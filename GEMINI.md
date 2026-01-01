@@ -38,6 +38,7 @@ You are working on **Deedee**, a personal, self-improving AI agent designed to r
 
 ## 📂 Navigation
 - **`TODO.md`**: The source of truth for current progress. Check this first.
+- **IMPORTANT**: Always update `TODO.md` at the end of a successful step or before a context switch.
 - **`specs/`**: The detailed requirements for the current task.
 - **`docs/architecture.md`**: The system map.
 

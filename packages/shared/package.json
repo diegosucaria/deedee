@@ -2,5 +2,7 @@
   "name": "@deedee/shared",
   "version": "0.0.1",
   "main": "index.js",
-  "types": "index.d.ts"
+  "dependencies": {
+    "axios": "^1.6.0"
+  }
 }
