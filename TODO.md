@@ -1,38 +1,39 @@
 # Deedee Project Roadmap
 
-## Phase 1: Core Foundation (Current)
-- [ ] **Implement Spec 001: Core Agent Hello World**
-  - [ ] Create `packages/shared/src/types.ts` (Message definitions)
-  - [ ] Create `packages/interfaces/src/mock.ts` (Test interface)
-  - [ ] Create `apps/agent/src/agent.ts` (Main logic)
-  - [ ] Write & Pass `apps/agent/tests/smoke.test.ts`
-- [ ] **Dockerize Core**
-  - [ ] Create `apps/agent/Dockerfile`
-  - [ ] Verify local build
+## Phase 1: Core Foundation (Completed)
+- [x] **Implement Spec 001: Core Agent Hello World**
+  - [x] Shared Types & Mock Interface
+  - [x] Agent Logic & Smoke Test
+- [x] **Spec 002: Supervisor & IPC**
+  - [x] Supervisor Express Server
+  - [x] Git Operations Wrapper
+  - [x] Shared IPC Client
+- [x] **Spec 003: Telegram Interface**
+  - [x] Polling Service
+  - [x] Outgoing Message Endpoint
+- [x] **Spec 004: HTTP IPC Integration**
+  - [x] Agent Webhook Server
+  - [x] HttpInterface Adapter
+- [x] **Spec 005: MCP GSuite**
+  - [x] Calendar & Gmail Tools
+  - [x] Agent Tool Integration
 
-## Phase 2: The Supervisor (Self-Improvement)
-- [ ] **Spec 002: Supervisor & IPC**
-  - [ ] Define API between Agent and Supervisor
-  - [ ] Implement `apps/supervisor` basic server
-- [ ] **Container Management**
-  - [ ] Implement Docker Socket control in Supervisor
-  - [ ] Test Supervisor restarting Agent
+## Phase 2: Deployment & Stability (Current)
+- [ ] **Deploy to Balena and Verify**
+  - [x] CI/CD Pipeline Setup
+  - [ ] Verify End-to-End on Device
+- [ ] **Spec 006: Supervisor Self-Test & Rollback**
+  - [ ] Implement Health Checks
+  - [ ] Implement Rollback Logic
 
-## Phase 3: Capabilities (MCP)
-- [ ] **MCP Infrastructure**
-  - [ ] Set up `@deedee/mcp-servers`
-  - [ ] Implement Client in Agent to consume MCP
-- [ ] **Specific Servers**
-  - [ ] `mcp-local`: Safe file reading/writing
-  - [ ] `mcp-gsuite`: Google Calendar/Gmail integration
+## Phase 3: Enhanced Capabilities
+- [ ] **Spec 008: Local System MCP**
+  - [ ] File System Access (Safe Mode)
+  - [ ] Command Execution
+- [ ] **Spec 007: WhatsApp Interface**
+  - [ ] Baileys Integration
 
-## Phase 4: Interfaces (The "Body")
-- [ ] **Telegram Connector**
-  - [ ] Implement `@deedee/interfaces/telegram`
-  - [ ] Setup Webhook handling
-- [ ] **Slack Connector** (Future)
-
-## Phase 5: Security & Deployment
-- [ ] **Secret Management** strategy implementation
-- [ ] **Nginx/Reverse Proxy** setup
-- [ ] **Raspberry Pi** deployment script
+## Phase 4: Long-Term Memory
+- [ ] **SQLite Integration**
+  - [ ] Conversation History
+  - [ ] Fact Storage

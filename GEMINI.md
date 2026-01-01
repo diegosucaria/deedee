@@ -36,9 +36,12 @@ You are working on **Deedee**, a personal, self-improving AI agent designed to r
 - The system should eventually be able to edit its own code.
 - **Mechanism**: Agent -> Supervisor -> Local Git Commit -> Push -> GitHub Action -> Balena Build -> Update.
 
+## ⚙️ Operational Mandates
+- **TODO Updates**: You MUST update `TODO.md` automatically at the end of every chat turn if a task was completed or the status changed. Do not wait for the user to ask.
+- **Context Updates**: Update `GEMINI.md` if new architectural decisions or secrets are introduced.
+
 ## 📂 Navigation
 - **`TODO.md`**: The source of truth for current progress. Check this first.
-- **IMPORTANT**: Always update `TODO.md` at the end of a successful step or before a context switch.
 - **`specs/`**: The detailed requirements for the current task.
 - **`docs/architecture.md`**: The system map.
 
