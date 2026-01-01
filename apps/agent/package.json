@@ -1,0 +1,14 @@
+{
+  "name": "@deedee/agent",
+  "version": "0.0.1",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "test": "jest"
+  },
+  "dependencies": {
+    "@google/generative-ai": "^0.1.0",
+    "better-sqlite3": "^9.0.0",
+    "dotenv": "^16.0.0"
+  }
+}

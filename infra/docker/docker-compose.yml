@@ -1,0 +1,38 @@
+version: '2.1'
+
+volumes:
+  repo-data:
+  agent-data: # For SQLite DB
+
+services:
+  agent:
+    build:
+      context: ../../
+      dockerfile: apps/agent/Dockerfile
+    environment:
+      - NODE_ENV=production
+      # Secrets injected by Balena Dashboard
+    volumes:
+      - repo-data:/app/source
+      - agent-data:/app/data
+    networks:
+      - deedee-net
+    restart: always
+
+  supervisor:
+    build:
+      context: ../../
+      dockerfile: apps/supervisor/Dockerfile
+    environment:
+      - GIT_USER_NAME=Deedee Agent
+      - GIT_USER_EMAIL=deedee@bot
+      # GITHUB_PAT injected by Balena Dashboard
+    volumes:
+      - repo-data:/app/source
+    networks:
+      - deedee-net
+    restart: always
+
+networks:
+  deedee-net:
+    driver: bridge
