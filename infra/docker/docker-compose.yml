@@ -11,7 +11,8 @@ services:
       dockerfile: apps/agent/Dockerfile
     environment:
       - NODE_ENV=production
-      # Secrets injected by Balena Dashboard
+      - SUPERVISOR_URL=http://supervisor:4000
+      - INTERFACES_URL=http://interfaces:5000
     volumes:
       - repo-data:/app/source
       - agent-data:/app/data
@@ -26,9 +27,22 @@ services:
     environment:
       - GIT_USER_NAME=Deedee Agent
       - GIT_USER_EMAIL=deedee@bot
-      # GITHUB_PAT injected by Balena Dashboard
+      - PORT=4000
     volumes:
       - repo-data:/app/source
+    networks:
+      - deedee-net
+    restart: always
+
+  interfaces:
+    build:
+      context: ../../
+      dockerfile: apps/interfaces/Dockerfile
+    environment:
+      - NODE_ENV=production
+      - AGENT_URL=http://agent:3000
+      - PORT=5000
+      # TELEGRAM_TOKEN, SLACK_TOKEN injected by Balena
     networks:
       - deedee-net
     restart: always

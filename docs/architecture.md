@@ -16,26 +16,40 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 ### 2. Supervisor (`apps/supervisor`)
 - **Runtime**: Node.js
 - **Privileges**: Filesystem access to the source code repo.
-- **Role**: The "Git Operator" and "Test Runner".
+- **Port**: 4000 (Internal).
+- **Role**: The "Git Operator".
+    - Exposes HTTP endpoints: `POST /cmd/update`, `POST /cmd/rollback`.
     - Watches for "Change Requests" from the Agent.
     - Applies code changes to the local git repository.
-    - Runs local tests to ensure basic integrity.
     - **Commits and Pushes** changes to GitHub.
-- **Security**: Holds the GitHub PAT. Validates changes before pushing.
 
-### 3. Interface Adapters (`packages/interfaces`)
-- **Role**: Translate platform-specific events (Telegram messages, Slack events) into a standardized internal event format for the Agent.
-- **Services**:
-    - `connector-telegram`
-    - `connector-slack`
-    - `connector-whatsapp`
+### 3. Interfaces Service (`apps/interfaces`)
+- **Runtime**: Node.js
+- **Port**: 5000 (Internal).
+- **Role**: Unified "Ears" of the system.
+- **Communication Strategy**:
+    - **Telegram**: Long Polling.
+    - **Slack**: Socket Mode.
+    - **WhatsApp**: (TBD - likely Baileys library).
+- **Data Flow**:
+    - Receives message -> `POST http://agent:3000/webhook` -> Agent.
+    - Agent replies -> `POST http://interfaces:5000/send` -> Platform.
 
 ### 4. MCP Servers (`packages/mcp-servers`)
+- **Runtime**: Sub-processes within the Agent container (for now) to save RAM.
 - **Role**: Expose tools and data sources to the Agent via the Model Context Protocol.
-- **Servers**:
-    - `mcp-gsuite`: Google Calendar, Gmail, Drive access.
-    - `mcp-local`: Local filesystem, CLI execution (controlled), Hardware stats.
-    - `mcp-browser`: Headless browser for web tasks.
+
+## Inter-Process Communication (IPC)
+- **Protocol**: HTTP/JSON.
+- **Network**: Internal Docker Network (no external access).
+- **Agent (Port 3000)**: Accepts messages, tool results.
+- **Supervisor (Port 4000)**: Accepts system commands (update, restart).
+- **Interfaces (Port 5000)**: Accepts outgoing messages.
+
+## Data Persistence
+- **Agent**: Owns `agent.db` (SQLite). EXCLUSIVE ACCESS.
+- **Supervisor**: Owns the git repo volume.
+
 
 ## Deployment & CI (Balena.io)
 - **Platform**: BalenaOS (Raspberry Pi).
