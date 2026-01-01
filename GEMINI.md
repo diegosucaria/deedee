@@ -16,13 +16,11 @@ You are working on **Deedee**, a personal, self-improving AI agent designed to r
 
 ## 🛡️ Critical Mandates
 
-### 1. Security First
-- **Principle of Least Privilege**: The `Agent` container must NEVER have root access. It must ask the `Supervisor` to perform system-level tasks via Git commits.
-- **Secrets**: 
-    - `GOOGLE_API_KEY`: Injected by Balena (Agent).
-    - `GITHUB_PAT`: Injected by Balena (Supervisor).
-    - `BALENA_API_TOKEN`: GitHub Secret (CI/CD).
-- **Sandboxing**: Code execution (if added) must be strictly sandboxed.
+### 1. Security First (Modified: "YOLO" Mode)
+- **Operational Mode**: The Agent is a personal tool for a single user. We prioritize **Capability over Restriction**.
+- **Shell Access**: The Agent is allowed broad access to `run_shell_command` (e.g., `rm`, `curl`, `git`).
+- **Safety Net**: We do not prevent destructive actions (like deleting source code). Instead, we rely on the **Supervisor** to detect corruption and perform a "Hard Reset" (re-clone from GitHub) if necessary.
+- **Secrets**: Continue to protect API Keys via environment variables.
 
 ### 2. TDD & Specs
 - **Workflow**:

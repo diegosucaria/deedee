@@ -20,8 +20,8 @@
 
 ## Phase 2: Deployment & Stability (Current)
 - [ ] **Deploy to Balena and Verify**
-  - [x] CI/CD Pipeline Setup
-  - [ ] Verify End-to-End on Device
+  - [x] CI/CD Pipeline Setup (Balena CLI)
+  - [ ] Verify End-to-End on Device (In Progress)
 - [ ] **Spec 006: Supervisor Self-Test & Rollback**
   - [ ] Implement Health Checks
   - [ ] Implement Rollback Logic
