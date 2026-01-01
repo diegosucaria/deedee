@@ -2,20 +2,42 @@ const { Agent } = require('../src/agent');
 const { MockInterface } = require('./mock-interface');
 const { createUserMessage } = require('@deedee/shared/src/types');
 
-// Mock Google Generative AI to avoid real API calls in tests
+// Mock Dependencies
+jest.mock('@deedee/mcp-servers/src/gsuite/index', () => ({
+  GSuiteTools: jest.fn().mockImplementation(() => ({
+    listEvents: jest.fn().mockResolvedValue([{ summary: 'Mock Event' }]),
+    sendEmail: jest.fn()
+  }))
+}));
+
 jest.mock('@google/generative-ai', () => ({
   GoogleGenerativeAI: jest.fn().mockImplementation(() => ({
     getGenerativeModel: jest.fn().mockReturnValue({
-      generateContent: jest.fn().mockResolvedValue({
-        response: {
-          text: () => 'I am Deedee'
-        }
+      startChat: jest.fn().mockReturnValue({
+        sendMessage: jest.fn().mockImplementation(async (content) => {
+          // 1. First call simulates Model asking to call function
+          if (typeof content === 'string' && content.includes('calendar')) {
+            return {
+              response: {
+                text: () => '',
+                functionCalls: () => [{ name: 'listEvents', args: {} }]
+              }
+            };
+          }
+          // 2. Second call simulates Model seeing the result
+          return {
+            response: {
+              text: () => 'You have one event.',
+              functionCalls: () => []
+            }
+          };
+        })
       })
     })
   }))
 }));
 
-describe('Agent Smoke Test', () => {
+describe('Agent with Tools', () => {
   let agent;
   let mockInterface;
 
@@ -27,17 +49,13 @@ describe('Agent Smoke Test', () => {
     });
   });
 
-  test('should reply to a message', async () => {
+  test('should execute tool and reply', async () => {
     await agent.start();
-
-    const userMsg = createUserMessage('Who are you?', 'telegram', 'user123');
+    const userMsg = createUserMessage('Check my calendar', 'telegram', 'user1');
     
-    // Simulate incoming message
     await agent.onMessage(userMsg);
 
     const reply = mockInterface.getLastMessage();
-    expect(reply).toBeDefined();
-    expect(reply.role).toBe('assistant');
-    expect(reply.content).toBe('I am Deedee');
+    expect(reply.content).toBe('You have one event.');
   });
 });
