@@ -3,7 +3,7 @@ name: Deploy to Balena
 on:
   push:
     branches:
-      - master
+      - main
   workflow_dispatch:
 
 jobs:
@@ -12,9 +12,13 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Balena Deploy
-        uses: balena-io/deploy-to-balena-action@v0.1.0
-        with:
-          balena_token: ${{ secrets.BALENA_API_TOKEN }}
-          fleet: g_diego_sucaria/deedee
-          create_tag: true
+      - name: Install Balena CLI
+        run: npm install -g balena-cli
+
+      - name: Balena Login
+        env:
+          BALENA_TOKEN: ${{ secrets.BALENA_API_TOKEN }}
+        run: balena login --token "$BALENA_TOKEN"
+
+      - name: Balena Push
+        run: balena push g_diego_sucaria/deedee -s . --noparent-check --unsupported
