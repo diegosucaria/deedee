@@ -475,6 +475,7 @@ class Agent {
           contents: [{ parts: [{ text: text }] }],
           config: {
             responseModalities: ['AUDIO'],
+            audioEncoding: 'MP3',
             speechConfig: {
               voiceConfig: {
                 prebuiltVoiceConfig: {
