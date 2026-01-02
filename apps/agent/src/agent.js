@@ -482,8 +482,7 @@ class Agent {
                   voiceName: 'Kore' // AO, Fenrir, Kore, Puck
                 }
               }
-            },
-            audioTimestamp: false // Optional
+            }
           }
         });
 
