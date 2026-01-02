@@ -8,7 +8,8 @@ const port = process.env.PORT || 3000;
 const interfacesUrl = process.env.INTERFACES_URL || 'http://localhost:5000';
 const googleApiKey = process.env.GOOGLE_API_KEY;
 
-app.use(express.json());
+// Increase body limit to support large audio/image payloads
+app.use(express.json({ limit: '50mb' }));
 
 // 1. Setup Interface
 const httpInterface = new HttpInterface(interfacesUrl);
@@ -32,7 +33,7 @@ app.get('/health', (req, res) => {
 
 app.post('/webhook', (req, res) => {
   const message = req.body;
-  
+
   if (!message || !message.content) {
     return res.status(400).json({ error: 'Invalid message format' });
   }
@@ -43,7 +44,7 @@ app.post('/webhook', (req, res) => {
     message.role = message.role || 'user';
     message.source = message.source || 'http';
     message.timestamp = message.timestamp || new Date().toISOString();
-    
+
     httpInterface.receive(message);
     res.json({ received: true });
   } else {
