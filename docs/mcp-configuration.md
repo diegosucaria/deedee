@@ -34,22 +34,21 @@ The agent looks for a configuration file at `apps/agent/mcp_config.json`.
 ### 1. Home Assistant
 To enable Home Assistant integration:
 
-1.  **Get your Token**: Go to your Home Assistant Profile -> Security -> Create Long-Lived Access Token.
-2.  **Edit `apps/agent/mcp_config.json`**:
+3.  **Edit `apps/agent/mcp_config.json`**:
     ```json
     {
       "homeassistant": {
-        "transport": "sse",
-        "url": "${HA_URL}/api/mcp", 
+        "command": "uvx",
+        "args": ["ha-mcp"],
         "env": {
-          "HA_URL": "${HA_URL}",
-          "HA_TOKEN": "${HA_TOKEN}" 
+          "HOMEASSISTANT_URL": "${HA_URL}",
+          "HOMEASSISTANT_TOKEN": "${HA_TOKEN}"
         },
         "disabled": false
       }
     }
     ```
-    *Better Security*: Set `HA_TOKEN` in your `.env` file or Balena Dashboard variables, and use `${HA_TOKEN}` in the config.
+    *Note*: The `ha-mcp` server acts as a standard API client and does not require server-side integration in Home Assistant. Ensure `HA_URL` and `HA_TOKEN` are set in your environment.
 
 ### 2. PostgreSQL
 ```json
