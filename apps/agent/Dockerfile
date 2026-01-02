@@ -23,8 +23,13 @@ RUN npm install --workspaces --if-present
 RUN npm install
 
 # Install Plex MCP Server dependencies (using uv for speed/reliability)
-# We use --system to install into the container's python environment so 'python3' command works directly
-RUN uv pip install --system -r packages/plex-mcp-server/requirements.txt
+# We use a virtual environment to respect PEP 668 on Alpine
+ENV VIRTUAL_ENV=/opt/venv
+RUN uv venv $VIRTUAL_ENV
+ENV PATH="$VIRTUAL_ENV/bin:$PATH"
+
+# Install requirements into the venv
+RUN uv pip install -r packages/plex-mcp-server/requirements.txt
 
 # Start the specific app
 WORKDIR /app/apps/agent
