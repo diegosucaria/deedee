@@ -1,3 +1,4 @@
+
 const { createAssistantMessage } = require('@deedee/shared/src/types');
 const { GSuiteTools } = require('@deedee/mcp-servers/src/gsuite/index');
 const { LocalTools } = require('@deedee/mcp-servers/src/local/index');
@@ -8,7 +9,7 @@ const { MCPManager } = require('./mcp-manager');
 const { CommandHandler } = require('./command-handler');
 const { RateLimiter } = require('./rate-limiter');
 const { ConfirmationManager } = require('./confirmation-manager');
-const googleTTS = require('google-tts-api');
+const axios = require('axios');
 
 class Agent {
   constructor(config) {
@@ -463,35 +464,65 @@ class Agent {
     if (executionName === 'runShellCommand') return await this.local.runShellCommand(args.command);
     // Audio / TTS
     if (executionName === 'replyWithAudio') {
-      const text = args.text;
-      const lang = args.language || 'en';
-      
       try {
-        const results = await googleTTS.getAllAudioBase64(text, {
-          lang: lang,
-          slow: false,
-          host: 'https://translate.google.com',
+        const text = args.text;
+        console.log(`[Agent] Generating audio for: "${text.substring(0, 50)}..."`);
+
+        // Use Gemini 2.5 or 2.0 Flash Exp for TTS
+        const ttsModel = 'gemini-2.0-flash-exp'; // or 'gemini-2.5-flash-preview-tts' if available
+
+        const response = await this.client.models.generateContent({
+          model: ttsModel,
+          contents: [{ parts: [{ text: text }] }],
+          config: {
+            responseModalities: ['AUDIO'],
+            speechConfig: {
+              voiceConfig: {
+                prebuiltVoiceConfig: {
+                  voiceName: 'Kore' // AO, Fenrir, Kore, Puck
+                }
+              }
+            }
+          }
         });
-        
-        let sentCount = 0;
-        for (const item of results) {
-            const audioMsg = createAssistantMessage('[Audio Response]');
-            audioMsg.metadata = { chatId: messageContext.metadata?.chatId };
-            audioMsg.source = messageContext.source;
-            audioMsg.content = item.base64; 
-            audioMsg.type = 'audio';
-            
-            await this.interface.send(audioMsg);
-            sentCount++;
+
+        if (!response.candidates || !response.candidates[0]) {
+          throw new Error('No candidates returned from Gemini TTS');
         }
-        
-        return { success: true, sent_segments: sentCount };
+
+        const candidate = response.candidates[0];
+        // The audio binary is usually in parts[0].inlineData.data
+        let audioData = null;
+        if (candidate.content && candidate.content.parts) {
+          for (const part of candidate.content.parts) {
+            if (part.inlineData && part.inlineData.data) {
+              audioData = part.inlineData.data;
+              break;
+            }
+          }
+        }
+
+        if (!audioData) {
+          throw new Error('No audio data found in Gemini response');
+        }
+
+        const audioMsg = createAssistantMessage('[Audio Response]');
+        audioMsg.metadata = { chatId: messageContext.metadata?.chatId };
+        audioMsg.source = messageContext.source;
+        audioMsg.content = audioData;
+        audioMsg.type = 'audio';
+
+        await this.interface.send(audioMsg);
+
+        // Return success with metadata, not just true, so the model knows it worked
+        return { success: true, info: 'Audio sent to user.' };
+
       } catch (e) {
-        console.error('TTS Error:', e);
+        console.error('TTS Error (Gemini):', e);
         return { error: `TTS failed: ${e.message}` };
       }
     }
-    
+
     // Supervisor
     if (executionName === 'rollbackLastChange') {
       const rollbackRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/rollback`, {
