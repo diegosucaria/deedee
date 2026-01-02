@@ -86,7 +86,9 @@ class Agent {
       this.db.saveMessage(message);
 
       // --- ROUTING ---
+      console.time('[Agent] Router Duration');
       const decision = await this.router.route(message.content);
+      console.timeEnd('[Agent] Router Duration');
       const selectedModel = decision.model === 'FLASH'
         ? (process.env.WORKER_FLASH || 'gemini-2.0-flash-exp')
         : (process.env.WORKER_PRO || 'gemini-3-pro-preview');
@@ -140,32 +142,12 @@ class Agent {
       });
 
       // 2. Send Message to Gemini
+      console.time(`[Agent] Model Response (${selectedModel})`);
       let response = await session.sendMessage({ message: message.content });
+      console.timeEnd(`[Agent] Model Response (${selectedModel})`);
 
-      // --- DEBUG: Log Raw Response for Thought Signature Issue ---
-      try {
-        if (response.candidates && response.candidates[0]) {
-          const parts = response.candidates[0].content.parts;
-          // Use util.inspect to find hidden properties like Symbols (thought_signature)
-          const util = require('util');
-          console.log('[DEBUG] Gemini Response Parts (INSPECT):', util.inspect(parts, { showHidden: true, depth: null, colors: false }));
+      // --- DEBUG: Log Raw Response REMOVED ---
 
-          // Deep inspection for hidden thought_signature
-          parts.forEach((part, idx) => {
-            if (part.functionCall) {
-              console.log(`[DEBUG] Part ${idx} functionCall keys:`, Object.keys(part.functionCall));
-              console.log(`[DEBUG] Part ${idx} symbol keys:`, Object.getOwnPropertySymbols(part.functionCall).map(s => s.toString()));
-              // Check if thought_signature is non-enumerable
-              const desc = Object.getOwnPropertyDescriptor(part.functionCall, 'thought_signature');
-              console.log(`[DEBUG] Part ${idx} thought_signature descriptor:`, desc);
-            }
-          });
-        } else {
-          console.log('[DEBUG] Gemini Response (No Candidates):', JSON.stringify(response, null, 2));
-        }
-      } catch (debugErr) {
-        console.error('[DEBUG] Failed to log response:', debugErr);
-      }
       // -----------------------------------------------------------
 
 
@@ -299,7 +281,13 @@ class Agent {
           toolResult = { info: 'No output from tool execution.' };
         }
 
-        console.log('Tool Result:', toolResult);
+        // Efficient Logging: Truncate large outputs
+        const logResult = JSON.stringify(toolResult);
+        if (logResult.length > 200) {
+          console.log('Tool Result (Truncated):', logResult.substring(0, 200) + '...');
+        } else {
+          console.log('Tool Result:', toolResult);
+        }
 
         // SAVE TOOL RESPONSE (FunctionResponse)
         const functionResponsePart = {
@@ -325,9 +313,11 @@ class Agent {
         });
 
         // Send Tool Response back to Gemini
+        console.time(`[Agent] Model Tool Response (${selectedModel})`);
         response = await session.sendMessage({
           message: [functionResponsePart]
         });
+        console.timeEnd(`[Agent] Model Tool Response (${selectedModel})`);
 
         // Re-check for recursive function calls 
         functionCalls = this._getFunctionCalls(response);
