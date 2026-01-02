@@ -275,12 +275,21 @@ class MCPManager {
         return null;
     }
 
-    async cleanup() {
-        for (const client of this.clients.values()) {
+    async close() {
+        console.log('[MCP] Closing connections...');
+        for (const [name, client] of this.clients.entries()) {
             try {
-                // connection close?
-            } catch (e) { }
+                if (client.transport && typeof client.transport.close === 'function') {
+                    await client.transport.close();
+                } else if (typeof client.close === 'function') {
+                    await client.close();
+                }
+                console.log(`[MCP] Closed connection to ${name}`);
+            } catch (e) {
+                console.warn(`[MCP] Error closing ${name}:`, e.message);
+            }
         }
+        this.clients.clear();
     }
 }
 

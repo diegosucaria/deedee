@@ -4,10 +4,29 @@ const fs = require('fs');
 const crypto = require('crypto');
 
 class AgentDB {
-  constructor(dataDir = '/app/data') {
+  constructor(dataDir) {
+    // Determine data directory
+    if (!dataDir) {
+      if (process.env.DATA_DIR) {
+        dataDir = process.env.DATA_DIR;
+      } else if (fs.existsSync('/app') && process.platform !== 'darwin') {
+        // Likely Docker or Linux environment
+        dataDir = '/app/data';
+      } else {
+        // Local fallback (MacOS or outside container)
+        dataDir = path.join(process.cwd(), 'data');
+      }
+    }
+
     // Ensure data dir exists
     if (!fs.existsSync(dataDir)) {
-      fs.mkdirSync(dataDir, { recursive: true });
+      try {
+        fs.mkdirSync(dataDir, { recursive: true });
+      } catch (e) {
+        console.error(`[DB] Failed to create data dir ${dataDir}, falling back to tmp.`);
+        dataDir = path.join(require('os').tmpdir(), 'deedee_data');
+        fs.mkdirSync(dataDir, { recursive: true });
+      }
     }
 
     this.dbPath = path.join(dataDir, 'agent.db');

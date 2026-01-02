@@ -57,12 +57,13 @@ class Router {
             }).sendMessage({ message: prompt });
 
             let text = '{}';
-            if (typeof response.response.text === 'function') {
-                text = response.response.text();
-            } else if (response.response.text) {
-                text = response.response.text;
-            } else if (response.response.candidates && response.response.candidates[0] && response.response.candidates[0].content) {
-                text = response.response.candidates[0].content.parts[0].text;
+
+            if (typeof response.text === 'function') {
+                text = response.text();
+            } else if (response.text) {
+                text = response.text;
+            } else if (response.candidates && response.candidates[0] && response.candidates[0].content) {
+                text = response.candidates[0].content.parts[0].text;
             }
 
             // Cleanup potential markdown blocks if the model wrapped JSON

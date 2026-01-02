@@ -7,6 +7,7 @@ const { Router } = require('./router');
 const { MCPManager } = require('./mcp-manager');
 const { CommandHandler } = require('./command-handler');
 const { RateLimiter } = require('./rate-limiter');
+const { ConfirmationManager } = require('./confirmation-manager');
 
 class Agent {
   constructor(config) {
@@ -27,7 +28,10 @@ class Agent {
     this.gsuite = new GSuiteTools();
     this.local = new LocalTools('/app/source');
 
-    this.commandHandler = new CommandHandler(this.db, this.interface);
+    this.local = new LocalTools('/app/source');
+
+    this.confirmationManager = new ConfirmationManager(this.db);
+    this.commandHandler = new CommandHandler(this.db, this.interface, this.confirmationManager);
     this.rateLimiter = new RateLimiter(this.db);
 
     this.onMessage = this.onMessage.bind(this);
@@ -74,7 +78,23 @@ class Agent {
       const chatId = message.metadata?.chatId;
 
       // 1. Slash Commands (only for text messages)
-      if (!isMultiModal && await this.commandHandler.handle(message)) {
+      // 1. Slash Commands (only for text messages)
+      const commandResult = !isMultiModal ? await this.commandHandler.handle(message) : false;
+
+      if (typeof commandResult === 'object' && commandResult.type === 'EXECUTE_PENDING') {
+        // Execute the pending action immediately
+        const action = commandResult.action;
+        console.log(`[Agent] User confirmed action: ${action.name}`);
+        const result = await this._executeTool(action.name, action.args);
+
+        // Notify user of result
+        const reply = createAssistantMessage(`Action **${action.name}** executed.\nResult: \`\`\`json\n${JSON.stringify(result, null, 2).substring(0, 500)}\n\`\`\``);
+        reply.metadata = { chatId };
+        reply.source = message.source;
+        await this.interface.send(reply);
+        return;
+      } else if (commandResult === true) {
+        // Handled by command handler (e.g. /clear, /cancel)
         return;
       }
 
@@ -139,6 +159,7 @@ class Agent {
             3. DO NOT use 'runShellCommand' for git operations (commit/push). Use the dedicated tools.
             4. DO NOT change/add/improve anything else in the code that was not asked for. Keep comments as is.
             5. All strings and comments you add must be in English.
+            6. Since you can self-improve, when writing/adding/changing a tool/feature you must write the tests for it, to validate that it works before calling 'commitAndPush'.
           `,
         },
         history: history
@@ -206,78 +227,27 @@ class Agent {
         }, 2500);
 
         try {
-          // --- INTERNAL TOOLS ---
-          if (executionName === 'rememberFact') {
-            this.db.setKey(call.args.key, call.args.value);
-            toolResult = { success: true };
-          }
-          else if (executionName === 'getFact') {
-            const val = this.db.getKey(call.args.key);
-            toolResult = val ? { value: val } : { info: 'Fact not found in database.' };
-          }
-          else if (executionName === 'addGoal') {
-            const metadata = { chatId: message.metadata?.chatId };
-            const info = this.db.addGoal(call.args.description, metadata);
-            toolResult = { success: true, id: info.lastInsertRowid };
-          }
-          else if (executionName === 'completeGoal') {
-            this.db.completeGoal(call.args.id);
-            toolResult = { success: true };
-          }
-          // GSuite
-          else if (executionName === 'listEvents') toolResult = await this.gsuite.listEvents(call.args);
-          else if (executionName === 'sendEmail') toolResult = await this.gsuite.sendEmail(call.args);
-          // Local
-          else if (executionName === 'readFile') toolResult = await this.local.readFile(call.args.path);
-          else if (executionName === 'writeFile') toolResult = await this.local.writeFile(call.args.path, call.args.content);
-          else if (executionName === 'listDirectory') toolResult = await this.local.listDirectory(call.args.path);
-          else if (executionName === 'runShellCommand') toolResult = await this.local.runShellCommand(call.args.command);
-          // Supervisor
-          else if (executionName === 'rollbackLastChange') {
-            const rollbackRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/rollback`, {
-              method: 'POST'
-            });
-            toolResult = await rollbackRes.json();
-          }
-          else if (executionName === 'pullLatestChanges') {
-            const pullRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/pull`, {
-              method: 'POST'
-            });
-            toolResult = await pullRes.json();
-          }
-          else if (executionName === 'commitAndPush') {
-            const commitRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/commit`, {
-              method: 'POST',
-              headers: { 'Content-Type': 'application/json' },
-              body: JSON.stringify({ message: call.args.message, files: ['.'] })
-            });
-            toolResult = await commitRes.json();
+          // SENSITIVE GUARD CHECK
+          const guard = this.confirmationManager.check(executionName, call.args);
+          if (guard.requiresConfirmation) {
+            console.log(`[Agent] Action ${executionName} requires confirmation.`);
+            this.confirmationManager.store(message.metadata?.chatId, executionName, call.args);
 
-            // Notification: Slack (Self-Improvement Alert)
-            if (toolResult && toolResult.success && process.env.SLACK_WEBHOOK_URL) {
-              try {
-                await fetch(process.env.SLACK_WEBHOOK_URL, {
-                  method: 'POST',
-                  headers: { 'Content-Type': 'application/json' },
-                  body: JSON.stringify({
-                    text: `🚀 *New Feature Deployed via Self-Improvement*\n\n*Commit:* ${call.args.message}\n*Files:* All changed files`
-                  })
-                });
-                console.log('[Agent] Sent Slack notification for self-improvement.');
-              } catch (slackErr) {
-                console.error('[Agent] Failed to send Slack notification:', slackErr);
-              }
-            }
+            toolResult = { info: `Action PAUSED. ${guard.message} User must confirm.` };
+
+            // Notify user specifically
+            const confirmMsg = createAssistantMessage(`🛑 **Safety Check**: I want to execute \`${executionName}\`.\n\nArgs: \`${JSON.stringify(call.args)}\`\n\n${guard.message}\n\nReply **/confirm** to proceed or **/cancel** to stop.`);
+            confirmMsg.metadata = { chatId: message.metadata?.chatId };
+            confirmMsg.source = message.source;
+            await this.interface.send(confirmMsg).catch(console.error);
+
+            // We do NOT break here loop-wise because we want to return the info to the model so it knows it's paused.
+            // However, the model usually stops after tool execution.
+          } else {
+            // Execute normally
+            toolResult = await this._executeTool(executionName, call.args, message);
           }
-          // --- EXTERNAL MCP TOOLS ---
-          else {
-            try {
-              toolResult = await this.mcp.callTool(executionName, call.args);
-            } catch (err) {
-              console.warn(`[Agent] Tool ${executionName} not found in Internal or MCP tools:`, err);
-              toolResult = { error: `Tool ${executionName} failed or does not exist: ${err.message}` };
-            }
-          }
+
         } catch (toolErr) {
           console.warn(`[Agent] Tool execution failed: ${toolErr.message}`);
           toolResult = { error: `Tool execution failed: ${toolErr.message}` };
@@ -407,6 +377,102 @@ class Agent {
       case 'addGoal':
       case 'completeGoal': return 'Updating goals...';
       default: return `Executing ${name}...`;
+    }
+  }
+
+  async stop() {
+    console.log('[Agent] Stopping...');
+
+    // Stop MCP
+    if (this.mcp) {
+      await this.mcp.close();
+    }
+
+    // Close DB
+    if (this.db && this.db.db) {
+      this.db.db.close();
+    }
+
+    // Stop Interface (if applicable)
+    if (this.interface && typeof this.interface.stop === 'function') {
+      this.interface.stop();
+    }
+
+    console.log('[Agent] Stopped.');
+  }
+
+  async _executeTool(executionName, args, messageContext = {}) {
+    // --- INTERNAL TOOLS ---
+    if (executionName === 'rememberFact') {
+      this.db.setKey(args.key, args.value);
+      return { success: true };
+    }
+    if (executionName === 'getFact') {
+      const val = this.db.getKey(args.key);
+      return val ? { value: val } : { info: 'Fact not found in database.' };
+    }
+    if (executionName === 'addGoal') {
+      const metadata = { chatId: messageContext.metadata?.chatId };
+      const info = this.db.addGoal(args.description, metadata);
+      return { success: true, id: info.lastInsertRowid };
+    }
+    if (executionName === 'completeGoal') {
+      this.db.completeGoal(args.id);
+      return { success: true };
+    }
+    // GSuite
+    if (executionName === 'listEvents') return await this.gsuite.listEvents(args);
+    if (executionName === 'sendEmail') return await this.gsuite.sendEmail(args);
+    // Local
+    if (executionName === 'readFile') return await this.local.readFile(args.path);
+    if (executionName === 'writeFile') return await this.local.writeFile(args.path, args.content);
+    if (executionName === 'listDirectory') return await this.local.listDirectory(args.path);
+    if (executionName === 'runShellCommand') return await this.local.runShellCommand(args.command);
+    // Supervisor
+    if (executionName === 'rollbackLastChange') {
+      const rollbackRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/rollback`, {
+        method: 'POST'
+      });
+      return await rollbackRes.json();
+    }
+    if (executionName === 'pullLatestChanges') {
+      const pullRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/pull`, {
+        method: 'POST'
+      });
+      return await pullRes.json();
+    }
+    if (executionName === 'commitAndPush') {
+      const commitRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/commit`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: args.message, files: ['.'] })
+      });
+      const toolResult = await commitRes.json();
+
+      // Notification: Slack (Self-Improvement Alert)
+      if (toolResult && toolResult.success && process.env.SLACK_WEBHOOK_URL) {
+        try {
+          await fetch(process.env.SLACK_WEBHOOK_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              text: `🚀 *New Feature Deployed via Self-Improvement*\n\n*Commit:* ${args.message}\n*Files:* All changed files`
+            })
+          });
+          console.log('[Agent] Sent Slack notification for self-improvement.');
+        } catch (slackErr) {
+          console.error('[Agent] Failed to send Slack notification:', slackErr);
+        }
+      }
+      return toolResult;
+    }
+
+    // --- EXTERNAL MCP TOOLS ---
+    try {
+      return await this.mcp.callTool(executionName, args);
+    } catch (err) {
+      console.warn(`[Agent] Tool ${executionName} not found in Internal or MCP tools:`, err);
+      return { error: `Tool ${executionName} failed or does not exist: ${err.message}` };
     }
   }
 }

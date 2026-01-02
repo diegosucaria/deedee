@@ -34,7 +34,15 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
   chats: {
     create: jest.fn().mockReturnValue({
       sendMessage: jest.fn().mockImplementation(async (payload) => {
-        // Case A: User Message ({ message: string })
+        // Case A: Router Request
+        if (typeof payload?.message === 'string' && payload.message.includes('You are the Router')) {
+          return {
+            text: JSON.stringify({ model: 'FLASH', reason: 'Test Mock' }),
+            candidates: [{ content: { parts: [{ text: JSON.stringify({ model: 'FLASH', reason: 'Test Mock' }) }] } }]
+          };
+        }
+
+        // Case B: User Message ({ message: string })
         if (typeof payload?.message === 'string' && payload.message.toLowerCase().includes('calendar')) {
           return {
             text: undefined,
