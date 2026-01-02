@@ -47,7 +47,7 @@ class TelegramService {
     try {
       const fileId = ctx.message.voice.file_id;
       const fileLink = await ctx.telegram.getFileLink(fileId);
-      
+
       const response = await axios.get(fileLink.href, { responseType: 'arraybuffer' });
       const buffer = Buffer.from(response.data);
       const base64Audio = buffer.toString('base64');
@@ -80,9 +80,15 @@ class TelegramService {
   }
 
   async sendMessage(chatId, content) {
-    // strict Markdown (MarkdownV2) often fails with unescaped characters from LLMs. 
-    // Legacy 'Markdown' is more forgiving.
-    await this.bot.telegram.sendMessage(chatId, content, { parse_mode: 'Markdown' });
+    try {
+      // strict Markdown (MarkdownV2) often fails with unescaped characters from LLMs. 
+      // Legacy 'Markdown' is more forgiving.
+      await this.bot.telegram.sendMessage(chatId, content, { parse_mode: 'Markdown' });
+    } catch (err) {
+      console.warn('[Telegram] Failed to send Markdown, falling back to plain text:', err.message);
+      // Fallback to plain text
+      await this.bot.telegram.sendMessage(chatId, content);
+    }
   }
 }
 
