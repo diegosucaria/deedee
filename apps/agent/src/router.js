@@ -17,7 +17,7 @@ class Router {
         }
     }
 
-    async route(userMessage) {
+    async route(userMessage, history = []) {
         // If it's audio/multimodal, always use FLASH (it handles it best)
         if (Array.isArray(userMessage)) {
             console.log('[Router] Multimodal input detected, routing to FLASH');
@@ -26,6 +26,13 @@ class Router {
 
         await this._ensureClient();
         try {
+            // Format recent history for context
+            const historyText = history.slice(-3).map(msg => {
+                const role = msg.role === 'model' ? 'Assistant' : 'User';
+                const content = msg.parts.map(p => p.text).join(' ');
+                return `${role}: ${content}`;
+            }).join('\n');
+
             const prompt = `
         You are the Router for a personal assistant bot. Your only job is to analyze the user's input and select the best model to handle the request.
         
@@ -45,6 +52,9 @@ class Router {
         * **Creative Writing:** Emails, blog posts, essays.
         * **Analysis:** Summarizing long text, analyzing logs, comparing options.
         
+        ### RECENT CONTEXT
+        ${historyText}
+
         User Input: "${userMessage}"
       `;
 

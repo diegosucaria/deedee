@@ -108,8 +108,12 @@ class Agent {
 
       // --- ROUTING ---
       console.time('[Agent] Router Duration');
+
+      // Get brief history for context (last 3 messages)
+      const routingHistory = this.db.getHistoryForChat(chatId, 3);
+
       // Pass the primary content or parts to router
-      const decision = await this.router.route(message.parts || message.content);
+      const decision = await this.router.route(message.parts || message.content, routingHistory);
       console.timeEnd('[Agent] Router Duration');
       const selectedModel = decision.model === 'FLASH'
         ? (process.env.WORKER_FLASH || 'gemini-2.0-flash-exp')

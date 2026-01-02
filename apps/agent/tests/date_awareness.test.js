@@ -15,7 +15,8 @@ jest.mock('../src/db', () => ({
 jest.mock('../src/mcp-manager', () => ({
     MCPManager: jest.fn().mockImplementation(() => ({
         init: jest.fn(),
-        getTools: jest.fn().mockResolvedValue([])
+        getTools: jest.fn().mockResolvedValue([]),
+        callTool: jest.fn()
     }))
 }));
 
