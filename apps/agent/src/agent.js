@@ -146,14 +146,18 @@ class Agent {
       try {
         if (response.candidates && response.candidates[0]) {
           const parts = response.candidates[0].content.parts;
-          console.log('[DEBUG] Gemini Response Parts (JSON):', JSON.stringify(parts, null, 2));
+          // Use util.inspect to find hidden properties like Symbols (thought_signature)
+          const util = require('util');
+          console.log('[DEBUG] Gemini Response Parts (INSPECT):', util.inspect(parts, { showHidden: true, depth: null, colors: false }));
 
           // Deep inspection for hidden thought_signature
           parts.forEach((part, idx) => {
             if (part.functionCall) {
               console.log(`[DEBUG] Part ${idx} functionCall keys:`, Object.keys(part.functionCall));
-              console.log(`[DEBUG] Part ${idx} has thought_signature?`, 'thought_signature' in part.functionCall);
-              console.log(`[DEBUG] Part ${idx} thought_signature value:`, part.functionCall.thought_signature);
+              console.log(`[DEBUG] Part ${idx} symbol keys:`, Object.getOwnPropertySymbols(part.functionCall).map(s => s.toString()));
+              // Check if thought_signature is non-enumerable
+              const desc = Object.getOwnPropertyDescriptor(part.functionCall, 'thought_signature');
+              console.log(`[DEBUG] Part ${idx} thought_signature descriptor:`, desc);
             }
           });
         } else {
@@ -350,7 +354,7 @@ class Agent {
     } catch (error) {
       console.error('Error processing message:', error);
 
-      const chatId = message.metadata?.chatId; 
+      const chatId = message.metadata?.chatId;
       // Auto-Rollback: Delete this turn to prevent stuck loops
       if (chatId && message.timestamp) {
         console.warn(`[Agent] Performing Auto-Rollback for chat ${chatId} since ${message.timestamp}`);
