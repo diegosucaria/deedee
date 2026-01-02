@@ -15,6 +15,7 @@ services:
       - INTERFACES_URL=http://interfaces:5000
       - RATE_LIMIT_HOURLY=50
       - RATE_LIMIT_DAILY=500
+      - MAX_TOOL_LOOPS=50
     volumes:
       - repo-data:/app/source
       - agent-data:/app/data

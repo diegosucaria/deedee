@@ -28,7 +28,6 @@ class TelegramService {
       const chatId = ctx.chat.id.toString();
 
       console.log(`[Telegram] Received from ${userId}: ${text}`);
-      console.log(`[Telegram Debug] Chars: ${text.split('').map(c => c.charCodeAt(0)).join(', ')}`);
 
       const message = createUserMessage(text, 'telegram', userId);
       // Attach chatId to metadata so we know where to reply

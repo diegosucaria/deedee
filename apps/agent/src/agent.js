@@ -63,10 +63,7 @@ class Agent {
   async onMessage(message) {
     try {
       console.log(`Received: ${message.content}`);
-      // Debug Encoding: Log character codes
-      if (message.content) {
-        console.log(`[Encoding Debug] Chars: ${message.content.split('').map(c => c.charCodeAt(0)).join(', ')}`);
-      }
+
 
       // Feature: Rate Limiting
       // default: 50 msg/hour, 500 msg/day
@@ -105,7 +102,17 @@ class Agent {
         await this.interface.send(thinkingMsg).catch(err => console.error('[Agent] Failed to send thinking msg:', err));
       }
 
+      const MAX_LOOPS = parseInt(process.env.MAX_TOOL_LOOPS || '10');
+      let loopCount = 0;
+
       while (functionCalls && functionCalls.length > 0) {
+        loopCount++;
+        if (loopCount > MAX_LOOPS) {
+          console.warn(`[Agent] Max tool loop limit reached (${MAX_LOOPS}). Breaking.`);
+          await this.interface.send(createAssistantMessage('I am stuck in a loop. Stopping now.'));
+          break;
+        }
+
         const call = functionCalls[0];
         console.log(`Function Call: ${call.name}`, call.args);
 
@@ -116,7 +123,8 @@ class Agent {
           toolResult = { success: true };
         }
         else if (call.name === 'getFact') {
-          toolResult = this.db.getKey(call.args.key);
+          const val = this.db.getKey(call.args.key);
+          toolResult = val ? { value: val } : { info: 'Fact not found in database.' };
         }
         else if (call.name === 'addGoal') {
           // Contextual Injection
@@ -136,6 +144,10 @@ class Agent {
         else if (call.name === 'writeFile') toolResult = await this.local.writeFile(call.args.path, call.args.content);
         else if (call.name === 'listDirectory') toolResult = await this.local.listDirectory(call.args.path);
         else if (call.name === 'runShellCommand') toolResult = await this.local.runShellCommand(call.args.command);
+
+        if (toolResult === undefined || toolResult === null) {
+          toolResult = { info: 'No output from tool execution.' };
+        }
 
         console.log('Tool Result:', toolResult);
 
