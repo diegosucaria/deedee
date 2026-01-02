@@ -59,3 +59,7 @@
   - [x] Implement `MCPManager` (Stdio Transport)
   - [x] Refactor `Agent.js` to Hybrid Tool System (Merged Tools)
   - [x] Configure Home Assistant Server (`mcp_config.json`)
+  - [x] **Spec 019: Plex Integration**
+    - [x] Clone `vladimir-tutin/plex-mcp-server`
+    - [x] Configure `mcp_config.json` with `python3` and `cwd`
+    - [x] Dockerfile dependency update (venv + uv)

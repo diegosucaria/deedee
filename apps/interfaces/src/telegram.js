@@ -123,9 +123,12 @@ class TelegramService {
         source = { url: content };
       } else {
         // Assume Base64
-        source = { source: Buffer.from(content, 'base64') };
+        source = {
+          source: Buffer.from(content, 'base64'),
+          filename: 'voice.mp3' // Help Telegram identify the format
+        };
       }
-      
+
       console.log(`[Telegram] Sending voice to ${chatId}`);
       await this.bot.telegram.sendVoice(chatId, source);
     } catch (err) {

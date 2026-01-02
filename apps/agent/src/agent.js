@@ -481,9 +481,11 @@ class Agent {
                   voiceName: 'Kore' // AO, Fenrir, Kore, Puck
                 }
               }
-            }
+            },
+            audioTimestamp: false // Optional
           }
         });
+
 
         if (!response.candidates || !response.candidates[0]) {
           throw new Error('No candidates returned from Gemini TTS');

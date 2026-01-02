@@ -43,6 +43,43 @@ The ears and mouth.
 - **Runtime**: Sub-processes within the Agent container (for now) to save RAM.
 - **Role**: Expose tools and data sources to the Agent via the Model Context Protocol.
 
+### 4.1 MCP Integration Patterns
+When adding a new MCP server, choose one of the following patterns:
+
+#### A. Published Package (Preferred for Python)
+Use when the server is published to PyPI (e.g., `ha-mcp`).
+- **Config**: Use `uvx` (or `uv tool run`) to download and run it on usage.
+- **Dockerfile**: No changes needed (if `uv` is installed).
+```json
+"homeassistant": {
+    "command": "uvx",
+    "args": ["ha-mcp"],
+    "env": { ... }
+}
+```
+
+#### B. Cloned Repository (Standalone)
+Use for servers only available as source code (e.g., `plex-mcp-server`).
+- **Location**: Clone into `packages/<server-name>`.
+- **Dockerfile**: Update `apps/agent/Dockerfile` to install dependencies into the system or venv.
+  ```dockerfile
+  RUN uv pip install -r packages/<server-name>/requirements.txt
+  ```
+- **Config**: Configure `command` and `cwd`.
+```json
+"plex": {
+    "command": "python3",
+    "args": ["server.py"],
+    "cwd": "../../packages/plex-mcp-server",
+    "env": { ... }
+}
+```
+
+#### C. Internal/Legacy (Built-in)
+Use for custom tools integrated directly into the repo (e.g., `gsuite`).
+- **Implementation**: Defined in `packages/mcp-servers` and imported in `agent.js`.
+- **Note**: We are migrating away from this towards Config-based (Pattern A/B).
+
 ## Inter-Process Communication (IPC)
 - **Protocol**: HTTP/JSON.
 - **Network**: Internal Docker Network (no external access).
