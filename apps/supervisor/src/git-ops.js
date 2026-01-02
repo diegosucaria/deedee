@@ -36,6 +36,8 @@ class GitOps {
       } else {
         await this.run(`git remote add origin ${remoteUrl}`);
       }
+      // Pull after setting up the remote to ensure content is retrieved
+      await this.run('git pull origin master');
     }
   }
 
