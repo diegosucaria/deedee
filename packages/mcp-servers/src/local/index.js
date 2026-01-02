@@ -6,7 +6,7 @@ const execAsync = util.promisify(exec);
 
 const BLOCKED_BINARIES = [
   'vi', 'nano', 'emacs', 'top', 'htop', 'shutdown', 'init', 'halt',
-  'passwd', 'rm -rf /', 'mkfs', 'fdisk', 'parted', 'dd',
+  'passwd', 'rm -rf /', 'mkfs', 'fdisk', 'parted', 'dd', 'env'
 ];
 
 class LocalTools {

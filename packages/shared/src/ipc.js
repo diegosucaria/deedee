@@ -1,4 +1,4 @@
-const axios = require('axios'); // We need to add axios to shared dependencies
+const axios = require('axios');
 
 class SupervisorClient {
   /**

@@ -16,7 +16,9 @@
   - [x] Syntax validation
 - [x] **Refactor Agent**
   - [x] Split Tools Registry into `tools-definition.js`
-- [ ] **Deploy to Balena and Verify** (Action Pending)
+- [x] **Fix: Supervisor Git Initialization (Missing `git pull`)**
+- [x] **Feat: Shell Command Security Model (Blacklist instead of Whitelist)**
+- [x] **Deploy to Balena and Verify**
 
 ## Phase 3: Enhanced Capabilities
 - [ ] **Spec 013: Router Architecture & Chat Hydration**
