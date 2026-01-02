@@ -68,7 +68,7 @@ class Agent {
       this.db.saveMessage(message);
 
       // 2. Send Message to Gemini
-      let response = await this.chat.sendMessage([{ text: message.content }]);
+      let response = await this.chat.sendMessage({ message: message.content });
 
       // 3. Handle Function Calls Loop
       let functionCalls = this._getFunctionCalls(response);
