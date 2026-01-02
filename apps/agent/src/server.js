@@ -11,6 +11,17 @@ const googleApiKey = process.env.GOOGLE_API_KEY;
 // Increase body limit to support large audio/image payloads
 app.use(express.json({ limit: '50mb' }));
 
+// Global Error Handlers
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('[System] Unhandled Rejection at:', promise, 'reason:', reason);
+});
+
+process.on('uncaughtException', (error) => {
+  console.error('[System] Uncaught Exception:', error);
+  // Ideally, we should exit here, but in "YOLO" mode we try to stay up.
+  // process.exit(1);
+});
+
 // 1. Setup Interface
 const httpInterface = new HttpInterface(interfacesUrl);
 
