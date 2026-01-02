@@ -350,6 +350,7 @@ class Agent {
     } catch (error) {
       console.error('Error processing message:', error);
 
+      const chatId = message.metadata?.chatId; 
       // Auto-Rollback: Delete this turn to prevent stuck loops
       if (chatId && message.timestamp) {
         console.warn(`[Agent] Performing Auto-Rollback for chat ${chatId} since ${message.timestamp}`);

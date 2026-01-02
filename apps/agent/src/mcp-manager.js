@@ -91,6 +91,27 @@ class MCPManager {
                     }
                 }
 
+                // SPECIAL HANDLING: Home Assistant (mcp-server-home-assistant)
+                if (name === 'homeassistant') {
+                    // 1. Derive WebSocket URL from HA_URL (http -> ws, append /api/websocket)
+                    if (env.HA_URL && !env.HOME_ASSISTANT_WEB_SOCKET_URL) {
+                        try {
+                            const haUrl = new URL(env.HA_URL);
+                            const proto = haUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+                            // Construct standard WS path
+                            const wsUrl = `${proto}//${haUrl.host}${haUrl.pathname.replace(/\/$/, '')}/api/websocket`;
+                            env.HOME_ASSISTANT_WEB_SOCKET_URL = wsUrl;
+                            console.log(`[MCP] Derived HOME_ASSISTANT_WEB_SOCKET_URL: ${wsUrl}`);
+                        } catch (e) {
+                            console.warn(`[MCP] Failed to derive WS URL from HA_URL: ${env.HA_URL}`, e);
+                        }
+                    }
+                    // 2. Map Token
+                    if (env.HA_TOKEN && !env.HOME_ASSISTANT_API_TOKEN) {
+                        env.HOME_ASSISTANT_API_TOKEN = env.HA_TOKEN;
+                    }
+                }
+
                 let transport;
                 if (serverConfig.transport === 'sse') {
                     // Interpolate URL variables if needed
