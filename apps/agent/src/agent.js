@@ -113,8 +113,14 @@ class Agent {
     ];
 
     const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-pro-latest';
-    console.log(`[Agent] Using model: ${modelName}`);
-    this.model = this.genAI.getGenerativeModel({ model: modelName, tools });
+    const apiVersion = process.env.GEMINI_API_VERSION || 'v1';
+    console.log(`[Agent] Using model: ${modelName} (${apiVersion})`);
+    
+    this.model = this.genAI.getGenerativeModel({ 
+      model: modelName, 
+      apiVersion: apiVersion,
+      tools 
+    });
     this.chat = this.model.startChat();
     
     this.onMessage = this.onMessage.bind(this);
