@@ -28,34 +28,9 @@ jest.mock('@google/genai', () => ({
       create: jest.fn().mockReturnValue({
         sendMessage: jest.fn().mockImplementation(async (payload) => {
           
-          // --- FIX: Handle different payload types ---
-          
-          // Case A: User Message (String)
-          // Agent calls: sendMessage("Check my calendar")
-          let userText = '';
-          if (typeof payload === 'string') {
-            userText = payload;
-          } 
-          // Fallback if wrapped in object
-          else if (payload?.parts?.[0]?.text) {
-            userText = payload.parts[0].text;
-          }
-
-          // Case B: Function Response (Array)
-          // Agent calls: sendMessage([{ functionResponse: ... }])
-          let isFunctionResponse = false;
-          if (Array.isArray(payload) && payload[0]?.functionResponse) {
-            isFunctionResponse = true;
-          } 
-          // Fallback if wrapped in object
-          else if (payload?.parts?.[0]?.functionResponse) {
-            isFunctionResponse = true;
-          }
-
-          // --- LOGIC ---
-
-          // SCENARIO 1: User asks for calendar (First Turn)
-          if (userText && userText.toLowerCase().includes('calendar')) {
+          // Case A: User Message (Array of parts)
+          // The Agent now sends [{ text: ... }] for user input.
+          if (Array.isArray(payload) && payload[0]?.text?.toLowerCase().includes('calendar')) {
             return {
               text: undefined, 
               candidates: [{
@@ -68,8 +43,10 @@ jest.mock('@google/genai', () => ({
             };
           }
 
-          // SCENARIO 2: Tool execution finishes (Second Turn)
-          if (isFunctionResponse) {
+          // Case B: Function Response (Object)
+          // The Agent now sends { role: 'function', parts: [...] }
+          // We check specifically for this structure.
+          if (payload && payload.role === 'function' && payload.parts?.[0]?.functionResponse) {
             return {
               text: 'You have one event.',
               candidates: [{
