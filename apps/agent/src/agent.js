@@ -11,6 +11,39 @@ const { RateLimiter } = require('./rate-limiter');
 const { ConfirmationManager } = require('./confirmation-manager');
 const axios = require('axios');
 
+function createWavHeader(dataLength, sampleRate = 24000, numChannels = 1, bitsPerSample = 16) {
+  const buffer = Buffer.alloc(44);
+
+  // RIFF identifier
+  buffer.write('RIFF', 0);
+  // file length
+  buffer.writeUInt32LE(36 + dataLength, 4);
+  // RIFF type
+  buffer.write('WAVE', 8);
+  // format chunk identifier
+  buffer.write('fmt ', 12);
+  // format chunk length
+  buffer.writeUInt32LE(16, 16);
+  // sample format (raw)
+  buffer.writeUInt16LE(1, 20);
+  // channel count
+  buffer.writeUInt16LE(numChannels, 22);
+  // sample rate
+  buffer.writeUInt32LE(sampleRate, 24);
+  // byte rate (sampleRate * blockAlign)
+  buffer.writeUInt32LE(sampleRate * numChannels * (bitsPerSample / 8), 28);
+  // block align (channel count * bytes per sample)
+  buffer.writeUInt16LE(numChannels * (bitsPerSample / 8), 32);
+  // bits per sample
+  buffer.writeUInt16LE(bitsPerSample, 34);
+  // data chunk identifier
+  buffer.write('data', 36);
+  // data chunk length
+  buffer.writeUInt32LE(dataLength, 40);
+
+  return buffer;
+}
+
 class Agent {
   constructor(config) {
     this.interface = config.interface;
@@ -475,7 +508,7 @@ class Agent {
           contents: [{ parts: [{ text: text }] }],
           config: {
             responseModalities: ['AUDIO'],
-            audioEncoding: 'OGG_OPUS',
+            audioEncoding: 'LINEAR16',
             speechConfig: {
               voiceConfig: {
                 prebuiltVoiceConfig: {
@@ -493,24 +526,30 @@ class Agent {
 
         const candidate = response.candidates[0];
         // The audio binary is usually in parts[0].inlineData.data
-        let audioData = null;
+        let audioBase64 = null;
         if (candidate.content && candidate.content.parts) {
           for (const part of candidate.content.parts) {
             if (part.inlineData && part.inlineData.data) {
-              audioData = part.inlineData.data;
+              audioBase64 = part.inlineData.data;
               break;
             }
           }
         }
 
-        if (!audioData) {
+        if (!audioBase64) {
           throw new Error('No audio data found in Gemini response');
         }
+
+        // Convert PCM to WAV
+        const pcmBuffer = Buffer.from(audioBase64, 'base64');
+        const wavHeader = createWavHeader(pcmBuffer.length);
+        const wavBuffer = Buffer.concat([wavHeader, pcmBuffer]);
+        const wavBase64 = wavBuffer.toString('base64');
 
         const audioMsg = createAssistantMessage('[Audio Response]');
         audioMsg.metadata = { chatId: messageContext.metadata?.chatId };
         audioMsg.source = messageContext.source;
-        audioMsg.content = audioData;
+        audioMsg.content = wavBase64;
         audioMsg.type = 'audio';
 
         await this.interface.send(audioMsg);
