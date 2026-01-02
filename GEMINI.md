@@ -23,6 +23,11 @@ You are working on **Deedee**, a personal, self-improving AI agent designed to r
 - **Secrets**: Continue to protect API Keys via environment variables (`GOOGLE_API_KEY`, `TELEGRAM_TOKEN`, `GITHUB_PAT`, `SLACK_WEBHOOK_URL`, `PLEX_URL`, `PLEX_TOKEN`, `DEEDEE_API_TOKEN`).
 - **Access Control**: You must define `ALLOWED_TELEGRAM_IDS` (comma-separated strings) to prevent unauthorized access. Use `8407498647` (User) as the primary ID.
 
+### 4. API Security
+- **Strict Authentication**: All external HTTP endpoints (e.g., exposed via `apps/api`) MUST be protected by Bearer Token authentication (`DEEDEE_API_TOKEN`).
+- **No Public Endpoints**: Never expose functional endpoints publicly. Only `/health` may be public.
+- **Middleware**: Use a dedicated auth middleware for all `/v1` routes.
+
 ### 2. TDD & Specs
 - **Workflow**:
   1.  Read/Create a Spec file in `specs/`.

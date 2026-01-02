@@ -69,6 +69,7 @@ class Agent {
     this.commandHandler = new CommandHandler(this.db, this.interface, this.confirmationManager, this.stopFlags);
     this.rateLimiter = new RateLimiter(this.db);
 
+    this.processMessage = this.processMessage.bind(this);
     this.onMessage = this.onMessage.bind(this);
   }
 
@@ -106,6 +107,18 @@ class Agent {
   }
 
   async onMessage(message) {
+    // Default handler: Send to Interface
+    await this.processMessage(message, async (reply) => {
+      await this.interface.send(reply);
+    });
+  }
+
+  /**
+   * Core processing logic.
+   * @param {object} message - Incoming message
+   * @param {function} sendCallback - Async function(reply) to handle responses
+   */
+  async processMessage(message, sendCallback) {
     try {
       const isMultiModal = !!message.parts;
       console.log(`Received: ${isMultiModal ? '[Multi-modal content]' : message.content}`);
@@ -130,7 +143,7 @@ class Agent {
         const reply = createAssistantMessage(`Action **${action.name}** executed.\nResult: \`\`\`json\n${JSON.stringify(result, null, 2).substring(0, 500)}\n\`\`\``);
         reply.metadata = { chatId };
         reply.source = message.source;
-        await this.interface.send(reply);
+        await sendCallback(reply);
         return;
       } else if (commandResult === true) {
         // Handled by command handler (e.g. /clear, /cancel)
@@ -211,6 +224,7 @@ class Agent {
             5. All strings and comments you add must be in English.
             6. Since you can self-improve, when writing/adding/changing a tool/feature you must write the tests for it, to validate that it works before calling 'commitAndPush'.
             7. For multi-step tasks, execute tools in succession (chaining). DO NOT output intermediate text updates (like "I have pulled changes") unless you are blocked. Proceed directly to the next tool call.
+            8. **Audio Responses**: When using 'replyWithAudio', keep your textual content EXTREMELY concise (1-2 sentences max). Speak in a fast-paced, energetic, and natural manner. Avoid filler words. Do not describe the audio, just speak it.
           `,
         },
         history: history
@@ -233,7 +247,7 @@ class Agent {
         // CHECK STOP FLAG
         if (this.stopFlags.has(chatId)) {
           console.log(`[Agent] Stop flag detected for chat ${chatId}. Breaking loop.`);
-          await this.interface.send(createAssistantMessage('🛑 Execution stopped by user.'));
+          await sendCallback(createAssistantMessage('🛑 Execution stopped by user.'));
           this.stopFlags.delete(chatId);
           break;
         }
@@ -241,7 +255,7 @@ class Agent {
         loopCount++;
         if (loopCount > MAX_LOOPS) {
           console.warn(`[Agent] Max tool loop limit reached (${MAX_LOOPS}). Breaking.`);
-          await this.interface.send(createAssistantMessage('I am stuck in a loop. Stopping now.'));
+          await sendCallback(createAssistantMessage('I am stuck in a loop. Stopping now.'));
           break;
         }
 
@@ -251,7 +265,7 @@ class Agent {
           const updateMsg = createAssistantMessage(`Still working... (${thinkText})`);
           updateMsg.metadata = { chatId: message.metadata?.chatId };
           updateMsg.source = message.source;
-          await this.interface.send(updateMsg).catch(err => console.error('[Agent] Failed to send update msg:', err));
+          await sendCallback(updateMsg).catch(err => console.error('[Agent] Failed to send update msg:', err));
         }
 
         // SAVE MODEL FUNCTION CALL (Intermediate)
@@ -283,7 +297,7 @@ class Agent {
           const thinkingMsg = createAssistantMessage(`Thinking... (${thinkText})`);
           thinkingMsg.metadata = { chatId: message.metadata?.chatId };
           thinkingMsg.source = message.source;
-          await this.interface.send(thinkingMsg).catch(err => console.error('[Agent] Failed to send thinking msg:', err));
+          await sendCallback(thinkingMsg).catch(err => console.error('[Agent] Failed to send thinking msg:', err));
         }, 2500);
 
         try {
@@ -299,7 +313,7 @@ class Agent {
             const confirmMsg = createAssistantMessage(`🛑 **Safety Check**: I want to execute \`${executionName}\`.\n\nArgs: \`${JSON.stringify(call.args)}\`\n\n${guard.message}\n\nReply **/confirm** to proceed or **/cancel** to stop.`);
             confirmMsg.metadata = { chatId: message.metadata?.chatId };
             confirmMsg.source = message.source;
-            await this.interface.send(confirmMsg).catch(console.error);
+            await sendCallback(confirmMsg).catch(console.error);
 
             // We do NOT break here loop-wise because we want to return the info to the model so it knows it's paused.
             // However, the model usually stops after tool execution.
@@ -384,7 +398,7 @@ class Agent {
           // 2. Save Assistant Reply
           this.db.saveMessage(reply);
 
-          await this.interface.send(reply);
+          await sendCallback(reply);
         }
       } else {
         console.warn('[Agent] No text response found. Response dump:', JSON.stringify(response, null, 2));
@@ -392,7 +406,7 @@ class Agent {
         const reply = createAssistantMessage("I received an empty response from my brain. Please try again.");
         reply.metadata = { chatId: message.metadata?.chatId };
         reply.source = message.source;
-        await this.interface.send(reply);
+        await sendCallback(reply);
       }
 
     } catch (error) {
@@ -407,7 +421,7 @@ class Agent {
       const errReply = createAssistantMessage(`Error: ${error.message} (Automatic Rollback performed)`);
       errReply.metadata = { chatId: message.metadata?.chatId };
       errReply.source = message.source;
-      await this.interface.send(errReply);
+      await sendCallback(errReply);
     }
   }
 
@@ -552,7 +566,7 @@ class Agent {
         audioMsg.content = wavBase64;
         audioMsg.type = 'audio';
 
-        await this.interface.send(audioMsg);
+        await sendCallback(audioMsg);
 
         // Return success with metadata, not just true, so the model knows it worked
         return { success: true, info: 'Audio sent to user.' };

@@ -125,12 +125,15 @@ class TelegramService {
         // Assume Base64
         source = {
           source: Buffer.from(content, 'base64'),
-          filename: 'speech.wav' // Help Telegram identify the format
+          filename: 'voice_message.wav'
         };
       }
 
       console.log(`[Telegram] Sending audio to ${chatId}`);
-      await this.bot.telegram.sendAudio(chatId, source);
+      await this.bot.telegram.sendAudio(chatId, source, {
+        title: 'Audio Response',
+        performer: 'Deedee'
+      });
     } catch (err) {
       console.error('[Telegram] Failed to send voice:', err.message);
       await this.bot.telegram.sendMessage(chatId, "Sorry, I couldn't send the audio response.");

@@ -20,10 +20,11 @@ router.post('/', async (req, res) => {
             type: 'text'
         };
 
-        // Forward to Agent Webhook
-        console.log(`[API] Forwarding message from ${chatId} to Agent...`);
-        const response = await axios.post(`${AGENT_URL}/webhook`, payload);
+        // Forward to Agent /chat (Synchronous)
+        console.log(`[API] Forwarding message from ${chatId} to Agent (Synchronous)...`);
+        const response = await axios.post(`${AGENT_URL}/chat`, payload);
 
+        // response.data = { replies: [...] }
         res.json({ success: true, agentResponse: response.data });
 
     } catch (error) {

@@ -101,6 +101,34 @@ app.post('/webhook', (req, res) => {
   }
 });
 
+app.post('/chat', async (req, res) => {
+  const message = req.body;
+
+  if (!message || !message.content) {
+    return res.status(400).json({ error: 'Invalid message format' });
+  }
+
+  if (agent) {
+    // Normalize message fields
+    message.role = message.role || 'user';
+    message.source = message.source || 'http';
+    message.timestamp = message.timestamp || new Date().toISOString();
+
+    const replies = [];
+    try {
+      await agent.processMessage(message, async (reply) => {
+        replies.push(reply);
+      });
+      res.json({ replies });
+    } catch (error) {
+      console.error('[Agent] Chat processing error:', error);
+      res.status(500).json({ error: error.message });
+    }
+  } else {
+    res.status(503).json({ error: 'Agent not initialized' });
+  }
+});
+
 if (require.main === module) {
   app.listen(port, () => {
     console.log(`Agent listening at http://localhost:${port}`);
