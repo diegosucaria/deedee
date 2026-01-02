@@ -18,12 +18,6 @@ class Router {
     }
 
     async route(userMessage, history = []) {
-        // If it's audio/multimodal, always use FLASH (it handles it best)
-        if (Array.isArray(userMessage)) {
-            console.log('[Router] Multimodal input detected, routing to FLASH');
-            return { model: 'FLASH', reason: 'Audio/Multimodal input' };
-        }
-
         await this._ensureClient();
         try {
             // Format recent history for context
@@ -33,7 +27,7 @@ class Router {
                 return `${role}: ${content}`;
             }).join('\n');
 
-            const prompt = `
+            const instructionText = `
         You are the Router for a personal assistant bot. Your only job is to analyze the user's input and select the best model to handle the request.
         
         Output a JSON object: {"model": "FLASH" | "PRO", "reason": "brief explanation"}
@@ -54,9 +48,19 @@ class Router {
         
         ### RECENT CONTEXT
         ${historyText}
-
-        User Input: "${userMessage}"
       `;
+
+            let routerPrompt;
+            if (Array.isArray(userMessage)) {
+                // Multimodal: Send instructions + user content parts
+                routerPrompt = [
+                    { text: instructionText + "\nUser Input (See Multimodal Content Below):" },
+                    ...userMessage
+                ];
+            } else {
+                // Text-only
+                routerPrompt = instructionText + `\nUser Input: "${userMessage}"`;
+            }
 
             const response = await this.client.chats.create({
                 model: this.model,
@@ -64,7 +68,7 @@ class Router {
                     responseMimeType: 'application/json',
                     temperature: 0.0,
                 }
-            }).sendMessage({ message: prompt });
+            }).sendMessage({ message: routerPrompt });
 
 
             let text = '{}';
