@@ -5,7 +5,7 @@ const { LocalTools } = require('@deedee/mcp-servers/src/local/index');
 const { AgentDB } = require('./db');
 const { toolDefinitions } = require('./tools-definition');
 const { Router } = require('./router');
-const { MCPManager } = require('./mcp-manager'); 
+const { MCPManager } = require('./mcp-manager');
 
 class Agent {
   constructor(config) {
@@ -22,7 +22,7 @@ class Agent {
     this.router = new Router(config.googleApiKey);
 
     // MCP Manager
-    this.mcp = new MCPManager(); 
+    this.mcp = new MCPManager();
 
     // Tools Setup
     this.gsuite = new GSuiteTools();
@@ -35,7 +35,7 @@ class Agent {
     console.log('Agent starting...');
 
     // Initialize MCP
-    await this.mcp.init(); 
+    await this.mcp.init();
 
     // Check Goals
     const pendingGoals = this.db.getPendingGoals();
@@ -122,6 +122,12 @@ class Agent {
             You are Deedee, a helpful and capable AI assistant.
             You have access to a variety of tools to help the user.
             
+            REPO CONTEXT:
+            - This is a Monorepo.
+            - Apps: apps/agent, apps/supervisor, apps/interfaces
+            - Packages: packages/mcp-servers, packages/shared
+            - If a file is not found, verify the path using 'listDirectory'.
+
             CRITICAL PROTOCOL:
             1. If you are asked to write code, modify files, or improve yourself, you MUST first call 'pullLatestChanges'.
             2. When you are done making changes, you MUST call 'commitAndPush'. This tool runs tests automatically.
@@ -171,62 +177,70 @@ class Agent {
 
         let toolResult;
 
-        // --- INTERNAL TOOLS ---
-        if (call.name === 'rememberFact') {
-          this.db.setKey(call.args.key, call.args.value);
-          toolResult = { success: true };
-        }
-        else if (call.name === 'getFact') {
-          const val = this.db.getKey(call.args.key);
-          toolResult = val ? { value: val } : { info: 'Fact not found in database.' };
-        }
-        else if (call.name === 'addGoal') {
-          const metadata = { chatId: message.metadata?.chatId };
-          const info = this.db.addGoal(call.args.description, metadata);
-          toolResult = { success: true, id: info.lastInsertRowid };
-        }
-        else if (call.name === 'completeGoal') {
-          this.db.completeGoal(call.args.id);
-          toolResult = { success: true };
-        }
-        // GSuite
-        else if (call.name === 'listEvents') toolResult = await this.gsuite.listEvents(call.args);
-        else if (call.name === 'sendEmail') toolResult = await this.gsuite.sendEmail(call.args);
-        // Local
-        else if (call.name === 'readFile') toolResult = await this.local.readFile(call.args.path);
-        else if (call.name === 'writeFile') toolResult = await this.local.writeFile(call.args.path, call.args.content);
-        else if (call.name === 'listDirectory') toolResult = await this.local.listDirectory(call.args.path);
-        else if (call.name === 'runShellCommand') toolResult = await this.local.runShellCommand(call.args.command);
-        // Supervisor
-        else if (call.name === 'rollbackLastChange') {
-          const rollbackRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/rollback`, {
-            method: 'POST'
-          });
-          toolResult = await rollbackRes.json();
-        }
-        else if (call.name === 'pullLatestChanges') {
-          const pullRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/pull`, {
-            method: 'POST'
-          });
-          toolResult = await pullRes.json();
-        }
-        else if (call.name === 'commitAndPush') {
-          const commitRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/commit`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ message: call.args.message, files: ['.'] })
-          });
-          toolResult = await commitRes.json();
-        }
-        // --- EXTERNAL MCP TOOLS ---
-        else {
-          // Try MCP Manager
-          try {
-            toolResult = await this.mcp.callTool(call.name, call.args);
-          } catch (err) {
-            console.warn(`[Agent] Tool ${call.name} not found in Internal or MCP tools:`, err);
-            toolResult = { error: `Tool ${call.name} failed or does not exist: ${err.message}` };
+        try {
+          // --- INTERNAL TOOLS ---
+          if (call.name === 'rememberFact') {
+            this.db.setKey(call.args.key, call.args.value);
+            toolResult = { success: true };
           }
+          else if (call.name === 'getFact') {
+            const val = this.db.getKey(call.args.key);
+            toolResult = val ? { value: val } : { info: 'Fact not found in database.' };
+          }
+          else if (call.name === 'addGoal') {
+            const metadata = { chatId: message.metadata?.chatId };
+            const info = this.db.addGoal(call.args.description, metadata);
+            toolResult = { success: true, id: info.lastInsertRowid };
+          }
+          else if (call.name === 'completeGoal') {
+            this.db.completeGoal(call.args.id);
+            toolResult = { success: true };
+          }
+          // GSuite
+          else if (call.name === 'listEvents') toolResult = await this.gsuite.listEvents(call.args);
+          else if (call.name === 'sendEmail') toolResult = await this.gsuite.sendEmail(call.args);
+          // Local
+          else if (call.name === 'readFile') toolResult = await this.local.readFile(call.args.path);
+          else if (call.name === 'writeFile') toolResult = await this.local.writeFile(call.args.path, call.args.content);
+          else if (call.name === 'listDirectory') toolResult = await this.local.listDirectory(call.args.path);
+          else if (call.name === 'runShellCommand') toolResult = await this.local.runShellCommand(call.args.command);
+          // Supervisor
+          else if (call.name === 'rollbackLastChange') {
+            const rollbackRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/rollback`, {
+              method: 'POST'
+            });
+            toolResult = await rollbackRes.json();
+          }
+          else if (call.name === 'pullLatestChanges') {
+            const pullRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/pull`, {
+              method: 'POST'
+            });
+            toolResult = await pullRes.json();
+          }
+          else if (call.name === 'commitAndPush') {
+            const commitRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/commit`, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ message: call.args.message, files: ['.'] })
+            });
+            toolResult = await commitRes.json();
+          }
+          // --- EXTERNAL MCP TOOLS ---
+          else {
+            // Try MCP Manager
+            try {
+              toolResult = await this.mcp.callTool(call.name, call.args);
+            } catch (err) {
+              console.warn(`[Agent] Tool ${call.name} not found in Internal or MCP tools:`, err);
+              toolResult = { error: `Tool ${call.name} failed or does not exist: ${err.message}` };
+            }
+          }
+        } catch (toolErr) {
+          console.warn(`[Agent] Tool execution failed: ${toolErr.message}`);
+          toolResult = { error: `Tool execution failed: ${toolErr.message}` };
+        } finally {
+          // Clear the "Thinking..." timer if it hasn't fired yet
+          if (thinkTimer) clearTimeout(thinkTimer);
         }
 
         if (toolResult === undefined || toolResult === null) {
