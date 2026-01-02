@@ -468,7 +468,7 @@ class Agent {
         const text = args.text;
         console.log(`[Agent] Generating audio for: "${text.substring(0, 50)}..."`);
 
-        const ttsModel = process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-tts';
+        const ttsModel = process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts';
 
         const response = await this.client.models.generateContent({
           model: ttsModel,

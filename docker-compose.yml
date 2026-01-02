@@ -21,6 +21,7 @@ services:
       - WORKER_FLASH=gemini-3-flash-preview
       # - WORKER_FLASH=gemini-2.5-flash
       - WORKER_PRO=gemini-3-pro-preview
+      - GEMINI_TTS_MODEL=gemini-2.5-flash-preview-tts
     volumes:
       - repo-data:/app/source
       - agent-data:/app/data
