@@ -16,8 +16,10 @@ services:
       - RATE_LIMIT_HOURLY=50
       - RATE_LIMIT_DAILY=500
       - MAX_TOOL_LOOPS=50
-      - ROUTER_MODEL=gemini-3-flash-preview
-      - WORKER_FLASH=gemini-3-flash-preview
+      #- ROUTER_MODEL=gemini-3-flash-preview
+      - ROUTER_MODEL=gemini-2.5-flash
+      #- WORKER_FLASH=gemini-3-flash-preview
+      - WORKER_FLASH=gemini-2.5-flash
       - WORKER_PRO=gemini-3-pro-preview
     volumes:
       - repo-data:/app/source
