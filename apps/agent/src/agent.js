@@ -165,6 +165,11 @@ class Agent {
             - Packages: packages/mcp-servers, packages/shared
             - If a file is not found, verify the path using 'listDirectory'.
 
+            TOOL USAGE GUIDELINES:
+            1. **Prioritize Context**: If the user asks generic questions like "what happened?" or "status?", prioritize checking your Conversation History first. Do NOT call external tools (like Home Assistant, Calendar) unless the user explicitly mentions "house", "schedule", or similar words that indicate they are asking about something specific.
+            2. **Lazy Fetching**: Do not fetch data speculatively. Only call a tool if you are 90% sure it contains the answer to the user's specific question.
+            3. **Explanation**: If you are unsure what the user means by "what happened", ask for clarification instead of guessing with a tool call.
+
             CRITICAL PROTOCOL:
             1. If you are asked to write code, modify files, or improve yourself, you MUST first call 'pullLatestChanges'.
             2. When you are done making changes, you MUST call 'commitAndPush'. This tool runs tests automatically.

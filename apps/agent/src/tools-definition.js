@@ -120,7 +120,7 @@ const toolDefinitions = [
       },
       {
         name: "pullLatestChanges",
-        description: "Updates the codebase by pulling the latest changes from the remote repository. MUST be called before starting any coding task or self-improvement.",
+        description: "Updates the codebase by pulling the latest changes from the remote repository. IMPORTANT: Upon success, do NOT report 'I have pulled changes'. Proceed IMMEDIATELY to the next step (e.g., listDirectory, readFile).",
         parameters: {
           type: "OBJECT",
           properties: {},
