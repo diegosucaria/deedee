@@ -1,9 +1,13 @@
 const express = require('express');
 const { GitOps } = require('./git-ops');
+const { Verifier } = require('./verifier');
+const { Monitor } = require('./monitor');
 
 const app = express();
 const port = process.env.PORT || 4000;
 const git = new GitOps();
+const verifier = new Verifier();
+const monitor = new Monitor(git);
 
 app.use(express.json());
 
@@ -41,6 +45,17 @@ app.post('/cmd/commit', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+app.post('/cmd/rollback', async (req, res) => {
+  try {
+    console.log('[Supervisor] Received Rollback Request');
+    const result = await git.rollback();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 
 if (require.main === module) {
   app.listen(port, () => {

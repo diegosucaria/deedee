@@ -84,7 +84,7 @@ const toolDefinitions = [
         description: "Write content to a file",
         parameters: {
           type: "OBJECT",
-          properties: { 
+          properties: {
             path: { type: "STRING" },
             content: { type: "STRING" }
           },
@@ -107,6 +107,15 @@ const toolDefinitions = [
           type: "OBJECT",
           properties: { command: { type: "STRING" } },
           required: ["command"]
+        }
+      },
+      {
+        name: "rollbackLastChange",
+        description: "Undoes the last code change made to the system using git revert. Use this if a recent update broke something.",
+        parameters: {
+          type: "OBJECT",
+          properties: {},
+          required: []
         }
       }
     ]

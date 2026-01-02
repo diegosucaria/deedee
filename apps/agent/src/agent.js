@@ -144,6 +144,14 @@ class Agent {
         else if (call.name === 'writeFile') toolResult = await this.local.writeFile(call.args.path, call.args.content);
         else if (call.name === 'listDirectory') toolResult = await this.local.listDirectory(call.args.path);
         else if (call.name === 'runShellCommand') toolResult = await this.local.runShellCommand(call.args.command);
+        // Supervisor
+        else if (call.name === 'rollbackLastChange') {
+          // Trigger Supervisor Rollback
+          const rollbackRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/rollback`, {
+            method: 'POST'
+          });
+          toolResult = await rollbackRes.json();
+        }
 
         if (toolResult === undefined || toolResult === null) {
           toolResult = { info: 'No output from tool execution.' };

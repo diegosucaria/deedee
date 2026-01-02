@@ -21,12 +21,25 @@
 - [x] **Deploy to Balena and Verify**
 
 ## Phase 3: Enhanced Capabilities
-- [ ] **Feature: Agent Rate Limiting**
-  - [ ] DB Schema for Usage Tracking
-  - [ ] Token Limit Logic
+- [x] **Feature: Agent Rate Limiting**
+  - [x] DB Schema for Usage Tracking
+  - [x] Token Limit Logic
+- [x] **Feature: Loop Prevention (Safety)**
+- [x] **Feature: "Thinking" State Notification**
+- [x] **Improvement: Tool Feedback & Null Handling**
 - [ ] **Spec 013: Router Architecture & Chat Hydration**
   - [ ] Implement AgentDB Hydration (`getHistoryForChat`)
   - [ ] Implement Router Logic (Prompt & Parsing)
   - [ ] Refactor Agent to Stateless/Hydrated Loop
-- [ ] **Spec 006: Supervisor Self-Test & Rollback**
+- [x] **Spec 006: Supervisor Rollback**
+  - [x] Implement `POST /cmd/rollback`
+  - [x] Implement `git revert` logic
+  - [x] Add `rollbackLastChange` tool to Agent
+- [x] **Spec 014: Health & Auto-Rollback**
+  - [x] Implement Supervisor Monitor class
+  - [x] Implement Alerting Logic
+  - [x] Implement Auto-Rollback Logic
+- [x] **Feature: Supervisor Slack Alerts**
+  - [x] Add `SLACK_WEBHOOK_URL` to Docker Compose (managed externally)
+  - [x] Update Monitor to post to Webhook
 - [ ] **Spec 007: WhatsApp Interface**

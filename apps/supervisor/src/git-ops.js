@@ -63,6 +63,22 @@ class GitOps {
       return { success: false, error: error.message };
     }
   }
+
+  async rollback() {
+    try {
+      console.log('[GitOps] Rolling back last commit...');
+      // Revert the last commit. This creates a new commit.
+      await this.run('git revert --no-edit HEAD');
+
+      // Push the new revert commit
+      await this.run('git push origin master');
+
+      return { success: true, message: 'Rolled back last change successfully.' };
+    } catch (error) {
+      console.error('[GitOps] Rollback Error:', error.message);
+      return { success: false, error: error.message };
+    }
+  }
 }
 
 module.exports = { GitOps };

@@ -31,6 +31,7 @@ services:
       - GIT_USER_NAME=Deedee Agent
       - GIT_USER_EMAIL=deedee@bot
       - PORT=4000
+      - SLACK_WEBHOOK_URL= # Add your webhook URL here
     volumes:
       - repo-data:/app/source
     networks:
