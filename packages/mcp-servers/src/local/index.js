@@ -4,9 +4,9 @@ const { exec } = require('child_process');
 const util = require('util');
 const execAsync = util.promisify(exec);
 
-const ALLOWED_BINARIES = [
-  'ls', 'cat', 'grep', 'find', 'git', 'npm', 'node', 'curl', 'rm', 'mv', 'cp', 
-  'mkdir', 'touch', 'echo', 'pwd', 'whoami', 'date'
+const BLOCKED_BINARIES = [
+  'vi', 'nano', 'emacs', 'top', 'htop', 'shutdown', 'init', 'halt',
+  'passwd', 'rm -rf /', 'mkfs', 'fdisk', 'parted', 'dd',
 ];
 
 class LocalTools {
@@ -48,15 +48,13 @@ class LocalTools {
   }
 
   async runShellCommand(command) {
-    // Basic validation to prevent running interactive tools that hang
+    // Basic validation to prevent running interactive tools that hang or highly destructive commands
     const binary = command.trim().split(' ')[0];
-    
-    // Safety check: is it in our allowed list?
-    // We strictly check the binary name, but we assume the user might provide full path /usr/bin/ls
+
     const binaryName = path.basename(binary);
-    
-    if (!ALLOWED_BINARIES.includes(binaryName)) {
-      throw new Error(`Command '${binaryName}' is not allowed or not in the whitelist.`);
+
+    if (BLOCKED_BINARIES.includes(binaryName)) {
+      throw new Error(`Command '${binaryName}' is blocked for security or stability reasons.`);
     }
 
     try {
