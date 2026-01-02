@@ -29,6 +29,7 @@ class GitOps {
     await this.run(`git config user.email "${email}"`);
 
     if (remoteUrl) {
+      console.log(`[GitOps] Configuring remote: ${remoteUrl}`);
       // Check existing remotes to avoid 'No such remote' or 'Remote already exists' errors
       const remotes = await this.run('git remote');
       if (remotes.includes('origin')) {
@@ -37,7 +38,10 @@ class GitOps {
         await this.run(`git remote add origin ${remoteUrl}`);
       }
       // Pull after setting up the remote to ensure content is retrieved
+      console.log('[GitOps] Pulling from origin/master...');
       await this.run('git pull origin master');
+    } else {
+      console.log('[GitOps] No remote URL configured. Skipping pull.');
     }
   }
 
@@ -51,7 +55,7 @@ class GitOps {
       await this.run(`git commit -m "${message}"`);
 
       await this.run('git push origin master');
-      
+
       return { success: true, message: 'Pushed to origin/master' };
 
     } catch (error) {
