@@ -28,17 +28,39 @@ We define rules in a clean config structure:
 
 ```javascript
 const SENSITIVE_RULES = [
-    // Rule: Warning on Automation Disabling
+    // Rule: Warnings for Critical HA Actions
     {
-        tool: 'homeassistant', // or generic MCP name
-        condition: (args) => args.domain === 'automation' && args.service === 'turn_off',
-        message: '⚠️ Disabling an automation requires confirmation.'
+        condition: (name, args) => {
+            if (name === 'homeassistant' || name === 'call_service') {
+                if (args.domain === 'automation' && args.service === 'turn_off') return true;
+                if (args.domain === 'script' && args.service.includes('delete')) return true;
+                if (args.domain === 'alarm_control_panel' && args.service === 'disarm') return true;
+            }
+            return false;
+        },
+        message: '⚠️ Disabling an automation or security system requires confirmation.'
     },
-    // Rule: Protect Critical Files (Example)
+    // Rule: Destructive Shell Commands
     {
-        tool: 'writeFile',
-        condition: (args) => args.path.includes('.env'),
-        message: '⚠️ Modifying .env file requires confirmation.'
+        condition: (name, args) => name === 'runShellCommand' && (
+            args.command.includes('rm ') || 
+            args.command.includes(' > ') || 
+            args.command.includes('mv ') ||
+            args.command.includes('format')
+        ),
+        message: '⚠️ Destructive shell command requires confirmation.'
+    },
+    // Rule: Plex Media Deletion
+    {
+        condition: (name, args) => {
+            const destructivePlex = [
+                'media_delete', 'playlist_delete', 
+                'collection_delete', 'media_edit_metadata',
+                'playlist_edit', 'collection_edit'
+            ];
+            return destructivePlex.includes(name);
+        },
+        message: '⚠️ This action modifies your Plex library and requires confirmation.'
     }
 ];
 ```

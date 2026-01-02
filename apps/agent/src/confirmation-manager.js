@@ -23,12 +23,28 @@ class ConfirmationManager {
                 message: '⚠️ Disabling an automation or security system requires confirmation.'
             },
             {
-                condition: (name, args) => name === 'runShellCommand' && (args.command.includes('rm -rf') || args.command.includes('format')),
+                condition: (name, args) => name === 'runShellCommand' && (
+                    args.command.includes('rm ') ||
+                    args.command.includes(' > ') ||
+                    args.command.includes('mv ') ||
+                    args.command.includes('format')
+                ),
                 message: '⚠️ Destructive shell command requires confirmation.'
             },
             {
                 condition: (name, args) => name === 'sendEmail' && !args.to.includes('@'), // loose check
                 message: '⚠️ Sending email requires confirmation (Safety Check).'
+            },
+            {
+                condition: (name, args) => {
+                    const destructivePlex = [
+                        'media_delete', 'playlist_delete',
+                        'collection_delete', 'media_edit_metadata',
+                        'playlist_edit', 'collection_edit'
+                    ];
+                    return destructivePlex.includes(name);
+                },
+                message: '⚠️ This action modifies your Plex library and requires confirmation.'
             }
         ];
     }
