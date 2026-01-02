@@ -8,37 +8,37 @@ const { toolDefinitions } = require('./tools-definition');
 class Agent {
   constructor(config) {
     this.interface = config.interface;
-    
+
     // 1. Initialize the unified Client
     this.client = new GoogleGenAI({ apiKey: config.googleApiKey });
-    
+
     // Persistence
     this.db = new AgentDB(); // Defaults to /app/data
 
     // Tools Setup
     this.gsuite = new GSuiteTools();
     this.local = new LocalTools('/app/source');
-    
+
     this.modelName = process.env.GEMINI_MODEL || 'gemini-1.5-pro';
     const apiVersion = process.env.GEMINI_API_VERSION || 'v1beta';
 
     console.log(`[Agent] Using model: ${this.modelName} (Client version: ${apiVersion})`);
-    
+
     // 2. Start Chat (happens on the client, not a model instance)
     // Note: If you have system instructions, they go into 'config' here as well.
     this.chat = this.client.chats.create({
       model: this.modelName,
       config: {
-        tools: toolDefinitions, 
+        tools: toolDefinitions,
       }
     });
-    
+
     this.onMessage = this.onMessage.bind(this);
   }
 
   async start() {
     console.log('Agent starting...');
-    
+
     // Check Goals
     const pendingGoals = this.db.getPendingGoals();
     if (pendingGoals.length > 0) {
@@ -63,7 +63,11 @@ class Agent {
   async onMessage(message) {
     try {
       console.log(`Received: ${message.content}`);
-      
+      // Debug Encoding: Log character codes
+      if (message.content) {
+        console.log(`[Encoding Debug] Chars: ${message.content.split('').map(c => c.charCodeAt(0)).join(', ')}`);
+      }
+
       // 1. Save User Message
       this.db.saveMessage(message);
 
@@ -76,7 +80,7 @@ class Agent {
       while (functionCalls && functionCalls.length > 0) {
         const call = functionCalls[0];
         console.log(`Function Call: ${call.name}`, call.args);
-        
+
         let toolResult;
         // Memory
         if (call.name === 'rememberFact') {
@@ -123,7 +127,7 @@ class Agent {
 
       // 4. Final Text Response
       const text = response.text || '';
-      
+
       if (text) {
         if (message.source === 'http') {
           console.log('[Agent] Final Response (to console):', text);
@@ -131,18 +135,19 @@ class Agent {
           const reply = createAssistantMessage(text);
           reply.metadata = { chatId: message.metadata?.chatId };
           reply.source = message.source; // Ensure reply source matches incoming message source
-          
+
           // 2. Save Assistant Reply
           this.db.saveMessage(reply);
-          
+
           await this.interface.send(reply);
         }
       }
-      
+
     } catch (error) {
       console.error('Error processing message:', error);
       const errReply = createAssistantMessage(`Error: ${error.message}`);
       errReply.metadata = { chatId: message.metadata?.chatId };
+      errReply.source = message.source; // Fix: Propagate source to avoid 400 error in Interfaces
       await this.interface.send(errReply);
     }
   }
@@ -151,7 +156,7 @@ class Agent {
   _getFunctionCalls(response) {
     const candidates = response.candidates;
     if (!candidates || !candidates.length) return [];
-    
+
     // Flatten parts from the first candidate that are function calls
     return candidates[0].content.parts
       .filter(part => part.functionCall)
