@@ -18,6 +18,12 @@ class Router {
     }
 
     async route(userMessage) {
+        // If it's audio/multimodal, always use FLASH (it handles it best)
+        if (Array.isArray(userMessage)) {
+            console.log('[Router] Multimodal input detected, routing to FLASH');
+            return { model: 'FLASH', reason: 'Audio/Multimodal input' };
+        }
+
         await this._ensureClient();
         try {
             const prompt = `

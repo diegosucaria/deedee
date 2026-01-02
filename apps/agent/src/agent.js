@@ -68,12 +68,13 @@ class Agent {
 
   async onMessage(message) {
     try {
-      console.log(`Received: ${message.content}`);
+      const isMultiModal = !!message.parts;
+      console.log(`Received: ${isMultiModal ? '[Multi-modal content]' : message.content}`);
 
       const chatId = message.metadata?.chatId;
 
-      // 1. Slash Commands
-      if (await this.commandHandler.handle(message)) {
+      // 1. Slash Commands (only for text messages)
+      if (!isMultiModal && await this.commandHandler.handle(message)) {
         return;
       }
 
@@ -87,7 +88,8 @@ class Agent {
 
       // --- ROUTING ---
       console.time('[Agent] Router Duration');
-      const decision = await this.router.route(message.content);
+      // Pass the primary content or parts to router
+      const decision = await this.router.route(message.parts || message.content);
       console.timeEnd('[Agent] Router Duration');
       const selectedModel = decision.model === 'FLASH'
         ? (process.env.WORKER_FLASH || 'gemini-2.0-flash-exp')
@@ -102,7 +104,6 @@ class Agent {
       const mcpTools = await this.mcp.getTools();
 
       // Transform MCP tools to Gemini Format if not already compliant
-      // (MCPManager attempts to map them, but let's ensure structure)
       const externalTools = mcpTools.map(t => ({
         name: t.name,
         description: t.description,
@@ -143,13 +144,8 @@ class Agent {
 
       // 2. Send Message to Gemini
       console.time(`[Agent] Model Response (${selectedModel})`);
-      let response = await session.sendMessage({ message: message.content });
+      let response = await session.sendMessage({ message: message.parts || message.content });
       console.timeEnd(`[Agent] Model Response (${selectedModel})`);
-
-      // --- DEBUG: Log Raw Response REMOVED ---
-
-      // -----------------------------------------------------------
-
 
       // 3. Handle Function Calls Loop
       let functionCalls = this._getFunctionCalls(response);
@@ -176,24 +172,20 @@ class Agent {
         }
 
         // SAVE MODEL FUNCTION CALL (Intermediate)
-        // We need to construct a message object for the function call
-        // The 'response' object has candidates[0].content.parts
-        // We want to save this exactly as 'model' role to preserve signature.
         if (response.candidates && response.candidates[0]) {
           const fcParts = response.candidates[0].content.parts;
-          // Only save if it has function calls (which it does here)
           this.db.saveMessage({
             role: 'model',
             parts: fcParts,
             metadata: { chatId: message.metadata?.chatId },
-            source: message.source // Keep source context
+            source: message.source
           });
         }
 
         const call = functionCalls[0];
         let executionName = call.name;
 
-        // Sanitize Tool Name (fix for default_api prefix hallucination)
+        // Sanitize Tool Name
         if (executionName && executionName.startsWith('default_api:')) {
           console.log(`[Agent] Sanitizing tool name for execution: ${executionName} -> ${executionName.replace('default_api:', '')}`);
           executionName = executionName.replace('default_api:', '');
@@ -204,7 +196,7 @@ class Agent {
 
         // Delayed "Thinking..." Message (2.5s)
         thinkTimer = setTimeout(async () => {
-          const thinkText = this._getThinkingMessage([call]); // Scope to current call
+          const thinkText = this._getThinkingMessage([call]);
           const thinkingMsg = createAssistantMessage(`Thinking... (${thinkText})`);
           thinkingMsg.metadata = { chatId: message.metadata?.chatId };
           thinkingMsg.source = message.source;
@@ -261,7 +253,6 @@ class Agent {
           }
           // --- EXTERNAL MCP TOOLS ---
           else {
-            // Try MCP Manager
             try {
               toolResult = await this.mcp.callTool(executionName, call.args);
             } catch (err) {
@@ -273,7 +264,6 @@ class Agent {
           console.warn(`[Agent] Tool execution failed: ${toolErr.message}`);
           toolResult = { error: `Tool execution failed: ${toolErr.message}` };
         } finally {
-          // Clear the "Thinking..." timer if it hasn't fired yet
           if (thinkTimer) clearTimeout(thinkTimer);
         }
 
@@ -281,7 +271,6 @@ class Agent {
           toolResult = { info: 'No output from tool execution.' };
         }
 
-        // Efficient Logging: Truncate large outputs
         const logResult = JSON.stringify(toolResult);
         if (logResult.length > 200) {
           console.log('Tool Result (Truncated):', logResult.substring(0, 200) + '...');
@@ -298,14 +287,6 @@ class Agent {
         };
 
         this.db.saveMessage({
-          role: 'function', // Gemini SDK uses 'function' or 'user'? 
-          // SDK uses 'function' role for function responses in history, OR 'user' with functionResponse part.
-          // Let's use 'user' because usually interaction is User -> Model -> User(Tool) -> Model
-          // SDK docs say: role: 'function' is deprecated? No, 'function' role is standard for parts.
-          // Actually, in 'history' array, the role for function output is usually 'function'.
-          // Let's verify db.js mapping. row.role. 
-          // If I save as 'function', `getHistoryForChat` maps it to ... 'function'.
-          // Correct.
           role: 'function',
           parts: [functionResponsePart],
           metadata: { chatId: message.metadata?.chatId },
@@ -332,11 +313,9 @@ class Agent {
         } else {
           const reply = createAssistantMessage(text);
           reply.metadata = { chatId: message.metadata?.chatId };
-          reply.source = message.source; // Ensure reply source matches incoming message source
+          reply.source = message.source;
 
-          // 2. Save Assistant Reply
           this.db.saveMessage(reply);
-
           await this.interface.send(reply);
         }
       }
@@ -345,7 +324,6 @@ class Agent {
       console.error('Error processing message:', error);
 
       const chatId = message.metadata?.chatId;
-      // Auto-Rollback: Delete this turn to prevent stuck loops
       if (chatId && message.timestamp) {
         console.warn(`[Agent] Performing Auto-Rollback for chat ${chatId} since ${message.timestamp}`);
         this.db.deleteMessagesSince(chatId, message.timestamp);
@@ -358,12 +336,10 @@ class Agent {
     }
   }
 
-  // Helper to extract function calls from the new SDK response structure
   _getFunctionCalls(response) {
     const candidates = response.candidates;
     if (!candidates || !candidates.length) return [];
 
-    // Flatten parts from the first candidate that are function calls
     const content = candidates[0].content;
     if (!content || !content.parts) return [];
 
@@ -372,11 +348,9 @@ class Agent {
       .map(part => part.functionCall);
   }
 
-  // Helper to generate smart status messages
   _getThinkingMessage(calls) {
     if (!calls || calls.length === 0) return 'Thinking...';
 
-    // Look at the first call to decide the message
     const name = calls[0].name;
 
     switch (name) {

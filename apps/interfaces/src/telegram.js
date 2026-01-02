@@ -8,6 +8,7 @@ class TelegramService {
     this.agentUrl = agentUrl;
 
     this.bot.on('text', this.handleMessage.bind(this));
+    this.bot.on('voice', this.handleVoice.bind(this));
   }
 
   async start() {
@@ -39,6 +40,42 @@ class TelegramService {
     } catch (error) {
       console.error('[Telegram] Error forwarding message:', error.message);
       ctx.reply('Sorry, I am having trouble reaching my brain.');
+    }
+  }
+
+  async handleVoice(ctx) {
+    try {
+      const fileId = ctx.message.voice.file_id;
+      const fileLink = await ctx.telegram.getFileLink(fileId);
+      
+      const response = await axios.get(fileLink.href, { responseType: 'arraybuffer' });
+      const buffer = Buffer.from(response.data);
+      const base64Audio = buffer.toString('base64');
+
+      const userId = ctx.from.id.toString();
+      const chatId = ctx.chat.id.toString();
+
+      console.log(`[Telegram] Received voice from ${userId}`);
+
+      // Create a message with parts
+      const message = createUserMessage('[Voz]', 'telegram', userId);
+      message.parts = [
+        { text: "El usuario ha enviado un mensaje de voz. Escúchalo y responde adecuadamente." },
+        {
+          inlineData: {
+            mimeType: ctx.message.voice.mime_type || 'audio/ogg',
+            data: base64Audio
+          }
+        }
+      ];
+      message.metadata = { chatId };
+
+      // Forward to Agent
+      await axios.post(`${this.agentUrl}/webhook`, message);
+
+    } catch (error) {
+      console.error('[Telegram] Error handling voice:', error.message);
+      ctx.reply('Perdón, tuve un problema procesando tu mensaje de voz.');
     }
   }
 
