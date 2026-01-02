@@ -155,7 +155,8 @@ class MCPManager {
                     transport = new StdioClientTransport({
                         command: serverConfig.command,
                         args: serverConfig.args || [],
-                        env: env
+                        env: env,
+                        cwd: serverConfig.cwd // Support running from specific directory
                     });
                 }
 

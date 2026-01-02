@@ -10,5 +10,19 @@
             "HA_TOKEN": "${HA_TOKEN}"
         },
         "disabled": false
+    },
+    "plex": {
+        "command": "python3",
+        "args": [
+            "plex_mcp_server.py",
+            "--transport",
+            "stdio"
+        ],
+        "cwd": "../../packages/plex-mcp-server",
+        "env": {
+            "PLEX_URL": "${PLEX_URL}",
+            "PLEX_TOKEN": "${PLEX_TOKEN}"
+        },
+        "disabled": false
     }
 }

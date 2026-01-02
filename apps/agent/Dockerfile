@@ -22,6 +22,10 @@ RUN npm install --workspaces --if-present
 # We can just install everything for now to be safe with monorepo linking
 RUN npm install
 
+# Install Plex MCP Server dependencies (using uv for speed/reliability)
+# We use --system to install into the container's python environment so 'python3' command works directly
+RUN uv pip install --system -r packages/plex-mcp-server/requirements.txt
+
 # Start the specific app
 WORKDIR /app/apps/agent
 CMD ["npm", "start"]
