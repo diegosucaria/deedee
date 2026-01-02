@@ -22,6 +22,44 @@ process.on('uncaughtException', (error) => {
   // process.exit(1);
 });
 
+// 0. Environment & Secrets Setup
+const fs = require('fs');
+const path = require('path');
+
+// Handle Base64 encoded Google Credentials (common in Balena/Container envs)
+if (process.env.GOOGLE_APPLICATION_CREDENTIALS && !process.env.GOOGLE_APPLICATION_CREDENTIALS.startsWith('/')) {
+  try {
+    console.log('[Setup] Detecting Base64/Content in GOOGLE_APPLICATION_CREDENTIALS...');
+    const credsContent = process.env.GOOGLE_APPLICATION_CREDENTIALS;
+    let jsonContent;
+
+    // Check if it's Base64
+    if (/^([0-9a-zA-Z+/]{4})*(([0-9a-zA-Z+/]{2}==)|([0-9a-zA-Z+/]{3}=))?$/.test(credsContent) && !credsContent.trim().startsWith('{')) {
+      const buff = Buffer.from(credsContent, 'base64');
+      jsonContent = buff.toString('utf-8');
+    } else {
+      // Assume it's raw JSON string
+      jsonContent = credsContent;
+    }
+
+    // Validate it looks like JSON
+    JSON.parse(jsonContent);
+
+    // Write to file
+    const credsPath = path.join('/app/data', 'google-service-account.json');
+    if (!fs.existsSync('/app/data')) fs.mkdirSync('/app/data', { recursive: true });
+
+    fs.writeFileSync(credsPath, jsonContent);
+    console.log(`[Setup] Wrote Google Credentials to ${credsPath}`);
+
+    // Point SDK to the file
+    process.env.GOOGLE_APPLICATION_CREDENTIALS = credsPath;
+  } catch (e) {
+    console.error('[Setup] Failed to process GOOGLE_APPLICATION_CREDENTIALS content:', e.message);
+    // Proceeding might fail if the SDK expects a path
+  }
+}
+
 // 1. Setup Interface
 const httpInterface = new HttpInterface(interfacesUrl);
 

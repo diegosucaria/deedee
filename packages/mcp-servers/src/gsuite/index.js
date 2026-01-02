@@ -9,16 +9,16 @@ class GSuiteTools {
   async listEvents({ timeMin, timeMax, maxResults = 10 }) {
     const auth = await this.auth.getClient();
     const calendar = google.calendar({ version: 'v3', auth });
-    
+
     const res = await calendar.events.list({
-      calendarId: 'primary',
+      calendarId: process.env.GOOGLE_CALENDAR_ID || 'primary',
       timeMin: timeMin || new Date().toISOString(),
       timeMax: timeMax,
       maxResults,
       singleEvents: true,
       orderBy: 'startTime',
     });
-    
+
     return res.data.items;
   }
 
