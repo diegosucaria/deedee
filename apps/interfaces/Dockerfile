@@ -1,6 +1,7 @@
 FROM node:18-alpine
 
 WORKDIR /app
+ENV LANG=C.UTF-8
 
 # Copy root config
 COPY package.json package-lock.json* ./

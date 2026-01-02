@@ -4,6 +4,7 @@ FROM node:18-alpine
 RUN apk add --no-cache git
 
 WORKDIR /app
+ENV LANG=C.UTF-8
 
 # Copy root config
 COPY package.json package-lock.json* ./

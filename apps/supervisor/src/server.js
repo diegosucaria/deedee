@@ -9,7 +9,17 @@ app.use(express.json());
 
 const gitName = process.env.GIT_USER_NAME || 'Deedee Supervisor';
 const gitEmail = process.env.GIT_USER_EMAIL || 'supervisor@deedee.bot';
-const gitRemote = process.env.GIT_REMOTE_URL;
+let gitRemote = process.env.GIT_REMOTE_URL;
+const githubPat = process.env.GITHUB_PAT;
+
+// Inject PAT into URL if available and URL is HTTPS
+if (gitRemote && githubPat && gitRemote.startsWith('https://')) {
+  // Insert PAT: https://PAT@github.com/...
+  gitRemote = gitRemote.replace('https://', `https://${githubPat}@`);
+  console.log(`[Supervisor] Configured authenticated remote: ${gitRemote.replace(githubPat, '***')}`);
+} else {
+  console.log(`[Supervisor] Configured remote: ${gitRemote}`);
+}
 
 git.configure(gitName, gitEmail, gitRemote).catch(console.error);
 
@@ -23,7 +33,7 @@ app.post('/cmd/commit', async (req, res) => {
     if (!message) {
       return res.status(400).json({ error: 'Commit message is required' });
     }
-    
+
     console.log(`[Supervisor] Committing: "${message}"`);
     const result = await git.commitAndPush(message, files);
     res.json(result);
