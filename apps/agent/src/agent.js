@@ -137,6 +137,8 @@ class Agent {
             1. If you are asked to write code, modify files, or improve yourself, you MUST first call 'pullLatestChanges'.
             2. When you are done making changes, you MUST call 'commitAndPush'. This tool runs tests automatically.
             3. DO NOT use 'runShellCommand' for git operations (commit/push). Use the dedicated tools.
+            4. DO NOT change/add/improve anything else in the code that was not asked for. Keep comments as is.
+            5. All strings and comments you add must be in English.
           `,
         },
         history: history
