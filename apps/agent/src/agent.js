@@ -1,4 +1,4 @@
-const { GoogleGenerativeAI } = require('@google/generative-ai');
+const { GoogleGenAI } = require('@google/genai');
 const { createAssistantMessage } = require('@deedee/shared/src/types');
 const { GSuiteTools } = require('@deedee/mcp-servers/src/gsuite/index');
 const { LocalTools } = require('@deedee/mcp-servers/src/local/index');
@@ -8,7 +8,9 @@ const { toolDefinitions } = require('./tools-definition');
 class Agent {
   constructor(config) {
     this.interface = config.interface;
-    this.genAI = new GoogleGenerativeAI(config.googleApiKey);
+    
+    // 1. Initialize the unified Client
+    this.client = new GoogleGenAI({ apiKey: config.googleApiKey });
     
     // Persistence
     this.db = new AgentDB(); // Defaults to /app/data
@@ -17,16 +19,19 @@ class Agent {
     this.gsuite = new GSuiteTools();
     this.local = new LocalTools('/app/source');
     
-    const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-pro-latest';
-    const apiVersion = process.env.GEMINI_API_VERSION || 'v1';
-    console.log(`[Agent] Using model: ${modelName} (${apiVersion})`);
+    this.modelName = process.env.GEMINI_MODEL || 'gemini-1.5-pro';
+    const apiVersion = process.env.GEMINI_API_VERSION || 'v1beta'; // New SDK usually defaults to v1beta for newer features
+
+    console.log(`[Agent] Using model: ${this.modelName} (Client version: ${apiVersion})`);
     
-    this.model = this.genAI.getGenerativeModel({ 
-      model: modelName, 
-      apiVersion: apiVersion,
-      tools: toolDefinitions 
+    // 2. Start Chat (happens on the client, not a model instance)
+    // Note: If you have system instructions, they go into 'config' here as well.
+    this.chat = this.client.chats.create({
+      model: this.modelName,
+      config: {
+        tools: toolDefinitions, 
+      }
     });
-    this.chat = this.model.startChat();
     
     this.onMessage = this.onMessage.bind(this);
   }
@@ -38,7 +43,7 @@ class Agent {
     const pendingGoals = this.db.getPendingGoals();
     if (pendingGoals.length > 0) {
       console.log(`[Memory] I have ${pendingGoals.length} pending goals.`);
-      
+
       for (const goal of pendingGoals) {
         console.log(` - Resuming: ${goal.description}`);
         if (goal.metadata && goal.metadata.chatId) {
@@ -62,12 +67,17 @@ class Agent {
       // 1. Save User Message
       this.db.saveMessage(message);
 
-      const result = await this.chat.sendMessage(message.content);
-      const response = await result.response;
-      
-      const calls = response.functionCalls();
-      if (calls && calls.length > 0) {
-        const call = calls[0];
+      // 2. Send Message to Gemini
+      let response = await this.chat.sendMessage({
+        role: 'user',
+        parts: [{ text: message.content }]
+      });
+
+      // 3. Handle Function Calls Loop
+      let functionCalls = this._getFunctionCalls(response);
+
+      while (functionCalls && functionCalls.length > 0) {
+        const call = functionCalls[0];
         console.log(`Function Call: ${call.name}`, call.args);
         
         let toolResult;
@@ -97,27 +107,29 @@ class Agent {
         else if (call.name === 'writeFile') toolResult = await this.local.writeFile(call.args.path, call.args.content);
         else if (call.name === 'listDirectory') toolResult = await this.local.listDirectory(call.args.path);
         else if (call.name === 'runShellCommand') toolResult = await this.local.runShellCommand(call.args.command);
+        // ---------------------------------------------
 
         console.log('Tool Result:', toolResult);
-        const nextResult = await this.chat.sendMessage([
-          {
+
+        // Send Tool Response back to Gemini
+        response = await this.chat.sendMessage({
+          parts: [{
             functionResponse: {
               name: call.name,
               response: { result: toolResult }
             }
-          }
-        ]);
-        
-        const finalResponse = createAssistantMessage(nextResult.response.text());
-        finalResponse.metadata = { chatId: message.metadata?.chatId };
-        
-        // 2. Save Assistant Reply
-        this.db.saveMessage(finalResponse);
-        
-        await this.interface.send(finalResponse);
+          }]
+        });
 
-      } else {
-        const text = response.text();
+        // Re-check for recursive function calls (e.g., tool calls another tool)
+        functionCalls = this._getFunctionCalls(response);
+      }
+
+      // 4. Final Text Response
+      // response.text is a getter in the new SDK that extracts the text part safely
+      const text = response.text || '';
+      
+      if (text) {
         const reply = createAssistantMessage(text);
         reply.metadata = { chatId: message.metadata?.chatId };
         
@@ -133,6 +145,17 @@ class Agent {
       errReply.metadata = { chatId: message.metadata?.chatId };
       await this.interface.send(errReply);
     }
+  }
+
+  // Helper to extract function calls from the new SDK response structure
+  _getFunctionCalls(response) {
+    const candidates = response.candidates;
+    if (!candidates || !candidates.length) return [];
+    
+    // Flatten parts from the first candidate that are function calls
+    return candidates[0].content.parts
+      .filter(part => part.functionCall)
+      .map(part => part.functionCall);
   }
 }
 
