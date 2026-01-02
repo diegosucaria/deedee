@@ -252,6 +252,22 @@ class Agent {
               body: JSON.stringify({ message: call.args.message, files: ['.'] })
             });
             toolResult = await commitRes.json();
+
+            // Notification: Slack (Self-Improvement Alert)
+            if (toolResult && toolResult.success && process.env.SLACK_WEBHOOK_URL) {
+              try {
+                await fetch(process.env.SLACK_WEBHOOK_URL, {
+                  method: 'POST',
+                  headers: { 'Content-Type': 'application/json' },
+                  body: JSON.stringify({
+                    text: `🚀 *New Feature Deployed via Self-Improvement*\n\n*Commit:* ${call.args.message}\n*Files:* All changed files`
+                  })
+                });
+                console.log('[Agent] Sent Slack notification for self-improvement.');
+              } catch (slackErr) {
+                console.error('[Agent] Failed to send Slack notification:', slackErr);
+              }
+            }
           }
           // --- EXTERNAL MCP TOOLS ---
           else {
@@ -307,7 +323,24 @@ class Agent {
       }
 
       // 4. Final Text Response
-      const text = response.text || '';
+      // SDK might expose text via method or property depending on version/response type
+      let text = '';
+      if (typeof response.text === 'function') {
+        try {
+          text = response.text();
+        } catch (e) {
+          // Sometimes text() throws if candidate safety blocked
+          console.warn('[Agent] response.text() threw:', e.message);
+        }
+      } else if (response.text) {
+        text = response.text;
+      } else if (response.candidates && response.candidates[0] && response.candidates[0].content) {
+        // Validation fallback
+        text = response.candidates[0].content.parts
+          .filter(p => p.text)
+          .map(p => p.text)
+          .join(' ');
+      }
 
       if (text) {
         if (message.source === 'http') {
@@ -315,11 +348,15 @@ class Agent {
         } else {
           const reply = createAssistantMessage(text);
           reply.metadata = { chatId: message.metadata?.chatId };
-          reply.source = message.source;
+          reply.source = message.source; // Ensure reply source matches incoming message source
 
+          // 2. Save Assistant Reply
           this.db.saveMessage(reply);
+
           await this.interface.send(reply);
         }
+      } else {
+        console.warn('[Agent] No text response found in final turn. Possible empty response or Safety Filter.');
       }
 
     } catch (error) {
