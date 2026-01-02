@@ -68,6 +68,27 @@ class Agent {
         console.log(`[Encoding Debug] Chars: ${message.content.split('').map(c => c.charCodeAt(0)).join(', ')}`);
       }
 
+      // Feature: Rate Limiting
+      // default: 50 msg/hour, 500 msg/day
+      const limitHourly = parseInt(process.env.RATE_LIMIT_HOURLY || '50');
+      const limitDaily = parseInt(process.env.RATE_LIMIT_DAILY || '500');
+
+      const usedHour = this.db.checkLimit(1);
+      const usedDay = this.db.checkLimit(24);
+
+      if (usedHour >= limitHourly || usedDay >= limitDaily) {
+        console.warn(`[Agent] Rate limit exceeded. Hour: ${usedHour}/${limitHourly}, Day: ${usedDay}/${limitDaily}`);
+        const limitReply = createAssistantMessage(`⚠️ Rate limit exceeded. please try again later.`);
+        limitReply.metadata = { chatId: message.metadata?.chatId };
+        limitReply.source = message.source;
+        await this.interface.send(limitReply);
+        return;
+      }
+
+      // Log current usage
+      this.db.logUsage();
+
+
       // 1. Save User Message
       this.db.saveMessage(message);
 

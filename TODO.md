@@ -21,6 +21,9 @@
 - [x] **Deploy to Balena and Verify**
 
 ## Phase 3: Enhanced Capabilities
+- [ ] **Feature: Agent Rate Limiting**
+  - [ ] DB Schema for Usage Tracking
+  - [ ] Token Limit Logic
 - [ ] **Spec 013: Router Architecture & Chat Hydration**
   - [ ] Implement AgentDB Hydration (`getHistoryForChat`)
   - [ ] Implement Router Logic (Prompt & Parsing)

@@ -9,11 +9,11 @@ class AgentDB {
     if (!fs.existsSync(dataDir)) {
       fs.mkdirSync(dataDir, { recursive: true });
     }
-    
+
     this.dbPath = path.join(dataDir, 'agent.db');
     console.log(`[DB] Opening database at ${this.dbPath}`);
     this.db = new Database(this.dbPath);
-    
+
     this.init();
   }
 
@@ -44,6 +44,11 @@ class AgentDB {
         metadata TEXT, -- JSON string for context (chatId, etc)
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
+
+      CREATE TABLE IF NOT EXISTS usage_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
     `);
 
     // Migration: Add metadata column if it doesn't exist (for existing DBs)
@@ -61,7 +66,7 @@ class AgentDB {
       VALUES (?, ?, ?, ?, ?, ?)
     `);
     // Fallback if msg.id is missing or generated elsewhere
-    const id = msg.id || crypto.randomUUID(); 
+    const id = msg.id || crypto.randomUUID();
     stmt.run(id, msg.role, msg.content, msg.source, msg.metadata?.chatId, msg.timestamp);
   }
 
@@ -107,6 +112,20 @@ class AgentDB {
   completeGoal(id) {
     const stmt = this.db.prepare("UPDATE goals SET status = 'completed' WHERE id = ?");
     stmt.run(id);
+  }
+
+  // --- Rate Limiting ---
+  logUsage() {
+    this.db.prepare('INSERT INTO usage_logs DEFAULT VALUES').run();
+  }
+
+  checkLimit(windowHours) {
+    const stmt = this.db.prepare(`
+      SELECT COUNT(*) as count FROM usage_logs 
+      WHERE timestamp > datetime('now', '-' || ? || ' hours')
+    `);
+    const result = stmt.get(windowHours);
+    return result ? result.count : 0;
   }
 }
 
