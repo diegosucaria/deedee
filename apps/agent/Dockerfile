@@ -3,6 +3,12 @@ FROM node:18-alpine
 WORKDIR /app
 ENV LANG=C.UTF-8
 
+# Install Python and UV for local MCP servers
+RUN apk add --no-cache python3 py3-pip curl gcompat
+RUN curl -LsSf https://astral.sh/uv/install.sh | sh
+ENV PATH="/root/.local/bin:/root/.cargo/bin:$PATH"
+
+
 # Copy root config
 COPY package.json package-lock.json* ./
 

@@ -1,7 +1,10 @@
 {
     "homeassistant": {
-        "transport": "sse",
-        "url": "${HA_URL}/api/mcp",
+        "transport": "stdio",
+        "command": "uvx",
+        "args": [
+            "mcp-homeassistant"
+        ],
         "env": {
             "HA_URL": "${HA_URL}",
             "HA_TOKEN": "${HA_TOKEN}"
