@@ -9,6 +9,12 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 - **Runtime**: Node.js
 - **Framework**: LangChain or Google GenAI SDK
 - **Role**: Central brain. Processes user input, maintains memory, plans actions, and invokes tools.
+- **Cognitive Architecture (Router-Worker)**:
+    - **Layer 1 (Router)**: `Gemini 2.0 Flash`. Analyzes intent (strict JSON). Decides if a task is "Simple" or "Complex".
+    - **Layer 2 (Workers)**:
+        - **Fast Worker**: `Gemini 2.0 Flash`. Executes tools, home automation, and casual chat.
+        - **Reasoning Worker**: `Gemini 1.5 Pro` (or higher). Handles coding, planning, and analysis.
+    - **State Management**: Stateless execution. Context is "hydrated" from SQLite for every turn.
 - **Dependencies**: 
     - Connects to MCP Servers for capabilities.
     - Connects to Interface adapters for communication.

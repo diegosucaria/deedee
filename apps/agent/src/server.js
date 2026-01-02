@@ -39,6 +39,11 @@ app.post('/webhook', (req, res) => {
 
   // Inject into Agent
   if (agent) {
+    // Normalize message fields
+    message.role = message.role || 'user';
+    message.source = message.source || 'http';
+    message.timestamp = message.timestamp || new Date().toISOString();
+    
     httpInterface.receive(message);
     res.json({ received: true });
   } else {

@@ -43,9 +43,9 @@ jest.mock('@google/genai', () => ({
             };
           }
 
-          // Case B: Function Response (Array of parts)
-          // The Agent now sends [{ functionResponse: ... }]
-          if (Array.isArray(payload) && payload[0]?.functionResponse) {
+          // Case B: Function Response (Object with message property containing array)
+          // The Agent now sends { message: [{ functionResponse: ... }] }
+          if (Array.isArray(payload?.message) && payload.message[0]?.functionResponse) {
             return {
               text: 'You have one event.',
               candidates: [{

@@ -19,5 +19,9 @@
 - [ ] **Deploy to Balena and Verify** (Action Pending)
 
 ## Phase 3: Enhanced Capabilities
+- [ ] **Spec 013: Router Architecture & Chat Hydration**
+  - [ ] Implement AgentDB Hydration (`getHistoryForChat`)
+  - [ ] Implement Router Logic (Prompt & Parsing)
+  - [ ] Refactor Agent to Stateless/Hydrated Loop
 - [ ] **Spec 006: Supervisor Self-Test & Rollback**
 - [ ] **Spec 007: WhatsApp Interface**
