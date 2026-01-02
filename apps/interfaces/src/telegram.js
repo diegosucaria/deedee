@@ -80,7 +80,9 @@ class TelegramService {
   }
 
   async sendMessage(chatId, content) {
-    await this.bot.telegram.sendMessage(chatId, content);
+    // strict Markdown (MarkdownV2) often fails with unescaped characters from LLMs. 
+    // Legacy 'Markdown' is more forgiving.
+    await this.bot.telegram.sendMessage(chatId, content, { parse_mode: 'Markdown' });
   }
 }
 
