@@ -3,7 +3,7 @@
         "transport": "stdio",
         "command": "uvx",
         "args": [
-            "mcp-homeassistant"
+            "mcp-server-home-assistant"
         ],
         "env": {
             "HA_URL": "${HA_URL}",
