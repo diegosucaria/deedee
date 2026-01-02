@@ -10,7 +10,7 @@ class Agent {
     
     // Tools Setup
     this.gsuite = new GSuiteTools();
-    this.local = new LocalTools('/app/source'); // Restrict to source dir by default, or /app
+    this.local = new LocalTools('/app/source');
     
     // Define Tools for Gemini
     const tools = [
@@ -86,7 +86,9 @@ class Agent {
       }
     ];
 
-    this.model = this.genAI.getGenerativeModel({ model: 'gemini-pro', tools });
+    const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-pro-latest';
+    console.log(`[Agent] Using model: ${modelName}`);
+    this.model = this.genAI.getGenerativeModel({ model: modelName, tools });
     this.chat = this.model.startChat();
     
     this.onMessage = this.onMessage.bind(this);

@@ -1,5 +1,8 @@
 FROM node:18-alpine
 
+# Install git for Supervisor operations
+RUN apk add --no-cache git
+
 WORKDIR /app
 
 # Copy root config
