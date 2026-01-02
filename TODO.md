@@ -9,15 +9,14 @@
 - [x] **Spec 008: Local System MCP**
 
 ## Phase 2: Reliability & Persistence (Current)
-- [ ] **Deploy to Balena and Verify** (Ongoing)
-- [ ] **Spec 009: Agent Persistence (SQLite)**
-  - [ ] DB Schema (History, Goals)
-  - [ ] Context Loading on Boot
-- [ ] **Spec 010: Supervisor Pre-Flight Checks**
-  - [ ] Run `npm test` before `git push`
-  - [ ] Syntax validation
-- [ ] **Refactor Agent**
-  - [ ] Split Tools Registry
+- [x] **Spec 009: Agent Persistence (SQLite)**
+- [x] **Spec 011: Post-Update Notification**
+- [x] **Spec 010: Supervisor Pre-Flight Checks**
+  - [x] Run `npm test` before `git push`
+  - [x] Syntax validation
+- [x] **Refactor Agent**
+  - [x] Split Tools Registry into `tools-definition.js`
+- [ ] **Deploy to Balena and Verify** (Action Pending)
 
 ## Phase 3: Enhanced Capabilities
 - [ ] **Spec 006: Supervisor Self-Test & Rollback**

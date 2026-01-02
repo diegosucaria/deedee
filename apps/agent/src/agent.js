@@ -3,6 +3,7 @@ const { createAssistantMessage } = require('@deedee/shared/src/types');
 const { GSuiteTools } = require('@deedee/mcp-servers/src/gsuite/index');
 const { LocalTools } = require('@deedee/mcp-servers/src/local/index');
 const { AgentDB } = require('./db');
+const { toolDefinitions } = require('./tools-definition');
 
 class Agent {
   constructor(config) {
@@ -16,102 +17,6 @@ class Agent {
     this.gsuite = new GSuiteTools();
     this.local = new LocalTools('/app/source');
     
-    // Define Tools for Gemini
-    const tools = [
-      {
-        functionDeclarations: [
-          // Memory / DB
-          {
-            name: "rememberFact",
-            description: "Save a fact or preference to long-term memory",
-            parameters: {
-              type: "OBJECT",
-              properties: {
-                key: { type: "STRING", description: "Unique key (e.g., 'user_name')" },
-                value: { type: "STRING", description: "Value to store" }
-              },
-              required: ["key", "value"]
-            }
-          },
-          {
-            name: "getFact",
-            description: "Retrieve a fact from long-term memory",
-            parameters: {
-              type: "OBJECT",
-              properties: { key: { type: "STRING" } },
-              required: ["key"]
-            }
-          },
-          // GSuite
-          {
-            name: "listEvents",
-            description: "List calendar events for a time range",
-            parameters: {
-              type: "OBJECT",
-              properties: {
-                timeMin: { type: "STRING" },
-                timeMax: { type: "STRING" },
-                maxResults: { type: "NUMBER" }
-              }
-            }
-          },
-          {
-            name: "sendEmail",
-            description: "Send an email",
-            parameters: {
-              type: "OBJECT",
-              properties: {
-                to: { type: "STRING" },
-                subject: { type: "STRING" },
-                body: { type: "STRING" }
-              },
-              required: ["to", "subject", "body"]
-            }
-          },
-          // Local System
-          {
-            name: "readFile",
-            description: "Read a file from the local system",
-            parameters: {
-              type: "OBJECT",
-              properties: { path: { type: "STRING" } },
-              required: ["path"]
-            }
-          },
-          {
-            name: "writeFile",
-            description: "Write content to a file",
-            parameters: {
-              type: "OBJECT",
-              properties: { 
-                path: { type: "STRING" },
-                content: { type: "STRING" }
-              },
-              required: ["path", "content"]
-            }
-          },
-          {
-            name: "listDirectory",
-            description: "List files in a directory",
-            parameters: {
-              type: "OBJECT",
-              properties: { path: { type: "STRING" } },
-              required: ["path"]
-            }
-          },
-          {
-            name: "runShellCommand",
-            description: "Run a shell command (allowed: ls, grep, git, npm, etc)",
-            parameters: {
-              type: "OBJECT",
-              properties: { command: { type: "STRING" } },
-              required: ["command"]
-            }
-          }
-        ]
-      }
-    ];
-
     const modelName = process.env.GEMINI_MODEL || 'gemini-1.5-pro-latest';
     const apiVersion = process.env.GEMINI_API_VERSION || 'v1';
     console.log(`[Agent] Using model: ${modelName} (${apiVersion})`);
@@ -119,7 +24,7 @@ class Agent {
     this.model = this.genAI.getGenerativeModel({ 
       model: modelName, 
       apiVersion: apiVersion,
-      tools 
+      tools: toolDefinitions 
     });
     this.chat = this.model.startChat();
     
@@ -132,10 +37,18 @@ class Agent {
     // Check Goals
     const pendingGoals = this.db.getPendingGoals();
     if (pendingGoals.length > 0) {
-      console.log(`[Memory] I have ${pendingGoals.length} pending goals:`);
-      pendingGoals.forEach(g => console.log(` - ${g.description}`));
-      // In a real scenario, we might proactively send a message here:
-      // this.interface.send(createAssistantMessage(`I'm back. Resuming goal: ${pendingGoals[0].description}`));
+      console.log(`[Memory] I have ${pendingGoals.length} pending goals.`);
+      
+      for (const goal of pendingGoals) {
+        console.log(` - Resuming: ${goal.description}`);
+        if (goal.metadata && goal.metadata.chatId) {
+          const msg = createAssistantMessage(`I am back online. Resuming task: "${goal.description}"`);
+          msg.metadata = { chatId: goal.metadata.chatId };
+          // We need a slight delay or retry here in case Interfaces isn't ready, 
+          // but for now we assume it is.
+          this.interface.send(msg).catch(err => console.error('[Agent] Failed to send resume msg:', err));
+        }
+      }
     }
 
     this.interface.on('message', this.onMessage);
@@ -165,6 +78,16 @@ class Agent {
         }
         else if (call.name === 'getFact') {
           toolResult = this.db.getKey(call.args.key);
+        }
+        else if (call.name === 'addGoal') {
+          // Contextual Injection
+          const metadata = { chatId: message.metadata?.chatId };
+          const info = this.db.addGoal(call.args.description, metadata);
+          toolResult = { success: true, id: info.lastInsertRowid };
+        }
+        else if (call.name === 'completeGoal') {
+          this.db.completeGoal(call.args.id);
+          toolResult = { success: true };
         }
         // GSuite
         else if (call.name === 'listEvents') toolResult = await this.gsuite.listEvents(call.args);

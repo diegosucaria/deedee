@@ -60,6 +60,7 @@ CREATE TABLE kv_store (
 CREATE TABLE goals (
   id INTEGER PRIMARY KEY,
   description TEXT,
-  status TEXT
+  status TEXT,
+  metadata TEXT -- JSON string (e.g. { "chatId": "123" })
 );
 ```

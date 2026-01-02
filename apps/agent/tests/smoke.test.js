@@ -8,6 +8,8 @@ jest.mock('../src/db', () => ({
     saveMessage: jest.fn(),
     getKey: jest.fn(),
     setKey: jest.fn(),
+    addGoal: jest.fn().mockReturnValue({ lastInsertRowid: 1 }),
+    completeGoal: jest.fn(),
     getPendingGoals: jest.fn().mockReturnValue([])
   }))
 }));

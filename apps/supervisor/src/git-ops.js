@@ -1,10 +1,12 @@
 const { exec } = require('child_process');
 const util = require('util');
+const { Verifier } = require('./verifier');
 const execAsync = util.promisify(exec);
 
 class GitOps {
   constructor(workDir = '/app/source') {
     this.workDir = workDir;
+    this.verifier = new Verifier(workDir);
   }
 
   async run(command) {
@@ -24,19 +26,26 @@ class GitOps {
   }
 
   async commitAndPush(message, files = ['.']) {
-    // 1. Add files
-    const fileList = files.join(' ');
-    await this.run(`git add ${fileList}`);
+    try {
+      // 0. Pre-Flight Checks
+      await this.verifier.verify(files);
 
-    // 2. Commit
-    await this.run(`git commit -m "${message}"`);
+      // 1. Add files
+      const fileList = files.join(' ');
+      await this.run(`git add ${fileList}`);
 
-    // 3. Push
-    // Note: We assume the remote is already configured with the PAT token
-    // or via SSH in the container setup.
-    await this.run('git push origin main');
-    
-    return { success: true, message: 'Pushed to origin/main' };
+      // 2. Commit
+      await this.run(`git commit -m "${message}"`);
+
+      // 3. Push
+      await this.run('git push origin master'); // Assuming master branch as confirmed
+      
+      return { success: true, message: 'Pushed to origin/master' };
+
+    } catch (error) {
+      console.error('[GitOps] Validation or Git Error:', error.message);
+      return { success: false, error: error.message };
+    }
   }
 }
 

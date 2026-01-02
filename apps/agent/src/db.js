@@ -40,9 +40,17 @@ class AgentDB {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         description TEXT NOT NULL,
         status TEXT DEFAULT 'pending', -- pending, completed, failed
+        metadata TEXT, -- JSON string for context (chatId, etc)
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
     `);
+
+    // Migration: Add metadata column if it doesn't exist (for existing DBs)
+    try {
+      this.db.exec("ALTER TABLE goals ADD COLUMN metadata TEXT");
+    } catch (err) {
+      // Ignore error if column already exists
+    }
   }
 
   // --- Messages ---
@@ -80,14 +88,19 @@ class AgentDB {
   }
 
   // --- Goals ---
-  addGoal(description) {
-    const stmt = this.db.prepare('INSERT INTO goals (description) VALUES (?)');
-    return stmt.run(description);
+  addGoal(description, metadata = {}) {
+    const metaStr = JSON.stringify(metadata);
+    const stmt = this.db.prepare('INSERT INTO goals (description, metadata) VALUES (?, ?)');
+    return stmt.run(description, metaStr);
   }
 
   getPendingGoals() {
     const stmt = this.db.prepare("SELECT * FROM goals WHERE status = 'pending'");
-    return stmt.all();
+    const rows = stmt.all();
+    return rows.map(row => ({
+      ...row,
+      metadata: row.metadata ? JSON.parse(row.metadata) : {}
+    }));
   }
 
   completeGoal(id) {
