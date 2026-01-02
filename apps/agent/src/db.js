@@ -150,7 +150,10 @@ class AgentDB {
     // Map to Gemini SDK format
     return rows.map(row => {
       // Map 'assistant' role to 'model' for Gemini
-      const role = row.role === 'assistant' ? 'model' : row.role;
+      // Map 'function' role to 'user' for Gemini (function results are considered user input in the chat loop)
+      let role = row.role;
+      if (role === 'assistant') role = 'model';
+      if (role === 'function') role = 'user';
 
       if (row.parts) {
         try {

@@ -142,6 +142,19 @@ class Agent {
       // 2. Send Message to Gemini
       let response = await session.sendMessage({ message: message.content });
 
+      // --- DEBUG: Log Raw Response for Thought Signature Issue ---
+      try {
+        if (response.candidates && response.candidates[0]) {
+          console.log('[DEBUG] Gemini Response Parts:', JSON.stringify(response.candidates[0].content.parts, null, 2));
+        } else {
+          console.log('[DEBUG] Gemini Response (No Candidates):', JSON.stringify(response, null, 2));
+        }
+      } catch (debugErr) {
+        console.error('[DEBUG] Failed to log response:', debugErr);
+      }
+      // -----------------------------------------------------------
+
+
       // 3. Handle Function Calls Loop
       let functionCalls = this._getFunctionCalls(response);
 
