@@ -118,7 +118,9 @@ class Agent {
       let functionCalls = this._getFunctionCalls(response);
 
       if (functionCalls.length > 0) {
-        const thinkingMsg = createAssistantMessage('Thinking...');
+        // Initial Smart Message
+        const thinkText = this._getThinkingMessage(functionCalls);
+        const thinkingMsg = createAssistantMessage(thinkText);
         thinkingMsg.metadata = { chatId: message.metadata?.chatId };
         thinkingMsg.source = message.source;
         await this.interface.send(thinkingMsg).catch(err => console.error('[Agent] Failed to send thinking msg:', err));
@@ -133,6 +135,15 @@ class Agent {
           console.warn(`[Agent] Max tool loop limit reached (${MAX_LOOPS}). Breaking.`);
           await this.interface.send(createAssistantMessage('I am stuck in a loop. Stopping now.'));
           break;
+        }
+
+        // Periodic Feedback (every 3rd loop, starting at 3)
+        if (loopCount > 1 && loopCount % 3 === 0) {
+          const thinkText = this._getThinkingMessage(functionCalls);
+          const updateMsg = createAssistantMessage(`Still working... (${thinkText})`);
+          updateMsg.metadata = { chatId: message.metadata?.chatId };
+          updateMsg.source = message.source;
+          await this.interface.send(updateMsg).catch(err => console.error('[Agent] Failed to send update msg:', err));
         }
 
         const call = functionCalls[0];
@@ -247,6 +258,31 @@ class Agent {
     return candidates[0].content.parts
       .filter(part => part.functionCall)
       .map(part => part.functionCall);
+  }
+
+  // Helper to generate smart status messages
+  _getThinkingMessage(calls) {
+    if (!calls || calls.length === 0) return 'Thinking...';
+
+    // Look at the first call to decide the message
+    const name = calls[0].name;
+
+    switch (name) {
+      case 'readFile': return 'Reading file...';
+      case 'writeFile': return 'Writing to file...';
+      case 'listDirectory': return 'Checking directory contents...';
+      case 'runShellCommand': return 'Running system command...';
+      case 'pullLatestChanges': return 'Pulling latest code...';
+      case 'commitAndPush': return 'Committing changes...';
+      case 'rollbackLastChange': return 'Rolling back changes...';
+      case 'listEvents': return 'Checking calendar...';
+      case 'sendEmail': return 'Sending email...';
+      case 'rememberFact':
+      case 'getFact': return 'Accessing memory...';
+      case 'addGoal':
+      case 'completeGoal': return 'Updating goals...';
+      default: return `Executing ${name}...`;
+    }
   }
 }
 
