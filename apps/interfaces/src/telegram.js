@@ -125,7 +125,7 @@ class TelegramService {
         // Assume Base64
         source = {
           source: Buffer.from(content, 'base64'),
-          filename: 'voice.mp3' // Help Telegram identify the format
+          filename: 'voice.ogg' // Help Telegram identify the format
         };
       }
 
