@@ -44,3 +44,12 @@
   - [x] Update Monitor to post to Webhook
 - [ ] **Spec 007: WhatsApp Interface**
 - [ ] **Spec 015: Slack Bot Interface**
+- [x] **Feature: Smart Thinking & Loop Feedback**
+  - [x] Implement `_generateThinkingMessage` helper.
+  - [x] Info messages with action context.
+  - [x] Periodic update (every 3 loops).
+- [x] **Spec 016: Full MCP Client Architecture**
+  - [x] Install `@modelcontextprotocol/sdk`
+  - [x] Implement `MCPManager` (Stdio Transport)
+  - [x] Refactor `Agent.js` to Hybrid Tool System (Merged Tools)
+  - [x] Configure Home Assistant Server (`mcp_config.json`)

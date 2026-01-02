@@ -1,0 +1,14 @@
+{
+    "homeassistant": {
+        "command": "npx",
+        "args": [
+            "-y",
+            "@modelcontextprotocol/server-homeassistant"
+        ],
+        "env": {
+            "HA_URL": "${HA_URL}",
+            "HA_TOKEN": "${HA_TOKEN}"
+        },
+        "disabled": true
+    }
+}

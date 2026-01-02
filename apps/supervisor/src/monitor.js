@@ -7,7 +7,7 @@ class Monitor {
         this.git = gitOps;
         this.agentUrl = process.env.AGENT_URL || 'http://agent:3000';
         this.interfacesUrl = process.env.INTERFACES_URL || 'http://interfaces:5000';
-        this.slackWebhookUrl = process.env.SLACK_WEBHOOK_URL; // [NEW]
+        this.slackWebhookUrl = process.env.SLACK_WEBHOOK_URL;
 
         // Config
         this.checkInterval = 60000; // 1 minute

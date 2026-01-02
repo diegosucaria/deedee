@@ -4,7 +4,8 @@ const { GSuiteTools } = require('@deedee/mcp-servers/src/gsuite/index');
 const { LocalTools } = require('@deedee/mcp-servers/src/local/index');
 const { AgentDB } = require('./db');
 const { toolDefinitions } = require('./tools-definition');
-const { Router } = require('./router'); // [NEW]
+const { Router } = require('./router');
+const { MCPManager } = require('./mcp-manager'); 
 
 class Agent {
   constructor(config) {
@@ -18,7 +19,10 @@ class Agent {
     this.db = new AgentDB();
 
     // Router
-    this.router = new Router(config.googleApiKey); // [NEW]
+    this.router = new Router(config.googleApiKey);
+
+    // MCP Manager
+    this.mcp = new MCPManager(); 
 
     // Tools Setup
     this.gsuite = new GSuiteTools();
@@ -30,6 +34,9 @@ class Agent {
   async start() {
     console.log('Agent starting...');
 
+    // Initialize MCP
+    await this.mcp.init(); 
+
     // Check Goals
     const pendingGoals = this.db.getPendingGoals();
     if (pendingGoals.length > 0) {
@@ -40,8 +47,6 @@ class Agent {
         if (goal.metadata && goal.metadata.chatId) {
           const msg = createAssistantMessage(`I am back online. Resuming task: "${goal.description}"`);
           msg.metadata = { chatId: goal.metadata.chatId };
-          // We need a slight delay or retry here in case Interfaces isn't ready, 
-          // but for now we assume it is.
           this.interface.send(msg).catch(err => console.error('[Agent] Failed to send resume msg:', err));
         }
       }
@@ -55,9 +60,7 @@ class Agent {
     try {
       console.log(`Received: ${message.content}`);
 
-
       // Feature: Rate Limiting
-      // default: 50 msg/hour, 500 msg/day
       const limitHourly = parseInt(process.env.RATE_LIMIT_HOURLY || '50');
       const limitDaily = parseInt(process.env.RATE_LIMIT_DAILY || '500');
 
@@ -76,13 +79,11 @@ class Agent {
       // Log current usage
       this.db.logUsage();
 
-
       // 1. Save User Message
       this.db.saveMessage(message);
 
       // --- ROUTING ---
       const decision = await this.router.route(message.content);
-      // Models: 'gemini-2.0-flash-exp' vs 'gemini-exp-1206' (or 1.5-pro)
       const selectedModel = decision.model === 'FLASH'
         ? (process.env.WORKER_FLASH || 'gemini-2.0-flash-exp')
         : (process.env.WORKER_PRO || 'gemini-exp-1206');
@@ -91,13 +92,32 @@ class Agent {
 
       // --- HYDRATION ---
       const chatId = message.metadata?.chatId;
-      const history = this.db.getHistoryForChat(chatId, 50); // Get last 50 turns
+      const history = this.db.getHistoryForChat(chatId, 50);
+
+      // --- TOOLS MERGE ---
+      const mcpTools = await this.mcp.getTools();
+
+      // Transform MCP tools to Gemini Format if not already compliant
+      // (MCPManager attempts to map them, but let's ensure structure)
+      const externalTools = mcpTools.map(t => ({
+        name: t.name,
+        description: t.description,
+        parameters: t.parameters
+      }));
+
+      const allTools = [
+        ...toolDefinitions[0].functionDeclarations, // Internal tools
+        ...externalTools
+      ];
+
+      // construct the tools object for Gemini
+      const geminiTools = [{ functionDeclarations: allTools }];
 
       // Initialize Stateless Chat Session
       const session = this.client.chats.create({
         model: selectedModel,
         config: {
-          tools: toolDefinitions,
+          tools: geminiTools,
           systemInstruction: `
             You are Deedee, a helpful and capable AI assistant.
             You have access to a variety of tools to help the user.
@@ -150,7 +170,8 @@ class Agent {
         console.log(`Function Call: ${call.name}`, call.args);
 
         let toolResult;
-        // Memory
+
+        // --- INTERNAL TOOLS ---
         if (call.name === 'rememberFact') {
           this.db.setKey(call.args.key, call.args.value);
           toolResult = { success: true };
@@ -160,7 +181,6 @@ class Agent {
           toolResult = val ? { value: val } : { info: 'Fact not found in database.' };
         }
         else if (call.name === 'addGoal') {
-          // Contextual Injection
           const metadata = { chatId: message.metadata?.chatId };
           const info = this.db.addGoal(call.args.description, metadata);
           toolResult = { success: true, id: info.lastInsertRowid };
@@ -179,27 +199,34 @@ class Agent {
         else if (call.name === 'runShellCommand') toolResult = await this.local.runShellCommand(call.args.command);
         // Supervisor
         else if (call.name === 'rollbackLastChange') {
-          // Trigger Supervisor Rollback
           const rollbackRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/rollback`, {
             method: 'POST'
           });
           toolResult = await rollbackRes.json();
         }
         else if (call.name === 'pullLatestChanges') {
-          // Trigger Supervisor Pull
           const pullRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/pull`, {
             method: 'POST'
           });
           toolResult = await pullRes.json();
         }
         else if (call.name === 'commitAndPush') {
-          // Trigger Supervisor Commit
           const commitRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/commit`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ message: call.args.message, files: ['.'] })
           });
           toolResult = await commitRes.json();
+        }
+        // --- EXTERNAL MCP TOOLS ---
+        else {
+          // Try MCP Manager
+          try {
+            toolResult = await this.mcp.callTool(call.name, call.args);
+          } catch (err) {
+            console.warn(`[Agent] Tool ${call.name} not found in Internal or MCP tools:`, err);
+            toolResult = { error: `Tool ${call.name} failed or does not exist: ${err.message}` };
+          }
         }
 
         if (toolResult === undefined || toolResult === null) {
@@ -218,7 +245,7 @@ class Agent {
           }]
         });
 
-        // Re-check for recursive function calls (e.g., tool calls another tool)
+        // Re-check for recursive function calls 
         functionCalls = this._getFunctionCalls(response);
       }
 
