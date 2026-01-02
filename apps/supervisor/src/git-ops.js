@@ -20,25 +20,36 @@ class GitOps {
     }
   }
 
-  async configure(name, email) {
+  async configure(name, email, remoteUrl) {
+    try {
+      await this.run('git rev-parse --is-inside-work-tree');
+    } catch (error) {
+      await this.run('git init');
+      await this.run('git checkout -B master');
+    }
+
     await this.run(`git config user.name "${name}"`);
     await this.run(`git config user.email "${email}"`);
+
+    if (remoteUrl) {
+      try {
+        await this.run(`git remote set-url origin ${remoteUrl}`);
+      } catch (error) {
+        await this.run(`git remote add origin ${remoteUrl}`);
+      }
+    }
   }
 
   async commitAndPush(message, files = ['.']) {
     try {
-      // 0. Pre-Flight Checks
       await this.verifier.verify(files);
 
-      // 1. Add files
       const fileList = files.join(' ');
       await this.run(`git add ${fileList}`);
 
-      // 2. Commit
       await this.run(`git commit -m "${message}"`);
 
-      // 3. Push
-      await this.run('git push origin master'); // Assuming master branch as confirmed
+      await this.run('git push origin master');
       
       return { success: true, message: 'Pushed to origin/master' };
 

@@ -7,10 +7,11 @@ const git = new GitOps();
 
 app.use(express.json());
 
-// Init Git Config
 const gitName = process.env.GIT_USER_NAME || 'Deedee Supervisor';
 const gitEmail = process.env.GIT_USER_EMAIL || 'supervisor@deedee.bot';
-git.configure(gitName, gitEmail).catch(console.error);
+const gitRemote = process.env.GIT_REMOTE_URL;
+
+git.configure(gitName, gitEmail, gitRemote).catch(console.error);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'supervisor' });
@@ -37,4 +38,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app }; // Export for testing
+module.exports = { app };

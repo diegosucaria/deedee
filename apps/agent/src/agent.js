@@ -20,7 +20,7 @@ class Agent {
     this.local = new LocalTools('/app/source');
     
     this.modelName = process.env.GEMINI_MODEL || 'gemini-1.5-pro';
-    const apiVersion = process.env.GEMINI_API_VERSION || 'v1beta'; // New SDK usually defaults to v1beta for newer features
+    const apiVersion = process.env.GEMINI_API_VERSION || 'v1beta';
 
     console.log(`[Agent] Using model: ${this.modelName} (Client version: ${apiVersion})`);
     
@@ -68,10 +68,7 @@ class Agent {
       this.db.saveMessage(message);
 
       // 2. Send Message to Gemini
-      let response = await this.chat.sendMessage({
-        role: 'user',
-        parts: [{ text: message.content }]
-      });
+      let response = await this.chat.sendMessage(message.content);
 
       // 3. Handle Function Calls Loop
       let functionCalls = this._getFunctionCalls(response);
@@ -107,26 +104,22 @@ class Agent {
         else if (call.name === 'writeFile') toolResult = await this.local.writeFile(call.args.path, call.args.content);
         else if (call.name === 'listDirectory') toolResult = await this.local.listDirectory(call.args.path);
         else if (call.name === 'runShellCommand') toolResult = await this.local.runShellCommand(call.args.command);
-        // ---------------------------------------------
 
         console.log('Tool Result:', toolResult);
 
         // Send Tool Response back to Gemini
-        response = await this.chat.sendMessage({
-          parts: [{
-            functionResponse: {
-              name: call.name,
-              response: { result: toolResult }
-            }
-          }]
-        });
+        response = await this.chat.sendMessage([{
+          functionResponse: {
+            name: call.name,
+            response: { result: toolResult }
+          }
+        }]);
 
         // Re-check for recursive function calls (e.g., tool calls another tool)
         functionCalls = this._getFunctionCalls(response);
       }
 
       // 4. Final Text Response
-      // response.text is a getter in the new SDK that extracts the text part safely
       const text = response.text || '';
       
       if (text) {

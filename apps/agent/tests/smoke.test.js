@@ -21,30 +21,70 @@ jest.mock('@deedee/mcp-servers/src/gsuite/index', () => ({
   }))
 }));
 
-jest.mock('@google/generative-ai', () => ({
-  GoogleGenerativeAI: jest.fn().mockImplementation(() => ({
-    getGenerativeModel: jest.fn().mockReturnValue({
-      startChat: jest.fn().mockReturnValue({
-        sendMessage: jest.fn().mockImplementation(async (content) => {
-          // 1. First call simulates Model asking to call function
-          if (typeof content === 'string' && content.includes('calendar')) {
+// 3. Mock @google/genai
+jest.mock('@google/genai', () => ({
+  GoogleGenAI: jest.fn().mockImplementation(() => ({
+    chats: {
+      create: jest.fn().mockReturnValue({
+        sendMessage: jest.fn().mockImplementation(async (payload) => {
+          
+          // --- FIX: Handle different payload types ---
+          
+          // Case A: User Message (String)
+          // Agent calls: sendMessage("Check my calendar")
+          let userText = '';
+          if (typeof payload === 'string') {
+            userText = payload;
+          } 
+          // Fallback if wrapped in object
+          else if (payload?.parts?.[0]?.text) {
+            userText = payload.parts[0].text;
+          }
+
+          // Case B: Function Response (Array)
+          // Agent calls: sendMessage([{ functionResponse: ... }])
+          let isFunctionResponse = false;
+          if (Array.isArray(payload) && payload[0]?.functionResponse) {
+            isFunctionResponse = true;
+          } 
+          // Fallback if wrapped in object
+          else if (payload?.parts?.[0]?.functionResponse) {
+            isFunctionResponse = true;
+          }
+
+          // --- LOGIC ---
+
+          // SCENARIO 1: User asks for calendar (First Turn)
+          if (userText && userText.toLowerCase().includes('calendar')) {
             return {
-              response: {
-                text: () => '',
-                functionCalls: () => [{ name: 'listEvents', args: {} }]
-              }
+              text: undefined, 
+              candidates: [{
+                content: {
+                  parts: [{
+                    functionCall: { name: 'listEvents', args: {} }
+                  }]
+                }
+              }]
             };
           }
-          // 2. Second call simulates Model seeing the result
-          return {
-            response: {
-              text: () => 'You have one event.',
-              functionCalls: () => []
-            }
-          };
+
+          // SCENARIO 2: Tool execution finishes (Second Turn)
+          if (isFunctionResponse) {
+            return {
+              text: 'You have one event.',
+              candidates: [{
+                content: {
+                  parts: [{ text: 'You have one event.' }]
+                }
+              }]
+            };
+          }
+
+          // Default
+          return { text: 'I do not understand.', candidates: [] };
         })
       })
-    })
+    }
   }))
 }));
 
@@ -53,6 +93,7 @@ describe('Agent with Tools', () => {
   let mockInterface;
 
   beforeEach(() => {
+    jest.clearAllMocks(); // Good practice to clear mocks between tests
     mockInterface = new MockInterface();
     agent = new Agent({
       googleApiKey: 'fake-key',
