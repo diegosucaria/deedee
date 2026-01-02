@@ -77,6 +77,13 @@ class Agent {
       // 3. Handle Function Calls Loop
       let functionCalls = this._getFunctionCalls(response);
 
+      if (functionCalls.length > 0) {
+        const thinkingMsg = createAssistantMessage('Thinking...');
+        thinkingMsg.metadata = { chatId: message.metadata?.chatId };
+        thinkingMsg.source = message.source;
+        await this.interface.send(thinkingMsg).catch(err => console.error('[Agent] Failed to send thinking msg:', err));
+      }
+
       while (functionCalls && functionCalls.length > 0) {
         const call = functionCalls[0];
         console.log(`Function Call: ${call.name}`, call.args);
@@ -147,7 +154,7 @@ class Agent {
       console.error('Error processing message:', error);
       const errReply = createAssistantMessage(`Error: ${error.message}`);
       errReply.metadata = { chatId: message.metadata?.chatId };
-      errReply.source = message.source; // Fix: Propagate source to avoid 400 error in Interfaces
+      errReply.source = message.source;
       await this.interface.send(errReply);
     }
   }
