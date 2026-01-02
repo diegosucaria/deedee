@@ -43,3 +43,4 @@
   - [x] Add `SLACK_WEBHOOK_URL` to Docker Compose (managed externally)
   - [x] Update Monitor to post to Webhook
 - [ ] **Spec 007: WhatsApp Interface**
+- [ ] **Spec 015: Slack Bot Interface**
