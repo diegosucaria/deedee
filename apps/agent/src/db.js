@@ -127,6 +127,30 @@ class AgentDB {
     const result = stmt.get(windowHours);
     return result ? result.count : 0;
   }
+  // --- Chat History Hydration ---
+  getHistoryForChat(chatId, limit = 20) {
+    if (!chatId) return [];
+
+    // Get last N messages for this chat
+    const stmt = this.db.prepare(`
+      SELECT role, content FROM messages 
+      WHERE chat_id = ? 
+      ORDER BY timestamp DESC 
+      LIMIT ?
+    `);
+
+    const rows = stmt.all(chatId, limit).reverse(); // Reverse to get chronological order
+
+    // Map to Gemini SDK format
+    return rows.map(row => {
+      // Map 'assistant' role to 'model' for Gemini
+      const role = row.role === 'assistant' ? 'model' : row.role;
+      return {
+        role: role,
+        parts: [{ text: row.content }]
+      };
+    });
+  }
 }
 
 module.exports = { AgentDB };

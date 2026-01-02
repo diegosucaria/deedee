@@ -16,6 +16,9 @@ services:
       - RATE_LIMIT_HOURLY=50
       - RATE_LIMIT_DAILY=500
       - MAX_TOOL_LOOPS=50
+      - ROUTER_MODEL=gemini-2.0-flash-exp
+      - WORKER_FLASH=gemini-2.0-flash-exp
+      - WORKER_PRO=gemini-exp-1206
     volumes:
       - repo-data:/app/source
       - agent-data:/app/data
@@ -31,7 +34,6 @@ services:
       - GIT_USER_NAME=Deedee Agent
       - GIT_USER_EMAIL=deedee@bot
       - PORT=4000
-      - SLACK_WEBHOOK_URL= # Add your webhook URL here
     volumes:
       - repo-data:/app/source
     networks:

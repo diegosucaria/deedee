@@ -29,8 +29,13 @@ class Verifier {
     // In the future, we could optimize this to `npm test -w @deedee/agent`.
     try {
       console.log('[Verifier] Running tests...');
-      // We assume dependencies are installed.
-      // We run tests for the whole monorepo.
+
+      // Ensure specific dependencies are installed in the volume
+      // This is critical because the volume is separate from the container's build time files
+      console.log('[Verifier] Installing dependencies in source...');
+      await execAsync('npm install', { cwd: this.workDir });
+
+      // Run tests for the whole monorepo
       await execAsync('npm test', { cwd: this.workDir });
     } catch (error) {
       // stdout usually contains the test failure details

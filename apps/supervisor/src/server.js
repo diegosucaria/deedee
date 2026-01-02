@@ -56,6 +56,16 @@ app.post('/cmd/rollback', async (req, res) => {
   }
 });
 
+app.post('/cmd/pull', async (req, res) => {
+  try {
+    console.log('[Supervisor] Received Pull Request');
+    const result = await git.pull();
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 
 if (require.main === module) {
   app.listen(port, () => {

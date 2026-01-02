@@ -27,10 +27,10 @@
 - [x] **Feature: Loop Prevention (Safety)**
 - [x] **Feature: "Thinking" State Notification**
 - [x] **Improvement: Tool Feedback & Null Handling**
-- [ ] **Spec 013: Router Architecture & Chat Hydration**
-  - [ ] Implement AgentDB Hydration (`getHistoryForChat`)
-  - [ ] Implement Router Logic (Prompt & Parsing)
-  - [ ] Refactor Agent to Stateless/Hydrated Loop
+- [x] **Spec 013: Router Architecture & Chat Hydration**
+  - [x] Implement AgentDB Hydration (`getHistoryForChat`)
+  - [x] Implement Router Logic (Prompt & Parsing)
+  - [x] Refactor Agent to Stateless/Hydrated Loop
 - [x] **Spec 006: Supervisor Rollback**
   - [x] Implement `POST /cmd/rollback`
   - [x] Implement `git revert` logic

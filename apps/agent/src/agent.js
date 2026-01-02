@@ -4,34 +4,25 @@ const { GSuiteTools } = require('@deedee/mcp-servers/src/gsuite/index');
 const { LocalTools } = require('@deedee/mcp-servers/src/local/index');
 const { AgentDB } = require('./db');
 const { toolDefinitions } = require('./tools-definition');
+const { Router } = require('./router'); // [NEW]
 
 class Agent {
   constructor(config) {
     this.interface = config.interface;
+    this.config = config; // Save config for later
 
     // 1. Initialize the unified Client
     this.client = new GoogleGenAI({ apiKey: config.googleApiKey });
 
     // Persistence
-    this.db = new AgentDB(); // Defaults to /app/data
+    this.db = new AgentDB();
+
+    // Router
+    this.router = new Router(config.googleApiKey); // [NEW]
 
     // Tools Setup
     this.gsuite = new GSuiteTools();
     this.local = new LocalTools('/app/source');
-
-    this.modelName = process.env.GEMINI_MODEL || 'gemini-1.5-pro';
-    const apiVersion = process.env.GEMINI_API_VERSION || 'v1beta';
-
-    console.log(`[Agent] Using model: ${this.modelName} (Client version: ${apiVersion})`);
-
-    // 2. Start Chat (happens on the client, not a model instance)
-    // Note: If you have system instructions, they go into 'config' here as well.
-    this.chat = this.client.chats.create({
-      model: this.modelName,
-      config: {
-        tools: toolDefinitions,
-      }
-    });
 
     this.onMessage = this.onMessage.bind(this);
   }
@@ -89,8 +80,39 @@ class Agent {
       // 1. Save User Message
       this.db.saveMessage(message);
 
+      // --- ROUTING ---
+      const decision = await this.router.route(message.content);
+      // Models: 'gemini-2.0-flash-exp' vs 'gemini-exp-1206' (or 1.5-pro)
+      const selectedModel = decision.model === 'FLASH'
+        ? (process.env.WORKER_FLASH || 'gemini-2.0-flash-exp')
+        : (process.env.WORKER_PRO || 'gemini-exp-1206');
+
+      console.log(`[Agent] Routing to: ${selectedModel}`);
+
+      // --- HYDRATION ---
+      const chatId = message.metadata?.chatId;
+      const history = this.db.getHistoryForChat(chatId, 50); // Get last 50 turns
+
+      // Initialize Stateless Chat Session
+      const session = this.client.chats.create({
+        model: selectedModel,
+        config: {
+          tools: toolDefinitions,
+          systemInstruction: `
+            You are Deedee, a helpful and capable AI assistant.
+            You have access to a variety of tools to help the user.
+            
+            CRITICAL PROTOCOL:
+            1. If you are asked to write code, modify files, or improve yourself, you MUST first call 'pullLatestChanges'.
+            2. When you are done making changes, you MUST call 'commitAndPush'. This tool runs tests automatically.
+            3. DO NOT use 'runShellCommand' for git operations (commit/push). Use the dedicated tools.
+          `,
+        },
+        history: history
+      });
+
       // 2. Send Message to Gemini
-      let response = await this.chat.sendMessage({ message: message.content });
+      let response = await session.sendMessage({ message: message.content });
 
       // 3. Handle Function Calls Loop
       let functionCalls = this._getFunctionCalls(response);
@@ -152,6 +174,22 @@ class Agent {
           });
           toolResult = await rollbackRes.json();
         }
+        else if (call.name === 'pullLatestChanges') {
+          // Trigger Supervisor Pull
+          const pullRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/pull`, {
+            method: 'POST'
+          });
+          toolResult = await pullRes.json();
+        }
+        else if (call.name === 'commitAndPush') {
+          // Trigger Supervisor Commit
+          const commitRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/commit`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ message: call.args.message, files: ['.'] })
+          });
+          toolResult = await commitRes.json();
+        }
 
         if (toolResult === undefined || toolResult === null) {
           toolResult = { info: 'No output from tool execution.' };
@@ -160,7 +198,7 @@ class Agent {
         console.log('Tool Result:', toolResult);
 
         // Send Tool Response back to Gemini
-        response = await this.chat.sendMessage({
+        response = await session.sendMessage({
           message: [{
             functionResponse: {
               name: call.name,

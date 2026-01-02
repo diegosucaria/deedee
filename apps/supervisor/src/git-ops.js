@@ -67,6 +67,9 @@ class GitOps {
   async rollback() {
     try {
       console.log('[GitOps] Rolling back last commit...');
+      // Ensure clean state
+      await this.run('git reset --hard HEAD');
+
       // Revert the last commit. This creates a new commit.
       await this.run('git revert --no-edit HEAD');
 
@@ -76,6 +79,18 @@ class GitOps {
       return { success: true, message: 'Rolled back last change successfully.' };
     } catch (error) {
       console.error('[GitOps] Rollback Error:', error.message);
+      return { success: false, error: error.message };
+    }
+  }
+
+  async pull() {
+    try {
+      console.log('[GitOps] Pulling latest changes...');
+      await this.run('git fetch origin');
+      await this.run('git reset --hard origin/master'); // Force sync to origin
+      return { success: true, message: 'Pulled latest changes.' };
+    } catch (error) {
+      console.error('[GitOps] Pull Error:', error.message);
       return { success: false, error: error.message };
     }
   }

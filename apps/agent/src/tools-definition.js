@@ -117,6 +117,26 @@ const toolDefinitions = [
           properties: {},
           required: []
         }
+      },
+      {
+        name: "pullLatestChanges",
+        description: "Updates the codebase by pulling the latest changes from the remote repository. MUST be called before starting any coding task or self-improvement.",
+        parameters: {
+          type: "OBJECT",
+          properties: {},
+          required: []
+        }
+      },
+      {
+        name: "commitAndPush",
+        description: "Commits and pushes changes to the remote repository. Automatically runs 'npm test' first and fails if tests do not pass.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            message: { type: "STRING", description: "Commit message describing the changes" }
+          },
+          required: ["message"]
+        }
       }
     ]
   }
