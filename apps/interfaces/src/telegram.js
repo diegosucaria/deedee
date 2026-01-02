@@ -58,7 +58,7 @@ class TelegramService {
       console.log(`[Telegram] Received voice from ${userId}`);
 
       // Create a message with parts
-      const message = createUserMessage('[Voz]', 'telegram', userId);
+      const message = createUserMessage('[Voice]', 'telegram', userId);
       message.parts = [
         { text: "The user has received a voice message. Detect its language, listen to it and respond appropriately." },
         {
