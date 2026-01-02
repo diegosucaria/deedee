@@ -364,7 +364,10 @@ class Agent {
     if (!candidates || !candidates.length) return [];
 
     // Flatten parts from the first candidate that are function calls
-    return candidates[0].content.parts
+    const content = candidates[0].content;
+    if (!content || !content.parts) return [];
+
+    return content.parts
       .filter(part => part.functionCall)
       .map(part => part.functionCall);
   }
