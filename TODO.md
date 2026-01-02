@@ -59,7 +59,12 @@
   - [x] Implement `MCPManager` (Stdio Transport)
   - [x] Refactor `Agent.js` to Hybrid Tool System (Merged Tools)
   - [x] Configure Home Assistant Server (`mcp_config.json`)
+  - [x] Configure Home Assistant Server (`mcp_config.json`)
   - [x] **Spec 019: Plex Integration**
     - [x] Clone `vladimir-tutin/plex-mcp-server`
     - [x] Configure `mcp_config.json` with `python3` and `cwd`
     - [x] Dockerfile dependency update (venv + uv)
+    - [x] **Guardrails**: Implement Spec 017 (Confirmation for Destructive Tools)
+  - [x] **Spec 020: API Service (Microservice)**
+    - [x] Create `apps/api` with Express & Bearer Auth
+    - [x] Connect to Agent via Webhook

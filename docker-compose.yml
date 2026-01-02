@@ -56,6 +56,21 @@ services:
       - deedee-net
     restart: always
 
+  api:
+    build:
+      context: .
+      dockerfile: apps/api/Dockerfile
+    environment:
+      - NODE_ENV=production
+      - AGENT_URL=http://agent:3000
+      - PORT=3001
+      # DEEDEE_API_TOKEN injected by Balena
+    ports:
+      - "3001:3001"
+    networks:
+      - deedee-net
+    restart: always
+
 networks:
   deedee-net:
     driver: bridge

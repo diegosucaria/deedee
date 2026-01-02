@@ -20,7 +20,7 @@ Deedee is a **personal, autonomous AI agent** designed to run on a Raspberry Pi 
     *   **Google Workspace**: Calendar & Gmail access (via MCP).
     *   **Plex**: Manage media, playlists, and check status.
     *   **Memory**: Long-term fact storage.
-*   **Interfaces**: Chat via Telegram or Slack.
+*   **Interfaces**: Chat via Telegram, Slack, or secure API Webhook.
 
 ---
 
@@ -61,6 +61,7 @@ You must configure these variables (e.g., in a `.env` file or Balena Dashboard):
 | `WORKER_PRO` | Model for reasoning (Default: `gemini-3-pro-preview`). | No |
 | `PLEX_URL` | URL of your Plex Server. | No |
 | `PLEX_TOKEN` | Plex Authentication Token. | No |
+| `DEEDEE_API_TOKEN` | Token for the API Service (`apps/api`). | No (but API won't work) |
 
 *\* At least one chat platform is required.*
 

@@ -39,7 +39,15 @@ The ears and mouth.
     - Receives message -> `POST http://agent:3000/webhook` -> Agent.
     - Agent replies -> `POST http://interfaces:5000/send` -> Platform.
 
-### 4. MCP Servers (`packages/mcp-servers`)
+### 4. API Service (`apps/api`)
+The Gateway.
+- **Goal**: Secure, authenticated entry point for external webhooks (iOS Shortcuts, Dashboards).
+- **Port**: 3001.
+- **Auth**: `Bearer <DEEDEE_API_TOKEN>`.
+- **Data Flow**:
+    - Incoming Request -> `apps/api` (Validates Token) -> `http://agent:3000/webhook`.
+
+### 5. MCP Servers (`packages/mcp-servers`)
 - **Runtime**: Sub-processes within the Agent container (for now) to save RAM.
 - **Role**: Expose tools and data sources to the Agent via the Model Context Protocol.
 
@@ -84,6 +92,7 @@ Use for custom tools integrated directly into the repo (e.g., `gsuite`).
 - **Protocol**: HTTP/JSON.
 - **Network**: Internal Docker Network (no external access).
 - **Agent (Port 3000)**: Accepts messages, tool results.
+- **API (Port 3001)**: Public-facing authenticated gateway.
 - **Supervisor (Port 4000)**: Accepts system commands (update, restart).
 - **Interfaces (Port 5000)**: Accepts outgoing messages.
 
