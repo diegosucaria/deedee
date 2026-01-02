@@ -204,6 +204,7 @@ class Agent {
           });
         }
 
+        const call = functionCalls[0];
         let executionName = call.name;
 
         // Sanitize Tool Name (fix for default_api prefix hallucination)
