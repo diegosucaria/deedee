@@ -179,6 +179,13 @@ class AgentDB {
     console.log(`[DB] Cleared history for chat ${chatId}`);
   }
 
+  deleteMessagesSince(chatId, timestamp) {
+    if (!chatId || !timestamp) return;
+    const stmt = this.db.prepare('DELETE FROM messages WHERE chat_id = ? AND timestamp >= ?');
+    const info = stmt.run(chatId, timestamp);
+    console.log(`[DB] Rolled back ${info.changes} messages in chat ${chatId} since ${timestamp}`);
+  }
+
   clearGoals(chatId) {
     // Fail all pending goals associated with this chat or globally if no metadata check?
     // We filter by metadata like '%"chatId": "xyz"%' 

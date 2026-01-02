@@ -348,7 +348,14 @@ class Agent {
 
     } catch (error) {
       console.error('Error processing message:', error);
-      const errReply = createAssistantMessage(`Error: ${error.message}`);
+
+      // Auto-Rollback: Delete this turn to prevent stuck loops
+      if (chatId && message.timestamp) {
+        console.warn(`[Agent] Performing Auto-Rollback for chat ${chatId} since ${message.timestamp}`);
+        this.db.deleteMessagesSince(chatId, message.timestamp);
+      }
+
+      const errReply = createAssistantMessage(`Error: ${error.message} (Automatic Rollback performed)`);
       errReply.metadata = { chatId: message.metadata?.chatId };
       errReply.source = message.source;
       await this.interface.send(errReply);
