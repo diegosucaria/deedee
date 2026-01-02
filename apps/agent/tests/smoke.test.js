@@ -43,10 +43,9 @@ jest.mock('@google/genai', () => ({
             };
           }
 
-          // Case B: Function Response (Object)
-          // The Agent now sends { role: 'function', parts: [...] }
-          // We check specifically for this structure.
-          if (payload && payload.role === 'function' && payload.parts?.[0]?.functionResponse) {
+          // Case B: Function Response (Array of parts)
+          // The Agent now sends [{ functionResponse: ... }]
+          if (Array.isArray(payload) && payload[0]?.functionResponse) {
             return {
               text: 'You have one event.',
               candidates: [{

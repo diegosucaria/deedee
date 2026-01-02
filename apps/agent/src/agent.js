@@ -108,15 +108,12 @@ class Agent {
         console.log('Tool Result:', toolResult);
 
         // Send Tool Response back to Gemini
-        response = await this.chat.sendMessage({
-          role: 'function',
-          parts: [{
-            functionResponse: {
-              name: call.name,
-              response: { result: toolResult }
-            }
-          }]
-        });
+        response = await this.chat.sendMessage([{
+          functionResponse: {
+            name: call.name,
+            response: { result: toolResult }
+          }
+        }]);
 
         // Re-check for recursive function calls (e.g., tool calls another tool)
         functionCalls = this._getFunctionCalls(response);
