@@ -43,13 +43,19 @@
   - [x] Add `SLACK_WEBHOOK_URL` to Docker Compose (managed externally)
   - [x] Update Monitor to post to Webhook
 - [ ] **Spec 007: WhatsApp Interface**
-- [ ] **Spec 015: Slack Bot Interface**
-- [x] **Feature: Smart Thinking & Loop Feedback**
-  - [x] Implement `_generateThinkingMessage` helper.
-  - [x] Info messages with action context.
-  - [x] Periodic update (every 3 loops).
-- [x] **Spec 016: Full MCP Client Architecture**
-  - [x] Install `@modelcontextprotocol/sdk`
+- [ ] **Spec 015: Slack- [x] **Agent Basics**:
+    - [x] Basic "Hello World" (Telegram -> Agent -> LLM -> Telegram).
+    - [x] Router Logic (Flash for fast/tools, Pro for complex).
+    - [x] Rate Limiting (Prevent $1000 bills).
+    - [x] Context Hydration (SQLite / Vector DB basics).
+    - [x] Date Awareness (Inject system time).
+    - [x] **Architecture & Performance**:
+        - [x] MCP Tool Caching (Fast startup/tools).
+        - [x] Context-Aware Routing (History + Multimodal).
+        - [x] Security Allowlist (`ALLOWED_TELEGRAM_IDS`).
+- [ ] **Interfaces**:
+    - [x] Telegram (Text & Voice).
+    - [ ] WhatsApp (Twilio). (Priority: Check cost first).protocol/sdk`
   - [x] Implement `MCPManager` (Stdio Transport)
   - [x] Refactor `Agent.js` to Hybrid Tool System (Merged Tools)
   - [x] Configure Home Assistant Server (`mcp_config.json`)

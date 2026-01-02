@@ -7,8 +7,23 @@ class TelegramService {
     this.bot = new Telegraf(token);
     this.agentUrl = agentUrl;
 
+    // Security: Parse Allowed IDs
+    const allowed = process.env.ALLOWED_TELEGRAM_IDS || '';
+    this.allowedIds = new Set(allowed.split(',').map(id => id.trim()).filter(id => id.length > 0));
+
+    if (this.allowedIds.size > 0) {
+      console.log(`[Telegram] Security Enforced. Allowed IDs: ${Array.from(this.allowedIds).join(', ')}`);
+    } else {
+      console.warn(`[Telegram] ⚠️ WARNING: No ALLOWED_TELEGRAM_IDS set. Bot is PUBLIC.`);
+    }
+
     this.bot.on('text', this.handleMessage.bind(this));
     this.bot.on('voice', this.handleVoice.bind(this));
+  }
+
+  _isAllowed(userId) {
+    if (this.allowedIds.size === 0) return true; // Open by default if not configured
+    return this.allowedIds.has(userId);
   }
 
   async start() {
@@ -26,6 +41,11 @@ class TelegramService {
     try {
       const text = ctx.message.text;
       const userId = ctx.from.id.toString();
+
+      if (!this._isAllowed(userId)) {
+        console.warn(`[Telegram] Blocked message from unauthorized user: ${userId}`);
+        return;
+      }
       const chatId = ctx.chat.id.toString();
 
       console.log(`[Telegram] Received from ${userId}: ${text}`);
@@ -53,6 +73,11 @@ class TelegramService {
       const base64Audio = buffer.toString('base64');
 
       const userId = ctx.from.id.toString();
+
+      if (!this._isAllowed(userId)) {
+        console.warn(`[Telegram] Blocked voice from unauthorized user: ${userId}`);
+        return;
+      }
       const chatId = ctx.chat.id.toString();
 
       console.log(`[Telegram] Received voice from ${userId}`);

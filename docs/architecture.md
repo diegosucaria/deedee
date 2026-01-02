@@ -8,34 +8,32 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 ### 1. Core Agent (`apps/agent`)
 - **Runtime**: Node.js
 - **Framework**: LangChain or Google GenAI SDK
-- **Role**: Central brain. Processes user input, maintains memory, plans actions, and invokes tools.
-- **Cognitive Architecture (Router-Worker)**:
-    - **Layer 1 (Router)**: `Gemini 2.0 Flash`. Analyzes intent (strict JSON). Decides if a task is "Simple" or "Complex".
-    - **Layer 2 (Workers)**:
-        - **Fast Worker**: `Gemini 2.0 Flash`. Executes tools, home automation, and casual chat.
-        - **Reasoning Worker**: `Gemini 1.5 Pro` (or higher). Handles coding, planning, and analysis.
-    - **State Management**: Stateless execution. Context is "hydrated" from SQLite for every turn.
-- **Dependencies**: 
-    - Connects to MCP Servers for capabilities.
-    - Connects to Interface adapters for communication.
+The brain.
+- **Goal:** Processes user requests, manages state, and decides which tools to call.
+- **Logic:**
+    - **Router:** Decides between `GEMINI FLASH` (fast, tools, light reasoning) and `GEMINI PRO` (deep reasoning, coding).
+        - *Context-Aware:* Uses the last 3 messages to make smarter routing decisions.
+        - *Multimodal:* Handles audio/images properly.
+    - **MCP Manager:** Discovers and communicates with tools.
+        - *Caching:* Caches tool definitions at startup to minimize latency.
+    - **State:** Hydrates conversation history from SQLite / Vector DB on every turn.
 
 ### 2. Supervisor (`apps/supervisor`)
-- **Runtime**: Node.js
-- **Privileges**: Filesystem access to the source code repo.
-- **Port**: 4000 (Internal).
-- **Role**: The "Git Operator".
-    - Exposes HTTP endpoints: `POST /cmd/update`, `POST /cmd/rollback`.
-    - Watches for "Change Requests" from the Agent.
-    - Applies code changes to the local git repository.
-    - **Commits and Pushes** changes to GitHub.
+The immune system.
+- **Goal:** Ensures the Agent doesn't break itself and handles self-updates.
+- **Capabilities:**
+    - Has full filesystem access (unlike the Agent, which is restricted).
+    - Can run `git` commands, `npm install`, and restart the Agent container.
+    - **Watchdog:** If the Agent code is broken (tests fail), it performs a hard reset.
+    - Can be triggered by the Agent to apply a self-patch.
 
-### 3. Interfaces Service (`apps/interfaces`)
-- **Runtime**: Node.js
-- **Port**: 5000 (Internal).
-- **Role**: Unified "Ears" of the system.
-- **Communication Strategy**:
-    - **Telegram**: Long Polling.
-    - **Slack**: Socket Mode.
+### 3. Interfaces (`apps/interfaces`)
+The ears and mouth.
+- **Goal:** Exposes the Agent to the outside world.
+- **Supported Channels:**
+    - **Telegram:** Polling bot.
+        - *Security:* Supports `ALLOWED_TELEGRAM_IDS` to restrict access.
+    - **HTTP Webhook:** For other integrations.
     - **WhatsApp**: (TBD - likely Baileys library).
 - **Data Flow**:
     - Receives message -> `POST http://agent:3000/webhook` -> Agent.

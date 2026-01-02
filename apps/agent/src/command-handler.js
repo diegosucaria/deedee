@@ -1,10 +1,11 @@
 const { createAssistantMessage } = require('@deedee/shared/src/types');
 
 class CommandHandler {
-    constructor(db, interfaceObj, confirmationManager) {
+    constructor(db, interfaceObj, confirmationManager, stopFlags) {
         this.db = db;
         this.interface = interfaceObj;
         this.confirmationManager = confirmationManager;
+        this.stopFlags = stopFlags;
     }
 
     /**
@@ -15,6 +16,15 @@ class CommandHandler {
         if (!content?.startsWith('/')) return false; // Not a command
 
         const chatId = message.metadata?.chatId;
+
+        if (content === '/stop') {
+            if (this.stopFlags) {
+                this.stopFlags.add(chatId);
+                console.log(`[CommandHandler] Stop flag set for ${chatId}`);
+                await this.sendReply(chatId, message.source, 'Stopping execution...');
+            }
+            return true;
+        }
 
         if (content === '/clear') {
             this.db.clearHistory(chatId);

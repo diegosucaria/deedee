@@ -31,7 +31,9 @@ class Agent {
     this.local = new LocalTools('/app/source');
 
     this.confirmationManager = new ConfirmationManager(this.db);
-    this.commandHandler = new CommandHandler(this.db, this.interface, this.confirmationManager);
+    // Shared state for stopping execution
+    this.stopFlags = new Set();
+    this.commandHandler = new CommandHandler(this.db, this.interface, this.confirmationManager, this.stopFlags);
     this.rateLimiter = new RateLimiter(this.db);
 
     this.onMessage = this.onMessage.bind(this);
@@ -77,7 +79,11 @@ class Agent {
 
       const chatId = message.metadata?.chatId;
 
-      // 1. Slash Commands (only for text messages)
+      // Clear stop flag for this chat on new message (unless it's the stop command itself, handled by command handler)
+      if (message.content !== '/stop') {
+        this.stopFlags.delete(chatId);
+      }
+
       // 1. Slash Commands (only for text messages)
       const commandResult = !isMultiModal ? await this.commandHandler.handle(message) : false;
 
@@ -166,15 +172,17 @@ class Agent {
             4. DO NOT change/add/improve anything else in the code that was not asked for. Keep comments as is.
             5. All strings and comments you add must be in English.
             6. Since you can self-improve, when writing/adding/changing a tool/feature you must write the tests for it, to validate that it works before calling 'commitAndPush'.
+            7. For multi-step tasks, execute tools in succession (chaining). DO NOT output intermediate text updates (like "I have pulled changes") unless you are blocked. Proceed directly to the next tool call.
           `,
         },
         history: history
       });
 
       // 2. Send Message to Gemini
-      console.time(`[Agent] Model Response (${selectedModel})`);
+      const timerLabel = `[Agent] Model Response (${selectedModel}) - ${Date.now()}`;
+      console.time(timerLabel);
       let response = await session.sendMessage({ message: message.parts || message.content });
-      console.timeEnd(`[Agent] Model Response (${selectedModel})`);
+      console.timeEnd(timerLabel);
 
       // 3. Handle Function Calls Loop
       let functionCalls = this._getFunctionCalls(response);
@@ -184,6 +192,14 @@ class Agent {
       let loopCount = 0;
 
       while (functionCalls && functionCalls.length > 0) {
+        // CHECK STOP FLAG
+        if (this.stopFlags.has(chatId)) {
+          console.log(`[Agent] Stop flag detected for chat ${chatId}. Breaking loop.`);
+          await this.interface.send(createAssistantMessage('🛑 Execution stopped by user.'));
+          this.stopFlags.delete(chatId);
+          break;
+        }
+
         loopCount++;
         if (loopCount > MAX_LOOPS) {
           console.warn(`[Agent] Max tool loop limit reached (${MAX_LOOPS}). Breaking.`);
@@ -288,11 +304,12 @@ class Agent {
         });
 
         // Send Tool Response back to Gemini
-        console.time(`[Agent] Model Tool Response (${selectedModel})`);
+        const toolTimerLabel = `[Agent] Model Tool Response (${selectedModel}) - ${Date.now()}`;
+        console.time(toolTimerLabel);
         response = await session.sendMessage({
           message: [functionResponsePart]
         });
-        console.timeEnd(`[Agent] Model Tool Response (${selectedModel})`);
+        console.timeEnd(toolTimerLabel);
 
         // Re-check for recursive function calls 
         functionCalls = this._getFunctionCalls(response);
@@ -333,6 +350,11 @@ class Agent {
         }
       } else {
         console.warn('[Agent] No text response found. Response dump:', JSON.stringify(response, null, 2));
+        // Fallback notification to user
+        const reply = createAssistantMessage("I received an empty response from my brain. Please try again.");
+        reply.metadata = { chatId: message.metadata?.chatId };
+        reply.source = message.source;
+        await this.interface.send(reply);
       }
 
     } catch (error) {
