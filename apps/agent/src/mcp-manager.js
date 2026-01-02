@@ -94,8 +94,14 @@ class MCPManager {
                 // SPECIAL HANDLING: Home Assistant
                 if (name === 'homeassistant') {
                     // Map standard variables for 'ha-mcp' package (and others that use HASS_*)
-                    if (env.HA_URL) env.HASS_URL = env.HA_URL;
-                    if (env.HA_TOKEN) env.HASS_TOKEN = env.HA_TOKEN;
+                    if (env.HA_URL) {
+                        env.HASS_URL = env.HA_URL;
+                        env.HOMEASSISTANT_URL = env.HA_URL; // Required by ha-mcp
+                    }
+                    if (env.HA_TOKEN) {
+                        env.HASS_TOKEN = env.HA_TOKEN;
+                        env.HOMEASSISTANT_TOKEN = env.HA_TOKEN; // Required by ha-mcp
+                    }
 
                     // Also derive WebSocket URL for 'mcp-server-home-assistant' legacy support or fallback
                     if (env.HA_URL && !env.HOME_ASSISTANT_WEB_SOCKET_URL) {
