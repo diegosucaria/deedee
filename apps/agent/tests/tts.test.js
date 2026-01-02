@@ -33,7 +33,7 @@ describe('Agent TTS', () => {
               content: {
                 parts: [{
                   inlineData: {
-                    data: 'base64audioData'
+                    data: Buffer.from('rawAudioData').toString('base64')
                   }
                 }]
               }
@@ -52,8 +52,11 @@ describe('Agent TTS', () => {
 
     expect(result.success).toBe(true);
     expect(mockInterface.send).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'audio',
-      content: 'base64audioData'
+      type: 'audio'
     }));
+    
+    // Verify content is a base64 string and looks like a WAV (starts with 'UklGR' which is 'RIFF' in base64)
+    const sentMsg = mockInterface.send.mock.calls[0][0];
+    expect(sentMsg.content).toMatch(/^UklGR/);
   });
 });

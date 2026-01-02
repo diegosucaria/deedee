@@ -137,7 +137,7 @@ class Agent {
         // Execute the pending action immediately
         const action = commandResult.action;
         console.log(`[Agent] User confirmed action: ${action.name}`);
-        const result = await this._executeTool(action.name, action.args);
+        const result = await this._executeTool(action.name, action.args, message, sendCallback);
 
         // Notify user of result
         const reply = createAssistantMessage(`Action **${action.name}** executed.\nResult: \`\`\`json\n${JSON.stringify(result, null, 2).substring(0, 500)}\n\`\`\``);
@@ -319,7 +319,7 @@ class Agent {
             // However, the model usually stops after tool execution.
           } else {
             // Execute normally
-            toolResult = await this._executeTool(executionName, call.args, message);
+            toolResult = await this._executeTool(executionName, call.args, message, sendCallback);
           }
 
         } catch (toolErr) {
@@ -482,7 +482,7 @@ class Agent {
     console.log('[Agent] Stopped.');
   }
 
-  async _executeTool(executionName, args, messageContext = {}) {
+  async _executeTool(executionName, args, messageContext = {}, sendCallback) {
     // --- INTERNAL TOOLS ---
     if (executionName === 'rememberFact') {
       this.db.setKey(args.key, args.value);
@@ -566,7 +566,8 @@ class Agent {
         audioMsg.content = wavBase64;
         audioMsg.type = 'audio';
 
-        await sendCallback(audioMsg);
+        const finalSendCallback = sendCallback || (async (msg) => await this.interface.send(msg));
+        await finalSendCallback(audioMsg);
 
         // Return success with metadata, not just true, so the model knows it worked
         return { success: true, info: 'Audio sent to user.' };
