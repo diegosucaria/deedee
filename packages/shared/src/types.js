@@ -1,3 +1,5 @@
+const crypto = require('crypto');
+
 // Type definitions for internal messages
 // In a real TS project this would be a .d.ts or .ts file, 
 // but for JS/JSDoc compatibility we'll export constants and "shapes" via comments.
