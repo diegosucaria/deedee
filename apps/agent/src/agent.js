@@ -326,7 +326,7 @@ class Agent {
           await this.interface.send(reply);
         }
       } else {
-        console.warn('[Agent] No text response found in final turn. Possible empty response or Safety Filter.');
+        console.warn('[Agent] No text response found. Response dump:', JSON.stringify(response, null, 2));
       }
 
     } catch (error) {

@@ -56,7 +56,13 @@ class Router {
                 }
             }).sendMessage({ message: prompt });
 
+
             let text = '{}';
+            console.log('[Router] Raw Response:', response ? (typeof response) : 'undefined');
+
+            if (!response) {
+                throw new Error('Received undefined response from LLM');
+            }
 
             if (typeof response.text === 'function') {
                 text = response.text();
