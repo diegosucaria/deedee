@@ -145,7 +145,17 @@ class Agent {
       // --- DEBUG: Log Raw Response for Thought Signature Issue ---
       try {
         if (response.candidates && response.candidates[0]) {
-          console.log('[DEBUG] Gemini Response Parts:', JSON.stringify(response.candidates[0].content.parts, null, 2));
+          const parts = response.candidates[0].content.parts;
+          console.log('[DEBUG] Gemini Response Parts (JSON):', JSON.stringify(parts, null, 2));
+
+          // Deep inspection for hidden thought_signature
+          parts.forEach((part, idx) => {
+            if (part.functionCall) {
+              console.log(`[DEBUG] Part ${idx} functionCall keys:`, Object.keys(part.functionCall));
+              console.log(`[DEBUG] Part ${idx} has thought_signature?`, 'thought_signature' in part.functionCall);
+              console.log(`[DEBUG] Part ${idx} thought_signature value:`, part.functionCall.thought_signature);
+            }
+          });
         } else {
           console.log('[DEBUG] Gemini Response (No Candidates):', JSON.stringify(response, null, 2));
         }
