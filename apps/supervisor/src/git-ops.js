@@ -21,20 +21,19 @@ class GitOps {
   }
 
   async configure(name, email, remoteUrl) {
-    try {
-      await this.run('git rev-parse --is-inside-work-tree');
-    } catch (error) {
-      await this.run('git init');
-      await this.run('git checkout -B master');
-    }
+    // Initialize (idempotent) to ensure repo exists without causing 'not a git repository' errors
+    await this.run('git init');
+    await this.run('git checkout -B master');
 
     await this.run(`git config user.name "${name}"`);
     await this.run(`git config user.email "${email}"`);
 
     if (remoteUrl) {
-      try {
+      // Check existing remotes to avoid 'No such remote' or 'Remote already exists' errors
+      const remotes = await this.run('git remote');
+      if (remotes.includes('origin')) {
         await this.run(`git remote set-url origin ${remoteUrl}`);
-      } catch (error) {
+      } else {
         await this.run(`git remote add origin ${remoteUrl}`);
       }
     }
