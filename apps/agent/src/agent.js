@@ -2,12 +2,16 @@ const { GoogleGenerativeAI } = require('@google/generative-ai');
 const { createAssistantMessage } = require('@deedee/shared/src/types');
 const { GSuiteTools } = require('@deedee/mcp-servers/src/gsuite/index');
 const { LocalTools } = require('@deedee/mcp-servers/src/local/index');
+const { AgentDB } = require('./db');
 
 class Agent {
   constructor(config) {
     this.interface = config.interface;
     this.genAI = new GoogleGenerativeAI(config.googleApiKey);
     
+    // Persistence
+    this.db = new AgentDB(); // Defaults to /app/data
+
     // Tools Setup
     this.gsuite = new GSuiteTools();
     this.local = new LocalTools('/app/source');
@@ -16,6 +20,28 @@ class Agent {
     const tools = [
       {
         functionDeclarations: [
+          // Memory / DB
+          {
+            name: "rememberFact",
+            description: "Save a fact or preference to long-term memory",
+            parameters: {
+              type: "OBJECT",
+              properties: {
+                key: { type: "STRING", description: "Unique key (e.g., 'user_name')" },
+                value: { type: "STRING", description: "Value to store" }
+              },
+              required: ["key", "value"]
+            }
+          },
+          {
+            name: "getFact",
+            description: "Retrieve a fact from long-term memory",
+            parameters: {
+              type: "OBJECT",
+              properties: { key: { type: "STRING" } },
+              required: ["key"]
+            }
+          },
           // GSuite
           {
             name: "listEvents",
@@ -96,6 +122,16 @@ class Agent {
 
   async start() {
     console.log('Agent starting...');
+    
+    // Check Goals
+    const pendingGoals = this.db.getPendingGoals();
+    if (pendingGoals.length > 0) {
+      console.log(`[Memory] I have ${pendingGoals.length} pending goals:`);
+      pendingGoals.forEach(g => console.log(` - ${g.description}`));
+      // In a real scenario, we might proactively send a message here:
+      // this.interface.send(createAssistantMessage(`I'm back. Resuming goal: ${pendingGoals[0].description}`));
+    }
+
     this.interface.on('message', this.onMessage);
     console.log('Agent listening for messages.');
   }
@@ -103,6 +139,9 @@ class Agent {
   async onMessage(message) {
     try {
       console.log(`Received: ${message.content}`);
+      
+      // 1. Save User Message
+      this.db.saveMessage(message);
 
       const result = await this.chat.sendMessage(message.content);
       const response = await result.response;
@@ -113,8 +152,16 @@ class Agent {
         console.log(`Function Call: ${call.name}`, call.args);
         
         let toolResult;
+        // Memory
+        if (call.name === 'rememberFact') {
+          this.db.setKey(call.args.key, call.args.value);
+          toolResult = { success: true };
+        }
+        else if (call.name === 'getFact') {
+          toolResult = this.db.getKey(call.args.key);
+        }
         // GSuite
-        if (call.name === 'listEvents') toolResult = await this.gsuite.listEvents(call.args);
+        else if (call.name === 'listEvents') toolResult = await this.gsuite.listEvents(call.args);
         else if (call.name === 'sendEmail') toolResult = await this.gsuite.sendEmail(call.args);
         // Local
         else if (call.name === 'readFile') toolResult = await this.local.readFile(call.args.path);
@@ -134,12 +181,20 @@ class Agent {
         
         const finalResponse = createAssistantMessage(nextResult.response.text());
         finalResponse.metadata = { chatId: message.metadata?.chatId };
+        
+        // 2. Save Assistant Reply
+        this.db.saveMessage(finalResponse);
+        
         await this.interface.send(finalResponse);
 
       } else {
         const text = response.text();
         const reply = createAssistantMessage(text);
         reply.metadata = { chatId: message.metadata?.chatId };
+        
+        // 2. Save Assistant Reply
+        this.db.saveMessage(reply);
+        
         await this.interface.send(reply);
       }
       

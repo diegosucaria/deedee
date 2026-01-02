@@ -2,7 +2,16 @@ const { Agent } = require('../src/agent');
 const { MockInterface } = require('./mock-interface');
 const { createUserMessage } = require('@deedee/shared/src/types');
 
-// Mock Dependencies
+// Mock DB
+jest.mock('../src/db', () => ({
+  AgentDB: jest.fn().mockImplementation(() => ({
+    saveMessage: jest.fn(),
+    getKey: jest.fn(),
+    setKey: jest.fn(),
+    getPendingGoals: jest.fn().mockReturnValue([])
+  }))
+}));
+
 jest.mock('@deedee/mcp-servers/src/gsuite/index', () => ({
   GSuiteTools: jest.fn().mockImplementation(() => ({
     listEvents: jest.fn().mockResolvedValue([{ summary: 'Mock Event' }]),
