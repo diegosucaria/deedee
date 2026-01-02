@@ -137,6 +137,19 @@ const toolDefinitions = [
           },
           required: ["message"]
         }
+      },
+      // Audio / TTS
+      {
+        name: "replyWithAudio",
+        description: "Generate and send an audio response (text-to-speech) to the user. Use this ONLY when the user explicitly requests an audio/voice response.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            text: { type: "STRING", description: "The text content to be converted to speech" },
+            language: { type: "STRING", description: "Language code (e.g., 'en', 'es', 'fr'). Defaults to 'en'." }
+          },
+          required: ["text"]
+        }
       }
     ]
   }

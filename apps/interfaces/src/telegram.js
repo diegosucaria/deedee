@@ -115,6 +115,24 @@ class TelegramService {
       await this.bot.telegram.sendMessage(chatId, content);
     }
   }
+
+  async sendVoice(chatId, content) {
+    try {
+      let source;
+      if (content.startsWith('http')) {
+        source = { url: content };
+      } else {
+        // Assume Base64
+        source = { source: Buffer.from(content, 'base64') };
+      }
+      
+      console.log(`[Telegram] Sending voice to ${chatId}`);
+      await this.bot.telegram.sendVoice(chatId, source);
+    } catch (err) {
+      console.error('[Telegram] Failed to send voice:', err.message);
+      await this.bot.telegram.sendMessage(chatId, "Sorry, I couldn't send the audio response.");
+    }
+  }
 }
 
 module.exports = { TelegramService };

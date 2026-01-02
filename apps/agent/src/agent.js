@@ -8,6 +8,7 @@ const { MCPManager } = require('./mcp-manager');
 const { CommandHandler } = require('./command-handler');
 const { RateLimiter } = require('./rate-limiter');
 const { ConfirmationManager } = require('./confirmation-manager');
+const googleTTS = require('google-tts-api');
 
 class Agent {
   constructor(config) {
@@ -26,8 +27,6 @@ class Agent {
 
     // Tools Setup
     this.gsuite = new GSuiteTools();
-    this.local = new LocalTools('/app/source');
-
     this.local = new LocalTools('/app/source');
 
     this.confirmationManager = new ConfirmationManager(this.db);
@@ -409,6 +408,7 @@ class Agent {
       case 'getFact': return 'Accessing memory...';
       case 'addGoal':
       case 'completeGoal': return 'Updating goals...';
+      case 'replyWithAudio': return 'Generating voice response...';
       default: return `Executing ${name}...`;
     }
   }
@@ -461,6 +461,37 @@ class Agent {
     if (executionName === 'writeFile') return await this.local.writeFile(args.path, args.content);
     if (executionName === 'listDirectory') return await this.local.listDirectory(args.path);
     if (executionName === 'runShellCommand') return await this.local.runShellCommand(args.command);
+    // Audio / TTS
+    if (executionName === 'replyWithAudio') {
+      const text = args.text;
+      const lang = args.language || 'en';
+      
+      try {
+        const results = await googleTTS.getAllAudioBase64(text, {
+          lang: lang,
+          slow: false,
+          host: 'https://translate.google.com',
+        });
+        
+        let sentCount = 0;
+        for (const item of results) {
+            const audioMsg = createAssistantMessage('[Audio Response]');
+            audioMsg.metadata = { chatId: messageContext.metadata?.chatId };
+            audioMsg.source = messageContext.source;
+            audioMsg.content = item.base64; 
+            audioMsg.type = 'audio';
+            
+            await this.interface.send(audioMsg);
+            sentCount++;
+        }
+        
+        return { success: true, sent_segments: sentCount };
+      } catch (e) {
+        console.error('TTS Error:', e);
+        return { error: `TTS failed: ${e.message}` };
+      }
+    }
+    
     // Supervisor
     if (executionName === 'rollbackLastChange') {
       const rollbackRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/rollback`, {

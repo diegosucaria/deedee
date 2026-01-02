@@ -20,7 +20,8 @@ class HttpInterface extends EventEmitter {
       await axios.post(`${this.interfacesUrl}/send`, {
         source: message.source,
         content: message.content,
-        metadata: message.metadata
+        metadata: message.metadata,
+        type: message.type || 'text'
       });
       return true;
     } catch (error) {
