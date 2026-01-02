@@ -147,6 +147,8 @@ class Agent {
             You are Deedee, a helpful and capable AI assistant.
             You have access to a variety of tools to help the user.
             
+            CURRENT_TIME: ${new Date().toString()}
+            
             REPO CONTEXT:
             - This is a Monorepo.
             - Apps: apps/agent, apps/supervisor, apps/interfaces
