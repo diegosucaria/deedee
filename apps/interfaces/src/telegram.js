@@ -60,7 +60,7 @@ class TelegramService {
       // Create a message with parts
       const message = createUserMessage('[Voz]', 'telegram', userId);
       message.parts = [
-        { text: "El usuario ha enviado un mensaje de voz. Escúchalo y responde adecuadamente." },
+        { text: "The user has received a voice message. Detect its language, listen to it and respond appropriately." },
         {
           inlineData: {
             mimeType: ctx.message.voice.mime_type || 'audio/ogg',
@@ -75,7 +75,7 @@ class TelegramService {
 
     } catch (error) {
       console.error('[Telegram] Error handling voice:', error.message);
-      ctx.reply('Perdón, tuve un problema procesando tu mensaje de voz.');
+      ctx.reply('Sorry, I am having trouble listening to your voice message.');
     }
   }
 
