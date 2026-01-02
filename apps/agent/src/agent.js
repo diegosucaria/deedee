@@ -125,13 +125,18 @@ class Agent {
       const text = response.text || '';
       
       if (text) {
-        const reply = createAssistantMessage(text);
-        reply.metadata = { chatId: message.metadata?.chatId };
-        
-        // 2. Save Assistant Reply
-        this.db.saveMessage(reply);
-        
-        await this.interface.send(reply);
+        if (message.source === 'http') {
+          console.log('[Agent] Final Response (to console):', text);
+        } else {
+          const reply = createAssistantMessage(text);
+          reply.metadata = { chatId: message.metadata?.chatId };
+          reply.source = message.source; // Ensure reply source matches incoming message source
+          
+          // 2. Save Assistant Reply
+          this.db.saveMessage(reply);
+          
+          await this.interface.send(reply);
+        }
       }
       
     } catch (error) {

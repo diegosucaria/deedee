@@ -27,10 +27,9 @@ jest.mock('@google/genai', () => ({
     chats: {
       create: jest.fn().mockReturnValue({
         sendMessage: jest.fn().mockImplementation(async (payload) => {
-          
-          // Case A: User Message (Object with message property)
-          // The Agent now sends { message: ... } for user input.
-          if (payload?.message?.toLowerCase().includes('calendar')) {
+          // Case A: User Message ({ message: string })
+          // Check if payload.message is a string before calling toLowerCase
+          if (typeof payload?.message === 'string' && payload.message.toLowerCase().includes('calendar')) {
             return {
               text: undefined, 
               candidates: [{
@@ -43,8 +42,8 @@ jest.mock('@google/genai', () => ({
             };
           }
 
-          // Case B: Function Response (Object with message property containing array)
-          // The Agent now sends { message: [{ functionResponse: ... }] }
+          // Case B: Function Response ({ message: [{ functionResponse: ... }] })
+          // We check if payload.message is an array containing a functionResponse
           if (Array.isArray(payload?.message) && payload.message[0]?.functionResponse) {
             return {
               text: 'You have one event.',
