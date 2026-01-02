@@ -57,17 +57,22 @@ class AgentDB {
     } catch (err) {
       // Ignore error if column already exists
     }
+    // Migration: Add parts column if it doesn't exist
+    try {
+      this.db.exec("ALTER TABLE messages ADD COLUMN parts TEXT");
+    } catch (err) { }
   }
 
   // --- Messages ---
   saveMessage(msg) {
     const stmt = this.db.prepare(`
-      INSERT INTO messages (id, role, content, source, chat_id, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (id, role, content, parts, source, chat_id, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
     // Fallback if msg.id is missing or generated elsewhere
     const id = msg.id || crypto.randomUUID();
-    stmt.run(id, msg.role, msg.content, msg.source, msg.metadata?.chatId, msg.timestamp);
+    const partsStr = msg.parts ? JSON.stringify(msg.parts) : null;
+    stmt.run(id, msg.role, msg.content, partsStr, msg.source, msg.metadata?.chatId, msg.timestamp);
   }
 
   getHistory(limit = 10) {
@@ -146,9 +151,19 @@ class AgentDB {
     return rows.map(row => {
       // Map 'assistant' role to 'model' for Gemini
       const role = row.role === 'assistant' ? 'model' : row.role;
+
+      if (row.parts) {
+        try {
+          return { role, parts: JSON.parse(row.parts) };
+        } catch (e) {
+          console.error('[DB] Failed to parse message parts:', e);
+        }
+      }
+
+      // Fallback to content
       return {
         role: role,
-        parts: [{ text: row.content }]
+        parts: [{ text: row.content || '' }]
       };
     });
   }

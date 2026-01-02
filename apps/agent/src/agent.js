@@ -5,6 +5,8 @@ const { AgentDB } = require('./db');
 const { toolDefinitions } = require('./tools-definition');
 const { Router } = require('./router');
 const { MCPManager } = require('./mcp-manager');
+const { CommandHandler } = require('./command-handler');
+const { RateLimiter } = require('./rate-limiter');
 
 class Agent {
   constructor(config) {
@@ -24,6 +26,9 @@ class Agent {
     // Tools Setup
     this.gsuite = new GSuiteTools();
     this.local = new LocalTools('/app/source');
+
+    this.commandHandler = new CommandHandler(this.db, this.interface);
+    this.rateLimiter = new RateLimiter(this.db);
 
     this.onMessage = this.onMessage.bind(this);
   }
@@ -67,62 +72,24 @@ class Agent {
 
       const chatId = message.metadata?.chatId;
 
-      // --- SLASH COMMANDS ---
-      const content = message.content?.trim();
-      if (content?.startsWith('/')) {
-        const { createAssistantMessage } = require('@deedee/shared/src/types'); // Ensure import available (it is at top of file, but good to be sure or reuse)
-
-        if (content === '/clear') {
-          this.db.clearHistory(chatId);
-          const reply = createAssistantMessage('Chat history cleared.');
-          reply.metadata = { chatId };
-          reply.source = message.source;
-          await this.interface.send(reply);
-          return;
-        }
-        if (content === '/reset_goals') {
-          this.db.clearGoals(chatId);
-          const reply = createAssistantMessage('Pending goals reset (marked as failed).');
-          reply.metadata = { chatId };
-          reply.source = message.source;
-          await this.interface.send(reply);
-          return;
-        }
-        // Unknown command
-        const reply = createAssistantMessage(`Unknown command: ${content}`);
-        reply.metadata = { chatId };
-        reply.source = message.source;
-        await this.interface.send(reply);
+      // 1. Slash Commands
+      if (await this.commandHandler.handle(message)) {
         return;
       }
 
-      // Feature: Rate Limiting
-      const limitHourly = parseInt(process.env.RATE_LIMIT_HOURLY || '50');
-      const limitDaily = parseInt(process.env.RATE_LIMIT_DAILY || '500');
-
-      const usedHour = this.db.checkLimit(1);
-      const usedDay = this.db.checkLimit(24);
-
-      if (usedHour >= limitHourly || usedDay >= limitDaily) {
-        console.warn(`[Agent] Rate limit exceeded. Hour: ${usedHour}/${limitHourly}, Day: ${usedDay}/${limitDaily}`);
-        const limitReply = createAssistantMessage(`⚠️ Rate limit exceeded. please try again later.`);
-        limitReply.metadata = { chatId: message.metadata?.chatId };
-        limitReply.source = message.source;
-        await this.interface.send(limitReply);
+      // 2. Rate Limiting
+      if (!(await this.rateLimiter.check(message, this.interface))) {
         return;
       }
 
-      // Log current usage
-      this.db.logUsage();
-
-      // 1. Save User Message
+      // 3. Save User Message
       this.db.saveMessage(message);
 
       // --- ROUTING ---
       const decision = await this.router.route(message.content);
       const selectedModel = decision.model === 'FLASH'
         ? (process.env.WORKER_FLASH || 'gemini-2.0-flash-exp')
-        : (process.env.WORKER_PRO || 'gemini-exp-1206');
+        : (process.env.WORKER_PRO || 'gemini-3-pro-preview');
 
       console.log(`[Agent] Routing to: ${selectedModel}`);
 
@@ -199,8 +166,29 @@ class Agent {
           await this.interface.send(updateMsg).catch(err => console.error('[Agent] Failed to send update msg:', err));
         }
 
+        // SAVE MODEL FUNCTION CALL (Intermediate)
+        // We need to construct a message object for the function call
+        // The 'response' object has candidates[0].content.parts
+        // We want to save this exactly as 'model' role to preserve signature.
+        if (response.candidates && response.candidates[0]) {
+          const fcParts = response.candidates[0].content.parts;
+          // Only save if it has function calls (which it does here)
+          this.db.saveMessage({
+            role: 'model',
+            parts: fcParts,
+            metadata: { chatId: message.metadata?.chatId },
+            source: message.source // Keep source context
+          });
+        }
+
         const call = functionCalls[0];
         console.log(`Function Call: ${call.name}`, call.args);
+
+        // Sanitize Tool Name (fix for default_api prefix hallucination)
+        if (call.name && call.name.startsWith('default_api:')) {
+          console.log(`[Agent] Sanitizing tool name: ${call.name} -> ${call.name.replace('default_api:', '')}`);
+          call.name = call.name.replace('default_api:', '');
+        }
 
         let toolResult;
         let thinkTimer = null;
@@ -286,14 +274,32 @@ class Agent {
 
         console.log('Tool Result:', toolResult);
 
+        // SAVE TOOL RESPONSE (FunctionResponse)
+        const functionResponsePart = {
+          functionResponse: {
+            name: call.name,
+            response: { result: toolResult }
+          }
+        };
+
+        this.db.saveMessage({
+          role: 'function', // Gemini SDK uses 'function' or 'user'? 
+          // SDK uses 'function' role for function responses in history, OR 'user' with functionResponse part.
+          // Let's use 'user' because usually interaction is User -> Model -> User(Tool) -> Model
+          // SDK docs say: role: 'function' is deprecated? No, 'function' role is standard for parts.
+          // Actually, in 'history' array, the role for function output is usually 'function'.
+          // Let's verify db.js mapping. row.role. 
+          // If I save as 'function', `getHistoryForChat` maps it to ... 'function'.
+          // Correct.
+          role: 'function',
+          parts: [functionResponsePart],
+          metadata: { chatId: message.metadata?.chatId },
+          source: message.source
+        });
+
         // Send Tool Response back to Gemini
         response = await session.sendMessage({
-          message: [{
-            functionResponse: {
-              name: call.name,
-              response: { result: toolResult }
-            }
-          }]
+          message: [functionResponsePart]
         });
 
         // Re-check for recursive function calls 

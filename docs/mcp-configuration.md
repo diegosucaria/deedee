@@ -39,11 +39,11 @@ To enable Home Assistant integration:
     ```json
     {
       "homeassistant": {
-        "command": "npx",
-        "args": ["-y", "@modelcontextprotocol/server-homeassistant"],
+        "transport": "sse",
+        "url": "${HA_URL}/api/mcp", 
         "env": {
-          "HA_URL": "http://homeassistant.local:8123",
-          "HA_TOKEN": "YOUR_LONG_LIVED_TOKEN" 
+          "HA_URL": "${HA_URL}",
+          "HA_TOKEN": "${HA_TOKEN}" 
         },
         "disabled": false
       }

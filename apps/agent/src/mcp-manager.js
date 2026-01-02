@@ -7,7 +7,61 @@ const fs = require('fs');
 class MCPManager {
     constructor(configPath = '../mcp_config.json') {
         this.clients = new Map(); // serverName -> Client
+        this.toolMap = new Map(); // toolName -> { name: string, client: Client }
         this.configPath = path.resolve(__dirname, configPath);
+    }
+
+    // ... (init method remains same)
+
+    async getTools() {
+        const allTools = [];
+        this.toolMap.clear(); // Refresh cache
+
+        for (const [name, client] of this.clients.entries()) {
+            try {
+                const result = await client.listTools();
+                if (result && result.tools) {
+                    const mappedTools = result.tools.map(t => ({
+                        name: t.name,
+                        description: t.description,
+                        parameters: t.inputSchema // MCP uses 'inputSchema', Gemini uses 'parameters' (JSON Schema)
+                    }));
+
+                    // Store reference and populate cache
+                    mappedTools.forEach(t => {
+                        t.serverName = name;
+                        this.toolMap.set(t.name, { name, client });
+                    });
+
+                    allTools.push(...mappedTools);
+                }
+            } catch (err) {
+                console.error(`[MCP] Failed to list tools for ${name}:`, err);
+            }
+        }
+        return allTools;
+    }
+
+    async callTool(name, args) {
+        // Linear lookup removed. Using cache.
+        const owner = this.toolMap.get(name);
+
+        if (!owner) {
+            throw new Error(`Tool ${name} not found in any MCP server.`);
+        }
+
+        const result = await owner.client.callTool({
+            name: name,
+            arguments: args
+        });
+
+        // Let's return the simplified result
+        if (result.content && result.content.length > 0) {
+            // Return text content
+            const text = result.content.map(c => c.text).join('\n');
+            return { output: text };
+        }
+        return result;
     }
 
     async init() {
@@ -53,10 +107,9 @@ class MCPManager {
 
                     // SSE Transport
                     const url = new URL(urlStr);
-                    // Append params if needed (e.g. auth token as query param if not header)
-                    // HA usually expects headers or token in query? 
-                    // Search said: /subscribe_events?token=...
-                    // Standard MCP via SSE might just need the URL.
+                    console.log(`[MCP] Debug: Connecting to ${urlStr}`);
+                    console.log(`[MCP] Debug: Token present? ${!!env.HA_TOKEN}`);
+                    if (env.HA_TOKEN) console.log(`[MCP] Debug: Token length: ${env.HA_TOKEN.length}`);
 
                     transport = new SSEClientTransport(url, {
                         eventSourceInit: {
@@ -64,8 +117,6 @@ class MCPManager {
                                 "Authorization": `Bearer ${env.HA_TOKEN}`
                             }
                         }
-                        // Note: SSEClientTransport implementation details vary.
-                        // Assuming basic usage here.
                     });
                 } else {
                     // Default: Stdio Transport
