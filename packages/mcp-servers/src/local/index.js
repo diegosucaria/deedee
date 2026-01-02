@@ -5,8 +5,8 @@ const util = require('util');
 const execAsync = util.promisify(exec);
 
 const BLOCKED_BINARIES = [
-  'vi', 'nano', 'emacs', 'top', 'htop', 'shutdown', 'init', 'halt',
-  'passwd', 'rm -rf /', 'mkfs', 'fdisk', 'parted', 'dd', 'env'
+  'vi', 'nano', 'emacs', 'vim', 'top', 'htop', 'shutdown', 'init', 'halt',
+  'passwd', 'rm', 'mkfs', 'fdisk', 'parted', 'dd', 'env', 'sudo', 'su'
 ];
 
 class LocalTools {
@@ -59,7 +59,7 @@ class LocalTools {
 
     try {
       console.log(`[LocalTools] Executing: ${command}`);
-      const { stdout, stderr } = await execAsync(command, { 
+      const { stdout, stderr } = await execAsync(command, {
         cwd: this.workDir,
         timeout: 30000 // 30s timeout
       });
@@ -67,8 +67,8 @@ class LocalTools {
     } catch (error) {
       // If the command failed (exit code != 0), we still return the output
       // so the model can see why it failed.
-      return { 
-        stdout: error.stdout ? error.stdout.trim() : '', 
+      return {
+        stdout: error.stdout ? error.stdout.trim() : '',
         stderr: error.stderr ? error.stderr.trim() : error.message,
         error: true
       };

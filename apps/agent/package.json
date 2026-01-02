@@ -4,13 +4,13 @@
   "main": "src/index.js",
   "scripts": {
     "start": "node src/server.js",
-    "test": "jest"
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest"
   },
   "dependencies": {
     "@deedee/mcp-servers": "*",
     "@deedee/shared": "*",
-    "@modelcontextprotocol/sdk": "^0.6.0",
-    "@modelcontextprotocol/server-homeassistant": "^0.6.0",
+    "@modelcontextprotocol/sdk": "^1.0.0",
+    "@google/genai": "^1.0.0",
     "axios": "^1.6.0",
     "better-sqlite3": "^9.0.0",
     "dotenv": "^16.0.0",

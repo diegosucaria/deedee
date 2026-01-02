@@ -1,4 +1,3 @@
-const { GoogleGenAI } = require('@google/genai');
 const { createAssistantMessage } = require('@deedee/shared/src/types');
 const { GSuiteTools } = require('@deedee/mcp-servers/src/gsuite/index');
 const { LocalTools } = require('@deedee/mcp-servers/src/local/index');
@@ -11,9 +10,7 @@ class Agent {
   constructor(config) {
     this.interface = config.interface;
     this.config = config; // Save config for later
-
-    // 1. Initialize the unified Client
-    this.client = new GoogleGenAI({ apiKey: config.googleApiKey });
+    this.client = null;   // Will be init in start()
 
     // Persistence
     this.db = new AgentDB();
@@ -31,8 +28,16 @@ class Agent {
     this.onMessage = this.onMessage.bind(this);
   }
 
+  async _loadClientLibrary() {
+    return import('@google/genai');
+  }
+
   async start() {
     console.log('Agent starting...');
+
+    // 1. Initialize the unified Client (Dynamic Import for ESM)
+    const { GoogleGenAI } = await this._loadClientLibrary();
+    this.client = new GoogleGenAI({ apiKey: this.config.googleApiKey });
 
     // Initialize MCP
     await this.mcp.init();
@@ -59,6 +64,37 @@ class Agent {
   async onMessage(message) {
     try {
       console.log(`Received: ${message.content}`);
+
+      const chatId = message.metadata?.chatId;
+
+      // --- SLASH COMMANDS ---
+      const content = message.content?.trim();
+      if (content?.startsWith('/')) {
+        const { createAssistantMessage } = require('@deedee/shared/src/types'); // Ensure import available (it is at top of file, but good to be sure or reuse)
+
+        if (content === '/clear') {
+          this.db.clearHistory(chatId);
+          const reply = createAssistantMessage('Chat history cleared.');
+          reply.metadata = { chatId };
+          reply.source = message.source;
+          await this.interface.send(reply);
+          return;
+        }
+        if (content === '/reset_goals') {
+          this.db.clearGoals(chatId);
+          const reply = createAssistantMessage('Pending goals reset (marked as failed).');
+          reply.metadata = { chatId };
+          reply.source = message.source;
+          await this.interface.send(reply);
+          return;
+        }
+        // Unknown command
+        const reply = createAssistantMessage(`Unknown command: ${content}`);
+        reply.metadata = { chatId };
+        reply.source = message.source;
+        await this.interface.send(reply);
+        return;
+      }
 
       // Feature: Rate Limiting
       const limitHourly = parseInt(process.env.RATE_LIMIT_HOURLY || '50');
@@ -91,7 +127,6 @@ class Agent {
       console.log(`[Agent] Routing to: ${selectedModel}`);
 
       // --- HYDRATION ---
-      const chatId = message.metadata?.chatId;
       const history = this.db.getHistoryForChat(chatId, 50);
 
       // --- TOOLS MERGE ---
@@ -143,14 +178,6 @@ class Agent {
       // 3. Handle Function Calls Loop
       let functionCalls = this._getFunctionCalls(response);
 
-      if (functionCalls.length > 0) {
-        // Initial Smart Message
-        const thinkText = this._getThinkingMessage(functionCalls);
-        const thinkingMsg = createAssistantMessage(thinkText);
-        thinkingMsg.metadata = { chatId: message.metadata?.chatId };
-        thinkingMsg.source = message.source;
-        await this.interface.send(thinkingMsg).catch(err => console.error('[Agent] Failed to send thinking msg:', err));
-      }
 
       const MAX_LOOPS = parseInt(process.env.MAX_TOOL_LOOPS || '10');
       let loopCount = 0;
@@ -176,6 +203,16 @@ class Agent {
         console.log(`Function Call: ${call.name}`, call.args);
 
         let toolResult;
+        let thinkTimer = null;
+
+        // Delayed "Thinking..." Message (2.5s)
+        thinkTimer = setTimeout(async () => {
+          const thinkText = this._getThinkingMessage([call]); // Scope to current call
+          const thinkingMsg = createAssistantMessage(`Thinking... (${thinkText})`);
+          thinkingMsg.metadata = { chatId: message.metadata?.chatId };
+          thinkingMsg.source = message.source;
+          await this.interface.send(thinkingMsg).catch(err => console.error('[Agent] Failed to send thinking msg:', err));
+        }, 2500);
 
         try {
           // --- INTERNAL TOOLS ---

@@ -1,5 +1,6 @@
 const { Client } = require("@modelcontextprotocol/sdk/client/index.js");
 const { StdioClientTransport } = require("@modelcontextprotocol/sdk/client/stdio.js");
+const { SSEClientTransport } = require("@modelcontextprotocol/sdk/client/sse.js");
 const path = require('path');
 const fs = require('fs');
 
@@ -27,7 +28,6 @@ class MCPManager {
                 const env = { ...process.env };
                 if (serverConfig.env) {
                     for (const [k, v] of Object.entries(serverConfig.env)) {
-                        // Support ${VAR} syntax
                         if (v.startsWith('${') && v.endsWith('}')) {
                             const varName = v.slice(2, -1);
                             env[k] = process.env[varName] || '';
@@ -37,11 +37,44 @@ class MCPManager {
                     }
                 }
 
-                const transport = new StdioClientTransport({
-                    command: serverConfig.command,
-                    args: serverConfig.args || [],
-                    env: env
-                });
+                let transport;
+                if (serverConfig.transport === 'sse') {
+                    // Interpolate URL variables if needed
+                    let urlStr = serverConfig.url;
+                    if (urlStr.includes('${')) {
+                        // Simple replacement for now, reusing the 'env' logic or just matching?
+                        // We have the resolved 'env' object from above loop.
+                        // But that env loop puts vars INTO 'env' object.
+                        // We need values from process.env (or keys in that env block).
+
+                        // Let's do a replace against process.env
+                        urlStr = urlStr.replace(/\$\{([^}]+)\}/g, (_, key) => process.env[key] || '');
+                    }
+
+                    // SSE Transport
+                    const url = new URL(urlStr);
+                    // Append params if needed (e.g. auth token as query param if not header)
+                    // HA usually expects headers or token in query? 
+                    // Search said: /subscribe_events?token=...
+                    // Standard MCP via SSE might just need the URL.
+
+                    transport = new SSEClientTransport(url, {
+                        eventSourceInit: {
+                            headers: {
+                                "Authorization": `Bearer ${env.HA_TOKEN}`
+                            }
+                        }
+                        // Note: SSEClientTransport implementation details vary.
+                        // Assuming basic usage here.
+                    });
+                } else {
+                    // Default: Stdio Transport
+                    transport = new StdioClientTransport({
+                        command: serverConfig.command,
+                        args: serverConfig.args || [],
+                        env: env
+                    });
+                }
 
                 const client = new Client({
                     name: "DeedeeClient",

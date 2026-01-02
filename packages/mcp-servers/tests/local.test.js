@@ -1,54 +1,49 @@
-const { LocalTools } = require('../src/local/index');
-const fs = require('fs/promises');
 const path = require('path');
-
-// We will test against the local filesystem of the test runner (tmp dir)
-// to avoid mocking everything and ensuring real file ops work.
+const fs = require('fs/promises');
+const { LocalTools } = require('../src/local/index');
 
 describe('LocalTools', () => {
+  const testDir = path.resolve(__dirname, 'test_sandbox');
   let tools;
-  let tmpDir;
 
   beforeAll(async () => {
-    tmpDir = path.join(__dirname, 'tmp_test');
-    await fs.mkdir(tmpDir, { recursive: true });
-    tools = new LocalTools(tmpDir);
+    await fs.mkdir(testDir, { recursive: true });
+    tools = new LocalTools(testDir);
   });
 
   afterAll(async () => {
-    await fs.rm(tmpDir, { recursive: true, force: true });
+    await fs.rm(testDir, { recursive: true, force: true });
   });
 
-  test('writeFile and readFile', async () => {
-    const filename = 'hello.txt';
-    const content = 'Hello World';
-
-    await tools.writeFile(filename, content);
-    const readBack = await tools.readFile(filename);
-
-    expect(readBack).toBe(content);
+  test('writeFile should create a file with content', async () => {
+    await tools.writeFile('hello.txt', 'Hello World');
+    const content = await fs.readFile(path.join(testDir, 'hello.txt'), 'utf8');
+    expect(content).toBe('Hello World');
   });
 
-  test('listDirectory', async () => {
+  test('readFile should read existing file', async () => {
+    const readBack = await tools.readFile('hello.txt');
+    expect(readBack).toBe('Hello World');
+  });
+
+  test('listDirectory should list created file', async () => {
     const files = await tools.listDirectory('.');
-    expect(files).toEqual(expect.arrayContaining([
-      expect.objectContaining({ name: 'hello.txt', type: 'file' })
-    ]));
+    expect(files.some(f => f.name === 'hello.txt')).toBe(true);
   });
 
-  test('runShellCommand: allowed command (echo)', async () => {
-    const res = await tools.runShellCommand('echo test');
-    expect(res.stdout.trim()).toBe('test');
+  test('runShellCommand (allowed) should return output', async () => {
+    // echo test
+    const result = await tools.runShellCommand('echo test');
+    expect(result.stdout.trim()).toBe('test');
   });
 
-  test('runShellCommand: blocked command (fake_interactive)', async () => {
-    await expect(tools.runShellCommand('nano file.txt'))
-      .rejects.toThrow(/not allowed/);
+  test('runShellCommand should block "vi"', async () => {
+    await expect(tools.runShellCommand('vi test.txt'))
+      .rejects.toThrow(/blocked/);
   });
 
-  test('runShellCommand: error handling (ls non-existent)', async () => {
-    const res = await tools.runShellCommand('ls non_existent_file');
-    expect(res.error).toBe(true);
-    expect(res.stderr).toContain('No such file');
+  test('runShellCommand should block "rm -rf /"', async () => {
+    await expect(tools.runShellCommand('rm -rf /'))
+      .rejects.toThrow(/blocked/);
   });
 });

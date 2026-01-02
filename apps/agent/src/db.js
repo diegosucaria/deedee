@@ -128,6 +128,7 @@ class AgentDB {
     return result ? result.count : 0;
   }
   // --- Chat History Hydration ---
+  // --- Chat History Hydration ---
   getHistoryForChat(chatId, limit = 20) {
     if (!chatId) return [];
 
@@ -150,6 +151,34 @@ class AgentDB {
         parts: [{ text: row.content }]
       };
     });
+  }
+
+  // --- Reset Commands ---
+  clearHistory(chatId) {
+    if (!chatId) return;
+    const stmt = this.db.prepare('DELETE FROM messages WHERE chat_id = ?');
+    stmt.run(chatId);
+    console.log(`[DB] Cleared history for chat ${chatId}`);
+  }
+
+  clearGoals(chatId) {
+    // Fail all pending goals associated with this chat or globally if no metadata check?
+    // We filter by metadata like '%"chatId": "xyz"%' 
+    // SQLite's JSON support is basic, usually via string match if JSON1 ext not loaded.
+    // AgentDB init loaded nothing special, so string match is safest for now.
+
+    if (chatId) {
+      // Safe-ish string match for chatId in metadata
+      const stmt = this.db.prepare(`
+         UPDATE goals SET status = 'failed' 
+         WHERE status = 'pending' AND metadata LIKE ?
+       `);
+      stmt.run(`%${chatId}%`);
+      console.log(`[DB] Failed pending goals for chat ${chatId}`);
+    } else {
+      // If no chatId, fail ALL pending? Safer to require chatId.
+      console.warn(`[DB] clearGoals called without chatId.`);
+    }
   }
 }
 

@@ -1,14 +1,11 @@
 {
     "homeassistant": {
-        "command": "npx",
-        "args": [
-            "-y",
-            "@modelcontextprotocol/server-homeassistant"
-        ],
+        "transport": "sse",
+        "url": "${HA_URL}/api/mcp",
         "env": {
             "HA_URL": "${HA_URL}",
             "HA_TOKEN": "${HA_TOKEN}"
         },
-        "disabled": true
+        "disabled": false
     }
 }

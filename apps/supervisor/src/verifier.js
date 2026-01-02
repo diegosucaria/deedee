@@ -30,10 +30,17 @@ class Verifier {
     try {
       console.log('[Verifier] Running tests...');
 
-      // Ensure specific dependencies are installed in the volume
-      // This is critical because the volume is separate from the container's build time files
-      console.log('[Verifier] Installing dependencies in source...');
-      await execAsync('npm install', { cwd: this.workDir });
+      // 3. Ensure dependencies are installed
+      const fs = require('fs');
+      const nodeModulesPath = path.join(this.workDir, 'node_modules');
+
+      // Optimization: Skip npm install if node_modules exists
+      if (fs.existsSync(nodeModulesPath)) {
+        console.log('[Verifier] node_modules exists, skipping npm install.');
+      } else {
+        console.log('[Verifier] Installing dependencies in source...');
+        await execAsync('npm install', { cwd: this.workDir });
+      }
 
       // Run tests for the whole monorepo
       await execAsync('npm test', { cwd: this.workDir });

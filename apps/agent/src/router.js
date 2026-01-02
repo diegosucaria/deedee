@@ -1,13 +1,24 @@
-const { GoogleGenAI } = require('@google/genai');
-
 class Router {
     constructor(apiKey) {
-        this.client = new GoogleGenAI({ apiKey });
+        this.apiKey = apiKey;
+        this.client = null;
         // Use a fast model for routing
         this.model = process.env.ROUTER_MODEL || 'gemini-2.0-flash-exp';
     }
 
+    async _loadClientLibrary() {
+        return import('@google/genai');
+    }
+
+    async _ensureClient() {
+        if (!this.client) {
+            const { GoogleGenAI } = await this._loadClientLibrary();
+            this.client = new GoogleGenAI({ apiKey: this.apiKey });
+        }
+    }
+
     async route(userMessage) {
+        await this._ensureClient();
         try {
             const prompt = `
         You are the Router for a personal assistant bot. Your only job is to analyze the user's input and select the best model to handle the request.
