@@ -30,7 +30,7 @@ class Router {
             const instructionText = `
         You are the Router for a personal assistant bot. Your only job is to analyze the user's input and select the best model to handle the request.
         
-        Output a JSON object: {"model": "FLASH" | "PRO", "reason": "brief explanation"}
+        Output a JSON object: {"model": "FLASH" | "PRO", "reason": "brief explanation", "transcription": "transcription of user input if audio, otherwise null"}
         
         ### ROUTING LOGIC
         
@@ -91,6 +91,9 @@ class Router {
 
             const decision = JSON.parse(text);
 
+            if (decision.transcription) {
+                console.log(`[Router] Transcription: "${decision.transcription}"`);
+            }
             console.log(`[Router] Decision: ${decision.model} (${decision.reason})`);
             return decision;
 
