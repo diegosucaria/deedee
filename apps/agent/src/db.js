@@ -68,6 +68,12 @@ class AgentDB {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
       );
+
+      CREATE TABLE IF NOT EXISTS entity_aliases (
+        alias TEXT PRIMARY KEY,
+        entity_id TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
     `);
 
     // Migration: Add metadata column if it doesn't exist (for existing DBs)
@@ -223,6 +229,21 @@ class AgentDB {
       // If no chatId, fail ALL pending? Safer to require chatId.
       console.warn(`[DB] clearGoals called without chatId.`);
     }
+  }
+
+  // --- Smart Home Entity Memory ---
+  saveDeviceAlias(alias, entityId) {
+    const stmt = this.db.prepare(`
+      INSERT INTO entity_aliases (alias, entity_id) VALUES (?, ?)
+      ON CONFLICT(alias) DO UPDATE SET entity_id = excluded.entity_id
+    `);
+    stmt.run(alias.toLowerCase(), entityId);
+  }
+
+  getDeviceAlias(alias) {
+    const stmt = this.db.prepare('SELECT entity_id FROM entity_aliases WHERE alias = ?');
+    const row = stmt.get(alias.toLowerCase());
+    return row ? row.entity_id : null;
   }
 }
 

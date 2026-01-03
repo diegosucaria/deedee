@@ -223,6 +223,11 @@ class Agent {
             7. For multi-step tasks, execute tools in succession (chaining). DO NOT output intermediate text updates (like "I have pulled changes") unless you are blocked. Proceed directly to the next tool call.
             8. **Audio Responses**: When using 'replyWithAudio', keep your textual content EXTREMELY concise (1-2 sentences max). Speak in a fast-paced, energetic, and natural manner. Avoid filler words. Do not describe the audio, just speak it.
             9. **Language Preference**: When speaking Spanish via 'replyWithAudio', always set 'languageCode' to 'es-419' for a neutral Latin American accent, unless requested otherwise.
+
+            SMART HOME RULES (Home Assistant):
+            1. **Memory First**: Before searching for a device (e.g. "turn on hallway light"), ALWAYS call 'lookupDevice' with the alias ("hallway light") first. Only if it returns null should you call 'ha_search_entities'.
+            2. **Learn**: After successfully searching and finding a device for the first time, ALWAYS call 'learnDevice' to save it for next time.
+            3. **100% Brightness**: When the user says "Turn On" a light, NEVER use 'ha_toggle' or generic turn_on (unless percentage is not supported by the entity). You MUST set specific brightness to 100% (or 255/100 depending on service). Use 'ha_call_service' with domain 'light', service 'turn_on', and data: { "entity_id": "...", "brightness_pct": 100 }.
       `;
 
       // Specific instruction for iPhone/Voice sources where dictation is unreliable
@@ -601,6 +606,16 @@ class Agent {
         console.error('TTS Error (Gemini):', e);
         return { error: `TTS failed: ${e.message}` };
       }
+    }
+    // Smart Home Memory
+    if (executionName === 'lookupDevice') {
+      const entityId = this.db.getDeviceAlias(args.alias);
+      if (entityId) return { entityId: entityId };
+      return { info: `No alias found for '${args.alias}'. Scan/Search HA first.` };
+    }
+    if (executionName === 'learnDevice') {
+      this.db.saveDeviceAlias(args.alias, args.entityId);
+      return { success: true, info: `Saved alias '${args.alias}' -> '${args.entityId}'` };
     }
 
     // Supervisor

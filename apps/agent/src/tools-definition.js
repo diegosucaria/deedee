@@ -138,6 +138,28 @@ const toolDefinitions = [
           required: ["message"]
         }
       },
+      // Smart Home Memory
+      {
+        name: "lookupDevice",
+        description: "Check if the agent remembers a specific device alias (e.g., 'hallway light') and get its entity ID. usage: always call this BEFORE searching HA.",
+        parameters: {
+          type: "OBJECT",
+          properties: { alias: { type: "STRING" } },
+          required: ["alias"]
+        }
+      },
+      {
+        name: "learnDevice",
+        description: "Teach the agent that a specific alias (e.g., 'hallway light') corresponds to an entity ID (e.g., 'light.hallway'). Call this after you successfully find a device via search.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            alias: { type: "STRING" },
+            entityId: { type: "STRING" }
+          },
+          required: ["alias", "entityId"]
+        }
+      },
       // Audio / TTS
       {
         name: "replyWithAudio",

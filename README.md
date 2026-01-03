@@ -70,6 +70,9 @@ Open Telegram and message your bot:
     - **GSuite**: "Calendar", "Gmail".
     - **Local**: Shell, Filesystem.
 - **📱 API Gateway**: Synchronous API (`POST /v1/chat`) for iOS Shortcuts and Dashboards. Includes **Dictation Safeguards** for voice input.
+- **🏠 Smart Home Intelligence**:
+    - **Entity Memory**: Remembers your device names ("hallway light" → `light.hallway_main`).
+    - **Adaptive Control**: Smart logic (e.g., "Turn On" always sets brightness to 100%).
 - **🛑 Safety**: Global `/stop` command instantly kills any runaway agent loops.
 
 ---
