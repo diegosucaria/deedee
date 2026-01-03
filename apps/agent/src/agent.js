@@ -545,7 +545,17 @@ class Agent {
           // 2. Save Assistant Reply
           this.db.saveMessage(reply);
 
-          await sendCallback(reply);
+          // Check if we already sent audio
+          const audioTool = executionSummary.toolOutputs.find(t => t.name === 'replyWithAudio');
+          const audioSent = audioTool && audioTool.result && audioTool.result.success;
+
+          if (audioSent) {
+            console.log('[Agent] Suppressing final text response because audio was sent.');
+            // We saved it to DB above, but we do NOT send it to interface to avoid double notification.
+          } else {
+            await sendCallback(reply);
+          }
+
           executionSummary.replies.push(reply);
         }
       } else {

@@ -48,15 +48,35 @@ describe('Agent TTS', () => {
   });
 
   test('replyWithAudio calls Gemini API and sends audio', async () => {
-    const result = await agent._executeTool('replyWithAudio', { text: 'Hello world' });
+    // Manually inject client for direct tool execution test
+    agent.toolExecutor.services.client = agent.client;
+
+    const mockSendCallback = jest.fn();
+    const mockMessage = { metadata: { chatId: 'test-chat' }, source: 'telegram' };
+
+    const result = await agent._executeTool(
+      'replyWithAudio',
+      { text: 'Hello world' },
+      mockMessage,
+      mockSendCallback
+    );
 
     expect(result.success).toBe(true);
-    expect(mockInterface.send).toHaveBeenCalledWith(expect.objectContaining({
-      type: 'audio'
+
+    // It should have called the callback with the audio message
+    expect(mockSendCallback).toHaveBeenCalledWith(expect.objectContaining({
+      parts: expect.arrayContaining([
+        expect.objectContaining({
+          inlineData: expect.objectContaining({
+            mimeType: 'audio/wav'
+          })
+        })
+      ])
     }));
-    
-    // Verify content is a base64 string and looks like a WAV (starts with 'UklGR' which is 'RIFF' in base64)
-    const sentMsg = mockInterface.send.mock.calls[0][0];
-    expect(sentMsg.content).toMatch(/^UklGR/);
+
+    // Verify content is a base64 string and looks like a WAV
+    const sentMsg = mockSendCallback.mock.calls[0][0];
+    const base64Audio = sentMsg.parts[0].inlineData.data;
+    expect(base64Audio).toMatch(/^UklGR/);
   });
 });
