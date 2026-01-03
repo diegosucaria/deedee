@@ -533,6 +533,7 @@ class Agent {
 
         const response = await this.client.models.generateContent({
           model: ttsModel,
+          systemInstruction: 'Read the following text exactly as provided. Output ONLY audio.',
           contents: [{ parts: [{ text: text }] }],
           config: {
             responseModalities: ['AUDIO'],
