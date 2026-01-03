@@ -4,6 +4,7 @@ const cors = require('cors');
 const { authMiddleware } = require('./auth');
 const chatRouter = require('./chat');
 const briefingRouter = require('./briefing');
+const cityImageRouter = require('./city-image');
 const dashboardRouter = require('./dashboard');
 
 const app = express();

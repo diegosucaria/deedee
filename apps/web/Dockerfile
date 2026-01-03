@@ -50,4 +50,4 @@ ENV PORT 3000
 ENV HOSTNAME "0.0.0.0"
 
 # I need to configure next.config.mjs to output: "standalone" for this to work.
-CMD ["node", "server.js"]
+CMD ["node", "apps/web/server.js"]
