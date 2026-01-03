@@ -9,6 +9,8 @@ const { MCPManager } = require('./mcp-manager');
 const { CommandHandler } = require('./command-handler');
 const { RateLimiter } = require('./rate-limiter');
 const { ConfirmationManager } = require('./confirmation-manager');
+const { ToolExecutor } = require('./tool-executor');
+const path = require('path');
 const { JournalManager } = require('./journal');
 const { Scheduler } = require('./scheduler');
 const axios = require('axios');
@@ -223,8 +225,13 @@ class Agent {
 
       console.log(`[Agent] Routing to Model: ${selectedModel}`);
 
+      // --- EXPERIMENTAL: Adaptive Context Window ---
+      // Flash models (simple tasks) need less context. Pro models (reasoning) need more.
+      const historyLimit = (decision.model === 'FLASH' || decision.model === 'IMAGE') ? 10 : 50;
+      console.log(`[Agent] Fetching history with limit: ${historyLimit}`);
+
       // --- HYDRATION ---
-      const history = this.db.getHistoryForChat(chatId, 50);
+      const history = this.db.getHistoryForChat(chatId, historyLimit);
 
       // --- TOOLS MERGE ---
       const mcpTools = await this.mcp.getTools();
@@ -353,109 +360,117 @@ class Agent {
           });
         }
 
-        const call = functionCalls[0];
-        let executionName = call.name;
+        // PARALLEL EXECUTION STRATEGY
+        console.log(`[Agent] Processing ${functionCalls.length} tool calls in parallel.`);
 
-        // Sanitize Tool Name
-        if (executionName && executionName.startsWith('default_api:')) {
-          console.log(`[Agent] Sanitizing tool name for execution: ${executionName} -> ${executionName.replace('default_api:', '')}`);
-          executionName = executionName.replace('default_api:', '');
-        }
-
-        let toolResult;
-        let thinkTimer = null;
-
-        // Delayed "Thinking..." Message (2.5s)
-        thinkTimer = setTimeout(async () => {
-          const thinkText = this._getThinkingMessage([call]);
+        // 1. Start Global Thinking Timer (for the batch)
+        let thinkTimer = setTimeout(async () => {
+          const thinkText = this._getThinkingMessage(functionCalls);
           const thinkingMsg = createAssistantMessage(`Thinking... (${thinkText})`);
           thinkingMsg.metadata = { chatId: message.metadata?.chatId };
           thinkingMsg.source = message.source;
           await sendCallback(thinkingMsg).catch(err => console.error('[Agent] Failed to send thinking msg:', err));
         }, 2500);
 
-        try {
-          // SENSITIVE GUARD CHECK
-          const guard = this.confirmationManager.check(executionName, call.args);
-          if (guard.requiresConfirmation) {
-            console.log(`[Agent] Action ${executionName} requires confirmation.`);
-            this.confirmationManager.store(message.metadata?.chatId, executionName, call.args);
+        // 2. Execute All Tools
+        const toolPromises = functionCalls.map(async (call) => {
+          let executionName = call.name;
+          // Sanitize Tool Name
+          if (executionName && executionName.startsWith('default_api:')) {
+            executionName = executionName.replace('default_api:', '');
+          }
 
-            toolResult = { info: `Action PAUSED. ${guard.message} User must confirm.` };
+          let toolResult;
+          try {
+            // SENSITIVE GUARD CHECK
+            const guard = this.confirmationManager.check(executionName, call.args);
+            if (guard.requiresConfirmation) {
+              console.log(`[Agent] Action ${executionName} requires confirmation.`);
+              this.confirmationManager.store(message.metadata?.chatId, executionName, call.args);
 
-            // Notify user specifically
-            const confirmMsg = createAssistantMessage(`🛑 **Safety Check**: I want to execute \`${executionName}\`.\n\nArgs: \`${JSON.stringify(call.args)}\`\n\n${guard.message}\n\nReply **/confirm** to proceed or **/cancel** to stop.`);
-            confirmMsg.metadata = { chatId: message.metadata?.chatId };
-            confirmMsg.source = message.source;
-            await sendCallback(confirmMsg).catch(console.error);
+              // Notify user specifically
+              const confirmMsg = createAssistantMessage(`🛑 **Safety Check**: I want to execute \`${executionName}\`.\n\nArgs: \`${JSON.stringify(call.args)}\`\n\n${guard.message}\n\nReply **/confirm** to proceed or **/cancel** to stop.`);
+              confirmMsg.metadata = { chatId: message.metadata?.chatId };
+              confirmMsg.source = message.source;
+              await sendCallback(confirmMsg).catch(console.error);
 
-            // We do NOT break here loop-wise because we want to return the info to the model so it knows it's paused.
-            // However, the model usually stops after tool execution.
+              toolResult = { info: `Action PAUSED. ${guard.message} User must confirm.` };
+            } else {
+              // Execute normally
+              toolResult = await this._executeTool(executionName, call.args, message, sendCallback);
+            }
+          } catch (toolErr) {
+            console.warn(`[Agent] Tool execution failed (${executionName}): ${toolErr.message}`);
+            toolResult = { error: `Tool execution failed: ${toolErr.message}` };
+          }
+
+          if (toolResult === undefined || toolResult === null) {
+            toolResult = { info: 'No output from tool execution.' };
+          }
+
+          return { call, executionName, result: toolResult };
+        });
+
+        // Wait for all tools
+        const results = await Promise.all(toolPromises);
+        clearTimeout(thinkTimer);
+
+        // 3. Process Results & Build Response
+        const functionResponseParts = [];
+        const dbFunctionResponseParts = [];
+
+        for (const { call, executionName, result } of results) {
+          // Capture to Summary
+          executionSummary.toolOutputs.push({ name: executionName, result });
+
+          // Log
+          const logResult = JSON.stringify(result);
+          if (logResult.length > 200) {
+            console.log(`Tool Result (${executionName}) (Truncated):`, logResult.substring(0, 200) + '...');
           } else {
-            // Execute normally
-            toolResult = await this._executeTool(executionName, call.args, message, sendCallback);
+            console.log(`Tool Result (${executionName}):`, result);
           }
 
-        } catch (toolErr) {
-          console.warn(`[Agent] Tool execution failed: ${toolErr.message}`);
-          toolResult = { error: `Tool execution failed: ${toolErr.message}` };
-        } finally {
-          if (thinkTimer) clearTimeout(thinkTimer);
-        }
-
-        if (toolResult === undefined || toolResult === null) {
-          toolResult = { info: 'No output from tool execution.' };
-        }
-
-        // Capture Tool Output
-        executionSummary.toolOutputs.push({ name: executionName, result: toolResult });
-
-        const logResult = JSON.stringify(toolResult);
-        if (logResult.length > 200) {
-          console.log(`Tool Result (${executionName}) (Truncated):`, logResult.substring(0, 200) + '...');
-        } else {
-          console.log(`Tool Result (${executionName}):`, toolResult);
-        }
-
-        // SAVE TOOL RESPONSE (FunctionResponse)
-        // We sanitize the result for DB storage to avoid bloat (e.g. huge Base64 images)
-        let dbToolResult = toolResult;
-
-        if (executionName === 'generateImage') {
-          // Store NOTHING for image generation.
-          // We store a minimal acknowledgement to preserve History integrity (Call -> Response)
-          dbToolResult = { info: 'Image generated.' };
-        } else if (toolResult && toolResult.image_base64 && toolResult.image_base64.length > 500) {
-          dbToolResult = { ...toolResult, image_base64: '<BASE64_IMAGE_TRUNCATED_FOR_DB>' };
-        }
-
-        const functionResponsePart = {
-          functionResponse: {
-            name: call.name,
-            response: { result: toolResult } // Send FULL result to Gemini so it sees the data
+          // Sanitize for DB
+          let dbToolResult = result;
+          if (executionName === 'generateImage') {
+            dbToolResult = { info: 'Image generated.' };
+          } else if (result && result.image_base64 && result.image_base64.length > 500) {
+            dbToolResult = { ...result, image_base64: '<BASE64_IMAGE_TRUNCATED_FOR_DB>' };
           }
-        };
 
-        const dbFunctionResponsePart = {
-          functionResponse: {
-            name: call.name,
-            response: { result: dbToolResult } // Save SANITIZED result to DB
-          }
-        };
+          // Build API Payload
+          functionResponseParts.push({
+            functionResponse: {
+              name: call.name,
+              response: { result: result }
+            }
+          });
 
+          // Build DB Payload
+          dbFunctionResponseParts.push({
+            functionResponse: {
+              name: call.name,
+              response: { result: dbToolResult }
+            }
+          });
+        }
+
+        // 4. Save Function Results to DB
         this.db.saveMessage({
           role: 'function',
-          parts: [dbFunctionResponsePart],
+          parts: dbFunctionResponseParts,
           metadata: { chatId: message.metadata?.chatId },
           source: message.source
         });
 
-        // Send Tool Response back to Gemini
+        // 5. Send All Results back to Gemini
         const toolTimerLabel = `[Agent] Model Tool Response (${selectedModel}) - ${Date.now()}`;
         console.time(toolTimerLabel);
         response = await session.sendMessage({
-          message: [functionResponsePart]
+          message: functionResponseParts
         });
+        console.timeEnd(toolTimerLabel);
         console.timeEnd(toolTimerLabel);
 
         // Re-check for recursive function calls 
@@ -598,8 +613,8 @@ class Agent {
     console.log('[Agent] Stopped.');
   }
 
-  async _executeTool(executionName, args, messageContext = {}, sendCallback) {
-    // --- INTERNAL TOOLS ---
+  async _executeTool(executionName, args, message, sendCallback) {
+    // --- INTERNAL DB TOOLS ---
     if (executionName === 'rememberFact') {
       this.db.setKey(args.key, args.value);
       return { success: true };
@@ -609,7 +624,7 @@ class Agent {
       return val ? { value: val } : { info: 'Fact not found in database.' };
     }
     if (executionName === 'addGoal') {
-      const metadata = { chatId: messageContext.metadata?.chatId };
+      const metadata = { chatId: message.metadata?.chatId };
       const info = this.db.addGoal(args.description, metadata);
       return { success: true, id: info.lastInsertRowid };
     }
@@ -617,169 +632,8 @@ class Agent {
       this.db.completeGoal(args.id);
       return { success: true };
     }
-    // GSuite
-    if (executionName === 'listEvents') return await this.gsuite.listEvents(args);
-    if (executionName === 'sendEmail') return await this.gsuite.sendEmail(args);
-    // Local
-    if (executionName === 'readFile') return await this.local.readFile(args.path);
-    if (executionName === 'writeFile') return await this.local.writeFile(args.path, args.content);
-    if (executionName === 'listDirectory') return await this.local.listDirectory(args.path);
-    if (executionName === 'listDirectory') return await this.local.listDirectory(args.path);
-    if (executionName === 'runShellCommand') return await this.local.runShellCommand(args.command);
-    // Productivity
-    if (executionName === 'logJournal') {
-      const path = this.journal.log(args.content);
-      return { success: true, path: path };
-    }
-    // Scheduler
-    if (executionName === 'scheduleJob') {
-      this.scheduler.scheduleJob(args.name, args.cron, async () => {
-        console.log(`[Scheduler] Executing task: ${args.task}`);
-        const msg = createAssistantMessage(`⏰ Scheduled Task Triggered: ${args.task}`);
-        msg.metadata = { chatId: 'scheduler_trigger' };
 
-        await this.processMessage({
-          role: 'user',
-          content: `Scheduled Task: ${args.task}`,
-          source: 'scheduler',
-          metadata: { chatId: `scheduled_${args.name}_${Date.now()}` }
-        }, async (reply) => {
-          if (this.interface) {
-            await this.interface.send(reply);
-          }
-        });
-      });
-      return { success: true, info: `Job '${args.name}' scheduled for '${args.cron}'` };
-    }
-    if (executionName === 'listJobs') {
-      // Scheduler needs a list method. It has `this.jobs`.
-      const jobs = Object.keys(this.scheduler.jobs);
-      return { jobs: jobs };
-    }
-    if (executionName === 'cancelJob') {
-      this.scheduler.cancelJob(args.name);
-      return { success: true };
-    }
-
-    // Image Generation
-    if (executionName === 'generateImage') {
-      try {
-        console.log(`[Agent] Generating image for: "${args.prompt.substring(0, 50)}..."`);
-        const modelName = process.env.GEMINI_IMAGE_MODEL || 'gemini-3-pro-image-preview'; // User specified model
-
-        const response = await this.client.models.generateContent({
-          model: modelName,
-          contents: args.prompt,
-          config: {
-            responseModalities: ['TEXT', 'IMAGE'],
-            tools: [{ googleSearch: {} }]
-          }
-        });
-
-        if (!response.candidates || !response.candidates[0]) throw new Error('No candidates');
-
-        const candidate = response.candidates[0];
-
-        // Log Grounding Metadata if present
-        if (candidate.groundingMetadata) {
-          console.log('[Agent] Image Generation Grounding Metadata:', JSON.stringify(candidate.groundingMetadata, null, 2));
-        }
-
-        // Extract Image (Robustly find the part with inlineData)
-        const imgPart = candidate.content.parts.find(p => p.inlineData);
-        if (!imgPart || !imgPart.inlineData || !imgPart.inlineData.data) {
-          console.warn('[Agent] Image generation response had no image part:', JSON.stringify(candidate));
-          throw new Error('No image data in response');
-        }
-
-        return {
-          success: true,
-          image_base64: imgPart.inlineData.data,
-          mimeType: imgPart.inlineData.mimeType || 'image/png'
-        };
-
-      } catch (e) {
-        console.error('Image Gen Error:', e);
-        return { error: `Image Generation failed: ${e.message}` };
-      }
-    }
-    // Audio / TTS
-    if (executionName === 'replyWithAudio') {
-      try {
-        const text = args.text;
-        const languageCode = args.languageCode;
-        console.log(`[Agent] Generating audio for: "${text.substring(0, 50)}..." with optional lang: ${languageCode}`);
-
-        const ttsModel = process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts';
-
-        const speechConfig = {
-          voiceConfig: {
-            prebuiltVoiceConfig: {
-              voiceName: 'Kore' // AO, Fenrir, Kore, Puck
-            }
-          }
-        };
-
-        if (languageCode) {
-          speechConfig.languageCode = languageCode;
-        }
-
-        const response = await this.client.models.generateContent({
-          model: ttsModel,
-          systemInstruction: 'Read the following text exactly as provided. Output ONLY audio.',
-          contents: [{ parts: [{ text: text }] }],
-          config: {
-            responseModalities: ['AUDIO'],
-            audioEncoding: 'LINEAR16',
-            speechConfig: speechConfig
-          }
-        });
-
-
-        if (!response.candidates || !response.candidates[0]) {
-          throw new Error('No candidates returned from Gemini TTS');
-        }
-
-        const candidate = response.candidates[0];
-        // The audio binary is usually in parts[0].inlineData.data
-        let audioBase64 = null;
-        if (candidate.content && candidate.content.parts) {
-          for (const part of candidate.content.parts) {
-            if (part.inlineData && part.inlineData.data) {
-              audioBase64 = part.inlineData.data;
-              break;
-            }
-          }
-        }
-
-        if (!audioBase64) {
-          throw new Error('No audio data found in Gemini response');
-        }
-
-        // Convert PCM to WAV
-        const pcmBuffer = Buffer.from(audioBase64, 'base64');
-        const wavHeader = createWavHeader(pcmBuffer.length);
-        const wavBuffer = Buffer.concat([wavHeader, pcmBuffer]);
-        const wavBase64 = wavBuffer.toString('base64');
-
-        const audioMsg = createAssistantMessage('[Audio Response]');
-        audioMsg.metadata = { chatId: messageContext.metadata?.chatId };
-        audioMsg.source = messageContext.source;
-        audioMsg.content = wavBase64;
-        audioMsg.type = 'audio';
-
-        const finalSendCallback = sendCallback || (async (msg) => await this.interface.send(msg));
-        await finalSendCallback(audioMsg);
-
-        // Return success with metadata, not just true, so the model knows it worked
-        return { success: true, info: 'Audio sent to user.' };
-
-      } catch (e) {
-        console.error('TTS Error (Gemini):', e);
-        return { error: `TTS failed: ${e.message}` };
-      }
-    }
-    // Smart Home Memory
+    // --- SMART HOME MEMORY ---
     if (executionName === 'lookupDevice') {
       const entityId = this.db.getDeviceAlias(args.alias);
       if (entityId) return { entityId: entityId };
@@ -790,7 +644,7 @@ class Agent {
       return { success: true, info: `Saved alias '${args.alias}' -> '${args.entityId}'` };
     }
 
-    // Supervisor
+    // --- SUPERVISOR TOOLS ---
     if (executionName === 'rollbackLastChange') {
       const rollbackRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/rollback`, {
         method: 'POST'
@@ -829,12 +683,16 @@ class Agent {
       return toolResult;
     }
 
-    // --- EXTERNAL MCP TOOLS ---
+    // --- DELEGATE TO EXECUTOR (File, Scheduler, GSuite, Image, Audio, MCP) ---
     try {
-      return await this.mcp.callTool(executionName, args);
-    } catch (err) {
-      console.warn(`[Agent] Tool ${executionName} not found in Internal or MCP tools:`, err);
-      return { error: `Tool ${executionName} failed or does not exist: ${err.message}` };
+      return await this.toolExecutor.execute(executionName, args, {
+        message,
+        sendCallback,
+        processMessage: this.processMessage.bind(this)
+      });
+    } catch (error) {
+      console.error(`[Agent] Tool Execution Error (${executionName}):`, error);
+      throw error;
     }
   }
 }

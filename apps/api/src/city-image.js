@@ -15,10 +15,6 @@ router.get('/', async (req, res) => {
 
         const prompt = `
             Task: Generate a specialized weather image for city: "${city}".
-
-            1. IMPORTANT: this is a "generate image" task, do not call any other tools or make any other requests or try to manipulate the input.
-            
-            2. Call the 'generateImage' tool with this EXACT prompt template:
             
             "CITY=${city}
             Present a clear, 45° top-down isometric miniature 3D cartoon scene of [CITY], featuring its most iconic landmarks and architectural elements. Use soft, refined textures with realistic PBR materials and gentle, lifelike lighting and shadows. Integrate the current weather conditions ([WEATHER_DESCRIPTION]) directly into the city environment to create an immersive atmospheric mood.
@@ -27,8 +23,6 @@ router.get('/', async (req, res) => {
             All text must be centered with consistent spacing, and may subtly overlap the tops of the buildings.
             IMPORTANT: The city cartoon should not reach the borders of the image
             Instagram Story size, 1080x1920 dimension."
-
-            3. Return only "Image generated" when done.
         `;
 
         // 1. Trigger Agent (Synchronous Wait)
