@@ -28,6 +28,12 @@ class Scheduler {
         });
 
         this.jobs[name] = job;
+        // Attach metadata to the job object for retrieval
+        this.jobs[name].metadata = {
+            name,
+            cronExpression,
+            createdAt: new Date()
+        };
         console.log(`[Scheduler] Job '${name}' scheduled with rule: ${cronExpression}`);
     }
 

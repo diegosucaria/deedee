@@ -33,17 +33,27 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - `POST /v1/chat`: Synchronous chat interface.
     - `GET /v1/briefing`: Generates a spoken morning briefing (text).
     - `GET /v1/city-image`: Generates a weather-aware city wallpaper (PNG).
-- **Auth**: Bearer Token (`DEEDEE_API_TOKEN`).
+    - `GET /v1/journal`, `/v1/tasks`, `/v1/facts`: Dashboard data endpoints.
+- **Auth**: Bearer Token (`DEEDEE_API_TOKEN`). All routes protected.
 - **Flow**: Client -> API -> Agent (Waits for full processing) -> API -> Client JSON Response.
 
 ### 4. Interfaces (`apps/interfaces`)
 - **Role**: The Ears and Mouth.
 - **Port**: `5000`
 - **Supported Channels**:
+    - **Socket.io**: Real-time event-based communication for Web Interface.
     - **Telegram**: Long-Polling Bot. Supports Global Stop (`/stop`) and Audio Messages.
     - **Internal Webhook**: Legacy ingress for async messages.
 
-### 5. MCP Servers (`packages/mcp-servers`)
+### 5. Web Interface (`apps/web`)
+- **Type**: Next.js 14 App (Port 3002)
+- **Role**: Visual Dashboard & detailed Chat.
+- **Features**: Real-time Chat, Markdown Journal, Memory Bank, Task Scheduler.
+- **Auth**:
+    - **User**: Relies on Reverse Proxy (Authelia/Authentik).
+    - **Service**: Injected `DEEDEE_API_TOKEN` for secure API communication (Server Actions).
+
+### 6. MCP Servers (`packages/mcp-servers`)
 - **Role**: Tool Providers.
 - **Servers**:
     - **Local**: File system, time, shell execution.

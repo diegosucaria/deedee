@@ -145,6 +145,81 @@ app.post('/chat', async (req, res) => {
   }
 });
 
+// --- INTERNAL MANAGEMENT ENDPOINTS ---
+
+app.get('/internal/journal', (req, res) => {
+  if (!agent || !agent.journal) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const files = fs.readdirSync(agent.journal.journalDir)
+      .filter(f => f.endsWith('.md'))
+      .sort().reverse();
+    res.json({ files });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/internal/journal/:date', (req, res) => {
+  if (!agent || !agent.journal) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const { date } = req.params; // Expect filename like "2024-01-01.md" or just date?
+    // Let's assume input is YYYY-MM-DD
+    const filename = date.endsWith('.md') ? date : `${date}.md`;
+    const filePath = path.join(agent.journal.journalDir, filename);
+
+    if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Journal not found' });
+
+    const content = fs.readFileSync(filePath, 'utf8');
+    res.json({ date, content });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/internal/facts', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    // We need to access KV store directly or add getter.
+    // agent.db.getKey is for single key. checking db.js... db.db is exposed? Yes.
+    // agent.db.db is the better-sqlite3 instance.
+    const stmt = agent.db.db.prepare('SELECT key, value, updated_at FROM kv_store ORDER BY updated_at DESC');
+    const rows = stmt.all();
+    // Parse values if they are JSON
+    const facts = rows.map(r => {
+      try { return { ...r, value: JSON.parse(r.value) }; }
+      catch (e) { return r; }
+    });
+    res.json({ facts });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.get('/internal/tasks', (req, res) => {
+  if (!agent || !agent.scheduler) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const jobs = Object.values(agent.scheduler.jobs).map(j => ({
+      name: j.metadata?.name || 'unknown',
+      cron: j.metadata?.cronExpression || 'unknown',
+      nextInvocation: j.nextInvocation()
+    }));
+    res.json({ jobs });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/internal/tasks/:id/cancel', (req, res) => {
+  if (!agent || !agent.scheduler) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const { id } = req.params;
+    agent.scheduler.cancelJob(id);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
 if (require.main === module) {
   app.listen(port, () => {
     console.log(`Agent listening at http://localhost:${port}`);

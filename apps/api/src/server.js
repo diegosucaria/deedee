@@ -4,7 +4,7 @@ const cors = require('cors');
 const { authMiddleware } = require('./auth');
 const chatRouter = require('./chat');
 const briefingRouter = require('./briefing');
-const cityImageRouter = require('./city-image');
+const dashboardRouter = require('./dashboard');
 
 const app = express();
 const port = process.env.PORT || 3001;
@@ -19,6 +19,7 @@ app.get('/health', (req, res) => {
 
 // Protected V1 Routes
 app.use('/v1', authMiddleware);
+app.use('/v1', dashboardRouter); // Dashboard routes (journal, tasks, facts)
 app.use('/v1/chat', chatRouter);
 app.use('/v1/briefing', briefingRouter);
 app.use('/v1/city-image', cityImageRouter);

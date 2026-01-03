@@ -7,6 +7,7 @@ You are working on **Deedee**, a personal, self-improving AI agent designed to r
 - **Architecture**: Microservices in a Monorepo.
   - **Agent**: The brain (LangChain/Gemini). Unprivileged.
   - **Supervisor**: The immune system/updater. Privileged (Filesystem/Git access).
+  - **Web**: Next.js Dashboard & Chat.
   - **MCP Servers**: Tools exposed to the Agent.
 - **Stack**: Node.js, Docker, Google Gemini, MCP (Model Context Protocol).
 - **Deployment**:

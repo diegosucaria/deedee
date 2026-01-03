@@ -11,6 +11,7 @@
 ### Interfaces
 - [x] **Telegram**: Text and Native Voice (WAV) support.
 - [x] **API Gateway**: Synchronous `POST /v1/chat` for iOS Shortcuts & Dashboards.
+- [x] **Web Dashboard**: Next.js interface with Real-time Chat, Journal, and Memory views.
 
 ### Capabilities & Tools
 - [x] **Plex Integration**: "Play Inception", "What's on deck?".
@@ -29,7 +30,6 @@
 ### Interfaces
 - [ ] **WhatsApp**: Integration via Twilio or Meta API.
 - [ ] **Slack**: Native app integration (currently just webhooks).
-- [ ] **Web Dashboard**: A React frontend for the API Gateway.
 
 ### Intelligence
 - [ ] **Vector Memory**: Migrate from SQLite Regex search to Embeddings/Vector Store (pgvector/Chroma).
