@@ -17,11 +17,25 @@ class HttpInterface extends EventEmitter {
   async send(message) {
     try {
       console.log(`[HttpInterface] Sending to ${message.source}...`);
+
+      let content = message.content;
+      let type = message.type || 'text';
+
+      // Check for audio parts (Gemini style)
+      if (message.parts && message.parts.length > 0) {
+        // Look for audio/wav or any audio
+        const audioPart = message.parts.find(p => p.inlineData && p.inlineData.mimeType && p.inlineData.mimeType.startsWith('audio/'));
+        if (audioPart) {
+          content = audioPart.inlineData.data; // Base64
+          type = 'audio';
+        }
+      }
+
       await axios.post(`${this.interfacesUrl}/send`, {
         source: message.source,
-        content: message.content,
+        content: content,
         metadata: message.metadata,
-        type: message.type || 'text'
+        type: type
       });
       return true;
     } catch (error) {
