@@ -102,7 +102,7 @@ const toolDefinitions = [
       },
       {
         name: "runShellCommand",
-        description: "Run a shell command (allowed: ls, grep, git, npm, etc)",
+        description: "Run a shell command",
         parameters: {
           type: "OBJECT",
           properties: { command: { type: "STRING" } },
@@ -148,6 +148,38 @@ const toolDefinitions = [
           required: ["content"]
         }
       },
+      // Scheduler
+      {
+        name: "scheduleJob",
+        description: "Schedule a recurring task using cron syntax. The task must be a simple description that the agent will execute later.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING", description: "Unique name for the job" },
+            cron: { type: "STRING", description: "Cron expression (e.g. '0 9 * * *' for daily at 9am)" },
+            task: { type: "STRING", description: "Description of the task to perform (e.g. 'Check weather and send report')" }
+          },
+          required: ["name", "cron", "task"]
+        }
+      },
+      {
+        name: "listJobs",
+        description: "List all currently scheduled jobs.",
+        parameters: {
+          type: "OBJECT",
+          properties: {},
+          required: []
+        }
+      },
+      {
+        name: "cancelJob",
+        description: "Cancel a scheduled job by name.",
+        parameters: {
+          type: "OBJECT",
+          properties: { name: { type: "STRING" } },
+          required: ["name"]
+        }
+      },
       // Image Generation
       {
         name: "generateImage",
@@ -185,7 +217,7 @@ const toolDefinitions = [
       // Audio / TTS
       {
         name: "replyWithAudio",
-        description: "Generate and send an audio response (text-to-speech) to the user using Gemini 2.5. Use this ONLY when the user explicitly requests an audio/voice response.",
+        description: "Generate and send an audio response (text-to-speech) to the user using Gemini TTS. Use this ONLY when the user explicitly requests an audio/voice response.",
         parameters: {
           type: "OBJECT",
           properties: {

@@ -12,15 +12,22 @@ class ConfirmationManager {
                 // Example: Guard turning off all lights or critical automations
                 // Adjust these rules based on your "Smart Mode" preference
                 condition: (name, args) => {
-                    if (name === 'homeassistant' || name === 'call_service') { // Adjust based on actual tool name in definition
-                        // If it's a critical domain/service
+                    if (name === 'ha_call_service' || name === 'call_service') {
+                        // Critical System Domains
+                        if (args.domain === 'homeassistant') return true; // Block reload/restart
+                        if (args.domain === 'hassio') return true; // Block system updates/restores
+
+                        // Dangerous Actions
                         if (args.domain === 'automation' && args.service === 'turn_off') return true;
                         if (args.domain === 'script' && args.service.includes('delete')) return true;
                         if (args.domain === 'alarm_control_panel' && args.service === 'disarm') return true;
+
+                        // Mass actions (safety net)
+                        if (args.entity_id === 'all') return true;
                     }
                     return false;
                 },
-                message: '⚠️ Disabling an automation or security system requires confirmation.'
+                message: '⚠️ This Home Assistant action affects the system or security and requires confirmation.'
             },
             {
                 condition: (name, args) => name === 'runShellCommand' && (

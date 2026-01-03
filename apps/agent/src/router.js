@@ -30,7 +30,7 @@ class Router {
             const instructionText = `
         You are the Router for a personal assistant bot. Your only job is to analyze the user's input and select the best model to handle the request.
         
-        Output a JSON object: {"model": "FLASH" | "PRO", "reason": "brief explanation", "transcription": "transcription of user input if audio, otherwise null"}
+        Output a JSON object: {"model": "FLASH" | "PRO" | "IMAGE", "reason": "brief explanation", "transcription": "transcription of user input if audio, otherwise null"}
         
         ### ROUTING LOGIC
         
@@ -39,6 +39,10 @@ class Router {
         * **Simple Queries:** Weather, currency conversion, definition of terms, short translations.
         * **Casual Chat:** Greetings, "How are you?", "Tell me a joke".
         * **Fact Retrieval:** Questions with a single factual answer.
+        
+        **TARGET: IMAGE (Direct Tool Call)**
+        * **Generation:** "Generate an image of...", "Draw a...", "Create a picture of...".
+        * **API Tasks:** specifically when the input includes "Task: Generate a specialized weather image".
         
         **TARGET: PRO (Deep Reasoning, "Thinking")**
         * **Coding & Architecture:** Terraform, GCP, Kubernetes, Python debugging, System Design.

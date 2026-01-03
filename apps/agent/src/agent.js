@@ -184,11 +184,44 @@ class Agent {
       // Pass the primary content or parts to router
       const decision = await this.router.route(message.parts || message.content, routingHistory);
       console.timeEnd('[Agent] Router Duration');
+      console.log(`[Agent] Routing to: ${decision.model}`);
+
+      // --- BYPASS: DIRECT IMAGE GENERATION ---
+      if (decision.model === 'IMAGE') {
+        console.log('[Agent] Executing Direct Image Generation Bypass');
+
+        let prompt = message.content;
+        // Handle multimodal prompt extraction if needed, but usually image gen prompt is text
+        if (message.parts) {
+          prompt = message.parts.map(p => p.text).join(' ');
+        }
+
+        const toolResult = await this._executeTool('generateImage', { prompt: prompt }, message, sendCallback);
+        executionSummary.toolOutputs.push({ name: 'generateImage', result: toolResult });
+
+        // Optionally send a text confirmation
+        const reply = createAssistantMessage('Image generated.');
+        reply.metadata = { chatId: message.metadata?.chatId };
+        reply.source = message.source;
+        await sendCallback(reply);
+        executionSummary.replies.push(reply);
+
+        // Save interaction
+        this.db.saveMessage({
+          role: 'assistant',
+          content: 'Image generated (Direct Bypass)',
+          metadata: { chatId: message.metadata?.chatId },
+          source: message.source
+        });
+
+        return executionSummary;
+      }
+
       const selectedModel = decision.model === 'FLASH'
         ? (process.env.WORKER_FLASH || 'gemini-2.0-flash-exp')
         : (process.env.WORKER_PRO || 'gemini-3-pro-preview');
 
-      console.log(`[Agent] Routing to: ${selectedModel}`);
+      console.log(`[Agent] Routing to Model: ${selectedModel}`);
 
       // --- HYDRATION ---
       const history = this.db.getHistoryForChat(chatId, 50);
@@ -230,7 +263,8 @@ class Agent {
             3. **Explanation**: If you are unsure what the user means by "what happened", ask for clarification instead of guessing with a tool call.
 
             CRITICAL PROTOCOL:
-            1. If you are asked to write code, modify files, or improve yourself, you MUST first call 'pullLatestChanges'.
+            1. If you are going to write code, modify files, or improve yourself, you MUST first call 'pullLatestChanges'.
+            2. Do not start writing code automatically if the user did not ask for it. Even if the user asked for a new feature or change, ask for confirmation first, giving a brief summary of what you are going to do.
             2. When you are done making changes, you MUST call 'commitAndPush'. This tool runs tests automatically.
             3. DO NOT use 'runShellCommand' for git operations (commit/push). Use the dedicated tools.
             4. DO NOT change/add/improve anything else in the code that was not asked for. Keep comments as is.
@@ -245,6 +279,7 @@ class Agent {
             1. **Memory First**: Before searching for a device (e.g. "turn on hallway light"), ALWAYS call 'lookupDevice' with the alias ("hallway light") first. Only if it returns null should you call 'ha_search_entities'.
             2. **Learn**: After successfully searching and finding a device for the first time, ALWAYS call 'learnDevice' to save it for next time.
             3. **100% Brightness**: When the user says "Turn On" a light, NEVER use 'ha_toggle' or generic turn_on (unless percentage is not supported by the entity). You MUST set specific brightness to 100% (or 255/100 depending on service). Use 'ha_call_service' with domain 'light', service 'turn_on', and data: { "entity_id": "...", "brightness_pct": 100 }.
+            4. **Scheduling vs Automations**: Do NOT use Home Assistant to create automations for simple reminders or scheduling tasks (e.g. "Remind me to...", "Do X every day"). Use the 'scheduleJob' tool for these. Only use Home Assistant if the user explicitly asks to automate a smart device state (e.g. "Turn on lights at sunset").
       `;
 
       // Specific instruction for iPhone/Voice sources where dictation is unreliable
@@ -596,6 +631,36 @@ class Agent {
       const path = this.journal.log(args.content);
       return { success: true, path: path };
     }
+    // Scheduler
+    if (executionName === 'scheduleJob') {
+      this.scheduler.scheduleJob(args.name, args.cron, async () => {
+        console.log(`[Scheduler] Executing task: ${args.task}`);
+        const msg = createAssistantMessage(`⏰ Scheduled Task Triggered: ${args.task}`);
+        msg.metadata = { chatId: 'scheduler_trigger' };
+
+        await this.processMessage({
+          role: 'user',
+          content: `Scheduled Task: ${args.task}`,
+          source: 'scheduler',
+          metadata: { chatId: `scheduled_${args.name}_${Date.now()}` }
+        }, async (reply) => {
+          if (this.interface) {
+            await this.interface.send(reply);
+          }
+        });
+      });
+      return { success: true, info: `Job '${args.name}' scheduled for '${args.cron}'` };
+    }
+    if (executionName === 'listJobs') {
+      // Scheduler needs a list method. It has `this.jobs`.
+      const jobs = Object.keys(this.scheduler.jobs);
+      return { jobs: jobs };
+    }
+    if (executionName === 'cancelJob') {
+      this.scheduler.cancelJob(args.name);
+      return { success: true };
+    }
+
     // Image Generation
     if (executionName === 'generateImage') {
       try {
