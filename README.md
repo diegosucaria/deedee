@@ -74,6 +74,7 @@ Everything is customizable via environment variables. Like which models to use.
   ![Self-Healing Loop](docs/self-healing.png)
 
 - **🔌 MCP Integration**: Supports Model Context Protocol.
+    - **Home Assistant**: "Turn on the living room light" or "Set the temperature to 22°C".
     - **Plex**: "Play the movie Inception" or "Recommend me a movie I haven't seen"/
     - **GSuite**: "Calendar", "Gmail".
     - **Local**: Shell, Filesystem.
