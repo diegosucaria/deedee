@@ -462,13 +462,28 @@ class Agent {
           executionSummary.replies.push(reply);
         }
       } else {
-        console.warn('[Agent] No text response found. Response dump:', JSON.stringify(response, null, 2));
-        // Fallback notification to user
-        const reply = createAssistantMessage("I received an empty response from my brain. Please try again.");
-        reply.metadata = { chatId: message.metadata?.chatId };
-        reply.source = message.source;
-        await sendCallback(reply);
-        executionSummary.replies.push(reply);
+        // If we executed tools but got no final text, assume success and generate a generic confirmation.
+        if (executionSummary.toolOutputs.length > 0) {
+          console.log('[Agent] No text response after tool execution. Assuming implicit success.');
+          const lastTool = executionSummary.toolOutputs[executionSummary.toolOutputs.length - 1];
+          const reply = createAssistantMessage(`✅ Action ${lastTool.name} completed.`);
+          reply.metadata = { chatId: message.metadata?.chatId };
+          reply.source = message.source;
+
+          // Save implicit reply
+          this.db.saveMessage(reply);
+
+          await sendCallback(reply);
+          executionSummary.replies.push(reply);
+        } else {
+          console.warn('[Agent] No text response found. Response dump:', JSON.stringify(response, null, 2));
+          // Fallback notification to user
+          const reply = createAssistantMessage("I received an empty response from my brain. Please try again.");
+          reply.metadata = { chatId: message.metadata?.chatId };
+          reply.source = message.source;
+          await sendCallback(reply);
+          executionSummary.replies.push(reply);
+        }
       }
 
     } catch (error) {
@@ -589,22 +604,33 @@ class Agent {
 
         const response = await this.client.models.generateContent({
           model: modelName,
-          contents: [{ parts: [{ text: args.prompt }] }],
+          contents: args.prompt,
           config: {
-            responseModalities: ['IMAGE'] // Requesting Image
+            responseModalities: ['TEXT', 'IMAGE'],
+            tools: [{ googleSearch: {} }]
           }
         });
 
         if (!response.candidates || !response.candidates[0]) throw new Error('No candidates');
 
-        // Extract Image
-        const part = response.candidates[0].content.parts[0];
-        if (!part || !part.inlineData || !part.inlineData.data) throw new Error('No image data in response');
+        const candidate = response.candidates[0];
+
+        // Log Grounding Metadata if present
+        if (candidate.groundingMetadata) {
+          console.log('[Agent] Image Generation Grounding Metadata:', JSON.stringify(candidate.groundingMetadata, null, 2));
+        }
+
+        // Extract Image (Robustly find the part with inlineData)
+        const imgPart = candidate.content.parts.find(p => p.inlineData);
+        if (!imgPart || !imgPart.inlineData || !imgPart.inlineData.data) {
+          console.warn('[Agent] Image generation response had no image part:', JSON.stringify(candidate));
+          throw new Error('No image data in response');
+        }
 
         return {
           success: true,
-          image_base64: part.inlineData.data,
-          mimeType: part.inlineData.mimeType || 'image/png'
+          image_base64: imgPart.inlineData.data,
+          mimeType: imgPart.inlineData.mimeType || 'image/png'
         };
 
       } catch (e) {
