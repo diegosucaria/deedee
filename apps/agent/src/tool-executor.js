@@ -169,10 +169,18 @@ class ToolExecutor {
                 throw new Error('No image returned from Imagen model.');
             }
 
+            // Send Image to User!
+            const imgMsg = createAssistantMessage('');
+            imgMsg.parts = [{ inlineData: { mimeType: 'image/png', data: b64JSON } }];
+            imgMsg.metadata = { chatId: context.message.metadata?.chatId };
+            imgMsg.source = context.message.source;
+
+            await sendCallback(imgMsg);
+
             return {
                 success: true,
-                image_base64: b64JSON,
-                info: 'Image generated successfully.'
+                image_base64: "...",
+                info: 'Image generated and sent to user.'
             };
         }
 

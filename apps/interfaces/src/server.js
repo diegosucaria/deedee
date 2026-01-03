@@ -45,7 +45,7 @@ io.on("connection", (socket) => {
       // Wait, this file didn't require axios/fetch (only TelegramService used axios internally?)
       // Check imports. Line 13 of package.json has axios.
       const axios = require('axios');
-      await axios.post(`${agentUrl}/v1/chat`, payload);
+      await axios.post(`${agentUrl}/chat`, payload);
 
       // Ack to client?
       socket.emit("chat:ack", { id: data.id, status: "sent" });
@@ -104,6 +104,8 @@ app.post('/send', async (req, res) => {
       if (type === 'audio') {
         // content is expected to be base64 string or url
         await telegram.sendVoice(metadata.chatId, content);
+      } else if (type === 'image') {
+        await telegram.sendPhoto(metadata.chatId, content);
       } else {
         await telegram.sendMessage(metadata.chatId, content);
       }

@@ -14,6 +14,7 @@ const navItems = [
     { name: 'Memory', href: '/facts', icon: Database },
     { name: 'History', href: '/history', icon: Clock },
     { name: 'Aliases', href: '/aliases', icon: Tags },
+    { name: 'Stats', href: '/stats', icon: Activity },
 ];
 
 export function Sidebar() {

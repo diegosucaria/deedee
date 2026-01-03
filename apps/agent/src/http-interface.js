@@ -21,13 +21,18 @@ class HttpInterface extends EventEmitter {
       let content = message.content;
       let type = message.type || 'text';
 
-      // Check for audio parts (Gemini style)
+      // Check for audio/image parts (Gemini style)
       if (message.parts && message.parts.length > 0) {
         // Look for audio/wav or any audio
         const audioPart = message.parts.find(p => p.inlineData && p.inlineData.mimeType && p.inlineData.mimeType.startsWith('audio/'));
+        const imagePart = message.parts.find(p => p.inlineData && p.inlineData.mimeType && p.inlineData.mimeType.startsWith('image/'));
+
         if (audioPart) {
           content = audioPart.inlineData.data; // Base64
           type = 'audio';
+        } else if (imagePart) {
+          content = imagePart.inlineData.data; // Base64
+          type = 'image';
         }
       }
 

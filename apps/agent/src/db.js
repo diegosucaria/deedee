@@ -341,6 +341,38 @@ class AgentDB {
     const row = stmt.get(alias.toLowerCase());
     return row ? row.entity_id : null;
   }
+  getStats() {
+    const totalMessages = this.db.prepare('SELECT COUNT(*) as count FROM messages').get().count;
+
+    // Last 24h
+    const messages24h = this.db.prepare("SELECT COUNT(*) as count FROM messages WHERE timestamp > datetime('now', '-24 hours')").get().count;
+
+    // By Role
+    const roles = this.db.prepare('SELECT role, COUNT(*) as count FROM messages GROUP BY role').all();
+    const roleCounts = roles.reduce((acc, r) => ({ ...acc, [r.role]: r.count }), {});
+
+    // Goals
+    const pendingGoals = this.db.prepare("SELECT COUNT(*) as count FROM goals WHERE status = 'pending'").get().count;
+    const completedGoals = this.db.prepare("SELECT COUNT(*) as count FROM goals WHERE status = 'completed'").get().count;
+
+    // Jobs
+    const activeJobs = this.db.prepare('SELECT COUNT(*) as count FROM scheduled_jobs').get().count;
+
+    return {
+      messages: {
+        total: totalMessages,
+        last24h: messages24h,
+        byRole: roleCounts
+      },
+      goals: {
+        pending: pendingGoals,
+        completed: completedGoals
+      },
+      jobs: {
+        active: activeJobs
+      }
+    };
+  }
 }
 
 module.exports = { AgentDB };

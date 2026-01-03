@@ -16,11 +16,19 @@ export default async function JournalDetailPage({ params }) {
         return <div className="p-8 text-red-400">Error loading journal: {err.message}</div>;
     }
 
+    const [y, m, d] = date.split('-').map(Number);
+    const formattedDate = new Date(y, m - 1, d).toLocaleDateString(undefined, {
+        weekday: 'long',
+        year: 'numeric',
+        month: 'long',
+        day: 'numeric'
+    });
+
     return (
         <div className="p-8 max-w-4xl mx-auto">
             <h1 className="text-3xl font-bold mb-2 flex items-center gap-3">
                 <Calendar className="h-8 w-8 text-indigo-400" />
-                {date}
+                {formattedDate}
             </h1>
             <div className="h-px w-full bg-zinc-800 mb-8" />
 

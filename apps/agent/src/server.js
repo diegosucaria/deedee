@@ -219,6 +219,14 @@ app.post('/internal/tasks/:id/cancel', (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+// --- Stats ---
+app.get('/internal/stats', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const stats = agent.db.getStats();
+    res.json(stats);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
 
 // --- History ---
 app.get('/internal/history', (req, res) => {

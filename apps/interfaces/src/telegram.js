@@ -139,6 +139,23 @@ class TelegramService {
       await this.bot.telegram.sendMessage(chatId, "Sorry, I couldn't send the audio response.");
     }
   }
+
+  async sendPhoto(chatId, content) {
+    try {
+      let source;
+      if (content.startsWith('http')) {
+        source = { url: content };
+      } else {
+        source = { source: Buffer.from(content, 'base64') };
+      }
+
+      console.log(`[Telegram] Sending photo to ${chatId}`);
+      await this.bot.telegram.sendPhoto(chatId, source);
+    } catch (err) {
+      console.error('[Telegram] Failed to send photo:', err.message);
+      await this.bot.telegram.sendMessage(chatId, "Sorry, I couldn't send the image.");
+    }
+  }
 }
 
 module.exports = { TelegramService };

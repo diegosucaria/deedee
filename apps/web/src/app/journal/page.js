@@ -26,14 +26,26 @@ export default async function JournalPage() {
             ) : (
                 <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                     {files.map((file) => {
-                        const date = file.replace('.md', '');
+                        const dateParams = file.replace('.md', '');
+                        // Parse date properly (handle local time zone issues by appending T12:00:00 or splitting)
+                        // Simple approach: split YYYY-MM-DD to avoid TZ shifts
+                        const [y, m, d] = dateParams.split('-').map(Number);
+                        const dateObj = new Date(y, m - 1, d);
+
+                        const formattedDate = dateObj.toLocaleDateString(undefined, {
+                            weekday: 'long',
+                            year: 'numeric',
+                            month: 'long',
+                            day: 'numeric'
+                        });
+
                         return (
                             <Link
                                 key={file}
-                                href={`/journal/${date}`}
+                                href={`/journal/${dateParams}`}
                                 className="block p-6 rounded-xl bg-zinc-900 border border-zinc-800 hover:border-indigo-500 transition-colors"
                             >
-                                <h2 className="text-xl font-semibold text-zinc-200">{date}</h2>
+                                <h2 className="text-xl font-semibold text-zinc-200">{formattedDate}</h2>
                                 <p className="text-sm text-zinc-500 mt-2">Daily Summary</p>
                             </Link>
                         );
