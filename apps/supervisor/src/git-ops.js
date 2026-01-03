@@ -45,8 +45,60 @@ class GitOps {
     }
   }
 
+  async _scanForSecrets(files) {
+    const fs = require('fs');
+    const path = require('path');
+
+    // Patterns for secrets
+    const patterns = [
+      { name: 'OpenAI API Key', regex: /sk-[a-zA-Z0-9]{20,}/ },
+      { name: 'GitHub Token', regex: /(ghp|gho|ghu|ghs|ghr)_[a-zA-Z0-9]{36}/ },
+      { name: 'Private Key', regex: /-----BEGIN PRIVATE KEY-----/ },
+      { name: 'Google API Key', regex: /AIza[0-9A-Za-z-_]{35}/ },
+      { name: 'Generic High Entropy', regex: /([a-z0-9]{32,})/i }
+    ];
+
+    for (const file of files) {
+      if (file === '.') {
+        continue; // Handled by git status check in caller
+      }
+
+      const fullPath = path.resolve(this.workDir, file);
+      if (!fs.existsSync(fullPath)) continue;
+
+      const stat = fs.statSync(fullPath);
+      if (stat.isDirectory()) continue; // Skip directories for now (unless recursive needed)
+
+      const content = fs.readFileSync(fullPath, 'utf-8');
+
+      for (const p of patterns) {
+        if (p.regex.test(content)) {
+          // EXCEPTION: Allow env.example or similar?
+          if (file.includes('.example') || file.includes('.test.') || file.endsWith('git-ops.js')) {
+            continue;
+          }
+          throw new Error(`SECURITY ALERT: Found potential ${p.name} in ${file}. Commit aborted.`);
+        }
+      }
+    }
+  }
+
   async commitAndPush(message, files = ['.']) {
     try {
+      // 0. Security Scan
+      // If files=['.'], we need to know WHICH files are staged/changed.
+      // git status --porcelain
+      let filesToScan = files;
+      if (files.includes('.')) {
+        const statusOutput = await this.run('git status --porcelain');
+        // Parse status lines: " M apps/file.js" -> "apps/file.js"
+        filesToScan = statusOutput.split('\n')
+          .filter(line => line.trim() !== '')
+          .map(line => line.substring(3).trim()); // naive parse
+      }
+
+      await this._scanForSecrets(filesToScan);
+
       await this.verifier.verify(files);
 
       const fileList = files.join(' ');

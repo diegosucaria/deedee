@@ -19,7 +19,7 @@ router.get('/', async (req, res) => {
             Use a clean, minimalistic composition with a soft, solid-colored background.
             At the top-center, place the title “[CITY]” in large bold text, a prominent weather icon beneath it, then the date (small text) and temperature ([TEMP]) (medium text).
             All text must be centered with consistent spacing, and may subtly overlap the tops of the buildings.
-            IMPORTANT: The city cartoon should not reach the borders of the image and the cartoon shape should be a square.
+            IMPORTANT: The city cartoon should not reach the borders of the image.
             Temperature should be in Celsius.
             Instagram Story size, 1080x1920 dimension."
         `;

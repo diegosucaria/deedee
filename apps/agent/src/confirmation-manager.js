@@ -31,12 +31,18 @@ class ConfirmationManager {
             },
             {
                 condition: (name, args) => name === 'runShellCommand' && (
-                    args.command.includes('rm ') ||
-                    args.command.includes(' > ') ||
-                    args.command.includes('mv ') ||
-                    args.command.includes('format')
+                    // Dangerous Piping
+                    args.command.includes('| bash') ||
+                    args.command.includes('| sh') ||
+                    args.command.includes('| python') ||
+                    args.command.includes('| node') ||
+                    // Dangerous file ops
+                    args.command.includes('rm -rf /') ||
+                    args.command.includes('> /etc/') ||
+                    // Crypto miners often use these
+                    args.command.includes('xmrig')
                 ),
-                message: '⚠️ Destructive shell command requires confirmation.'
+                message: '⚠️ Dangerous shell command detected (Remote Execution / System Modification). Confirmation required.'
             },
             {
                 condition: (name, args) => name === 'sendEmail' && !args.to.includes('@'), // loose check

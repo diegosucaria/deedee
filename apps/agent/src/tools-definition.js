@@ -26,6 +26,29 @@ const toolDefinitions = [
         }
       },
       {
+        name: "searchMemory",
+        description: "Search past conversation history for specific keywords. Use this for 'What did I do yesterday?' or finding old context.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            query: { type: "STRING", description: "Keyword to search for (e.g. 'grocery', 'project')" },
+            limit: { type: "NUMBER", description: "Max results (default 10)" }
+          },
+          required: ["query"]
+        }
+      },
+      {
+        name: "consolidateMemory",
+        description: "Summarize a specific day's logs into a journal entry and optionally clear raw logs. Useful for nightly maintenance.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            date: { type: "STRING", description: "YYYY-MM-DD date to consolidate. Defaults to 'yesterday'." }
+          },
+          required: []
+        }
+      },
+      {
         name: "addGoal",
         description: "Register a new high-level goal or task (e.g. 'Update code for PDF support')",
         parameters: {

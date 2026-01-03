@@ -157,6 +157,30 @@ class AgentDB {
     const result = stmt.get(windowHours);
     return result ? result.count : 0;
   }
+
+  // --- Search & Consolidation ---
+  searchMessages(query, limit = 10) {
+    // Simple LIKE search
+    const stmt = this.db.prepare(`
+        SELECT timestamp, role, content FROM messages 
+        WHERE content LIKE ? OR parts LIKE ?
+        ORDER BY timestamp DESC
+        LIMIT ?
+    `);
+    const likeQuery = `%${query}%`;
+    return stmt.all(likeQuery, likeQuery, limit);
+  }
+
+  getMessagesByDate(dateStr) {
+    // dateStr format YYYY-MM-DD
+    const stmt = this.db.prepare(`
+        SELECT role, content, timestamp FROM messages
+        WHERE date(timestamp) = ?
+        ORDER BY timestamp ASC
+      `);
+    return stmt.all(dateStr);
+  }
+
   // --- Chat History Hydration ---
   // --- Chat History Hydration ---
   getHistoryForChat(chatId, limit = 20) {

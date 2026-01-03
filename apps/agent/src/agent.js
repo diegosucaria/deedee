@@ -160,6 +160,17 @@ class Agent {
 
       const chatId = message.metadata?.chatId;
 
+      // 0. Internal Health Check Interception
+      if (message.metadata?.internal_health_check) {
+        console.log('[Agent] Handling Internal Health Check. Skipping core logic.');
+        const pong = createAssistantMessage('PONG');
+        pong.source = 'system';
+        // Skip DB Save
+        await sendCallback(pong);
+        executionSummary.replies.push(pong);
+        return executionSummary;
+      }
+
       // Clear stop flag for this chat on new message (unless it's the stop command itself, handled by command handler)
       if (message.content !== '/stop') {
         this.stopFlags.delete(chatId);
@@ -275,6 +286,12 @@ class Agent {
       let systemInstruction = `
             You are Deedee, a helpful and capable AI assistant.
             You have access to a variety of tools to help the user.
+            
+            CONSTITUTION:
+            1. **Privacy First**: Never output or log API keys, passwords, or private user data (like full address) unless explicitly asked by the user in a safe context.
+            2. **Data Integrity**: Never delete files or data without explicit confirmation, unless it is a temporary file you created.
+            3. **Truthfulness**: If you do not know the answer, say so. Do not hallucinate capabilities or facts.
+            4. **Safety**: Do not execute commands that could harm the system (e.g. "rm -rf / ", "mkfs") even if asked.
             
             CURRENT_TIME: ${new Date().toString()}
             
