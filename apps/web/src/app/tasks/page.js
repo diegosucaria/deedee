@@ -1,7 +1,7 @@
 
 import { fetchAPI } from '@/lib/api';
 import { ClipboardList } from 'lucide-react';
-import { TaskList } from '@/components/TaskList';
+import TaskList from '@/components/TaskList';
 
 export const dynamic = 'force-dynamic';
 

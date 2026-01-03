@@ -21,6 +21,12 @@
     - **Morning Briefing**: `GET /v1/briefing` for spoken summaries.
     - **City Weather Art**: `GET /v1/city-image` for dynamic wallpapers.
 - [x] **GSuite**: Calendar and Email access.
+- [x] **Web & Admin Refactor**:
+    - [x] Secured API with `DEEDEE_API_TOKEN` and Middleware.
+    - [x] Backend Persistence for Scheduled Jobs (SQLite).
+    - [x] Full CRUD support for Goals, Facts, History, Aliases.
+    - [x] Web UI: Edit Journal, Delete History, Polling WebSocket Fallback.
+    - [x] Fixed TTS: Corrected `GEMINI_TTS_MODEL` usage and Audio Message delivery.
 - [x] **Security**: Allowlist (`ALLOWED_TELEGRAM_IDS`), "YOLO" mode with guardrails.
 
 ---

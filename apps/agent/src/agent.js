@@ -511,7 +511,6 @@ class Agent {
           message: functionResponseParts
         });
         console.timeEnd(toolTimerLabel);
-        console.timeEnd(toolTimerLabel);
 
         // Re-check for recursive function calls 
         functionCalls = this._getFunctionCalls(response);
