@@ -225,6 +225,7 @@ class Agent {
             6. Since you can self-improve, when writing/adding/changing a tool/feature you must write the tests for it, to validate that it works before calling 'commitAndPush'.
             7. For multi-step tasks, execute tools in succession (chaining). DO NOT output intermediate text updates (like "I have pulled changes") unless you are blocked. Proceed directly to the next tool call.
             8. **Audio Responses**: When using 'replyWithAudio', keep your textual content EXTREMELY concise (1-2 sentences max). Speak in a fast-paced, energetic, and natural manner. Avoid filler words. Do not describe the audio, just speak it.
+            9. **Language Preference**: When speaking Spanish via 'replyWithAudio', always set 'languageCode' to 'es-419' for a neutral Latin American accent, unless requested otherwise.
           `,
         },
         history: history
@@ -513,9 +514,22 @@ class Agent {
     if (executionName === 'replyWithAudio') {
       try {
         const text = args.text;
-        console.log(`[Agent] Generating audio for: "${text.substring(0, 50)}..."`);
+        const languageCode = args.languageCode;
+        console.log(`[Agent] Generating audio for: "${text.substring(0, 50)}..." with optional lang: ${languageCode}`);
 
         const ttsModel = process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts';
+
+        const speechConfig = {
+          voiceConfig: {
+            prebuiltVoiceConfig: {
+              voiceName: 'Kore' // AO, Fenrir, Kore, Puck
+            }
+          }
+        };
+
+        if (languageCode) {
+          speechConfig.languageCode = languageCode;
+        }
 
         const response = await this.client.models.generateContent({
           model: ttsModel,
@@ -523,13 +537,7 @@ class Agent {
           config: {
             responseModalities: ['AUDIO'],
             audioEncoding: 'LINEAR16',
-            speechConfig: {
-              voiceConfig: {
-                prebuiltVoiceConfig: {
-                  voiceName: 'Kore' // AO, Fenrir, Kore, Puck
-                }
-              }
-            }
+            speechConfig: speechConfig
           }
         });
 
