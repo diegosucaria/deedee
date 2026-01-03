@@ -1,77 +1,100 @@
 'use client';
 
+import { useState } from 'react';
+import { Trash2, User, Bot, Wrench, Terminal, Calendar } from 'lucide-react';
 import { deleteHistory } from '@/app/actions';
-import { Trash2, User, Bot, Terminal } from 'lucide-react';
+import clsx from 'clsx';
 import ReactMarkdown from 'react-markdown';
 
 export default function HistoryList({ history }) {
+    // Group by Date
+    const grouped = history.reduce((acc, msg) => {
+        const date = new Date(msg.timestamp).toLocaleDateString(undefined, {
+            weekday: 'long',
+            year: 'numeric',
+            month: 'long',
+            day: 'numeric'
+        });
+        if (!acc[date]) acc[date] = [];
+        acc[date].push(msg);
+        return acc;
+    }, {});
 
-    const getIcon = (role) => {
-        if (role === 'user') return <User className="h-4 w-4" />;
-        if (role === 'model' || role === 'assistant') return <Bot className="h-4 w-4" />;
-        if (role === 'function' || role === 'system') return <Terminal className="h-4 w-4" />;
-        return <Bot className="h-4 w-4" />;
-    };
-
-    const getColor = (role) => {
-        if (role === 'user') return 'text-blue-400 bg-blue-400/10 border-blue-400/20';
-        if (role === 'model' || role === 'assistant') return 'text-purple-400 bg-purple-400/10 border-purple-400/20';
-        if (role === 'function') return 'text-orange-400 bg-orange-400/10 border-orange-400/20';
-        return 'text-zinc-400 bg-zinc-400/10 border-zinc-400/20';
+    const handleDelete = async (id) => {
+        if (confirm('Delete this message log?')) {
+            await deleteHistory(id);
+        }
     };
 
     return (
-        <div className="space-y-4">
-            {history.length === 0 ? (
-                <div className="text-zinc-500 text-center py-8">No history loaded.</div>
-            ) : (
-                history.map((msg) => (
-                    <div
-                        key={msg.id || Math.random()}
-                        className="group relative flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-900/50 p-4 transition-all hover:bg-zinc-900 hover:border-zinc-700"
-                    >
-                        <div className="flex items-center justify-between mb-2">
-                            <div className={`flex items-center gap-2 px-2 py-1 rounded text-xs font-medium border ${getColor(msg.role)}`}>
-                                {getIcon(msg.role)}
-                                <span className="uppercase">{msg.role}</span>
-                            </div>
-                            <span className="text-xs text-zinc-600 font-mono">
-                                {new Date(msg.timestamp).toLocaleString()}
-                            </span>
-                        </div>
-
-                        <div className="text-sm text-zinc-300 font-mono whitespace-pre-wrap pl-2 border-l-2 border-zinc-800">
-                            {msg.content ? (
-                                msg.content
-                            ) : (
-                                <span className="text-zinc-600 italic">No text content (JSON/Parts)</span>
-                            )}
-                        </div>
-
-                        {/* JSON Parts Preview (if any) */}
-                        {msg.parts && (
-                            <details className="mt-2 text-xs text-zinc-500">
-                                <summary className="cursor-pointer hover:text-zinc-400">View Parts JSON</summary>
-                                <pre className="bg-black/30 p-2 rounded mt-1 overflow-x-auto">
-                                    {msg.parts}
-                                </pre>
-                            </details>
-                        )}
-
-                        <div className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity">
-                            <button
-                                onClick={() => {
-                                    if (confirm('Permanently delete this message?')) deleteHistory(msg.id);
-                                }}
-                                title="Delete Message"
-                                className="p-1.5 text-zinc-600 hover:text-red-400 hover:bg-red-400/10 rounded-md transition-colors"
-                            >
-                                <Trash2 className="h-4 w-4" />
-                            </button>
-                        </div>
+        <div className="space-y-12">
+            {Object.entries(grouped).map(([date, messages]) => (
+                <div key={date}>
+                    <div className="sticky top-0 z-10 flex justify-center mb-6">
+                        <span className="bg-zinc-800 text-zinc-400 text-xs font-medium px-3 py-1 rounded-full border border-zinc-700 shadow-sm backdrop-blur-md">
+                            {date}
+                        </span>
                     </div>
-                ))
-            )}
+
+                    <div className="space-y-6">
+                        {messages.map((msg) => (
+                            <div key={msg.id} className="relative group">
+                                <div className="flex gap-4 max-w-4xl mx-auto">
+                                    {/* Avatar */}
+                                    <div className={clsx(
+                                        "flex-shrink-0 w-10 h-10 rounded-full flex items-center justify-center border",
+                                        msg.role === 'user' && "bg-indigo-500/10 border-indigo-500/20 text-indigo-400",
+                                        msg.role === 'assistant' && "bg-emerald-500/10 border-emerald-500/20 text-emerald-400",
+                                        (msg.role === 'function' || msg.role === 'tool') && "bg-amber-500/10 border-amber-500/20 text-amber-400",
+                                        msg.role === 'system' && "bg-zinc-800 border-zinc-700 text-zinc-500"
+                                    )}>
+                                        {msg.role === 'user' && <User className="w-5 h-5" />}
+                                        {msg.role === 'assistant' && <Bot className="w-5 h-5" />}
+                                        {(msg.role === 'function' || msg.role === 'tool') && <Wrench className="w-5 h-5" />}
+                                        {msg.role === 'system' && <Terminal className="w-5 h-5" />}
+                                    </div>
+
+                                    {/* Content */}
+                                    <div className="flex-1 min-w-0">
+                                        <div className="flex items-center gap-2 mb-1">
+                                            <span className="text-sm font-semibold text-zinc-300 capitalize">
+                                                {msg.role}
+                                            </span>
+                                            <span className="text-xs text-zinc-600">
+                                                {new Date(msg.timestamp).toLocaleTimeString()}
+                                            </span>
+                                            <span className="text-[10px] text-zinc-700 bg-zinc-900 border border-zinc-800 px-1.5 rounded uppercase">
+                                                {msg.source || 'db'}
+                                            </span>
+                                        </div>
+
+                                        <div className="prose prose-invert prose-sm max-w-none text-zinc-400 bg-zinc-900/40 p-4 rounded-xl border border-zinc-800/50">
+                                            {msg.role === 'tool' ? (
+                                                <pre className="text-xs bg-transparent p-0 m-0 overflow-x-auto">
+                                                    {msg.content}
+                                                </pre>
+                                            ) : (
+                                                <ReactMarkdown>{msg.content || '*(No content)*'}</ReactMarkdown>
+                                            )}
+                                        </div>
+                                    </div>
+
+                                    {/* Actions */}
+                                    <div className="opacity-0 group-hover:opacity-100 transition-opacity flex flex-col justify-start pt-2">
+                                        <button
+                                            onClick={() => handleDelete(msg.id)}
+                                            className="p-2 text-zinc-600 hover:text-red-400 hover:bg-zinc-800 rounded-lg transition-colors"
+                                            title="Delete Message"
+                                        >
+                                            <Trash2 className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        ))}
+                    </div>
+                </div>
+            ))}
         </div>
     );
 }

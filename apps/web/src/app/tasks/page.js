@@ -21,7 +21,7 @@ export default async function TasksPage() {
                 Scheduler
             </h1>
 
-            <TaskList initialJobs={jobs} />
+            <TaskList tasks={jobs} />
         </div>
     );
 }

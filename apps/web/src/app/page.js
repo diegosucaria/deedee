@@ -18,7 +18,6 @@ export default function ChatPage() {
   // Initialize Socket
   useEffect(() => {
     const newSocket = io(SOCKET_URL, {
-      transports: ['websocket'],
       reconnectionAttempts: 5,
     });
 
