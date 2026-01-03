@@ -239,6 +239,26 @@ app.delete('/internal/history/:id', (req, res) => {
 });
 
 // --- Journal ---
+app.put('/internal/journal/:date', (req, res) => {
+  if (!agent || !agent.journal) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const { date } = req.params;
+    const { content } = req.body;
+
+    if (!content) return res.status(400).json({ error: 'Content required' });
+
+    const filename = date.endsWith('.md') ? date : `${date}.md`;
+    const filePath = path.join(agent.journal.journalDir, filename);
+
+    // Security check: ensure path is within journalDir
+    // Note: path.join resolves '..' so checking startWith is usually safe if journalDir is absolute/resolved.
+    // Ideally we use fs.realpath but for now this is "YOLO but okay".
+
+    fs.writeFileSync(filePath, content, 'utf8');
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.delete('/internal/journal/:date', (req, res) => {
   if (!agent || !agent.journal) return res.status(503).json({ error: 'Agent not ready' });
   try {

@@ -1,6 +1,5 @@
-
 import { fetchAPI } from '@/lib/api';
-import ReactMarkdown from 'react-markdown';
+import JournalEditor from '@/components/JournalEditor';
 import { Calendar } from 'lucide-react';
 
 export const dynamic = 'force-dynamic';
@@ -14,7 +13,7 @@ export default async function JournalDetailPage({ params }) {
         content = data.content || '';
     } catch (err) {
         console.error('Journal detail error:', err);
-        content = 'Error loading journal entry.';
+        return <div className="p-8 text-red-400">Error loading journal: {err.message}</div>;
     }
 
     return (
@@ -25,9 +24,7 @@ export default async function JournalDetailPage({ params }) {
             </h1>
             <div className="h-px w-full bg-zinc-800 mb-8" />
 
-            <div className="markdown prose prose-invert max-w-none bg-zinc-900/50 p-8 rounded-2xl border border-zinc-800">
-                <ReactMarkdown>{content}</ReactMarkdown>
-            </div>
+            <JournalEditor date={date} initialContent={content} />
         </div>
     );
 }

@@ -125,3 +125,15 @@ export async function deleteJournal(date) {
         return { success: true };
     } catch (e) { return { success: false, error: e.message }; }
 }
+
+export async function updateJournal(date, content) {
+    try {
+        await fetchAPI(`/v1/journal/${date}`, {
+            method: 'PUT',
+            body: JSON.stringify({ content })
+        });
+        revalidatePath('/journal');
+        revalidatePath(`/journal/${date}`);
+        return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+}

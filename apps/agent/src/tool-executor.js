@@ -183,18 +183,18 @@ class ToolExecutor {
             console.log(`[ToolExecutor] Generating audio for: "${text.substring(0, 30)}..." with optional lang: ${language}`);
 
             // 1. Generate Speech
-            const modelName = process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
+            const modelName = process.env.GEMINI_TTS_MODEL || process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
             const audioResponse = await client.models.generateContent({
                 model: modelName,
                 contents: [{
-                    parts: [{ text: `Please read the following text aloud in a natural, clear voice. Return ONLY the audio data. Text: "${text}"` }]
+                    parts: [{ text: `Please read the following text aloud in a natural, slightly fast-paced, clear voice. Return ONLY the audio data. Text: "${text}"` }]
                 }],
                 config: {
                     responseModalities: ['AUDIO'],
                     speechConfig: {
                         voiceConfig: {
                             prebuiltVoiceConfig: {
-                                voiceName: "Puck" // or Fenrir, etc
+                                voiceName: "Kore"
                             }
                         }
                     }

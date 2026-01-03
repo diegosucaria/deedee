@@ -22,6 +22,7 @@ const proxyRequest = async (req, res, method, path, data) => {
 // Journal
 router.get('/journal', (req, res) => proxyRequest(req, res, 'GET', '/internal/journal'));
 router.get('/journal/:date', (req, res) => proxyRequest(req, res, 'GET', `/internal/journal/${req.params.date}`));
+router.put('/journal/:date', (req, res) => proxyRequest(req, res, 'PUT', `/internal/journal/${req.params.date}`, req.body));
 router.delete('/journal/:date', (req, res) => proxyRequest(req, res, 'DELETE', `/internal/journal/${req.params.date}`));
 
 // Facts
