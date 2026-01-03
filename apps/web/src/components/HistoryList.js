@@ -16,18 +16,21 @@ export default function HistoryList({ history }) {
         ? history
         : history.filter(h => (h.source || 'db') === filterSource);
 
-    // Group by Date
-    const grouped = filteredHistory.reduce((acc, msg) => {
+    // Sort Descending (Newest First)
+    const sorted = [...filteredHistory].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+
+    // Group by Date using Map to preserve order
+    const grouped = sorted.reduce((acc, msg) => {
         const date = new Date(msg.timestamp).toLocaleDateString(undefined, {
             weekday: 'long',
             year: 'numeric',
             month: 'long',
             day: 'numeric'
         });
-        if (!acc[date]) acc[date] = [];
-        acc[date].push(msg);
+        if (!acc.has(date)) acc.set(date, []);
+        acc.get(date).push(msg);
         return acc;
-    }, {});
+    }, new Map());
 
     const handleDelete = async (id) => {
         if (confirm('Delete this message log?')) {
@@ -51,7 +54,7 @@ export default function HistoryList({ history }) {
             </div>
 
             <div className="space-y-12">
-                {Object.entries(grouped).map(([date, messages]) => (
+                {Array.from(grouped.entries()).map(([date, messages]) => (
                     <div key={date}>
                         <div className="sticky top-0 z-10 flex justify-center mb-6">
                             <span className="bg-zinc-800 text-zinc-400 text-xs font-medium px-3 py-1 rounded-full border border-zinc-700 shadow-sm backdrop-blur-md">
