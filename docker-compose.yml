@@ -74,8 +74,8 @@ services:
 
   web:
     build:
-      context: apps/web
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: apps/web/Dockerfile
     environment:
       - NODE_ENV=production
       - PORT=3000
