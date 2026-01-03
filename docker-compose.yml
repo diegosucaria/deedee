@@ -22,7 +22,7 @@ services:
       # - WORKER_FLASH=gemini-2.5-flash
       - WORKER_PRO=gemini-3-pro-preview
       - GEMINI_TTS_MODEL=gemini-2.5-flash-preview-tts
-      - GEMINI_IMAGE_MODEL=${GEMINI_IMAGE_MODEL}
+      - GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview
     volumes:
       - repo-data:/app/source
       - agent-data:/app/data

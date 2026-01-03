@@ -152,6 +152,33 @@ To generate a dynamic wallpaper:
     - Response is a binary PNG image.
 3.  **Shortcut Action**: "Set Wallpaper" or "Save to Photo Album".
 
+## 💻 API Usage Examples
+
+You can interact with Deedee from your terminal or any HTTP client.
+
+### 1. Chat (Text)
+```bash
+curl -X POST http://localhost:3001/v1/chat \
+  -H "Authorization: Bearer <YOUR_TOKEN>" \
+  -H "Content-Type: application/json" \
+  -d '{"message": "Check my calendar for today"}'
+```
+
+### 2. Morning Briefing (Audio Text)
+```bash
+curl -X GET http://localhost:3001/v1/briefing \
+  -H "Authorization: Bearer <YOUR_TOKEN>"
+# Returns: {"success": true, "briefing": "Good morning! It's 20°C in Córdoba..."}
+```
+
+### 3. City Weather Wallpaper (Image)
+```bash
+curl -X GET "http://localhost:3001/v1/city-image?city=Tokyo" \
+  -H "Authorization: Bearer <YOUR_TOKEN>" \
+  --output wallpaper.png
+# Saves 'wallpaper.png' to current directory
+```
+
 ---
 
 ## 🛠️ Architecture
