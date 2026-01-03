@@ -138,6 +138,28 @@ const toolDefinitions = [
           required: ["message"]
         }
       },
+      // Productivity
+      {
+        name: "logJournal",
+        description: "Log a note, idea, or todo to a daily markdown journal. Use this for 'Note to self', 'Remember to buy milk', etc.",
+        parameters: {
+          type: "OBJECT",
+          properties: { content: { type: "STRING" } },
+          required: ["content"]
+        }
+      },
+      // Image Generation
+      {
+        name: "generateImage",
+        description: "Generate an image using Gemini 3 Pro. Returns a base64 string.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            prompt: { type: "STRING", description: "Detailed prompt for the image." }
+          },
+          required: ["prompt"]
+        }
+      },
       // Smart Home Memory
       {
         name: "lookupDevice",

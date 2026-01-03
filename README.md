@@ -73,6 +73,9 @@ Open Telegram and message your bot:
 - **🏠 Smart Home Intelligence**:
     - **Entity Memory**: Remembers your device names ("hallway light" → `light.hallway_main`).
     - **Adaptive Control**: Smart logic (e.g., "Turn On" always sets brightness to 100%).
+- **⚡ Productivity**:
+    - **Smart Notes**: "Note to self: buy milk" saves to a daily markdown journal.
+    - **Morning Briefing**: `GET /v1/briefing` generates a concise audio-ready summary of your day.
 - **🛑 Safety**: Global `/stop` command instantly kills any runaway agent loops.
 
 ---
@@ -129,6 +132,25 @@ You can talk to Deedee via Siri using Apple Shortcuts.
     *   Iterate and Speak/Show the content.
 
 > **Tip**: Setting `source: iphone` enables special safeguards where Deedee will ask for clarification if your dictation is garbled.
+
+## 🌅 Morning Briefing Setup
+
+To wake up to a personalized summary:
+1.  Create an iOS Automation (e.g., "When Alarm Stops").
+2.  Add "Get Contents of URL":
+    -   **URL**: `https://<your-api-url>/v1/briefing`
+    -   **Method**: `GET`
+    -   **Headers**: `Authorization: Bearer <TOKEN>`
+3.  Parse JSON response (`Dictionary` -> `Value for key 'briefing'`).
+4.  Add "Speak Text" action.
+
+## 🏙️ City Weather Lock Screen
+
+To generate a dynamic wallpaper:
+1.  **URL**: `https://<your-api-url>/v1/city-image?city=London`
+2.  **Method**: `GET`
+    - Response is a binary PNG image.
+3.  **Shortcut Action**: "Set Wallpaper" or "Save to Photo Album".
 
 ---
 

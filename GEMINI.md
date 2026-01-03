@@ -20,7 +20,7 @@ You are working on **Deedee**, a personal, self-improving AI agent designed to r
 - **Operational Mode**: The Agent is a personal tool for a single user. We prioritize **Capability over Restriction**.
 - **Shell Access**: The Agent is allowed broad access to `run_shell_command` (e.g., `rm`, `curl`, `git`).
 - **Safety Net**: We do not prevent destructive actions (like deleting source code). Instead, we rely on the **Supervisor** to detect corruption and perform a "Hard Reset" (re-clone from GitHub) if necessary.
-- **Secrets**: Continue to protect API Keys via environment variables (`GOOGLE_API_KEY`, `TELEGRAM_TOKEN`, `GITHUB_PAT`, `SLACK_WEBHOOK_URL`, `PLEX_URL`, `PLEX_TOKEN`, `DEEDEE_API_TOKEN`).
+- **Secrets**: Continue to protect API Keys via environment variables (`GOOGLE_API_KEY`, `TELEGRAM_TOKEN`, `GITHUB_PAT`, `SLACK_WEBHOOK_URL`, `PLEX_URL`, `PLEX_TOKEN`, `DEEDEE_API_TOKEN`, `GEMINI_IMAGE_MODEL`).
 - **Access Control**: You must define `ALLOWED_TELEGRAM_IDS` (comma-separated strings) to prevent unauthorized access. Use `<YOUR_TELEGRAM_ID>` (User) as the primary ID.
 
 ### 4. API Security

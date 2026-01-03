@@ -9,6 +9,8 @@ const { MCPManager } = require('./mcp-manager');
 const { CommandHandler } = require('./command-handler');
 const { RateLimiter } = require('./rate-limiter');
 const { ConfirmationManager } = require('./confirmation-manager');
+const { JournalManager } = require('./journal');
+const { Scheduler } = require('./scheduler');
 const axios = require('axios');
 
 function createWavHeader(dataLength, sampleRate = 24000, numChannels = 1, bitsPerSample = 16) {
@@ -62,12 +64,18 @@ class Agent {
     // Tools Setup
     this.gsuite = new GSuiteTools();
     this.local = new LocalTools('/app/source');
+    this.journal = new JournalManager();
 
+    this.confirmationManager = new ConfirmationManager(this.db);
+    // Shared state for stopping execution
+    this.stopFlags = new Set();
     this.confirmationManager = new ConfirmationManager(this.db);
     // Shared state for stopping execution
     this.stopFlags = new Set();
     this.commandHandler = new CommandHandler(this.db, this.interface, this.confirmationManager, this.stopFlags);
     this.rateLimiter = new RateLimiter(this.db);
+
+    this.scheduler = new Scheduler(this);
 
     this.processMessage = this.processMessage.bind(this);
     this.onMessage = this.onMessage.bind(this);
@@ -474,6 +482,7 @@ class Agent {
       case 'rollbackLastChange': return 'Rolling back changes...';
       case 'listEvents': return 'Checking calendar...';
       case 'sendEmail': return 'Sending email...';
+      case 'logJournal': return 'Writing to journal...';
       case 'rememberFact':
       case 'getFact': return 'Accessing memory...';
       case 'addGoal':
@@ -530,7 +539,44 @@ class Agent {
     if (executionName === 'readFile') return await this.local.readFile(args.path);
     if (executionName === 'writeFile') return await this.local.writeFile(args.path, args.content);
     if (executionName === 'listDirectory') return await this.local.listDirectory(args.path);
+    if (executionName === 'listDirectory') return await this.local.listDirectory(args.path);
     if (executionName === 'runShellCommand') return await this.local.runShellCommand(args.command);
+    // Productivity
+    if (executionName === 'logJournal') {
+      const path = this.journal.log(args.content);
+      return { success: true, path: path };
+    }
+    // Image Generation
+    if (executionName === 'generateImage') {
+      try {
+        console.log(`[Agent] Generating image for: "${args.prompt.substring(0, 50)}..."`);
+        const modelName = process.env.GEMINI_IMAGE_MODEL || 'gemini-3-pro-image-preview'; // User specified model
+
+        const response = await this.client.models.generateContent({
+          model: modelName,
+          contents: [{ parts: [{ text: args.prompt }] }],
+          config: {
+            responseModalities: ['IMAGE'] // Requesting Image
+          }
+        });
+
+        if (!response.candidates || !response.candidates[0]) throw new Error('No candidates');
+
+        // Extract Image
+        const part = response.candidates[0].content.parts[0];
+        if (!part || !part.inlineData || !part.inlineData.data) throw new Error('No image data in response');
+
+        return {
+          success: true,
+          image_base64: part.inlineData.data,
+          mimeType: part.inlineData.mimeType || 'image/png'
+        };
+
+      } catch (e) {
+        console.error('Image Gen Error:', e);
+        return { error: `Image Generation failed: ${e.message}` };
+      }
+    }
     // Audio / TTS
     if (executionName === 'replyWithAudio') {
       try {

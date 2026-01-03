@@ -22,11 +22,13 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - **Self-Healing**: Monitors the Agent. If tests fail or the agent crashes, it performs a "Hard Reset" (re-clones code).
     - **Updater**: Applies code changes requested by the Agent (Self-Improvement loop).
 
-### 3. API Service (`apps/api`)
-- **Role**: The Gateway.
-- **Port**: `3001`
-- **Auth**: `Bearer <DEEDEE_API_TOKEN>` (Strict Middleware).
-- **Function**: Provides a synchronous Request/Response interface for external clients (iOS Shortcuts, Web Dashboards).
+### 3. API Gateway (`apps/api`)
+- **Type**: Express Service (Port 3001)
+- **Routes**:
+    - `POST /v1/chat`: Synchronous chat interface.
+    - `GET /v1/briefing`: Generates a spoken morning briefing (text).
+    - `GET /v1/city-image`: Generates a weather-aware city wallpaper (PNG).
+- **Auth**: Bearer Token (`DEEDEE_API_TOKEN`).
 - **Flow**: Client -> API -> Agent (Waits for full processing) -> API -> Client JSON Response.
 
 ### 4. Interfaces (`apps/interfaces`)
