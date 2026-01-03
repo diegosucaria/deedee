@@ -10,7 +10,7 @@
 
 **The Self-Improving Personal AI Agent for Raspberry Pi**
 
-Deedee is an autonomous, persistent AI companion optimized for **Raspberry Pi** (deployed via **Balena Cloud**). It can also run on any Docker-capable host.
+Deedee is an autonomous, persistent AI companion optimized for **Raspberry Pi** (it can be deployed via **Balena Cloud**). It can also run on any Docker-capable host.
 It connects to your life (Telegram, Calendar, Plex, Home) and can modify its own code to learn new skills.
 
 ---
@@ -25,7 +25,7 @@ It connects to your life (Telegram, Calendar, Plex, Home) and can modify its own
 ## What is it NOT? 🚫
 - **NOT a SaaS**: You cannot deploy one instance for 100 users. It is single-tenant.
 - **NOT a "Chatbot"**: It is an Agent. It takes actions, waits for results, and can run for minutes (or hours) to solve a problem.
-- **NOT Production-Safe for Enterprise**: It allows the AI to run `rm -rf` if it thinks that helps (though we have guardrails).
+- **NOT Production-Safe for Enterprise**: It allows the AI to freely run commands that it thinks will help (though we have guardrails).
 
 ---
 
@@ -62,7 +62,9 @@ Open Telegram and message your bot:
 
 ## ✨ Features
 
-- **🧠 Dual-Brain Logic**: Routes fast queries to `Gemini 2.5 Flash` and complex tasks to `Gemini Pro`.
+- **🧠 Dual-Brain Logic**: Routes fast queries to `Gemini 2.5 Flash` and complex tasks to `Gemini 3 Pro`.
+
+Everything is customizable via environment variables. Like which models to use.
   
   ![Dual Brain Architecture](docs/dual-brain.png)
 
@@ -72,7 +74,7 @@ Open Telegram and message your bot:
   ![Self-Healing Loop](docs/self-healing.png)
 
 - **🔌 MCP Integration**: Supports Model Context Protocol.
-    - **Plex**: "Play the movie Inception".
+    - **Plex**: "Play the movie Inception" or "Recommend me a movie I haven't seen"/
     - **GSuite**: "Calendar", "Gmail".
     - **Local**: Shell, Filesystem.
 - **📱 API Gateway**: Synchronous API (`POST /v1/chat`) for iOS Shortcuts and Dashboards. Includes **Dictation Safeguards** for voice input.
