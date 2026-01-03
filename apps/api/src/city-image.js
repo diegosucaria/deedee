@@ -72,7 +72,7 @@ router.get('/', async (req, res) => {
 
         // 1. Trigger Agent
         await axios.post(`${AGENT_URL}/chat`, {
-            message: prompt,
+            content: prompt,
             source: 'api_image',
             metadata: { chatId: chatId }
         });

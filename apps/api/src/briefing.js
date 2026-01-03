@@ -21,7 +21,7 @@ router.get('/', async (req, res) => {
 
         // We use the same /chat endpoint on the agent, but we construct a specific message
         const response = await axios.post(`${AGENT_URL}/chat`, {
-            message: prompt,
+            content: prompt,
             source: 'api_briefing', // Special source
             metadata: { chatId: 'briefing_session' }
         });
