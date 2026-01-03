@@ -6,7 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import { Send, Mic, Play, Pause, Wifi, WifiOff } from 'lucide-react';
 import clsx from 'clsx';
 
-const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || 'http://localhost:5000';
+const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || undefined;
 
 export default function ChatPage() {
   const [socket, setSocket] = useState(null);

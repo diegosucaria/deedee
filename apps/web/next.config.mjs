@@ -1,6 +1,13 @@
 const nextConfig = {
   output: 'standalone',
-  /* config options here */
+  async rewrites() {
+    return [
+      {
+        source: '/socket.io/:path*',
+        destination: 'http://interfaces:5000/socket.io/:path*',
+      },
+    ];
+  },
 };
 
 export default nextConfig;
