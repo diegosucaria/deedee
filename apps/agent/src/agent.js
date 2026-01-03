@@ -79,6 +79,16 @@ class Agent {
 
     this.scheduler = new Scheduler(this);
 
+    this.toolExecutor = new ToolExecutor({
+      local: this.local,
+      journal: this.journal,
+      scheduler: this.scheduler,
+      gsuite: this.gsuite,
+      mcp: this.mcp,
+      client: null, // Will be populated in processMessage
+      interface: this.interface
+    });
+
     this.processMessage = this.processMessage.bind(this);
     this.onMessage = this.onMessage.bind(this);
   }
@@ -137,6 +147,16 @@ class Agent {
     try {
       const isMultiModal = !!message.parts;
       console.log(`Received: ${isMultiModal ? '[Multi-modal content]' : message.content}`);
+
+      // Ensure client is ready (JIT)
+      if (!this.client) {
+        const { GoogleGenAI } = await this._loadClientLibrary();
+        this.client = new GoogleGenAI({ apiKey: this.config.googleApiKey });
+      }
+
+      // Propagate dependencies to ToolExecutor
+      this.toolExecutor.services.client = this.client;
+      this.toolExecutor.services.interface = this.interface;
 
       const chatId = message.metadata?.chatId;
 
