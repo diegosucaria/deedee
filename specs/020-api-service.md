@@ -34,7 +34,18 @@ Accepts a JSON payload to send a message to the agent.
 ```
 
 **Response:**
-- `200 OK`: `{ "success": true, "status": "sent" }`
+- `200 OK`: 
+  ```json
+  {
+    "success": true,
+    "agentResponse": {
+      "replies": [
+        { "content": "Thinking...", "type": "text" },
+        { "content": "Hello!", "type": "text" }
+      ]
+    }
+  }
+  ```
 - `401 Unauthorized`: Invalid Token.
 - `400 Bad Request`: Missing fields.
 
