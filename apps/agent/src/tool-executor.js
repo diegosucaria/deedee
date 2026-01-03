@@ -114,9 +114,9 @@ class ToolExecutor {
                 }
 
                 // Log grounding metadata if present (for image gen?)
-                if (response.candidates[0].groundingMetadata) {
-                    console.log('[ToolExecutor] Image Generation Grounding Metadata:', JSON.stringify(response.candidates[0].groundingMetadata, null, 2));
-                }
+                // if (response.candidates[0].groundingMetadata) {
+                //     console.log('[ToolExecutor] Image Generation Grounding Metadata:', JSON.stringify(response.candidates[0].groundingMetadata, null, 2));
+                // }
             }
 
             if (!b64JSON) {
