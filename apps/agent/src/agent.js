@@ -127,6 +127,11 @@ class Agent {
    * @param {function} sendCallback - Async function(reply) to handle responses
    */
   async processMessage(message, sendCallback) {
+    const executionSummary = {
+      toolOutputs: [], // List of { name, result }
+      replies: []      // List of text/audio replies
+    };
+
     try {
       const isMultiModal = !!message.parts;
       console.log(`Received: ${isMultiModal ? '[Multi-modal content]' : message.content}`);
@@ -148,20 +153,23 @@ class Agent {
         console.log(`[Agent] User confirmed action: ${action.name}`);
         const result = await this._executeTool(action.name, action.args, message, sendCallback);
 
+        executionSummary.toolOutputs.push({ name: action.name, result });
+
         // Notify user of result
         const reply = createAssistantMessage(`Action **${action.name}** executed.\nResult: \`\`\`json\n${JSON.stringify(result, null, 2).substring(0, 500)}\n\`\`\``);
         reply.metadata = { chatId };
         reply.source = message.source;
         await sendCallback(reply);
-        return;
+        executionSummary.replies.push(reply);
+        return executionSummary;
       } else if (commandResult === true) {
         // Handled by command handler (e.g. /clear, /cancel)
-        return;
+        return executionSummary;
       }
 
       // 2. Rate Limiting
       if (!(await this.rateLimiter.check(message, this.interface))) {
-        return;
+        return executionSummary;
       }
 
       // 3. Save User Message
@@ -227,10 +235,11 @@ class Agent {
             3. DO NOT use 'runShellCommand' for git operations (commit/push). Use the dedicated tools.
             4. DO NOT change/add/improve anything else in the code that was not asked for. Keep comments as is.
             5. All strings and comments you add must be in English.
-            6. Since you can self-improve, when writing/adding/changing a tool/feature you must write the tests for it, to validate that it works before calling 'commitAndPush'.
-            7. For multi-step tasks, execute tools in succession (chaining). DO NOT output intermediate text updates (like "I have pulled changes") unless you are blocked. Proceed directly to the next tool call.
-            8. **Audio Responses**: When using 'replyWithAudio', keep your textual content EXTREMELY concise (1-2 sentences max). Speak in a fast-paced, energetic, and natural manner. Avoid filler words. Do not describe the audio, just speak it.
-            9. **Language Preference**: When speaking Spanish via 'replyWithAudio', always set 'languageCode' to 'es-419' for a neutral Latin American accent, unless requested otherwise.
+            6. Since you can self-improve, when writing/adding/changing a tool/feature you must write the tests for it, to validate that it works before calling 'commitAndPush'. You must also write documentation if required.
+            7. This is a public repository, so when writing code or documentation, make sure you do not leak any sensitive or private information. The code will be used by others so make sure it is written with expandability and reusability in mind.
+            8. For multi-step tasks, execute tools in succession (chaining). DO NOT output intermediate text updates (like "I have pulled changes") unless you are blocked. Proceed directly to the next tool call.
+            9. **Audio Responses**: When using 'replyWithAudio', keep your textual content EXTREMELY concise (1-2 sentences max). Speak in a fast-paced, energetic, and natural manner. Avoid filler words. Do not describe the audio, just speak it.
+            10. **Language Preference**: When speaking Spanish via 'replyWithAudio', always set 'languageCode' to 'es-419' for a neutral Latin American accent, unless requested otherwise.
 
             SMART HOME RULES (Home Assistant):
             1. **Memory First**: Before searching for a device (e.g. "turn on hallway light"), ALWAYS call 'lookupDevice' with the alias ("hallway light") first. Only if it returns null should you call 'ha_search_entities'.
@@ -363,24 +372,45 @@ class Agent {
           toolResult = { info: 'No output from tool execution.' };
         }
 
+        // Capture Tool Output
+        executionSummary.toolOutputs.push({ name: executionName, result: toolResult });
+
         const logResult = JSON.stringify(toolResult);
         if (logResult.length > 200) {
-          console.log('Tool Result (Truncated):', logResult.substring(0, 200) + '...');
+          console.log(`Tool Result (${executionName}) (Truncated):`, logResult.substring(0, 200) + '...');
         } else {
-          console.log('Tool Result:', toolResult);
+          console.log(`Tool Result (${executionName}):`, toolResult);
         }
 
         // SAVE TOOL RESPONSE (FunctionResponse)
+        // We sanitize the result for DB storage to avoid bloat (e.g. huge Base64 images)
+        let dbToolResult = toolResult;
+
+        if (executionName === 'generateImage') {
+          // Store NOTHING for image generation.
+          // We store a minimal acknowledgement to preserve History integrity (Call -> Response)
+          dbToolResult = { info: 'Image generated.' };
+        } else if (toolResult && toolResult.image_base64 && toolResult.image_base64.length > 500) {
+          dbToolResult = { ...toolResult, image_base64: '<BASE64_IMAGE_TRUNCATED_FOR_DB>' };
+        }
+
         const functionResponsePart = {
           functionResponse: {
             name: call.name,
-            response: { result: toolResult }
+            response: { result: toolResult } // Send FULL result to Gemini so it sees the data
+          }
+        };
+
+        const dbFunctionResponsePart = {
+          functionResponse: {
+            name: call.name,
+            response: { result: dbToolResult } // Save SANITIZED result to DB
           }
         };
 
         this.db.saveMessage({
           role: 'function',
-          parts: [functionResponsePart],
+          parts: [dbFunctionResponsePart],
           metadata: { chatId: message.metadata?.chatId },
           source: message.source
         });
@@ -429,6 +459,7 @@ class Agent {
           this.db.saveMessage(reply);
 
           await sendCallback(reply);
+          executionSummary.replies.push(reply);
         }
       } else {
         console.warn('[Agent] No text response found. Response dump:', JSON.stringify(response, null, 2));
@@ -437,6 +468,7 @@ class Agent {
         reply.metadata = { chatId: message.metadata?.chatId };
         reply.source = message.source;
         await sendCallback(reply);
+        executionSummary.replies.push(reply);
       }
 
     } catch (error) {
@@ -452,7 +484,10 @@ class Agent {
       errReply.metadata = { chatId: message.metadata?.chatId };
       errReply.source = message.source;
       await sendCallback(errReply);
+      executionSummary.replies.push(errReply);
     }
+
+    return executionSummary;
   }
 
   _getFunctionCalls(response) {

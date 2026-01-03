@@ -39,3 +39,4 @@
 ### Infrastructure
 - [ ] **Kubernetes**: Migrate from Docker Compose (maybe overkill for Pi?).
 - [ ] **Voice Cloning**: Use ElevenLabs or OpenVoice for custom TTS identities.
+- [ ] **Optimize MCP Startup**: Bake `ha-mcp` into Docker image to avoid `uvx` runtime download.
