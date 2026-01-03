@@ -51,3 +51,24 @@ Supervisor performs 'Git Push/Pull' to GitHub.
 GitHub triggers Balena Cloud to update the Raspberry Pi containers.
 Style: Modern, microservices layout, highlighting the Agent as the central node."
 
+--- 
+
+1. The Hero Banner (For the top of README)
+Goal: Establish Deedee as a friendly, futuristic, and helpful personal assistant. Prompt:
+
+"A cinematic wide shot of a friendly, small, spherical floating AI robot named Deedee, hovering over a Raspberry Pi on a desk. The robot projects a holographic interface showing a calendar, a weather icon, and a snippet of clean code. The lighting is moody and cozy, neon blue and purple ambient desk lights, depth of field focused on the robot. Style: High-end 3D render, tech-noir, sleek, clean, 8k resolution, aspect ratio 16:9."
+
+2. The "Dual Brain" Router Concept (For Architecture)
+Goal: Visualize the "Smart Router" that splits traffic between Gemini Flash (Speed) and Gemini Pro (Reasoning). Prompt:
+
+"Abstract 3D isometric data visualization. A central glowing orb (The Router) splitting a stream of data into two distinct paths. Left path: High-speed, bright yellow lightning streaks symbolizing speed (Flash). Right path: complex, structured, glowing blue geometric crystal lattice symbolizing deep reasoning (Pro). Dark background, cybernetic neural network aesthetic. Clean, minimal, tech illustration."
+
+3. The "Self-Healing" Cycle (For Self-Improvement)
+Goal: Illustrate the loop of Agent -> Supervisor -> Git -> Update. Prompt:
+
+"A stylized vector illustration of an infinite loop cycle. Four stages in the circle: 1. A robot writing on a holographic keyboard (Coding), 2. A glowing shield scanning the code (Supervisor), 3. A rocket ship launching (Deploy), 4. The robot leveling up or glowing brighter (Update). Flat 2.0 design, vibrant colors, clean lines on a dark background. Infographic style."
+
+
+--- 
+
+

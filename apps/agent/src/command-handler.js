@@ -20,8 +20,9 @@ class CommandHandler {
         if (content === '/stop') {
             if (this.stopFlags) {
                 this.stopFlags.add(chatId);
-                console.log(`[CommandHandler] Stop flag set for ${chatId}`);
-                await this.sendReply(chatId, message.source, 'Stopping execution...');
+                this.stopFlags.add('GLOBAL_STOP');
+                console.log(`[CommandHandler] Stop flag set for ${chatId} and GLOBAL_STOP`);
+                await this.sendReply(chatId, message.source, 'Stopping ALL execution loops...');
             }
             return true;
         }

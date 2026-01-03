@@ -119,7 +119,20 @@ app.post('/chat', async (req, res) => {
       await agent.processMessage(message, async (reply) => {
         replies.push(reply);
       });
-      res.json({ replies });
+      let finalReplies = replies;
+
+      // Only filter strictly for the iOS Shortcut (source=iphone, chatId=ios_shortcut)
+      // This keeps "Thinking..." messages for other clients like Web Dashboards.
+      if (message.source === 'iphone' && message.metadata?.chatId === 'ios_shortcut') {
+        finalReplies = replies.filter(r => {
+          const c = r.content || '';
+          return !c.startsWith('Thinking...') &&
+            !c.startsWith('Still working...') &&
+            !c.startsWith('Action **');
+        });
+      }
+
+      res.json({ replies: finalReplies });
     } catch (error) {
       console.error('[Agent] Chat processing error:', error);
       res.status(500).json({ error: error.message });

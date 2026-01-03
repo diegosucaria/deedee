@@ -21,4 +21,6 @@ jobs:
         run: balena login --token "$BALENA_TOKEN"
 
       - name: Balena Push
-        run: balena push g_diego_sucaria/deedee -s . --noparent-check --unsupported
+        env:
+          BALENA_FLEET: ${{ secrets.BALENA_FLEET_SLUG }}
+        run: balena push "$BALENA_FLEET" -s . --noparent-check --unsupported

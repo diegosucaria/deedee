@@ -128,6 +128,7 @@ class Agent {
       // Clear stop flag for this chat on new message (unless it's the stop command itself, handled by command handler)
       if (message.content !== '/stop') {
         this.stopFlags.delete(chatId);
+        this.stopFlags.delete('GLOBAL_STOP');
       }
 
       // 1. Slash Commands (only for text messages)
@@ -194,12 +195,8 @@ class Agent {
       // construct the tools object for Gemini
       const geminiTools = [{ functionDeclarations: allTools }];
 
-      // Initialize Stateless Chat Session
-      const session = this.client.chats.create({
-        model: selectedModel,
-        config: {
-          tools: geminiTools,
-          systemInstruction: `
+      // Build System Instruction
+      let systemInstruction = `
             You are Deedee, a helpful and capable AI assistant.
             You have access to a variety of tools to help the user.
             
@@ -226,7 +223,24 @@ class Agent {
             7. For multi-step tasks, execute tools in succession (chaining). DO NOT output intermediate text updates (like "I have pulled changes") unless you are blocked. Proceed directly to the next tool call.
             8. **Audio Responses**: When using 'replyWithAudio', keep your textual content EXTREMELY concise (1-2 sentences max). Speak in a fast-paced, energetic, and natural manner. Avoid filler words. Do not describe the audio, just speak it.
             9. **Language Preference**: When speaking Spanish via 'replyWithAudio', always set 'languageCode' to 'es-419' for a neutral Latin American accent, unless requested otherwise.
-          `,
+      `;
+
+      // Specific instruction for iPhone/Voice sources where dictation is unreliable
+      if (['iphone', 'ios_shortcut'].includes(message.source)) {
+        systemInstruction += `\n
+            **DICTATION SAFEGUARD**: You are receiving input from iOS Voice Dictation. It is prone to errors.
+            - If the user's request is AMBIGUOUS, resembles gibberish, or matches a tool only weakly (e.g. "turn on the light" but no room specified, or "play movie" but name is garbled), DO NOT EXECUTE THE TOOL.
+            - Instead, ASK FOR CLARIFICATION: "Did you say [interpreted text]?" or "Which light?".
+            - ONLY execute tools if the intent is crystal clear.
+        `;
+      }
+
+      // Initialize Stateless Chat Session
+      const session = this.client.chats.create({
+        model: selectedModel,
+        config: {
+          tools: geminiTools,
+          systemInstruction: systemInstruction,
         },
         history: history
       });
@@ -246,10 +260,12 @@ class Agent {
 
       while (functionCalls && functionCalls.length > 0) {
         // CHECK STOP FLAG
-        if (this.stopFlags.has(chatId)) {
+        if (this.stopFlags.has(chatId) || this.stopFlags.has('GLOBAL_STOP')) {
           console.log(`[Agent] Stop flag detected for chat ${chatId}. Breaking loop.`);
           await sendCallback(createAssistantMessage('🛑 Execution stopped by user.'));
           this.stopFlags.delete(chatId);
+          // Do NOT delete GLOBAL_STOP here, so it hits other concurrent loops.
+          // It will be cleared on next user input.
           break;
         }
 
