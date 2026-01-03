@@ -1,80 +1,97 @@
 'use client';
 
-import { useState } from 'react';
-import { Trash2, RefreshCw } from 'lucide-react';
-import { useRouter } from 'next/navigation'; // Keep for client-side refresh if needed
-import { cancelTask } from '../app/actions';
+import { useFormState } from 'react-dom';
+import { cancelTask, createTask } from '@/app/actions';
+import { Trash2, Clock, PlayCircle, Plus } from 'lucide-react';
 
-export function TaskList({ initialJobs }) {
-    const router = useRouter();
-    const [jobs, setJobs] = useState(initialJobs);
-    const [canceling, setCanceling] = useState(null);
+const initialState = { success: false, error: null };
 
-    const handleCancel = async (name) => {
-        if (!confirm(`Are you sure you want to cancel job "${name}"?`)) return;
-
-        setCanceling(name);
-
-        // Optimistic Update
-        const previousJobs = [...jobs];
-        setJobs(prev => prev.filter(j => j.name !== name));
-
-        try {
-            const result = await cancelTask(name);
-
-            if (!result.success) {
-                throw new Error(result.error || 'Failed');
-            }
-            // Success: Data is revalidated on server.
-            // We can optionally router.refresh() to ensure we are in sync, 
-            // effectively re-fetching the server component and updating props, 
-            // but since we are using local state initialized from props, 
-            // we might not see the prop update unless we sync state to props (useEffect).
-            // For simple list, optimistic update is sufficient UX. 
-            // Router refresh ensures if we navigate away and back we are good.
-            router.refresh();
-        } catch (err) {
-            console.error(err);
-            alert('Error canceling task: ' + err.message);
-            // Revert
-            setJobs(previousJobs);
-        } finally {
-            setCanceling(null);
-        }
-    };
+export default function TaskList({ tasks }) {
+    const [state, formAction] = useFormState(createTask, initialState);
 
     return (
-        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-            {jobs.map((job) => (
-                <div key={job.name} className="p-6 rounded-xl bg-zinc-900 border border-zinc-800 flex flex-col justify-between">
-                    <div>
-                        <h3 className="text-lg font-semibold text-zinc-200 flex items-center gap-2">
-                            {job.name}
-                        </h3>
-                        <div className="mt-2 text-sm text-zinc-400 font-mono bg-zinc-950 p-2 rounded border border-zinc-800 inline-block">
-                            {job.cron}
-                        </div>
-                        <div className="mt-4 text-sm text-zinc-500">
-                            Next Run: <span className="text-zinc-300">{job.nextInvocation ? new Date(job.nextInvocation).toLocaleString() : 'N/A'}</span>
-                        </div>
+        <div className="space-y-8">
+            {/* Add Task Form */}
+            <div className="bg-zinc-900/50 p-6 rounded-2xl border border-zinc-800">
+                <h3 className="text-lg font-medium text-white mb-4 flex items-center gap-2">
+                    <Plus className="h-5 w-5 text-indigo-400" />
+                    New Schedule
+                </h3>
+                <form action={formAction} className="grid md:grid-cols-2 gap-4">
+                    <input
+                        type="text"
+                        name="name"
+                        placeholder="Job Name (e.g. daily_briefing)"
+                        required
+                        className="rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                    />
+                    <input
+                        type="text"
+                        name="cron"
+                        placeholder="Cron (e.g. 0 8 * * *)"
+                        required
+                        className="rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-mono text-sm"
+                    />
+                    <div className="md:col-span-2">
+                        <input
+                            type="text"
+                            name="task"
+                            placeholder="Instruction (e.g. 'Summarize yesterday's logs')"
+                            required
+                            className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                        />
                     </div>
 
-                    <div className="mt-6 flex justify-end">
-                        <button
-                            onClick={() => handleCancel(job.name)}
-                            disabled={canceling === job.name}
-                            className="flex items-center gap-2 px-3 py-2 rounded-lg bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 transition-colors text-sm font-medium disabled:opacity-50"
+                    <button
+                        type="submit"
+                        className="md:col-span-2 flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 font-medium text-white hover:bg-indigo-500 active:bg-indigo-700 transition-colors"
+                    >
+                        Schedule Task
+                    </button>
+                </form>
+                {state?.error && (
+                    <p className="mt-4 text-sm text-red-400 bg-red-400/10 p-2 rounded border border-red-400/20">
+                        {state.error}
+                    </p>
+                )}
+            </div>
+
+            {/* List */}
+            <div className="grid gap-4 md:grid-cols-2">
+                {tasks.length === 0 ? (
+                    <div className="col-span-full text-zinc-500 text-center py-8">No scheduled tasks active.</div>
+                ) : (
+                    tasks.map((job) => (
+                        <div
+                            key={job.name}
+                            className="group relative flex flex-col gap-3 rounded-xl border border-zinc-800 bg-zinc-900 p-5 transition-all hover:bg-zinc-800/50 hover:border-zinc-700 hover:shadow-xl"
                         >
-                            {canceling === job.name ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Trash2 className="h-4 w-4" />}
-                            Cancel
-                        </button>
-                    </div>
-                </div>
-            ))}
+                            <div className="flex items-center justify-between">
+                                <span className="font-semibold text-white tracking-wide">{job.name}</span>
+                                <div className="flex items-center gap-1.5 rounded-full bg-indigo-500/10 px-2.5 py-1 text-xs font-medium text-indigo-400 border border-indigo-500/20 font-mono">
+                                    <Clock className="h-3 w-3" />
+                                    {job.cron}
+                                </div>
+                            </div>
 
-            {jobs.length === 0 && (
-                <p className="text-zinc-500 col-span-full text-center py-10">No active scheduled tasks.</p>
-            )}
+                            <div className="text-sm text-zinc-400 flex items-center gap-2">
+                                <PlayCircle className="h-4 w-4 text-emerald-500" />
+                                Next: <span className="text-zinc-300">{new Date(job.nextInvocation).toLocaleString()}</span>
+                            </div>
+
+                            <button
+                                onClick={() => {
+                                    if (confirm(`Cancel schedule '${job.name}'?`)) cancelTask(job.name);
+                                }}
+                                className="absolute top-4 right-4 p-2 text-zinc-500 hover:bg-red-500/10 hover:text-red-400 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
+                                title="Cancel Schedule"
+                            >
+                                <Trash2 className="h-4 w-4" />
+                            </button>
+                        </div>
+                    ))
+                )}
+            </div>
         </div>
     );
 }

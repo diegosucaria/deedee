@@ -107,6 +107,9 @@ class Agent {
     // Initialize MCP
     await this.mcp.init();
 
+    // Load Scheduled Jobs
+    await this.scheduler.loadJobs();
+
     // Check Goals
     const pendingGoals = this.db.getPendingGoals();
     if (pendingGoals.length > 0) {

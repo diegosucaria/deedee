@@ -3,20 +3,125 @@
 import { fetchAPI } from '@/lib/api';
 import { revalidatePath } from 'next/cache';
 
+// --- Tasks ---
 export async function cancelTask(name) {
     try {
         const encodedName = encodeURIComponent(name);
-        // Call existing API endpoint via helper (which now adds Bearer token)
-        // Note: fetchAPI uses process.env.API_URL (server to server)
-        await fetchAPI(`/v1/tasks/${encodedName}/cancel`, {
-            method: 'POST',
-        });
-
-        // Revalidate the tasks page to show updated list
+        await fetchAPI(`/v1/tasks/${encodedName}/cancel`, { method: 'POST' });
         revalidatePath('/tasks');
         return { success: true };
     } catch (error) {
-        console.error('Cancel Task Error:', error);
         return { success: false, error: error.message };
     }
+}
+
+export async function createTask(prevState, formData) {
+    try {
+        const name = formData.get('name');
+        const cron = formData.get('cron');
+        const task = formData.get('task');
+
+        // Validation
+        if (!name || !cron || !task) return { success: false, error: 'Missing required fields' };
+
+        await fetchAPI('/v1/tasks', {
+            method: 'POST',
+            body: JSON.stringify({ name, cron, task })
+        });
+        revalidatePath('/tasks');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+// --- Goals ---
+export async function addGoal(prevState, formData) {
+    try {
+        const description = formData.get('description');
+        if (!description) return { success: false, error: 'Description required' };
+
+        await fetchAPI('/v1/goals', {
+            method: 'POST',
+            body: JSON.stringify({ description, metadata: { source: 'web' } })
+        });
+        revalidatePath('/goals');
+        return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+}
+
+export async function deleteGoal(id) {
+    try {
+        await fetchAPI(`/v1/goals/${id}`, { method: 'DELETE' });
+        revalidatePath('/goals');
+        return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+}
+
+export async function updateGoal(id, status) {
+    try {
+        await fetchAPI(`/v1/goals/${id}`, { method: 'PUT', body: JSON.stringify({ status }) });
+        revalidatePath('/goals');
+        return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+}
+
+// --- Facts ---
+export async function addFact(prevState, formData) {
+    try {
+        const key = formData.get('key');
+        const value = formData.get('value');
+        if (!key || !value) return { success: false, error: 'Key and Value required' };
+
+        await fetchAPI('/v1/facts', { method: 'POST', body: JSON.stringify({ key, value }) });
+        revalidatePath('/facts');
+        return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+}
+
+export async function deleteFact(key) {
+    try {
+        await fetchAPI(`/v1/facts/${encodeURIComponent(key)}`, { method: 'DELETE' });
+        revalidatePath('/facts');
+        return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+}
+
+// --- Aliases ---
+export async function addAlias(prevState, formData) {
+    try {
+        const alias = formData.get('alias');
+        const entityId = formData.get('entityId');
+        if (!alias || !entityId) return { success: false, error: 'Alias and Entity ID required' };
+
+        await fetchAPI('/v1/aliases', { method: 'POST', body: JSON.stringify({ alias, entityId }) });
+        revalidatePath('/aliases');
+        return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+}
+
+export async function deleteAlias(alias) {
+    try {
+        await fetchAPI(`/v1/aliases/${encodeURIComponent(alias)}`, { method: 'DELETE' });
+        revalidatePath('/aliases');
+        return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+}
+
+// --- History ---
+export async function deleteHistory(id) {
+    try {
+        await fetchAPI(`/v1/history/${id}`, { method: 'DELETE' });
+        revalidatePath('/history');
+        return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+}
+
+// --- Journal ---
+export async function deleteJournal(date) {
+    try {
+        await fetchAPI(`/v1/journal/${date}`, { method: 'DELETE' });
+        revalidatePath('/journal');
+        return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
 }

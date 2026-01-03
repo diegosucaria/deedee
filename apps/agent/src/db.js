@@ -64,6 +64,14 @@ class AgentDB {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
+      CREATE TABLE IF NOT EXISTS scheduled_jobs (
+        name TEXT PRIMARY KEY,
+        cron_expression TEXT NOT NULL,
+        task_type TEXT NOT NULL, -- e.g. 'function_call', 'script'
+        payload TEXT, -- JSON args
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
       CREATE TABLE IF NOT EXISTS usage_logs (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -87,6 +95,70 @@ class AgentDB {
       this.db.exec("ALTER TABLE messages ADD COLUMN parts TEXT");
     } catch (err) { }
   }
+
+  // --- Scheduled Jobs ---
+  saveScheduledJob(job) {
+    const payloadStr = JSON.stringify(job.payload || {});
+    const stmt = this.db.prepare(`
+      INSERT INTO scheduled_jobs (name, cron_expression, task_type, payload) 
+      VALUES (?, ?, ?, ?) 
+      ON CONFLICT(name) DO UPDATE SET 
+        cron_expression=excluded.cron_expression, 
+        task_type=excluded.task_type, 
+        payload=excluded.payload
+    `);
+    stmt.run(job.name, job.cronExpression, job.taskType || 'function_call', payloadStr);
+  }
+
+  getScheduledJobs() {
+    const stmt = this.db.prepare('SELECT * FROM scheduled_jobs');
+    return stmt.all().map(row => ({
+      name: row.name,
+      cronExpression: row.cron_expression,
+      taskType: row.task_type,
+      payload: row.payload ? JSON.parse(row.payload) : {},
+      createdAt: row.created_at
+    }));
+  }
+
+  deleteScheduledJob(name) {
+    this.db.prepare('DELETE FROM scheduled_jobs WHERE name = ?').run(name);
+  }
+
+  // --- Extended CRUD ---
+  deleteFact(key) {
+    this.db.prepare('DELETE FROM kv_store WHERE key = ?').run(key);
+  }
+
+  deleteGoal(id) {
+    this.db.prepare('DELETE FROM goals WHERE id = ?').run(id);
+  }
+
+  updateGoal(id, { status, description }) {
+    const updates = [];
+    const args = [];
+    if (status) { updates.push('status = ?'); args.push(status); }
+    if (description) { updates.push('description = ?'); args.push(description); }
+
+    if (updates.length === 0) return;
+
+    args.push(id);
+    const sql = `UPDATE goals SET ${updates.join(', ')} WHERE id = ?`;
+    this.db.prepare(sql).run(...args);
+  }
+
+  listAliases() {
+    return this.db.prepare('SELECT * FROM entity_aliases ORDER BY alias ASC').all();
+  }
+
+  deleteAlias(alias) {
+    this.db.prepare('DELETE FROM entity_aliases WHERE alias = ?').run(alias);
+  }
+
+  deleteMessage(id) {
+    this.db.prepare('DELETE FROM messages WHERE id = ?').run(id);
+  }
+
 
   // --- Messages ---
   saveMessage(msg) {

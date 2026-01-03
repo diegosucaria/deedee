@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { MessageSquare, Book, ClipboardList, Database, Activity } from 'lucide-react';
+import { MessageSquare, Book, ClipboardList, Database, Activity, Target, Clock, Tags } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -10,7 +10,10 @@ const navItems = [
     { name: 'Chat', href: '/', icon: MessageSquare },
     { name: 'Journal', href: '/journal', icon: Book },
     { name: 'Tasks', href: '/tasks', icon: ClipboardList },
+    { name: 'Goals', href: '/goals', icon: Target },
     { name: 'Memory', href: '/facts', icon: Database },
+    { name: 'History', href: '/history', icon: Clock },
+    { name: 'Aliases', href: '/aliases', icon: Tags },
 ];
 
 export function Sidebar() {

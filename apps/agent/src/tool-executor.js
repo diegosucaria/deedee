@@ -101,6 +101,10 @@ class ToolExecutor {
                         }
                     });
                 }
+            }, {
+                persist: true,
+                taskType: 'agent_instruction',
+                payload: { task: args.task }
             });
             return { success: true, info: `Job '${args.name}' scheduled for '${args.cron}'` };
         }

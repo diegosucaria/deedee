@@ -1,6 +1,5 @@
-
 import { fetchAPI } from '@/lib/api';
-import { Database } from 'lucide-react';
+import MemoryList from '@/components/MemoryList';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,48 +8,20 @@ export default async function FactsPage() {
     try {
         const data = await fetchAPI('/v1/facts');
         facts = data.facts || [];
-    } catch (err) {
-        console.error('Facts fetch error:', err);
+    } catch (e) {
+        console.error('Failed to fetch facts:', e);
     }
 
     return (
-        <div className="p-8">
-            <h1 className="text-3xl font-bold mb-8 flex items-center gap-3">
-                <Database className="h-8 w-8 text-indigo-400" />
-                Memory Bank
-            </h1>
+        <main className="flex h-screen flex-col bg-zinc-950 text-zinc-200 p-6 md:p-12 overflow-y-auto w-full">
+            <header className="mb-8 max-w-4xl mx-auto w-full">
+                <h1 className="text-3xl font-bold tracking-tight text-white mb-2">Memory Bank</h1>
+                <p className="text-zinc-400">Key-Value store for long-term agent memory.</p>
+            </header>
 
-            <div className="overflow-hidden rounded-xl border border-zinc-800 bg-zinc-900 shadow-sm">
-                <table className="w-full text-left text-sm text-zinc-400">
-                    <thead className="bg-zinc-950 text-zinc-200 uppercase tracking-wider text-xs font-medium border-b border-zinc-800">
-                        <tr>
-                            <th className="px-6 py-4">Key</th>
-                            <th className="px-6 py-4">Value</th>
-                            <th className="px-6 py-4">Last Updated</th>
-                        </tr>
-                    </thead>
-                    <tbody className="divide-y divide-zinc-800">
-                        {facts.map((fact) => (
-                            <tr key={fact.key} className="hover:bg-zinc-800/50 transition-colors">
-                                <td className="px-6 py-4 font-mono text-indigo-300">{fact.key}</td>
-                                <td className="px-6 py-4 text-zinc-300">
-                                    {typeof fact.value === 'object' ? JSON.stringify(fact.value) : fact.value}
-                                </td>
-                                <td className="px-6 py-4 text-zinc-500">
-                                    {fact.updated_at ? new Date(fact.updated_at).toLocaleString() : '-'}
-                                </td>
-                            </tr>
-                        ))}
-                        {facts.length === 0 && (
-                            <tr>
-                                <td colSpan="3" className="px-6 py-8 text-center text-zinc-500">
-                                    No facts stored in memory yet.
-                                </td>
-                            </tr>
-                        )}
-                    </tbody>
-                </table>
-            </div>
-        </div>
+            <section className="max-w-4xl mx-auto w-full pb-20">
+                <MemoryList facts={facts} />
+            </section>
+        </main>
     );
 }

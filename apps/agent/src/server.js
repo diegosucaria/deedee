@@ -220,6 +220,151 @@ app.post('/internal/tasks/:id/cancel', (req, res) => {
   }
 });
 
+// --- History ---
+app.get('/internal/history', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const limit = parseInt(req.query.limit) || 50;
+    const history = agent.db.getHistory(limit);
+    res.json({ history });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/internal/history/:id', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    agent.db.deleteMessage(req.params.id);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- Journal ---
+app.delete('/internal/journal/:date', (req, res) => {
+  if (!agent || !agent.journal) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const { date } = req.params;
+    const filename = date.endsWith('.md') ? date : `${date}.md`;
+    const filePath = path.join(agent.journal.journalDir, filename);
+    if (fs.existsSync(filePath)) {
+      fs.unlinkSync(filePath);
+      res.json({ success: true });
+    } else {
+      res.status(404).json({ error: 'File not found' });
+    }
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- Facts ---
+app.post('/internal/facts', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const { key, value } = req.body;
+    agent.db.setKey(key, value);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/internal/facts/:key', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    agent.db.deleteFact(req.params.key);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- Goals ---
+app.get('/internal/goals', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const goals = agent.db.getPendingGoals();
+    res.json({ goals });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/internal/goals', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const { description, metadata } = req.body;
+    agent.db.addGoal(description, metadata);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/internal/goals/:id', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const { status, description } = req.body;
+    agent.db.updateGoal(req.params.id, { status, description });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/internal/goals/:id', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    agent.db.deleteGoal(req.params.id);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- Aliases ---
+app.get('/internal/aliases', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const aliases = agent.db.listAliases();
+    res.json({ aliases });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/internal/aliases', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const { alias, entityId } = req.body;
+    agent.db.saveDeviceAlias(alias, entityId);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/internal/aliases/:alias', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    agent.db.deleteAlias(req.params.alias);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- Scheduler (Create) ---
+app.post('/internal/scheduler', (req, res) => {
+  if (!agent || !agent.scheduler) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const { name, cron, task } = req.body;
+
+    const callback = async () => {
+      console.log(`[Scheduler] Executing task: ${task}`);
+      const { createAssistantMessage } = require('@deedee/shared/src/types');
+
+      await agent.processMessage({
+        role: 'user',
+        content: `Scheduled Task: ${task}`,
+        source: 'scheduler',
+        metadata: { chatId: `scheduled_${name}_${Date.now()}` }
+      }, async (reply) => {
+        if (agent.interface) {
+          await agent.interface.send(reply);
+        }
+      });
+    };
+
+    agent.scheduler.scheduleJob(name, cron, callback, {
+      persist: true,
+      taskType: 'agent_instruction',
+      payload: { task }
+    });
+
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 if (require.main === module) {
   app.listen(port, () => {
     console.log(`Agent listening at http://localhost:${port}`);
