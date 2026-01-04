@@ -25,7 +25,7 @@ export default async function HistoryPage({ searchParams }) {
                 <div className="flex items-center justify-between">
                     <div>
                         <h1 className="text-3xl font-bold tracking-tight text-white mb-2">Message History</h1>
-                        <p className="text-zinc-400">Raw log of database interactions (Last {LIMIT}).</p>
+                        <p className="text-zinc-400">Raw log of database interactions (Last {limit}).</p>
                     </div>
                 </div>
             </header>

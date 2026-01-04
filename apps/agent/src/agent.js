@@ -14,39 +14,10 @@ const path = require('path');
 const { JournalManager } = require('./journal');
 const { Scheduler } = require('./scheduler');
 const axios = require('axios');
+const { getSystemInstruction } = require('./prompts/system');
+const { getFunctionCalls, getThinkingMessage } = require('./utils/helpers');
 
-function createWavHeader(dataLength, sampleRate = 24000, numChannels = 1, bitsPerSample = 16) {
-  const buffer = Buffer.alloc(44);
 
-  // RIFF identifier
-  buffer.write('RIFF', 0);
-  // file length
-  buffer.writeUInt32LE(36 + dataLength, 4);
-  // RIFF type
-  buffer.write('WAVE', 8);
-  // format chunk identifier
-  buffer.write('fmt ', 12);
-  // format chunk length
-  buffer.writeUInt32LE(16, 16);
-  // sample format (raw)
-  buffer.writeUInt16LE(1, 20);
-  // channel count
-  buffer.writeUInt16LE(numChannels, 22);
-  // sample rate
-  buffer.writeUInt32LE(sampleRate, 24);
-  // byte rate (sampleRate * blockAlign)
-  buffer.writeUInt32LE(sampleRate * numChannels * (bitsPerSample / 8), 28);
-  // block align (channel count * bytes per sample)
-  buffer.writeUInt16LE(numChannels * (bitsPerSample / 8), 32);
-  // bits per sample
-  buffer.writeUInt16LE(bitsPerSample, 34);
-  // data chunk identifier
-  buffer.write('data', 36);
-  // data chunk length
-  buffer.writeUInt32LE(dataLength, 40);
-
-  return buffer;
-}
 
 class Agent {
   constructor(config) {
@@ -310,48 +281,7 @@ class Agent {
       const geminiTools = [{ functionDeclarations: allTools }];
 
       // Build System Instruction
-      let systemInstruction = `
-            You are Deedee, a helpful and capable AI assistant.
-            You have access to a variety of tools to help the user.
-            
-            CONSTITUTION:
-            1. **Privacy First**: Never output or log API keys, passwords, or private user data (like full address) unless explicitly asked by the user in a safe context.
-            2. **Data Integrity**: Never delete files or data without explicit confirmation, unless it is a temporary file you created.
-            3. **Truthfulness**: If you do not know the answer, say so. Do not hallucinate capabilities or facts.
-            4. **Safety**: Do not execute commands that could harm the system (e.g. "rm -rf / ", "mkfs") even if asked.
-            
-            CURRENT_TIME: ${new Date().toString()}
-            
-            REPO CONTEXT:
-            - This is a Monorepo.
-            - Apps: apps/agent, apps/supervisor, apps/interfaces
-            - Packages: packages/mcp-servers, packages/shared
-            - If a file is not found, verify the path using 'listDirectory'.
-
-            TOOL USAGE GUIDELINES:
-            1. **Prioritize Context**: If the user asks generic questions like "what happened?" or "status?", prioritize checking your Conversation History first. Do NOT call external tools (like Home Assistant, Calendar) unless the user explicitly mentions "house", "schedule", or similar words that indicate they are asking about something specific.
-            2. **Lazy Fetching**: Do not fetch data speculatively. Only call a tool if you are 90% sure it contains the answer to the user's specific question.
-            3. **Explanation**: If you are unsure what the user means by "what happened", ask for clarification instead of guessing with a tool call.
-
-            CRITICAL PROTOCOL:
-            1. If you are going to write code, modify files, or improve yourself, you MUST first call 'pullLatestChanges'.
-            2. Do not start writing code automatically if the user did not ask for it. Even if the user asked for a new feature or change, ask for confirmation first, giving a brief summary of what you are going to do.
-            2. When you are done making changes, you MUST call 'commitAndPush'. This tool runs tests automatically.
-            3. DO NOT use 'runShellCommand' for git operations (commit/push). Use the dedicated tools.
-            4. DO NOT change/add/improve anything else in the code that was not asked for. Keep comments as is.
-            5. All strings and comments you add must be in English.
-            6. Since you can self-improve, when writing/adding/changing a tool/feature you must write the tests for it, to validate that it works before calling 'commitAndPush'. You must also write documentation if required.
-            7. This is a public repository, so when writing code or documentation, make sure you do not leak any sensitive or private information. The code will be used by others so make sure it is written with expandability and reusability in mind.
-            8. For multi-step tasks, execute tools in succession (chaining). DO NOT output intermediate text updates (like "I have pulled changes") unless you are blocked. Proceed directly to the next tool call.
-            9. **Audio Responses**: When using 'replyWithAudio', keep your textual content EXTREMELY concise (1-2 sentences max). Speak in a fast-paced, energetic, and natural manner. Avoid filler words. Do not describe the audio, just speak it.
-            10. **Language Preference**: When speaking Spanish via 'replyWithAudio', always set 'languageCode' to 'es-419' for a neutral Latin American accent, unless requested otherwise.
-
-            SMART HOME RULES (Home Assistant):
-            1. **Memory First**: Before searching for a device (e.g. "turn on hallway light"), ALWAYS call 'lookupDevice' with the alias ("hallway light") first. Only if it returns null should you call 'ha_search_entities'.
-            2. **Learn**: After successfully searching and finding a device for the first time, ALWAYS call 'learnDevice' to save it for next time.
-            3. **100% Brightness**: When the user says "Turn On" a light, NEVER use 'ha_toggle' or generic turn_on (unless percentage is not supported by the entity). You MUST set specific brightness to 100% (or 255/100 depending on service). Use 'ha_call_service' with domain 'light', service 'turn_on', and data: { "entity_id": "...", "brightness_pct": 100 }.
-            4. **Scheduling vs Automations**: Do NOT use Home Assistant to create automations for simple reminders or scheduling tasks (e.g. "Remind me to...", "Do X every day"). Use the 'scheduleJob' tool for these. Only use Home Assistant if the user explicitly asks to automate a smart device state (e.g. "Turn on lights at sunset").
-      `;
+      let systemInstruction = getSystemInstruction(new Date().toString());
 
       // Specific instruction for iPhone/Voice sources where dictation is unreliable
       if (['iphone', 'ios_shortcut'].includes(message.source)) {
@@ -380,7 +310,7 @@ class Agent {
       console.timeEnd(timerLabel);
 
       // 3. Handle Function Calls Loop
-      let functionCalls = this._getFunctionCalls(response);
+      let functionCalls = getFunctionCalls(response);
 
 
       const MAX_LOOPS = parseInt(process.env.MAX_TOOL_LOOPS || '10');
@@ -406,7 +336,7 @@ class Agent {
 
         // Periodic Feedback (every 3rd loop, starting at 3)
         if (loopCount > 1 && loopCount % 3 === 0) {
-          const thinkText = this._getThinkingMessage(functionCalls);
+          const thinkText = getThinkingMessage(functionCalls);
           const updateMsg = createAssistantMessage(`Still working... (${thinkText})`);
           updateMsg.metadata = { chatId: message.metadata?.chatId };
           updateMsg.source = message.source;
@@ -429,7 +359,7 @@ class Agent {
 
         // 1. Start Global Thinking Timer (for the batch)
         let thinkTimer = setTimeout(async () => {
-          const thinkText = this._getThinkingMessage(functionCalls);
+          const thinkText = getThinkingMessage(functionCalls);
           const thinkingMsg = createAssistantMessage(`Thinking... (${thinkText})`);
           thinkingMsg.metadata = { chatId: message.metadata?.chatId };
           thinkingMsg.source = message.source;
@@ -538,7 +468,7 @@ class Agent {
         console.timeEnd(toolTimerLabel);
 
         // Re-check for recursive function calls 
-        functionCalls = this._getFunctionCalls(response);
+        functionCalls = getFunctionCalls(response);
       }
 
       // 4. Final Text Response
@@ -630,42 +560,7 @@ class Agent {
     return executionSummary;
   }
 
-  _getFunctionCalls(response) {
-    const candidates = response.candidates;
-    if (!candidates || !candidates.length) return [];
 
-    const content = candidates[0].content;
-    if (!content || !content.parts) return [];
-
-    return content.parts
-      .filter(part => part.functionCall)
-      .map(part => part.functionCall);
-  }
-
-  _getThinkingMessage(calls) {
-    if (!calls || calls.length === 0) return 'Thinking...';
-
-    const name = calls[0].name;
-
-    switch (name) {
-      case 'readFile': return 'Reading file...';
-      case 'writeFile': return 'Writing to file...';
-      case 'listDirectory': return 'Checking directory contents...';
-      case 'runShellCommand': return 'Running system command...';
-      case 'pullLatestChanges': return 'Pulling latest code...';
-      case 'commitAndPush': return 'Committing changes...';
-      case 'rollbackLastChange': return 'Rolling back changes...';
-      case 'listEvents': return 'Checking calendar...';
-      case 'sendEmail': return 'Sending email...';
-      case 'logJournal': return 'Writing to journal...';
-      case 'rememberFact':
-      case 'getFact': return 'Accessing memory...';
-      case 'addGoal':
-      case 'completeGoal': return 'Updating goals...';
-      case 'replyWithAudio': return 'Generating voice response...';
-      default: return `Executing ${name}...`;
-    }
-  }
 
   async stop() {
     console.log('[Agent] Stopping...');

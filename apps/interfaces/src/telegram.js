@@ -104,13 +104,32 @@ class TelegramService {
     }
   }
 
+  _escapeMarkdown(text) {
+    // Escapes special characters for MarkdownV2
+    // Characters to escape: _ * [ ] ( ) ~ ` > # + - = | { } . !
+    return text.replace(/([_*\[\]()~`>#\+\-=|{}.!])/g, '\\$1');
+  }
+
   async sendMessage(chatId, content) {
     try {
-      // strict Markdown (MarkdownV2) often fails with unescaped characters from LLMs. 
-      // Legacy 'Markdown' is more forgiving.
-      await this.bot.telegram.sendMessage(chatId, content, { parse_mode: 'Markdown' });
+      // Heuristic: Split by code blocks (```) to escape text outside of them.
+      const parts = content.split('```');
+      let finalMsg = '';
+
+      for (let i = 0; i < parts.length; i++) {
+        if (i % 2 === 0) {
+          // Regular Text -> Escape
+          finalMsg += this._escapeMarkdown(parts[i]);
+        } else {
+          // Code Block -> Keep raw, wrap in fences
+          finalMsg += '```' + parts[i] + '```';
+        }
+      }
+
+      await this.bot.telegram.sendMessage(chatId, finalMsg, { parse_mode: 'MarkdownV2' });
+
     } catch (err) {
-      console.warn('[Telegram] Failed to send Markdown, falling back to plain text:', err.message);
+      console.warn('[Telegram] Failed to send MarkdownV2, falling back to plain text:', err.message);
       // Fallback to plain text
       await this.bot.telegram.sendMessage(chatId, content);
     }

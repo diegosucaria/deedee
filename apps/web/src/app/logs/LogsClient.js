@@ -189,7 +189,7 @@ export default function LogsClient({ token }) {
                     ) : (
                         <div className="space-y-1 text-xs md:text-sm font-mono">
                             {displayedLogs.map((line, i) => (
-                                <div key={i} className="whitespace-pre-wrap break-all border-l-2 border-transparent hover:border-zinc-800 hover:bg-zinc-900/30 px-2 py-0.5 leading-relaxed text-zinc-300">
+                                <div key={i} className="whitespace-pre-wrap break-all border-l-2 border-transparent hover:border-zinc-800 hover:bg-zinc-900/30 px-2 py-[1px] leading-tight text-zinc-300">
                                     {line || <span className="h-4 block" />}
                                 </div>
                             ))}

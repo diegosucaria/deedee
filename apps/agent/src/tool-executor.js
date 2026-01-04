@@ -1,4 +1,5 @@
 const { createAssistantMessage } = require('@deedee/shared/src/types');
+const { createWavHeader } = require('./utils/audio');
 
 class ToolExecutor {
     /**
@@ -223,21 +224,7 @@ class ToolExecutor {
             const rawBuffer = Buffer.from(audioData, 'base64');
 
             // Wrap in WAV
-            const wavHeader = Buffer.alloc(44);
-            wavHeader.write('RIFF', 0);
-            wavHeader.writeUInt32LE(36 + rawBuffer.length, 4);
-            wavHeader.write('WAVE', 8);
-            wavHeader.write('fmt ', 12);
-            wavHeader.writeUInt32LE(16, 16);
-            wavHeader.writeUInt16LE(1, 20); // PCM
-            wavHeader.writeUInt16LE(1, 22); // Mono
-            wavHeader.writeUInt32LE(24000, 24); // Sample Rate
-            wavHeader.writeUInt32LE(24000 * 2, 28); // Byte Rate
-            wavHeader.writeUInt16LE(2, 32); // Block Align
-            wavHeader.writeUInt16LE(16, 34); // Bits Per Sample
-            wavHeader.write('data', 36);
-            wavHeader.writeUInt32LE(rawBuffer.length, 40);
-
+            const wavHeader = createWavHeader(rawBuffer.length, 24000, 1, 16);
             const wavBuffer = Buffer.concat([wavHeader, rawBuffer]);
 
             // Send!
