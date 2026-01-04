@@ -242,10 +242,34 @@ class Agent {
         await sendCallback(reply);
         executionSummary.replies.push(reply);
 
-        // Save interaction
+        // --- HISTORY INJECTION [FIX] ---
+        // Simulate standard Tool Use flow so future context knows this was handled.
+
+        // 1. Synthetic Model Turn (Function Call)
+        this.db.saveMessage({
+          role: 'model',
+          parts: [{ functionCall: { name: 'generateImage', args: { prompt } } }],
+          metadata: { chatId: message.metadata?.chatId },
+          source: message.source
+        });
+
+        // 2. Synthetic Function Turn (Function Response)
+        this.db.saveMessage({
+          role: 'function',
+          parts: [{
+            functionResponse: {
+              name: 'generateImage',
+              response: { result: { info: 'Image generated successfully.' } }
+            }
+          }],
+          metadata: { chatId: message.metadata?.chatId },
+          source: message.source
+        });
+
+        // 3. Assistant Final Response
         this.db.saveMessage({
           role: 'assistant',
-          content: 'Image generated (Direct Bypass)',
+          content: 'Image generated.',
           metadata: { chatId: message.metadata?.chatId },
           source: message.source
         });

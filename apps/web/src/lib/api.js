@@ -1,5 +1,11 @@
 
-const API_URL = process.env.API_URL || 'http://localhost:3001';
+// On Client: Use relative path (rewritten by Next.js to http://api:3001)
+// On Server: Use env var or Docker DNS
+const API_URL = typeof window === 'undefined'
+    ? (process.env.API_URL || 'http://api:3001')
+    : '/api';
+
+export { API_URL };
 
 export async function fetchAPI(path, options = {}) {
     const url = `${API_URL}${path}`;
