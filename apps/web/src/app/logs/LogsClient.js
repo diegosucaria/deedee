@@ -82,6 +82,18 @@ export default function LogsClient({ token }) {
                 const reader = response.body.getReader();
                 readerRef.current = reader; // For manual cleanup if needed
                 const decoder = new TextDecoder();
+                const logBuffer = []; // Temporary buffer for high-throughput logs
+
+                // Flush buffer every 50ms to avoid React thrashing (approx 20fps)
+                const flushInterval = setInterval(() => {
+                    if (logBuffer.length > 0) {
+                        setLogs((prev) => {
+                            const newLogs = [...prev, ...logBuffer].slice(-5000);
+                            logBuffer.length = 0; // Clear buffer
+                            return newLogs;
+                        });
+                    }
+                }, 50);
 
                 while (isActive) {
                     const { done, value } = await reader.read();
@@ -92,13 +104,15 @@ export default function LogsClient({ token }) {
                     const chunk = decoder.decode(value, { stream: true });
                     const lines = chunk.split('\n');
 
-                    if (isActive) {
-                        setLogs((prev) => {
-                            const newLogs = [...prev, ...lines].slice(-5000);
-                            return newLogs;
-                        });
+                    // Filter out empty lines to save processing
+                    const validLines = lines.filter(line => line.length > 0);
+
+                    if (isActive && validLines.length > 0) {
+                        logBuffer.push(...validLines);
                     }
                 }
+
+                clearInterval(flushInterval); // Clean up interval on loop exit
 
                 if (isActive) {
                     console.log('[LogsClient] Reconnecting in 3s...');

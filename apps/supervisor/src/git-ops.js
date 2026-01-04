@@ -41,8 +41,8 @@ class GitOps {
     await this.run(`git config user.email "${email}"`);
 
     if (remoteUrl) {
-      // Mask Sensitive Auth Info in Logs
-      const maskedUrl = remoteUrl.replace(/(github_pat_|ghp_)[a-zA-Z0-9]+@/, '***@');
+      // Mask Sensitive Auth Info in Logs (Robust)
+      const maskedUrl = remoteUrl.replace(/:\/\/[^@]+@/, '://***@');
       console.log(`[GitOps] Configuring remote: ${maskedUrl}`);
       // Check existing remotes to avoid 'No such remote' or 'Remote already exists' errors
       const remotes = await this.run('git remote');
