@@ -405,8 +405,8 @@ class AgentDB {
     // Get avg latency per hour? Or just raw points for graph?
     // Let's get raw points for now: timestamp, value, type
     const stmt = this.db.prepare(`
-      SELECT timestamp, value, type FROM metrics 
-      WHERE type IN ('latency_router', 'latency_model') 
+      SELECT timestamp, value, type, metadata FROM metrics 
+      WHERE type IN ('latency_router', 'latency_model', 'latency_e2e') 
       ORDER BY timestamp DESC LIMIT ?
     `);
     return stmt.all(limit).reverse();

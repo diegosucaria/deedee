@@ -114,6 +114,7 @@ class Agent {
    * @param {function} sendCallback - Async function(reply) to handle responses
    */
   async processMessage(message, sendCallback) {
+    const e2eStart = Date.now();
     const executionSummary = {
       toolOutputs: [], // List of { name, result }
       replies: []      // List of text/audio replies
@@ -601,6 +602,10 @@ class Agent {
       errReply.source = message.source;
       await sendCallback(errReply);
       executionSummary.replies.push(errReply);
+    } finally {
+      const e2eDuration = Date.now() - e2eStart;
+      this.db.logMetric('latency_e2e', e2eDuration, { chatId: message.metadata?.chatId });
+      console.log(`[Agent] E2E Request Duration: ${e2eDuration}ms`);
     }
 
     return executionSummary;

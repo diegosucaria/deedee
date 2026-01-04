@@ -17,38 +17,41 @@ export default function StatsClient() {
             const latRes = await fetch(`${API_URL}/internal/stats/latency`);
             const latData = await latRes.json();
 
-            // Transform for chart (map timestamp/id to label)
-            // Expecting array of { type, value, metadata, timestamp }
-            // Filter into buckets if needed or just show last N points
+            // Group by Chat ID to align Router/Model/E2E for the same request
+            const grouped = {};
 
-            // Group by Interaction (ChatId) if possible, or just plot raw stream
-            // The backend returns a simple array. Let's map it.
-            const stats = latData.map((d, i) => ({
-                label: i,
-                router: d.type === 'latency_router' ? d.value : 0,
-                model: d.type === 'latency_model' ? d.value : 0,
-                ...d
-            }));
+            latData.forEach(item => {
+                let chatId = 'unknown';
+                try {
+                    const meta = JSON.parse(item.metadata);
+                    if (meta && meta.chatId) chatId = meta.chatId;
+                } catch (e) { }
 
-            // We need to merge Router/Model for same interaction ideally.
-            // For now, let's just show two separate lines on same time axis is hard if strictly sequential.
-            // Let's simplified: Filter for model latency only for now as primary metric.
-            const modelLatencies = latData
-                .filter(d => d.type === 'latency_model')
-                .map((d, i) => ({ label: i, value: d.value }));
+                if (!grouped[chatId]) {
+                    grouped[chatId] = {
+                        timestamp: item.timestamp, // Use first seen timestamp
+                        router: 0,
+                        model: 0,
+                        e2e: 0,
+                        label: '' // Will be set later
+                    };
+                }
 
-            const routerLatencies = latData
-                .filter(d => d.type === 'latency_router')
-                .map((d, i) => ({ label: i, value: d.value }));
+                if (item.type === 'latency_router') grouped[chatId].router = item.value;
+                if (item.type === 'latency_model') grouped[chatId].model = item.value;
+                if (item.type === 'latency_e2e') grouped[chatId].e2e = item.value;
+            });
 
-            // Merge by index (approx)
-            const merged = modelLatencies.map((m, i) => ({
-                label: i,
-                model: m.value,
-                router: routerLatencies[i]?.value || 0
-            }));
+            // Convert to Array & Sort
+            const chartData = Object.values(grouped)
+                .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+                .slice(-50) // Last 50 requests
+                .map((d, i) => ({
+                    ...d,
+                    label: i + 1 // Simple index label 1..50
+                }));
 
-            setLatencyData(merged);
+            setLatencyData(chartData);
 
             // Fetch Usage
             const usageRes = await fetch(`${API_URL}/internal/stats/usage`);
@@ -81,12 +84,16 @@ export default function StatsClient() {
                     </h2>
                     <div className="flex gap-4 text-sm">
                         <div className="flex items-center gap-2">
+                            <div className="w-3 h-3 rounded-full bg-pink-400" />
+                            <span className="text-zinc-400">Total (e2e)</span>
+                        </div>
+                        <div className="flex items-center gap-2">
                             <div className="w-3 h-3 rounded-full bg-indigo-400" />
-                            <span className="text-zinc-400">Model (ms)</span>
+                            <span className="text-zinc-400">Model</span>
                         </div>
                         <div className="flex items-center gap-2">
                             <div className="w-3 h-3 rounded-full bg-emerald-400" />
-                            <span className="text-zinc-400">Router (ms)</span>
+                            <span className="text-zinc-400">Router</span>
                         </div>
                     </div>
                 </div>
@@ -94,10 +101,12 @@ export default function StatsClient() {
                 <div className="h-64 w-full">
                     <SimpleLineChart
                         data={latencyData}
-                        dataKey1="model"
-                        color1="#818cf8"
-                        dataKey2="router"
-                        color2="#34d399"
+                        dataKey1="e2e"
+                        color1="#f472b6" // Pink
+                        dataKey2="model"
+                        color2="#818cf8" // Indigo
+                        dataKey3="router"
+                        color3="#34d399" // Emerald
                     />
                 </div>
             </div>

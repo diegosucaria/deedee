@@ -11,7 +11,7 @@ import { useMemo } from 'react';
  * @param {string} props.color1 - Color for first metric (tailwind class or hex?) -> using hex/stroke
  * @param {string} props.color2 - Color for second metric
  */
-export function SimpleLineChart({ data, dataKey1, dataKey2, height = 200, color1 = '#818cf8', color2 = '#34d399' }) {
+export function SimpleLineChart({ data, dataKey1, dataKey2, dataKey3, height = 200, color1 = '#818cf8', color2 = '#34d399', color3 = '#f472b6' }) {
     if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-zinc-600">No Data</div>;
 
     const padding = 20;
@@ -20,7 +20,8 @@ export function SimpleLineChart({ data, dataKey1, dataKey2, height = 200, color1
 
     const values1 = data.map(d => d[dataKey1] || 0);
     const values2 = dataKey2 ? data.map(d => d[dataKey2] || 0) : [];
-    const allValues = [...values1, ...values2];
+    const values3 = dataKey3 ? data.map(d => d[dataKey3] || 0) : [];
+    const allValues = [...values1, ...values2, ...values3];
 
     const maxVal = Math.max(...allValues, 100);
     const minVal = 0;
@@ -36,6 +37,7 @@ export function SimpleLineChart({ data, dataKey1, dataKey2, height = 200, color1
 
     const path1 = buildPath(values1);
     const path2 = buildPath(values2);
+    const path3 = buildPath(values3);
 
     return (
         <div className="w-full h-full">
@@ -52,6 +54,7 @@ export function SimpleLineChart({ data, dataKey1, dataKey2, height = 200, color1
                 })}
 
                 {/* Lines */}
+                {path3 && <path d={path3} fill="none" stroke={color3} strokeWidth="2" />}
                 {path2 && <path d={path2} fill="none" stroke={color2} strokeWidth="2" />}
                 <path d={path1} fill="none" stroke={color1} strokeWidth="2" />
 
