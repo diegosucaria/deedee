@@ -198,13 +198,6 @@ class AgentDB {
     const stmt = this.db.prepare(query);
     const rows = stmt.all(...params);
 
-    // If we fetched DESC (newest first), we usually want to reverse for chronological display logic upstream, 
-    // BUT the HistoryList expects DESC (newest at top) or handles sorting itself. 
-    // Let's return raw rows. The existing 'reverse()' was for 'DESC' fetch to show 'ASC' in chat.
-    // History page usually wants proper DESC. 
-    // Existing code: return stmt.all(limit).reverse();
-    // Use flag to control reverse? For now, keep semantic consistency.
-
     return rows;
   }
 

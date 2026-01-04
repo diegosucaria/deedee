@@ -70,9 +70,6 @@ export default function LogsClient({ token }) {
                     if (done) break;
                     const chunk = decoder.decode(value, { stream: true });
 
-                    // DEBUG: Provide visibility into data arrival
-                    // console.log(`[LogsClient] Received chunk: ${value.byteLength} bytes`);
-
                     // Split by newline
                     const lines = chunk.split('\n');
                     setLogs((prev) => {
