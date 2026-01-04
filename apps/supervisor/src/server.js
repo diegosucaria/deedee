@@ -96,7 +96,12 @@ app.get('/logs/:container', async (req, res) => {
     res.setHeader('Content-Type', 'text/plain');
     res.setHeader('Transfer-Encoding', 'chunked');
 
-    logStream.pipe(res);
+    // Docker logs are multiplexed with headers (8 bytes). We need to demux them.
+    // 'res' is a writable stream, so we pipe both stdout and stderr to it.
+    // NOTE: This sends plain text to the client, mixed.
+    container.modem.demuxStream(logStream, res, res);
+
+    // logStream.pipe(res); // <-- OLD RAW PIPE
 
     req.on('close', () => {
       try { logStream.destroy(); } catch (e) { }
