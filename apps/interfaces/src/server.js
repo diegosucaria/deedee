@@ -45,7 +45,19 @@ io.on("connection", (socket) => {
       // Wait, this file didn't require axios/fetch (only TelegramService used axios internally?)
       // Check imports. Line 13 of package.json has axios.
       const axios = require('axios');
-      await axios.post(`${agentUrl}/chat`, payload);
+      const response = await axios.post(`${agentUrl}/chat`, payload);
+
+      console.log(`[Interfaces] Agent responded with ${response.data.replies?.length || 0} replies.`);
+
+      if (response.data.replies && Array.isArray(response.data.replies)) {
+        for (const reply of response.data.replies) {
+          socket.emit('agent:message', {
+            content: reply.content,
+            type: reply.type || 'text',
+            timestamp: reply.timestamp
+          });
+        }
+      }
 
       // Ack to client?
       socket.emit("chat:ack", { id: data.id, status: "sent" });
