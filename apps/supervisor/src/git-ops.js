@@ -1,7 +1,8 @@
-const { exec } = require('child_process');
+const { exec, execFile } = require('child_process');
 const util = require('util');
 const { Verifier } = require('./verifier');
 const execAsync = util.promisify(exec);
+const execFileAsync = util.promisify(execFile);
 
 class GitOps {
   constructor(workDir = '/app/source') {
@@ -16,6 +17,17 @@ class GitOps {
       return stdout.trim();
     } catch (error) {
       console.error(`Git Error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  async runSafe(file, args) {
+    try {
+      const { stdout, stderr } = await execFileAsync(file, args, { cwd: this.workDir });
+      if (stderr) console.warn(`Git Warning (Safe): ${stderr}`);
+      return stdout.trim();
+    } catch (error) {
+      console.error(`Git Error (Safe): ${error.message}`);
       throw error;
     }
   }
@@ -101,12 +113,24 @@ class GitOps {
 
       await this.verifier.verify(files);
 
-      const fileList = files.join(' ');
-      await this.run(`git add ${fileList}`);
+      // SAFE EXECUTION: Prevent shell injection by avoiding 'git add ${files} and git commit -m "${message}"'
+      // Use execFileAsync via runSafe
 
-      await this.run(`git commit -m "${message}"`);
+      // 1. Git Add
+      // If files contains '.', we can use standard git add .
+      // If specific files, pass them as arguments
+      if (files.includes('.')) {
+        await this.runSafe('git', ['add', '.']);
+      } else {
+        await this.runSafe('git', ['add', ...files]);
+      }
 
-      await this.run('git push origin master');
+      // 2. Git Commit
+      // Pass message as a separate argument to avoid shell interpretation
+      await this.runSafe('git', ['commit', '-m', message]);
+
+      // 3. Git Push (origin master is hardcoded safe string, but consistent to use runSafe or run)
+      await this.runSafe('git', ['push', 'origin', 'master']);
 
       return { success: true, message: 'Pushed to origin/master' };
 
