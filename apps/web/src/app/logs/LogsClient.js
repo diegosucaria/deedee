@@ -36,35 +36,38 @@ export default function LogsClient({ token }) {
     const logsEndRef = useRef(null);
 
     useEffect(() => {
+        let retryTimeout = null;
+        let abortController = new AbortController();
+        let isActive = true;
+
         // Clear logs on switch
         setLogs([]);
-        setIsConnected(false);
         setError(null);
-        if (readerRef.current) {
-            readerRef.current.cancel();
-            readerRef.current = null;
-        }
 
-        const fetchLogs = async () => {
+        const connect = async () => {
+            if (!isActive) return;
+
             try {
                 setIsConnected(true);
+                // Reset error on new connection attempt (optional, or keep generic "Connecting...")
+                // setError(null); 
+
                 let url = `${API_URL}/v1/logs/${selectedContainer}`;
 
                 // Construct Query Params
                 const params = new URLSearchParams();
                 if (timeFilter !== 'all') {
-                    params.append('since', timeFilter); // Docker supports "10m", "1h"
+                    params.append('since', timeFilter);
                 } else {
-                    params.append('tail', '1000'); // If all, limit tail to avoid crash
+                    params.append('tail', '1000');
                 }
                 url += `?${params.toString()}`;
 
                 console.log(`[LogsClient] Connecting to ${url}`);
 
                 const response = await fetch(url, {
-                    headers: {
-                        'Authorization': `Bearer ${token}`
-                    }
+                    headers: { 'Authorization': `Bearer ${token}` },
+                    signal: abortController.signal
                 });
 
                 if (!response.ok) {
@@ -73,42 +76,61 @@ export default function LogsClient({ token }) {
                     throw new Error(`Connection failed: ${response.statusText}`);
                 }
 
+                // If successful, clear any previous error
+                setError(null);
+
                 const reader = response.body.getReader();
-                readerRef.current = reader;
+                readerRef.current = reader; // For manual cleanup if needed
                 const decoder = new TextDecoder();
 
-                while (true) {
+                while (isActive) {
                     const { done, value } = await reader.read();
-                    if (done) break;
+                    if (done) {
+                        console.log('[LogsClient] Stream ended by server.');
+                        break;
+                    }
                     const chunk = decoder.decode(value, { stream: true });
-
-                    // Split by newline
                     const lines = chunk.split('\n');
-                    setLogs((prev) => {
-                        // Append new lines
-                        // Limit total buffer to prevent browser crash
-                        const newLogs = [...prev, ...lines].slice(-5000);
-                        return newLogs;
-                    });
+
+                    if (isActive) {
+                        setLogs((prev) => {
+                            const newLogs = [...prev, ...lines].slice(-5000);
+                            return newLogs;
+                        });
+                    }
                 }
-            } catch (err) {
-                if (err.name !== 'AbortError') {
-                    console.error('Log Stream Error:', err);
-                    setError(err.message);
+
+                if (isActive) {
+                    console.log('[LogsClient] Reconnecting in 3s...');
                     setIsConnected(false);
+                    retryTimeout = setTimeout(connect, 3000);
+                }
+
+            } catch (err) {
+                if (err.name === 'AbortError') return;
+
+                console.error('[LogsClient] Stream Error:', err);
+                if (isActive) {
+                    setError(`${err.message}. Retrying in 5s...`);
+                    setIsConnected(false);
+                    retryTimeout = setTimeout(connect, 5000); // Slower retry on error
                 }
             }
         };
 
         if (token) {
-            fetchLogs();
+            connect();
         } else {
             setError('Missing API Token');
         }
 
         return () => {
+            isActive = false;
+            abortController.abort();
+            if (retryTimeout) clearTimeout(retryTimeout);
             if (readerRef.current) {
-                readerRef.current.cancel();
+                readerRef.current.cancel().catch(() => { });
+                readerRef.current = null;
             }
         };
     }, [selectedContainer, token, timeFilter]);
