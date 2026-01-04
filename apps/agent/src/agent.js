@@ -184,20 +184,17 @@ class Agent {
 
       // --- ROUTING ---
       console.time('[Agent] Router Duration');
+      const routerStart = Date.now();
 
       // Get brief history for context (last 3 messages)
       const routingHistory = this.db.getHistoryForChat(chatId, 3);
 
       // Pass the primary content or parts to router
       const decision = await this.router.route(message.parts || message.content, routingHistory);
+      const routerDuration = Date.now() - routerStart;
       console.timeEnd('[Agent] Router Duration');
 
-      // LOG METRIC: Router Latency (using console.time logic, but we need exact val. Recalculating)
-      // Since console.time doesn't return value, let's just mark timestamp or rely on rough estimate manually if needed.
-      // Better:
-      const routerStart = Date.now();
-      // ... (router call was above). Let's wrap it properly if we want exact ms.
-      // Actually, let's just use a simple delta for now.
+      this.db.logMetric('latency_router', routerDuration, { model: decision.model, chatId });
 
       console.log(`[Agent] Routing to: ${decision.model}`);
 
