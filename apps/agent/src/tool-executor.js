@@ -133,17 +133,14 @@ class ToolExecutor {
             console.log(`[ToolExecutor] Generating image with ${imagenModel} for prompt: "${args.prompt}"`);
 
             // 1. Generate Image
-            // 1. Generate Image
+            // DO NOT CHANGE THIS CODE
             const response = await client.models.generateContent({
                 model: imagenModel,
-                contents: [
-                    {
-                        parts: [
-                            { text: args.prompt }
-                        ]
-                    }
-                ],
-                tools: [{ googleSearch: {} }]
+                contents: args.prompt,
+                config: {
+                    responseModalities: ['TEXT', 'IMAGE'],
+                    tools: [{"google_search": {}}],
+                },
             });
 
             // 2. Extract Image
