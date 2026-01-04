@@ -18,6 +18,8 @@ export default function LogsClient({ token }) {
     const [logs, setLogs] = useState([]);
     const [isConnected, setIsConnected] = useState(false);
     const [error, setError] = useState(null);
+    const [timeFilter, setTimeFilter] = useState('1h'); // 10m, 1h, 24h, all
+    const [sortOrder, setSortOrder] = useState('desc'); // desc (newest top), asc (oldest top)
     const readerRef = useRef(null);
     const logsEndRef = useRef(null);
 
@@ -34,7 +36,20 @@ export default function LogsClient({ token }) {
         const fetchLogs = async () => {
             try {
                 setIsConnected(true);
-                const response = await fetch(`${API_URL}/v1/logs/${selectedContainer}?tail=200`, {
+                let url = `${API_URL}/v1/logs/${selectedContainer}`;
+
+                // Construct Query Params
+                const params = new URLSearchParams();
+                if (timeFilter !== 'all') {
+                    params.append('since', timeFilter); // Docker supports "10m", "1h"
+                } else {
+                    params.append('tail', '1000'); // If all, limit tail to avoid crash
+                }
+                url += `?${params.toString()}`;
+
+                console.log(`[LogsClient] Connecting to ${url}`);
+
+                const response = await fetch(url, {
                     headers: {
                         'Authorization': `Bearer ${token}`
                     }
@@ -54,11 +69,16 @@ export default function LogsClient({ token }) {
                     const { done, value } = await reader.read();
                     if (done) break;
                     const chunk = decoder.decode(value, { stream: true });
-                    // Split by newline and filter empty
+
+                    // DEBUG: Provide visibility into data arrival
+                    // console.log(`[LogsClient] Received chunk: ${value.byteLength} bytes`);
+
+                    // Split by newline
                     const lines = chunk.split('\n');
                     setLogs((prev) => {
-                        // Keep last 1000 lines max
-                        const newLogs = [...prev, ...lines].slice(-1000);
+                        // Append new lines
+                        // Limit total buffer to prevent browser crash
+                        const newLogs = [...prev, ...lines].slice(-5000);
                         return newLogs;
                     });
                 }
@@ -82,41 +102,71 @@ export default function LogsClient({ token }) {
                 readerRef.current.cancel();
             }
         };
-    }, [selectedContainer, token]);
+    }, [selectedContainer, token, timeFilter]);
 
-    // Auto-scroll
+    // Derived state for display
+    const displayedLogs = [...logs];
+    if (sortOrder === 'desc') {
+        displayedLogs.reverse();
+    }
+
+    // Auto-scroll only if sorting is oldest-first (standard terminal behavior)
     useEffect(() => {
-        if (logsEndRef.current) {
+        if (sortOrder === 'asc' && logsEndRef.current) {
             logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
         }
-    }, [logs]);
+    }, [logs, sortOrder]);
 
     return (
         <div className="flex h-screen flex-col bg-zinc-950 text-green-500 font-mono overflow-hidden">
             {/* Header */}
-            <header className="flex h-14 items-center justify-between border-b border-zinc-800 bg-zinc-900 px-4">
+            <header className="flex h-14 items-center justify-between border-b border-zinc-800 bg-zinc-900 px-4 shrink-0">
                 <div className="flex items-center gap-3">
                     <Terminal className="h-5 w-5 text-indigo-500" />
-                    <span className="font-bold text-zinc-100 tracking-wider">SYSTEM_LOGS_V1</span>
+                    <span className="font-bold text-zinc-100 tracking-wider hidden md:inline">SYSTEM_LOGS_V1</span>
                 </div>
-                <div className="flex items-center gap-4 text-xs font-bold">
-                    {error ? (
-                        <span className="flex items-center gap-2 text-red-500 animate-pulse">
-                            <AlertCircle className="w-4 h-4" /> CONNECTION_LOST: {error}
-                        </span>
-                    ) : isConnected ? (
-                        <span className="flex items-center gap-2 text-emerald-500">
-                            <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> LIVE_STREAM
-                        </span>
-                    ) : (
-                        <span className="text-zinc-500">CONNECTING...</span>
-                    )}
+
+                {/* Controls */}
+                <div className="flex items-center gap-4">
+                    <select
+                        value={timeFilter}
+                        onChange={(e) => setTimeFilter(e.target.value)}
+                        className="bg-zinc-800 text-zinc-300 text-xs rounded px-2 py-1 border border-zinc-700 outline-none focus:border-indigo-500"
+                    >
+                        <option value="10m">Last 10m</option>
+                        <option value="1h">Last 1h</option>
+                        <option value="24h">Last 24h</option>
+                        <option value="all">All (Tail 1000)</option>
+                    </select>
+
+                    <button
+                        onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
+                        className="text-xs font-bold text-zinc-400 hover:text-white flex items-center gap-1"
+                    >
+                        {sortOrder === 'asc' ? '⬇️ Oldest' : '⬆️ Newest'}
+                    </button>
+
+                    <div className="h-4 w-px bg-zinc-700 mx-2" />
+
+                    <div className="flex items-center gap-4 text-xs font-bold">
+                        {error ? (
+                            <span className="flex items-center gap-2 text-red-500 animate-pulse">
+                                <AlertCircle className="w-4 h-4" /> <span className="hidden md:inline">CONNECTION_LOST: {error}</span>
+                            </span>
+                        ) : isConnected ? (
+                            <span className="flex items-center gap-2 text-emerald-500">
+                                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse" /> <span className="hidden md:inline">LIVE</span>
+                            </span>
+                        ) : (
+                            <span className="text-zinc-500">CONNECTING...</span>
+                        )}
+                    </div>
                 </div>
             </header>
 
             <div className="flex flex-1 overflow-hidden">
                 {/* Sidebar */}
-                <aside className="w-48 border-r border-zinc-800 bg-zinc-900/50 flex flex-col p-2 space-y-1">
+                <aside className="w-48 border-r border-zinc-800 bg-zinc-900/50 flex flex-col p-2 space-y-1 shrink-0 overflow-y-auto hidden md:flex">
                     <span className="text-[10px] text-zinc-500 uppercase font-bold px-2 py-2 mb-1 tracking-widest">Targets</span>
                     {CONTAINERS.map(c => (
                         <button
@@ -140,13 +190,13 @@ export default function LogsClient({ token }) {
                             [ERROR] {error}
                         </div>
                     ) : (
-                        <div className="space-y-1 text-xs md:text-sm">
-                            {logs.map((line, i) => (
-                                <div key={i} className="whitespace-pre-wrap break-all border-l-2 border-transparent hover:border-zinc-800 hover:bg-zinc-900/30 px-2 py-0.5 leading-relaxed">
+                        <div className="space-y-1 text-xs md:text-sm font-mono">
+                            {displayedLogs.map((line, i) => (
+                                <div key={i} className="whitespace-pre-wrap break-all border-l-2 border-transparent hover:border-zinc-800 hover:bg-zinc-900/30 px-2 py-0.5 leading-relaxed text-zinc-300">
                                     {line || <span className="h-4 block" />}
                                 </div>
                             ))}
-                            <div ref={logsEndRef} />
+                            {sortOrder === 'asc' && <div ref={logsEndRef} />}
                         </div>
                     )}
 

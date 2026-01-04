@@ -232,8 +232,13 @@ app.get('/internal/stats', (req, res) => {
 app.get('/internal/history', (req, res) => {
   if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
   try {
-    const limit = parseInt(req.query.limit) || 50;
-    const history = agent.db.getHistory(limit);
+    const limit = parseInt(req.query.limit) || 100;
+    const since = req.query.since;
+    const until = req.query.until;
+    const order = req.query.order || 'DESC';
+
+    // Support legacy limit-only call or new options
+    const history = agent.db.getHistory({ limit, since, until, order });
     res.json({ history });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

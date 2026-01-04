@@ -70,7 +70,9 @@ app.post('/cmd/pull', async (req, res) => {
 
 app.get('/logs/:container', async (req, res) => {
   const name = req.params.container;
-  const tail = req.query.tail || 100;
+  const tail = req.query.tail;
+  const since = req.query.since; // timestamps or relative (e.g. 10m)
+  const until = req.query.until;
 
   // Use standard Docker connection (Env vars or default socket)
   const docker = new Docker();
@@ -86,15 +88,25 @@ app.get('/logs/:container', async (req, res) => {
 
     const container = docker.getContainer(target.Id);
 
-    const logStream = await container.logs({
+    const logOptions = {
       follow: true,
       stdout: true,
       stderr: true,
-      tail: parseInt(tail)
-    });
+      // If no time filter is set, default to tail 200. If time filter IS set, default tail to 'all' (undefined) to see full range.
+      tail: (since || until) ? undefined : (tail || 200)
+    };
+    if (since) logOptions.since = since;
+    if (until) logOptions.until = until;
 
-    res.setHeader('Content-Type', 'text/plain');
+    console.log(`[Supervisor] Streaming logs for ${name} (since: ${since}, tail: ${logOptions.tail})`);
+
+    const logStream = await container.logs(logOptions);
+
+    res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Transfer-Encoding', 'chunked');
+    res.setHeader('Cache-Control', 'no-cache, no-transform');
+    res.setHeader('Connection', 'keep-alive');
+    res.setHeader('X-Accel-Buffering', 'no'); // Nginx / Balena Proxy buffering disable
 
     // Inspect to check if TTY is enabled
     const info = await container.inspect();

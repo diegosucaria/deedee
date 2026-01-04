@@ -38,15 +38,26 @@ app.get('/v1/logs/:container', (req, res) => {
     const supervisorHost = 'supervisor';
     const supervisorPort = 4000;
 
+    // Build query string from all params
+    const query = new URLSearchParams(req.query).toString();
+    const path = `/logs/${container}${query ? `?${query}` : ''}`;
+
     const options = {
         hostname: supervisorHost,
         port: supervisorPort,
-        path: `/logs/${container}?tail=${tail}`,
+        path: path,
         method: 'GET'
     };
 
     const proxyReq = http.request(options, (proxyRes) => {
-        res.writeHead(proxyRes.statusCode, proxyRes.headers);
+        // Forward Status
+        res.writeHead(proxyRes.statusCode, {
+            ...proxyRes.headers,
+            'Cache-Control': 'no-cache, no-transform',
+            'Connection': 'keep-alive',
+            'X-Accel-Buffering': 'no'
+        });
+
         proxyRes.pipe(res, { end: true });
     });
 

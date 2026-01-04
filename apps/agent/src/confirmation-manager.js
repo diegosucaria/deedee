@@ -23,7 +23,20 @@ class ConfirmationManager {
                         if (args.domain === 'alarm_control_panel' && args.service === 'disarm') return true;
 
                         // Mass actions (safety net)
-                        if (args.entity_id === 'all') return true;
+                        if (args.entity_id === 'all') {
+                            // 1. Allow turning OFF lights/switches/media (common "goodnight" use case)
+                            if (['light', 'switch', 'media_player'].includes(args.domain) && args.service === 'turn_off') {
+                                return false;
+                            }
+
+                            // 2. Allow turning ON or Setting Color for LIGHTS (user request)
+                            // "set color" in HA is typically done via turn_on with arguments
+                            if (args.domain === 'light' && args.service === 'turn_on') {
+                                return false;
+                            }
+
+                            return true; // Block other mass actions (e.g. unlocking all doors, turning on all switches)
+                        }
                     }
                     return false;
                 },

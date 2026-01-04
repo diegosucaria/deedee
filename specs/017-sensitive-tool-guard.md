@@ -35,6 +35,15 @@ const SENSITIVE_RULES = [
                 if (args.domain === 'automation' && args.service === 'turn_off') return true;
                 if (args.domain === 'script' && args.service.includes('delete')) return true;
                 if (args.domain === 'alarm_control_panel' && args.service === 'disarm') return true;
+                // Mass actions (safety net)
+                // Exception: 
+                // 1. Allow turning OFF lights/switches/media (common "goodnight" use case)
+                // 2. Allow turning ON lights (includes setting color) - user requested
+                if (args.entity_id === 'all') {
+                     if (['light', 'switch', 'media_player'].includes(args.domain) && args.service === 'turn_off') return false; 
+                     if (args.domain === 'light' && args.service === 'turn_on') return false;
+                     return true; // Block others
+                }
             }
             return false;
         },

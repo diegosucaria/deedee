@@ -1,23 +1,41 @@
 'use client';
 
 import { useState } from 'react';
-import { Trash2, User, Bot, Wrench, Terminal, Calendar } from 'lucide-react';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
+import { Trash2, User, Bot, Wrench, Terminal, Calendar, ArrowUpDown, Clock } from 'lucide-react';
 import { deleteHistory } from '@/app/actions';
 import clsx from 'clsx';
 import ReactMarkdown from 'react-markdown';
 
 export default function HistoryList({ history }) {
+    const router = useRouter();
+    const pathname = usePathname();
+    const searchParams = useSearchParams();
+
+    // UI State for client-side filtering (Source)
     const [filterSource, setFilterSource] = useState('all');
+
+    // Get current server params
+    const currentOrder = searchParams.get('order') || 'desc';
+    const currentSince = searchParams.get('since') || '';
+
+    const updateParams = (key, value) => {
+        const params = new URLSearchParams(searchParams);
+        if (value) params.set(key, value);
+        else params.delete(key);
+        router.push(`${pathname}?${params.toString()}`);
+    };
 
     // Get unique sources
     const sources = ['all', ...new Set(history.map(h => h.source || 'db'))];
 
+    // Client-side filtering for Source (server filtering for Source not implemented yet)
     const filteredHistory = filterSource === 'all'
         ? history
         : history.filter(h => (h.source || 'db') === filterSource);
 
-    // Sort Descending (Newest First)
-    const sorted = [...filteredHistory].sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+    // Server returns requested order (DESC by default).
+    const sorted = [...filteredHistory];
 
     // Group by Date using Map to preserve order
     const grouped = sorted.reduce((acc, msg) => {
@@ -35,12 +53,38 @@ export default function HistoryList({ history }) {
     const handleDelete = async (id) => {
         if (confirm('Delete this message log?')) {
             await deleteHistory(id);
+            router.refresh();
         }
     };
 
     return (
         <div className="space-y-8">
-            <div className="flex justify-end mb-4">
+            <div className="flex flex-col md:flex-row justify-between items-end md:items-center mb-6 gap-4 border-b border-zinc-800 pb-4">
+                <div className="flex items-center gap-4">
+                    {/* Time Filter */}
+                    <label className="flex items-center gap-2 text-sm text-zinc-500">
+                        <Clock className="w-4 h-4" />
+                        <select
+                            value={currentSince}
+                            onChange={(e) => updateParams('since', e.target.value)}
+                            className="bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                        >
+                            <option value="">All Time (Limit 100)</option>
+                            <option value={new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()}>Last 24 Hours</option>
+                            <option value={new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()}>Last 7 Days</option>
+                        </select>
+                    </label>
+
+                    {/* Sort Order */}
+                    <button
+                        onClick={() => updateParams('order', currentOrder === 'desc' ? 'asc' : 'desc')}
+                        className="flex items-center gap-2 text-sm text-zinc-400 hover:text-white bg-zinc-900 border border-zinc-800 px-3 py-1.5 rounded-lg transition-colors"
+                    >
+                        <ArrowUpDown className="w-4 h-4" />
+                        {currentOrder === 'desc' ? 'Newest First' : 'Oldest First'}
+                    </button>
+                </div>
+
                 <label className="flex items-center gap-2 text-sm text-zinc-500">
                     Filter Source:
                     <select

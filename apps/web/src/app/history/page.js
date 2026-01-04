@@ -5,10 +5,15 @@ export const dynamic = 'force-dynamic';
 
 export default async function HistoryPage({ searchParams }) {
     let history = [];
-    const LIMIT = 100;
+    const limit = searchParams.limit || 100;
+    const since = searchParams.since;
+    const order = searchParams.order || 'desc';
 
     try {
-        const data = await fetchAPI(`/v1/history?limit=${LIMIT}`);
+        const query = new URLSearchParams({ limit, order });
+        if (since) query.append('since', since);
+
+        const data = await fetchAPI(`/v1/history?${query.toString()}`);
         history = data.history || [];
     } catch (e) {
         console.error('Failed to fetch history:', e);
