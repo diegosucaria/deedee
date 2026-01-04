@@ -46,6 +46,7 @@ cd deedee
 cp .env.example .env
 nano .env
 # -> Fill in GOOGLE_API_KEY and TELEGRAM_TOKEN
+# -> Set WORKER_GOOGLE_SEARCH=gemini-2.5-pro (for Search Tool)
 # -> Set ALLOWED_TELEGRAM_IDS to your ID (get it from @userinfobot)
 
 # 3. Launch
@@ -74,7 +75,7 @@ Everything is customizable via environment variables. Like which models to use.
   ![Self-Healing Loop](docs/self-healing.png)
 
 - **🔌 MCP Integration**: Supports Model Context Protocol.
-    - **Home Assistant**: "Turn on the living room light" or "Set the temperature to 22°C".
+    - **Home Assistant**: "Turn on the living room light" or "Set the temperature to 22°C". Active and integrated.
     - **Plex**: "Play the movie Inception" or "Recommend me a movie I haven't seen"/
     - **GSuite**: "Calendar", "Gmail".
     - **Local**: Shell, Filesystem.

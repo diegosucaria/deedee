@@ -18,6 +18,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
         - **Image Bypass**: Direct execution of image generation, skipping the reasoning model for speed.
         - **Parallel Tools**: Executes multiple tool calls concurrently for faster turnaround.
     - **Safety Guard**: Verifies sensitive tool usage (e.g., shell commands) and blocks ambiguous dictation commands (`iphone` source).
+    - **Google Search Split**: To bypass model limitations (Gemini 3 Preview vs Tools), general search queries are executed via a side-channel call to a Flash/Pro model (`WORKER_GOOGLE_SEARCH`) instead of the main agent model.
     - **MCP Manager**: Orchestrates tools via the Model Context Protocol.
 
 ### 2. Supervisor (`apps/supervisor`)
@@ -59,7 +60,16 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - **Local**: File system, time, shell execution.
     - **GSuite**: Google Calendar (OAuth).
     - **Plex**: Media library search and playback status (Python-based).
-    - **Home Assistant**: (Planned/External).
+    - **Plex**: Media library search and playback status (Python-based).
+    - **Home Assistant**: Control smart home devices (`ha-mcp`). Active.
+
+### 7. Logs Service (`/v1/logs`)
+- **Role**: Centralized Log Streaming.
+- **Mechanism**: Reads Docker logs from the host via socket proxy.
+- **Features**: 
+    - Server-Sent Events (SSE) stream to Web UI.
+    - Historical log fetching (since 10m, 1h).
+    - Auto-reconnect resilience.
 
 ## Data Perspectives
 
