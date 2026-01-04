@@ -20,6 +20,7 @@ router.post('/audio', upload.single('file'), async (req, res) => {
 
         const source = req.body.source || 'ios_shortcut';
         const chatId = req.body.chatId || 'audio_chat';
+        const replyMode = req.body.replyMode || req.query.replyMode || 'auto'; // 'auto', 'text', 'audio'
         const mimeType = req.file.mimetype || 'audio/wav'; // Fallback
 
         console.log(`[AudioEndpoint] Received audio (${req.file.size} bytes, ${mimeType}) from ${source}`);
@@ -42,7 +43,10 @@ router.post('/audio', upload.single('file'), async (req, res) => {
                 }
             ],
             source: source,
-            metadata: { chatId: chatId }
+            metadata: {
+                chatId: chatId,
+                replyMode: replyMode
+            }
         };
 
         console.log(`[AudioEndpoint] Forwarding to Agent at ${AGENT_URL}/chat...`);

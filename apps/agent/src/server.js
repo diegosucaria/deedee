@@ -119,7 +119,12 @@ app.post('/chat', async (req, res) => {
       const executionSummary = await agent.processMessage(message, async (reply) => {
         replies.push(reply);
       });
-      let finalReplies = executionSummary && executionSummary.replies ? executionSummary.replies : replies;
+
+      // Use the captured 'replies' (from callbacks) as the source of truth for what to send back.
+      // This ensures we respect:
+      // 1. Tool-generated outputs (Audio/Image) which are sent via callback but not always in summary.
+      // 2. Suppression logic (Text suppressed via callback is not in 'replies').
+      let finalReplies = replies.length > 0 ? replies : (executionSummary?.replies || []);
 
       // Only filter strictly for the iOS Shortcut (source=iphone, chatId=ios_shortcut)
       // This keeps "Thinking..." messages for other clients like Web Dashboards.

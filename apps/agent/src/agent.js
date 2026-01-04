@@ -288,13 +288,27 @@ class Agent {
       // Build System Instruction
       let systemInstruction = getSystemInstruction(new Date().toString());
 
-      // Specific instruction for iPhone/Voice sources where dictation is unreliable
       if (['iphone', 'ios_shortcut'].includes(message.source)) {
         systemInstruction += `\n
             **DICTATION SAFEGUARD**: You are receiving input from iOS Voice Dictation. It is prone to errors.
             - If the user's request is AMBIGUOUS, resembles gibberish, or matches a tool only weakly (e.g. "turn on the light" but no room specified, or "play movie" but name is garbled), DO NOT EXECUTE THE TOOL.
             - Instead, ASK FOR CLARIFICATION: "Did you say [interpreted text]?" or "Which light?".
             - ONLY execute tools if the intent is crystal clear.
+        `;
+      }
+
+      // REPLY MODE INSTRUCTION
+      const replyMode = message.metadata?.replyMode || 'auto';
+      if (replyMode === 'text') {
+        systemInstruction += `\n
+            **OUTPUT RESTRICTION**: The user has explicitly requested a TEXT-ONLY response.
+            - DO NOT call the 'replyWithAudio' tool.
+            - Provide your response purely as text.
+        `;
+      } else if (replyMode === 'audio' && !message.parts) { // Force audio if text input + mode=audio
+        systemInstruction += `\n
+            **OUTPUT RESTRICTION**: The user has explicitly requested an AUDIO response.
+            - YOU MUST call the 'replyWithAudio' tool to speak your response.
         `;
       }
 

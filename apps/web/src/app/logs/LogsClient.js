@@ -112,10 +112,21 @@ export default function LogsClient({ token }) {
 
     // Auto-scroll logic
     useEffect(() => {
+        // Scroll to bottom if autoScroll is enabled AND we are sorting ascending (newest at bottom)
         if (autoScroll && sortOrder === 'asc' && logsEndRef.current) {
             logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
         }
     }, [logs, sortOrder, autoScroll]);
+
+    // Force scroll to bottom on mount/container switch if autoScroll is on
+    useEffect(() => {
+        if (autoScroll && sortOrder === 'asc' && logsEndRef.current) {
+            // Small timeout to ensure DOM is ready
+            setTimeout(() => {
+                logsEndRef.current?.scrollIntoView({ behavior: 'auto' });
+            }, 100);
+        }
+    }, [selectedContainer]);
 
     // Handle manual scroll to disable auto-scroll (optional, but good UX)
     // For now, let's keep it manual toggle only to be simple/robust.
