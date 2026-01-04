@@ -13,6 +13,7 @@ export default function ChatPage() {
   const [isConnected, setIsConnected] = useState(false);
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
+  const [isWaiting, setIsWaiting] = useState(false);
   const messagesEndRef = useRef(null);
 
   // Initialize Socket
@@ -32,6 +33,14 @@ export default function ChatPage() {
     });
 
     newSocket.on('agent:message', (data) => {
+      // Check for "Thinking..." messages to show typing state
+      if (data.content && (data.content.startsWith('Thinking...') || data.content.startsWith('Still working...'))) {
+        setIsWaiting(true);
+        return;
+      }
+
+      setIsWaiting(false);
+
       // data: { content, type, timestamp }
       addMessage({
         role: 'assistant',
@@ -60,7 +69,7 @@ export default function ChatPage() {
   // Auto-scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, isWaiting]);
 
   const addMessage = (msg) => {
     setMessages((prev) => [...prev, msg]);
@@ -72,6 +81,7 @@ export default function ChatPage() {
 
     const content = inputValue;
     setInputValue('');
+    setIsWaiting(true);
 
     // Optimistic Update
     addMessage({
@@ -107,7 +117,7 @@ export default function ChatPage() {
 
       {/* Messages */}
       <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
-        {messages.length === 0 && (
+        {messages.length === 0 && !isWaiting && (
           <div className="flex h-full items-center justify-center text-zinc-500">
             <div className="text-center">
               <p className="mb-2 text-2xl font-semibold text-zinc-300">👋 Hello, I'm DeeDee.</p>
@@ -152,6 +162,20 @@ export default function ChatPage() {
             </div>
           </div>
         ))}
+
+        {/* Typing Indicator */}
+        {isWaiting && (
+          <div className="flex w-full justify-start">
+            <div className="max-w-[85%] rounded-2xl px-5 py-4 shadow-sm md:max-w-[70%] bg-zinc-800 rounded-tl-none border border-zinc-700">
+              <div className="flex space-x-2 items-center h-4">
+                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce"></div>
+              </div>
+            </div>
+          </div>
+        )}
+
         <div ref={messagesEndRef} />
       </div>
 
