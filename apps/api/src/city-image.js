@@ -18,7 +18,7 @@ router.get('/', async (req, res) => {
             CURRENT_TIME=${new Date().toLocaleString()}
             Present a clear, 45° top-down isometric miniature 3D cartoon scene of [CITY], featuring its most iconic landmarks and architectural elements. Use soft, refined textures with realistic PBR materials and gentle, lifelike lighting and shadows. Integrate the current weather conditions ([WEATHER_DESCRIPTION]) directly into the city environment to create an immersive atmospheric mood.
             Use a clean, minimalistic composition with a soft, solid-colored background.
-            At the top-center, place the title “[CITY]” in large bold text, a prominent weather icon beneath it, then the date (small text) and **current** temperature ([TEMP] at [CURRENT_TIME]) (medium text) and the day weather forecast ([WEATHER_FORECAST]) (small text).
+            At the top-center, place the title “[CITY]” in large bold text, a prominent weather icon beneath it, then the date in text (small text) and **current** temperature ([TEMP] at [CURRENT_TIME]) (don't show the time) (medium text) and the day weather forecast ([WEATHER_FORECAST]) with min and max temp (small text).
             All text must be centered with consistent spacing, and may subtly overlap the tops of the buildings.
             IMPORTANT: The city cartoon should not reach the borders of the image.
             Temperature should be in Celsius.
