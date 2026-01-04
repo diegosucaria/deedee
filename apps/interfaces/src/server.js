@@ -2,6 +2,7 @@ const { Server } = require("socket.io");
 const http = require('http');
 const express = require('express');
 const { TelegramService } = require('./telegram');
+const axios = require('axios');
 
 const app = express();
 const server = http.createServer(app);
@@ -29,9 +30,6 @@ io.on("connection", (socket) => {
     try {
       console.log(`[Interfaces] Received socket message from ${socket.id}`);
       // Send to Agent
-      // We expect Agent to reply to /send, which we will route back to socket
-      // But we need to pass a "chatId" that maps to this socket.
-      // For web, use socket.id as chatId or a session ID.
       const payload = {
         content: data.content,
         source: 'web',
@@ -41,10 +39,6 @@ io.on("connection", (socket) => {
         }
       };
 
-      // We use axios or fetch to call Agent
-      // Wait, this file didn't require axios/fetch (only TelegramService used axios internally?)
-      // Check imports. Line 13 of package.json has axios.
-      const axios = require('axios');
       const response = await axios.post(`${agentUrl}/chat`, payload);
 
       console.log(`[Interfaces] Agent responded with ${response.data.replies?.length || 0} replies.`);

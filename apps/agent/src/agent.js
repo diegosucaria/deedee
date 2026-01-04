@@ -471,19 +471,20 @@ class Agent {
             console.log(`Tool Result (${executionName}):`, result);
           }
 
-          // Sanitize for DB
+          // Sanitize for DB AND Model to prevent Context Pollution
           let dbToolResult = result;
           if (executionName === 'generateImage') {
-            dbToolResult = { info: 'Image generated.' };
+            // Gemini does NOT need the base64. It just needs success.
+            dbToolResult = { info: 'Image generated and sent to user.' };
           } else if (result && result.image_base64 && result.image_base64.length > 500) {
-            dbToolResult = { ...result, image_base64: '<BASE64_IMAGE_TRUNCATED_FOR_DB>' };
+            dbToolResult = { ...result, image_base64: '<BASE64_IMAGE_TRUNCATED>' };
           }
 
-          // Build API Payload
+          // Build API Payload (Send CLEAN result to Model)
           functionResponseParts.push({
             functionResponse: {
               name: call.name,
-              response: { result: result }
+              response: { result: dbToolResult }
             }
           });
 

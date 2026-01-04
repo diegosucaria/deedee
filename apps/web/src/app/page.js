@@ -151,6 +151,14 @@ export default function ChatPage() {
                   {/* Actual player hidden/managed or we can optimize this later */}
                   <audio controls src={msg.content.startsWith('data:') ? msg.content : `data:audio/wav;base64,${msg.content}`} className="hidden" />
                 </div>
+              ) : msg.type === 'image' ? (
+                <div className="rounded-lg overflow-hidden">
+                  <img
+                    src={msg.content.startsWith('data:') ? msg.content : `data:image/png;base64,${msg.content}`}
+                    alt="Generated Image"
+                    className="w-full h-auto max-h-96 object-cover"
+                  />
+                </div>
               ) : (
                 <div className="markdown prose prose-invert prose-sm max-w-none">
                   <ReactMarkdown>{msg.content}</ReactMarkdown>
