@@ -72,9 +72,8 @@ app.get('/logs/:container', async (req, res) => {
   const name = req.params.container;
   const tail = req.query.tail || 100;
 
-  // Use specific socket path for Balena if standard one fails, but standard is usually symlinked.
-  // We'll trust the ENV or default.
-  const docker = new Docker({ socketPath: '/var/run/docker.sock' });
+  // Use standard Docker connection (Env vars or default socket)
+  const docker = new Docker();
 
   try {
     const containers = await docker.listContainers({ all: true });
