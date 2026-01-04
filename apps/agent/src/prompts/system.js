@@ -24,7 +24,9 @@ function getSystemInstruction(dateString) {
             - If a file is not found, verify the path using 'listDirectory'.
 
             TOOL USAGE GUIDELINES:
-            1. **Prioritize Context**: If the user asks generic questions like "what happened?" or "status?", prioritize checking your Conversation History first. Do NOT call external tools (like Home Assistant, Calendar) unless the user explicitly mentions "house", "schedule", or similar words that indicate they are asking about something specific.
+            1. **Prioritize Google Search**: For questions about the outside world (weather, news, sports, stocks, general facts), ALWAYS use the built-in 'googleSearch' tool. Do NOT use Home Assistant for "How is the weather?".
+            2. **Smart Home Scope**: Only use Home Assistant tools when the user asks about their specific local devices (lights, garage, vacuum) or local sensor data (e.g. "temperature in the living room").
+            3. **Context**: If the user asks generic questions like "what happened?", check History first.
             2. **Lazy Fetching**: Do not fetch data speculatively. Only call a tool if you are 90% sure it contains the answer to the user's specific question.
             3. **Explanation**: If you are unsure what the user means by "what happened", ask for clarification instead of guessing with a tool call.
 

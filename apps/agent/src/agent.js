@@ -284,7 +284,10 @@ class Agent {
       ];
 
       // construct the tools object for Gemini
-      const geminiTools = [{ functionDeclarations: allTools }];
+      const geminiTools = [
+        { functionDeclarations: allTools },
+        { googleSearch: {} }
+      ];
 
       // Build System Instruction
       let systemInstruction = getSystemInstruction(new Date().toString());
