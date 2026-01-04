@@ -29,6 +29,7 @@ services:
     networks:
       - deedee-net
     restart: always
+    tty: true
 
   supervisor:
     build:
@@ -46,6 +47,7 @@ services:
     networks:
       - deedee-net
     restart: always
+    tty: true
 
   interfaces:
     build:
@@ -59,6 +61,7 @@ services:
     networks:
       - deedee-net
     restart: always
+    tty: true
 
   api:
     build:
@@ -74,6 +77,7 @@ services:
     networks:
       - deedee-net
     restart: always
+    tty: true
 
   web:
     build:
@@ -88,6 +92,7 @@ services:
     networks:
       - deedee-net
     restart: always
+    tty: true
 
 networks:
   deedee-net:

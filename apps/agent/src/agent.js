@@ -555,7 +555,8 @@ class Agent {
         text = response.text;
       } else if (response.candidates && response.candidates[0] && response.candidates[0].content) {
         // Validation fallback
-        text = response.candidates[0].content.parts
+        const parts = response.candidates[0].content.parts || [];
+        text = parts
           .filter(p => p.text)
           .map(p => p.text)
           .join(' ');

@@ -96,12 +96,20 @@ app.get('/logs/:container', async (req, res) => {
     res.setHeader('Content-Type', 'text/plain');
     res.setHeader('Transfer-Encoding', 'chunked');
 
-    // Docker logs are multiplexed with headers (8 bytes). We need to demux them.
-    // 'res' is a writable stream, so we pipe both stdout and stderr to it.
-    // NOTE: This sends plain text to the client, mixed.
-    container.modem.demuxStream(logStream, res, res);
+    // Inspect to check if TTY is enabled
+    const info = await container.inspect();
+    const isTty = info.Config && info.Config.Tty;
 
-    // logStream.pipe(res); // <-- OLD RAW PIPE
+    console.log(`[Supervisor] Streaming logs for ${name} (tty: ${isTty})`);
+
+    if (isTty) {
+      // TTY enabled: raw stream is already text
+      logStream.pipe(res);
+    } else {
+      // TTY disabled: multiplexed stream (binary headers)
+      // Demux stdout and stderr to the response
+      container.modem.demuxStream(logStream, res, res);
+    }
 
     req.on('close', () => {
       try { logStream.destroy(); } catch (e) { }
