@@ -104,7 +104,7 @@ app.post('/webhook', (req, res) => {
 app.post('/chat', async (req, res) => {
   const message = req.body;
 
-  if (!message || !message.content) {
+  if (!message || (!message.content && !message.parts)) {
     return res.status(400).json({ error: 'Invalid message format' });
   }
 
@@ -225,6 +225,22 @@ app.get('/internal/stats', (req, res) => {
   try {
     const stats = agent.db.getStats();
     res.json(stats);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/internal/stats/latency', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const trend = agent.db.getLatencyTrend(100);
+    res.json(trend);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/internal/stats/usage', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const usage = agent.db.getTokenUsageStats();
+    res.json(usage);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

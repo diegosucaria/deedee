@@ -40,24 +40,9 @@ export function Sidebar() {
                         DeeDee
                     </span>
                 </div>
-
-                <button
-                    onClick={() => setIsCollapsed(!isCollapsed)}
-                    className={clsx("text-zinc-500 hover:text-zinc-300 ml-auto hidden md:block", isCollapsed && "hidden")}
-                >
-                    <ChevronLeft className="w-5 h-5" />
-                </button>
             </div>
 
-            {/* Collapse Toggle (Mobile/Collapsed View) */}
-            {isCollapsed && (
-                <button
-                    onClick={() => setIsCollapsed(!isCollapsed)}
-                    className="mb-4 text-zinc-500 hover:text-white"
-                >
-                    <ChevronRight className="w-5 h-5" />
-                </button>
-            )}
+
 
             <nav className="flex flex-1 flex-col gap-2 px-2 w-full">
                 {navItems.map((item) => {
@@ -94,9 +79,31 @@ export function Sidebar() {
                 })}
             </nav>
 
-            <div className={clsx("mt-auto flex flex-col items-center gap-4 border-t border-zinc-800 pt-4 w-full", isCollapsed ? "px-0" : "px-4 items-start")}>
-                <div className="text-[10px] text-zinc-600 text-center w-full whitespace-nowrap overflow-hidden">
-                    {isCollapsed ? 'v0.1' : 'v0.1.0-alpha'}
+            <div className={clsx("mt-auto flex items-center gap-4 border-t border-zinc-800 pt-4 w-full", isCollapsed ? "flex-col px-0" : "flex-col px-4 items-start")}>
+                {!isCollapsed && (
+                    <div className="w-full space-y-2 mb-2">
+                        <div className="flex items-center justify-between text-[10px] text-zinc-500">
+                            <span>Agent</span>
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+                        </div>
+                        <div className="flex items-center justify-between text-[10px] text-zinc-500">
+                            <span>Brain</span>
+                            <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+                        </div>
+                    </div>
+                )}
+
+                <div className="flex w-full items-center justify-between">
+                    <div className="text-[10px] text-zinc-600 text-center whitespace-nowrap overflow-hidden">
+                        {isCollapsed ? 'v0.1' : 'v0.1.0-alpha'}
+                    </div>
+
+                    <button
+                        onClick={() => setIsCollapsed(!isCollapsed)}
+                        className="text-zinc-500 hover:text-white hidden md:block"
+                    >
+                        {isCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
+                    </button>
                 </div>
             </div>
         </div>

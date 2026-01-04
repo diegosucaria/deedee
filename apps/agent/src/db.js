@@ -82,6 +82,24 @@ class AgentDB {
         entity_id TEXT NOT NULL,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
+
+      CREATE TABLE IF NOT EXISTS metrics (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        type TEXT NOT NULL, -- latency_router, latency_model, etc
+        value REAL NOT NULL,
+        metadata TEXT, -- JSON
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS token_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        model TEXT NOT NULL,
+        prompt_tokens INTEGER,
+        candidate_tokens INTEGER,
+        total_tokens INTEGER,
+        chat_id TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
     `);
 
     // Migration: Add metadata column if it doesn't exist (for existing DBs)
@@ -368,6 +386,40 @@ class AgentDB {
     const stmt = this.db.prepare('SELECT entity_id FROM entity_aliases WHERE alias = ?');
     const row = stmt.get(alias.toLowerCase());
     return row ? row.entity_id : null;
+  }
+
+  // --- Metrics & Analytics ---
+  logMetric(type, value, metadata = {}) {
+    const metaStr = JSON.stringify(metadata);
+    this.db.prepare('INSERT INTO metrics (type, value, metadata) VALUES (?, ?, ?)').run(type, value, metaStr);
+  }
+
+  logTokenUsage({ model, promptTokens, candidateTokens, totalTokens, chatId }) {
+    this.db.prepare(`
+      INSERT INTO token_usage (model, prompt_tokens, candidate_tokens, total_tokens, chat_id)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(model, promptTokens, candidateTokens, totalTokens, chatId);
+  }
+
+  getLatencyTrend(limit = 100) {
+    // Get avg latency per hour? Or just raw points for graph?
+    // Let's get raw points for now: timestamp, value, type
+    const stmt = this.db.prepare(`
+      SELECT timestamp, value, type FROM metrics 
+      WHERE type IN ('latency_router', 'latency_model') 
+      ORDER BY timestamp DESC LIMIT ?
+    `);
+    return stmt.all(limit).reverse();
+  }
+
+  getTokenUsageStats() {
+    // Total tokens today
+    const today = this.db.prepare(`
+      SELECT SUM(total_tokens) as total FROM token_usage 
+      WHERE timestamp > date('now')
+    `).get().total || 0;
+
+    return { today };
   }
   getStats() {
     const totalMessages = this.db.prepare('SELECT COUNT(*) as count FROM messages').get().count;

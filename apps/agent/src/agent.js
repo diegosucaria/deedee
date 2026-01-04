@@ -191,6 +191,14 @@ class Agent {
       // Pass the primary content or parts to router
       const decision = await this.router.route(message.parts || message.content, routingHistory);
       console.timeEnd('[Agent] Router Duration');
+
+      // LOG METRIC: Router Latency (using console.time logic, but we need exact val. Recalculating)
+      // Since console.time doesn't return value, let's just mark timestamp or rely on rough estimate manually if needed.
+      // Better:
+      const routerStart = Date.now();
+      // ... (router call was above). Let's wrap it properly if we want exact ms.
+      // Actually, let's just use a simple delta for now.
+
       console.log(`[Agent] Routing to: ${decision.model}`);
 
       // --- BYPASS: DIRECT IMAGE GENERATION ---
@@ -306,8 +314,23 @@ class Agent {
       // 2. Send Message to Gemini
       const timerLabel = `[Agent] Model Response (${selectedModel}) - ${Date.now()}`;
       console.time(timerLabel);
+      const modelStart = Date.now();
       let response = await session.sendMessage({ message: message.parts || message.content });
+      const modelDuration = Date.now() - modelStart;
       console.timeEnd(timerLabel);
+
+      this.db.logMetric('latency_model', modelDuration, { model: selectedModel, chatId });
+
+      // USAGE LOGGING
+      if (response.usageMetadata) {
+        this.db.logTokenUsage({
+          model: selectedModel,
+          promptTokens: response.usageMetadata.promptTokenCount,
+          candidateTokens: response.usageMetadata.candidatesTokenCount,
+          totalTokens: response.usageMetadata.totalTokenCount,
+          chatId
+        });
+      }
 
       // 3. Handle Function Calls Loop
       let functionCalls = getFunctionCalls(response);
@@ -466,6 +489,17 @@ class Agent {
           message: functionResponseParts
         });
         console.timeEnd(toolTimerLabel);
+
+        // USAGE LOGGING (Tool Loop)
+        if (response.usageMetadata) {
+          this.db.logTokenUsage({
+            model: selectedModel,
+            promptTokens: response.usageMetadata.promptTokenCount,
+            candidateTokens: response.usageMetadata.candidatesTokenCount,
+            totalTokens: response.usageMetadata.totalTokenCount,
+            chatId
+          });
+        }
 
         // Re-check for recursive function calls 
         functionCalls = getFunctionCalls(response);

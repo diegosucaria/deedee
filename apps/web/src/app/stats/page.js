@@ -1,6 +1,7 @@
 export const dynamic = 'force-dynamic';
 import { fetchAPI } from '@/lib/api';
 import { BarChart3, MessageSquare, Brain, Clock, Zap, CheckCircle, Activity } from 'lucide-react';
+import StatsClient from './StatsClient';
 
 export default async function StatsPage() {
     let stats = null;
@@ -96,6 +97,8 @@ export default async function StatsPage() {
                     </div>
                 </div>
             </div>
+            {/* Real-time Charts */}
+            <StatsClient />
         </div>
     );
 }

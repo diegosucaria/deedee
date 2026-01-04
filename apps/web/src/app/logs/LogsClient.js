@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Terminal, RefreshCw, Layers, Layout, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Terminal, RefreshCw, Layers, Layout, AlertCircle, ChevronLeft, ChevronRight, ArrowUpCircle, ArrowDownCircle, PauseCircle, PlayCircle, Clock } from 'lucide-react';
 import clsx from 'clsx';
 import { API_URL } from '@/lib/api';
 
@@ -21,6 +21,8 @@ export default function LogsClient({ token }) {
     const [timeFilter, setTimeFilter] = useState('1h'); // 10m, 1h, 24h, all
     const [sortOrder, setSortOrder] = useState('asc'); // asc (standard terminal: oldest top, newest bottom)
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+    const [autoScroll, setAutoScroll] = useState(true);
+    const [showTimestamps, setShowTimestamps] = useState(false);
     const readerRef = useRef(null);
     const logsEndRef = useRef(null);
 
@@ -108,12 +110,30 @@ export default function LogsClient({ token }) {
         displayedLogs.reverse();
     }
 
-    // Auto-scroll only if sorting is oldest-first (standard terminal behavior)
+    // Auto-scroll logic
     useEffect(() => {
-        if (sortOrder === 'asc' && logsEndRef.current) {
+        if (autoScroll && sortOrder === 'asc' && logsEndRef.current) {
             logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
         }
-    }, [logs, sortOrder]);
+    }, [logs, sortOrder, autoScroll]);
+
+    // Handle manual scroll to disable auto-scroll (optional, but good UX)
+    // For now, let's keep it manual toggle only to be simple/robust.
+
+    const scrollToTop = () => {
+        setAutoScroll(false);
+        const main = document.querySelector('main.overflow-auto');
+        if (main) main.scrollTop = 0;
+    };
+
+    const scrollToBottom = () => {
+        setAutoScroll(true);
+        if (logsEndRef.current) logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+    };
+
+    const clearLogs = () => {
+        setLogs([]);
+    };
 
     return (
         <div className="flex h-screen flex-col bg-zinc-950 text-green-500 font-mono overflow-hidden">
@@ -138,10 +158,38 @@ export default function LogsClient({ token }) {
                     </select>
 
                     <button
-                        onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
-                        className="text-xs font-bold text-zinc-400 hover:text-white flex items-center gap-1"
+                        onClick={clearLogs}
+                        className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white px-2 py-1 rounded border border-zinc-700 transition-colors"
+                        title="Clear Local Logs"
                     >
-                        {sortOrder === 'asc' ? '⬇️ Standard' : '⬆️ Reverse'}
+                        Clear
+                    </button>
+
+                    <div className="h-4 w-px bg-zinc-700 mx-2" />
+
+                    {/* Scroll Controls */}
+                    <button onClick={scrollToTop} title="Scroll to Top" className="text-zinc-500 hover:text-white">
+                        <ArrowUpCircle className="w-4 h-4" />
+                    </button>
+                    <button onClick={scrollToBottom} title="Scroll to Bottom" className="text-zinc-500 hover:text-white">
+                        <ArrowDownCircle className="w-4 h-4" />
+                    </button>
+                    <button
+                        onClick={() => setAutoScroll(!autoScroll)}
+                        title={autoScroll ? "Disable Auto-Scroll" : "Enable Auto-Scroll"}
+                        className={clsx("transition-colors", autoScroll ? "text-green-500" : "text-zinc-600 hover:text-zinc-400")}
+                    >
+                        {autoScroll ? <PlayCircle className="w-4 h-4" /> : <PauseCircle className="w-4 h-4" />}
+                    </button>
+
+                    <div className="h-4 w-px bg-zinc-700 mx-2" />
+
+                    <button
+                        onClick={() => setShowTimestamps(!showTimestamps)}
+                        title="Toggle Timestamps"
+                        className={clsx("transition-colors", showTimestamps ? "text-indigo-400" : "text-zinc-600 hover:text-zinc-400")}
+                    >
+                        <Clock className="w-4 h-4" />
                     </button>
 
                     <div className="h-4 w-px bg-zinc-700 mx-2" />
@@ -168,14 +216,8 @@ export default function LogsClient({ token }) {
                     "border-r border-zinc-800 bg-zinc-900/50 flex flex-col transition-all duration-300 ease-in-out shrink-0 overflow-y-auto hidden md:flex",
                     isSidebarCollapsed ? "w-12 items-center py-2" : "w-48 p-2"
                 )}>
-                    <div className={clsx("flex items-center mb-2", isSidebarCollapsed ? "justify-center" : "justify-between px-2")}>
-                        {!isSidebarCollapsed && <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Targets</span>}
-                        <button
-                            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
-                            className="text-zinc-500 hover:text-zinc-300"
-                        >
-                            {isSidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
-                        </button>
+                    <div className={clsx("flex items-center mb-2 px-2", isSidebarCollapsed ? "justify-center" : "justify-start")}>
+                        <span className={clsx("text-[10px] text-zinc-500 uppercase font-bold tracking-widest", isSidebarCollapsed ? "hidden" : "block")}>Targets</span>
                     </div>
 
                     <div className={clsx("flex flex-col space-y-1", isSidebarCollapsed ? "w-full px-1" : "w-full")}>
@@ -185,8 +227,8 @@ export default function LogsClient({ token }) {
                                 onClick={() => setSelectedContainer(c)}
                                 title={c}
                                 className={clsx(
-                                    "text-xs uppercase font-bold rounded hover:bg-zinc-800 transition-colors flex items-center justify-center", // Center items for collapse
-                                    isSidebarCollapsed ? "h-8 w-8 mx-auto" : "text-left px-3 py-2 gap-2 w-full",
+                                    "text-xs uppercase font-bold rounded hover:bg-zinc-800 transition-colors flex items-center", // Removed justify-center from base
+                                    isSidebarCollapsed ? "justify-center h-8 w-8 mx-auto" : "justify-start text-left px-3 py-2 gap-2 w-full",
                                     selectedContainer === c ? "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20" : "text-zinc-400"
                                 )}
                             >
@@ -201,6 +243,14 @@ export default function LogsClient({ token }) {
                             </button>
                         ))}
                     </div>
+                    <div className="mt-auto pt-2 border-t border-zinc-800/50 flex justify-end px-2">
+                        <button
+                            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                            className="text-zinc-600 hover:text-zinc-300 p-1"
+                        >
+                            {isSidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
+                        </button>
+                    </div>
                 </aside>
 
                 {/* Console Area */}
@@ -212,8 +262,13 @@ export default function LogsClient({ token }) {
                     ) : (
                         <div className="space-y-1 text-xs md:text-sm font-mono">
                             {displayedLogs.map((line, i) => (
-                                <div key={i} className="whitespace-pre-wrap break-all border-l-2 border-transparent hover:border-zinc-800 hover:bg-zinc-900/30 px-2 py-[1px] leading-tight text-zinc-300">
-                                    {line || <span className="h-4 block" />}
+                                <div key={i} className="flex gap-2 whitespace-pre-wrap break-all border-l-2 border-transparent hover:border-zinc-800 hover:bg-zinc-900/30 px-2 py-[1px] leading-tight text-zinc-300">
+                                    {showTimestamps && (
+                                        <span className="text-zinc-600 shrink-0 select-none text-[10px] pt-[2px]">
+                                            {new Date().toLocaleTimeString()}
+                                        </span>
+                                    )}
+                                    <span>{line || <span className="h-4 block" />}</span>
                                 </div>
                             ))}
                             {sortOrder === 'asc' && <div ref={logsEndRef} />}

@@ -12,8 +12,18 @@ export default function HistoryList({ history }) {
     const pathname = usePathname();
     const searchParams = useSearchParams();
 
-    // UI State for client-side filtering (Source)
+    // UI State for client-side filtering (Source) and Time Options
     const [filterSource, setFilterSource] = useState('all');
+    const [timeOptions, setTimeOptions] = useState({ last24h: '', last7d: '' });
+
+    useEffect(() => {
+        const now = Date.now();
+        // eslint-disable-next-line react-hooks/set-state-in-effect
+        setTimeOptions({
+            last24h: new Date(now - 24 * 60 * 60 * 1000).toISOString(),
+            last7d: new Date(now - 7 * 24 * 60 * 60 * 1000).toISOString()
+        });
+    }, []);
 
     // Get current server params
     const currentOrder = searchParams.get('order') || 'desc';
@@ -70,8 +80,8 @@ export default function HistoryList({ history }) {
                             className="bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                         >
                             <option value="">All Time (Limit 100)</option>
-                            <option value={new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString()}>Last 24 Hours</option>
-                            <option value={new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString()}>Last 7 Days</option>
+                            <option value={timeOptions.last24h}>Last 24 Hours</option>
+                            <option value={timeOptions.last7d}>Last 7 Days</option>
                         </select>
                     </label>
 

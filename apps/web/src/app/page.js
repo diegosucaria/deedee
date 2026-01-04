@@ -16,6 +16,10 @@ export default function ChatPage() {
   const [isWaiting, setIsWaiting] = useState(false);
   const messagesEndRef = useRef(null);
 
+  const addMessage = (msg) => {
+    setMessages((prev) => [...prev, msg]);
+  };
+
   // Initialize Socket
   useEffect(() => {
     const newSocket = io(SOCKET_URL, {
@@ -68,6 +72,7 @@ export default function ChatPage() {
       }
     });
 
+    // eslint-disable-next-line react-hooks/set-state-in-effect
     setSocket(newSocket);
 
     return () => newSocket.close();
@@ -78,9 +83,7 @@ export default function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, isWaiting]);
 
-  const addMessage = (msg) => {
-    setMessages((prev) => [...prev, msg]);
-  };
+
 
   const handleSendMessage = (e) => {
     e.preventDefault();

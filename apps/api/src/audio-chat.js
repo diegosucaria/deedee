@@ -54,6 +54,9 @@ router.post('/audio', upload.single('file'), async (req, res) => {
         res.json({ success: true, agentResponse: response.data });
 
     } catch (error) {
+        if (error.response) {
+            console.error('[AudioEndpoint] Agent Error Data:', JSON.stringify(error.response.data));
+        }
         console.error('[AudioEndpoint] Error:', error.message);
         res.status(500).json({ error: 'Failed to process audio', details: error.message });
     }
