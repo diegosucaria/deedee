@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Terminal, RefreshCw, Layers, Layout, AlertCircle } from 'lucide-react';
+import { Terminal, RefreshCw, Layers, Layout, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
 import clsx from 'clsx';
 import { API_URL } from '@/lib/api';
 
@@ -19,7 +19,8 @@ export default function LogsClient({ token }) {
     const [isConnected, setIsConnected] = useState(false);
     const [error, setError] = useState(null);
     const [timeFilter, setTimeFilter] = useState('1h'); // 10m, 1h, 24h, all
-    const [sortOrder, setSortOrder] = useState('desc'); // desc (newest top), asc (oldest top)
+    const [sortOrder, setSortOrder] = useState('asc'); // asc (standard terminal: oldest top, newest bottom)
+    const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
     const readerRef = useRef(null);
     const logsEndRef = useRef(null);
 
@@ -140,7 +141,7 @@ export default function LogsClient({ token }) {
                         onClick={() => setSortOrder(prev => prev === 'asc' ? 'desc' : 'asc')}
                         className="text-xs font-bold text-zinc-400 hover:text-white flex items-center gap-1"
                     >
-                        {sortOrder === 'asc' ? '⬇️ Oldest' : '⬆️ Newest'}
+                        {sortOrder === 'asc' ? '⬇️ Standard' : '⬆️ Reverse'}
                     </button>
 
                     <div className="h-4 w-px bg-zinc-700 mx-2" />
@@ -163,21 +164,37 @@ export default function LogsClient({ token }) {
 
             <div className="flex flex-1 overflow-hidden">
                 {/* Sidebar */}
-                <aside className="w-48 border-r border-zinc-800 bg-zinc-900/50 flex flex-col p-2 space-y-1 shrink-0 overflow-y-auto hidden md:flex">
-                    <span className="text-[10px] text-zinc-500 uppercase font-bold px-2 py-2 mb-1 tracking-widest">Targets</span>
-                    {CONTAINERS.map(c => (
+                <aside className={clsx(
+                    "border-r border-zinc-800 bg-zinc-900/50 flex flex-col transition-all duration-300 ease-in-out shrink-0 overflow-y-auto hidden md:flex",
+                    isSidebarCollapsed ? "w-12 items-center py-2" : "w-48 p-2"
+                )}>
+                    <div className={clsx("flex items-center mb-2", isSidebarCollapsed ? "justify-center" : "justify-between px-2")}>
+                        {!isSidebarCollapsed && <span className="text-[10px] text-zinc-500 uppercase font-bold tracking-widest">Targets</span>}
                         <button
-                            key={c}
-                            onClick={() => setSelectedContainer(c)}
-                            className={clsx(
-                                "text-left px-3 py-2 text-xs uppercase font-bold rounded hover:bg-zinc-800 transition-colors flex items-center gap-2",
-                                selectedContainer === c ? "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20" : "text-zinc-400"
-                            )}
+                            onClick={() => setIsSidebarCollapsed(!isSidebarCollapsed)}
+                            className="text-zinc-500 hover:text-zinc-300"
                         >
-                            <Layers className="w-3 h-3" />
-                            {c}
+                            {isSidebarCollapsed ? <ChevronRight className="w-4 h-4" /> : <ChevronLeft className="w-4 h-4" />}
                         </button>
-                    ))}
+                    </div>
+
+                    <div className={clsx("flex flex-col space-y-1", isSidebarCollapsed ? "w-full px-1" : "w-full")}>
+                        {CONTAINERS.map(c => (
+                            <button
+                                key={c}
+                                onClick={() => setSelectedContainer(c)}
+                                title={c}
+                                className={clsx(
+                                    "text-xs uppercase font-bold rounded hover:bg-zinc-800 transition-colors flex items-center justify-center", // Center items for collapse
+                                    isSidebarCollapsed ? "h-8 w-8 mx-auto" : "text-left px-3 py-2 gap-2 w-full",
+                                    selectedContainer === c ? "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20" : "text-zinc-400"
+                                )}
+                            >
+                                <Layers className="w-3 h-3 shrink-0" />
+                                {!isSidebarCollapsed && <span>{c}</span>}
+                            </button>
+                        ))}
+                    </div>
                 </aside>
 
                 {/* Console Area */}
