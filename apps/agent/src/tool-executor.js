@@ -179,7 +179,7 @@ class ToolExecutor {
 
             return {
                 success: true,
-                image_base64: "...",
+                image_base64: b64JSON,
                 info: 'Image generated and sent to user.'
             };
         }
