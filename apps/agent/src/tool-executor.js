@@ -139,7 +139,7 @@ class ToolExecutor {
                 contents: args.prompt,
                 config: {
                     responseModalities: ['TEXT', 'IMAGE'],
-                    tools: [{ "google_search": {} }],
+                    tools: [{ googleSearch: {} }],
                 },
             });
 
@@ -158,7 +158,7 @@ class ToolExecutor {
                 if (response.candidates[0].groundingMetadata) {
                     console.log('[ToolExecutor] Grounding Metadata:', JSON.stringify(response.candidates[0].groundingMetadata, null, 2));
                 } else {
-                    console.log('[ToolExecutor] No Grounding Metadata found.');
+                    console.log('[ToolExecutor] No Grounding Metadata found. Full Response Dump:', JSON.stringify(response, null, 2));
                 }
             }
 
