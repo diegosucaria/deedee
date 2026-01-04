@@ -129,7 +129,7 @@ class ToolExecutor {
 
         // Image Generation
         if (name === 'generateImage') {
-            const imagenModel = process.env.GEMINI_IMAGE_MODEL || 'imagen-3.0-generate-002';
+            const imagenModel = process.env.GEMINI_IMAGE_MODEL || 'gemini-3-pro-image-preview';
             console.log(`[ToolExecutor] Generating image with ${imagenModel} for prompt: "${args.prompt}"`);
 
             // 1. Generate Image
@@ -139,7 +139,7 @@ class ToolExecutor {
                 contents: args.prompt,
                 config: {
                     responseModalities: ['TEXT', 'IMAGE'],
-                    tools: [{"google_search": {}}],
+                    tools: [{ "google_search": {} }],
                 },
             });
 
@@ -154,9 +154,11 @@ class ToolExecutor {
                     b64JSON = imagePart.inlineData.data;
                 }
 
-                // Log grounding metadata if present (for image gen?)
+                // Log Grounding Metadata
                 if (response.candidates[0].groundingMetadata) {
-                    console.log('[ToolExecutor] Image Generation Grounding Metadata:', JSON.stringify(response.candidates[0].groundingMetadata, null, 2));
+                    console.log('[ToolExecutor] Grounding Metadata:', JSON.stringify(response.candidates[0].groundingMetadata, null, 2));
+                } else {
+                    console.log('[ToolExecutor] No Grounding Metadata found.');
                 }
             }
 
