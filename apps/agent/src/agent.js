@@ -57,7 +57,8 @@ class Agent {
       gsuite: this.gsuite,
       mcp: this.mcp,
       client: null, // Will be populated in processMessage
-      interface: this.interface
+      interface: this.interface,
+      db: this.db
     });
 
     this.processMessage = this.processMessage.bind(this);

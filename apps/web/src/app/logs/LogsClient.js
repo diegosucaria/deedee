@@ -6,12 +6,12 @@ import clsx from 'clsx';
 import { API_URL } from '@/lib/api';
 
 const CONTAINERS = [
+    'all',
     'agent',
     'interfaces',
     'api',
     'web',
-    'supervisor',
-    'all'
+    'supervisor'
 ];
 
 const CONTAINER_COLORS = {
@@ -23,7 +23,7 @@ const CONTAINER_COLORS = {
 };
 
 export default function LogsClient({ token }) {
-    const [selectedContainer, setSelectedContainer] = useState('agent');
+    const [selectedContainer, setSelectedContainer] = useState('all');
     const [logs, setLogs] = useState([]);
     const [isConnected, setIsConnected] = useState(false);
     const [error, setError] = useState(null);
@@ -123,7 +123,7 @@ export default function LogsClient({ token }) {
     useEffect(() => {
         // Scroll to bottom if autoScroll is enabled AND we are sorting ascending (newest at bottom)
         if (autoScroll && sortOrder === 'asc' && logsEndRef.current) {
-            logsEndRef.current.scrollIntoView({ behavior: 'smooth' });
+            logsEndRef.current.scrollIntoView({ behavior: 'auto' });
         }
     }, [logs, sortOrder, autoScroll]);
 
@@ -302,7 +302,7 @@ export default function LogsClient({ token }) {
                                             </span>
                                         )}
                                         {prefix && (
-                                            <span className={clsx("shrink-0 font-bold w-20 text-right uppercase select-none opacity-80 group-hover:opacity-100 transition-opacity", colorClass)}>
+                                            <span className={clsx("shrink-0 font-bold w-24 text-center uppercase select-none text-[10px] py-[2px] rounded bg-zinc-900/80 border border-zinc-800/50", colorClass)}>
                                                 {prefix}
                                             </span>
                                         )}
