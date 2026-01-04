@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { Trash2, User, Bot, Wrench, Terminal, Calendar, ArrowUpDown, Clock } from 'lucide-react';
 import { deleteHistory } from '@/app/actions';

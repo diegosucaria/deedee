@@ -10,8 +10,17 @@ const CONTAINERS = [
     'interfaces',
     'api',
     'web',
-    'supervisor'
+    'supervisor',
+    'all'
 ];
+
+const CONTAINER_COLORS = {
+    agent: 'text-green-500',
+    interfaces: 'text-yellow-500',
+    api: 'text-blue-500',
+    web: 'text-pink-500',
+    supervisor: 'text-purple-500'
+};
 
 export default function LogsClient({ token }) {
     const [selectedContainer, setSelectedContainer] = useState('agent');
@@ -272,16 +281,35 @@ export default function LogsClient({ token }) {
                         </div>
                     ) : (
                         <div className="space-y-1 text-xs md:text-sm font-mono">
-                            {displayedLogs.map((line, i) => (
-                                <div key={i} className="flex gap-2 whitespace-pre-wrap break-all border-l-2 border-transparent hover:border-zinc-800 hover:bg-zinc-900/30 px-2 py-[1px] leading-tight text-zinc-300">
-                                    {showTimestamps && (
-                                        <span className="text-zinc-600 shrink-0 select-none text-[10px] pt-[2px]">
-                                            {new Date().toLocaleTimeString()}
-                                        </span>
-                                    )}
-                                    <span>{line || <span className="h-4 block" />}</span>
-                                </div>
-                            ))}
+                            {displayedLogs.map((line, i) => {
+                                // Parse line for prefix [name]
+                                const match = line.match(/^\[(agent|api|web|interfaces|supervisor)\] (.*)/);
+                                let prefix = null;
+                                let content = line;
+                                let colorClass = 'text-zinc-300';
+
+                                if (match) {
+                                    prefix = match[1];
+                                    content = match[2];
+                                    colorClass = CONTAINER_COLORS[prefix] || 'text-zinc-300';
+                                }
+
+                                return (
+                                    <div key={i} className="flex gap-2 whitespace-pre-wrap break-all border-l-2 border-transparent hover:border-zinc-800 hover:bg-zinc-900/30 px-2 py-[1px] leading-tight group">
+                                        {showTimestamps && (
+                                            <span className="text-zinc-600 shrink-0 select-none text-[10px] pt-[2px]">
+                                                {new Date().toLocaleTimeString()}
+                                            </span>
+                                        )}
+                                        {prefix && (
+                                            <span className={clsx("shrink-0 font-bold w-20 text-right uppercase select-none opacity-80 group-hover:opacity-100 transition-opacity", colorClass)}>
+                                                {prefix}
+                                            </span>
+                                        )}
+                                        <span className={clsx(prefix ? colorClass : "text-zinc-300")}>{content || <span className="h-4 block" />}</span>
+                                    </div>
+                                );
+                            })}
                             {sortOrder === 'asc' && <div ref={logsEndRef} />}
                         </div>
                     )}

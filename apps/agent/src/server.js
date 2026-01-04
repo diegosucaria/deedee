@@ -126,10 +126,10 @@ app.post('/chat', async (req, res) => {
       // 2. Suppression logic (Text suppressed via callback is not in 'replies').
       let finalReplies = replies.length > 0 ? replies : (executionSummary?.replies || []);
 
-      // Only filter strictly for the iOS Shortcut (source=iphone, chatId=ios_shortcut)
+      // Only filter strictly for the iOS Shortcut (source=iphone OR source=ios_shortcut)
       // This keeps "Thinking..." messages for other clients like Web Dashboards.
-      if (message.source === 'iphone' && message.metadata?.chatId === 'ios_shortcut') {
-        finalReplies = replies.filter(r => {
+      if (['iphone', 'ios_shortcut'].includes(message.source)) {
+        finalReplies = finalReplies.filter(r => {
           const c = r.content || '';
           return !c.startsWith('Thinking...') &&
             !c.startsWith('Still working...') &&

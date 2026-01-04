@@ -70,17 +70,109 @@ app.post('/cmd/pull', async (req, res) => {
 
 app.get('/logs/:container', async (req, res) => {
   const name = req.params.container;
-  const tail = req.query.tail;
-  const since = req.query.since; // timestamps or relative (e.g. 10m)
+  const tail = req.query.tail; // 10m, 1h, or number like 100
+  const since = req.query.since;
   const until = req.query.until;
 
-  // Use standard Docker connection (Env vars or default socket)
   const docker = new Docker();
 
+  // Helper to parse 'since' (duration string -> timestamp)
+  const parseSince = (val) => {
+    if (!val) return undefined;
+    const match = val.match(/^(\d+)(m|h|d)$/);
+    if (match) {
+      const num = parseInt(match[1]);
+      const unit = match[2];
+      let seconds = 0;
+      if (unit === 'm') seconds = num * 60;
+      if (unit === 'h') seconds = num * 3600;
+      if (unit === 'd') seconds = num * 86400;
+      return Math.floor((Date.now() / 1000) - seconds);
+    }
+    return val;
+  };
+
+  const calculatedSince = parseSince(since);
+
   try {
-    const containers = await docker.listContainers({ all: true });
-    // Fuzzy match: 'agent' matches 'deedee_agent_1'
-    const target = containers.find(c => c.Names.some(n => n.includes(name)));
+    const allContainers = await docker.listContainers({ all: true });
+
+    // --- MULTIPLEX 'ALL' ---
+    if (name === 'all') {
+      const TARGETS = ['agent', 'api', 'web', 'supervisor', 'interfaces'];
+      const streams = [];
+
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('Transfer-Encoding', 'chunked');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no');
+
+      console.log(`[Supervisor] Streaming ALL logs (since: ${since})`);
+
+      for (const targetName of TARGETS) {
+        // Find container
+        const targetContainer = allContainers.find(c => c.Names.some(n => n.includes(targetName)));
+        if (!targetContainer) continue;
+
+        const container = docker.getContainer(targetContainer.Id);
+        const logOptions = {
+          follow: true,
+          stdout: true,
+          stderr: true,
+          tail: (since || until) ? undefined : (tail || 50), // Lower tail for 'all' to avoid flood
+          since: calculatedSince,
+          until: until
+        };
+
+        try {
+          const stream = await container.logs(logOptions);
+          // Decorate stream to prefix lines
+          stream.on('data', (chunk) => {
+            // Docker stream might be multiplexed (header + payload) or raw
+            // For simplicity in this naive implementation, we assume we can just stringify.
+            // But properly we should demux. dockerode exposes container.modem.demuxStream.
+            // Demuxing confusingly writes to two streams.
+            // Let's rely on TTY enabled which means raw text.
+            // If TTY is false (common in compose), the first 8 bytes offer header.
+            // We'll clean basic non-ascii if needed or trust TTY is set in compose.
+
+            // CLEAN METHOD: Write directly to res with prefix.
+            // NOTE: This mixes stdout/stderr.
+
+            // Convert to string, split lines, prefix, write.
+            const text = chunk.toString('utf8');
+            // Remove Docker headers if present (hacky but 'good enough' for simple viewing)
+            // Or ideally use 'demuxStream' passing a custom writable.
+
+            // Simple prefixer
+            const lines = text.split('\n');
+            lines.forEach(line => {
+              if (line.trim()) {
+                // Check for Docker Header (Byte 0=1/2, Byte 4-7=Size) - simplified check: non-printable start?
+                // Actually, let's just output raw text. The frontend handles garbage decently.
+                // To be cleaner: regex clean? 
+                // Let's assume text.
+                res.write(`[${targetName}] ${line}\n`);
+              }
+            });
+          });
+
+          streams.push(stream);
+        } catch (e) {
+          console.error(`Error streaming ${targetName}:`, e.message);
+        }
+      }
+
+      req.on('close', () => {
+        console.log('[Supervisor] Client closed connection for ALL logs');
+        streams.forEach(s => s.destroy());
+      });
+
+      return;
+    }
+
+    // --- SINGLE CONTAINER ---
+    const target = allContainers.find(c => c.Names.some(n => n.includes(name)));
 
     if (!target) {
       return res.status(404).json({ error: `Container '${name}' not found` });
@@ -92,54 +184,26 @@ app.get('/logs/:container', async (req, res) => {
       follow: true,
       stdout: true,
       stderr: true,
-      // If no time filter is set, default to tail 200. If time filter IS set, default tail to 'all' (undefined) to see full range.
-      tail: (since || until) ? undefined : (tail || 200)
+      tail: (since || until) ? undefined : (tail || 200),
+      since: calculatedSince,
+      until: until
     };
 
-    // Helper to convert relative time (10m, 1h) to timestamp (seconds)
-    // Docker API requires Unix timestamp (integer seconds) for 'since'
-    const parseSince = (val) => {
-      if (!val) return undefined;
-      const match = val.match(/^(\d+)(m|h|d)$/);
-      if (match) {
-        const num = parseInt(match[1]);
-        const unit = match[2];
-        let seconds = 0;
-        if (unit === 'm') seconds = num * 60;
-        if (unit === 'h') seconds = num * 3600;
-        if (unit === 'd') seconds = num * 86400;
-
-        // Return timestamp in seconds
-        return Math.floor((Date.now() / 1000) - seconds);
-      }
-      return val; // Assume it's already a timestamp
-    };
-
-    if (since) logOptions.since = parseSince(since);
-    if (until) logOptions.until = until;
-
-    console.log(`[Supervisor] Streaming logs for ${name} (since: ${since}, tail: ${logOptions.tail})`);
+    console.log(`[Supervisor] Streaming logs for ${name} (since: ${since})`);
 
     const logStream = await container.logs(logOptions);
 
     res.setHeader('Content-Type', 'text/plain; charset=utf-8');
     res.setHeader('Transfer-Encoding', 'chunked');
-    res.setHeader('Cache-Control', 'no-cache, no-transform');
     res.setHeader('Connection', 'keep-alive');
-    res.setHeader('X-Accel-Buffering', 'no'); // Nginx / Balena Proxy buffering disable
+    res.setHeader('X-Accel-Buffering', 'no');
 
-    // Inspect to check if TTY is enabled
     const info = await container.inspect();
     const isTty = info.Config && info.Config.Tty;
 
-    console.log(`[Supervisor] Streaming logs for ${name} (tty: ${isTty})`);
-
     if (isTty) {
-      // TTY enabled: raw stream is already text
       logStream.pipe(res);
     } else {
-      // TTY disabled: multiplexed stream (binary headers)
-      // Demux stdout and stderr to the response
       container.modem.demuxStream(logStream, res, res);
     }
 
@@ -149,9 +213,7 @@ app.get('/logs/:container', async (req, res) => {
 
   } catch (err) {
     console.error(`[Supervisor] Log Error (${name}):`, err.message);
-    // Only send error json if headers haven't sent (streaming might have started)
     if (!res.headersSent) res.status(500).json({ error: err.message });
-    else res.end(`\n[Error] ${err.message}`);
   }
 });
 

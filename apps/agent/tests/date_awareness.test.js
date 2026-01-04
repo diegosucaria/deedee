@@ -7,6 +7,8 @@ jest.mock('../src/db', () => ({
         getPendingGoals: jest.fn().mockReturnValue([]),
         getHistoryForChat: jest.fn().mockReturnValue([]),
         saveMessage: jest.fn(),
+        logMetric: jest.fn(),
+        logTokenUsage: jest.fn(),
         checkLimit: jest.fn().mockReturnValue(true),
         logUsage: jest.fn(),
         getScheduledJobs: jest.fn().mockReturnValue([])

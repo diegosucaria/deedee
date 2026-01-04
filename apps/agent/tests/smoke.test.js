@@ -13,6 +13,8 @@ jest.mock('../src/db', () => ({
     getPendingGoals: jest.fn().mockReturnValue([]),
     checkLimit: jest.fn().mockReturnValue(0),
     logUsage: jest.fn(),
+    logMetric: jest.fn(),
+    logTokenUsage: jest.fn(),
     getHistoryForChat: jest.fn().mockReturnValue([]),
     getScheduledJobs: jest.fn().mockReturnValue([])
   }))
@@ -22,10 +24,17 @@ jest.mock('../src/db', () => ({
 process.env.HA_URL = 'http://localhost';
 process.env.HA_TOKEN = 'fake-token';
 
-jest.mock('@deedee/mcp-servers/src/gsuite/index', () => ({
-  GSuiteTools: jest.fn().mockImplementation(() => ({
-    listEvents: jest.fn().mockResolvedValue([{ summary: 'Mock Event' }]),
-    sendEmail: jest.fn()
+GSuiteTools: jest.fn().mockImplementation(() => ({
+  listEvents: jest.fn().mockResolvedValue([{ summary: 'Mock Event' }]),
+  sendEmail: jest.fn()
+}))
+
+jest.mock('../src/mcp-manager', () => ({
+  MCPManager: jest.fn().mockImplementation(() => ({
+    init: jest.fn(),
+    getTools: jest.fn().mockResolvedValue([]),
+    callTool: jest.fn(),
+    close: jest.fn()
   }))
 }));
 

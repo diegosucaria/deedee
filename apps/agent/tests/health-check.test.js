@@ -9,7 +9,12 @@ describe('Agent Health Check', () => {
         // Mock config
         agent = new Agent({ interface: { send: jest.fn(), on: jest.fn() }, googleApiKey: 'fake' });
         // Mock DB to avoid errors, though health check should skip it
-        agent.db = { saveMessage: jest.fn(), getHistoryForChat: jest.fn() };
+        agent.db = {
+            saveMessage: jest.fn(),
+            logMetric: jest.fn(),
+            logTokenUsage: jest.fn(),
+            getHistoryForChat: jest.fn()
+        };
         agent.rateLimiter = { check: jest.fn().mockResolvedValue(true) };
         agent.commandHandler = { handle: jest.fn().mockResolvedValue(false) };
     });

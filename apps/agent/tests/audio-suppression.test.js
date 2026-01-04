@@ -7,7 +7,12 @@ describe('Audio Response Suppression', () => {
 
     beforeEach(() => {
         agent = new Agent({ interface: { send: jest.fn(), on: jest.fn() }, googleApiKey: 'fake' });
-        agent.db = { saveMessage: jest.fn(), getHistoryForChat: jest.fn() };
+        agent.db = {
+            saveMessage: jest.fn(),
+            getHistoryForChat: jest.fn(),
+            logMetric: jest.fn(),
+            logTokenUsage: jest.fn()
+        };
         agent.rateLimiter = { check: jest.fn().mockResolvedValue(true) };
         agent.commandHandler = { handle: jest.fn().mockResolvedValue(false) };
 

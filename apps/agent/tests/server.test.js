@@ -1,4 +1,14 @@
 const request = require('supertest');
+
+jest.mock('../src/mcp-manager', () => ({
+  MCPManager: jest.fn().mockImplementation(() => ({
+    init: jest.fn(),
+    getTools: jest.fn().mockResolvedValue([]),
+    callTool: jest.fn(),
+    close: jest.fn()
+  }))
+}));
+
 const { app } = require('../src/server');
 
 describe('Agent Server API', () => {
@@ -26,3 +36,4 @@ afterAll(async () => {
     await agent.stop();
   }
 });
+
