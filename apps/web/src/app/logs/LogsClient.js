@@ -190,8 +190,14 @@ export default function LogsClient({ token }) {
                                     selectedContainer === c ? "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20" : "text-zinc-400"
                                 )}
                             >
-                                <Layers className="w-3 h-3 shrink-0" />
-                                {!isSidebarCollapsed && <span>{c}</span>}
+                                {isSidebarCollapsed ? (
+                                    <span className="text-sm font-bold">{c.charAt(0).toUpperCase()}</span>
+                                ) : (
+                                    <>
+                                        <Layers className="w-3 h-3 shrink-0" />
+                                        <span>{c}</span>
+                                    </>
+                                )}
                             </button>
                         ))}
                     </div>

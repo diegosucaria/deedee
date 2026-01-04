@@ -61,10 +61,19 @@ app.get('/v1/logs/:container', (req, res) => {
         });
 
         proxyRes.pipe(res, { end: true });
+
+        // Handle upstream disconnect
+        proxyRes.on('close', () => {
+            if (!res.finished) res.end();
+        });
     });
 
+    // Handle upstream socket errors (ECONNRESET, etc)
     proxyReq.on('error', (e) => {
-        console.error(`[API] Log Proxy Error: ${e.message}`);
+        // Only log if it's not a standard client disconnect
+        if (e.code !== 'ECONNRESET') {
+            console.error(`[API] Log Proxy Error: ${e.message} (${e.code})`);
+        }
         if (!res.headersSent) res.status(502).json({ error: 'Failed to connect to Supervisor' });
     });
 
@@ -72,6 +81,9 @@ app.get('/v1/logs/:container', (req, res) => {
     req.on('close', () => {
         proxyReq.destroy();
     });
+
+    // Set a timeout?
+    // proxyReq.setTimeout(0); // Disable timeout?
 
     proxyReq.end();
 });
