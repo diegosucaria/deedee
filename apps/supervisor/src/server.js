@@ -95,7 +95,27 @@ app.get('/logs/:container', async (req, res) => {
       // If no time filter is set, default to tail 200. If time filter IS set, default tail to 'all' (undefined) to see full range.
       tail: (since || until) ? undefined : (tail || 200)
     };
-    if (since) logOptions.since = since;
+
+    // Helper to convert relative time (10m, 1h) to timestamp (seconds)
+    // Docker API requires Unix timestamp (integer seconds) for 'since'
+    const parseSince = (val) => {
+      if (!val) return undefined;
+      const match = val.match(/^(\d+)(m|h|d)$/);
+      if (match) {
+        const num = parseInt(match[1]);
+        const unit = match[2];
+        let seconds = 0;
+        if (unit === 'm') seconds = num * 60;
+        if (unit === 'h') seconds = num * 3600;
+        if (unit === 'd') seconds = num * 86400;
+
+        // Return timestamp in seconds
+        return Math.floor((Date.now() / 1000) - seconds);
+      }
+      return val; // Assume it's already a timestamp
+    };
+
+    if (since) logOptions.since = parseSince(since);
     if (until) logOptions.until = until;
 
     console.log(`[Supervisor] Streaming logs for ${name} (since: ${since}, tail: ${logOptions.tail})`);
