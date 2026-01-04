@@ -300,6 +300,12 @@ class AgentDB {
     console.log(`[DB] Cleared history for chat ${chatId}`);
   }
 
+  clearAllHistory() {
+    const stmt = this.db.prepare('DELETE FROM messages');
+    const info = stmt.run();
+    console.log(`[DB] Cleared ALL history (${info.changes} messages)`);
+  }
+
   deleteMessagesSince(chatId, timestamp) {
     if (!chatId || !timestamp) return;
     const stmt = this.db.prepare('DELETE FROM messages WHERE chat_id = ? AND timestamp >= ?');

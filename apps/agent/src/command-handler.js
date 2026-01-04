@@ -31,7 +31,16 @@ class CommandHandler {
             this.db.clearHistory(chatId);
             // Also message to user...
             const reply = createAssistantMessage('Chat history cleared.');
-            reply.metadata = { chatId };
+            reply.metadata = { chatId, systemAction: 'CLEAR_HISTORY' };
+            reply.source = message.source;
+            await this.interface.send(reply);
+            return true;
+        }
+
+        if (content === '/clear_all') {
+            this.db.clearAllHistory();
+            const reply = createAssistantMessage('All chat history cleared from database.');
+            reply.metadata = { chatId, systemAction: 'CLEAR_HISTORY' };
             reply.source = message.source;
             await this.interface.send(reply);
             return true;

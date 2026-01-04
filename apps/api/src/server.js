@@ -23,7 +23,45 @@ app.use('/v1', authMiddleware);
 app.use('/v1', dashboardRouter); // Dashboard routes (journal, tasks, facts)
 app.use('/v1/chat', chatRouter);
 app.use('/v1/briefing', briefingRouter);
+app.use('/v1/briefing', briefingRouter);
 app.use('/v1/city-image', cityImageRouter);
+
+// Proxy System Logs (Stream)
+const http = require('http');
+app.get('/v1/logs/:container', (req, res) => {
+    // Stream from Supervisor
+    const container = req.params.container;
+    const tail = req.query.tail || 100;
+
+    // We can't rely on generic SUPERVISOR_URL being set in API service if it's not.
+    // Docker compose says api has AGENT_URL. Supervisor is at http://supervisor:4000
+    const supervisorHost = 'supervisor';
+    const supervisorPort = 4000;
+
+    const options = {
+        hostname: supervisorHost,
+        port: supervisorPort,
+        path: `/logs/${container}?tail=${tail}`,
+        method: 'GET'
+    };
+
+    const proxyReq = http.request(options, (proxyRes) => {
+        res.writeHead(proxyRes.statusCode, proxyRes.headers);
+        proxyRes.pipe(res, { end: true });
+    });
+
+    proxyReq.on('error', (e) => {
+        console.error(`[API] Log Proxy Error: ${e.message}`);
+        if (!res.headersSent) res.status(502).json({ error: 'Failed to connect to Supervisor' });
+    });
+
+    // Handle client disconnect
+    req.on('close', () => {
+        proxyReq.destroy();
+    });
+
+    proxyReq.end();
+});
 
 if (require.main === module) {
     app.listen(port, () => {

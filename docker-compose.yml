@@ -40,6 +40,9 @@ services:
       - PORT=4000
     volumes:
       - repo-data:/app/source
+      - /var/run/docker.sock:/var/run/docker.sock
+    labels:
+      io.balena.features.balena-socket: '1'
     networks:
       - deedee-net
     restart: always

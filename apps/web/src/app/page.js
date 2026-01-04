@@ -39,6 +39,13 @@ export default function ChatPage() {
         return;
       }
 
+      // Check for System Actions
+      if (data.metadata?.systemAction === 'CLEAR_HISTORY') {
+        setMessages([]);
+        setIsWaiting(false);
+        return;
+      }
+
       setIsWaiting(false);
 
       // data: { content, type, timestamp }

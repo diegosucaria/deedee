@@ -2,6 +2,7 @@ const express = require('express');
 const { GitOps } = require('./git-ops');
 const { Verifier } = require('./verifier');
 const { Monitor } = require('./monitor');
+const Docker = require('dockerode');
 
 const app = express();
 const port = process.env.PORT || 4000;
@@ -66,6 +67,49 @@ app.post('/cmd/pull', async (req, res) => {
   }
 });
 
+
+app.get('/logs/:container', async (req, res) => {
+  const name = req.params.container;
+  const tail = req.query.tail || 100;
+
+  // Use specific socket path for Balena if standard one fails, but standard is usually symlinked.
+  // We'll trust the ENV or default.
+  const docker = new Docker({ socketPath: '/var/run/docker.sock' });
+
+  try {
+    const containers = await docker.listContainers({ all: true });
+    // Fuzzy match: 'agent' matches 'deedee_agent_1'
+    const target = containers.find(c => c.Names.some(n => n.includes(name)));
+
+    if (!target) {
+      return res.status(404).json({ error: `Container '${name}' not found` });
+    }
+
+    const container = docker.getContainer(target.Id);
+
+    const logStream = await container.logs({
+      follow: true,
+      stdout: true,
+      stderr: true,
+      tail: parseInt(tail)
+    });
+
+    res.setHeader('Content-Type', 'text/plain');
+    res.setHeader('Transfer-Encoding', 'chunked');
+
+    logStream.pipe(res);
+
+    req.on('close', () => {
+      try { logStream.destroy(); } catch (e) { }
+    });
+
+  } catch (err) {
+    console.error(`[Supervisor] Log Error (${name}):`, err.message);
+    // Only send error json if headers haven't sent (streaming might have started)
+    if (!res.headersSent) res.status(500).json({ error: err.message });
+    else res.end(`\n[Error] ${err.message}`);
+  }
+});
 
 if (require.main === module) {
   app.listen(port, () => {
