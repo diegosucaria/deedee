@@ -79,6 +79,7 @@ app.get('/health', (req, res) => {
 app.post('/send', async (req, res) => {
   try {
     const { source, content, metadata, type } = req.body;
+    console.log(`[Interfaces] DEBUG: /send called. Source: ${source}, Type: ${type}, Meta:`, JSON.stringify(metadata));
 
     // WEB / SOCKET
     if (source === 'web' || (metadata && metadata.socketId)) {
@@ -86,6 +87,8 @@ app.post('/send', async (req, res) => {
       // We'll broadcast to the room (chatId) if we join rooms, or just to the specific socket if explicit.
       // Flexible: emit to chatId
       const target = metadata.chatId || metadata.socketId;
+      console.log(`[Interfaces] DEBUG: Emitting to target: ${target}`);
+
       if (target) {
         io.to(target).emit('agent:message', {
           content,

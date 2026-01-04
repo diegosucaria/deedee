@@ -36,12 +36,15 @@ class HttpInterface extends EventEmitter {
         }
       }
 
+      console.log(`[HttpInterface] DEBUG: Sending to ${message.source}, Type: ${type}, ChatID: ${message.metadata?.chatId}`);
+
       await axios.post(`${this.interfacesUrl}/send`, {
         source: message.source,
         content: content,
         metadata: message.metadata,
         type: type
       });
+      console.log(`[HttpInterface] DEBUG: Successfully sent to Interfaces.`);
       return true;
     } catch (error) {
       console.error('[HttpInterface] Send Error:', error.message);
