@@ -295,7 +295,7 @@ class Agent {
       // construct the tools object for Gemini
       let geminiTools;
 
-      if (decision.toolMode === 'SEARCH' && process.env.USE_NATIVE_SEARCH !== 'false') {
+      if (decision.toolMode === 'SEARCH') {
         // Native Search grounding (exclusive)
         console.log('[Agent] Mode: SEARCH (Google Grounding)');
         geminiTools = [{ googleSearch: {} }];

@@ -10,7 +10,8 @@ jest.mock('telegraf', () => {
             stop: jest.fn(),
             telegram: {
                 sendMessage: jest.fn(),
-                getFileLink: jest.fn()
+                getFileLink: jest.fn(),
+                sendChatAction: jest.fn().mockResolvedValue(true)
             }
         }))
     };
