@@ -52,7 +52,10 @@ app.get('/v1/logs/:container', (req, res) => {
         hostname: supervisorHost,
         port: supervisorPort,
         path: path,
-        method: 'GET'
+        method: 'GET',
+        headers: {
+            'x-supervisor-token': process.env.SUPERVISOR_TOKEN
+        }
     };
 
     const proxyReq = http.request(options, (proxyRes) => {

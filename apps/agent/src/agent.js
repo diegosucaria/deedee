@@ -701,20 +701,31 @@ class Agent {
     // --- SUPERVISOR TOOLS ---
     if (executionName === 'rollbackLastChange') {
       const rollbackRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/rollback`, {
-        method: 'POST'
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-supervisor-token': process.env.SUPERVISOR_TOKEN
+        }
       });
       return await rollbackRes.json();
     }
     if (executionName === 'pullLatestChanges') {
       const pullRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/pull`, {
-        method: 'POST'
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'x-supervisor-token': process.env.SUPERVISOR_TOKEN
+        }
       });
       return await pullRes.json();
     }
     if (executionName === 'commitAndPush') {
       const commitRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/commit`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-supervisor-token': process.env.SUPERVISOR_TOKEN
+        },
         body: JSON.stringify({ message: args.message, files: ['.'] })
       });
       const toolResult = await commitRes.json();

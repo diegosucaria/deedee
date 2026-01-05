@@ -37,6 +37,27 @@ const monitor = new Monitor(git);
 
 app.use(express.json());
 
+// Security: Simple Token Auth
+app.use((req, res, next) => {
+  // Skip auth for health checks or internal metrics if needed?
+  // Let's protect everything except /health
+  if (req.path === '/health') return next();
+
+  const token = req.headers['x-supervisor-token'];
+  const validToken = process.env.SUPERVISOR_TOKEN;
+
+  if (!validToken) {
+    console.warn('[Supervisor] WARNING: SUPERVISOR_TOKEN not set. Allowing request (Insecure).');
+    return next();
+  }
+
+  if (token !== validToken) {
+    console.warn(`[Supervisor] Unauthorized access attempt from ${req.ip}`);
+    return res.status(403).json({ error: 'Unauthorized' });
+  }
+  next();
+});
+
 const gitName = process.env.GIT_USER_NAME || 'Deedee Supervisor';
 const gitEmail = process.env.GIT_USER_EMAIL || 'supervisor@deedee.bot';
 let gitRemote = process.env.GIT_REMOTE_URL;

@@ -33,8 +33,13 @@ DeeDee operates on a **"YOLO but Safe"** model. This means we prioritize **Perso
 - **Read-Only**: `/proc`, `/sys`.
 
 ### Network
+### Network
 - **Outbound**: Unrestricted (needed for API calls, fetch).
 - **Inbound**: None (container isolation).
+- **Service Mesh**:
+    - **`apps/api`**: Public Gateway. Enforces Bearer Auth on `/v1/*`.
+    - **`apps/agent`**: Internal Only. Protected by Docker Network isolation. Enforces Path Validation on Journal Ops.
+    - **`apps/supervisor`**: Internal Only. Protected by `SUPERVISOR_TOKEN` to prevent SSRF->RCE lateral movement.
 
 ### Tools
 - **GSuite**: Full Read/Write access to Calendar and Mail.

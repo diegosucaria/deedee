@@ -175,6 +175,12 @@ app.get('/internal/journal/:date', (req, res) => {
     const { date } = req.params; // Expect filename like "2024-01-01.md" or just date?
     // Let's assume input is YYYY-MM-DD
     const filename = date.endsWith('.md') ? date : `${date}.md`;
+
+    // Security: Prevent Directory Traversal
+    if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+      return res.status(400).json({ error: 'Invalid filename' });
+    }
+
     const filePath = path.join(agent.journal.journalDir, filename);
 
     if (!fs.existsSync(filePath)) return res.status(404).json({ error: 'Journal not found' });
@@ -308,11 +314,20 @@ app.put('/internal/journal/:date', (req, res) => {
     if (!content) return res.status(400).json({ error: 'Content required' });
 
     const filename = date.endsWith('.md') ? date : `${date}.md`;
+
+    // Security: Prevent Directory Traversal
+    if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) {
+      return res.status(400).json({ error: 'Invalid filename' });
+    }
+
     const filePath = path.join(agent.journal.journalDir, filename);
 
-    // Security check: ensure path is within journalDir
-    // Note: path.join resolves '..' so checking startWith is usually safe if journalDir is absolute/resolved.
-    // Ideally we use fs.realpath but for now this is "YOLO but okay".
+    // Double check resolved path is inside journalDir
+    const resolvedPath = path.resolve(filePath);
+    const resolvedJournalDir = path.resolve(agent.journal.journalDir);
+    if (!resolvedPath.startsWith(resolvedJournalDir)) {
+      return res.status(403).json({ error: 'Access denied' });
+    }
 
     fs.writeFileSync(filePath, content, 'utf8');
     res.json({ success: true });
@@ -324,6 +339,7 @@ app.delete('/internal/journal/:date', (req, res) => {
   try {
     const { date } = req.params;
     const filename = date.endsWith('.md') ? date : `${date}.md`;
+    if (filename.includes('..') || filename.includes('/') || filename.includes('\\')) return res.status(400).json({ error: 'Invalid filename' });
     const filePath = path.join(agent.journal.journalDir, filename);
     if (fs.existsSync(filePath)) {
       fs.unlinkSync(filePath);
