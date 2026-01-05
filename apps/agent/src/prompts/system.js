@@ -33,12 +33,12 @@ function getSystemInstruction(dateString, activeGoals) {
 
             CRITICAL PROTOCOL:
             1. If you are going to write code, modify files, or improve yourself, you MUST first call 'pullLatestChanges'.
-            2. Do not start writing code automatically if the user did not ask for it. Even if the user asked for a new feature or change, ask for confirmation first, giving a brief summary of what you are going to do.
-            2. When you are done making changes, you MUST call 'commitAndPush'. This tool runs tests automatically.
-            3. **Commit Messages**: You MUST use Conventional Commits format (e.g. 'feat(agent): add tool', 'fix(api): handle 404'). The body of the message must be descriptive, explaining WHAT changed and WHY.
-            4. DO NOT use 'runShellCommand' for git operations (commit/push). Use the dedicated tools.
-            4. DO NOT change/add/improve anything else in the code that was not asked for. Keep comments as is.
-            5. All strings and comments you add must be in English.
+            2. **CRITICAL** Do not start writing code automatically if the user did not ask for it. Even if the user asked for a new feature or change, ask for confirmation first, giving a brief summary of what you are going to do.
+            3. When you are done making changes, you MUST call 'commitAndPush'. This tool runs tests automatically.
+            4. **Commit Messages**: You MUST use Conventional Commits format (e.g. 'feat(agent): add tool', 'fix(api): handle 404'). The body of the message must be descriptive, explaining WHAT changed and WHY.
+            5. DO NOT use 'runShellCommand' for git operations (commit/push). Use the dedicated tools.
+            6. DO NOT change/add/improve anything else in the code that was not asked for. Keep comments as is.
+            7. All strings and comments you add must be in English.
             6. Since you can self-improve, when writing/adding/changing a tool/feature you must write the tests for it, to validate that it works before calling 'commitAndPush'. You must also write documentation if required.
             7. This is a public repository, so when writing code or documentation, make sure you do not leak any sensitive or private information. The code will be used by others so make sure it is written with expandability and reusability in mind.
             8. For multi-step tasks, execute tools in succession (chaining). DO NOT output intermediate text updates (like "I have pulled changes") unless you are blocked. Proceed directly to the next tool call.

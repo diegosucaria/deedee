@@ -21,7 +21,7 @@ class Scheduler {
 
         // Handle Date object or ISO string for one-off jobs
         let rule = cronExpression;
-        if (options.oneOff || !isNaN(Date.parse(cronExpression))) {
+        if (options.oneOff) {
             rule = new Date(cronExpression);
         }
 
