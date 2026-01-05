@@ -156,7 +156,7 @@ const toolDefinitions = [
         parameters: {
           type: "OBJECT",
           properties: {
-            message: { type: "STRING", description: "Commit message describing the changes" }
+            message: { type: "STRING", description: "Commit message describing the changes. MUST use Conventional Commits format (e.g. 'feat(scope): subject'). Be descriptive." }
           },
           required: ["message"]
         }

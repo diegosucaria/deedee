@@ -39,11 +39,14 @@ You are working on **Deedee**, a personal, self-improving AI agent designed to r
 
 ### 3. Self-Improvement Philosophy
 - The system should eventually be able to edit its own code.
-- **Mechanism**: Agent -> Supervisor -> Local Git Commit -> Push -> GitHub Action -> Balena Build -> Update.
+41: - The system should eventually be able to edit its own code.
+42: - **Mechanism**: Agent -> Supervisor -> Local Git Commit -> Push -> GitHub Action -> Balena Build -> Update.
+43: - **Descriptive Commit Messages**: When self-improving, you **MUST** use Conventional Commits (e.g., `feat(agent): add new tool`, `fix(api): handle timeout`). The message must be descriptive of *what* changed and *why*.
 
 ## ⚙️ Operational Mandates
 - **TODO Updates**: You MUST update `TODO.md` automatically at the end of every chat turn if a task was completed or the status changed. Do not wait for the user to ask.
-- **Context Updates**: Update `GEMINI.md` if new architectural decisions or secrets are introduced.
+46: - **Context Updates**: Update `GEMINI.md` if new architectural decisions or secrets are introduced.
+47: - **Offer to Commit**: After finishing a requested feature or significant task, you **MUST** offer to commit the changes to git with a descriptive message. Do not wait for the user to ask.
 
 ## 📂 Navigation
 - **`TODO.md`**: The source of truth for current progress. Check this first.
