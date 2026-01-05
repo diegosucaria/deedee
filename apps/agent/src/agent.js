@@ -13,6 +13,7 @@ const { ConfirmationManager } = require('./confirmation-manager');
 const { ToolExecutor } = require('./tool-executor');
 const path = require('path');
 const { JournalManager } = require('./journal');
+const { BackupManager } = require('./backup');
 const { Scheduler } = require('./scheduler');
 const axios = require('axios');
 const { getSystemInstruction } = require('./prompts/system');
@@ -39,6 +40,7 @@ class Agent {
     this.gsuite = new GSuiteTools();
     this.local = new LocalTools('/app/source');
     this.journal = new JournalManager();
+    this.backupManager = new BackupManager(this);
 
     this.confirmationManager = new ConfirmationManager(this.db);
     // Shared state for stopping execution

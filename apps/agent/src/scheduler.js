@@ -104,6 +104,11 @@ class Scheduler {
                 name: 'nightly_consolidation',
                 cron: '0 0 * * *', // Midnight
                 task: 'Run consolidateMemory tool to summarize yesterday\'s logs into the journal.'
+            },
+            {
+                name: 'nightly_backup',
+                cron: '0 2 * * *', // 2 AM
+                task: 'Perform nightly backup of data to GCS.'
             }
         ];
 
@@ -115,6 +120,18 @@ class Scheduler {
                 // We manually construct the instruction wrapper to match 'agent_instruction' type
                 const callback = async () => {
                     console.log(`[Scheduler] Executing SYSTEM task: ${sysJob.task}`);
+
+                    // Direct Execution for Backup (Bypass Agent LLM to avoid context window usage/failures and ensure reliability)
+                    if (sysJob.name === 'nightly_backup') {
+                        try {
+                            const result = await this.agent.backupManager.performBackup();
+                            console.log('[Scheduler] Nightly Backup Result:', result);
+                        } catch (err) {
+                            console.error('[Scheduler] Nightly Backup Failed:', err);
+                        }
+                        return;
+                    }
+
                     await this.agent.processMessage({
                         role: 'user',
                         content: `System Maintenance: ${sysJob.task}`,

@@ -28,6 +28,7 @@
     - [x] Web UI: Edit Journal, Delete History, Polling WebSocket Fallback.
     - [x] Fixed TTS: Corrected `GEMINI_TTS_MODEL` usage and Audio Message delivery.
 - [x] **Security**: Allowlist (`ALLOWED_TELEGRAM_IDS`), "YOLO" mode with guardrails.
+- [x] **Backup**: Configurable Nightly GCS Backup (Zip + Rotate).
 
 ---
 
