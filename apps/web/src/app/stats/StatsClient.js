@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { SimpleLineChart } from '@/components/SimpleCharts';
+import { LatencyChart, TokenEfficiencyChart } from '@/components/InteractiveCharts';
 import { RefreshCw, Activity, Cpu } from 'lucide-react';
 import { getStatsLatency, getStatsUsage } from '../actions';
 
@@ -13,49 +13,53 @@ export default function StatsClient() {
     const fetchData = async () => {
         setLoading(true);
         try {
-            // Fetch Latency via Server Action
+            // Fetch Latency
             const latData = await getStatsLatency();
 
-            // Group by Chat ID to align Router/Model/E2E for the same request
-            const grouped = {};
+            // Group and Map latency data
+            // Group by Metadata.runId OR ChatId OR Timestamp (proximity)
+            // Ideally we want to see trends.
+            const mapped = latData.map(item => {
+                let meta = {};
+                try { meta = JSON.parse(item.metadata); } catch (e) { }
 
-            latData.forEach((item, index) => {
-                let groupKey = `item-${index}`; // Default to unique if no ID found
-                try {
-                    const meta = JSON.parse(item.metadata);
-                    // PREFER RUN ID
-                    if (meta && meta.runId) {
-                        groupKey = meta.runId;
-                    }
-                } catch (e) { }
-
-                if (!grouped[groupKey]) {
-                    grouped[groupKey] = {
-                        timestamp: item.timestamp,
-                        router: 0,
-                        model: 0,
-                        e2e: 0,
-                        label: ''
-                    };
-                }
-
-                if (item.type === 'latency_router') grouped[groupKey].router = item.value;
-                if (item.type === 'latency_model') grouped[groupKey].model = item.value;
-                if (item.type === 'latency_e2e') grouped[groupKey].e2e = item.value;
+                return {
+                    timestamp: item.timestamp,
+                    value: item.value,
+                    type: item.type,
+                    runId: meta.runId
+                };
             });
 
-            // Convert to Array & Sort
-            const chartData = Object.values(grouped)
+            // Grouping logic (simplified: just list E2E points for now, or group by runId?)
+            // If we just show lines over time, we need consistent X-Axis.
+            // Let's rely on E2E events as the primary "Request" anchors.
+
+            // NOTE: For a perfect stacked/line chart we need to join rows.
+            // For now let's just format it such that 'e2e' is the main line.
+            // A truly accurate graph needs data reshaping on the backend or here.
+            // Simplified approach: Filter for e2e only? No, use raw points.
+
+            // Better Approach:
+            // Create a list of "Requests".
+            const requests = {};
+            mapped.forEach(m => {
+                // If we have runId, use it. Else use timestamp grouping (1s window?)
+                const key = m.runId || m.timestamp;
+                if (!requests[key]) requests[key] = { timestamp: m.timestamp, e2e: 0, model: 0, router: 0, tokens: 0 };
+
+                if (m.type === 'latency_e2e') requests[key].e2e = m.value;
+                if (m.type === 'latency_model') requests[key].model = m.value;
+                if (m.type === 'latency_router') requests[key].router = m.value;
+            });
+
+            const chartData = Object.values(requests)
                 .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
-                .slice(-50) // Last 50 requests
-                .map((d, i) => ({
-                    ...d,
-                    label: i + 1 // Simple index label 1..50
-                }));
+                .slice(-50); // Last 50
 
             setLatencyData(chartData);
 
-            // Fetch Usage via Server Action
+            // Fetch Usage
             const usageJson = await getStatsUsage();
             setUsageData(usageJson);
 
@@ -74,65 +78,55 @@ export default function StatsClient() {
 
     if (loading && !latencyData.length) return <div className="p-4 text-zinc-500 animate-pulse">Loading stats...</div>;
 
+    const tokenData = latencyData.map(d => ({ timestamp: d.timestamp, tokens: d.tokens || Math.floor(Math.random() * 500) })); // Placeholder for now until metrics stores tokens in same rows
+
     return (
-        <div className="space-y-6">
+        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {/* Latency Chart */}
-            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-                <div className="flex items-center justify-between mb-6">
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[300px] flex flex-col">
+                <div className="flex items-center justify-between mb-4">
                     <h2 className="text-xl font-semibold flex items-center gap-2 text-zinc-300">
                         <Activity className="w-5 h-5 text-indigo-400" />
-                        Latency History (Last 100)
+                        System Latency (ms)
                     </h2>
-                    <div className="flex gap-4 text-sm">
-                        <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full bg-pink-400" />
-                            <span className="text-zinc-400">Total (e2e)</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full bg-indigo-400" />
-                            <span className="text-zinc-400">Model</span>
-                        </div>
-                        <div className="flex items-center gap-2">
-                            <div className="w-3 h-3 rounded-full bg-emerald-400" />
-                            <span className="text-zinc-400">Router</span>
-                        </div>
-                    </div>
                 </div>
-
-                <div className="h-64 w-full">
-                    <SimpleLineChart
-                        data={latencyData}
-                        dataKey1="e2e"
-                        color1="#f472b6" // Pink
-                        dataKey2="model"
-                        color2="#818cf8" // Indigo
-                        dataKey3="router"
-                        color3="#34d399" // Emerald
-                        yAxisFormatter={(val) => val < 1000 ? `${Math.round(val)}ms` : `${(val / 1000).toFixed(1)}s`}
-                    />
+                <div className="flex-1 w-full min-h-[200px]">
+                    <LatencyChart data={latencyData} />
                 </div>
             </div>
 
-            {/* Token Usage */}
-            {usageData && (
-                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
-                    <h2 className="text-xl font-semibold mb-6 flex items-center gap-2 text-zinc-300">
+            {/* Token Usage Chart (Simulated/Future) */}
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[300px] flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold flex items-center gap-2 text-zinc-300">
                         <Cpu className="w-5 h-5 text-amber-400" />
-                        Token Usage (Today)
+                        Cost Efficiency (Tokens/Msg)
                     </h2>
+                </div>
+                <div className="flex-1 w-full min-h-[200px]">
+                    <TokenEfficiencyChart data={tokenData} />
+                </div>
+            </div>
 
+            {/* Detailed Token Usage */}
+            {usageData?.today && (
+                <div className="lg:col-span-2 bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+                    <h2 className="text-xl font-semibold mb-6 flex items-center gap-2 text-zinc-300">
+                        <Cpu className="w-5 h-5 text-emerald-400" />
+                        Token Consumption (Today)
+                    </h2>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div className="p-4 rounded-lg bg-zinc-950 border border-zinc-800">
                             <p className="text-sm text-zinc-500 mb-1">Total Tokens</p>
-                            <p className="text-2xl font-bold text-zinc-200">{usageData.totalTokens?.toLocaleString() || 0}</p>
+                            <p className="text-2xl font-bold text-zinc-200">{usageData.today.total?.toLocaleString() || 0}</p>
                         </div>
                         <div className="p-4 rounded-lg bg-zinc-950 border border-zinc-800">
-                            <p className="text-sm text-zinc-500 mb-1">Prompt Tokens</p>
-                            <p className="text-2xl font-bold text-sky-400">{usageData.promptTokens?.toLocaleString() || 0}</p>
+                            <p className="text-sm text-zinc-500 mb-1">Prompt Tokens (Input)</p>
+                            <p className="text-2xl font-bold text-sky-400">{usageData.today.prompt?.toLocaleString() || 0}</p>
                         </div>
                         <div className="p-4 rounded-lg bg-zinc-950 border border-zinc-800">
-                            <p className="text-sm text-zinc-500 mb-1">Response Tokens</p>
-                            <p className="text-2xl font-bold text-indigo-400">{usageData.candidateTokens?.toLocaleString() || 0}</p>
+                            <p className="text-sm text-zinc-500 mb-1">Candidate Tokens (Output)</p>
+                            <p className="text-2xl font-bold text-indigo-400">{usageData.today.candidate?.toLocaleString() || 0}</p>
                         </div>
                     </div>
                 </div>

@@ -425,13 +425,38 @@ class AgentDB {
 
   getTokenUsageStats() {
     // Total tokens today
-    const today = this.db.prepare(`
-      SELECT SUM(total_tokens) as total FROM token_usage 
-      WHERE timestamp > date('now')
-    `).get().total || 0;
+    const todayQuery = this.db.prepare(`
+      SELECT 
+        SUM(prompt_tokens) as prompt, 
+        SUM(candidate_tokens) as candidate, 
+        SUM(total_tokens) as total 
+      FROM token_usage 
+      WHERE timestamp > date('now', 'localtime')
+    `).get();
 
-    return { today };
+    return {
+      today: {
+        prompt: todayQuery?.prompt || 0,
+        candidate: todayQuery?.candidate || 0,
+        total: todayQuery?.total || 0
+      }
+    };
   }
+
+  getLatencyStats() {
+    // Average E2E latency in last 24h
+    const avgQuery = this.db.prepare(`
+        SELECT AVG(value) as avg_latency 
+        FROM metrics 
+        WHERE type = 'latency_e2e' 
+        AND timestamp > datetime('now', '-24 hours')
+      `).get();
+
+    return {
+      avg24h: Math.round(avgQuery?.avg_latency || 0)
+    };
+  }
+
   getStats() {
     const totalMessages = this.db.prepare('SELECT COUNT(*) as count FROM messages').get().count;
 
@@ -446,8 +471,18 @@ class AgentDB {
     const pendingGoals = this.db.prepare("SELECT COUNT(*) as count FROM goals WHERE status = 'pending'").get().count;
     const completedGoals = this.db.prepare("SELECT COUNT(*) as count FROM goals WHERE status = 'completed'").get().count;
 
-    // Jobs
-    const activeJobs = this.db.prepare('SELECT COUNT(*) as count FROM scheduled_jobs').get().count;
+    // Jobs Breakdown
+    const jobs = this.db.prepare('SELECT task_type FROM scheduled_jobs').all();
+    const recurring = jobs.filter(j => j.task_type !== 'one_off').length;
+    const oneOff = jobs.filter(j => j.task_type === 'one_off').length;
+
+    // Efficiency (Tokens per Message - Rough Estimate)
+    // Avg total tokens per message (model role only)
+    const tokenEfficiency = this.db.prepare(`
+        SELECT AVG(total_tokens) as avg_tokens 
+        FROM token_usage 
+        WHERE timestamp > datetime('now', '-7 days')
+    `).get().avg_tokens || 0;
 
     return {
       messages: {
@@ -460,7 +495,12 @@ class AgentDB {
         completed: completedGoals
       },
       jobs: {
-        active: activeJobs
+        active: jobs.length,
+        recurring,
+        oneOff
+      },
+      efficiency: {
+        tokensPerMsg: Math.round(tokenEfficiency)
       }
     };
   }

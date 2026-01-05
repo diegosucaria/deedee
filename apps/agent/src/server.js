@@ -257,10 +257,17 @@ app.post('/internal/tasks/:id/run', async (req, res) => {
 });
 // --- Stats ---
 app.get('/internal/stats', (req, res) => {
-  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  if (!agent || !agent.db || !agent.journal) return res.status(503).json({ error: 'Agent not ready' });
   try {
-    const stats = agent.db.getStats();
-    res.json(stats);
+    const dbStats = agent.db.getStats();
+    const journalStats = agent.journal.getStats();
+    const latencyStats = agent.db.getLatencyStats();
+
+    res.json({
+      ...dbStats,
+      journal: journalStats,
+      latency: latencyStats
+    });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

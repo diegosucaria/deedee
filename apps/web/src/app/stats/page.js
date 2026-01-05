@@ -14,7 +14,7 @@ export default async function StatsPage() {
 
     if (!stats) return <div className="p-8">Loading...</div>;
 
-    const { messages, goals, jobs } = stats;
+    const { messages, goals, jobs, journal, latency, efficiency } = stats;
 
     return (
         <div className="p-8 max-w-6xl mx-auto space-y-8">
@@ -23,52 +23,56 @@ export default async function StatsPage() {
                 System Health & Stats
             </h1>
 
-            {/* Key Metrics Grid */}
+            {/* Top Row: KPIs */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">
                 <StatCard
                     title="Total Messages"
-                    value={messages.total}
+                    value={messages.total?.toLocaleString()}
                     icon={MessageSquare}
                     color="text-blue-400"
                     bg="bg-blue-400/10 border-blue-400/20"
                 />
                 <StatCard
-                    title="Active in Last 24h"
-                    value={messages.last24h}
+                    title="Avg Response (24h)"
+                    value={latency?.avg24h ? `${latency.avg24h}ms` : '-'}
                     icon={Zap}
                     color="text-yellow-400"
                     bg="bg-yellow-400/10 border-yellow-400/20"
                 />
                 <StatCard
-                    title="Pending Goals"
-                    value={goals.pending}
+                    title="Token Efficiency"
+                    value={efficiency?.tokensPerMsg ? `${efficiency.tokensPerMsg} /msg` : '-'}
                     icon={Brain}
                     color="text-purple-400"
                     bg="bg-purple-400/10 border-purple-400/20"
                 />
                 <StatCard
-                    title="Scheduled Jobs"
-                    value={jobs.active}
-                    icon={Clock}
+                    title="Journal (7 Days)"
+                    value={journal?.last7DaysEntries || 0}
+                    icon={CheckCircle}
                     color="text-emerald-400"
                     bg="bg-emerald-400/10 border-emerald-400/20"
                 />
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Middle Row: Charts */}
+            <StatsClient />
+
+            {/* Bottom Row: Details */}
+            <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
                 {/* Role Distribution */}
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                     <h2 className="text-xl font-semibold mb-6 flex items-center gap-2 text-zinc-300">
                         <BarChart3 className="w-5 h-5" />
-                        Message Distribution
+                        Message Roles
                     </h2>
                     <div className="space-y-4">
                         {Object.entries(messages.byRole).map(([role, count]) => (
                             <div key={role} className="flex items-center gap-4">
                                 <div className="w-24 text-sm font-medium text-zinc-400 capitalize">{role}</div>
-                                <div className="flex-1 bg-zinc-800 rounded-full h-4 overflow-hidden">
+                                <div className="flex-1 bg-zinc-800 rounded-full h-2 overflow-hidden">
                                     <div
-                                        className="h-full bg-indigo-500 rounded-full transition-all duration-500"
+                                        className="h-full bg-indigo-500 rounded-full"
                                         style={{ width: `${(count / messages.total) * 100}%` }}
                                     />
                                 </div>
@@ -82,23 +86,40 @@ export default async function StatsPage() {
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                     <h2 className="text-xl font-semibold mb-6 flex items-center gap-2 text-zinc-300">
                         <CheckCircle className="w-5 h-5" />
-                        Goal Completion
+                        Goals
                     </h2>
-                    <div className="flex items-center justify-center p-8">
+                    <div className="flex items-center justify-around p-4 h-full">
                         <div className="text-center">
-                            <div className="text-5xl font-bold text-emerald-400 mb-2">{goals.completed}</div>
-                            <div className="text-zinc-500">Goals Completed</div>
+                            <div className="text-4xl font-bold text-emerald-400 mb-1">{goals.completed}</div>
+                            <div className="text-xs text-zinc-500 uppercase tracking-wider">Done</div>
                         </div>
-                        <div className="h-16 w-px bg-zinc-800 mx-8" />
+                        <div className="h-12 w-px bg-zinc-800" />
                         <div className="text-center">
-                            <div className="text-5xl font-bold text-purple-400 mb-2">{goals.pending}</div>
-                            <div className="text-zinc-500">Goals Pending</div>
+                            <div className="text-4xl font-bold text-purple-400 mb-1">{goals.pending}</div>
+                            <div className="text-xs text-zinc-500 uppercase tracking-wider">Pending</div>
+                        </div>
+                    </div>
+                </div>
+
+                {/* Job Breakdown */}
+                <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+                    <h2 className="text-xl font-semibold mb-6 flex items-center gap-2 text-zinc-300">
+                        <Clock className="w-5 h-5" />
+                        Active Jobs
+                    </h2>
+                    <div className="flex items-center justify-around p-4 h-full">
+                        <div className="text-center">
+                            <div className="text-4xl font-bold text-sky-400 mb-1">{jobs.recurring}</div>
+                            <div className="text-xs text-zinc-500 uppercase tracking-wider">Recurring</div>
+                        </div>
+                        <div className="h-12 w-px bg-zinc-800" />
+                        <div className="text-center">
+                            <div className="text-4xl font-bold text-amber-400 mb-1">{jobs.oneOff}</div>
+                            <div className="text-xs text-zinc-500 uppercase tracking-wider">One-Off</div>
                         </div>
                     </div>
                 </div>
             </div>
-            {/* Real-time Charts */}
-            <StatsClient />
         </div>
     );
 }

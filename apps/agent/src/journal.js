@@ -73,6 +73,34 @@ class JournalManager {
         }
         return results;
     }
+    getStats() {
+        const files = fs.readdirSync(this.journalDir).filter(f => f.endsWith('.md'));
+        let totalEntries = 0;
+        let last7DaysEntries = 0;
+
+        const now = new Date();
+        const sevenDaysAgo = new Date(now.setDate(now.getDate() - 7));
+
+        for (const file of files) {
+            const content = fs.readFileSync(path.join(this.journalDir, file), 'utf8');
+            // Count lines starting with - [
+            const entries = content.split('\n').filter(l => l.trim().match(/^-\s*\[\d{2}:\d{2}\]/)).length;
+            totalEntries += entries;
+
+            // Check date for last 7 days
+            const fileDateStr = file.replace('.md', '');
+            const fileDate = new Date(fileDateStr);
+            if (fileDate >= sevenDaysAgo) {
+                last7DaysEntries += entries;
+            }
+        }
+
+        return {
+            totalFiles: files.length,
+            totalEntries,
+            last7DaysEntries
+        };
+    }
 }
 
 module.exports = { JournalManager };
