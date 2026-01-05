@@ -14,7 +14,7 @@ export async function cancelTask(name) {
         return { success: false, error: error.message };
     }
 }
-}
+// removed extra brace
 
 export async function runTask(name) {
     try {
