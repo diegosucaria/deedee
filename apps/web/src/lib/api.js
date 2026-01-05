@@ -18,8 +18,7 @@ export async function fetchAPI(path, options = {}) {
     const res = await fetch(url, {
         ...options,
         headers,
-        cache: 'no-store', // Be explicit for standard fetch
-        next: { revalidate: 0 } // Be explicit for Next.js App Router cache
+        cache: 'no-store' // Be explicit for standard fetch
     });
 
     if (!res.ok) {
