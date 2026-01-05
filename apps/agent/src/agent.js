@@ -825,8 +825,8 @@ class Agent {
         const result = await searchSession.sendMessage({ message: prompt });
 
         // Track Usage for Polyfill
-        if (result.response.usageMetadata && usageCallback) {
-          const u = result.response.usageMetadata;
+        if (result.usageMetadata && usageCallback) {
+          const u = result.usageMetadata;
           usageCallback(
             process.env.WORKER_FLASH || 'gemini-2.0-flash-exp',
             u.promptTokenCount,
@@ -834,7 +834,7 @@ class Agent {
           );
         }
 
-        const text = result.response.text();
+        const text = result.text();
         return { result: text, info: 'Search performed via Google Grounding.' };
       } catch (e) {
         console.error('[Agent] Search Polyfill Failed:', e);
