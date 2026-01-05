@@ -183,6 +183,24 @@ class Scheduler {
     scheduleOneOff(name, date, callback, options = {}) {
         this.scheduleJob(name, date, callback, { ...options, oneOff: true });
     }
+
+    /**
+     * Manually triggers a job immediately.
+     */
+    async runJob(name) {
+        const job = this.jobs[name];
+        if (!job) {
+            throw new Error(`Job '${name}' not found.`);
+        }
+        console.log(`[Scheduler] Manually triggering job: ${name}`);
+        // node-schedule jobs rely on the callback passed to scheduleJob.
+        // We can access it via job.job which is internal, or just invoke the wrapper if we stored it?
+        // node-schedule does not expose the callback cleanly on the job object usually (it's in job.job() but hidden).
+
+        // BETTER APPROACH: invokeJob() is a method on the Job object in node-schedule!
+        job.invoke();
+        return { success: true };
+    }
 }
 
 module.exports = { Scheduler };

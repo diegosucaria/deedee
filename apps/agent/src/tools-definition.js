@@ -249,6 +249,24 @@ const toolDefinitions = [
           required: ["alias", "entityId"]
         }
       },
+      {
+        name: "listDeviceAliases",
+        description: "List all learned smart home device aliases.",
+        parameters: {
+          type: "OBJECT",
+          properties: {},
+          required: []
+        }
+      },
+      {
+        name: "deleteDeviceAlias",
+        description: "Remove a specific learned device alias mapping. Use this if an alias is incorrect.",
+        parameters: {
+          type: "OBJECT",
+          properties: { alias: { type: "STRING" } },
+          required: ["alias"]
+        }
+      },
       // Audio / TTS
       {
         name: "replyWithAudio",

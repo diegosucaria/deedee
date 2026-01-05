@@ -1,7 +1,7 @@
 'use client';
 
 import { useFormState } from 'react-dom';
-import { cancelTask, createTask } from '@/app/actions';
+import { cancelTask, createTask, runTask } from '@/app/actions';
 import { Trash2, Clock, PlayCircle, Plus, Pencil, Save, X } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 
@@ -55,10 +55,12 @@ export default function TaskList({ tasks }) {
         formRef.current?.reset();
     };
 
-    const [activeTab, setActiveTab] = useState('recurring'); // recurring | oneoff
+    const [activeTab, setActiveTab] = useState('recurring'); // recurring | oneoff | system
 
-    const recurringTasks = tasks.filter(t => !t.isOneOff);
-    const reminders = tasks.filter(t => t.isOneOff);
+    // Filter jobs
+    const systemTasks = tasks.filter(t => t.isSystem); // System jobs
+    const reminders = tasks.filter(t => t.isOneOff && !t.isSystem); // Reminders
+    const recurringTasks = tasks.filter(t => !t.isOneOff && !t.isSystem); // User schedules
 
     return (
         <div className="space-y-8">
@@ -77,6 +79,13 @@ export default function TaskList({ tasks }) {
                 >
                     Reminders & One-Offs
                     {activeTab === 'oneoff' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-indigo-500" />}
+                </button>
+                <button
+                    onClick={() => setActiveTab('system')}
+                    className={`pb-2 px-1 text-sm font-medium transition-colors relative ${activeTab === 'system' ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                >
+                    System Jobs
+                    {activeTab === 'system' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-indigo-500" />}
                 </button>
             </div>
 
@@ -189,33 +198,24 @@ export default function TaskList({ tasks }) {
                             recurringTasks.map((job) => (
                                 <div
                                     key={job.name}
-                                    className={`group relative flex flex-col gap-4 rounded-xl border p-5 transition-all backdrop-blur-sm ${job.isSystem
-                                        ? 'bg-indigo-950/20 border-indigo-900/50 hover:bg-indigo-900/20'
-                                        : 'bg-zinc-900/80 border-zinc-800 hover:bg-zinc-800 hover:border-zinc-700 hover:shadow-xl hover:shadow-indigo-500/5'}`}
+                                    className="group relative flex flex-col gap-4 rounded-xl border p-5 transition-all backdrop-blur-sm bg-zinc-900/80 border-zinc-800 hover:bg-zinc-800 hover:border-zinc-700 hover:shadow-xl hover:shadow-indigo-500/5"
                                 >
                                     <div className="flex items-center justify-between border-b border-white/5 pb-3">
                                         <span className="font-semibold text-white tracking-wide flex items-center gap-2">
-                                            <Clock className={`h-4 w-4 ${job.isSystem ? 'text-indigo-400' : 'text-zinc-500'}`} />
+                                            <Clock className="h-4 w-4 text-zinc-500" />
                                             {job.name}
-                                            {job.isSystem && (
-                                                <span className="text-[10px] uppercase font-bold bg-indigo-500 text-white px-1.5 py-0.5 rounded tracking-wider">
-                                                    System
-                                                </span>
-                                            )}
                                         </span>
                                         <div className="flex items-center gap-2">
                                             <div className="font-mono text-xs text-indigo-400 bg-indigo-500/10 px-2 py-1 rounded border border-indigo-500/20">
                                                 {job.cron}
                                             </div>
-                                            {!job.isSystem && (
-                                                <button
-                                                    onClick={() => handleEdit(job)}
-                                                    className="p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-md transition-colors"
-                                                    title="Edit"
-                                                >
-                                                    <Pencil className="h-3.5 w-3.5" />
-                                                </button>
-                                            )}
+                                            <button
+                                                onClick={() => handleEdit(job)}
+                                                className="p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-md transition-colors"
+                                                title="Edit"
+                                            >
+                                                <Pencil className="h-3.5 w-3.5" />
+                                            </button>
                                         </div>
                                     </div>
 
@@ -228,6 +228,19 @@ export default function TaskList({ tasks }) {
                                             <PlayCircle className="h-3.5 w-3.5 text-emerald-500/80" />
                                             Next: {new Date(job.nextInvocation).toLocaleString()}
                                         </span>
+
+                                        <button
+                                            onClick={async () => {
+                                                if (confirm(`Run schedule '${job.name}' now?`)) {
+                                                    await runTask(job.name);
+                                                    alert('Triggered!');
+                                                }
+                                            }}
+                                            className="text-zinc-500 hover:text-emerald-400 hover:bg-emerald-500/10 px-2 py-1 rounded transition-colors flex items-center gap-1"
+                                            title="Run Now"
+                                        >
+                                            <PlayCircle className="h-3 w-3" /> Run
+                                        </button>
 
                                         {!job.isSystem && (
                                             <button
@@ -290,6 +303,64 @@ export default function TaskList({ tasks }) {
                                 >
                                     <Trash2 className="h-5 w-5" />
                                 </button>
+                            </div>
+                        ))
+                    )}
+                </div>
+            )}
+
+            {activeTab === 'system' && (
+                <div className="grid gap-4 md:grid-cols-2">
+                    {systemTasks.length === 0 ? (
+                        <div className="col-span-full text-zinc-500 text-center py-12">
+                            No system jobs found.
+                        </div>
+                    ) : (
+                        systemTasks.map((job) => (
+                            <div
+                                key={job.name}
+                                className="group relative flex flex-col gap-4 rounded-xl border p-5 transition-all backdrop-blur-sm bg-indigo-950/20 border-indigo-900/50 hover:bg-indigo-900/20"
+                            >
+                                <div className="flex items-center justify-between border-b border-white/5 pb-3">
+                                    <span className="font-semibold text-white tracking-wide flex items-center gap-2">
+                                        <Clock className="h-4 w-4 text-indigo-400" />
+                                        {job.name}
+                                        <span className="text-[10px] uppercase font-bold bg-indigo-500 text-white px-1.5 py-0.5 rounded tracking-wider">
+                                            System
+                                        </span>
+                                    </span>
+                                    <div className="flex items-center gap-2">
+                                        <div className="font-mono text-xs text-indigo-400 bg-indigo-500/10 px-2 py-1 rounded border border-indigo-500/20">
+                                            {job.cron}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <div className="text-sm text-zinc-300 leading-relaxed font-mono bg-black/20 p-3 rounded-lg border border-white/5 line-clamp-3">
+                                    {job.task || <em className="text-zinc-400">System maintenance task</em>}
+                                </div>
+
+                                <div className="flex items-center justify-between text-xs text-zinc-500 mt-auto pt-2">
+                                    <span className="flex items-center gap-1.5 ">
+                                        <PlayCircle className="h-3.5 w-3.5 text-emerald-500/80" />
+                                        Next: {new Date(job.nextInvocation).toLocaleString()}
+                                    </span>
+                                    <div className="flex items-center gap-2">
+                                        <button
+                                            onClick={async () => {
+                                                if (confirm(`Run system task '${job.name}' now?`)) {
+                                                    await runTask(job.name);
+                                                    alert('Triggered!');
+                                                }
+                                            }}
+                                            className="text-zinc-500 hover:text-emerald-400 hover:bg-emerald-500/10 px-2 py-1 rounded transition-colors flex items-center gap-1"
+                                            title="Run Now"
+                                        >
+                                            <PlayCircle className="h-3 w-3" /> Run
+                                        </button>
+                                        <span className="text-zinc-600 italic">Protected</span>
+                                    </div>
+                                </div>
                             </div>
                         ))
                     )}

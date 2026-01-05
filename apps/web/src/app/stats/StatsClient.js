@@ -108,6 +108,7 @@ export default function StatsClient() {
                         color2="#818cf8" // Indigo
                         dataKey3="router"
                         color3="#34d399" // Emerald
+                        yAxisFormatter={(val) => val < 1000 ? `${Math.round(val)}ms` : `${(val / 1000).toFixed(1)}s`}
                     />
                 </div>
             </div>

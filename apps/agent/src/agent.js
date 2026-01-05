@@ -698,17 +698,6 @@ class Agent {
       return { success: true };
     }
 
-    // --- SMART HOME MEMORY ---
-    if (executionName === 'lookupDevice') {
-      const entityId = this.db.getDeviceAlias(args.alias);
-      if (entityId) return { entityId: entityId };
-      return { info: `No alias found for '${args.alias}'. Scan/Search HA first.` };
-    }
-    if (executionName === 'learnDevice') {
-      this.db.saveDeviceAlias(args.alias, args.entityId);
-      return { success: true, info: `Saved alias '${args.alias}' -> '${args.entityId}'` };
-    }
-
     // --- SUPERVISOR TOOLS ---
     if (executionName === 'rollbackLastChange') {
       const rollbackRes = await fetch(`${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/rollback`, {

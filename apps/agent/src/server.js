@@ -239,6 +239,17 @@ app.post('/internal/tasks/:id/cancel', (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+
+app.post('/internal/tasks/:id/run', async (req, res) => {
+  if (!agent || !agent.scheduler) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const { id } = req.params;
+    await agent.scheduler.runJob(id);
+    res.json({ success: true });
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
 // --- Stats ---
 app.get('/internal/stats', (req, res) => {
   if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });

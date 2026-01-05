@@ -11,7 +11,7 @@ import { useMemo } from 'react';
  * @param {string} props.color1 - Color for first metric (tailwind class or hex?) -> using hex/stroke
  * @param {string} props.color2 - Color for second metric
  */
-export function SimpleLineChart({ data, dataKey1, dataKey2, dataKey3, height = 200, color1 = '#818cf8', color2 = '#34d399', color3 = '#f472b6' }) {
+export function SimpleLineChart({ data, dataKey1, dataKey2, dataKey3, height = 200, color1 = '#818cf8', color2 = '#34d399', color3 = '#f472b6', yAxisFormatter }) {
     if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-zinc-600">No Data</div>;
 
     const padding = 20;
@@ -48,7 +48,9 @@ export function SimpleLineChart({ data, dataKey1, dataKey2, dataKey3, height = 2
                     return (
                         <g key={t}>
                             <line x1={padding} y1={y} x2={width - padding} y2={y} stroke="#27272a" strokeWidth="1" strokeDasharray="4 4" />
-                            <text x={0} y={y + 4} className="text-[10px] fill-zinc-600 font-mono">{Math.round(minVal + t * (maxVal - minVal))}</text>
+                            <text x={0} y={y + 4} className="text-[10px] fill-zinc-600 font-mono">
+                                {yAxisFormatter ? yAxisFormatter(minVal + t * (maxVal - minVal)) : Math.round(minVal + t * (maxVal - minVal))}
+                            </text>
                         </g>
                     );
                 })}

@@ -97,6 +97,25 @@ class ToolExecutor {
             return { count: results.length, results };
         }
 
+        // --- Smart Home Memory ---
+        if (name === 'lookupDevice') {
+            const entityId = this.services.db.getDeviceAlias(args.alias);
+            if (entityId) return { entityId: entityId };
+            return { info: `No alias found for '${args.alias}'. Scan/Search HA first.` };
+        }
+        if (name === 'learnDevice') {
+            this.services.db.saveDeviceAlias(args.alias, args.entityId);
+            return { success: true, info: `Saved alias '${args.alias}' -> '${args.entityId}'` };
+        }
+        if (name === 'listDeviceAliases') {
+            const aliases = this.services.db.listAliases();
+            return { count: aliases.length, aliases };
+        }
+        if (name === 'deleteDeviceAlias') {
+            this.services.db.deleteAlias(args.alias);
+            return { success: true, info: `Deleted alias '${args.alias}'` };
+        }
+
         if (name === 'scheduleJob') {
             const { name, cron, task } = args;
 
