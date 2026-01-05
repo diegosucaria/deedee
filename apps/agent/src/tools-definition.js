@@ -215,6 +215,18 @@ const toolDefinitions = [
           required: ["time", "message"]
         }
       },
+      {
+        name: "scheduleTask",
+        description: "Schedule a one-time instruction to be executed by the agent at a specific time. Use this for delayed actions like 'Turn off lights in 10 minutes' or 'Check status at 5pm'. The instruction will be processed as a command.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            time: { type: "STRING", description: "ISO 8601 Date String (e.g., '2025-12-31T23:59:00')." },
+            task: { type: "STRING", description: "The instruction to execute (e.g., 'Turn off the ACs')." }
+          },
+          required: ["time", "task"]
+        }
+      },
       // Image Generation
       {
         name: "generateImage",
