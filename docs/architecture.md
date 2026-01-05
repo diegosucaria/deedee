@@ -12,7 +12,9 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 - **Capabilities**:
     - **Multimodal Routing:** Intelligently routes requests to `GEMINI FLASH` (Tools/Speed) or `GEMINI PRO` (Reasoning/Coding).
     - **Native TTS:** Generates high-quality speech using Gemini 2.5 (`LINEAR16`, `WAV`) with multilingual support.
-    - **Tool Executor**: Decoupled tool handling using `ToolExecutor` class. Delegates to Local, Scheduler, GSuite, and MCP tools.
+    - **Tool Executor**: Decoupled tool handling using a modular `ToolExecutor` facade. Delegates to domain-specific executors:
+        - `FileSystemExecutor`, `MemoryExecutor`, `SchedulerExecutor`, `SmartHomeExecutor`, `GSuiteExecutor`, `MediaExecutor`, `ProductivityExecutor`.
+    - **Optimization**:
     - **Optimization**:
         - **Adaptive Context**: Dynamically sizing history (10 vs 50 msgs) based on model complexity.
         - **Image Bypass**: Direct execution of image generation, skipping the reasoning model for speed.

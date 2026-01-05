@@ -87,6 +87,7 @@ Everything is customizable via environment variables. Like which models to use.
 -   **Security & backups**:
     -   **Nightly Backups**: Automatically zips and uploads data to Google Cloud Storage.
     -   **System Jobs**: Protected maintenance tasks (backup, consolidation) that cannot be accidentally deleted by the agent.
+- **Refactored Architecture**: Modular `ToolExecutor` with domain-specific handlers for easier extensibility.
 -   **⚡ Productivity**:
     -   **Smart Notes**: "Note to self: buy milk" saves to a daily markdown journal.
     -   **Second Brain**: Searchable journal entries (`readJournal`, `searchJournal`).
