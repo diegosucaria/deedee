@@ -24,6 +24,8 @@ router.get('/journal', (req, res) => proxyRequest(req, res, 'GET', '/internal/jo
 router.get('/journal/:date', (req, res) => proxyRequest(req, res, 'GET', `/internal/journal/${req.params.date}`));
 
 router.get('/stats', (req, res) => proxyRequest(req, res, 'GET', '/internal/stats'));
+router.get('/stats/latency', (req, res) => proxyRequest(req, res, 'GET', '/internal/stats/latency'));
+router.get('/stats/usage', (req, res) => proxyRequest(req, res, 'GET', '/internal/stats/usage'));
 router.delete('/journal/:date', (req, res) => proxyRequest(req, res, 'DELETE', `/internal/journal/${req.params.date}`));
 
 // Facts

@@ -193,7 +193,7 @@ class ToolExecutor {
             const audioResponse = await client.models.generateContent({
                 model: modelName,
                 contents: [{
-                    parts: [{ text: `Please read the following text aloud in a natural, slightly fast-paced, clear voice. Return ONLY the audio data. Text: "${text}"` }]
+                    parts: [{ text: `Please read the following text aloud in a natural, fast-paced, clear voice. Return ONLY the audio data. Text: "${text}"` }]
                 }],
                 config: {
                     responseModalities: ['AUDIO'],

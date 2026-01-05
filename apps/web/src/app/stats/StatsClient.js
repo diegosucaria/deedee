@@ -14,7 +14,7 @@ export default function StatsClient() {
         setLoading(true);
         try {
             // Fetch Latency
-            const latRes = await fetch(`${API_URL}/internal/stats/latency`);
+            const latRes = await fetch(`${API_URL}/v1/stats/latency`);
             const latData = await latRes.json();
 
             // Group by Chat ID to align Router/Model/E2E for the same request
@@ -61,7 +61,7 @@ export default function StatsClient() {
             setLatencyData(chartData);
 
             // Fetch Usage
-            const usageRes = await fetch(`${API_URL}/internal/stats/usage`);
+            const usageRes = await fetch(`${API_URL}/v1/stats/usage`);
             const usageJson = await usageRes.json();
             setUsageData(usageJson);
 
