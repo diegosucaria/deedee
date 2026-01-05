@@ -8,7 +8,8 @@
   ],
   "scripts": {
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
-    "lint": "eslint ."
+    "lint": "eslint .",
+    "build": "npm run build --workspace=apps/web"
   },
   "devDependencies": {
     "jest": "^29.7.0",

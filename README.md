@@ -72,7 +72,7 @@ Everything is customizable via environment variables. Like which models to use.
 - **💡 Smart Context & Memory**:
     - **Long-Term Memory**: Automatically compresses old conversations into summaries (`token_threshold` triggered) to maintain continuity without token bloat.
     - **Recal**: Agent can "search history" to recall specific details from months ago.
-    - **Cost Aware**: Tracks and visualizes real-time token costs on the dashboard.
+    - **Cost Aware**: Tracks and visualizes real-time token costs with exact pricing for Gemini Models (Flash/Pro) and Tiered Contexts.
 
 - **🗣️ Native Voice**: Replies with high-quality, low-latency audio (WAV) using Gemini TTS.
 - **🛡️ Supervisor System**: An external "immune system" service that detects if the Agent breaks itself and performs a rollback.
@@ -91,7 +91,7 @@ Everything is customizable via environment variables. Like which models to use.
 -   **Goals System**: Long-term memory for multi-step projects ("Refactor auth", "Plan vacation"). Persists across restarts.
 -   **Security & backups**:
     -   **Nightly Backups**: Automatically zips and uploads data to Google Cloud Storage.
-    -   **System Jobs**: Protected maintenance tasks (backup, consolidation) that cannot be accidentally deleted by the agent.
+    -   **System Jobs**: Protected maintenance tasks (backup, consolidation) differentiated from user jobs in stats.
 - **Refactored Architecture**: Modular `ToolExecutor` with domain-specific handlers for easier extensibility.
 -   **⚡ Productivity**:
     -   **Smart Notes**: "Note to self: buy milk" saves to a daily markdown journal.

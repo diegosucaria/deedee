@@ -7,7 +7,7 @@ class BackupManager {
     constructor(agent) {
         this.agent = agent;
         this.storage = new Storage(); // Auto-loads credentials from env
-        this.bucketName = process.env.GCS_BACKUP_BUCKET;
+        this.bucketName = process.env.GCS_BACKUP_BUCKET ? process.env.GCS_BACKUP_BUCKET.trim() : null;
         // Default to 'backups' if not specified. Remove trailing slash if present.
         this.backupPath = (process.env.GCS_BACKUP_PATH || 'backups').replace(/\/$/, '');
 

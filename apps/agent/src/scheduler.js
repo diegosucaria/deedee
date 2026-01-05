@@ -27,10 +27,25 @@ class Scheduler {
 
         const job = schedule.scheduleJob(rule, async () => {
             console.log(`[Scheduler] Running job: ${name}`);
+            const start = Date.now();
+            let status = 'success';
+            let output = null;
+
             try {
-                await callback();
+                const result = await callback();
+                // Store result as output if it's a string or object
+                if (result) {
+                    output = typeof result === 'object' ? JSON.stringify(result) : String(result);
+                }
             } catch (err) {
                 console.error(`[Scheduler] Job ${name} failed:`, err);
+                status = 'failure';
+                output = err.message;
+            }
+
+            const duration = Date.now() - start;
+            if (this.agent.db) {
+                this.agent.db.logJobExecution(name, status, output, duration);
             }
 
             // Auto-cleanup one-off jobs
@@ -90,7 +105,6 @@ class Scheduler {
             let callback;
             if (taskType === 'agent_instruction' && payload.task) {
                 // Reconstruct agent instruction callback
-                // Reconstruct agent instruction callback
                 callback = async () => {
                     console.log(`[Scheduler] Executing persisted task: ${payload.task} (Retry: ${payload.retryCount || 0})`);
 
@@ -99,8 +113,9 @@ class Scheduler {
                         chatId: payload.targetChatId || `scheduled_${name}_${Date.now()}`
                     };
 
+                    let executionResult = null;
                     try {
-                        const summary = await this.agent.processMessage({
+                        await this.agent.processMessage({
                             role: 'user',
                             content: `Scheduled Task: ${payload.task}`,
                             source: msgSource,
@@ -109,19 +124,11 @@ class Scheduler {
                             if (this.agent.interface) {
                                 await this.agent.interface.send(reply);
                             }
+                            // Capture reply for logging
+                            if (!executionResult) executionResult = reply;
+                            else if (reply.text) executionResult.text = (executionResult.text || '') + '\n' + reply.text;
                         });
-
-                        // Verify Success
-                        const failures = [
-                            "I received an empty response from my brain",
-                            "Error:",
-                            "No text response found"
-                        ];
-                        const success = summary && summary.replies.some(r =>
-                            r.content && !failures.some(f => r.content.includes(f))
-                        );
-
-                        if (!success) throw new Error("Agent execution failed or returned empty response.");
+                        return executionResult;
 
                     } catch (error) {
                         console.error(`[Scheduler] Task '${name}' failed:`, error.message);
@@ -134,8 +141,6 @@ class Scheduler {
                             console.log(`[Scheduler] Rescheduling '${name}' for retry ${currentRetry + 1}/${MAX_RETRIES} in 60s.`);
 
                             // Re-schedule execution for +1 minute
-                            // We must use a new unique name to avoid conflict if the previous one is still cleaning up
-                            // But usually, one-off is deleted by now.
                             this.scheduleOneOff(name, new Date(Date.now() + 60000), callback, {
                                 persist: true,
                                 taskType: 'agent_instruction',
@@ -157,6 +162,7 @@ class Scheduler {
                                 } catch (e) { console.error('[Scheduler] Failed to send Slack alert:', e); }
                             }
                         }
+                        throw error; // Propagate error so scheduleJob logger sees it
                     }
                 };
             } else {
@@ -200,28 +206,46 @@ class Scheduler {
             // Use the standard scheduleJob logic which handles the callback wrapper
             // We manually construct the instruction wrapper to match 'agent_instruction' type
             const callback = async () => {
-                console.log(`[Scheduler] Executing SYSTEM task: ${sysJob.task}`);
+                console.log(`[Scheduler] Executing SYSTEM task: ${sysJob.task} `);
 
                 // Direct Execution for Backup (Bypass Agent LLM to avoid context window usage/failures and ensure reliability)
                 if (sysJob.name === 'nightly_backup') {
+                    let result;
                     try {
-                        const result = await this.agent.backupManager.performBackup();
+                        result = await this.agent.backupManager.performBackup();
                         console.log('[Scheduler] Nightly Backup Result:', result);
                     } catch (err) {
                         console.error('[Scheduler] Nightly Backup Failed:', err);
+                        result = { error: err.message };
+                        throw err;
                     }
-                    return;
+                    return result; // Return for logging
                 }
 
+                // Nightly Consolidation + Maintenance
+                if (sysJob.name === 'nightly_consolidation') {
+                    // Also run log cleanup
+                    try {
+                        if (this.agent.db) this.agent.db.cleanupJobLogs(30);
+                    } catch (e) {
+                        console.error('[Scheduler] Log cleanup failed:', e);
+                    }
+                }
+
+                let executionResult = null;
                 await this.agent.processMessage({
                     role: 'user',
-                    content: `System Maintenance: ${sysJob.task}`,
+                    content: `System Maintenance: ${sysJob.task} `,
                     source: 'scheduler',
-                    metadata: { chatId: `system_${sysJob.name}_${Date.now()}` }
+                    metadata: { chatId: `system_${sysJob.name}_${Date.now()} ` }
                 }, async (reply) => {
                     // Fire and forget response
                     if (this.agent.interface) await this.agent.interface.send(reply);
+                    // Capture reply for logging
+                    if (!executionResult) executionResult = reply;
+                    else if (reply.text) executionResult.text = (executionResult.text || '') + '\n' + reply.text;
                 });
+                return executionResult; // Return for logging
             };
 
             this.scheduleJob(sysJob.name, sysJob.cron, callback, {
@@ -247,7 +271,7 @@ class Scheduler {
         if (!job) {
             throw new Error(`Job '${name}' not found.`);
         }
-        console.log(`[Scheduler] Manually triggering job: ${name}`);
+        console.log(`[Scheduler] Manually triggering job: ${name} `);
         // node-schedule jobs rely on the callback passed to scheduleJob.
         // We can access it via job.job which is internal, or just invoke the wrapper if we stored it?
         // node-schedule does not expose the callback cleanly on the job object usually (it's in job.job() but hidden).

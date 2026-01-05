@@ -202,6 +202,7 @@ class Agent {
       await reportProgress('Routing...');
 
       // --- ROUTING ---
+      let e2eCost = 0; // Track total cost for this request
       console.time('[Agent] Router Duration');
       const routerStart = Date.now();
 
@@ -421,15 +422,18 @@ class Agent {
       // USAGE LOGGING
       if (response.usageMetadata) {
         const { promptTokenCount, candidatesTokenCount, totalTokenCount } = response.usageMetadata;
+        const cost = calculateCost(selectedModel, promptTokenCount, candidatesTokenCount);
+        e2eCost += cost;
 
-        console.log(`[Tokens] P: ${promptTokenCount} | C: ${candidatesTokenCount} | Total: ${totalTokenCount}`);
+        console.log(`[Tokens] P: ${promptTokenCount} | C: ${candidatesTokenCount} | Total: ${totalTokenCount} | Cost: $${cost.toFixed(6)}`);
 
         this.db.logTokenUsage({
           model: selectedModel,
           promptTokens: promptTokenCount,
           candidateTokens: candidatesTokenCount,
           totalTokens: totalTokenCount,
-          chatId
+          chatId,
+          estimatedCost: cost
         });
       }
 
@@ -599,14 +603,18 @@ class Agent {
         // USAGE LOGGING (Tool Loop)
         if (response.usageMetadata) {
           const { promptTokenCount, candidatesTokenCount, totalTokenCount } = response.usageMetadata;
-          console.log(`[Tokens][Tool] P: ${promptTokenCount} | C: ${candidatesTokenCount} | Total: ${totalTokenCount}`);
+          const cost = calculateCost(selectedModel, promptTokenCount, candidatesTokenCount);
+          e2eCost += cost;
+
+          console.log(`[Tokens-Tool] P: ${promptTokenCount} | C: ${candidatesTokenCount} | Total: ${totalTokenCount} | Cost: $${cost.toFixed(6)}`);
 
           this.db.logTokenUsage({
             model: selectedModel,
             promptTokens: promptTokenCount,
             candidateTokens: candidatesTokenCount,
             totalTokens: totalTokenCount,
-            chatId
+            chatId,
+            estimatedCost: cost
           });
         }
 
@@ -709,7 +717,12 @@ class Agent {
     } finally {
       const e2eDuration = Date.now() - e2eStart;
       this.db.logMetric('latency_e2e', e2eDuration, { chatId: message.metadata?.chatId, runId });
-      console.log(`[Agent] E2E Request Duration: ${e2eDuration}ms`);
+      // Only log cost if it exists (might be 0 for internal health checks or errors before model calls)
+      if (typeof e2eCost !== 'undefined') {
+        console.log(`[Agent] E2E Request Duration: ${e2eDuration}ms | Total Cost: $${e2eCost.toFixed(6)}`);
+      } else {
+        console.log(`[Agent] E2E Request Duration: ${e2eDuration}ms`);
+      }
     }
 
     return executionSummary;
@@ -855,12 +868,12 @@ const PRICING = {
   // TTS & Image Models
   'gemini-2.5-flash-preview-tts': {
     threshold: 128000,
-    tier1: { input: 0.50, output: 10 }, 
+    tier1: { input: 0.50, output: 10 },
     tier2: { input: 0.50, output: 10 }
   },
   'gemini-3-pro-image-preview': {
     threshold: 200000,
-    tier1: { input: 2.00, output: 120.00 }, 
+    tier1: { input: 2.00, output: 120.00 },
     tier2: { input: 2.00, output: 120.00 }
   },
 

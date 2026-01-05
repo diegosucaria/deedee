@@ -98,15 +98,7 @@ class AgentDB {
         candidate_tokens INTEGER,
         total_tokens INTEGER,
         chat_id TEXT,
-        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-      CREATE TABLE IF NOT EXISTS token_usage (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        model TEXT NOT NULL,
-        prompt_tokens INTEGER,
-        candidate_tokens INTEGER,
-        total_tokens INTEGER,
-        chat_id TEXT,
+        estimated_cost REAL,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -114,9 +106,20 @@ class AgentDB {
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         chat_id TEXT NOT NULL,
         content TEXT NOT NULL,
-        range_start DATETIME,
-        range_end DATETIME,
+        range_start TEXT, -- Message ID or Index
+        range_end TEXT,
+        original_tokens INTEGER,
+        summary_tokens INTEGER,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS job_logs (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        job_name TEXT NOT NULL,
+        status TEXT NOT NULL, -- success, failure
+        output TEXT,
+        duration_ms INTEGER,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
       );
     `);
 
@@ -480,11 +483,11 @@ class AgentDB {
     this.db.prepare('INSERT INTO metrics (type, value, metadata) VALUES (?, ?, ?)').run(type, value, metaStr);
   }
 
-  logTokenUsage({ model, promptTokens, candidateTokens, totalTokens, chatId }) {
+  logTokenUsage({ model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost }) {
     this.db.prepare(`
-      INSERT INTO token_usage (model, prompt_tokens, candidate_tokens, total_tokens, chat_id)
-      VALUES (?, ?, ?, ?, ?)
-    `).run(model, promptTokens, candidateTokens, totalTokens, chatId);
+      INSERT INTO token_usage (model, prompt_tokens, candidate_tokens, total_tokens, chat_id, estimated_cost)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost || 0);
   }
 
   getLatencyTrend(limit = 100) {
@@ -593,6 +596,38 @@ class AgentDB {
         tokensPerMsg: Math.round(tokenEfficiency)
       }
     };
+  }
+
+  // --- Job Logs ---
+  logJobExecution(jobName, status, output, durationMs) {
+    this.db.prepare(`
+      INSERT INTO job_logs (job_name, status, output, duration_ms)
+      VALUES (?, ?, ?, ?)
+    `).run(jobName, status, output ? String(output) : null, durationMs);
+  }
+
+  getJobLogs(limit = 50, jobName = null) {
+    let query = 'SELECT * FROM job_logs';
+    const params = [];
+
+    if (jobName) {
+      query += ' WHERE job_name = ?';
+      params.push(jobName);
+    }
+
+    query += ' ORDER BY timestamp DESC LIMIT ?';
+    params.push(limit);
+
+    return this.db.prepare(query).all(...params);
+  }
+
+  cleanupJobLogs(retentionDays = 30) {
+    const info = this.db.prepare(`
+      DELETE FROM job_logs 
+      WHERE timestamp < datetime('now', '-' || ? || ' days')
+    `).run(retentionDays);
+    console.log(`[DB] Cleaned up ${info.changes} old job logs.`);
+    return info.changes;
   }
 }
 

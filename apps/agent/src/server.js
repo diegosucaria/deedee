@@ -312,6 +312,24 @@ app.delete('/internal/history/:id', (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// --- Summaries ---
+app.get('/internal/summaries', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const limit = parseInt(req.query.limit) || 20;
+    const summaries = agent.db.getSummaries(limit);
+    res.json({ summaries });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/internal/summaries/clear', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    agent.db.clearSummaries();
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // --- Journal ---
 app.put('/internal/journal/:date', (req, res) => {
   if (!agent || !agent.journal) return res.status(503).json({ error: 'Agent not ready' });
@@ -451,8 +469,8 @@ app.post('/internal/scheduler', (req, res) => {
 
     const callback = async () => {
       console.log(`[Scheduler] Executing task: ${task}`);
-      const { createAssistantMessage } = require('@deedee/shared/src/types');
 
+      let executionResult = null;
       await agent.processMessage({
         role: 'user',
         content: `Scheduled Task: ${task}`,
@@ -462,7 +480,11 @@ app.post('/internal/scheduler', (req, res) => {
         if (agent.interface) {
           await agent.interface.send(reply);
         }
+        // Capture reply
+        if (!executionResult) executionResult = reply;
+        else if (reply.text) executionResult.text = (executionResult.text || '') + '\n' + reply.text;
       });
+      return executionResult;
     };
 
     agent.scheduler.scheduleJob(name, cron, callback, {
