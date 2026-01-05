@@ -17,7 +17,7 @@ jest.mock('../src/db', () => ({
         // Agent constructor inits Router/MCP, we need to mock them too or handle them.
         getKey: jest.fn(),
         addGoal: jest.fn(),
-        checkLimit: jest.fn().mockReturnValue(0),
+        checkLimit: jest.fn().mockReturnValue(true),
         getPendingGoals: jest.fn().mockReturnValue([]), // Added
         logUsage: jest.fn(),
         logMetric: jest.fn(),
@@ -90,7 +90,15 @@ describe('Slash Commands', () => {
         msg.metadata = { chatId: 'chat123' };
 
         // Mock start/client to avoid crashes further down
-        agent.client = { chats: { create: jest.fn().mockReturnValue({ sendMessage: jest.fn().mockResolvedValue({ response: {} }) }) } };
+        agent.client = {
+            chats: {
+                create: jest.fn().mockReturnValue({
+                    sendMessage: jest.fn().mockResolvedValue({
+                        candidates: [{ content: { parts: [{ text: 'Mock Response' }] } }]
+                    })
+                })
+            }
+        };
         // We only care that it passed the command check
         try {
             await agent.onMessage(msg);

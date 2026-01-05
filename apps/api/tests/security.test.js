@@ -2,7 +2,11 @@ const request = require('supertest');
 const { app } = require('../src/server');
 const axios = require('axios');
 
-jest.mock('axios');
+
+jest.mock('axios', () => ({
+    post: jest.fn(),
+    get: jest.fn()
+}));
 
 describe('API Security', () => {
     const VALID_TOKEN = 'test-token-123';

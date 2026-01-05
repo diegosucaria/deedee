@@ -16,7 +16,16 @@ jest.mock('telegraf', () => {
         }))
     };
 });
-jest.mock('axios');
+jest.mock('axios', () => {
+    const mockAxios = {
+        post: jest.fn(),
+        get: jest.fn(),
+        create: jest.fn().mockReturnThis()
+    };
+    const axiosFn = jest.fn(() => mockAxios);
+    Object.assign(axiosFn, mockAxios);
+    return axiosFn;
+});
 
 describe('TelegramService Security', () => {
     let service;
@@ -77,7 +86,7 @@ describe('TelegramService Security', () => {
             reply: jest.fn()
         };
 
-        axios.post.mockResolvedValue({});
+        axios.post.mockResolvedValue({ data: { ok: true } });
 
         await service.handleMessage(ctx);
 

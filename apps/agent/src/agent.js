@@ -134,7 +134,6 @@ class Agent {
 
     try {
       const isMultiModal = !!message.parts;
-      console.log(`Received: ${isMultiModal ? '[Multi-modal content]' : message.content}`);
 
       // Ensure client is ready (JIT)
       if (!this.client) {
@@ -322,7 +321,10 @@ class Agent {
         .map(f => `- **${f.key}**: ${JSON.stringify(f.value)}`)
         .join('\n            ');
 
-      let systemInstruction = getSystemInstruction(new Date().toString(), pendingGoals, facts);
+      // Enable Coding/Dev Instructions ONLY for Pro/Reasoning models
+      const isCodingMode = decision.model === 'PRO';
+
+      let systemInstruction = getSystemInstruction(new Date().toString(), pendingGoals, facts, { codingMode: isCodingMode });
 
       if (['iphone', 'ios_shortcut'].includes(message.source)) {
         systemInstruction += `\n

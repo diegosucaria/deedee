@@ -57,11 +57,11 @@ describe('BackupManager', () => {
     test('should perform backup successfully', async () => {
         // Set custom path
         process.env.GCS_BACKUP_PATH = 'custom/backups';
+        process.env.GCS_BACKUP_BUCKET = 'test-bucket'; // Explicitly set to avoid "ghost" undefined issues
         // Re-init
         backupManager = new BackupManager(mockAgent);
 
         const result = await backupManager.performBackup();
-
         expect(result.success).toBe(true);
         expect(result.file).toContain('custom/backups/backup-');
 

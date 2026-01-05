@@ -14,15 +14,25 @@ jest.mock('googleapis', () => {
       }
     }
   };
-  
+
   return {
     google: {
       auth: { GoogleAuth: jest.fn() },
       calendar: jest.fn(() => mCalendar),
-      gmail: jest.fn(() => mGmail)
-    }
+      gmail: jest.fn(() => mGmail),
+      GoogleAuth: jest.fn() // Add GoogleAuth here if used directly
+    },
+    // Also mock GoogleAuth if it's imported separately which google-auth-library often is
+    GoogleAuth: jest.fn()
   };
 });
+// Also mock google-auth-library
+jest.mock('google-auth-library', () => ({
+  GoogleAuth: jest.fn().mockImplementation(() => ({
+    getClient: jest.fn().mockResolvedValue('fake-client'),
+    getApplicationDefaultAsync: jest.fn().mockResolvedValue('fake-client')
+  }))
+}));
 
 // Mock Auth
 jest.mock('../src/gsuite/auth', () => {

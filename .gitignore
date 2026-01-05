@@ -6,3 +6,4 @@ coverage
 .drafts
 .vscode
 data
+.last_boot_commit

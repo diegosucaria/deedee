@@ -37,7 +37,8 @@ jest.mock('@deedee/mcp-servers/src/local/index', () => ({
 // Mock Google GenAI
 const mockChatsCreate = jest.fn().mockReturnValue({
     sendMessage: jest.fn().mockResolvedValue({
-        text: () => "I know the date."
+        text: () => "I know the date.",
+        candidates: [{ content: { parts: [{ text: "I know the date." }] } }]
     })
 });
 

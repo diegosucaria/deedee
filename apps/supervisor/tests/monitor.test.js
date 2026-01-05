@@ -2,8 +2,6 @@ const { Monitor } = require('../src/monitor');
 const fs = require('fs');
 const path = require('path');
 
-jest.mock('fs');
-
 describe('Monitor', () => {
     let monitor;
     let mockGit;
@@ -21,13 +19,13 @@ describe('Monitor', () => {
     });
 
     afterEach(() => {
-        jest.clearAllMocks();
+        jest.restoreAllMocks();
     });
 
     test('notifyStartup: sends alert and saves hash on first run (no file)', async () => {
         mockGit.run.mockResolvedValue('hash123|feat: test commit');
-        fs.existsSync.mockReturnValue(false);
-        fs.writeFileSync.mockImplementation(() => {});
+        jest.spyOn(fs, 'existsSync').mockReturnValue(false);
+        jest.spyOn(fs, 'writeFileSync').mockImplementation(() => { });
 
         await monitor.notifyStartup();
 
@@ -44,9 +42,9 @@ describe('Monitor', () => {
 
     test('notifyStartup: sends alert and saves hash on new commit', async () => {
         mockGit.run.mockResolvedValue('hash456|fix: bug');
-        fs.existsSync.mockReturnValue(true);
-        fs.readFileSync.mockReturnValue('hash123');
-        fs.writeFileSync.mockImplementation(() => {});
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        jest.spyOn(fs, 'readFileSync').mockReturnValue('hash123');
+        jest.spyOn(fs, 'writeFileSync').mockImplementation(() => { });
 
         await monitor.notifyStartup();
 
@@ -62,8 +60,9 @@ describe('Monitor', () => {
 
     test('notifyStartup: sends simple alert on same commit', async () => {
         mockGit.run.mockResolvedValue('hash123|feat: test commit');
-        fs.existsSync.mockReturnValue(true);
-        fs.readFileSync.mockReturnValue('hash123');
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        jest.spyOn(fs, 'readFileSync').mockReturnValue('hash123');
+        jest.spyOn(fs, 'writeFileSync').mockImplementation(() => { });
 
         await monitor.notifyStartup();
 
