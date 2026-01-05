@@ -13,7 +13,9 @@ const PRESETS = {
     'every_minute': { label: 'Every Minute (Test)', cron: '*/1 * * * *' },
     'hourly': { label: 'Hourly', cron: '0 * * * *' },
     'daily_morning': { label: 'Daily Morning (8 AM)', cron: '0 8 * * *' },
+    'daily_morning': { label: 'Daily Morning (8 AM)', cron: '0 8 * * *' },
     'daily_evening': { label: 'Daily Evening (8 PM)', cron: '0 20 * * *' },
+    'one_time': { label: 'One-Time Task', cron: '' },
 };
 
 export default function TaskList({ tasks }) {
@@ -45,11 +47,14 @@ export default function TaskList({ tasks }) {
         if (matchingPreset) {
             setScheduleType(matchingPreset[0]);
         } else {
-            setScheduleType('custom');
+            // Check if it's a one-off date (ISO string look-alike) or custom cron
+            // Simple heuristic: if it parses as Date and doesn't have spaces like standard cron
+            const isDate = !isNaN(Date.parse(currentCron)) && currentCron.includes('T');
+            setScheduleType(isDate ? 'one_time' : 'custom');
         }
 
         if (editingTask) {
-            setCustomCron(editingTask.cron);
+            setCustomCron(editingTask.cron); // If one-off, this is the ISO string
         }
     }, [editingTask]); // eslint-disable-line react-hooks/exhaustive-deps
 
@@ -152,6 +157,18 @@ export default function TaskList({ tasks }) {
                                 }
                             }
 
+                            // Handle One-Time Task Date vs Cron
+                            if (scheduleType === 'one_time') {
+                                const executionLocal = customCron; // In this mode, customCron holds the datetime-local value
+                                if (executionLocal) {
+                                    const dateObj = new Date(executionLocal);
+                                    if (!isNaN(dateObj.getTime())) {
+                                        formData.set('cron', dateObj.toISOString());
+                                        formData.set('isOneOff', 'true');
+                                    }
+                                }
+                            }
+
                             await formAction(formData);
                             setEditingTask(null);
                             setCustomCron('');
@@ -188,7 +205,29 @@ export default function TaskList({ tasks }) {
                                 </select>
 
                                 <div className="relative w-1/2">
-                                    {(scheduleType === 'custom') ? (
+                                    {scheduleType === 'one_time' ? (
+                                        <input
+                                            type="datetime-local"
+                                            name="cron_display" // Don't submit this directly as 'cron', we handle manually
+                                            required
+                                            value={(() => {
+                                                // Convert ISO stored in customCron to local datetime-local format for display
+                                                // customCron might be empty (new) or ISO string (edit) or local string (typing)
+                                                if (!customCron) return '';
+                                                // If it already looks like local format (has T but no Z/offset usually in input), just return?
+                                                // Actually, datetime-local expects "YYYY-MM-DDThh:mm"
+                                                // If customCron is ISO (from DB), convert to local
+                                                if (customCron.endsWith('Z')) {
+                                                    const d = new Date(customCron);
+                                                    const offset = d.getTimezoneOffset() * 60000;
+                                                    return new Date(d.getTime() - offset).toISOString().slice(0, 16);
+                                                }
+                                                return customCron;
+                                            })()}
+                                            onChange={(e) => setCustomCron(e.target.value)}
+                                            className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-mono text-sm"
+                                        />
+                                    ) : (scheduleType === 'custom') ? (
                                         <input
                                             type="text"
                                             name="cron"

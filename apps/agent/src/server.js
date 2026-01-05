@@ -462,7 +462,7 @@ app.delete('/internal/aliases/:alias', (req, res) => {
 app.post('/internal/scheduler', (req, res) => {
   if (!agent || !agent.scheduler) return res.status(503).json({ error: 'Agent not ready' });
   try {
-    const { name, cron, task, expiresAt } = req.body;
+    const { name, cron, task, expiresAt, isOneOff } = req.body;
 
     // Security: Prevent overwriting system jobs
     const existingJob = agent.scheduler.jobs[name];
@@ -494,7 +494,8 @@ app.post('/internal/scheduler', (req, res) => {
       persist: true,
       taskType: 'agent_instruction',
       payload: { task },
-      expiresAt: expiresAt || null
+      expiresAt: expiresAt || null,
+      oneOff: !!isOneOff
     });
 
     res.json({ success: true });

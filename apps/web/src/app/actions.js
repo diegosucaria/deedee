@@ -32,13 +32,14 @@ export async function createTask(prevState, formData) {
         const cron = formData.get('cron');
         const task = formData.get('task');
         const expiresAt = formData.get('expiresAt');
+        const isOneOff = formData.get('isOneOff') === 'true';
 
         // Validation
         if (!name || !cron || !task) return { success: false, error: 'Missing required fields' };
 
         await fetchAPI('/v1/tasks', {
             method: 'POST',
-            body: JSON.stringify({ name, cron, task, expiresAt })
+            body: JSON.stringify({ name, cron, task, expiresAt, isOneOff })
         });
         revalidatePath('/tasks');
         return { success: true };

@@ -23,6 +23,13 @@ class Scheduler {
         let rule = cronExpression;
         if (options.oneOff) {
             rule = new Date(cronExpression);
+            console.log(`[Scheduler] Scheduling One-Off Job '${name}'`);
+            console.log(`[Scheduler] Raw Input: ${cronExpression}`);
+            console.log(`[Scheduler] Parsed Date: ${rule.toString()} (ISO: ${rule.toISOString()})`);
+            console.log(`[Scheduler] Server Time: ${new Date().toString()} (ISO: ${new Date().toISOString()})`);
+            if (rule.getTime() <= Date.now()) {
+                console.warn(`[Scheduler] WARNING: One-off job '${name}' is scheduled in the PAST! It might run immediately or not at all.`);
+            }
         }
 
         const job = schedule.scheduleJob(rule, async () => {

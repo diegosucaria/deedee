@@ -109,6 +109,12 @@ app.post('/send', async (req, res) => {
 
     // SCHEDULER (Internal)
     if (source === 'scheduler') {
+      // Suppress "Thinking..." interim messages for notifications
+      if (content.startsWith('Thinking...') || content.startsWith('Action **')) {
+        console.log(`[Interfaces] Scheduler output (suppressed): ${content}`);
+        return res.json({ success: true });
+      }
+
       if (telegram && defaultTelegramId) {
         console.log(`[Interfaces] Scheduler output: Routing to default Telegram ID (${defaultTelegramId}): ${content}`);
         await telegram.sendMessage(defaultTelegramId, `📅 *Scheduled Task Update*\n\n${content}`);
