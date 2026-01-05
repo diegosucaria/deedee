@@ -16,6 +16,8 @@ const io = new Server(server, {
 const port = process.env.PORT || 5000;
 const agentUrl = process.env.AGENT_URL || 'http://localhost:3000';
 const telegramToken = process.env.TELEGRAM_TOKEN;
+const allowedTelegramIds = (process.env.ALLOWED_TELEGRAM_IDS || '').split(',').map(id => id.trim()).filter(Boolean);
+const defaultTelegramId = allowedTelegramIds.length > 0 ? allowedTelegramIds[0] : null;
 
 // Increase body limit to support base64 audio
 app.use(express.json({ limit: '50mb' }));
@@ -107,7 +109,12 @@ app.post('/send', async (req, res) => {
 
     // SCHEDULER (Internal)
     if (source === 'scheduler') {
-      console.log(`[Interfaces] Scheduler output (logged only): ${content}`);
+      if (telegram && defaultTelegramId) {
+        console.log(`[Interfaces] Scheduler output: Routing to default Telegram ID (${defaultTelegramId}): ${content}`);
+        await telegram.sendMessage(defaultTelegramId, `📅 *Scheduled Task Update*\n\n${content}`);
+      } else {
+        console.log(`[Interfaces] Scheduler output (logged only): ${content}`);
+      }
       return res.json({ success: true });
     }
 
