@@ -1,5 +1,6 @@
 
 const { createAssistantMessage } = require('@deedee/shared/src/types');
+const crypto = require('crypto');
 const { GSuiteTools } = require('@deedee/mcp-servers/src/gsuite/index');
 const { LocalTools } = require('@deedee/mcp-servers/src/local/index');
 const { AgentDB } = require('./db');
@@ -119,6 +120,7 @@ class Agent {
       try { await onProgress(status); } catch (e) { /* ignore */ }
     };
 
+    const runId = crypto.randomUUID();
     const e2eStart = Date.now();
     const executionSummary = {
       toolOutputs: [], // List of { name, result }
@@ -203,7 +205,7 @@ class Agent {
       const routerDuration = Date.now() - routerStart;
       console.timeEnd('[Agent] Router Duration');
 
-      this.db.logMetric('latency_router', routerDuration, { model: decision.model, chatId });
+      this.db.logMetric('latency_router', routerDuration, { model: decision.model, chatId, runId });
 
       console.log(`[Agent] Routing to: ${decision.model}`);
 
@@ -352,7 +354,7 @@ class Agent {
       const modelDuration = Date.now() - modelStart;
       console.timeEnd(timerLabel);
 
-      this.db.logMetric('latency_model', modelDuration, { model: selectedModel, chatId });
+      this.db.logMetric('latency_model', modelDuration, { model: selectedModel, chatId, runId });
 
       // USAGE LOGGING
       if (response.usageMetadata) {
@@ -626,7 +628,7 @@ class Agent {
       executionSummary.replies.push(errReply);
     } finally {
       const e2eDuration = Date.now() - e2eStart;
-      this.db.logMetric('latency_e2e', e2eDuration, { chatId: message.metadata?.chatId });
+      this.db.logMetric('latency_e2e', e2eDuration, { chatId: message.metadata?.chatId, runId });
       console.log(`[Agent] E2E Request Duration: ${e2eDuration}ms`);
     }
 

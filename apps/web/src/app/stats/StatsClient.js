@@ -20,26 +20,33 @@ export default function StatsClient() {
             // Group by Chat ID to align Router/Model/E2E for the same request
             const grouped = {};
 
-            latData.forEach(item => {
-                let chatId = 'unknown';
+            latData.forEach((item, index) => {
+                let groupKey = `item-${index}`; // Default to unique if no ID found
                 try {
                     const meta = JSON.parse(item.metadata);
-                    if (meta && meta.chatId) chatId = meta.chatId;
+                    // PREFER RUN ID
+                    if (meta && meta.runId) {
+                        groupKey = meta.runId;
+                    }
+                    // Fallback to legacy ChatID ONLY if we don't have runId? 
+                    // No, legacy ChatID grouping caused the bug (merging history). 
+                    // So for old data without runId, we just show them as individual points (disjoint).
+                    // This means old data might look "incomplete" (dots floating) but new data will be correct connected lines.
                 } catch (e) { }
 
-                if (!grouped[chatId]) {
-                    grouped[chatId] = {
-                        timestamp: item.timestamp, // Use first seen timestamp
+                if (!grouped[groupKey]) {
+                    grouped[groupKey] = {
+                        timestamp: item.timestamp,
                         router: 0,
                         model: 0,
                         e2e: 0,
-                        label: '' // Will be set later
+                        label: ''
                     };
                 }
 
-                if (item.type === 'latency_router') grouped[chatId].router = item.value;
-                if (item.type === 'latency_model') grouped[chatId].model = item.value;
-                if (item.type === 'latency_e2e') grouped[chatId].e2e = item.value;
+                if (item.type === 'latency_router') grouped[groupKey].router = item.value;
+                if (item.type === 'latency_model') grouped[groupKey].model = item.value;
+                if (item.type === 'latency_e2e') grouped[groupKey].e2e = item.value;
             });
 
             // Convert to Array & Sort
