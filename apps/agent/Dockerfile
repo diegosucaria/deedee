@@ -35,6 +35,9 @@ ENV VIRTUAL_ENV=/opt/venv
 RUN uv venv $VIRTUAL_ENV
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
+# Copy packages first to allow pip install
+COPY --from=builder /app/packages ./packages
+
 # Pre-install MCP Servers
 RUN uv pip install -r packages/plex-mcp-server/requirements.txt
 RUN uv pip install ha-mcp
@@ -42,7 +45,6 @@ RUN uv pip install ha-mcp
 # Copy built node_modules and app source from builder
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/apps/agent ./apps/agent
-COPY --from=builder /app/packages ./packages
 COPY --from=builder /app/package.json ./package.json
 
 WORKDIR /app/apps/agent
