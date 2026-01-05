@@ -9,17 +9,76 @@ const LogContent = ({ content }) => {
 
     if (!content) return <span className="text-zinc-500">-</span>;
 
-    // Try parsing as JSON
-    let jsonString = null;
-    try {
-        const parsed = JSON.parse(content);
-        // Only treat as JSON if it's an object or array, not just a number/boolean
-        if (typeof parsed === 'object' && parsed !== null) {
-            jsonString = JSON.stringify(parsed, null, 2);
+    // Helper to deeply parse JSON strings within objects
+    const deepParse = (input) => {
+        if (typeof input === 'string') {
+            try {
+                const parsed = JSON.parse(input);
+                if (typeof parsed === 'object' && parsed !== null) {
+                    return deepParse(parsed);
+                }
+            } catch (e) { return input; }
         }
-    } catch (e) { }
 
-    if (jsonString) {
+        if (typeof input === 'object' && input !== null) {
+            if (Array.isArray(input)) {
+                return input.map(deepParse);
+            }
+            const newObj = {};
+            for (const key in input) {
+                newObj[key] = deepParse(input[key]);
+            }
+            return newObj;
+        }
+
+        return input;
+    };
+
+    let jsonString = null;
+    let isJson = false;
+
+    // First attempt to parse the top-level content
+    try {
+        let contentToParse = content;
+
+        // If it's a string, try to find the first '{' or '[' to handle prefixes like "Tool Result (...): "
+        if (typeof content === 'string') {
+            const firstBrace = content.indexOf('{');
+            const firstBracket = content.indexOf('[');
+
+            let startIndex = -1;
+            if (firstBrace !== -1 && firstBracket !== -1) {
+                startIndex = Math.min(firstBrace, firstBracket);
+            } else if (firstBrace !== -1) {
+                startIndex = firstBrace;
+            } else if (firstBracket !== -1) {
+                startIndex = firstBracket;
+            }
+
+            if (startIndex !== -1) {
+                // Try parsing from the first discovered brace/bracket
+                // We blindly take the substring from there to the end. 
+                // If there's trailing junk, JSON.parse might accept it or fail.
+                // Ideally we'd match balanced braces but that's complex. 
+                // Let's rely on JSON.parse failing if it's not valid.
+                contentToParse = content.substring(startIndex);
+            }
+        }
+
+        // If content is already an object (should be string from props, but just in case)
+        let parsed = typeof contentToParse === 'string' ? JSON.parse(contentToParse) : contentToParse;
+
+        // If it's valid object/array, try to deep parse its fields
+        if (typeof parsed === 'object' && parsed !== null) {
+            parsed = deepParse(parsed);
+            jsonString = JSON.stringify(parsed, null, 2);
+            isJson = true;
+        }
+    } catch (e) {
+        // Not JSON, just text
+    }
+
+    if (isJson && jsonString) {
         return (
             <details className="group">
                 <summary className="cursor-pointer text-xs text-indigo-400 hover:text-indigo-300 font-mono list-none flex items-center gap-2 select-none">
