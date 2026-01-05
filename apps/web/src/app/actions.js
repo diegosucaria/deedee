@@ -137,3 +137,21 @@ export async function updateJournal(date, content) {
         return { success: true };
     } catch (e) { return { success: false, error: e.message }; }
 }
+// --- Stats ---
+export async function getStatsLatency() {
+    try {
+        return await fetchAPI('/v1/stats/latency');
+    } catch (error) {
+        console.error('getStatsLatency Error:', error);
+        return [];
+    }
+}
+
+export async function getStatsUsage() {
+    try {
+        return await fetchAPI('/v1/stats/usage');
+    } catch (error) {
+        console.error('getStatsUsage Error:', error);
+        return null;
+    }
+}

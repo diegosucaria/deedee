@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { SimpleLineChart } from '@/components/SimpleCharts';
 import { RefreshCw, Activity, Cpu } from 'lucide-react';
-import { fetchAPI } from '@/lib/api';
+import { getStatsLatency, getStatsUsage } from '../actions';
 
 export default function StatsClient() {
     const [latencyData, setLatencyData] = useState([]);
@@ -13,8 +13,8 @@ export default function StatsClient() {
     const fetchData = async () => {
         setLoading(true);
         try {
-            // Fetch Latency
-            const latData = await fetchAPI('/v1/stats/latency');
+            // Fetch Latency via Server Action
+            const latData = await getStatsLatency();
 
             // Group by Chat ID to align Router/Model/E2E for the same request
             const grouped = {};
@@ -55,8 +55,8 @@ export default function StatsClient() {
 
             setLatencyData(chartData);
 
-            // Fetch Usage
-            const usageJson = await fetchAPI('/v1/stats/usage');
+            // Fetch Usage via Server Action
+            const usageJson = await getStatsUsage();
             setUsageData(usageJson);
 
         } catch (e) {
