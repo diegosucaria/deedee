@@ -203,6 +203,7 @@ class Agent {
 
       // --- ROUTING ---
       let e2eCost = 0; // Track total cost for this request
+      let e2eTokens = 0; // Track total tokens
       console.time('[Agent] Router Duration');
       const routerStart = Date.now();
 
@@ -424,6 +425,7 @@ class Agent {
         const { promptTokenCount, candidatesTokenCount, totalTokenCount } = response.usageMetadata;
         const cost = calculateCost(selectedModel, promptTokenCount, candidatesTokenCount);
         e2eCost += cost;
+        e2eTokens += totalTokenCount;
 
         console.log(`[Tokens] P: ${promptTokenCount} | C: ${candidatesTokenCount} | Total: ${totalTokenCount} | Cost: $${cost.toFixed(6)}`);
 
@@ -605,6 +607,7 @@ class Agent {
           const { promptTokenCount, candidatesTokenCount, totalTokenCount } = response.usageMetadata;
           const cost = calculateCost(selectedModel, promptTokenCount, candidatesTokenCount);
           e2eCost += cost;
+          e2eTokens += totalTokenCount;
 
           console.log(`[Tokens-Tool] P: ${promptTokenCount} | C: ${candidatesTokenCount} | Total: ${totalTokenCount} | Cost: $${cost.toFixed(6)}`);
 
@@ -650,6 +653,8 @@ class Agent {
           const reply = createAssistantMessage(text);
           reply.metadata = { chatId: message.metadata?.chatId };
           reply.source = message.source; // Ensure reply source matches incoming message source
+          reply.cost = e2eCost;
+          reply.tokenCount = e2eTokens;
 
           // 2. Save Assistant Reply
           this.db.saveMessage(reply);

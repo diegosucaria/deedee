@@ -10,11 +10,9 @@ const navItems = [
     { name: 'Chat', href: '/', icon: MessageSquare },
     { name: 'Journal', href: '/journal', icon: Book },
     { name: 'Tasks', href: '/tasks', icon: ClipboardList },
-    { name: 'Goals', href: '/goals', icon: Target },
-    { name: 'Memory', href: '/facts', icon: Database },
+    { name: 'Brain', href: '/brain', icon: Activity },
     { name: 'Logs', href: '/logs', icon: Terminal },
     { name: 'History', href: '/history', icon: Clock },
-    { name: 'Aliases', href: '/aliases', icon: Tags },
     { name: 'Stats', href: '/stats', icon: PieChart },
 ];
 

@@ -47,6 +47,8 @@ class AgentDB {
         content TEXT,
         source TEXT,
         chat_id TEXT,
+        cost REAL,
+        token_count INTEGER,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -141,8 +143,13 @@ class AgentDB {
 
     // Migration: Add token counts to summaries
     try {
-      this.db.exec("ALTER TABLE summaries ADD COLUMN original_tokens INTEGER");
       this.db.exec("ALTER TABLE summaries ADD COLUMN summary_tokens INTEGER");
+    } catch (err) { }
+
+    // Migration: Add cost/token_count to messages
+    try {
+      this.db.exec("ALTER TABLE messages ADD COLUMN cost REAL");
+      this.db.exec("ALTER TABLE messages ADD COLUMN token_count INTEGER");
     } catch (err) { }
   }
 
@@ -213,13 +220,13 @@ class AgentDB {
   // --- Messages ---
   saveMessage(msg) {
     const stmt = this.db.prepare(`
-      INSERT INTO messages (id, role, content, parts, source, chat_id, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (id, role, content, parts, source, chat_id, cost, token_count, timestamp)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     // Fallback if msg.id is missing or generated elsewhere
     const id = msg.id || crypto.randomUUID();
     const partsStr = msg.parts ? JSON.stringify(msg.parts) : null;
-    stmt.run(id, msg.role, msg.content, partsStr, msg.source, msg.metadata?.chatId, msg.timestamp);
+    stmt.run(id, msg.role, msg.content, partsStr, msg.source, msg.metadata?.chatId, msg.cost || 0, msg.tokenCount || 0, msg.timestamp);
   }
 
   getHistory(options = {}) {

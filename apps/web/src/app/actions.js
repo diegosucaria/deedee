@@ -56,7 +56,7 @@ export async function addGoal(prevState, formData) {
             method: 'POST',
             body: JSON.stringify({ description, metadata: { source: 'web' } })
         });
-        revalidatePath('/goals');
+        revalidatePath('/brain');
         return { success: true };
     } catch (e) { return { success: false, error: e.message }; }
 }
@@ -64,7 +64,7 @@ export async function addGoal(prevState, formData) {
 export async function deleteGoal(id) {
     try {
         await fetchAPI(`/v1/goals/${id}`, { method: 'DELETE' });
-        revalidatePath('/goals');
+        revalidatePath('/brain');
         return { success: true };
     } catch (e) { return { success: false, error: e.message }; }
 }
@@ -72,7 +72,7 @@ export async function deleteGoal(id) {
 export async function updateGoal(id, status) {
     try {
         await fetchAPI(`/v1/goals/${id}`, { method: 'PUT', body: JSON.stringify({ status }) });
-        revalidatePath('/goals');
+        revalidatePath('/brain');
         return { success: true };
     } catch (e) { return { success: false, error: e.message }; }
 }
@@ -85,7 +85,7 @@ export async function addFact(prevState, formData) {
         if (!key || !value) return { success: false, error: 'Key and Value required' };
 
         await fetchAPI('/v1/facts', { method: 'POST', body: JSON.stringify({ key, value }) });
-        revalidatePath('/facts');
+        revalidatePath('/brain');
         return { success: true };
     } catch (e) { return { success: false, error: e.message }; }
 }
@@ -93,7 +93,7 @@ export async function addFact(prevState, formData) {
 export async function deleteFact(key) {
     try {
         await fetchAPI(`/v1/facts/${encodeURIComponent(key)}`, { method: 'DELETE' });
-        revalidatePath('/facts');
+        revalidatePath('/brain');
         return { success: true };
     } catch (e) { return { success: false, error: e.message }; }
 }
@@ -106,7 +106,7 @@ export async function addAlias(prevState, formData) {
         if (!alias || !entityId) return { success: false, error: 'Alias and Entity ID required' };
 
         await fetchAPI('/v1/aliases', { method: 'POST', body: JSON.stringify({ alias, entityId }) });
-        revalidatePath('/aliases');
+        revalidatePath('/brain');
         return { success: true };
     } catch (e) { return { success: false, error: e.message }; }
 }
@@ -114,7 +114,7 @@ export async function addAlias(prevState, formData) {
 export async function deleteAlias(alias) {
     try {
         await fetchAPI(`/v1/aliases/${encodeURIComponent(alias)}`, { method: 'DELETE' });
-        revalidatePath('/aliases');
+        revalidatePath('/brain');
         return { success: true };
     } catch (e) { return { success: false, error: e.message }; }
 }

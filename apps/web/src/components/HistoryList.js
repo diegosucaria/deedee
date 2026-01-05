@@ -146,6 +146,11 @@ export default function HistoryList({ history }) {
                                                 <span className="text-[10px] text-zinc-700 bg-zinc-900 border border-zinc-800 px-1.5 rounded uppercase">
                                                     {msg.source || 'db'}
                                                 </span>
+                                                {msg.token_count > 0 && (
+                                                    <span className="text-[10px] text-zinc-500 ml-2 font-mono">
+                                                        {msg.token_count}t {msg.cost ? `($${msg.cost.toFixed(4)})` : ''}
+                                                    </span>
+                                                )}
                                             </div>
 
                                             <div className="prose prose-invert prose-sm max-w-none text-zinc-400 bg-zinc-900/40 p-4 rounded-xl border border-zinc-800/50">
