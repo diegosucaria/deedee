@@ -240,7 +240,7 @@ const toolDefinitions = [
       // Audio / TTS
       {
         name: "replyWithAudio",
-        description: "Generate and send an audio response (text-to-speech) to the user using Gemini TTS. Use this ONLY when the user explicitly requests an audio/voice response.",
+        description: "Generate and send an audio response (text-to-speech) to the user using Gemini TTS. FAIL if the user did NOT explicitly request an audio/voice response. Do NOT use this for simple greetings.",
         parameters: {
           type: "OBJECT",
           properties: {

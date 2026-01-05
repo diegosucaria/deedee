@@ -604,6 +604,7 @@ class Agent {
           const reply = createAssistantMessage("I received an empty response from my brain. Please try again.");
           reply.metadata = { chatId: message.metadata?.chatId };
           reply.source = message.source;
+          this.db.saveMessage(reply); // Persist error so it appears in history
           await sendCallback(reply);
           executionSummary.replies.push(reply);
         }

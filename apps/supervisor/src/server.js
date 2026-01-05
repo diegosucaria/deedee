@@ -2,7 +2,32 @@ const express = require('express');
 const { GitOps } = require('./git-ops');
 const { Verifier } = require('./verifier');
 const { Monitor } = require('./monitor');
+const { Writable } = require('stream');
 const Docker = require('dockerode');
+
+class PrefixWriter extends Writable {
+  constructor(prefix, destination) {
+    super();
+    this.prefix = prefix;
+    this.destination = destination;
+    this.buffer = '';
+  }
+
+  _write(chunk, encoding, callback) {
+    // Determine encoding just in case, though usually UTF8 from Docker
+    const text = chunk.toString();
+    const parts = (this.buffer + text).split('\n');
+    this.buffer = parts.pop(); // Keep last incomplete line
+
+    parts.forEach(line => {
+      // Only write if line has content or we want to preserve empty lines (usually better to skip empty to save noise)
+      if (line.length > 0) {
+        this.destination.write(`[${this.prefix}] ${line}\n`);
+      }
+    });
+    callback();
+  }
+}
 
 const app = express();
 const port = process.env.PORT || 4000;
@@ -115,10 +140,10 @@ app.get('/logs/:container', async (req, res) => {
         res.write('[SYSTEM] HEARTBEAT\n');
       }, 15000);
 
-      for (const targetName of TARGETS) {
+      const streamPromises = TARGETS.map(async (targetName) => {
         // Find container
         const targetContainer = allContainers.find(c => c.Names.some(n => n.includes(targetName)));
-        if (!targetContainer) continue;
+        if (!targetContainer) return null;
 
         const container = docker.getContainer(targetContainer.Id);
         const logOptions = {
@@ -131,43 +156,31 @@ app.get('/logs/:container', async (req, res) => {
         };
 
         try {
+          // Inspect to check TTY
+          const info = await container.inspect();
+          const isTty = info.Config && info.Config.Tty;
+
           const stream = await container.logs(logOptions);
-          // Decorate stream to prefix lines
-          stream.on('data', (chunk) => {
-            // Docker stream might be multiplexed (header + payload) or raw
-            // For simplicity in this naive implementation, we assume we can just stringify.
-            // But properly we should demux. dockerode exposes container.modem.demuxStream.
-            // Demuxing confusingly writes to two streams.
-            // Let's rely on TTY enabled which means raw text.
-            // If TTY is false (common in compose), the first 8 bytes offer header.
-            // We'll clean basic non-ascii if needed or trust TTY is set in compose.
 
-            // CLEAN METHOD: Write directly to res with prefix.
-            // NOTE: This mixes stdout/stderr.
+          const writer = new PrefixWriter(targetName, res);
 
-            // Convert to string, split lines, prefix, write.
-            const text = chunk.toString('utf8');
-            // Remove Docker headers if present (hacky but 'good enough' for simple viewing)
-            // Or ideally use 'demuxStream' passing a custom writable.
+          if (isTty) {
+            // TTY streams are just raw text
+            stream.pipe(writer);
+          } else {
+            // Non-TTY streams have an 8-byte header per frame
+            container.modem.demuxStream(stream, writer, writer);
+          }
 
-            // Simple prefixer
-            const lines = text.split('\n');
-            lines.forEach(line => {
-              if (line.trim()) {
-                // Check for Docker Header (Byte 0=1/2, Byte 4-7=Size) - simplified check: non-printable start?
-                // Actually, let's just output raw text. The frontend handles garbage decently.
-                // To be cleaner: regex clean? 
-                // Let's assume text.
-                res.write(`[${targetName}] ${line}\n`);
-              }
-            });
-          });
-
-          streams.push(stream);
+          return stream;
         } catch (e) {
           console.error(`Error streaming ${targetName}:`, e.message);
+          return null;
         }
-      }
+      });
+
+      const results = await Promise.all(streamPromises);
+      streams.push(...results.filter(s => s !== null));
 
       req.on('close', () => {
         console.log('[Supervisor] Client closed connection for ALL logs');
