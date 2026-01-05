@@ -49,6 +49,14 @@ class HttpInterface extends EventEmitter {
     }
   }
 
+  async sendProgress(chatId, status) {
+    try {
+      await axios.post(`${this.interfacesUrl}/progress`, { chatId, status });
+    } catch (error) {
+      // fire and forget
+    }
+  }
+
   /**
    * Called by the Webhook Handler to inject a message from outside.
    * @param {import('@deedee/shared/src/types').Message} message 

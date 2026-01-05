@@ -112,8 +112,13 @@ class Agent {
    * Core processing logic.
    * @param {object} message - Incoming message
    * @param {function} sendCallback - Async function(reply) to handle responses
+   * @param {function} onProgress - Optional async function(status) to report progress
    */
-  async processMessage(message, sendCallback) {
+  async processMessage(message, sendCallback, onProgress = async () => { }) {
+    const reportProgress = async (status) => {
+      try { await onProgress(status); } catch (e) { /* ignore */ }
+    };
+
     const e2eStart = Date.now();
     const executionSummary = {
       toolOutputs: [], // List of { name, result }
@@ -183,6 +188,8 @@ class Agent {
 
       // 3. Save User Message
       this.db.saveMessage(message);
+
+      await reportProgress('Routing...');
 
       // --- ROUTING ---
       console.time('[Agent] Router Duration');
@@ -260,6 +267,7 @@ class Agent {
         : (process.env.WORKER_PRO || 'gemini-3-pro-preview');
 
       console.log(`[Agent] Routing to Model: ${selectedModel}`);
+      await reportProgress(`Thinking (${selectedModel})...`);
 
       // --- EXPERIMENTAL: Adaptive Context Window ---
       // Flash models (simple tasks) need less context. Pro models (reasoning) need more.
@@ -320,6 +328,7 @@ class Agent {
       }
 
       // Initialize Stateless Chat Session
+      await reportProgress('Hydrating memory...');
       const session = this.client.chats.create({
         model: selectedModel,
         config: {
@@ -332,6 +341,7 @@ class Agent {
       // 2. Send Message to Gemini
       const timerLabel = `[Agent] Model Response (${selectedModel}) - ${Date.now()}`;
       console.time(timerLabel);
+      await reportProgress('Generating response...');
       const modelStart = Date.now();
       let response = await session.sendMessage({ message: message.parts || message.content });
       const modelDuration = Date.now() - modelStart;
@@ -397,6 +407,7 @@ class Agent {
 
         // PARALLEL EXECUTION STRATEGY
         console.log(`[Agent] Processing ${functionCalls.length} tool calls in parallel.`);
+        await reportProgress(`Executing ${functionCalls.length} tools...`);
 
         // 1. Start Global Thinking Timer (for the batch)
         let thinkTimer = setTimeout(async () => {

@@ -118,6 +118,11 @@ app.post('/chat', async (req, res) => {
     try {
       const executionSummary = await agent.processMessage(message, async (reply) => {
         replies.push(reply);
+      }, async (status) => {
+        // Report progress to Interface Service
+        if (message.metadata?.chatId) {
+          httpInterface.sendProgress(message.metadata.chatId, status);
+        }
       });
 
       // Use the captured 'replies' (from callbacks) as the source of truth for what to send back.

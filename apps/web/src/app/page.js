@@ -14,6 +14,7 @@ export default function ChatPage() {
   const [messages, setMessages] = useState([]);
   const [inputValue, setInputValue] = useState('');
   const [isWaiting, setIsWaiting] = useState(false);
+  const [thinkingStatus, setThinkingStatus] = useState('');
   const messagesEndRef = useRef(null);
 
   const addMessage = (msg) => {
@@ -70,6 +71,11 @@ export default function ChatPage() {
           console.error('Audio decode error', e);
         }
       }
+    }); // This is the correct closing for newSocket.on('agent:message', ...)
+
+    newSocket.on('agent:thinking', (data) => {
+      setIsWaiting(true);
+      setThinkingStatus(data.status);
     });
 
     // eslint-disable-next-line react-hooks/set-state-in-effect
@@ -189,33 +195,37 @@ export default function ChatPage() {
                 <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
                 <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
                 <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce"></div>
+                {thinkingStatus && (
+                  <span className="ml-3 text-xs text-zinc-400 font-mono animate-pulse">{thinkingStatus}</span>
+                )}
               </div>
             </div>
           </div>
+          </div>
         )}
 
-        <div ref={messagesEndRef} />
-      </div>
-
-      {/* Input */}
-      <div className="border-t border-zinc-800 bg-zinc-950 p-4">
-        <form onSubmit={handleSendMessage} className="mx-auto flex max-w-4xl gap-3">
-          <input
-            type="text"
-            value={inputValue}
-            onChange={(e) => setInputValue(e.target.value)}
-            placeholder="Type a message..."
-            className="flex-1 rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
-          />
-          <button
-            type="submit"
-            disabled={!isConnected || !inputValue.trim()}
-            className="flex items-center justify-center rounded-xl bg-indigo-600 px-5 text-white transition-colors hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            <Send className="h-5 w-5" />
-          </button>
-        </form>
-      </div>
+      <div ref={messagesEndRef} />
     </div>
+
+      {/* Input */ }
+  <div className="border-t border-zinc-800 bg-zinc-950 p-4">
+    <form onSubmit={handleSendMessage} className="mx-auto flex max-w-4xl gap-3">
+      <input
+        type="text"
+        value={inputValue}
+        onChange={(e) => setInputValue(e.target.value)}
+        placeholder="Type a message..."
+        className="flex-1 rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+      />
+      <button
+        type="submit"
+        disabled={!isConnected || !inputValue.trim()}
+        className="flex items-center justify-center rounded-xl bg-indigo-600 px-5 text-white transition-colors hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+      >
+        <Send className="h-5 w-5" />
+      </button>
+    </form>
+  </div>
+    </div >
   );
 }

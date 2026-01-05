@@ -130,6 +130,25 @@ app.post('/send', async (req, res) => {
   }
 });
 
+// Endpoint for Agent to report progress (e.g. "Routing...", "Thinking...")
+app.post('/progress', async (req, res) => {
+  try {
+    const { chatId, status } = req.body;
+    console.log(`[Interfaces] Progress Update for ${chatId}: ${status}`);
+
+    if (chatId) {
+      io.to(chatId).emit('agent:thinking', {
+        status: status,
+        timestamp: new Date().toISOString()
+      });
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[Interfaces] Progress Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 if (require.main === module) {
   server.listen(port, () => {
     console.log(`Interfaces listening at http://localhost:${port}`);

@@ -80,7 +80,6 @@ class TelegramService {
 
       console.log(`[Telegram] Received from ${userId}: ${text}`);
 
-      // Indicate we are thinking
       this.startTyping(chatId);
 
       const message = createUserMessage(text, 'telegram', userId);
@@ -115,7 +114,6 @@ class TelegramService {
 
       console.log(`[Telegram] Received voice from ${userId}`);
 
-      // Indicate we are thinking
       this.startTyping(chatId);
 
       // Create a message with parts
