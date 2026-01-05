@@ -10,7 +10,9 @@ jest.mock('../src/git-ops', () => {
       commitAndPush: jest.fn().mockImplementation(async (msg) => {
         if (msg === 'fail validation') return { success: false, error: 'Syntax Error' };
         return { success: true, message: 'Mock Pushed' };
-      })
+      }),
+      workDir: '/tmp/mock-source',
+      run: jest.fn().mockResolvedValue('hash|mock subject')
     }))
   };
 });

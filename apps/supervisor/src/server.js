@@ -51,7 +51,10 @@ if (gitRemote && githubPat && gitRemote.startsWith('https://')) {
   console.log(`[Supervisor] Configured remote: ${gitRemote}`);
 }
 
-git.configure(gitName, gitEmail, gitRemote).catch(console.error);
+git.configure(gitName, gitEmail, gitRemote).then(() => {
+  console.log('[Supervisor] Git configured. Starting monitor...');
+  monitor.start();
+}).catch(console.error);
 
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', service: 'supervisor' });

@@ -1,5 +1,7 @@
 const { exec } = require('child_process');
 const util = require('util');
+const fs = require('fs');
+const path = require('path');
 const execAsync = util.promisify(exec);
 
 class Monitor {
@@ -26,6 +28,9 @@ class Monitor {
         console.log(`[Monitor] Agent URL: ${this.agentUrl}`);
         if (this.slackWebhookUrl) console.log('[Monitor] Slack alerting enabled.');
 
+        // Startup Notification
+        this.notifyStartup();
+
         // Initial check
         this.check();
 
@@ -34,6 +39,48 @@ class Monitor {
 
     stop() {
         if (this.intervalId) clearInterval(this.intervalId);
+    }
+
+    async notifyStartup() {
+        if (!this.slackWebhookUrl) return;
+
+        try {
+            const trackingFile = path.join(this.git.workDir, '.last_boot_commit');
+            
+            // Get current commit info
+            // %H: commit hash, %s: subject
+            // Using git run to ensure we are in the correct directory
+            const commitInfo = await this.git.run('git log -1 --pretty=format:"%H|%s"');
+            
+            if (!commitInfo) {
+                console.warn('[Monitor] Could not retrieve git info for startup notification.');
+                return;
+            }
+
+            const [currentHash, ...msgParts] = commitInfo.split('|');
+            const currentMessage = msgParts.join('|');
+
+            let lastHash = '';
+            if (fs.existsSync(trackingFile)) {
+                lastHash = fs.readFileSync(trackingFile, 'utf-8').trim();
+            }
+
+            if (currentHash !== lastHash) {
+                // New commit or first run
+                const text = `🚀 *Deedee Rebooted* (New Update)\n*Commit:* ${currentMessage}\n*Hash:* \`${currentHash.substring(0, 7)}\``;
+                await this.alertUser(text);
+                
+                // Save the new hash so we don't notify again for this commit
+                fs.writeFileSync(trackingFile, currentHash);
+            } else {
+                // Same commit, just a restart
+                const text = `♻️ *Deedee Rebooted* (No Changes)\nI'm back online!`;
+                await this.alertUser(text);
+            }
+
+        } catch (err) {
+            console.error('[Monitor] Startup notification failed:', err.message);
+        }
     }
 
     async check() {
