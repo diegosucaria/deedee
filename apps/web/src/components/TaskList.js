@@ -143,6 +143,15 @@ export default function TaskList({ tasks }) {
                         </div>
 
                         <form ref={internalFormRef} action={async (formData) => {
+                            // Timezone Fix: Convert local input time to properly formatted ISO string (UTC)
+                            const expiresLocal = formData.get('expiresAt');
+                            if (expiresLocal) {
+                                const dateObj = new Date(expiresLocal);
+                                if (!isNaN(dateObj.getTime())) {
+                                    formData.set('expiresAt', dateObj.toISOString());
+                                }
+                            }
+
                             await formAction(formData);
                             setEditingTask(null);
                             setCustomCron('');
@@ -216,7 +225,11 @@ export default function TaskList({ tasks }) {
                                 <input
                                     type="datetime-local"
                                     name="expiresAt"
-                                    defaultValue={editingTask?.expiresAt ? new Date(editingTask.expiresAt).toISOString().slice(0, 16) : ''}
+                                    defaultValue={editingTask?.expiresAt ? (() => {
+                                        const d = new Date(editingTask.expiresAt);
+                                        const offset = d.getTimezoneOffset() * 60000;
+                                        return new Date(d.getTime() - offset).toISOString().slice(0, 16);
+                                    })() : ''}
                                     className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-mono text-sm"
                                 />
                             </div>
