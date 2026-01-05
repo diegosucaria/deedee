@@ -131,15 +131,18 @@ class Monitor {
             if (!res.ok) throw new Error(`Deep Check HTTP ${res.status}`);
 
             const data = await res.json();
-            // We expect the agent to reply with something like "PONG" or "I am here" if we programmed it 
-            // OR we just check if it returns VALID JSON with text.
-            // If the agent creates an empty response or error text, we catch it.
+            
+            // Check for valid response.
+            // Support both simplified { text: "..." } and standard { replies: [{ content: "..." }] }
+            const hasText = data && data.text && data.text.length > 0;
+            const hasReplies = data && data.replies && Array.isArray(data.replies) && data.replies.length > 0;
 
-            if (!data || !data.text || data.text.length === 0) {
+            if (!hasText && !hasReplies) {
                 throw new Error('Deep Check: Empty response from Agent');
             }
 
-            console.log(`[Monitor] Deep Check Passed. Agent replied: "${data.text.substring(0, 20)}..."`);
+            const replyContent = hasText ? data.text : data.replies[0].content;
+            console.log(`[Monitor] Deep Check Passed. Agent replied: "${(replyContent || '').substring(0, 20)}..."`);
         } catch (err) {
             console.error(`[Monitor] Deep Logic Check FAILED: ${err.message}`);
             // Force a failure count increment to trigger potential rollback if this persists

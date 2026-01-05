@@ -18,6 +18,10 @@ jest.mock('../src/git-ops', () => {
 });
 
 describe('Supervisor API', () => {
+  beforeAll(() => {
+    process.env.SUPERVISOR_TOKEN = 'test-token';
+  });
+
   test('GET /health', async () => {
     const res = await request(app).get('/health');
     expect(res.statusCode).toBe(200);
@@ -27,6 +31,7 @@ describe('Supervisor API', () => {
   test('POST /cmd/commit success', async () => {
     const res = await request(app)
       .post('/cmd/commit')
+      .set('x-supervisor-token', 'test-token')
       .send({ message: 'test commit', files: ['.'] });
     
     expect(res.statusCode).toBe(200);
@@ -36,6 +41,7 @@ describe('Supervisor API', () => {
   test('POST /cmd/commit failure (validation)', async () => {
     const res = await request(app)
       .post('/cmd/commit')
+      .set('x-supervisor-token', 'test-token')
       .send({ message: 'fail validation', files: ['.'] });
     
     expect(res.statusCode).toBe(200); // 200 OK because we return error in body
