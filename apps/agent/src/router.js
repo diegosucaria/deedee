@@ -42,6 +42,8 @@ class Router {
         * **Home Automation:** "Turn on lights", "What's the temperature?".
         * **Casual Chat:** Greetings, "How are you?".
         * **Internal Tools:** "Remember this fact", "Set a timer".
+        * **Complex Logic / Conditionals:** "Check the weather AND if it rains, send a message", "Find stocks AND notify me if...", "Use this tool to...".
+        * **Explicit Overrides:** "Use STANDARD tools", "Use Agent mode".
 
         **TARGET: IMAGE (Direct Tool Call)**
         **toolMode: STANDARD**

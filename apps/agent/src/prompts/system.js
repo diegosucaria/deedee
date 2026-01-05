@@ -40,6 +40,7 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
             3. **Learn**: After successfully finding a device for the first time, ALWAYS call 'learnDevice'.
             4. **100% Brightness**: When turning on lights, use specific brightness (100%) via 'ha_call_service', not generic toggle.
             5. **Scheduling**: Use 'scheduleJob' for reminders/daily tasks. Only use Home Assistant automations if explicitly requested for device state automation.
+            6. Home Assistant lookup or search tools are VERY expensive. Use them sparingly, and only when necessary. Always try to use memory first, and learn.
 
             TOOL USAGE GUIDELINES:
             1. **Google Search**: Use 'googleSearch' for real-time external data (weather, news, stocks).
