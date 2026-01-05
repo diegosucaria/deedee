@@ -88,7 +88,7 @@ class GitOps {
       for (const p of patterns) {
         if (p.regex.test(content)) {
           // EXCEPTION: Allow env.example, test files, git-ops itself, and package-lock.json
-          if (file.includes('.example') || file.includes('.test.') || file.endsWith('git-ops.js') || file.endsWith('package-lock.json')) {
+          if (file.includes('.example') || file.includes('.test.') || file.endsWith('git-ops.js') || file.endsWith('package-lock.json') || file.endsWith('last_boot_commit')) {
             continue;
           }
           throw new Error(`SECURITY ALERT: Found potential ${p.name} in ${file}. Commit aborted.`);

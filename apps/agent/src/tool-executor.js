@@ -98,46 +98,83 @@ class ToolExecutor {
         }
 
         if (name === 'scheduleJob') {
-            // Capture context
+            const { name, cron, task } = args;
+
+            // Capture the context of whoever called this tool
             const targetChatId = context.message.metadata?.chatId;
             const targetSource = context.message.source;
 
-            scheduler.scheduleJob(args.name, args.cron, async () => {
-                console.log(`[Scheduler] Executing task: ${args.task}`);
+            const callback = async () => {
+                // Use captured context or fall back to defaults
+                const meta = { chatId: targetChatId || `scheduled_${name}_${Date.now()}` };
 
-                // Use captured context or fallbacks
-                const msgSource = targetSource || 'scheduler';
-                // If we have a targetChatId, use it (maybe append timestamp to make it unique per run but related)
-                // Actually, for Telegram, we need the exact chatId to reply. 
-                // But for "new" conversations, we might want a unique ID.
-                // Let's rely on the interface to route correctly based on chatId.
-                const msgMeta = {
-                    chatId: targetChatId || `scheduled_${args.name}_${Date.now()}`
-                };
+                await processMessage({
+                    role: 'user',
+                    content: `Scheduled Task: ${task}`,
+                    source: targetSource || 'scheduler',
+                    metadata: meta
+                }, async (reply) => {
+                    if (this.services.interface) {
+                        await this.services.interface.send(reply);
+                    }
+                });
+            };
 
-                // Use the passed processMessage callback (bound to Agent instance)
-                if (processMessage) {
-                    await processMessage({
-                        role: 'user',
-                        content: `Scheduled Task: ${args.task}`,
-                        source: msgSource,
-                        metadata: msgMeta
-                    }, async (reply) => {
-                        if (this.services.interface) {
-                            await this.services.interface.send(reply);
-                        }
-                    });
-                }
-            }, {
+            scheduler.scheduleJob(name, cron, callback, {
                 persist: true,
                 taskType: 'agent_instruction',
                 payload: {
-                    task: args.task,
+                    task,
                     targetChatId,
                     targetSource
                 }
             });
-            return { success: true, info: `Job '${args.name}' scheduled for '${args.cron}'` };
+            return { success: true, info: `Job '${name}' scheduled for '${cron}'` };
+        }
+
+        if (name === 'setReminder') {
+            const { time, message: reminderMessage } = args;
+            const date = new Date(time);
+            if (isNaN(date.getTime())) return { error: "Invalid date format." };
+            if (date < new Date()) return { error: "Time must be in the future." };
+
+            const name = `reminder_${date.getTime()}_${Math.floor(Math.random() * 1000)}`;
+            const targetChatId = context.message.metadata?.chatId;
+            const targetSource = context.message.source;
+
+            const callback = async () => {
+                const meta = { chatId: targetChatId || `reminder_${name}` };
+
+                // For reminders, we might want to just SEND the message directly instead of "processing" it as a user input?
+                // But the instruction says "Agent will message the user". 
+                // If we treat it as processMessage, the agent will receive 'Remind me: Buy milk' and then say 'Okay don't forget buy milk'.
+                // Ideally, we want the agent to proactively say "Reminder: Buy milk".
+                // Let's force the agent to Generated Output.
+
+                await processMessage({
+                    role: 'user',
+                    content: `System Instruction: It is now ${new Date().toLocaleTimeString()}. The user set a reminder: "${reminderMessage}". Please explicitly remind them now.`,
+                    source: targetSource || 'scheduler',
+                    metadata: meta
+                }, async (reply) => {
+                    if (this.services.interface) {
+                        await this.services.interface.send(reply);
+                    }
+                });
+            };
+
+            scheduler.scheduleOneOff(name, date, callback, {
+                persist: true,
+                taskType: 'agent_instruction',
+                payload: {
+                    task: `Reminder: ${reminderMessage}`,
+                    isOneOff: true,
+                    targetChatId,
+                    targetSource
+                }
+            });
+
+            return { success: true, info: `Reminder set for ${date.toLocaleString()}` };
         }
 
         if (name === 'listJobs') {

@@ -18,6 +18,7 @@ jest.mock('../src/db', () => ({
         getKey: jest.fn(),
         addGoal: jest.fn(),
         checkLimit: jest.fn().mockReturnValue(0),
+        getPendingGoals: jest.fn().mockReturnValue([]), // Added
         logUsage: jest.fn(),
         logMetric: jest.fn(),
         logTokenUsage: jest.fn(),

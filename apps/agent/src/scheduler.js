@@ -19,30 +19,49 @@ class Scheduler {
             this.jobs[name].cancel();
         }
 
-        const job = schedule.scheduleJob(cronExpression, async () => {
+        // Handle Date object or ISO string for one-off jobs
+        let rule = cronExpression;
+        if (options.oneOff || !isNaN(Date.parse(cronExpression))) {
+            rule = new Date(cronExpression);
+        }
+
+        const job = schedule.scheduleJob(rule, async () => {
             console.log(`[Scheduler] Running job: ${name}`);
             try {
                 await callback();
             } catch (err) {
                 console.error(`[Scheduler] Job ${name} failed:`, err);
             }
+
+            // Auto-cleanup one-off jobs
+            if (options.oneOff) {
+                console.log(`[Scheduler] One-off job '${name}' completed. Cleaning up...`);
+                delete this.jobs[name];
+                this.agent.db.deleteScheduledJob(name);
+            }
         });
 
+        if (!job) {
+            console.error(`[Scheduler] Failed to schedule job '${name}'. Rule: ${rule}`);
+            return;
+        }
+
         this.jobs[name] = job;
-        this.jobs[name].metadata = { name, cronExpression, createdAt: new Date() };
+        this.jobs[name].metadata = { name, cronExpression, createdAt: new Date() }; // cronExpression here might be ISO string
 
         // Ensure payload is stored in memory for API access
         this.jobs[name].metadata.payload = options.payload || {};
+        if (options.oneOff) this.jobs[name].metadata.payload.isOneOff = true;
 
         if (options.persist) {
             this.agent.db.saveScheduledJob({
                 name,
-                cronExpression,
+                cronExpression: typeof cronExpression === 'string' ? cronExpression : cronExpression.toISOString(),
                 taskType: options.taskType || 'custom',
-                payload: options.payload || {}
+                payload: { ...options.payload, isOneOff: !!options.oneOff }
             });
         }
-        console.log(`[Scheduler] Job '${name}' scheduled with rule: ${cronExpression}`);
+        console.log(`[Scheduler] Job '${name}' scheduled. OneOff: ${!!options.oneOff}`);
     }
 
     cancelJob(name) {
@@ -61,6 +80,12 @@ class Scheduler {
         const jobs = this.agent.db.getScheduledJobs();
         for (const jobData of jobs) {
             const { name, cronExpression, taskType, payload } = jobData;
+
+            // Skip system jobs (let ensureSystemJobs recreate them with correct callbacks/logic)
+            if (payload && payload.isSystem) {
+                console.log(`[Scheduler] Skipping system job '${name}' load (will be ensured later).`);
+                continue;
+            }
 
             let callback;
             if (taskType === 'agent_instruction' && payload.task) {
@@ -146,10 +171,17 @@ class Scheduler {
                 this.scheduleJob(sysJob.name, sysJob.cron, callback, {
                     persist: true,
                     taskType: 'agent_instruction',
-                    payload: { task: sysJob.task }
+                    payload: { task: sysJob.task, isSystem: true }
                 });
             }
         }
+    }
+
+    /**
+     * Schedule a one-off reminder.
+     */
+    scheduleOneOff(name, date, callback, options = {}) {
+        this.scheduleJob(name, date, callback, { ...options, oneOff: true });
     }
 }
 

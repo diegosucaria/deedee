@@ -83,21 +83,30 @@ Everything is customizable via environment variables. Like which models to use.
 - **🏠 Smart Home Intelligence**:
     - **Entity Memory**: Remembers your device names ("hallway light" → `light.hallway_main`).
     - **Adaptive Control**: Smart logic (e.g., "Turn On" always sets brightness to 100%).
-- **⚡ Productivity**:
-    - **Smart Notes**: "Note to self: buy milk" saves to a daily markdown journal.
-    - **Morning Briefing**: `GET /v1/briefing` generates a concise audio-ready summary of your day.
-- **🛑 Safety**: Global `/stop` command instantly kills any runaway agent loops.
+-   **Goals System**: Long-term memory for multi-step projects ("Refactor auth", "Plan vacation"). Persists across restarts.
+-   **Security & backups**:
+    -   **Nightly Backups**: Automatically zips and uploads data to Google Cloud Storage.
+    -   **System Jobs**: Protected maintenance tasks (backup, consolidation) that cannot be accidentally deleted by the agent.
+-   **⚡ Productivity**:
+    -   **Smart Notes**: "Note to self: buy milk" saves to a daily markdown journal.
+    -   **Second Brain**: Searchable journal entries (`readJournal`, `searchJournal`).
+    -   **Smart Reminders**: "Remind me to call Mom at 5pm" (One-off, auto-deleting tasks).
+    -   **Morning Briefing**: `GET /v1/briefing` generates a concise audio-ready summary of your day.
+-   **🛑 Safety**: Global `/stop` command instantly kills any runaway agent loops.
 
 ---
 
-## � Tools & Capabilities
+##  Tools & Capabilities
 
 Deedee comes equipped with a suite of tools, both internal and via MCP.
 
 ### Internal Tools
 -   **System**: `runShellCommand`, `readFile`, `writeFile`, `listDirectory`.
 -   **Git/Self-Improvement**: `pullLatestChanges`, `commitAndPush`, `rollbackLastChange`.
--   **Memory**: `rememberFact`, `getFact`, `addGoal`, `completeGoal`.
+-   **Memory**: `rememberFact`, `getFact`.
+-   **Goals**: `addGoal`, `completeGoal` (Track long-running tasks).
+-   **Journal**: `logJournal`, `readJournal`, `searchJournal` (Second Brain).
+-   **Scheduling**: `scheduleJob` (Cron), `setReminder` (One-off).
 -   **Communication**: `replyWithAudio` (Native TTS), `sendEmail`.
 -   **Productivity**: `listEvents` (Calendar).
 

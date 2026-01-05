@@ -203,6 +203,18 @@ const toolDefinitions = [
           required: ["name"]
         }
       },
+      {
+        name: "setReminder",
+        description: "Set a one-time reminder for a specific date/time. The agent will message the user with the reminder content at the specified time.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            time: { type: "STRING", description: "ISO 8601 Date String (e.g. '2025-12-31T23:59:00'). MUST be in the future." },
+            message: { type: "STRING", description: "The content of the reminder (e.g. 'Buy milk', 'Call Mom')." }
+          },
+          required: ["time", "message"]
+        }
+      },
       // Image Generation
       {
         name: "generateImage",

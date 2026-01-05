@@ -29,6 +29,15 @@ Deedee uses a local SQLite database to maintain state across restarts. This ensu
     1.  Before starting a complex task (like an update), the Agent should add a goal.
     2.  On system boot, the Agent checks for `pending` goals.
     3.  If found, it knows *why* it is running and can resume work.
+    
+### 4. Journal (Second Brain)
+- **Files**: `/app/data/journal/YYYY/MM/DD.md`
+- **Content**: Daily logs, summaries, and notes.
+- **Agent Access**:
+    - `logJournal(text)`: Append to today's entry.
+    - `readJournal(date)`: Read a specific day.
+    - `searchJournal(query)`: Semantic/Text search across all entries.
+- **Automation**: `nightly_consolidation` job summarizes chat logs into the journal at midnight.
 
 ## Self-Improvement Workflow
 1.  **Plan**: Agent decides to add a feature.

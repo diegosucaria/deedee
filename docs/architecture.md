@@ -20,6 +20,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - **Safety Guard**: Verifies sensitive tool usage (e.g., shell commands) and blocks ambiguous dictation commands (`iphone` source).
     - **Google Search Split**: To bypass model limitations (Gemini 3 Preview vs Tools), general search queries are executed via a side-channel call to a Flash/Pro model (`WORKER_GOOGLE_SEARCH`) instead of the main agent model.
     - **MCP Manager**: Orchestrates tools via the Model Context Protocol.
+    - **Backup Manager**: Automates nightly zipping and uploading of `/app/data` to Google Cloud Storage with retention policy.
 
 ### 2. Supervisor (`apps/supervisor`)
 - **Role**: The Immune System.

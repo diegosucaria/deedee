@@ -3,7 +3,7 @@
 // On Server: Use env var or Docker DNS
 const API_URL = typeof window === 'undefined'
     ? (process.env.API_URL || 'http://api:3001')
-    : '/api/proxy';
+    : '/api';
 
 export { API_URL };
 

@@ -60,7 +60,7 @@ export default function StatsClient() {
             setUsageData(usageJson);
 
         } catch (e) {
-            console.error(e);
+            console.error('[StatsClient] Fetch Error:', e);
         } finally {
             setLoading(false);
         }
