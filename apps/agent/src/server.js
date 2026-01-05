@@ -450,11 +450,30 @@ app.post('/internal/aliases', (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.get('/internal/stats/cost-trend', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const limit = parseInt(req.query.limit || '100', 10);
+    const trend = agent.db.getTokenUsageTrend(limit);
+    res.json(trend);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.delete('/internal/aliases/:alias', (req, res) => {
   if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
   try {
     agent.db.deleteAlias(req.params.alias);
     res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- Logs ---
+app.get('/internal/logs/jobs', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const limit = parseInt(req.query.limit || '50', 10);
+    const logs = agent.db.getJobLogs(limit);
+    res.json({ logs });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

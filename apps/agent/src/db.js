@@ -516,6 +516,15 @@ class AgentDB {
     return stmt.all(limit).reverse();
   }
 
+  getTokenUsageTrend(limit = 100) {
+    const stmt = this.db.prepare(`
+      SELECT timestamp, estimated_cost, total_tokens, model 
+      FROM token_usage 
+      ORDER BY timestamp DESC LIMIT ?
+    `);
+    return stmt.all(limit).reverse();
+  }
+
   getTokenUsageStats() {
     // Total tokens today
     const todayQuery = this.db.prepare(`

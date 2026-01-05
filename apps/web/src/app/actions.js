@@ -168,3 +168,12 @@ export async function getStatsUsage() {
         return null;
     }
 }
+
+export async function getStatsCostTrend() {
+    try {
+        return await fetchAPI('/v1/stats/cost-trend');
+    } catch (error) {
+        console.error('getStatsCostTrend Error:', error);
+        return [];
+    }
+}

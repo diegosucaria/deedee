@@ -1,12 +1,13 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { LatencyChart, TokenEfficiencyChart } from '@/components/InteractiveCharts';
-import { RefreshCw, Activity, Cpu } from 'lucide-react';
-import { getStatsLatency, getStatsUsage } from '../actions';
+import { LatencyChart, TokenEfficiencyChart, CostChart } from '@/components/InteractiveCharts';
+import { RefreshCw, Activity, Cpu, DollarSign } from 'lucide-react';
+import { getStatsLatency, getStatsUsage, getStatsCostTrend } from '../actions';
 
 export default function StatsClient() {
     const [latencyData, setLatencyData] = useState([]);
+    const [tokenTrendData, setTokenTrendData] = useState([]);
     const [usageData, setUsageData] = useState(null);
     const [loading, setLoading] = useState(true);
 
@@ -59,6 +60,18 @@ export default function StatsClient() {
 
             setLatencyData(chartData);
 
+            // Fetch Token Trend (Cost & Tokens)
+            const trend = await getStatsCostTrend();
+            // Process trend for charts.
+            // DB returns: { timestamp, estimated_cost, total_tokens, model }
+            const mappedTrend = trend.map(t => ({
+                timestamp: t.timestamp,
+                estimated_cost: t.estimated_cost,
+                tokens: t.total_tokens
+            })).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+            setTokenTrendData(mappedTrend);
+
             // Fetch Usage
             const usageJson = await getStatsUsage();
             setUsageData(usageJson);
@@ -78,8 +91,6 @@ export default function StatsClient() {
 
     if (loading && !latencyData.length) return <div className="p-4 text-zinc-500 animate-pulse">Loading stats...</div>;
 
-    const tokenData = latencyData.map(d => ({ timestamp: d.timestamp, tokens: d.tokens || Math.floor(Math.random() * 500) })); // Placeholder for now until metrics stores tokens in same rows
-
     return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
             {/* Latency Chart */}
@@ -95,16 +106,29 @@ export default function StatsClient() {
                 </div>
             </div>
 
-            {/* Token Usage Chart (Simulated/Future) */}
+            {/* Token Efficiency Chart */}
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[300px] flex flex-col">
                 <div className="flex items-center justify-between mb-4">
                     <h2 className="text-xl font-semibold flex items-center gap-2 text-zinc-300">
                         <Cpu className="w-5 h-5 text-amber-400" />
-                        Cost Efficiency (Tokens/Msg)
+                        Token Efficiency (Tokens/Msg)
                     </h2>
                 </div>
                 <div className="flex-1 w-full min-h-[200px]">
-                    <TokenEfficiencyChart data={tokenData} />
+                    <TokenEfficiencyChart data={tokenTrendData} />
+                </div>
+            </div>
+
+            {/* Cost Chart */}
+            <div className="lg:col-span-2 bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[300px] flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold flex items-center gap-2 text-zinc-300">
+                        <DollarSign className="w-5 h-5 text-red-400" />
+                        Query Cost
+                    </h2>
+                </div>
+                <div className="flex-1 w-full min-h-[200px]">
+                    <CostChart data={tokenTrendData} />
                 </div>
             </div>
 

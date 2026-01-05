@@ -575,11 +575,7 @@ class Agent {
 
           // Log
           const logResult = JSON.stringify(result);
-          if (logResult.length > 200) {
-            console.log(`Tool Result (${executionName}) (Truncated):`, logResult.substring(0, 200) + '...');
-          } else {
-            console.log(`Tool Result (${executionName}):`, result);
-          }
+          console.log(`Tool Result (${executionName}):`, logResult);
 
           // Sanitize for DB AND Model to prevent Context Pollution
           let dbToolResult = result;

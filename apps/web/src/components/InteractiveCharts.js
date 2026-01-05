@@ -29,12 +29,14 @@ export function LatencyChart({ data }) {
             <LineChart
                 data={data}
                 margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                syncId="synced-charts"
             >
                 <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
                 <XAxis
                     dataKey="timestamp"
                     tick={false}
                     axisLine={false}
+                    tickFormatter={(ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 />
                 <YAxis
                     stroke="#71717a"
@@ -76,6 +78,44 @@ export function LatencyChart({ data }) {
     );
 }
 
+export function CostChart({ data }) {
+    if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-zinc-600">No Data</div>;
+
+    return (
+        <ResponsiveContainer width="100%" height="100%">
+            <AreaChart
+                data={data}
+                margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                syncId="synced-charts"
+            >
+                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                <XAxis
+                    dataKey="timestamp"
+                    tick={false}
+                    axisLine={false}
+                    tickFormatter={(ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                />
+                <YAxis
+                    stroke="#71717a"
+                    fontSize={12}
+                    tickFormatter={(val) => `$${val.toFixed(4)}`}
+                />
+                <Tooltip content={<CustomTooltip />} />
+                <Legend />
+                <Area
+                    type="monotone"
+                    dataKey="estimated_cost"
+                    name="Cost ($)"
+                    stroke="#ef4444"
+                    fill="#ef4444"
+                    fillOpacity={0.1}
+                    unit=""
+                />
+            </AreaChart>
+        </ResponsiveContainer>
+    );
+}
+
 export function TokenEfficiencyChart({ data }) {
     if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-zinc-600">No Data</div>;
 
@@ -85,12 +125,14 @@ export function TokenEfficiencyChart({ data }) {
             <AreaChart
                 data={data}
                 margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                syncId="synced-charts"
             >
                 <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
                 <XAxis
                     dataKey="timestamp"
                     tick={false}
                     axisLine={false}
+                    tickFormatter={(ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 />
                 <YAxis
                     stroke="#71717a"
