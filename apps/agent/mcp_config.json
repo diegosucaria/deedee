@@ -1,10 +1,8 @@
 {
     "homeassistant": {
         "transport": "stdio",
-        "command": "uvx",
-        "args": [
-            "ha-mcp"
-        ],
+        "command": "ha-mcp",
+        "args": [],
         "env": {
             "HA_URL": "${HA_URL}",
             "HA_TOKEN": "${HA_TOKEN}"

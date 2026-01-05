@@ -11,6 +11,11 @@ class SchedulerExecutor extends BaseExecutor {
                 const targetChatId = message.metadata?.chatId;
                 const targetSource = message.source;
 
+                // NOTE: Recurring jobs (scheduleJob) generally do NOT retry on failure in the same way 
+                // because they run again on the next cron interval. 
+                // However, user asked for "one-offs" specifically. 
+                // We'll leave recurring jobs as-is for now (simple execution) unless requested otherwise.
+
                 const callback = async () => {
                     const meta = { chatId: targetChatId || `scheduled_${jobName}_${Date.now()}` };
                     await processMessage({
@@ -43,29 +48,71 @@ class SchedulerExecutor extends BaseExecutor {
                 const targetChatId = message.metadata?.chatId;
                 const targetSource = message.source;
 
-                const callback = async () => {
+                // Define the logic in a reusable way or inline it
+                const createCallback = (currentPayload) => async () => {
                     const meta = { chatId: targetChatId || `reminder_${parsedName}` };
-                    await processMessage({
-                        role: 'user',
-                        content: `System Instruction: It is now ${new Date().toLocaleTimeString()}. The user set a reminder: "${reminderMessage}". Please explicitly remind them now.`,
-                        source: targetSource || 'scheduler',
-                        metadata: meta
-                    }, async (reply) => {
-                        if (this.services.interface) {
-                            await this.services.interface.send(reply);
+                    console.log(`[Executor] Running Reminder (Retry: ${currentPayload.retryCount || 0})`);
+
+                    try {
+                        const summary = await processMessage({
+                            role: 'user',
+                            content: `System Instruction: It is now ${new Date().toLocaleTimeString()}. The user set a reminder: "${reminderMessage}". Please explicitly remind them now.`,
+                            source: targetSource || 'scheduler',
+                            metadata: meta
+                        }, async (reply) => {
+                            if (this.services.interface) {
+                                await this.services.interface.send(reply);
+                            }
+                        });
+
+                        // Verification
+                        // Reminders are successful if they produce ANY non-error output
+                        const failures = ["I received an empty response", "Error:", "No text response found"];
+                        const success = summary && summary.replies.some(r => r.content && !failures.some(f => r.content.includes(f)));
+
+                        if (!success) throw new Error("Agent execution failed.");
+
+                    } catch (error) {
+                        console.error(`[Executor] Reminder '${parsedName}' failed:`, error.message);
+                        const currentRetry = currentPayload.retryCount || 0;
+                        const MAX_RETRIES = 3;
+
+                        if (currentRetry < MAX_RETRIES) {
+                            // Reschedule
+                            scheduler.scheduleOneOff(parsedName, new Date(Date.now() + 60000), createCallback({ ...currentPayload, retryCount: currentRetry + 1 }), {
+                                persist: true,
+                                taskType: 'agent_instruction',
+                                payload: { ...currentPayload, retryCount: currentRetry + 1 }
+                            });
+                        } else {
+                            // Slack Alert
+                            if (process.env.SLACK_WEBHOOK_URL) {
+                                try {
+                                    await fetch(process.env.SLACK_WEBHOOK_URL, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                            text: `🚨 *Reminder Failure*\n\nFailed to deliver reminder: *"${reminderMessage}"*\nError: ${error.message}`
+                                        })
+                                    });
+                                } catch (e) { console.error(e); }
+                            }
                         }
-                    });
+                    }
                 };
 
-                scheduler.scheduleOneOff(parsedName, date, callback, {
+                const initialPayload = {
+                    task: `Reminder: ${reminderMessage}`,
+                    isOneOff: true,
+                    targetChatId,
+                    targetSource,
+                    retryCount: 0
+                };
+
+                scheduler.scheduleOneOff(parsedName, date, createCallback(initialPayload), {
                     persist: true,
                     taskType: 'agent_instruction',
-                    payload: {
-                        task: `Reminder: ${reminderMessage}`,
-                        isOneOff: true,
-                        targetChatId,
-                        targetSource
-                    }
+                    payload: initialPayload
                 });
                 return { success: true, info: `Reminder set for ${date.toLocaleString()}` };
             }
@@ -80,29 +127,66 @@ class SchedulerExecutor extends BaseExecutor {
                 const targetChatId = message.metadata?.chatId;
                 const targetSource = message.source;
 
-                const callback = async () => {
+                const createCallback = (currentPayload) => async () => {
                     const meta = { chatId: targetChatId || `task_${parsedName}` };
-                    await processMessage({
-                        role: 'user',
-                        content: `Scheduled Instruction: ${task}`,
-                        source: targetSource || 'scheduler',
-                        metadata: meta
-                    }, async (reply) => {
-                        if (this.services.interface) {
-                            await this.services.interface.send(reply);
+                    console.log(`[Executor] Running One-Off Task (Retry: ${currentPayload.retryCount || 0})`);
+
+                    try {
+                        const summary = await processMessage({
+                            role: 'user',
+                            content: `Scheduled Instruction: ${task}`,
+                            source: targetSource || 'scheduler',
+                            metadata: meta
+                        }, async (reply) => {
+                            if (this.services.interface) {
+                                await this.services.interface.send(reply);
+                            }
+                        });
+
+                        const failures = ["I received an empty response", "Error:", "No text response found"];
+                        const success = summary && summary.replies.some(r => r.content && !failures.some(f => r.content.includes(f)));
+
+                        if (!success) throw new Error("Agent execution failed.");
+
+                    } catch (error) {
+                        console.error(`[Executor] Task '${parsedName}' failed:`, error.message);
+                        const currentRetry = currentPayload.retryCount || 0;
+                        const MAX_RETRIES = 3;
+
+                        if (currentRetry < MAX_RETRIES) {
+                            scheduler.scheduleOneOff(parsedName, new Date(Date.now() + 60000), createCallback({ ...currentPayload, retryCount: currentRetry + 1 }), {
+                                persist: true,
+                                taskType: 'agent_instruction',
+                                payload: { ...currentPayload, retryCount: currentRetry + 1 }
+                            });
+                        } else {
+                            if (process.env.SLACK_WEBHOOK_URL) {
+                                try {
+                                    await fetch(process.env.SLACK_WEBHOOK_URL, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                            text: `🚨 *Task Failure Alert*\n\nTask *"${task}"* failed after 3 retries.\nError: ${error.message}`
+                                        })
+                                    });
+                                } catch (e) { console.error(e); }
+                            }
                         }
-                    });
+                    }
                 };
 
-                scheduler.scheduleOneOff(parsedName, date, callback, {
+                const initialPayload = {
+                    task: task,
+                    isOneOff: true,
+                    targetChatId,
+                    targetSource,
+                    retryCount: 0
+                };
+
+                scheduler.scheduleOneOff(parsedName, date, createCallback(initialPayload), {
                     persist: true,
                     taskType: 'agent_instruction',
-                    payload: {
-                        task: task,
-                        isOneOff: true,
-                        targetChatId,
-                        targetSource
-                    }
+                    payload: initialPayload
                 });
                 return { success: true, info: `Task '${task}' scheduled for ${date.toLocaleString()}` };
             }

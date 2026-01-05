@@ -2,8 +2,9 @@
 
 import { useFormState } from 'react-dom';
 import { cancelTask, createTask, runTask } from '@/app/actions';
-import { Trash2, Clock, PlayCircle, Plus, Pencil, Save, X } from 'lucide-react';
+import { Trash2, Clock, PlayCircle, Plus, Pencil, Save, X, RefreshCw } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
+import { useRouter } from 'next/navigation';
 
 const initialState = { success: false, error: null };
 
@@ -16,11 +17,20 @@ const PRESETS = {
 };
 
 export default function TaskList({ tasks }) {
+    const router = useRouter();
     const [state, formAction] = useFormState(createTask, initialState);
     const [editingTask, setEditingTask] = useState(null);
     const [scheduleType, setScheduleType] = useState('custom');
     const [customCron, setCustomCron] = useState('');
     const formRef = useRef(null);
+
+    // Auto-refresh every 5 seconds
+    useEffect(() => {
+        const interval = setInterval(() => {
+            router.refresh();
+        }, 5000);
+        return () => clearInterval(interval);
+    }, [router]);
 
     // Effect to detect preset when editing or creating
     useEffect(() => {
@@ -62,31 +72,56 @@ export default function TaskList({ tasks }) {
     const reminders = tasks.filter(t => t.isOneOff && !t.isSystem); // Reminders
     const recurringTasks = tasks.filter(t => !t.isOneOff && !t.isSystem); // User schedules
 
+    const handleRunNow = async (name) => {
+        // Optimistic UI could be added here, but for now just run
+        await runTask(name);
+        // Refresh immediately to show update if any
+        router.refresh();
+    };
+
+    const renderBadge = (count) => {
+        if (count === 0) return null;
+        return (
+            <span className="ml-2 px-1.5 py-0.5 text-[10px] font-bold bg-indigo-500/20 text-indigo-300 rounded-full border border-indigo-500/30">
+                {count}
+            </span>
+        );
+    };
+
     return (
         <div className="space-y-8">
             {/* Tabs */}
-            <div className="flex items-center gap-4 border-b border-zinc-800 pb-2">
+            <div className="flex items-center gap-4 border-b border-zinc-800 pb-2 overflow-x-auto">
                 <button
                     onClick={() => setActiveTab('recurring')}
-                    className={`pb-2 px-1 text-sm font-medium transition-colors relative ${activeTab === 'recurring' ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                    className={`pb-2 px-1 text-sm font-medium transition-colors relative whitespace-nowrap flex items-center ${activeTab === 'recurring' ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
                 >
                     Recurring Schedules
+                    {renderBadge(recurringTasks.length)}
                     {activeTab === 'recurring' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-indigo-500" />}
                 </button>
                 <button
                     onClick={() => setActiveTab('oneoff')}
-                    className={`pb-2 px-1 text-sm font-medium transition-colors relative ${activeTab === 'oneoff' ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                    className={`pb-2 px-1 text-sm font-medium transition-colors relative whitespace-nowrap flex items-center ${activeTab === 'oneoff' ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
                 >
                     Reminders & One-Offs
+                    {renderBadge(reminders.length)}
                     {activeTab === 'oneoff' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-indigo-500" />}
                 </button>
                 <button
                     onClick={() => setActiveTab('system')}
-                    className={`pb-2 px-1 text-sm font-medium transition-colors relative ${activeTab === 'system' ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                    className={`pb-2 px-1 text-sm font-medium transition-colors relative whitespace-nowrap flex items-center ${activeTab === 'system' ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
                 >
                     System Jobs
+                    {renderBadge(systemTasks.length)}
                     {activeTab === 'system' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-indigo-500" />}
                 </button>
+
+                <div className="ml-auto">
+                    <button onClick={() => router.refresh()} className="p-2 text-zinc-500 hover:text-white transition-colors" title="Refresh">
+                        <RefreshCw className="h-4 w-4" />
+                    </button>
+                </div>
             </div>
 
             {activeTab === 'recurring' && (
@@ -111,6 +146,7 @@ export default function TaskList({ tasks }) {
                             setCustomCron('');
                             setScheduleType('custom');
                             formRef.current?.reset();
+                            // Refresh logic handled by revalidatePath in action
                         }} className="grid md:grid-cols-2 gap-4">
                             <input
                                 type="text"
@@ -230,12 +266,7 @@ export default function TaskList({ tasks }) {
                                         </span>
 
                                         <button
-                                            onClick={async () => {
-                                                if (confirm(`Run schedule '${job.name}' now?`)) {
-                                                    await runTask(job.name);
-                                                    alert('Triggered!');
-                                                }
-                                            }}
+                                            onClick={() => handleRunNow(job.name)}
                                             className="text-zinc-500 hover:text-emerald-400 hover:bg-emerald-500/10 px-2 py-1 rounded transition-colors flex items-center gap-1"
                                             title="Run Now"
                                         >
@@ -245,6 +276,7 @@ export default function TaskList({ tasks }) {
                                         {!job.isSystem && (
                                             <button
                                                 onClick={() => {
+                                                    // Keep confirmation for delete as it is destructive
                                                     if (confirm(`Cancel schedule '${job.name}'?`)) cancelTask(job.name);
                                                 }}
                                                 className="text-zinc-500 hover:text-red-400 hover:bg-red-500/10 px-2 py-1 rounded transition-colors flex items-center gap-1"
@@ -293,6 +325,14 @@ export default function TaskList({ tasks }) {
                                         <span className="text-zinc-500 text-xs font-mono">{job.name}</span>
                                     </div>
                                 </div>
+
+                                <button
+                                    onClick={() => handleRunNow(job.name)}
+                                    className="p-2 text-zinc-500 hover:text-emerald-400 hover:bg-emerald-500/10 rounded-lg transition-colors"
+                                    title="Run Now"
+                                >
+                                    <PlayCircle className="h-5 w-5" />
+                                </button>
 
                                 <button
                                     onClick={() => {
@@ -347,12 +387,7 @@ export default function TaskList({ tasks }) {
                                     </span>
                                     <div className="flex items-center gap-2">
                                         <button
-                                            onClick={async () => {
-                                                if (confirm(`Run system task '${job.name}' now?`)) {
-                                                    await runTask(job.name);
-                                                    alert('Triggered!');
-                                                }
-                                            }}
+                                            onClick={() => handleRunNow(job.name)}
                                             className="text-zinc-500 hover:text-emerald-400 hover:bg-emerald-500/10 px-2 py-1 rounded transition-colors flex items-center gap-1"
                                             title="Run Now"
                                         >

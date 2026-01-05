@@ -90,24 +90,74 @@ class Scheduler {
             let callback;
             if (taskType === 'agent_instruction' && payload.task) {
                 // Reconstruct agent instruction callback
+                // Reconstruct agent instruction callback
                 callback = async () => {
-                    console.log(`[Scheduler] Executing persisted task: ${payload.task}`);
+                    console.log(`[Scheduler] Executing persisted task: ${payload.task} (Retry: ${payload.retryCount || 0})`);
 
                     const msgSource = payload.targetSource || 'scheduler';
                     const msgMeta = {
                         chatId: payload.targetChatId || `scheduled_${name}_${Date.now()}`
                     };
 
-                    await this.agent.processMessage({
-                        role: 'user',
-                        content: `Scheduled Task: ${payload.task}`,
-                        source: msgSource,
-                        metadata: msgMeta
-                    }, async (reply) => {
-                        if (this.agent.interface) {
-                            await this.agent.interface.send(reply);
+                    try {
+                        const summary = await this.agent.processMessage({
+                            role: 'user',
+                            content: `Scheduled Task: ${payload.task}`,
+                            source: msgSource,
+                            metadata: msgMeta
+                        }, async (reply) => {
+                            if (this.agent.interface) {
+                                await this.agent.interface.send(reply);
+                            }
+                        });
+
+                        // Verify Success
+                        const failures = [
+                            "I received an empty response from my brain",
+                            "Error:",
+                            "No text response found"
+                        ];
+                        const success = summary && summary.replies.some(r =>
+                            r.content && !failures.some(f => r.content.includes(f))
+                        );
+
+                        if (!success) throw new Error("Agent execution failed or returned empty response.");
+
+                    } catch (error) {
+                        console.error(`[Scheduler] Task '${name}' failed:`, error.message);
+
+                        // Retry Logic
+                        const currentRetry = payload.retryCount || 0;
+                        const MAX_RETRIES = 3;
+
+                        if (currentRetry < MAX_RETRIES) {
+                            console.log(`[Scheduler] Rescheduling '${name}' for retry ${currentRetry + 1}/${MAX_RETRIES} in 60s.`);
+
+                            // Re-schedule execution for +1 minute
+                            // We must use a new unique name to avoid conflict if the previous one is still cleaning up
+                            // But usually, one-off is deleted by now.
+                            this.scheduleOneOff(name, new Date(Date.now() + 60000), callback, {
+                                persist: true,
+                                taskType: 'agent_instruction',
+                                payload: { ...payload, retryCount: currentRetry + 1 }
+                            });
+                        } else {
+                            console.error(`[Scheduler] Task '${name}' failed permanently after ${MAX_RETRIES} retries.`);
+
+                            // Slack Notification
+                            if (process.env.SLACK_WEBHOOK_URL) {
+                                try {
+                                    await fetch(process.env.SLACK_WEBHOOK_URL, {
+                                        method: 'POST',
+                                        headers: { 'Content-Type': 'application/json' },
+                                        body: JSON.stringify({
+                                            text: `🚨 *Task Failure Alert*\n\nThe task *"${payload.task}"* failed after ${MAX_RETRIES} retries.\n\nError: ${error.message}`
+                                        })
+                                    });
+                                } catch (e) { console.error('[Scheduler] Failed to send Slack alert:', e); }
+                            }
                         }
-                    });
+                    }
                 };
             } else {
                 console.warn(`[Scheduler] Unknown task type '${taskType}' for job '${name}'. Skipping.`);
