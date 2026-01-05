@@ -82,20 +82,46 @@ class ToolExecutor {
             return { success: true, path: path };
         }
 
-        // --- Scheduler ---
+        if (name === 'readJournal') {
+            const date = args.date || new Date().toISOString().split('T')[0];
+            const content = journal.read(date);
+            if (content) {
+                return { date, content };
+            } else {
+                return { info: `No journal entry found for ${date}.` };
+            }
+        }
+
+        if (name === 'searchJournal') {
+            const results = journal.search(args.query);
+            return { count: results.length, results };
+        }
+
         if (name === 'scheduleJob') {
+            // Capture context
+            const targetChatId = context.message.metadata?.chatId;
+            const targetSource = context.message.source;
+
             scheduler.scheduleJob(args.name, args.cron, async () => {
                 console.log(`[Scheduler] Executing task: ${args.task}`);
-                const msg = createAssistantMessage(`⏰ Scheduled Task Triggered: ${args.task}`);
-                msg.metadata = { chatId: 'scheduler_trigger' };
+
+                // Use captured context or fallbacks
+                const msgSource = targetSource || 'scheduler';
+                // If we have a targetChatId, use it (maybe append timestamp to make it unique per run but related)
+                // Actually, for Telegram, we need the exact chatId to reply. 
+                // But for "new" conversations, we might want a unique ID.
+                // Let's rely on the interface to route correctly based on chatId.
+                const msgMeta = {
+                    chatId: targetChatId || `scheduled_${args.name}_${Date.now()}`
+                };
 
                 // Use the passed processMessage callback (bound to Agent instance)
                 if (processMessage) {
                     await processMessage({
                         role: 'user',
                         content: `Scheduled Task: ${args.task}`,
-                        source: 'scheduler',
-                        metadata: { chatId: `scheduled_${args.name}_${Date.now()}` }
+                        source: msgSource,
+                        metadata: msgMeta
                     }, async (reply) => {
                         if (this.services.interface) {
                             await this.services.interface.send(reply);
@@ -105,7 +131,11 @@ class ToolExecutor {
             }, {
                 persist: true,
                 taskType: 'agent_instruction',
-                payload: { task: args.task }
+                payload: {
+                    task: args.task,
+                    targetChatId,
+                    targetSource
+                }
             });
             return { success: true, info: `Job '${args.name}' scheduled for '${args.cron}'` };
         }

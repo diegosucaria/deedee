@@ -41,6 +41,38 @@ class JournalManager {
         fs.appendFileSync(filePath, logEntry, 'utf8');
         return filePath;
     }
+    read(date) {
+        // date: YYYY-MM-DD
+        const filename = `${date}.md`;
+        const filePath = path.join(this.journalDir, filename);
+
+        if (fs.existsSync(filePath)) {
+            return fs.readFileSync(filePath, 'utf8');
+        }
+        return null;
+    }
+
+    search(query) {
+        // Naive text search across all markdown files
+        // Returns array of { date, content } chunks
+        const results = [];
+        const files = fs.readdirSync(this.journalDir).filter(f => f.endsWith('.md'));
+
+        for (const file of files) {
+            const content = fs.readFileSync(path.join(this.journalDir, file), 'utf8');
+            if (content.toLowerCase().includes(query.toLowerCase())) {
+                // Find the specific line or context
+                const lines = content.split('\n');
+                const matchingLines = lines.filter(l => l.toLowerCase().includes(query.toLowerCase()));
+
+                results.push({
+                    date: file.replace('.md', ''),
+                    matches: matchingLines
+                });
+            }
+        }
+        return results;
+    }
 }
 
 module.exports = { JournalManager };

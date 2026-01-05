@@ -212,6 +212,7 @@ app.get('/internal/tasks', (req, res) => {
       name: j.metadata?.name || 'unknown',
       cron: j.metadata?.cronExpression || 'unknown',
       task: j.metadata?.payload?.task || '',
+      isSystem: j.metadata?.payload?.isSystem || false,
       nextInvocation: j.nextInvocation()
     }));
     res.json({ jobs });
@@ -224,6 +225,13 @@ app.post('/internal/tasks/:id/cancel', (req, res) => {
   if (!agent || !agent.scheduler) return res.status(503).json({ error: 'Agent not ready' });
   try {
     const { id } = req.params;
+
+    // Security: Prevent cancelling system jobs
+    const job = agent.scheduler.jobs[id];
+    if (job && job.metadata?.payload?.isSystem) {
+      return res.status(403).json({ error: 'Cannot cancel system jobs' });
+    }
+
     agent.scheduler.cancelJob(id);
     res.json({ success: true });
   } catch (e) {
@@ -398,6 +406,12 @@ app.post('/internal/scheduler', (req, res) => {
   if (!agent || !agent.scheduler) return res.status(503).json({ error: 'Agent not ready' });
   try {
     const { name, cron, task } = req.body;
+
+    // Security: Prevent overwriting system jobs
+    const existingJob = agent.scheduler.jobs[name];
+    if (existingJob && existingJob.metadata?.payload?.isSystem) {
+      return res.status(403).json({ error: 'Cannot modify system jobs' });
+    }
 
     const callback = async () => {
       console.log(`[Scheduler] Executing task: ${task}`);

@@ -68,11 +68,16 @@ class Scheduler {
                 callback = async () => {
                     console.log(`[Scheduler] Executing persisted task: ${payload.task}`);
 
+                    const msgSource = payload.targetSource || 'scheduler';
+                    const msgMeta = {
+                        chatId: payload.targetChatId || `scheduled_${name}_${Date.now()}`
+                    };
+
                     await this.agent.processMessage({
                         role: 'user',
                         content: `Scheduled Task: ${payload.task}`,
-                        source: 'scheduler',
-                        metadata: { chatId: `scheduled_${name}_${Date.now()}` }
+                        source: msgSource,
+                        metadata: msgMeta
                     }, async (reply) => {
                         if (this.agent.interface) {
                             await this.agent.interface.send(reply);
@@ -88,6 +93,46 @@ class Scheduler {
             this.scheduleJob(name, cronExpression, callback, { persist: false, taskType, payload });
         }
         console.log(`[Scheduler] Loaded ${Object.keys(this.jobs).length} jobs from DB.`);
+    }
+
+    /**
+     * Ensures critical system jobs exist.
+     */
+    ensureSystemJobs() {
+        const SYSTEM_JOBS = [
+            {
+                name: 'nightly_consolidation',
+                cron: '0 0 * * *', // Midnight
+                task: 'Run consolidateMemory tool to summarize yesterday\'s logs into the journal.'
+            }
+        ];
+
+        console.log('[Scheduler] Verifying system jobs...');
+        for (const sysJob of SYSTEM_JOBS) {
+            if (!this.jobs[sysJob.name]) {
+                console.log(`[Scheduler] System job '${sysJob.name}' missing. Creating...`);
+                // Use the standard scheduleJob logic which handles the callback wrapper
+                // We manually construct the instruction wrapper to match 'agent_instruction' type
+                const callback = async () => {
+                    console.log(`[Scheduler] Executing SYSTEM task: ${sysJob.task}`);
+                    await this.agent.processMessage({
+                        role: 'user',
+                        content: `System Maintenance: ${sysJob.task}`,
+                        source: 'scheduler',
+                        metadata: { chatId: `system_${sysJob.name}_${Date.now()}` }
+                    }, async (reply) => {
+                        // Fire and forget response
+                        if (this.agent.interface) await this.agent.interface.send(reply);
+                    });
+                };
+
+                this.scheduleJob(sysJob.name, sysJob.cron, callback, {
+                    persist: true,
+                    taskType: 'agent_instruction',
+                    payload: { task: sysJob.task }
+                });
+            }
+        }
     }
 }
 

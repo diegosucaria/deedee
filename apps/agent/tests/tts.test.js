@@ -22,7 +22,13 @@ describe('Agent TTS', () => {
     const config = { interface: mockInterface, googleApiKey: 'test-key' };
     agent = new Agent(config);
     // Mock DB setup
-    agent.db = { getPendingGoals: jest.fn().mockReturnValue([]), getScheduledJobs: jest.fn().mockReturnValue([]) };
+    agent.db = {
+      getPendingGoals: jest.fn().mockReturnValue([]),
+      getScheduledJobs: jest.fn().mockReturnValue([]),
+      saveScheduledJob: jest.fn(),
+      deleteScheduledJob: jest.fn(),
+      saveMessage: jest.fn(),
+    };
 
     // Force _loadClientLibrary to return our mock
     agent._loadClientLibrary = jest.fn().mockResolvedValue({

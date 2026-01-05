@@ -166,25 +166,34 @@ export default function TaskList({ tasks }) {
                     tasks.map((job) => (
                         <div
                             key={job.name}
-                            className="group relative flex flex-col gap-4 rounded-xl border border-zinc-800 bg-zinc-900/80 p-5 transition-all hover:bg-zinc-800 hover:border-zinc-700 hover:shadow-xl hover:shadow-indigo-500/5 backdrop-blur-sm"
+                            className={`group relative flex flex-col gap-4 rounded-xl border p-5 transition-all backdrop-blur-sm ${job.isSystem
+                                ? 'bg-indigo-950/20 border-indigo-900/50 hover:bg-indigo-900/20'
+                                : 'bg-zinc-900/80 border-zinc-800 hover:bg-zinc-800 hover:border-zinc-700 hover:shadow-xl hover:shadow-indigo-500/5'}`}
                         >
                             <div className="flex items-center justify-between border-b border-white/5 pb-3">
                                 <span className="font-semibold text-white tracking-wide flex items-center gap-2">
-                                    <Clock className="h-4 w-4 text-zinc-500" />
+                                    <Clock className={`h-4 w-4 ${job.isSystem ? 'text-indigo-400' : 'text-zinc-500'}`} />
                                     {job.name}
+                                    {job.isSystem && (
+                                        <span className="text-[10px] uppercase font-bold bg-indigo-500 text-white px-1.5 py-0.5 rounded tracking-wider">
+                                            System
+                                        </span>
+                                    )}
                                 </span>
                                 <div className="flex items-center gap-2">
                                     <div className="font-mono text-xs text-indigo-400 bg-indigo-500/10 px-2 py-1 rounded border border-indigo-500/20">
                                         {job.cron}
                                     </div>
-                                    <button
-                                        onClick={() => handleEdit(job)}
-                                        className="p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-md transition-colors"
-                                        title="Edit"
-                                        aria-label="Edit task"
-                                    >
-                                        <Pencil className="h-3.5 w-3.5" />
-                                    </button>
+                                    {!job.isSystem && (
+                                        <button
+                                            onClick={() => handleEdit(job)}
+                                            className="p-1.5 text-zinc-400 hover:text-white hover:bg-white/10 rounded-md transition-colors"
+                                            title="Edit"
+                                            aria-label="Edit task"
+                                        >
+                                            <Pencil className="h-3.5 w-3.5" />
+                                        </button>
+                                    )}
                                 </div>
                             </div>
 
@@ -198,14 +207,16 @@ export default function TaskList({ tasks }) {
                                     Next: {new Date(job.nextInvocation).toLocaleString()}
                                 </span>
 
-                                <button
-                                    onClick={() => {
-                                        if (confirm(`Cancel schedule '${job.name}'?`)) cancelTask(job.name);
-                                    }}
-                                    className="text-zinc-500 hover:text-red-400 hover:bg-red-500/10 px-2 py-1 rounded transition-colors flex items-center gap-1"
-                                >
-                                    <Trash2 className="h-3 w-3" /> Cancel
-                                </button>
+                                {!job.isSystem && (
+                                    <button
+                                        onClick={() => {
+                                            if (confirm(`Cancel schedule '${job.name}'?`)) cancelTask(job.name);
+                                        }}
+                                        className="text-zinc-500 hover:text-red-400 hover:bg-red-500/10 px-2 py-1 rounded transition-colors flex items-center gap-1"
+                                    >
+                                        <Trash2 className="h-3 w-3" /> Cancel
+                                    </button>
+                                )}
                             </div>
                         </div>
                     ))

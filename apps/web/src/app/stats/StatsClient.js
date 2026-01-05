@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { SimpleLineChart } from '@/components/SimpleCharts';
 import { RefreshCw, Activity, Cpu } from 'lucide-react';
-import { API_URL } from '@/lib/api';
+import { fetchAPI } from '@/lib/api';
 
 export default function StatsClient() {
     const [latencyData, setLatencyData] = useState([]);
@@ -14,8 +14,7 @@ export default function StatsClient() {
         setLoading(true);
         try {
             // Fetch Latency
-            const latRes = await fetch(`${API_URL}/v1/stats/latency`);
-            const latData = await latRes.json();
+            const latData = await fetchAPI('/v1/stats/latency');
 
             // Group by Chat ID to align Router/Model/E2E for the same request
             const grouped = {};
@@ -28,10 +27,6 @@ export default function StatsClient() {
                     if (meta && meta.runId) {
                         groupKey = meta.runId;
                     }
-                    // Fallback to legacy ChatID ONLY if we don't have runId? 
-                    // No, legacy ChatID grouping caused the bug (merging history). 
-                    // So for old data without runId, we just show them as individual points (disjoint).
-                    // This means old data might look "incomplete" (dots floating) but new data will be correct connected lines.
                 } catch (e) { }
 
                 if (!grouped[groupKey]) {
@@ -61,8 +56,7 @@ export default function StatsClient() {
             setLatencyData(chartData);
 
             // Fetch Usage
-            const usageRes = await fetch(`${API_URL}/v1/stats/usage`);
-            const usageJson = await usageRes.json();
+            const usageJson = await fetchAPI('/v1/stats/usage');
             setUsageData(usageJson);
 
         } catch (e) {

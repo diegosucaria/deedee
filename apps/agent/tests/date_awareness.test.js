@@ -6,12 +6,14 @@ jest.mock('../src/db', () => ({
     AgentDB: jest.fn().mockImplementation(() => ({
         getPendingGoals: jest.fn().mockReturnValue([]),
         getHistoryForChat: jest.fn().mockReturnValue([]),
+        getScheduledJobs: jest.fn().mockReturnValue([]),
+        saveScheduledJob: jest.fn(),
+        deleteScheduledJob: jest.fn(),
         saveMessage: jest.fn(),
         logMetric: jest.fn(),
         logTokenUsage: jest.fn(),
         checkLimit: jest.fn().mockReturnValue(true),
-        logUsage: jest.fn(),
-        getScheduledJobs: jest.fn().mockReturnValue([])
+        logUsage: jest.fn()
     }))
 }));
 

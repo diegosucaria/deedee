@@ -11,6 +11,8 @@ jest.mock('../src/db', () => ({
     addGoal: jest.fn().mockReturnValue({ lastInsertRowid: 1 }),
     completeGoal: jest.fn(),
     getPendingGoals: jest.fn().mockReturnValue([]),
+    saveScheduledJob: jest.fn(),
+    deleteScheduledJob: jest.fn(),
     checkLimit: jest.fn().mockReturnValue(0),
     logUsage: jest.fn(),
     logMetric: jest.fn(),

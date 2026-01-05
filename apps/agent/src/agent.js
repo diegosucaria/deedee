@@ -83,6 +83,9 @@ class Agent {
     // Load Scheduled Jobs
     await this.scheduler.loadJobs();
 
+    // Ensure System Maintenance Jobs
+    this.scheduler.ensureSystemJobs();
+
     // Check Goals
     const pendingGoals = this.db.getPendingGoals();
     if (pendingGoals.length > 0) {
