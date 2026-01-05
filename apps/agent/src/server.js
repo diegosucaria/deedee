@@ -46,8 +46,7 @@ if (process.env.GOOGLE_APPLICATION_CREDENTIALS && !process.env.GOOGLE_APPLICATIO
     JSON.parse(jsonContent);
 
     // Write to file
-    const credsPath = path.join('/app/data', 'google-service-account.json');
-    if (!fs.existsSync('/app/data')) fs.mkdirSync('/app/data', { recursive: true });
+    const credsPath = path.join('/tmp', 'google-service-account.json');
 
     fs.writeFileSync(credsPath, jsonContent);
     console.log(`[Setup] Wrote Google Credentials to ${credsPath}`);
