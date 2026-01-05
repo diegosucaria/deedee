@@ -79,6 +79,23 @@ class CommandHandler {
             return true;
         }
 
+        if (content === '/summaries') {
+            const summaries = this.db.getSummaries(5);
+            let text = '## Recent Context Summaries\n';
+            if (summaries.length === 0) text += '_No summaries found._';
+            summaries.forEach(s => {
+                text += `\n**[${s.created_at}]** (${s.range_start} -> ${s.range_end})\n> ${s.content.substring(0, 150)}...\n`;
+            });
+            await this.sendReply(chatId, message.source, text);
+            return true;
+        }
+
+        if (content === '/clear_summaries') {
+            this.db.clearSummaries();
+            await this.sendReply(chatId, message.source, 'All context summaries deleted. Memory reset.');
+            return true;
+        }
+
         // Unknown command
         await this.sendReply(chatId, message.source, `Unknown command: ${content}`);
         return true;

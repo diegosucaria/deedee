@@ -3,7 +3,9 @@ const { createAssistantMessage } = require('@deedee/shared/src/types');
 const crypto = require('crypto');
 const { GSuiteTools } = require('@deedee/mcp-servers/src/gsuite/index');
 const { LocalTools } = require('@deedee/mcp-servers/src/local/index');
+
 const { AgentDB } = require('./db');
+const { SmartContextManager } = require('./smart-context');
 const { toolDefinitions } = require('./tools-definition');
 const { Router } = require('./router');
 const { MCPManager } = require('./mcp-manager');
@@ -29,6 +31,7 @@ class Agent {
 
     // Persistence
     this.db = new AgentDB();
+    this.smartContext = new SmartContextManager(this.db, this.client); // Client is null here, need to set later
 
     // Router
     this.router = new Router(config.googleApiKey);
@@ -144,6 +147,7 @@ class Agent {
       // Propagate dependencies to ToolExecutor
       this.toolExecutor.services.client = this.client;
       this.toolExecutor.services.interface = this.interface;
+      this.smartContext.client = this.client; // Ensure client is available for summarization
 
       const chatId = message.metadata?.chatId;
 
@@ -277,11 +281,14 @@ class Agent {
 
       // --- EXPERIMENTAL: Adaptive Context Window ---
       // Flash models (simple tasks) need less context. Pro models (reasoning) need more.
-      const historyLimit = (decision.model === 'FLASH' || decision.model === 'IMAGE') ? 10 : 50;
-      console.log(`[Agent] Fetching history with limit: ${historyLimit}`);
+
 
       // --- HYDRATION ---
-      const history = this.db.getHistoryForChat(chatId, historyLimit);
+      const historyLimit = (decision.model === 'FLASH' || decision.model === 'IMAGE') ? 10 : 50;
+      console.log(`[Agent] Fetching history (Smart Context) for model: ${decision.model}`);
+
+      // --- HYDRATION (Smart Context) ---
+      const history = await this.smartContext.getContext(chatId, decision.model);
 
       // --- TOOLS MERGE ---
       const mcpTools = await this.mcp.getTools();
@@ -413,11 +420,15 @@ class Agent {
 
       // USAGE LOGGING
       if (response.usageMetadata) {
+        const { promptTokenCount, candidatesTokenCount, totalTokenCount } = response.usageMetadata;
+
+        console.log(`[Tokens] P: ${promptTokenCount} | C: ${candidatesTokenCount} | Total: ${totalTokenCount}`);
+
         this.db.logTokenUsage({
           model: selectedModel,
-          promptTokens: response.usageMetadata.promptTokenCount,
-          candidateTokens: response.usageMetadata.candidatesTokenCount,
-          totalTokens: response.usageMetadata.totalTokenCount,
+          promptTokens: promptTokenCount,
+          candidateTokens: candidatesTokenCount,
+          totalTokens: totalTokenCount,
           chatId
         });
       }
@@ -587,11 +598,14 @@ class Agent {
 
         // USAGE LOGGING (Tool Loop)
         if (response.usageMetadata) {
+          const { promptTokenCount, candidatesTokenCount, totalTokenCount } = response.usageMetadata;
+          console.log(`[Tokens][Tool] P: ${promptTokenCount} | C: ${candidatesTokenCount} | Total: ${totalTokenCount}`);
+
           this.db.logTokenUsage({
             model: selectedModel,
-            promptTokens: response.usageMetadata.promptTokenCount,
-            candidateTokens: response.usageMetadata.candidatesTokenCount,
-            totalTokens: response.usageMetadata.totalTokenCount,
+            promptTokens: promptTokenCount,
+            candidateTokens: candidatesTokenCount,
+            totalTokens: totalTokenCount,
             chatId
           });
         }
@@ -734,6 +748,12 @@ class Agent {
       const val = this.db.getKey(args.key);
       return val ? { value: val } : { info: 'Fact not found in database.' };
     }
+    if (executionName === 'searchHistory') {
+      // Use internal specific search or general DB search
+      // Using existing searchMessages method
+      const matches = this.db.searchMessages(args.query, args.limit || 5);
+      return { matches: matches.map(m => `[${m.timestamp}] ${m.role}: ${m.content.substring(0, 200)}`) };
+    }
     if (executionName === 'addGoal') {
       const metadata = { chatId: message.metadata?.chatId };
       const info = this.db.addGoal(args.description, metadata);
@@ -806,6 +826,78 @@ class Agent {
       throw error;
     }
   }
+}
+
+// Pricing per 1 Million Tokens (Input / Output)
+// Source: https://ai.google.dev/gemini-api/docs/pricing
+const PRICING = {
+  // Direct Model Definitions
+  'gemini-2.5-flash': {
+    threshold: 128000,
+    tier1: { input: 0.30, output: 0.60 }, // <= 128k
+    tier2: { input: 1.0, output: 2.5 }  // > 128k (Est: 2x)
+  },
+  'gemini-2.0-flash-exp': {
+    threshold: 128000,
+    tier1: { input: 0.15, output: 0.60 },
+    tier2: { input: 0.30, output: 1.20 }
+  },
+  'gemini-3-pro-preview': {
+    threshold: 200000, // Pro Preview usually has 200k tier
+    tier1: { input: 2.00, output: 12.00 }, // <= 200k
+    tier2: { input: 4.00, output: 18.00 }  // > 200k
+  },
+  'gemini-2.5-pro': {
+    threshold: 200000,
+    tier1: { input: 2.00, output: 12.00 },
+    tier2: { input: 4.00, output: 18.00 }
+  },
+  // TTS & Image Models
+  'gemini-2.5-flash-preview-tts': {
+    threshold: 128000,
+    tier1: { input: 0.50, output: 10 }, 
+    tier2: { input: 0.50, output: 10 }
+  },
+  'gemini-3-pro-image-preview': {
+    threshold: 200000,
+    tier1: { input: 2.00, output: 120.00 }, 
+    tier2: { input: 2.00, output: 120.00 }
+  },
+
+  // Default/Fallback keys
+  'FLASH_DEFAULT': {
+    threshold: 128000,
+    tier1: { input: 0.15, output: 0.60 },
+    tier2: { input: 0.30, output: 1.20 }
+  },
+  'PRO_DEFAULT': {
+    threshold: 200000,
+    tier1: { input: 2.00, output: 12.00 },
+    tier2: { input: 4.00, output: 18.00 }
+  }
+};
+
+function calculateCost(model, inputTokens, outputTokens) {
+  let pricing = null;
+
+  if (PRICING[model]) {
+    pricing = PRICING[model];
+  } else {
+    const lower = model.toLowerCase();
+    if (lower.includes('pro')) pricing = PRICING['PRO_DEFAULT'];
+    else pricing = PRICING['FLASH_DEFAULT'];
+
+    console.warn(`[Cost] Model "${model}" not found in PRICING table. Falling back to default (${lower.includes('pro') ? 'PRO' : 'FLASH'}).`);
+  }
+
+  // Determine tier based on input tokens and specific model threshold
+  const limit = pricing.threshold || 128000;
+  const tier = inputTokens <= limit ? pricing.tier1 : pricing.tier2;
+
+  const inputCost = (inputTokens / 1_000_000) * tier.input;
+  const outputCost = (outputTokens / 1_000_000) * tier.output;
+
+  return inputCost + outputCost;
 }
 
 module.exports = { Agent };

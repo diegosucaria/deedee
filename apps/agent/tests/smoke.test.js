@@ -19,7 +19,10 @@ jest.mock('../src/db', () => ({
     logTokenUsage: jest.fn(),
     getHistoryForChat: jest.fn().mockReturnValue([]),
     getScheduledJobs: jest.fn().mockReturnValue([]),
-    getAllFacts: jest.fn().mockReturnValue([])
+    getAllFacts: jest.fn().mockReturnValue([]),
+    saveSummary: jest.fn(),
+    getLatestSummary: jest.fn().mockReturnValue(null),
+    searchMessages: jest.fn().mockReturnValue([]) // Added for searchHistory tool
   }))
 }));
 

@@ -29,6 +29,10 @@
     - [x] Fixed TTS: Corrected `GEMINI_TTS_MODEL` usage and Audio Message delivery.
 - [x] **Security**: Allowlist (`ALLOWED_TELEGRAM_IDS`), "YOLO" mode with guardrails.
 - [x] **Backup**: Configurable Nightly GCS Backup (Zip + Rotate).
+- [x] **Smart Context**:
+    - [x] Auto-summarization of long chats (Long-term memory).
+    - [x] Real-time Cost Tracking on stats dashboard.
+    - [x] `searchHistory` tool for deep recall.
 
 ---
 

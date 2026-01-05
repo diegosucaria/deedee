@@ -100,6 +100,24 @@ class AgentDB {
         chat_id TEXT,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
       );
+      CREATE TABLE IF NOT EXISTS token_usage (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        model TEXT NOT NULL,
+        prompt_tokens INTEGER,
+        candidate_tokens INTEGER,
+        total_tokens INTEGER,
+        chat_id TEXT,
+        timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS summaries (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id TEXT NOT NULL,
+        content TEXT NOT NULL,
+        range_start DATETIME,
+        range_end DATETIME,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
     `);
 
     // Migration: Add metadata column if it doesn't exist (for existing DBs)
@@ -111,6 +129,17 @@ class AgentDB {
     // Migration: Add parts column if it doesn't exist
     try {
       this.db.exec("ALTER TABLE messages ADD COLUMN parts TEXT");
+    } catch (err) { }
+
+    // Migration: Add estimated_cost to token_usage
+    try {
+      this.db.exec("ALTER TABLE token_usage ADD COLUMN estimated_cost REAL");
+    } catch (err) { }
+
+    // Migration: Add token counts to summaries
+    try {
+      this.db.exec("ALTER TABLE summaries ADD COLUMN original_tokens INTEGER");
+      this.db.exec("ALTER TABLE summaries ADD COLUMN summary_tokens INTEGER");
     } catch (err) { }
   }
 
@@ -304,8 +333,54 @@ class AgentDB {
     return stmt.all(dateStr);
   }
 
+
+
+  saveSummary(chatId, content, rangeStart, rangeEnd, originalTokens = 0, summaryTokens = 0) {
+    this.db.prepare(`
+      INSERT INTO summaries (chat_id, content, range_start, range_end, original_tokens, summary_tokens)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(chatId, content, rangeStart, rangeEnd, originalTokens, summaryTokens);
+  }
+
+  getLatestSummary(chatId) {
+    return this.db.prepare(`
+      SELECT * FROM summaries 
+      WHERE chat_id = ? 
+      ORDER BY created_at DESC 
+      LIMIT 1
+    `).get(chatId);
+  }
+
+  getSummaries(limit = 20) {
+    return this.db.prepare(`
+        SELECT * FROM summaries
+        ORDER BY created_at DESC
+        LIMIT ?
+    `).all(limit);
+  }
+
+  getSummaryStats() {
+    const stats = this.db.prepare(`
+      SELECT 
+        COUNT(*) as count, 
+        SUM(original_tokens) as original, 
+        SUM(summary_tokens) as summary
+      FROM summaries
+    `).get();
+
+    return {
+      totalCount: stats.count || 0,
+      totalOriginal: stats.original || 0,
+      totalSummary: stats.summary || 0
+    };
+  }
+
+  clearSummaries() {
+    this.db.exec('DELETE FROM summaries');
+  }
+
   // --- Chat History Hydration ---
-  // --- Chat History Hydration ---
+
   getHistoryForChat(chatId, limit = 20) {
     if (!chatId) return [];
 
@@ -472,9 +547,23 @@ class AgentDB {
     const completedGoals = this.db.prepare("SELECT COUNT(*) as count FROM goals WHERE status = 'completed'").get().count;
 
     // Jobs Breakdown
-    const jobs = this.db.prepare('SELECT task_type FROM scheduled_jobs').all();
-    const recurring = jobs.filter(j => j.task_type !== 'one_off').length;
-    const oneOff = jobs.filter(j => j.task_type === 'one_off').length;
+    const jobs = this.db.prepare('SELECT task_type, payload FROM scheduled_jobs').all();
+
+    let activeSystem = 0;
+    let activeRecurring = 0;
+    let activeOneOff = 0;
+
+    for (const job of jobs) {
+      const payload = job.payload ? JSON.parse(job.payload) : {};
+
+      if (payload.isSystem) {
+        activeSystem++;
+      } else if (job.task_type === 'one_off' || payload.isOneOff) {
+        activeOneOff++;
+      } else {
+        activeRecurring++;
+      }
+    }
 
     // Efficiency (Tokens per Message - Rough Estimate)
     // Avg total tokens per message (model role only)
@@ -495,9 +584,10 @@ class AgentDB {
         completed: completedGoals
       },
       jobs: {
-        active: jobs.length,
-        recurring,
-        oneOff
+        total: jobs.length,
+        system: activeSystem,
+        recurring: activeRecurring,
+        oneOff: activeOneOff
       },
       efficiency: {
         tokensPerMsg: Math.round(tokenEfficiency)

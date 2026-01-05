@@ -40,8 +40,8 @@ export default async function StatsPage() {
                     bg="bg-yellow-400/10 border-yellow-400/20"
                 />
                 <StatCard
-                    title="Token Efficiency"
-                    value={efficiency?.tokensPerMsg ? `${efficiency.tokensPerMsg} /msg` : '-'}
+                    title="Context Efficiency"
+                    value={stats.smartContext?.estimatedTokensSaved ? `~${(stats.smartContext.estimatedTokensSaved / 1000).toFixed(1)}k Saved` : '-'}
                     icon={Brain}
                     color="text-purple-400"
                     bg="bg-purple-400/10 border-purple-400/20"
@@ -105,11 +105,16 @@ export default async function StatsPage() {
                 <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                     <h2 className="text-xl font-semibold mb-6 flex items-center gap-2 text-zinc-300">
                         <Clock className="w-5 h-5" />
-                        Active Jobs
+                        Active Jobs ({jobs.total})
                     </h2>
                     <div className="flex items-center justify-around p-4 h-full">
                         <div className="text-center">
-                            <div className="text-4xl font-bold text-sky-400 mb-1">{jobs.recurring}</div>
+                            <div className="text-4xl font-bold text-sky-400 mb-1">{jobs.system}</div>
+                            <div className="text-xs text-zinc-500 uppercase tracking-wider">System</div>
+                        </div>
+                        <div className="h-12 w-px bg-zinc-800" />
+                        <div className="text-center">
+                            <div className="text-4xl font-bold text-indigo-400 mb-1">{jobs.recurring}</div>
                             <div className="text-xs text-zinc-500 uppercase tracking-wider">Recurring</div>
                         </div>
                         <div className="h-12 w-px bg-zinc-800" />

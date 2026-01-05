@@ -262,11 +262,13 @@ app.get('/internal/stats', (req, res) => {
     const dbStats = agent.db.getStats();
     const journalStats = agent.journal.getStats();
     const latencyStats = agent.db.getLatencyStats();
+    const contextStats = agent.smartContext.getStats();
 
     res.json({
       ...dbStats,
       journal: journalStats,
-      latency: latencyStats
+      latency: latencyStats,
+      smartContext: contextStats
     });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

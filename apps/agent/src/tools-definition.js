@@ -38,6 +38,18 @@ const toolDefinitions = [
         }
       },
       {
+        name: "searchHistory",
+        description: "Search specific details from the chat history. Use this when the Context Summary is too high-level and you need exact details (e.g. 'what was the code for X?').",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            query: { type: "STRING", description: "The specific detail or keyword to search for." },
+            limit: { type: "NUMBER", description: "Max results (default 5)" }
+          },
+          required: ["query"]
+        }
+      },
+      {
         name: "consolidateMemory",
         description: "Summarize a specific day's logs into a journal entry and optionally clear raw logs. Useful for nightly maintenance.",
         parameters: {

@@ -69,6 +69,11 @@ Everything is customizable via environment variables. Like which models to use.
   
   ![Dual Brain Architecture](docs/dual-brain.png)
 
+- **💡 Smart Context & Memory**:
+    - **Long-Term Memory**: Automatically compresses old conversations into summaries (`token_threshold` triggered) to maintain continuity without token bloat.
+    - **Recal**: Agent can "search history" to recall specific details from months ago.
+    - **Cost Aware**: Tracks and visualizes real-time token costs on the dashboard.
+
 - **🗣️ Native Voice**: Replies with high-quality, low-latency audio (WAV) using Gemini TTS.
 - **🛡️ Supervisor System**: An external "immune system" service that detects if the Agent breaks itself and performs a rollback.
 

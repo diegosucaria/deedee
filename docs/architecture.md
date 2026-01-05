@@ -15,7 +15,8 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - **Tool Executor**: Decoupled tool handling using a modular `ToolExecutor` facade. Delegates to domain-specific executors:
         - `FileSystemExecutor`, `MemoryExecutor`, `SchedulerExecutor`, `SmartHomeExecutor`, `GSuiteExecutor`, `MediaExecutor`, `ProductivityExecutor`.
     - **Optimization**:
-    - **Optimization**:
+        - **Smart Context**: Intelligent token management with auto-summarization (`gemini-2.5-flash`) and long-term memory via a `summaries` table.
+        - **Cost Tracking**: Real-time token usage and cost estimation (tiered pricing for Flash vs Pro) logged to `token_usage`.
         - **Adaptive Context**: Dynamically sizing history (10 vs 50 msgs) based on model complexity.
         - **Image Bypass**: Direct execution of image generation, skipping the reasoning model for speed.
         - **Parallel Tools**: Executes multiple tool calls concurrently for faster turnaround.

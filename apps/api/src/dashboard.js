@@ -41,6 +41,7 @@ router.post('/tasks/:id/run', (req, res) => proxyRequest(req, res, 'POST', `/int
 
 // History
 router.get('/history', (req, res) => proxyRequest(req, res, 'GET', '/internal/history'));
+router.get('/summaries', (req, res) => proxyRequest(req, res, 'GET', '/internal/summaries'));
 router.delete('/history/:id', (req, res) => proxyRequest(req, res, 'DELETE', `/internal/history/${req.params.id}`));
 
 // Goals
