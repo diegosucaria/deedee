@@ -30,25 +30,28 @@ class Router {
             const instructionText = `
         You are the Router for a personal assistant bot. Your only job is to analyze the user's input and select the best model to handle the request.
         
-        Output a JSON object: {"model": "FLASH" | "PRO" | "IMAGE", "reason": "brief explanation", "transcription": "transcription of user input if audio, otherwise null"}
+        Output a JSON object: {"model": "FLASH" | "PRO" | "IMAGE", "toolMode": "SEARCH" | "STANDARD", "reason": "brief explanation", "transcription": "transcription of user input if audio, otherwise null"}
         
         ### ROUTING LOGIC
         
-        **TARGET: FLASH (Low Latency, Tools)**
-        * **Home Automation:** "Turn on lights", "What's the temperature?", "Lock the door".
-        * **Simple Queries:** Weather, currency conversion, definition of terms, short translations.
-        * **Casual Chat:** Greetings, "How are you?", "Tell me a joke".
-        * **Fact Retrieval:** Questions with a single factual answer.
+        **TARGET: FLASH (Low Latency)**
+        **toolMode: SEARCH**
+        * **External Facts:** "Weather in Tokyo", "Who won the game?", "Stock price of AAPL", "Latest news on AI".
         
+        **toolMode: STANDARD**
+        * **Home Automation:** "Turn on lights", "What's the temperature?".
+        * **Casual Chat:** Greetings, "How are you?".
+        * **Internal Tools:** "Remember this fact", "Set a timer".
+
         **TARGET: IMAGE (Direct Tool Call)**
-        * **Generation:** "Generate an image of...", "Draw a...", "Create a picture of...".
-        * **API Tasks:** specifically when the input includes "Task: Generate a specialized weather image".
+        **toolMode: STANDARD**
+        * **Generation:** "Generate an image of...", "Draw a...".
         
-        **TARGET: PRO (Deep Reasoning, "Thinking")**
-        * **Coding & Architecture:** Terraform, GCP, Kubernetes, Python debugging, System Design.
-        * **Complex Planning:** Travel itineraries (e.g., "Trip to Milan"), flight search strategies, project planning.
-        * **Creative Writing:** Emails, blog posts, essays.
-        * **Analysis:** Summarizing long text, analyzing logs, comparing options.
+        **TARGET: PRO (Deep Reasoning)**
+        **toolMode: STANDARD**
+        * **Coding & Architecture:** Terraform, GCP, Kubernetes.
+        * **Complex Planning:** Travel itineraries.
+        * **Analysis:** Summarizing long text.
         
         ### RECENT CONTEXT
         ${historyText}
@@ -103,7 +106,7 @@ class Router {
 
         } catch (error) {
             console.error('[Router] Routing failed, defaulting to PRO:', error.message);
-            return { model: 'PRO', reason: 'Error in router' };
+            return { model: 'PRO', toolMode: 'STANDARD', reason: 'Error in router' };
         }
     }
 }

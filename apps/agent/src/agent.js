@@ -293,11 +293,16 @@ class Agent {
       ];
 
       // construct the tools object for Gemini
-      const geminiTools = [{ functionDeclarations: allTools }];
+      let geminiTools;
 
-      // --- NATIVE GOOGLE SEARCH ---
-      if (process.env.USE_NATIVE_SEARCH !== 'false') {
-        geminiTools.push({ googleSearch: {} });
+      if (decision.toolMode === 'SEARCH' && process.env.USE_NATIVE_SEARCH !== 'false') {
+        // Native Search grounding (exclusive)
+        console.log('[Agent] Mode: SEARCH (Google Grounding)');
+        geminiTools = [{ googleSearch: {} }];
+      } else {
+        // Standard Tool Use (Function Calling)
+        console.log('[Agent] Mode: STANDARD (Function Calling)');
+        geminiTools = [{ functionDeclarations: allTools }];
       }
 
       // Build System Instruction
