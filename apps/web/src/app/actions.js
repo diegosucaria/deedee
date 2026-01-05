@@ -31,13 +31,14 @@ export async function createTask(prevState, formData) {
         const name = formData.get('name');
         const cron = formData.get('cron');
         const task = formData.get('task');
+        const expiresAt = formData.get('expiresAt');
 
         // Validation
         if (!name || !cron || !task) return { success: false, error: 'Missing required fields' };
 
         await fetchAPI('/v1/tasks', {
             method: 'POST',
-            body: JSON.stringify({ name, cron, task })
+            body: JSON.stringify({ name, cron, task, expiresAt })
         });
         revalidatePath('/tasks');
         return { success: true };

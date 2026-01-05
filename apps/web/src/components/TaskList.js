@@ -23,6 +23,7 @@ export default function TaskList({ tasks }) {
     const [scheduleType, setScheduleType] = useState('custom');
     const [customCron, setCustomCron] = useState('');
     const formRef = useRef(null);
+    const internalFormRef = useRef(null);
 
     // Auto-refresh every 5 seconds
     useEffect(() => {
@@ -62,7 +63,8 @@ export default function TaskList({ tasks }) {
         setEditingTask(null);
         setScheduleType('custom');
         setCustomCron('');
-        formRef.current?.reset();
+        setCustomCron('');
+        internalFormRef.current?.reset();
     };
 
     const [activeTab, setActiveTab] = useState('recurring'); // recurring | oneoff | system
@@ -140,12 +142,12 @@ export default function TaskList({ tasks }) {
                             )}
                         </div>
 
-                        <form action={async (formData) => {
+                        <form ref={internalFormRef} action={async (formData) => {
                             await formAction(formData);
                             setEditingTask(null);
                             setCustomCron('');
                             setScheduleType('custom');
-                            formRef.current?.reset();
+                            internalFormRef.current?.reset();
                             // Refresh logic handled by revalidatePath in action
                         }} className="grid md:grid-cols-2 gap-4">
                             <input
@@ -206,6 +208,16 @@ export default function TaskList({ tasks }) {
                                     rows={2}
                                     defaultValue={editingTask?.task || ''}
                                     className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all resize-none"
+                                />
+                            </div>
+
+                            <div className="md:col-span-2">
+                                <label className="block text-xs text-zinc-500 mb-1 ml-1">Expiration (Optional)</label>
+                                <input
+                                    type="datetime-local"
+                                    name="expiresAt"
+                                    defaultValue={editingTask?.expiresAt ? new Date(editingTask.expiresAt).toISOString().slice(0, 16) : ''}
+                                    className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-mono text-sm"
                                 />
                             </div>
 

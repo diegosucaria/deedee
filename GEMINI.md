@@ -44,6 +44,7 @@ You are working on **Deedee**, a personal, self-improving AI agent designed to r
 - **Descriptive Commit Messages**: When self-improving, you **MUST** use Conventional Commits (e.g., `feat(agent): add new tool`, `fix(api): handle timeout`). The message must be descriptive of *what* changed and *why*.
 
 ### 4. Implementation Checklist (Definition of Done)
+- **API Impact Analysis**: For every new feature or tool, ask: "Does this need a API endpoint?" or "How can the user interact with this?". If yes, you **MUST** update the server.
 - **UI Impact Analysis**: For every new feature or tool, ask: "Does this need a UI component?" or "How can I visualize this?". If yes, you **MUST** update the web (e.g., Stats page, History, New Component). It might require a new page/component or updating existing ones. Most likely some changes can also be done in the stats page to support the new feature.
 - **Documentation**: Update `docs/` or `tools-definition.js` immediately. Do not leave "magic knowledge" in the code.
 - **Rules Update**: If the feature changes how the agent should behave, update `GEMINI.md`.
