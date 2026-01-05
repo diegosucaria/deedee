@@ -348,27 +348,66 @@ class Agent {
         `;
       }
 
-      // Initialize Stateless Chat Session
-      await reportProgress('Hydrating memory...');
-      const session = this.client.chats.create({
-        model: selectedModel,
-        config: {
-          tools: geminiTools,
-          systemInstruction: systemInstruction,
-        },
-        history: history
-      });
+      // 2. Send Message to Gemini (with Retry Logic)
+      const MAX_EMPTY_RETRIES = 2;
+      let retryCount = 0;
+      let response;
+      let session;
 
-      // 2. Send Message to Gemini
-      const timerLabel = `[Agent] Model Response (${selectedModel}) - ${Date.now()}`;
-      console.time(timerLabel);
-      await reportProgress('Generating response...');
-      const modelStart = Date.now();
-      let response = await session.sendMessage({ message: message.parts || message.content });
-      const modelDuration = Date.now() - modelStart;
-      console.timeEnd(timerLabel);
+      while (retryCount <= MAX_EMPTY_RETRIES) {
+        // Initialize Stateless Chat Session (Re-created per retry to avoid history pollution)
+        if (retryCount > 0) {
+          await reportProgress(`Retrying connection (${retryCount}/${MAX_EMPTY_RETRIES})...`);
+          // Add small delay
+          await new Promise(r => setTimeout(r, 1000));
+        } else {
+          await reportProgress('Hydrating memory...');
+        }
 
-      this.db.logMetric('latency_model', modelDuration, { model: selectedModel, chatId, runId });
+        session = this.client.chats.create({
+          model: selectedModel,
+          config: {
+            tools: geminiTools,
+            systemInstruction: systemInstruction,
+          },
+          history: history
+        });
+
+        const timerLabel = `[Agent] Model Response (${selectedModel}) - ${Date.now()}`;
+        console.time(timerLabel);
+        if (retryCount === 0) await reportProgress('Generating response...');
+
+        const modelStart = Date.now();
+        try {
+          response = await session.sendMessage({ message: message.parts || message.content });
+          const modelDuration = Date.now() - modelStart;
+          console.timeEnd(timerLabel);
+          this.db.logMetric('latency_model', modelDuration, { model: selectedModel, chatId, runId });
+
+          // Validation: Check if response is effectively empty
+          const initialCandidates = response.candidates || [];
+          const firstCandidate = initialCandidates[0];
+          const parts = firstCandidate?.content?.parts || [];
+
+          const hasFunctionCall = parts.some(p => p.functionCall);
+          const hasText = parts.some(p => p.text && p.text.trim().length > 0);
+
+          if (hasFunctionCall || hasText) {
+            break; // Valid response
+          }
+
+          console.warn(`[Agent] Empty response detected (FinishReason: ${firstCandidate?.finishReason}). Retrying...`);
+        } catch (e) {
+          console.warn(`[Agent] Model request failed: ${e.message}. Retrying...`);
+          if (retryCount === MAX_EMPTY_RETRIES) throw e; // Re-throw on last attempt
+        }
+
+        retryCount++;
+      }
+
+      if (retryCount > MAX_EMPTY_RETRIES && !response) {
+        throw new Error('Failed to get valid response from model after retries.');
+      }
 
       // USAGE LOGGING
       if (response.usageMetadata) {

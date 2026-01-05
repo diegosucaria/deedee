@@ -22,7 +22,8 @@ jest.mock('../src/db', () => ({
         logUsage: jest.fn(),
         logMetric: jest.fn(),
         logTokenUsage: jest.fn(),
-        getHistoryForChat: jest.fn().mockReturnValue([])
+        getHistoryForChat: jest.fn().mockReturnValue([]),
+        getAllFacts: jest.fn().mockReturnValue([])
     }))
 }));
 

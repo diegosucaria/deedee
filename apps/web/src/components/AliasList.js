@@ -2,12 +2,28 @@
 
 import { useFormState } from 'react-dom';
 import { addAlias, deleteAlias } from '@/app/actions';
-import { Trash2, Plus, Tag } from 'lucide-react';
+import { Trash2, Plus, Tag, Pencil } from 'lucide-react';
+import { useState } from 'react';
 
 const initialState = { success: false, error: null };
 
 export default function AliasList({ aliases }) {
     const [state, formAction] = useFormState(addAlias, initialState);
+    const [editingAlias, setEditingAlias] = useState(null);
+    const [editEntityId, setEditEntityId] = useState('');
+
+    const handleEditClick = (item) => {
+        setEditingAlias(item.alias);
+        setEditEntityId(item.entity_id);
+    };
+
+    const handleSaveEdit = async () => {
+        const formData = new FormData();
+        formData.append('alias', editingAlias);
+        formData.append('entityId', editEntityId);
+        await addAlias(null, formData);
+        setEditingAlias(null);
+    };
 
     return (
         <div className="space-y-6">
@@ -51,22 +67,47 @@ export default function AliasList({ aliases }) {
                             key={item.alias}
                             className="group relative flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition-all hover:bg-zinc-800/50 hover:border-zinc-700"
                         >
-                            <div className="flex items-center gap-2 text-indigo-400 font-medium">
-                                <Tag className="h-4 w-4" />
-                                {item.alias}
-                            </div>
-                            <div className="text-xs text-zinc-500 font-mono break-all bg-black/20 p-2 rounded">
-                                {item.entity_id}
+                            <div className="flex items-center justify-between">
+                                <div className="flex items-center gap-2 text-indigo-400 font-medium">
+                                    <Tag className="h-4 w-4" />
+                                    {item.alias}
+                                </div>
+                                <div className="flex opacity-0 group-hover:opacity-100 transition-opacity gap-1">
+                                    <button
+                                        onClick={() => handleEditClick(item)}
+                                        className="p-1.5 text-zinc-500 hover:bg-indigo-500/10 hover:text-indigo-400 rounded-lg transition-all"
+                                    >
+                                        <Pencil className="h-3.5 w-3.5" />
+                                    </button>
+                                    <button
+                                        onClick={() => {
+                                            if (confirm(`Delete alias '${item.alias}'?`)) deleteAlias(item.alias);
+                                        }}
+                                        className="p-1.5 text-zinc-500 hover:bg-red-500/10 hover:text-red-400 rounded-lg transition-all"
+                                    >
+                                        <Trash2 className="h-3.5 w-3.5" />
+                                    </button>
+                                </div>
                             </div>
 
-                            <button
-                                onClick={() => {
-                                    if (confirm(`Delete alias '${item.alias}'?`)) deleteAlias(item.alias);
-                                }}
-                                className="absolute top-2 right-2 p-2 text-zinc-500 hover:bg-red-500/10 hover:text-red-400 rounded-lg opacity-0 group-hover:opacity-100 transition-all"
-                            >
-                                <Trash2 className="h-4 w-4" />
-                            </button>
+                            {editingAlias === item.alias ? (
+                                <div className="flex flex-col gap-2 mt-1">
+                                    <input
+                                        type="text"
+                                        value={editEntityId}
+                                        onChange={(e) => setEditEntityId(e.target.value)}
+                                        className="w-full bg-black border border-zinc-700 rounded px-2 py-1 text-xs font-mono text-white focus:outline-none focus:border-indigo-500"
+                                    />
+                                    <div className="flex gap-2">
+                                        <button onClick={handleSaveEdit} className="flex-1 text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-2 py-1 rounded">Save</button>
+                                        <button onClick={() => setEditingAlias(null)} className="flex-1 text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-2 py-1 rounded">Cancel</button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="text-xs text-zinc-500 font-mono break-all bg-black/20 p-2 rounded">
+                                    {item.entity_id}
+                                </div>
+                            )}
                         </div>
                     ))
                 )}

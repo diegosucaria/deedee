@@ -18,7 +18,8 @@ jest.mock('../src/db', () => ({
     logMetric: jest.fn(),
     logTokenUsage: jest.fn(),
     getHistoryForChat: jest.fn().mockReturnValue([]),
-    getScheduledJobs: jest.fn().mockReturnValue([])
+    getScheduledJobs: jest.fn().mockReturnValue([]),
+    getAllFacts: jest.fn().mockReturnValue([])
   }))
 }));
 

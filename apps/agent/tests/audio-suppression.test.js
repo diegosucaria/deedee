@@ -13,7 +13,9 @@ describe('Audio Response Suppression', () => {
             logMetric: jest.fn(),
             logMetric: jest.fn(),
             logTokenUsage: jest.fn(),
-            getPendingGoals: jest.fn().mockReturnValue([]) // Added for Goals feature
+            logTokenUsage: jest.fn(),
+            getPendingGoals: jest.fn().mockReturnValue([]),
+            getAllFacts: jest.fn().mockReturnValue([])
         };
         agent.rateLimiter = { check: jest.fn().mockResolvedValue(true) };
         agent.commandHandler = { handle: jest.fn().mockResolvedValue(false) };

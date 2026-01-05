@@ -14,7 +14,8 @@ describe('Agent Health Check', () => {
             logMetric: jest.fn(),
             logTokenUsage: jest.fn(),
             getHistoryForChat: jest.fn(),
-            getPendingGoals: jest.fn().mockReturnValue([]) // Added for Goals feature
+            getPendingGoals: jest.fn().mockReturnValue([]),
+            getAllFacts: jest.fn().mockReturnValue([])
         };
         agent.rateLimiter = { check: jest.fn().mockResolvedValue(true) };
         agent.commandHandler = { handle: jest.fn().mockResolvedValue(false) };

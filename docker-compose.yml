@@ -43,7 +43,6 @@ services:
     volumes:
       - repo-data:/app/source
       - /var/run/docker.sock:/var/run/docker.sock
-      - agent-data:/app/data # temporal
     labels:
       io.balena.features.balena-socket: '1'
     networks:

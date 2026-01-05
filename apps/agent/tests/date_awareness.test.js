@@ -13,7 +13,8 @@ jest.mock('../src/db', () => ({
         logMetric: jest.fn(),
         logTokenUsage: jest.fn(),
         checkLimit: jest.fn().mockReturnValue(true),
-        logUsage: jest.fn()
+        logUsage: jest.fn(),
+        getAllFacts: jest.fn().mockReturnValue([])
     }))
 }));
 
