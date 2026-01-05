@@ -35,6 +35,10 @@ app.get('/v1/logs/:container', (req, res) => {
     const container = req.params.container;
     const tail = req.query.tail || 100;
 
+    // Disable timeouts for streaming
+    req.setTimeout(0);
+    res.setTimeout(0);
+
     // We can't rely on generic SUPERVISOR_URL being set in API service if it's not.
     // Docker compose says api has AGENT_URL. Supervisor is at http://supervisor:4000
     const supervisorHost = 'supervisor';

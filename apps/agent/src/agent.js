@@ -287,6 +287,11 @@ class Agent {
       // construct the tools object for Gemini
       const geminiTools = [{ functionDeclarations: allTools }];
 
+      // --- NATIVE GOOGLE SEARCH ---
+      if (process.env.USE_NATIVE_SEARCH !== 'false') {
+        geminiTools.push({ googleSearch: {} });
+      }
+
       // Build System Instruction
       let systemInstruction = getSystemInstruction(new Date().toString());
 

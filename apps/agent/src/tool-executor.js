@@ -40,48 +40,6 @@ class ToolExecutor {
             return { results };
         }
 
-        if (name === 'googleSearch') {
-            const modelName = process.env.WORKER_GOOGLE_SEARCH || 'gemini-2.0-flash-exp';
-            console.log(`[ToolExecutor] Performing Google Search for: "${args.query}" using ${modelName}`);
-
-            try {
-                // Perform a standalone generation with Grounding enabled
-                const response = await client.models.generateContent({
-                    model: modelName,
-                    contents: [{ parts: [{ text: `Please answer the following query using Google Search. Be concise. Query: ${args.query}` }] }],
-                    config: {
-                        tools: [{ googleSearch: {} }] // Enable ONLY Google Search here
-                    }
-                });
-
-                // Extract text response
-                let answer = 'No answer returned from search.';
-                if (response.candidates && response.candidates[0] && response.candidates[0].content) {
-                    answer = response.candidates[0].content.parts.map(p => p.text).join(' ');
-                }
-
-                // Extract Grounding Metadata (Sources)
-                let sources = [];
-                if (response.candidates && response.candidates[0].groundingMetadata) {
-                    const metadata = response.candidates[0].groundingMetadata;
-                    if (metadata.groundingChunks) {
-                        sources = metadata.groundingChunks
-                            .map(c => c.web ? c.web.title : null)
-                            .filter(Boolean);
-                    }
-                }
-
-                return {
-                    result: answer,
-                    sources: sources.slice(0, 3) // Top 3 sources
-                };
-
-            } catch (err) {
-                console.error('[ToolExecutor] Google Search failed:', err);
-                return { error: `Search failed: ${err.message}` };
-            }
-        }
-
         if (name === 'consolidateMemory') {
             const date = args.date || new Date(Date.now() - 86400000).toISOString().split('T')[0]; // Default yesterday
             const messages = this.services.db.getMessagesByDate(date);

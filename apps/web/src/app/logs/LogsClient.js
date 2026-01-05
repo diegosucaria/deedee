@@ -104,8 +104,8 @@ export default function LogsClient({ token }) {
                     const chunk = decoder.decode(value, { stream: true });
                     const lines = chunk.split('\n');
 
-                    // Filter out empty lines to save processing
-                    const validLines = lines.filter(line => line.length > 0);
+                    // Filter out empty lines and heartbeats
+                    const validLines = lines.filter(line => line.length > 0 && !line.includes('[SYSTEM] HEARTBEAT'));
 
                     if (isActive && validLines.length > 0) {
                         logBuffer.push(...validLines);

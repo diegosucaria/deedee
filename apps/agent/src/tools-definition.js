@@ -38,17 +38,6 @@ const toolDefinitions = [
         }
       },
       {
-        name: "googleSearch",
-        description: "Perform a Google Search to find real-time information about the world (weather, news, sports, facts).",
-        parameters: {
-          type: "OBJECT",
-          properties: {
-            query: { type: "STRING", description: "Search query" }
-          },
-          required: ["query"]
-        }
-      },
-      {
         name: "consolidateMemory",
         description: "Summarize a specific day's logs into a journal entry and optionally clear raw logs. Useful for nightly maintenance.",
         parameters: {

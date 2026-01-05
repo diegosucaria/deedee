@@ -18,8 +18,9 @@ services:
       - MAX_TOOL_LOOPS=50
       # - ROUTER_MODEL=gemini-3-flash-preview
       - ROUTER_MODEL=gemini-2.5-flash
-      - WORKER_FLASH=gemini-3-flash-preview
-      # - WORKER_FLASH=gemini-2.5-flash
+      # - WORKER_FLASH=gemini-3-flash-preview
+      - USE_NATIVE_SEARCH=true # uses googleSearch grounding (must be supported by model)
+      - WORKER_FLASH=gemini-2.5-flash # using this one bc it supports googleSearch grounding. (preview models don't)
       - WORKER_PRO=gemini-3-pro-preview
       - GEMINI_TTS_MODEL=gemini-2.5-flash-preview-tts
       - GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview

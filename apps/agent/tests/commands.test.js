@@ -19,6 +19,8 @@ jest.mock('../src/db', () => ({
         addGoal: jest.fn(),
         checkLimit: jest.fn().mockReturnValue(0),
         logUsage: jest.fn(),
+        logMetric: jest.fn(),
+        logTokenUsage: jest.fn(),
         getHistoryForChat: jest.fn().mockReturnValue([])
     }))
 }));

@@ -106,8 +106,14 @@ app.get('/logs/:container', async (req, res) => {
       res.setHeader('Transfer-Encoding', 'chunked');
       res.setHeader('Connection', 'keep-alive');
       res.setHeader('X-Accel-Buffering', 'no');
+      res.setTimeout(0);
 
       console.log(`[Supervisor] Streaming ALL logs (since: ${since})`);
+
+      // Heartbeat to keep connection alive
+      const heartbeat = setInterval(() => {
+        res.write('[SYSTEM] HEARTBEAT\n');
+      }, 15000);
 
       for (const targetName of TARGETS) {
         // Find container
@@ -165,6 +171,7 @@ app.get('/logs/:container', async (req, res) => {
 
       req.on('close', () => {
         console.log('[Supervisor] Client closed connection for ALL logs');
+        clearInterval(heartbeat);
         streams.forEach(s => s.destroy());
       });
 
