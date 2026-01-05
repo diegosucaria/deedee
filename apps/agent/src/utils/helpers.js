@@ -41,7 +41,7 @@ function getThinkingMessage(calls) {
         case 'getFact': return 'Accessing memory...';
         case 'addGoal':
         case 'completeGoal': return 'Updating goals...';
-        case 'replyWithAudio': return 'Generating voice response...';
+        case 'replyWithAudio': return null; // Suppress display for audio generation
         default: return `Executing ${name}...`;
     }
 }

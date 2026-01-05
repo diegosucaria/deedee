@@ -395,10 +395,12 @@ class Agent {
         // Periodic Feedback (every 3rd loop, starting at 3)
         if (loopCount > 1 && loopCount % 3 === 0) {
           const thinkText = getThinkingMessage(functionCalls);
-          const updateMsg = createAssistantMessage(`Still working... (${thinkText})`);
-          updateMsg.metadata = { chatId: message.metadata?.chatId };
-          updateMsg.source = message.source;
-          await sendCallback(updateMsg).catch(err => console.error('[Agent] Failed to send update msg:', err));
+          if (thinkText) {
+            const updateMsg = createAssistantMessage(`Still working... (${thinkText})`);
+            updateMsg.metadata = { chatId: message.metadata?.chatId };
+            updateMsg.source = message.source;
+            await sendCallback(updateMsg).catch(err => console.error('[Agent] Failed to send update msg:', err));
+          }
         }
 
         // SAVE MODEL FUNCTION CALL (Intermediate)
@@ -419,10 +421,12 @@ class Agent {
         // 1. Start Global Thinking Timer (for the batch)
         let thinkTimer = setTimeout(async () => {
           const thinkText = getThinkingMessage(functionCalls);
-          const thinkingMsg = createAssistantMessage(`Thinking... (${thinkText})`);
-          thinkingMsg.metadata = { chatId: message.metadata?.chatId };
-          thinkingMsg.source = message.source;
-          await sendCallback(thinkingMsg).catch(err => console.error('[Agent] Failed to send thinking msg:', err));
+          if (thinkText) {
+            const thinkingMsg = createAssistantMessage(`Thinking... (${thinkText})`);
+            thinkingMsg.metadata = { chatId: message.metadata?.chatId };
+            thinkingMsg.source = message.source;
+            await sendCallback(thinkingMsg).catch(err => console.error('[Agent] Failed to send thinking msg:', err));
+          }
         }, 2500);
 
         // 2. Execute All Tools
@@ -591,15 +595,22 @@ class Agent {
         if (executionSummary.toolOutputs.length > 0) {
           console.log('[Agent] No text response after tool execution. Assuming implicit success.');
           const lastTool = executionSummary.toolOutputs[executionSummary.toolOutputs.length - 1];
-          const reply = createAssistantMessage(`✅ Action ${lastTool.name} completed.`);
-          reply.metadata = { chatId: message.metadata?.chatId };
-          reply.source = message.source;
+          // Suppress confirmation for audio responses
+          if (lastTool.name === 'replyWithAudio' && lastTool.result && lastTool.result.success) {
+            console.log('[Agent] Suppressing explicit confirmation for replyWithAudio.');
+            // Implicit log only
+            this.db.saveMessage(createAssistantMessage('Audio sent.'));
+          } else {
+            const reply = createAssistantMessage(`✅ Action ${lastTool.name} completed.`);
+            reply.metadata = { chatId: message.metadata?.chatId };
+            reply.source = message.source;
 
-          // Save implicit reply
-          this.db.saveMessage(reply);
+            // Save implicit reply
+            this.db.saveMessage(reply);
 
-          await sendCallback(reply);
-          executionSummary.replies.push(reply);
+            await sendCallback(reply);
+            executionSummary.replies.push(reply);
+          }
         } else {
           console.warn('[Agent] No text response found. Response dump:', JSON.stringify(response, null, 2));
           // Fallback notification to user

@@ -245,7 +245,7 @@ const toolDefinitions = [
           type: "OBJECT",
           properties: {
             text: { type: "STRING", description: "The text content to be converted to speech" },
-            languageCode: { type: "STRING", description: "Optional. Language code for speech (e.g., 'es-419' for neutral Latin American Spanish, 'en-US' for English)" }
+            languageCode: { type: "STRING", description: "Optional. Language code for speech (e.g., 'es-419' for Spanish, 'en-US' for English). DEFAULT to the language of the 'text' content." }
           },
           required: ["text"]
         }
