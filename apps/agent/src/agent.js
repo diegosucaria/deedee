@@ -308,7 +308,11 @@ class Agent {
       }
 
       // Build System Instruction
-      let systemInstruction = getSystemInstruction(new Date().toString());
+      const pendingGoals = this.db.getPendingGoals()
+        .map(g => `- [${g.id}] ${g.description}`)
+        .join('\n            ');
+
+      let systemInstruction = getSystemInstruction(new Date().toString(), pendingGoals);
 
       if (['iphone', 'ios_shortcut'].includes(message.source)) {
         systemInstruction += `\n
