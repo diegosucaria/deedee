@@ -71,6 +71,7 @@ class AgentDB {
         cron_expression TEXT NOT NULL,
         task_type TEXT NOT NULL, -- e.g. 'function_call', 'script'
         payload TEXT, -- JSON args
+        expires_at DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -151,20 +152,26 @@ class AgentDB {
       this.db.exec("ALTER TABLE messages ADD COLUMN cost REAL");
       this.db.exec("ALTER TABLE messages ADD COLUMN token_count INTEGER");
     } catch (err) { }
+
+    // Migration: Add expires_at to scheduled_jobs
+    try {
+      this.db.exec("ALTER TABLE scheduled_jobs ADD COLUMN expires_at DATETIME");
+    } catch (err) { }
   }
 
   // --- Scheduled Jobs ---
   saveScheduledJob(job) {
     const payloadStr = JSON.stringify(job.payload || {});
     const stmt = this.db.prepare(`
-      INSERT INTO scheduled_jobs (name, cron_expression, task_type, payload) 
-      VALUES (?, ?, ?, ?) 
+      INSERT INTO scheduled_jobs (name, cron_expression, task_type, payload, expires_at) 
+      VALUES (?, ?, ?, ?, ?) 
       ON CONFLICT(name) DO UPDATE SET 
         cron_expression=excluded.cron_expression, 
         task_type=excluded.task_type, 
-        payload=excluded.payload
+        payload=excluded.payload,
+        expires_at=excluded.expires_at
     `);
-    stmt.run(job.name, job.cronExpression, job.taskType || 'function_call', payloadStr);
+    stmt.run(job.name, job.cronExpression, job.taskType || 'function_call', payloadStr, job.expiresAt || null);
   }
 
   getScheduledJobs() {
@@ -174,6 +181,7 @@ class AgentDB {
       cronExpression: row.cron_expression,
       taskType: row.task_type,
       payload: row.payload ? JSON.parse(row.payload) : {},
+      expiresAt: row.expires_at,
       createdAt: row.created_at
     }));
   }

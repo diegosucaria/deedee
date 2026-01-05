@@ -218,7 +218,10 @@ app.get('/internal/tasks', (req, res) => {
       cron: j.metadata?.cronExpression || 'unknown',
       task: j.metadata?.payload?.task || '',
       isSystem: j.metadata?.payload?.isSystem || false,
+      task: j.metadata?.payload?.task || '',
+      isSystem: j.metadata?.payload?.isSystem || false,
       isOneOff: j.metadata?.payload?.isOneOff || false,
+      expiresAt: j.metadata?.expiresAt || null,
       nextInvocation: j.nextInvocation()
     }));
     res.json({ jobs });

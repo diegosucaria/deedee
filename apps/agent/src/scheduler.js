@@ -27,6 +27,17 @@ class Scheduler {
 
         const job = schedule.scheduleJob(rule, async () => {
             console.log(`[Scheduler] Running job: ${name}`);
+
+            // Expiration Check
+            if (options.expiresAt) {
+                const expiry = new Date(options.expiresAt).getTime();
+                if (Date.now() > expiry) {
+                    console.log(`[Scheduler] Job '${name}' has expired (Expires: ${options.expiresAt}). Cancelling and Removing.`);
+                    this.cancelJob(name);
+                    return;
+                }
+            }
+
             const start = Date.now();
             let status = 'success';
             let output = null;
@@ -62,7 +73,13 @@ class Scheduler {
         }
 
         this.jobs[name] = job;
-        this.jobs[name].metadata = { name, cronExpression, createdAt: new Date() }; // cronExpression here might be ISO string
+        this.jobs[name] = job;
+        this.jobs[name].metadata = {
+            name,
+            cronExpression,
+            createdAt: new Date(),
+            expiresAt: options.expiresAt
+        }; // cronExpression here might be ISO string
 
         // Ensure payload is stored in memory for API access
         this.jobs[name].metadata.payload = options.payload || {};
@@ -73,7 +90,8 @@ class Scheduler {
                 name,
                 cronExpression: typeof cronExpression === 'string' ? cronExpression : cronExpression.toISOString(),
                 taskType: options.taskType || 'custom',
-                payload: { ...options.payload, isOneOff: !!options.oneOff }
+                payload: { ...options.payload, isOneOff: !!options.oneOff },
+                expiresAt: options.expiresAt
             });
         }
         console.log(`[Scheduler] Job '${name}' scheduled. OneOff: ${!!options.oneOff}`);
@@ -94,7 +112,17 @@ class Scheduler {
         console.log('[Scheduler] Loading persisted jobs...');
         const jobs = this.agent.db.getScheduledJobs();
         for (const jobData of jobs) {
-            const { name, cronExpression, taskType, payload } = jobData;
+            const { name, cronExpression, taskType, payload, expiresAt } = jobData;
+
+            // Load-time Expiration Check
+            if (expiresAt) {
+                const expiry = new Date(expiresAt).getTime();
+                if (Date.now() > expiry) {
+                    console.log(`[Scheduler] Found expired job '${name}' during load. Deleting.`);
+                    this.agent.db.deleteScheduledJob(name);
+                    continue;
+                }
+            }
 
             // Skip system jobs (let ensureSystemJobs recreate them with correct callbacks/logic)
             if (payload && payload.isSystem) {
@@ -171,7 +199,7 @@ class Scheduler {
             }
 
             // Schedule without re-persisting
-            this.scheduleJob(name, cronExpression, callback, { persist: false, taskType, payload });
+            this.scheduleJob(name, cronExpression, callback, { persist: false, taskType, payload, expiresAt });
         }
         console.log(`[Scheduler] Loaded ${Object.keys(this.jobs).length} jobs from DB.`);
     }

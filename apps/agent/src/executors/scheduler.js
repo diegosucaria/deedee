@@ -7,7 +7,7 @@ class SchedulerExecutor extends BaseExecutor {
 
         switch (name) {
             case 'scheduleJob': {
-                const { name: jobName, cron, task } = args;
+                const { name: jobName, cron, task, expiresAt } = args;
                 const targetChatId = message.metadata?.chatId;
                 const targetSource = message.source;
 
@@ -33,9 +33,10 @@ class SchedulerExecutor extends BaseExecutor {
                 scheduler.scheduleJob(jobName, cron, callback, {
                     persist: true,
                     taskType: 'agent_instruction',
-                    payload: { task, targetChatId, targetSource }
+                    payload: { task, targetChatId, targetSource },
+                    expiresAt: expiresAt
                 });
-                return { success: true, info: `Job '${jobName}' scheduled for '${cron}'` };
+                return { success: true, info: `Job '${jobName}' scheduled for '${cron}'` + (expiresAt ? ` until ${expiresAt}` : '') };
             }
 
             case 'setReminder': {
