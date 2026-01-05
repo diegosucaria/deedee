@@ -89,11 +89,10 @@ class Monitor {
             const res = await fetch(`${this.agentUrl}/health`);
             if (res.ok) {
                 // Determine if we should run a Deep Logic Check
-                // CheckInterval is 1 min. We want 1 hour. so 60 checks.
-                // We can use a counter or modulo on time? Counter is safer for "every N checks".
+                // CheckInterval is 1 min. We want 6 hours. so 360 checks.
                 this.checkCounter = (this.checkCounter || 0) + 1;
 
-                if (this.checkCounter >= 60) {
+                if (this.checkCounter >= 360) {
                     this.checkCounter = 0;
                     console.log('[Monitor] Running Deep Logic Check...');
                     await this._deepCheck();

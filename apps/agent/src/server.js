@@ -107,15 +107,6 @@ app.post('/chat', async (req, res) => {
     return res.status(400).json({ error: 'Invalid message format' });
   }
 
-  // Special handler for Internal Deep Logic Checks (saves LLM tokens & latency)
-  if (message.content === 'HEALTH_CHECK_PING_123') {
-    return res.json({
-      text: 'PONG',
-      replies: [{ role: 'assistant', content: 'PONG' }],
-      toolOutputs: []
-    });
-  }
-
   if (agent) {
     // Normalize message fields
     message.role = message.role || 'user';
