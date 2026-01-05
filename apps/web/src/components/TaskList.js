@@ -2,7 +2,7 @@
 
 import { useFormState } from 'react-dom';
 import { cancelTask, createTask, runTask } from '@/app/actions';
-import { Trash2, Clock, PlayCircle, Plus, Pencil, Save, X, RefreshCw } from 'lucide-react';
+import { Trash2, Clock, PlayCircle, Plus, Pencil, Save, X, RefreshCw, CalendarOff } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
@@ -255,6 +255,13 @@ export default function TaskList({ tasks }) {
                                         </div>
                                     </div>
 
+                                    {job.expiresAt && (
+                                        <div className="text-[10px] text-orange-400 bg-orange-400/10 px-2 py-1 -mt-2 rounded border border-orange-400/20 inline-flex items-center gap-1 self-start">
+                                            <CalendarOff className="h-3 w-3" />
+                                            Expires: {new Date(job.expiresAt).toLocaleString()}
+                                        </div>
+                                    )}
+
                                     <div className="text-sm text-zinc-300 leading-relaxed font-mono bg-black/20 p-3 rounded-lg border border-white/5 line-clamp-3">
                                         {job.task || <em className="text-zinc-600">No instruction visible</em>}
                                     </div>
@@ -323,6 +330,15 @@ export default function TaskList({ tasks }) {
                                         </span>
                                         <span className="text-zinc-600 mx-1">•</span>
                                         <span className="text-zinc-500 text-xs font-mono">{job.name}</span>
+                                        {job.expiresAt && (
+                                            <>
+                                                <span className="text-zinc-600 mx-1">•</span>
+                                                <span className="text-orange-400 text-xs flex items-center gap-1">
+                                                    <CalendarOff className="h-3 w-3" />
+                                                    Expires: {new Date(job.expiresAt).toLocaleString()}
+                                                </span>
+                                            </>
+                                        )}
                                     </div>
                                 </div>
 
