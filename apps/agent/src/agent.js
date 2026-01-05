@@ -834,7 +834,17 @@ class Agent {
           );
         }
 
-        const text = result.text();
+        let text = '';
+        if (typeof result.text === 'function') {
+          try { text = result.text(); } catch (e) { /* ignore */ }
+        } else if (result.text) {
+          text = result.text;
+        } else if (result.candidates && result.candidates[0] && result.candidates[0].content) {
+          const parts = result.candidates[0].content.parts || [];
+          text = parts.filter(p => p.text).map(p => p.text).join(' ');
+        }
+
+        if (!text) text = 'Search returned no text content.';
         return { result: text, info: 'Search performed via Google Grounding.' };
       } catch (e) {
         console.error('[Agent] Search Polyfill Failed:', e);
