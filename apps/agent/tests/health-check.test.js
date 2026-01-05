@@ -13,7 +13,8 @@ describe('Agent Health Check', () => {
             saveMessage: jest.fn(),
             logMetric: jest.fn(),
             logTokenUsage: jest.fn(),
-            getHistoryForChat: jest.fn()
+            getHistoryForChat: jest.fn(),
+            getPendingGoals: jest.fn().mockReturnValue([]) // Added for Goals feature
         };
         agent.rateLimiter = { check: jest.fn().mockResolvedValue(true) };
         agent.commandHandler = { handle: jest.fn().mockResolvedValue(false) };
@@ -43,7 +44,7 @@ describe('Agent Health Check', () => {
         // Mock router causing throw to exit early or mock full chain? 
         // Let's just expect it NOT to return immediate PONG logic.
         agent.router = { route: jest.fn().mockResolvedValue({ model: 'FLASH' }) };
-        agent.client = { chats: { create: () => ({ sendMessage: jest.fn().mockResolvedValue({ candidates: [] }) }) } };
+        agent.client = { chats: { create: () => ({ sendMessage: jest.fn().mockResolvedValue({ candidates: [{ content: { role: 'model', parts: [{ text: 'Hello' }] } }] }) }) } };
         agent.mcp = { getTools: jest.fn().mockResolvedValue([]) };
 
         const sendCallback = jest.fn();

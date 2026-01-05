@@ -12,12 +12,6 @@ class Scheduler {
      * @param {string} name - Unique job name
      * @param {string} cronExpression - Cron rule (e.g., '0 8 * * *')
      * @param {function} callback - Async function to run
-     */
-    /**
-     * Schedule a recurring job.
-     * @param {string} name - Unique job name
-     * @param {string} cronExpression - Cron rule (e.g., '0 8 * * *')
-     * @param {function} callback - Async function to run
      * @param {object} options - { persist: boolean, taskType: string, payload: object }
      */
     scheduleJob(name, cronExpression, callback, options = {}) {
@@ -36,6 +30,9 @@ class Scheduler {
 
         this.jobs[name] = job;
         this.jobs[name].metadata = { name, cronExpression, createdAt: new Date() };
+
+        // Ensure payload is stored in memory for API access
+        this.jobs[name].metadata.payload = options.payload || {};
 
         if (options.persist) {
             this.agent.db.saveScheduledJob({
@@ -88,7 +85,7 @@ class Scheduler {
             }
 
             // Schedule without re-persisting
-            this.scheduleJob(name, cronExpression, callback, { persist: false });
+            this.scheduleJob(name, cronExpression, callback, { persist: false, taskType, payload });
         }
         console.log(`[Scheduler] Loaded ${Object.keys(this.jobs).length} jobs from DB.`);
     }

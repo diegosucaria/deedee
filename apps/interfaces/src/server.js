@@ -105,6 +105,12 @@ app.post('/send', async (req, res) => {
       }
     }
 
+    // SCHEDULER (Internal)
+    if (source === 'scheduler') {
+      console.log(`[Interfaces] Scheduler output (logged only): ${content}`);
+      return res.json({ success: true });
+    }
+
     if (source === 'telegram' && telegram) {
       if (!metadata || !metadata.chatId) {
         throw new Error('Missing chatId in metadata for Telegram message');

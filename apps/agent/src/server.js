@@ -211,6 +211,7 @@ app.get('/internal/tasks', (req, res) => {
     const jobs = Object.values(agent.scheduler.jobs).map(j => ({
       name: j.metadata?.name || 'unknown',
       cron: j.metadata?.cronExpression || 'unknown',
+      task: j.metadata?.payload?.task || '',
       nextInvocation: j.nextInvocation()
     }));
     res.json({ jobs });
