@@ -235,6 +235,17 @@ class AgentDB {
     return row ? JSON.parse(row.value) : null;
   }
 
+  getAllFacts() {
+    const stmt = this.db.prepare('SELECT key, value FROM kv_store ORDER BY updated_at DESC');
+    return stmt.all().map(row => {
+      try {
+        return { key: row.key, value: JSON.parse(row.value) };
+      } catch (e) {
+        return { key: row.key, value: row.value };
+      }
+    });
+  }
+
   // --- Goals ---
   addGoal(description, metadata = {}) {
     const metaStr = JSON.stringify(metadata);

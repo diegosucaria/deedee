@@ -26,7 +26,7 @@ ENV LANG=C.UTF-8
 ENV NODE_ENV=production
 
 # Install Runtime Dependencies: Git (required for Supervisor)
-RUN apk add --no-cache git
+RUN apk add --no-cache git bash
 
 # Copy built node_modules and app source from builder
 COPY --from=builder /app/node_modules ./node_modules

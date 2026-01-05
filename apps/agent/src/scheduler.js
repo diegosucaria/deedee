@@ -189,41 +189,46 @@ class Scheduler {
 
         console.log('[Scheduler] Verifying system jobs...');
         for (const sysJob of SYSTEM_JOBS) {
-            if (!this.jobs[sysJob.name]) {
-                console.log(`[Scheduler] System job '${sysJob.name}' missing. Creating...`);
-                // Use the standard scheduleJob logic which handles the callback wrapper
-                // We manually construct the instruction wrapper to match 'agent_instruction' type
-                const callback = async () => {
-                    console.log(`[Scheduler] Executing SYSTEM task: ${sysJob.task}`);
+            console.log(`[Scheduler] Ensuring system job '${sysJob.name}'...`);
 
-                    // Direct Execution for Backup (Bypass Agent LLM to avoid context window usage/failures and ensure reliability)
-                    if (sysJob.name === 'nightly_backup') {
-                        try {
-                            const result = await this.agent.backupManager.performBackup();
-                            console.log('[Scheduler] Nightly Backup Result:', result);
-                        } catch (err) {
-                            console.error('[Scheduler] Nightly Backup Failed:', err);
-                        }
-                        return;
-                    }
-
-                    await this.agent.processMessage({
-                        role: 'user',
-                        content: `System Maintenance: ${sysJob.task}`,
-                        source: 'scheduler',
-                        metadata: { chatId: `system_${sysJob.name}_${Date.now()}` }
-                    }, async (reply) => {
-                        // Fire and forget response
-                        if (this.agent.interface) await this.agent.interface.send(reply);
-                    });
-                };
-
-                this.scheduleJob(sysJob.name, sysJob.cron, callback, {
-                    persist: true,
-                    taskType: 'agent_instruction',
-                    payload: { task: sysJob.task, isSystem: true }
-                });
+            // Always overwrite/update system jobs to ensure latest logic and metadata
+            // This handles cases where old versions exist in DB without proper flags
+            if (this.jobs[sysJob.name]) {
+                this.cancelJob(sysJob.name);
             }
+
+            // Use the standard scheduleJob logic which handles the callback wrapper
+            // We manually construct the instruction wrapper to match 'agent_instruction' type
+            const callback = async () => {
+                console.log(`[Scheduler] Executing SYSTEM task: ${sysJob.task}`);
+
+                // Direct Execution for Backup (Bypass Agent LLM to avoid context window usage/failures and ensure reliability)
+                if (sysJob.name === 'nightly_backup') {
+                    try {
+                        const result = await this.agent.backupManager.performBackup();
+                        console.log('[Scheduler] Nightly Backup Result:', result);
+                    } catch (err) {
+                        console.error('[Scheduler] Nightly Backup Failed:', err);
+                    }
+                    return;
+                }
+
+                await this.agent.processMessage({
+                    role: 'user',
+                    content: `System Maintenance: ${sysJob.task}`,
+                    source: 'scheduler',
+                    metadata: { chatId: `system_${sysJob.name}_${Date.now()}` }
+                }, async (reply) => {
+                    // Fire and forget response
+                    if (this.agent.interface) await this.agent.interface.send(reply);
+                });
+            };
+
+            this.scheduleJob(sysJob.name, sysJob.cron, callback, {
+                persist: true, // Persist so they show up in DB listing if needed, though mostly for consistent ID
+                taskType: 'agent_instruction',
+                payload: { task: sysJob.task, isSystem: true }
+            });
         }
     }
 

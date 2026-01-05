@@ -317,7 +317,12 @@ class Agent {
         .map(g => `- [${g.id}] ${g.description}`)
         .join('\n            ');
 
-      let systemInstruction = getSystemInstruction(new Date().toString(), pendingGoals);
+      // Fetch Memory/Facts
+      const facts = this.db.getAllFacts()
+        .map(f => `- **${f.key}**: ${JSON.stringify(f.value)}`)
+        .join('\n            ');
+
+      let systemInstruction = getSystemInstruction(new Date().toString(), pendingGoals, facts);
 
       if (['iphone', 'ios_shortcut'].includes(message.source)) {
         systemInstruction += `\n
