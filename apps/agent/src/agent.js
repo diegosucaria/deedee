@@ -175,7 +175,15 @@ class Agent {
         // Execute the pending action immediately
         const action = commandResult.action;
         console.log(`[Agent] User confirmed action: ${action.name}`);
-        const result = await this._executeTool(action.name, action.args, message, sendCallback);
+        const result = await this._executeTool(action.name, action.args, message, sendCallback, (model, pTokens, cTokens) => {
+          const cost = calculateCost(model, pTokens, cTokens);
+          // We don't have e2eCost/Tokens variables in this scope easily for the command handler return path
+          // But we can at least log it to DB
+          this.db.logTokenUsage({
+            model, promptTokens: pTokens, candidateTokens: cTokens,
+            totalTokens: pTokens + cTokens, chatId, estimatedCost: cost
+          });
+        });
 
         executionSummary.toolOutputs.push({ name: action.name, result });
 
@@ -229,7 +237,10 @@ class Agent {
           prompt = message.parts.map(p => p.text).join(' ');
         }
 
-        const toolResult = await this._executeTool('generateImage', { prompt: prompt }, message, sendCallback);
+        const toolResult = await this._executeTool('generateImage', { prompt: prompt }, message, sendCallback, (model, pTokens, cTokens) => {
+          // Image gen usually flat cost or different metric, but if we had tokens we'd track here.
+          // For now, no-op or specific image cost logic if needed.
+        });
         executionSummary.toolOutputs.push({ name: 'generateImage', result: toolResult });
 
         // Optionally send a text confirmation
@@ -526,7 +537,17 @@ class Agent {
               toolResult = { info: `Action PAUSED. ${guard.message} User must confirm.` };
             } else {
               // Execute normally
-              toolResult = await this._executeTool(executionName, call.args, message, sendCallback);
+              toolResult = await this._executeTool(executionName, call.args, message, sendCallback, (model, pTokens, cTokens) => {
+                const cost = calculateCost(model, pTokens, cTokens);
+                e2eCost += cost;
+                e2eTokens += (pTokens + cTokens);
+                console.log(`[Tokens-Polyfill] P: ${pTokens} | C: ${cTokens} | Cost: $${cost.toFixed(6)}`);
+
+                this.db.logTokenUsage({
+                  model, promptTokens: pTokens, candidateTokens: cTokens,
+                  totalTokens: pTokens + cTokens, chatId, estimatedCost: cost
+                });
+              });
             }
           } catch (toolErr) {
             console.warn(`[Agent] Tool execution failed (${executionName}): ${toolErr.message}`);
@@ -756,7 +777,7 @@ class Agent {
     console.log('[Agent] Stopped.');
   }
 
-  async _executeTool(executionName, args, message, sendCallback) {
+  async _executeTool(executionName, args, message, sendCallback, usageCallback = null) {
     // --- INTERNAL DB TOOLS ---
     if (executionName === 'rememberFact') {
       this.db.setKey(args.key, args.value);
@@ -780,6 +801,45 @@ class Agent {
     if (executionName === 'completeGoal') {
       this.db.completeGoal(args.id);
       return { success: true };
+    }
+
+    // --- SEARCH POLYFILL for STANDARD MODE ---
+    if (executionName === 'googleSearch') {
+      console.log('[Agent] Standard Mode: Polyfilling googleSearch via dedicated session...');
+      try {
+        // Create a dedicated session just for this search
+        // We use a separate model instance to ensure isolation and access to native search
+        const searchSession = this.client.chats.create({
+          model: process.env.WORKER_FLASH || 'gemini-2.0-flash-exp', // Use Flash for speed
+          config: {
+            tools: [{ googleSearch: {} }], // Enable Native Search here
+            systemInstruction: 'You are a search engine. Return the answer to the user query based on the search results. Be concise.'
+          }
+        });
+
+        let prompt = args.prompt;
+        // Handle case where args might be object/string mismatch
+        if (!prompt && typeof args === 'string') prompt = args;
+        if (!prompt) throw new Error('No prompt provided for search.');
+
+        const result = await searchSession.sendMessage({ message: prompt });
+
+        // Track Usage for Polyfill
+        if (result.response.usageMetadata && usageCallback) {
+          const u = result.response.usageMetadata;
+          usageCallback(
+            process.env.WORKER_FLASH || 'gemini-2.0-flash-exp',
+            u.promptTokenCount,
+            u.candidatesTokenCount
+          );
+        }
+
+        const text = result.response.text();
+        return { result: text, info: 'Search performed via Google Grounding.' };
+      } catch (e) {
+        console.error('[Agent] Search Polyfill Failed:', e);
+        return { error: `Search failed: ${e.message}` };
+      }
     }
 
     // --- SUPERVISOR TOOLS ---

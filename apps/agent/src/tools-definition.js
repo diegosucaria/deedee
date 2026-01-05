@@ -240,6 +240,18 @@ const toolDefinitions = [
           required: ["time", "task"]
         }
       },
+      // External Tools
+      {
+        name: "googleSearch",
+        description: "Perform a Google Search to get real-time information (weather, news, stocks, facts).",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            prompt: { type: "STRING", description: "The search query." }
+          },
+          required: ["prompt"]
+        }
+      },
       // Image Generation
       {
         name: "generateImage",
