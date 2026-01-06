@@ -2,37 +2,13 @@
 
 import { useState, useEffect } from 'react';
 import { fetchAPI } from '@/lib/api';
+import { safeParse, deepParse } from '@/lib/json-parser';
 import { Clock, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
 
 const LogContent = ({ content }) => {
     const [expanded, setExpanded] = useState(false);
 
     if (!content) return <span className="text-zinc-500">-</span>;
-
-    // Helper to deeply parse JSON strings within objects
-    const deepParse = (input) => {
-        if (typeof input === 'string') {
-            try {
-                const parsed = JSON.parse(input);
-                if (typeof parsed === 'object' && parsed !== null) {
-                    return deepParse(parsed);
-                }
-            } catch (e) { return input; }
-        }
-
-        if (typeof input === 'object' && input !== null) {
-            if (Array.isArray(input)) {
-                return input.map(deepParse);
-            }
-            const newObj = {};
-            for (const key in input) {
-                newObj[key] = deepParse(input[key]);
-            }
-            return newObj;
-        }
-
-        return input;
-    };
 
     // Helper to extract and parse JSON using brace balancing
     const parseLine = (line) => {
@@ -65,41 +41,17 @@ const LogContent = ({ content }) => {
 
                         if (balance === 0) {
                             // Found balanced end
-                            let candidate = contentToParse.substring(i, j + 1);
-                            try {
-                                let parsed = JSON.parse(candidate);
-                                if (typeof parsed === 'object' && parsed !== null) {
-                                    parsed = deepParse(parsed);
-                                    return JSON.stringify(parsed, null, 2);
-                                }
-                            } catch (e) {
-                                // 1. Try cleaning newlines (already added)
-                                try {
-                                    const sanitized = candidate.replace(/\n/g, '\\n');
-                                    let parsed = JSON.parse(sanitized);
-                                    return JSON.stringify(deepParse(parsed), null, 2);
-                                } catch (e2) {
-                                    // 2. Try handling Python-style dicts (common in Pydantic/Python logs)
-                                    // input_value={'limit': 100} -> {"limit": 100}
-                                    try {
-                                        let pySanitized = candidate
-                                            .replace(/'/g, '"')          // Replace single quotes with double (brittle but works for simple dumps)
-                                            .replace(/None/g, 'null')    // Python None -> null
-                                            .replace(/True/g, 'true')    // Python True -> true
-                                            .replace(/False/g, 'false')  // Python False -> false
-                                            .replace(/\(/g, '[')         // Tuples -> Arrays
-                                            .replace(/\)/g, ']')
-                                            .replace(/\\n/g, "\\\\n");   // Fix double escapes if needed
+                            const candidate = contentToParse.substring(i, j + 1);
 
-                                        let parsed = JSON.parse(pySanitized);
-                                        return JSON.stringify(deepParse(parsed), null, 2);
-                                    } catch (e3) {
-                                        // Still failed
-                                    }
-                                }
+                            // Use robust parsing
+                            const parsed = safeParse(candidate);
+                            if (parsed) {
+                                const deep = deepParse(parsed);
+                                return JSON.stringify(deep, null, 2);
                             }
-                            // If we found a balanced block but it failed parsing, 
-                            // we usually stop because we found the matching brace for the start.
+                            // If parsing failed, break and continue scanning from i+1 would be ideal, 
+                            // but our loop logic continues j. 
+                            // Actually, if we found a balanced block but it failed parsing, it's likely not JSON.
                             break;
                         }
                     }
