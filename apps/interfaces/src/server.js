@@ -131,10 +131,13 @@ app.post('/send', async (req, res) => {
 
       if (type === 'audio') {
         // content is expected to be base64 string or url
+        console.log(`[Interfaces] Sending Voice to ${metadata.chatId}`);
         await telegram.sendVoice(metadata.chatId, content);
       } else if (type === 'image') {
+        console.log(`[Interfaces] Sending Photo to ${metadata.chatId}`);
         await telegram.sendPhoto(metadata.chatId, content);
       } else {
+        console.log(`[Interfaces] Sending Text to ${metadata.chatId}: ${content.substring(0, 100).replace(/\n/g, ' ')}${content.length > 100 ? '...' : ''}`);
         await telegram.sendMessage(metadata.chatId, content);
       }
 

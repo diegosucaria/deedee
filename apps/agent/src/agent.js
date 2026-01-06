@@ -831,7 +831,7 @@ class Agent {
           model: process.env.WORKER_FLASH || 'gemini-2.0-flash-exp', // Use Flash for speed
           config: {
             tools: [{ googleSearch: {} }], // Enable Native Search here
-            systemInstruction: 'You are a search engine. Return the answer to the user query based on the search results. Be concise.'
+            systemInstruction: 'You are a search engine. Return the answer to the user query based on the search results. Be concise. IMPORTANT: You MUST answer in the SAME language as the user query. Do not switch languages.'
           }
         });
 
