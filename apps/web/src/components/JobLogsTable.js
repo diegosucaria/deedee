@@ -34,17 +34,15 @@ const LogContent = ({ content }) => {
         return input;
     };
 
-    let jsonString = null;
-    let isJson = false;
+    // Helper to try parsing a single line
+    const parseLine = (line) => {
+        try {
+            let contentToParse = line.trim();
+            if (!contentToParse) return null;
 
-    // First attempt to parse the top-level content
-    try {
-        let contentToParse = content;
-
-        // If it's a string, try to find the first '{' or '[' to handle prefixes like "Tool Result (...): "
-        if (typeof content === 'string') {
-            const firstBrace = content.indexOf('{');
-            const firstBracket = content.indexOf('[');
+            // Find start of JSON structure
+            const firstBrace = contentToParse.indexOf('{');
+            const firstBracket = contentToParse.indexOf('[');
 
             let startIndex = -1;
             if (firstBrace !== -1 && firstBracket !== -1) {
@@ -56,50 +54,76 @@ const LogContent = ({ content }) => {
             }
 
             if (startIndex !== -1) {
-                // Try parsing from the first discovered brace/bracket
-                // We blindly take the substring from there to the end. 
-                // If there's trailing junk, JSON.parse might accept it or fail.
-                // Ideally we'd match balanced braces but that's complex. 
-                // Let's rely on JSON.parse failing if it's not valid.
-                contentToParse = content.substring(startIndex);
+                contentToParse = contentToParse.substring(startIndex);
+            } else {
+                return null; // No JSON start found
             }
-        }
 
-        // If content is already an object (should be string from props, but just in case)
-        let parsed = typeof contentToParse === 'string' ? JSON.parse(contentToParse) : contentToParse;
+            // Attempt Parse
+            let parsed = JSON.parse(contentToParse);
+            if (typeof parsed === 'object' && parsed !== null) {
+                parsed = deepParse(parsed);
+                return JSON.stringify(parsed, null, 2);
+            }
+        } catch (e) { return null; }
+        return null;
+    };
 
-        // If it's valid object/array, try to deep parse its fields
-        if (typeof parsed === 'object' && parsed !== null) {
-            parsed = deepParse(parsed);
-            jsonString = JSON.stringify(parsed, null, 2);
-            isJson = true;
-        }
-    } catch (e) {
-        // Not JSON, just text
-    }
+    // Process all lines
+    const lines = typeof content === 'string' ? content.split('\n') : [JSON.stringify(content)];
+    const processedLines = lines.map((line, idx) => {
+        const prettyJson = parseLine(line);
+        return { original: line, pretty: prettyJson, id: idx };
+    });
 
-    if (isJson && jsonString) {
+    const hasJson = processedLines.some(l => l.pretty);
+
+    if (hasJson || lines.length > 5) {
         return (
-            <details className="group">
-                <summary className="cursor-pointer text-xs text-indigo-400 hover:text-indigo-300 font-mono list-none flex items-center gap-2 select-none">
-                    <span className="bg-indigo-500/10 border border-indigo-500/20 px-1 rounded text-[10px] font-bold">JSON</span>
-                    <span className="opacity-50 truncate max-w-[200px]">{content.substring(0, 50)}...</span>
-                </summary>
-                <div className="mt-2 relative">
-                    <pre className="p-3 bg-black/50 rounded-lg border border-white/10 text-[10px] text-zinc-300 overflow-x-auto whitespace-pre font-mono shadow-inner">
-                        {jsonString}
-                    </pre>
-                </div>
-            </details>
+            <div className="flex flex-col gap-1">
+                {!expanded && (
+                    <div
+                        onClick={() => setExpanded(true)}
+                        className="cursor-pointer text-xs text-indigo-400 hover:text-indigo-300 font-mono flex items-center gap-2 mb-1"
+                    >
+                        <RefreshCw className="w-3 h-3" />
+                        <span>View Full Log ({lines.length} lines)</span>
+                    </div>
+                )}
+
+                {expanded ? (
+                    <div className="flex flex-col gap-1 border-l-2 border-zinc-800 pl-2">
+                        {processedLines.map((l) => (
+                            <div key={l.id} className="text-xs font-mono break-words whitespace-pre-wrap text-zinc-400">
+                                {l.pretty ? (
+                                    <details className="group my-1">
+                                        <summary className="cursor-pointer text-indigo-300 hover:text-indigo-200 list-none flex items-center gap-2 select-none">
+                                            <span className="bg-indigo-500/10 border border-indigo-500/20 px-1 rounded text-[10px] font-bold">JSON</span>
+                                            <span className="opacity-50 truncate">{l.original.substring(0, 60)}...</span>
+                                        </summary>
+                                        <pre className="mt-1 p-2 bg-black/50 rounded border border-white/5 text-[10px] text-zinc-300 overflow-x-auto whitespace-pre shadow-inner">
+                                            {l.pretty}
+                                        </pre>
+                                    </details>
+                                ) : (
+                                    <div className="py-0.5">{l.original}</div>
+                                )}
+                            </div>
+                        ))}
+                        <button onClick={() => setExpanded(false)} className="text-[10px] text-zinc-500 hover:text-zinc-300 mt-2">Collapse</button>
+                    </div>
+                ) : (
+                    // Preview (last few lines? or first few?)
+                    <div className="text-zinc-500 text-xs font-mono line-clamp-3 cursor-pointer" onClick={() => setExpanded(true)}>
+                        {content}
+                    </div>
+                )}
+            </div>
         );
     }
 
     return (
-        <div
-            onClick={() => setExpanded(!expanded)}
-            className={`text-zinc-400 font-mono text-xs cursor-pointer hover:bg-white/5 p-1.5 -m-1.5 rounded transition-colors break-words whitespace-pre-wrap ${expanded ? '' : 'line-clamp-2'}`}
-            title={expanded ? "Click to collapse" : "Click to expand"}
-        >
+        <div className="text-zinc-400 font-mono text-xs break-words whitespace-pre-wrap">
             {content}
         </div>
     );

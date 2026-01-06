@@ -499,7 +499,8 @@ class Agent {
 
         // PARALLEL EXECUTION STRATEGY
         console.log(`[Agent] Processing ${functionCalls.length} tool calls in parallel.`);
-        await reportProgress(`Executing ${functionCalls.length} tools...`);
+        const toolNames = functionCalls.map(c => (c.name || '').replace('default_api:', '')).join(', ');
+        await reportProgress(`Executing ${functionCalls.length} tools: ${toolNames}...`);
 
         // 1. Start Global Thinking Timer (for the batch)
         let thinkTimer = setTimeout(async () => {
