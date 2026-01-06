@@ -2,8 +2,6 @@ export const dynamic = 'force-dynamic';
 import { fetchAPI } from '@/lib/api';
 import { BarChart3, MessageSquare, Brain, Clock, Zap, CheckCircle, Activity } from 'lucide-react';
 import StatsClient from './StatsClient';
-import JobLogsTable from '@/components/JobLogsTable';
-import ActiveJobsTable from '@/components/ActiveJobsTable';
 
 export default async function StatsPage() {
     let stats = null;
@@ -128,11 +126,7 @@ export default async function StatsPage() {
                 </div>
             </div>
 
-            {/* Active Jobs Table */}
-            <ActiveJobsTable />
-
-            {/* Job Logs Table */}
-            <JobLogsTable />
+            {/* Active Jobs Table and Job Logs Table have been moved to /tasks */}
         </div>
     );
 }
