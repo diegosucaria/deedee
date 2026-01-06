@@ -2,12 +2,14 @@
 
 import { useState, useEffect } from 'react';
 import { getTasks, runTask, cancelTask } from '@/app/actions';
-import { Clock, Play, Trash2, RefreshCw, CalendarOff } from 'lucide-react';
+import { Clock, Play, Trash2, RefreshCw, CalendarOff, Edit, Plus } from 'lucide-react';
+import CreateTaskForm from './CreateTaskForm';
 
 export default function ActiveJobsTable() {
     const [jobs, setJobs] = useState([]);
     const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState(null);
+    const [editingJob, setEditingJob] = useState(null);
 
     const loadJobs = async () => {
         setLoading(true);
@@ -56,16 +58,41 @@ export default function ActiveJobsTable() {
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
             <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
                 <h3 className="text-lg font-semibold text-zinc-300 flex items-center gap-2">
-                    <Clock className="w-5 h-5 text-sky-400" />
-                    Active Scheduled Jobs
-                </h3>
-                <button
-                    onClick={loadJobs}
-                    className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors"
-                >
-                    <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-                </button>
+                    <h3 className="text-lg font-semibold text-zinc-300 flex items-center gap-2">
+                        <Clock className="w-5 h-5 text-sky-400" />
+                        Active Scheduled Jobs
+                    </h3>
+                    <div className="flex gap-2">
+                        <button
+                            onClick={() => setEditingJob({})}
+                            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-2"
+                        >
+                            <Plus className="w-4 h-4" />
+                            New Schedule
+                        </button>
+                        <button
+                            onClick={loadJobs}
+                            className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors"
+                        >
+                            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                        </button>
+                    </div>
             </div>
+
+            {editingJob && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setEditingJob(null)}>
+                    <div className="w-full max-w-2xl" onClick={e => e.stopPropagation()}>
+                        <CreateTaskForm
+                            initialValues={editingJob.name ? editingJob : null}
+                            onTaskCreated={() => {
+                                setEditingJob(null);
+                                loadJobs();
+                            }}
+                            onCancel={() => setEditingJob(null)}
+                        />
+                    </div>
+                </div>
+            )}
 
             <div className="overflow-x-auto">
                 <table className="w-full text-sm text-left">
@@ -134,6 +161,14 @@ export default function ActiveJobsTable() {
                                                 title="Run Now"
                                             >
                                                 <Play className="w-4 h-4" />
+                                            </button>
+                                            <button
+                                                onClick={() => setEditingJob(job)}
+                                                disabled={actionLoading === job.name || job.isSystem}
+                                                className="p-1.5 hover:bg-zinc-700/50 rounded text-indigo-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                                title={job.isSystem ? "Cannot edit system jobs" : "Edit Job"}
+                                            >
+                                                <Edit className="w-4 h-4" />
                                             </button>
                                             {!job.isSystem && (
                                                 <button

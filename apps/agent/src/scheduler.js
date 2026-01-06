@@ -71,6 +71,7 @@ class Scheduler {
                 console.log(`[Scheduler] One-off job '${name}' completed. Cleaning up...`);
                 delete this.jobs[name];
                 this.agent.db.deleteScheduledJob(name);
+                this.agent.db.deleteJobState(name);
             }
         });
 
@@ -111,7 +112,8 @@ class Scheduler {
 
             // Remove from DB
             this.agent.db.deleteScheduledJob(name);
-            console.log(`[Scheduler] Job '${name}' cancelled and removed from DB.`);
+            this.agent.db.deleteJobState(name);
+            console.log(`[Scheduler] Job '${name}' cancelled, removed from DB, and state cleaned.`);
         }
     }
 
@@ -127,6 +129,7 @@ class Scheduler {
                 if (Date.now() > expiry) {
                     console.log(`[Scheduler] Found expired job '${name}' during load. Deleting.`);
                     this.agent.db.deleteScheduledJob(name);
+                    this.agent.db.deleteJobState(name);
                     continue;
                 }
             }

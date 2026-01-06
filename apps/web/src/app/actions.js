@@ -196,6 +196,18 @@ export async function getJobLogs(limit = 50) {
     }
 }
 
+export async function deleteJobLogs(ids) {
+    try {
+        await fetchAPI('/v1/logs/jobs/delete', {
+            method: 'POST',
+            body: JSON.stringify({ ids })
+        });
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function cleanupData() {
     try {
         await fetchAPI('/v1/cleanup', { method: 'POST' });

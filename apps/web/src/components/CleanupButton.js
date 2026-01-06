@@ -10,7 +10,8 @@ export default function CleanupButton() {
     const handleCleanup = async () => {
         setStatus('loading');
         try {
-            await cleanupData();
+            const result = await cleanupData();
+            if (!result.success) throw new Error(result.error);
             setStatus('success');
             setTimeout(() => setStatus('idle'), 3000);
         } catch (err) {

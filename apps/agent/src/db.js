@@ -308,6 +308,12 @@ class AgentDB {
     });
   }
 
+  deleteJobState(jobName) {
+    const prefix = `job:${jobName}:%`;
+    const info = this.db.prepare('DELETE FROM kv_store WHERE key LIKE ?').run(prefix);
+    console.log(`[DB] Deleted ${info.changes} facts for job '${jobName}'.`);
+  }
+
   // --- Goals ---
   addGoal(description, metadata = {}) {
     const metaStr = JSON.stringify(metadata);
@@ -660,6 +666,15 @@ class AgentDB {
     params.push(limit);
 
     return this.db.prepare(query).all(...params);
+  }
+
+  deleteJobLogs(ids) {
+    if (!ids || ids.length === 0) return 0;
+    const placeholders = ids.map(() => '?').join(',');
+    const stmt = this.db.prepare(`DELETE FROM job_logs WHERE id IN (${placeholders})`);
+    const info = stmt.run(...ids);
+    console.log(`[DB] Deleted ${info.changes} job logs.`);
+    return info.changes;
   }
 
   cleanupJobLogs(retentionDays = 30) {

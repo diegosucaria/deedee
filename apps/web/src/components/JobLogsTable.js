@@ -1,140 +1,26 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getJobLogs } from '@/app/actions';
-import { safeParse, deepParse } from '@/lib/json-parser';
+import { getJobLogs, deleteJobLogs } from '@/app/actions';
 import { Clock, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
+import LogContent from './LogContent';
 
-const LogContent = ({ content }) => {
-    const [expanded, setExpanded] = useState(false);
 
-    if (!content) return <span className="text-zinc-500">-</span>;
-
-    // Helper to extract and parse JSON using brace balancing
-    const parseLine = (line) => {
-        if (!line) return null;
-        let contentToParse = line.trim();
-
-        // Scanner to find first valid JSON object/array
-        for (let i = 0; i < contentToParse.length; i++) {
-            const char = contentToParse[i];
-            if (char === '{' || char === '[') {
-                const isObject = char === '{';
-                const startChar = char;
-                const endChar = isObject ? '}' : ']';
-
-                let balance = 0;
-                let inQuote = false;
-                let escape = false;
-
-                // Scan forward from i
-                for (let j = i; j < contentToParse.length; j++) {
-                    const c = contentToParse[j];
-
-                    if (escape) { escape = false; continue; }
-                    if (c === '\\') { escape = true; continue; }
-                    if (c === '"') { inQuote = !inQuote; continue; }
-
-                    if (!inQuote) {
-                        if (c === startChar) balance++;
-                        else if (c === endChar) balance--;
-
-                        if (balance === 0) {
-                            // Found balanced end
-                            const candidate = contentToParse.substring(i, j + 1);
-
-                            // Use robust parsing
-                            const parsed = safeParse(candidate);
-                            if (parsed) {
-                                try {
-                                    const deep = deepParse(parsed);
-                                    return JSON.stringify(deep, null, 2);
-                                } catch (err) {
-                                    console.error('deepParse failed:', err, candidate);
-                                }
-                            } else {
-                                console.warn('safeParse failed for candidate:', candidate.substring(0, 100));
-                            }
-                            // If parsing failed, break and continue scanning from i+1 would be ideal, 
-                            // but our loop logic continues j. 
-                            // Actually, if we found a balanced block but it failed parsing, it's likely not JSON.
-                            break;
-                        }
-                    }
-                }
-            }
-        }
-        return null; // No JSON found
-    };
-
-    // Process all lines
-    const lines = typeof content === 'string' ? content.split('\n') : [JSON.stringify(content)];
-    const processedLines = lines.map((line, idx) => {
-        const prettyJson = parseLine(line);
-        return { original: line, pretty: prettyJson, id: idx };
-    });
-
-    const hasJson = processedLines.some(l => l.pretty);
-
-    if (hasJson || lines.length > 5) {
-        return (
-            <div className="flex flex-col gap-1">
-                {!expanded && (
-                    <div
-                        onClick={() => setExpanded(true)}
-                        className="cursor-pointer text-xs text-indigo-400 hover:text-indigo-300 font-mono flex items-center gap-2 mb-1"
-                    >
-                        <RefreshCw className="w-3 h-3" />
-                        <span>View Full Log ({lines.length} lines)</span>
-                    </div>
-                )}
-
-                {expanded ? (
-                    <div className="flex flex-col gap-1 border-l-2 border-zinc-800 pl-2">
-                        {processedLines.map((l) => (
-                            <div key={l.id} className="text-xs font-mono break-words whitespace-pre-wrap text-zinc-400">
-                                {l.pretty ? (
-                                    <details className="group my-1">
-                                        <summary className="cursor-pointer text-indigo-300 hover:text-indigo-200 list-none flex items-center gap-2 select-none">
-                                            <span className="bg-indigo-500/10 border border-indigo-500/20 px-1 rounded text-[10px] font-bold">JSON</span>
-                                            <span className="opacity-50 truncate">{l.original.substring(0, 60)}...</span>
-                                        </summary>
-                                        <pre className="mt-1 p-2 bg-black/50 rounded border border-white/5 text-[10px] text-zinc-300 overflow-x-auto whitespace-pre shadow-inner">
-                                            {l.pretty}
-                                        </pre>
-                                    </details>
-                                ) : (
-                                    <div className="py-0.5">{l.original}</div>
-                                )}
-                            </div>
-                        ))}
-                        <button onClick={() => setExpanded(false)} className="text-[10px] text-zinc-500 hover:text-zinc-300 mt-2">Collapse</button>
-                    </div>
-                ) : (
-                    // Preview (last few lines? or first few?)
-                    <div className="text-zinc-500 text-xs font-mono line-clamp-3 cursor-pointer" onClick={() => setExpanded(true)}>
-                        {content}
-                    </div>
-                )}
-            </div>
-        );
-    }
-
-    return (
-        <div className="text-zinc-400 font-mono text-xs break-words whitespace-pre-wrap">
-            {content}
-        </div>
-    );
-};
 
 export default function JobLogsTable() {
     const [logs, setLogs] = useState([]);
     const [loading, setLoading] = useState(true);
 
+    // Selection, Sort, Filter
+    const [selectedIds, setSelectedIds] = useState(new Set());
+    const [sortConfig, setSortConfig] = useState({ key: 'timestamp', direction: 'desc' });
+    const [filterName, setFilterName] = useState('');
+    const [filterStatus, setFilterStatus] = useState('all');
+
     const loadLogs = async () => {
         setLoading(true);
         try {
-            const data = await getJobLogs(50);
+            const data = await getJobLogs(100); // Increased limit for better filtering
             setLogs(data.logs || []);
         } catch (err) {
             console.error('Failed to load job logs:', err);
@@ -145,46 +31,144 @@ export default function JobLogsTable() {
 
     useEffect(() => {
         loadLogs();
-        const interval = setInterval(loadLogs, 30000); // Poll every 30s
+        const interval = setInterval(loadLogs, 30000);
         return () => clearInterval(interval);
     }, []);
 
+    const handleDeleteSelected = async () => {
+        if (!confirm(`Delete ${selectedIds.size} logs?`)) return;
+        setLoading(true); // Re-use loading state or add specific one
+        try {
+            await deleteJobLogs(Array.from(selectedIds));
+            setSelectedIds(new Set());
+            await loadLogs();
+        } catch (err) {
+            console.error('Failed to delete logs:', err);
+        } finally {
+            setLoading(false);
+        }
+    };
+
+    const toggleSelection = (id) => {
+        const next = new Set(selectedIds);
+        if (next.has(id)) next.delete(id);
+        else next.add(id);
+        setSelectedIds(next);
+    };
+
+    const toggleAll = () => {
+        if (selectedIds.size === filteredLogs.length) {
+            setSelectedIds(new Set());
+        } else {
+            setSelectedIds(new Set(filteredLogs.map(l => l.id)));
+        }
+    };
+
+    const handleSort = (key) => {
+        setSortConfig(current => ({
+            key,
+            direction: current.key === key && current.direction === 'desc' ? 'asc' : 'desc'
+        }));
+    };
+
+    // Filter & Sort Logic
+    const filteredLogs = logs.filter(log => {
+        const matchesName = log.job_name.toLowerCase().includes(filterName.toLowerCase());
+        const matchesStatus = filterStatus === 'all' || log.status === filterStatus;
+        return matchesName && matchesStatus;
+    }).sort((a, b) => {
+        const aVal = a[sortConfig.key];
+        const bVal = b[sortConfig.key];
+        if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
+        if (aVal > bVal) return sortConfig.direction === 'asc' ? 1 : -1;
+        return 0;
+    });
+
     return (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-            <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-zinc-300 flex items-center gap-2">
-                    <Clock className="w-5 h-5 text-indigo-400" />
-                    Recent Job Executions
-                </h3>
-                <button
-                    onClick={loadLogs}
-                    className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors"
-                >
-                    <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-                </button>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden flex flex-col">
+            <div className="p-4 border-b border-zinc-800 flex flex-col gap-4">
+                <div className="flex items-center justify-between">
+                    <h3 className="text-lg font-semibold text-zinc-300 flex items-center gap-2">
+                        <Clock className="w-5 h-5 text-indigo-400" />
+                        Recent Job Executions
+                    </h3>
+                    <div className="flex items-center gap-2">
+                        {selectedIds.size > 0 && (
+                            <button
+                                onClick={handleDeleteSelected}
+                                className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-lg text-xs font-medium transition-colors flex items-center gap-2"
+                            >
+                                <XCircle className="w-4 h-4" />
+                                Delete ({selectedIds.size})
+                            </button>
+                        )}
+                        <button
+                            onClick={loadLogs}
+                            className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors"
+                        >
+                            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                        </button>
+                    </div>
+                </div>
+
+                {/* Filters */}
+                <div className="flex gap-2">
+                    <input
+                        type="text"
+                        placeholder="Filter by Job Name"
+                        value={filterName}
+                        onChange={(e) => setFilterName(e.target.value)}
+                        className="bg-black border border-zinc-800 rounded px-3 py-1.5 text-xs text-zinc-300 placeholder-zinc-600 focus:outline-none focus:border-indigo-500/50"
+                    />
+                    <select
+                        value={filterStatus}
+                        onChange={(e) => setFilterStatus(e.target.value)}
+                        className="bg-black border border-zinc-800 rounded px-3 py-1.5 text-xs text-zinc-300 focus:outline-none focus:border-indigo-500/50"
+                    >
+                        <option value="all">All Status</option>
+                        <option value="success">Success</option>
+                        <option value="failure">Failed</option>
+                    </select>
+                </div>
             </div>
 
             <div className="overflow-x-auto max-h-[600px]">
                 <table className="w-full text-sm text-left relative">
                     <thead className="bg-zinc-950 text-zinc-500 uppercase text-xs sticky top-0 z-10 shadow-sm border-b border-zinc-800">
                         <tr>
-                            <th className="px-6 py-3 w-[120px]">Status</th>
-                            <th className="px-6 py-3 w-[200px]">Job Name</th>
+                            <th className="px-4 py-3 w-[40px]">
+                                <input
+                                    type="checkbox"
+                                    className="rounded border-zinc-700 bg-zinc-900"
+                                    checked={filteredLogs.length > 0 && selectedIds.size === filteredLogs.length}
+                                    onChange={toggleAll}
+                                />
+                            </th>
+                            <th className="px-6 py-3 w-[120px] cursor-pointer hover:text-zinc-300" onClick={() => handleSort('status')}>Status</th>
+                            <th className="px-6 py-3 w-[200px] cursor-pointer hover:text-zinc-300" onClick={() => handleSort('job_name')}>Job Name</th>
                             <th className="px-6 py-3 min-w-[300px]">Output</th>
-                            <th className="px-6 py-3 w-[100px] text-right">Duration</th>
-                            <th className="px-6 py-3 w-[180px] text-right">Time</th>
+                            <th className="px-6 py-3 w-[100px] text-right cursor-pointer hover:text-zinc-300" onClick={() => handleSort('duration_ms')}>Duration</th>
+                            <th className="px-6 py-3 w-[180px] text-right cursor-pointer hover:text-zinc-300" onClick={() => handleSort('timestamp')}>Time</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-800 bg-zinc-900/50">
-                        {logs.length === 0 ? (
+                        {filteredLogs.length === 0 ? (
                             <tr>
-                                <td colSpan={5} className="px-6 py-12 text-center text-zinc-500">
+                                <td colSpan={6} className="px-6 py-12 text-center text-zinc-500">
                                     No job logs found.
                                 </td>
                             </tr>
                         ) : (
-                            logs.map((log) => (
-                                <tr key={log.id} className="hover:bg-zinc-800/50 transition-colors group">
+                            filteredLogs.map((log) => (
+                                <tr key={log.id} className={`hover:bg-zinc-800/50 transition-colors group ${selectedIds.has(log.id) ? 'bg-indigo-500/5 hover:bg-indigo-500/10' : ''}`}>
+                                    <td className="px-4 py-4 align-top">
+                                        <input
+                                            type="checkbox"
+                                            className="rounded border-zinc-700 bg-zinc-900"
+                                            checked={selectedIds.has(log.id)}
+                                            onChange={() => toggleSelection(log.id)}
+                                        />
+                                    </td>
                                     <td className="px-6 py-4 align-top">
                                         {log.status === 'success' ? (
                                             <span className="inline-flex items-center gap-1.5 px-2.5 py-1 rounded-full text-xs font-medium bg-emerald-500/10 text-emerald-500 border border-emerald-500/10">

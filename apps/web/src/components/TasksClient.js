@@ -24,7 +24,7 @@ export default function TasksClient() {
                     onClick={() => setActiveTab('manage')}
                     className={`pb-2 px-1 text-sm font-medium transition-colors relative whitespace-nowrap flex items-center gap-2 ${activeTab === 'manage' ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
                 >
-                    Manage & Logs
+                    Execution Logs
                     {activeTab === 'manage' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-indigo-500" />}
                 </button>
                 <button
@@ -45,7 +45,6 @@ export default function TasksClient() {
             {/* Tab Content */}
             {activeTab === 'manage' && (
                 <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
-                    <CreateTaskForm />
                     <JobLogsTable />
                 </div>
             )}

@@ -17,28 +17,52 @@ const PRESETS = {
     'one_time': { label: 'One-Time Task', cron: '' },
 };
 
-export default function CreateTaskForm({ onTaskCreated }) {
+export default function CreateTaskForm({ onTaskCreated, initialValues = null, onCancel = null }) {
     const router = useRouter();
     const [state, formAction] = useFormState(createTask, initialState);
-    const [scheduleType, setScheduleType] = useState('custom');
-    const [customCron, setCustomCron] = useState('');
+
+    // Determine initial schedule type
+    const getInitialScheduleType = () => {
+        if (!initialValues) return 'custom';
+        if (initialValues.isOneOff) return 'one_time';
+        // Check if cron matches any preset
+        const preset = Object.entries(PRESETS).find(([_, p]) => p.cron === initialValues.cron);
+        return preset ? preset[0] : 'custom';
+    };
+
+    const [scheduleType, setScheduleType] = useState(getInitialScheduleType());
+    const [customCron, setCustomCron] = useState(initialValues?.cron || '');
     const formRef = useRef(null);
 
     // Reset form on success if needed
     useEffect(() => {
         if (state?.success) {
-            formRef.current?.reset();
-            setCustomCron('');
-            setScheduleType('custom');
+            if (!initialValues) {
+                formRef.current?.reset();
+                setCustomCron('');
+                setScheduleType('custom');
+            }
             if (onTaskCreated) onTaskCreated();
         }
-    }, [state, onTaskCreated]);
+    }, [state, onTaskCreated, initialValues]);
+
+    const isEditing = !!initialValues;
 
     return (
         <div className="p-6 rounded-2xl border bg-zinc-900/50 border-zinc-800">
-            <h3 className="text-lg font-medium text-white flex items-center gap-2 mb-4">
-                <Plus className="h-5 w-5 text-indigo-400" />
-                New Schedule
+            <h3 className="text-lg font-medium text-white flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                    {isEditing ? <Save className="h-5 w-5 text-indigo-400" /> : <Plus className="h-5 w-5 text-indigo-400" />}
+                    {isEditing ? 'Edit Schedule' : 'New Schedule'}
+                </div>
+                {onCancel && (
+                    <button
+                        onClick={onCancel}
+                        className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-colors"
+                    >
+                        <X className="w-5 h-5" />
+                    </button>
+                )}
             </h3>
 
             <form ref={formRef} action={async (formData) => {
@@ -64,18 +88,22 @@ export default function CreateTaskForm({ onTaskCreated }) {
                 }
 
                 await formAction(formData);
-                // Refresh logic usually handled by action revalidate
             }} className="grid md:grid-cols-2 gap-4">
-                <input
-                    type="text"
-                    name="name"
-                    placeholder="Job Name (e.g. daily_briefing)"
-                    required
-                    className="rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
-                />
+                <div className="md:col-span-2">
+                    <label className="block text-xs text-zinc-500 mb-1 ml-1">Job Name {isEditing && '(Read Only)'}</label>
+                    <input
+                        type="text"
+                        name="name"
+                        placeholder="Job Name (e.g. daily_briefing)"
+                        required
+                        readOnly={isEditing}
+                        defaultValue={initialValues?.name}
+                        className={`w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all ${isEditing ? 'opacity-60 cursor-not-allowed' : ''}`}
+                    />
+                </div>
 
                 {/* Frequency Selector */}
-                <div className="flex gap-2">
+                <div className="md:col-span-2 flex gap-2">
                     <select
                         value={scheduleType}
                         onChange={(e) => {
@@ -85,20 +113,20 @@ export default function CreateTaskForm({ onTaskCreated }) {
                                 setCustomCron(PRESETS[type].cron);
                             }
                         }}
-                        className="rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm w-1/2"
+                        className="rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm w-1/3"
                     >
                         {Object.entries(PRESETS).map(([key, preset]) => (
                             <option key={key} value={key}>{preset.label}</option>
                         ))}
                     </select>
 
-                    <div className="relative w-1/2">
+                    <div className="relative w-2/3">
                         {scheduleType === 'one_time' ? (
                             <input
                                 type="datetime-local"
                                 name="cron_display"
                                 required
-                                value={customCron}
+                                value={customCron} // If one-off, this might be an ISO string from initialValues, needed conversion? No, input datetime-local needs YYYY-MM-DDThh:mm
                                 onChange={(e) => setCustomCron(e.target.value)}
                                 className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-mono text-sm"
                             />
@@ -124,10 +152,12 @@ export default function CreateTaskForm({ onTaskCreated }) {
                 </div>
 
                 <div className="md:col-span-2">
+                    <label className="block text-xs text-zinc-500 mb-1 ml-1">Instruction</label>
                     <textarea
                         name="task"
                         placeholder="Instruction (e.g. 'Summarize yesterday's logs')"
                         required
+                        defaultValue={initialValues?.task}
                         rows={2}
                         className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all resize-none"
                     />
@@ -138,6 +168,7 @@ export default function CreateTaskForm({ onTaskCreated }) {
                     <input
                         type="datetime-local"
                         name="expiresAt"
+                        defaultValue={initialValues?.expiresAt ? new Date(initialValues.expiresAt).toISOString().slice(0, 16) : ''}
                         className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-mono text-sm"
                     />
                 </div>
@@ -146,8 +177,8 @@ export default function CreateTaskForm({ onTaskCreated }) {
                     type="submit"
                     className="md:col-span-2 flex items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 font-medium text-white hover:bg-indigo-500 active:bg-indigo-700 transition-colors shadow-lg shadow-indigo-500/20"
                 >
-                    <Plus className="h-4 w-4" />
-                    Schedule Task
+                    {isEditing ? <Save className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                    {isEditing ? 'Save Changes' : 'Schedule Task'}
                 </button>
             </form>
             {state?.error && (

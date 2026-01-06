@@ -4,6 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { Terminal, RefreshCw, Layers, Layout, AlertCircle, ChevronLeft, ChevronRight, ArrowUpCircle, ArrowDownCircle, PauseCircle, PlayCircle, Clock } from 'lucide-react';
 import clsx from 'clsx';
 import { API_URL } from '@/lib/api';
+import LogContent from '@/components/LogContent';
 
 const CONTAINERS = [
     'all',
@@ -342,7 +343,7 @@ export default function LogsClient({ token }) {
                                                 {prefix}
                                             </span>
                                         )}
-                                        <span className={clsx(prefix ? colorClass : "text-zinc-300")}>{content || <span className="h-4 block" />}</span>
+                                        <LogContent content={content} className={clsx(prefix ? colorClass : "text-zinc-300")} />
                                     </div>
                                 );
                             })}

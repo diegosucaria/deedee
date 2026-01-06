@@ -31,6 +31,7 @@ router.delete('/journal/:date', (req, res) => proxyRequest(req, res, 'DELETE', `
 
 // Logs
 router.get('/logs/jobs', (req, res) => proxyRequest(req, res, 'GET', '/internal/logs/jobs'));
+router.post('/logs/jobs/delete', (req, res) => proxyRequest(req, res, 'POST', '/internal/logs/jobs/delete', req.body));
 router.get('/jobs/:name/state', (req, res) => proxyRequest(req, res, 'GET', `/internal/jobs/${req.params.name}/state`));
 
 // Facts

@@ -477,6 +477,16 @@ app.get('/internal/logs/jobs', (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/internal/logs/jobs/delete', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const { ids } = req.body;
+    if (!Array.isArray(ids)) return res.status(400).json({ error: 'ids must be an array' });
+    agent.db.deleteJobLogs(ids);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // --- Scheduler (Create) ---
 app.post('/internal/scheduler', (req, res) => {
   if (!agent || !agent.scheduler) return res.status(503).json({ error: 'Agent not ready' });
