@@ -319,13 +319,39 @@ class Agent {
       ];
 
       // construct the tools object for Gemini
+      // --- HYBRID SEARCH STRATEGY ---
+      // 1. Native Search (Grounding): Faster, Cheaper, Better Citations. BUT cannot mix with other tools (e.g. replyWithAudio).
+      // 2. Standard Mode (Polyfill): Slower, separate session. BUT allows mixing search + text-to-speech.
+
+      const isAudioContext =
+        // Input is Audio
+        (message.content === '[Voice]' || (message.parts && message.parts.some(p => p.inlineData?.mimeType?.startsWith('audio/')))) ||
+        // Output explicitly requested as Audio (e.g. iOS Shortcut)
+        ['iphone', 'ios_shortcut'].includes(message.source) ||
+        message.metadata?.replyMode === 'audio';
+
+      let useNativeSearch = false;
+
+      if (decision.toolMode === 'SEARCH') {
+        if (isAudioContext) {
+          console.log('[Agent] Mode: SEARCH requested, but Audio Context detected. Forcing STANDARD mode (Polyfill Search + TTS).');
+          useNativeSearch = false;
+        } else {
+          console.log('[Agent] Mode: SEARCH (Native Google Grounding). Text-only context.');
+          useNativeSearch = true;
+        }
+      }
+
       let geminiTools;
 
-      // ALWAYS use Standard Mode (Function Calling) to allow mixing tools (e.g. Google Search Polyfill + Audio)
-      // Native 'googleSearch: {}' grounding cannot be mixed with other functions in the same request.
-      // By using function calling, 'googleSearch' is routed to our Polyfill (tool-executor.js) which handles it in a separate session.
-      console.log(`[Agent] Mode: STANDARD (Function Calling) - Enforced for ${decision.toolMode}`);
-      geminiTools = [{ functionDeclarations: allTools }];
+      if (useNativeSearch) {
+        // Exclusive Mode
+        geminiTools = [{ googleSearch: {} }];
+      } else {
+        // Standard Function Calling (includes 'googleSearch' polyfill if needed)
+        console.log(`[Agent] Mode: STANDARD (Function Calling) - Enforced for ${decision.toolMode}`);
+        geminiTools = [{ functionDeclarations: allTools }];
+      }
 
       // Build System Instruction
       const pendingGoals = this.db.getPendingGoals()
