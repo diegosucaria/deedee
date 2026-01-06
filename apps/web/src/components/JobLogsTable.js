@@ -73,27 +73,33 @@ const LogContent = ({ content }) => {
                                     return JSON.stringify(parsed, null, 2);
                                 }
                             } catch (e) {
-                                // Retry with sanitized newlines (sometimes logs contain literal \n inside the string value)
-                                // This is a naive fix for when "output": "line1\nline2" is logged as literal newlines 
-                                // instead of \n escape sequence in the log string itself.
+                                // 1. Try cleaning newlines (already added)
                                 try {
-                                    // Replace literal newlines with \n, but be careful not to break valid JSON.
-                                    // Actually, standard JSON.parse fails on literal control characters.
-                                    // If the log system outputted literal \n inside a string, it's invalid JSON, but we can try to fix it.
                                     const sanitized = candidate.replace(/\n/g, '\\n');
                                     let parsed = JSON.parse(sanitized);
-                                    if (typeof parsed === 'object' && parsed !== null) {
-                                        parsed = deepParse(parsed);
-                                        return JSON.stringify(parsed, null, 2);
-                                    }
+                                    return JSON.stringify(deepParse(parsed), null, 2);
                                 } catch (e2) {
-                                    // Still failed
+                                    // 2. Try handling Python-style dicts (common in Pydantic/Python logs)
+                                    // input_value={'limit': 100} -> {"limit": 100}
+                                    try {
+                                        let pySanitized = candidate
+                                            .replace(/'/g, '"')          // Replace single quotes with double (brittle but works for simple dumps)
+                                            .replace(/None/g, 'null')    // Python None -> null
+                                            .replace(/True/g, 'true')    // Python True -> true
+                                            .replace(/False/g, 'false')  // Python False -> false
+                                            .replace(/\(/g, '[')         // Tuples -> Arrays
+                                            .replace(/\)/g, ']')
+                                            .replace(/\\n/g, "\\\\n");   // Fix double escapes if needed
+
+                                        let parsed = JSON.parse(pySanitized);
+                                        return JSON.stringify(deepParse(parsed), null, 2);
+                                    } catch (e3) {
+                                        // Still failed
+                                    }
                                 }
                             }
                             // If we found a balanced block but it failed parsing, 
                             // we usually stop because we found the matching brace for the start.
-                            // But for robustness, we could continue? 
-                            // For now, let's assume if it looks like a block but fails parse, it's not our JSON.
                             break;
                         }
                     }
