@@ -321,15 +321,11 @@ class Agent {
       // construct the tools object for Gemini
       let geminiTools;
 
-      if (decision.toolMode === 'SEARCH') {
-        // Native Search grounding (exclusive)
-        console.log('[Agent] Mode: SEARCH (Google Grounding)');
-        geminiTools = [{ googleSearch: {} }];
-      } else {
-        // Standard Tool Use (Function Calling)
-        console.log('[Agent] Mode: STANDARD (Function Calling)');
-        geminiTools = [{ functionDeclarations: allTools }];
-      }
+      // ALWAYS use Standard Mode (Function Calling) to allow mixing tools (e.g. Google Search Polyfill + Audio)
+      // Native 'googleSearch: {}' grounding cannot be mixed with other functions in the same request.
+      // By using function calling, 'googleSearch' is routed to our Polyfill (tool-executor.js) which handles it in a separate session.
+      console.log(`[Agent] Mode: STANDARD (Function Calling) - Enforced for ${decision.toolMode}`);
+      geminiTools = [{ functionDeclarations: allTools }];
 
       // Build System Instruction
       const pendingGoals = this.db.getPendingGoals()
