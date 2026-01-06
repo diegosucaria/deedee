@@ -2,7 +2,7 @@
 
 import {
     LineChart, Line, XAxis, YAxis, CartesianGrid, Tooltip, Legend, ResponsiveContainer,
-    BarChart, Bar, AreaChart, Area
+    BarChart, Bar, AreaChart, Area, ReferenceLine
 } from 'recharts';
 
 const CustomTooltip = ({ active, payload, label }) => {
@@ -34,8 +34,10 @@ export function LatencyChart({ data }) {
                 <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
                 <XAxis
                     dataKey="timestamp"
-                    tick={false}
-                    axisLine={false}
+                    stroke="#71717a"
+                    fontSize={12}
+                    type="number"
+                    domain={['dataMin', 'dataMax']}
                     tickFormatter={(ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 />
                 <YAxis
@@ -45,6 +47,7 @@ export function LatencyChart({ data }) {
                 />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend />
+                <ReferenceLine x={Date.now()} stroke="#f472b6" label="Now" strokeDasharray="3 3" />
                 <Line
                     type="monotone"
                     dataKey="e2e"
@@ -91,8 +94,10 @@ export function CostChart({ data }) {
                 <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
                 <XAxis
                     dataKey="timestamp"
-                    tick={false}
-                    axisLine={false}
+                    stroke="#71717a"
+                    fontSize={12}
+                    type="number"
+                    domain={['dataMin', 'dataMax']}
                     tickFormatter={(ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 />
                 <YAxis
@@ -102,6 +107,7 @@ export function CostChart({ data }) {
                 />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend />
+                <ReferenceLine x={Date.now()} stroke="#ef4444" label="Now" strokeDasharray="3 3" />
                 <Area
                     type="monotone"
                     dataKey="estimated_cost"
@@ -130,8 +136,10 @@ export function TokenEfficiencyChart({ data }) {
                 <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
                 <XAxis
                     dataKey="timestamp"
-                    tick={false}
-                    axisLine={false}
+                    stroke="#71717a"
+                    fontSize={12}
+                    type="number"
+                    domain={['dataMin', 'dataMax']}
                     tickFormatter={(ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 />
                 <YAxis
@@ -140,6 +148,7 @@ export function TokenEfficiencyChart({ data }) {
                 />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend />
+                <ReferenceLine x={Date.now()} stroke="#fbbf24" label="Now" strokeDasharray="3 3" />
                 <Area
                     type="monotone"
                     dataKey="tokens"

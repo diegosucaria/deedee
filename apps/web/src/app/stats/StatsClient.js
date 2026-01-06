@@ -47,7 +47,7 @@ export default function StatsClient() {
             mapped.forEach(m => {
                 // If we have runId, use it. Else use timestamp grouping (1s window?)
                 const key = m.runId || m.timestamp;
-                if (!requests[key]) requests[key] = { timestamp: m.timestamp, e2e: 0, model: 0, router: 0, tokens: 0 };
+                if (!requests[key]) requests[key] = { timestamp: new Date(m.timestamp).getTime(), e2e: 0, model: 0, router: 0, tokens: 0 };
 
                 if (m.type === 'latency_e2e') requests[key].e2e = m.value;
                 if (m.type === 'latency_model') requests[key].model = m.value;
@@ -55,7 +55,7 @@ export default function StatsClient() {
             });
 
             const chartData = Object.values(requests)
-                .sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp))
+                .sort((a, b) => a.timestamp - b.timestamp)
                 .slice(-50); // Last 50
 
             setLatencyData(chartData);
@@ -65,10 +65,10 @@ export default function StatsClient() {
             // Process trend for charts.
             // DB returns: { timestamp, estimated_cost, total_tokens, model }
             const mappedTrend = trend.map(t => ({
-                timestamp: t.timestamp,
+                timestamp: new Date(t.timestamp).getTime(),
                 estimated_cost: t.estimated_cost,
                 tokens: t.total_tokens
-            })).sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+            })).sort((a, b) => a.timestamp - b.timestamp);
 
             setTokenTrendData(mappedTrend);
 
