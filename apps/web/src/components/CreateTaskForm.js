@@ -31,7 +31,21 @@ export default function CreateTaskForm({ onTaskCreated, initialValues = null, on
     };
 
     const [scheduleType, setScheduleType] = useState(getInitialScheduleType());
-    const [customCron, setCustomCron] = useState(initialValues?.cron || '');
+
+    // Fix: For one-off jobs, use nextInvocation as the time, properly formatted
+    const getInitialCron = () => {
+        if (!initialValues) return '';
+        if (initialValues.isOneOff && initialValues.nextInvocation) {
+            try {
+                return new Date(initialValues.nextInvocation).toISOString().slice(0, 16);
+            } catch (e) {
+                return initialValues.cron || '';
+            }
+        }
+        return initialValues.cron || '';
+    };
+
+    const [customCron, setCustomCron] = useState(getInitialCron());
     const formRef = useRef(null);
 
     // Reset form on success if needed
@@ -158,8 +172,8 @@ export default function CreateTaskForm({ onTaskCreated, initialValues = null, on
                         placeholder="Instruction (e.g. 'Summarize yesterday's logs')"
                         required
                         defaultValue={initialValues?.task}
-                        rows={2}
-                        className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all resize-none"
+                        rows={8}
+                        className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all resize-y"
                     />
                 </div>
 
