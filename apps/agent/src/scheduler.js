@@ -219,12 +219,14 @@ class Scheduler {
             {
                 name: 'nightly_consolidation',
                 cron: '0 0 * * *', // Midnight
-                task: 'Run consolidateMemory tool to summarize yesterday\'s logs into the journal.'
+                task: 'Run consolidateMemory tool to summarize yesterday\'s logs into the journal.',
+                silent: true
             },
             {
                 name: 'nightly_backup',
                 cron: '0 2 * * *', // 2 AM
-                task: 'Perform nightly backup of data to GCS.'
+                task: 'Perform nightly backup of data to GCS.',
+                silent: true
             }
         ];
 
@@ -274,8 +276,10 @@ class Scheduler {
                     source: 'scheduler',
                     metadata: { chatId: `system_${sysJob.name}_${Date.now()} ` }
                 }, async (reply) => {
-                    // Fire and forget response
-                    if (this.agent.interface) await this.agent.interface.send(reply);
+                    // Fire and forget response ONLY if not silent
+                    if (this.agent.interface && !sysJob.silent) {
+                        await this.agent.interface.send(reply);
+                    }
                     // Capture reply for logging
                     if (!executionResult) executionResult = reply;
                     else if (reply.text) executionResult.text = (executionResult.text || '') + '\n' + reply.text;
