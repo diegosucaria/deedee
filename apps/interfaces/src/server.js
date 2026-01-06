@@ -2,6 +2,7 @@ const { Server } = require("socket.io");
 const http = require('http');
 const express = require('express');
 const { TelegramService } = require('./telegram');
+const { WhatsAppService } = require('./whatsapp');
 const axios = require('axios');
 
 const app = express();
@@ -70,6 +71,7 @@ io.on("connection", (socket) => {
 });
 
 let telegram;
+let whatsapp;
 
 // Only start Telegram if token is present (prevents crash in tests/dev if missing)
 if (telegramToken) {
@@ -79,15 +81,39 @@ if (telegramToken) {
   console.warn('[Interfaces] No TELEGRAM_TOKEN provided. Telegram disabled.');
 }
 
+// WhatsApp Init
+const enableWhatsApp = process.env.ENABLE_WHATSAPP === 'true' || process.env.ENABLE_WHATSAPP === '1';
+if (enableWhatsApp) {
+  whatsapp = new WhatsAppService(agentUrl);
+  whatsapp.start().catch(console.error);
+} else {
+  console.log('[Interfaces] WhatsApp disabled (ENABLE_WHATSAPP not set).');
+}
+
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', services: { telegram: !!telegram, socket: true } });
+  res.json({ status: 'ok', services: { telegram: !!telegram, whatsapp: !!whatsapp, socket: true } });
+});
+
+// --- WHATSAPP ENDPOINTS ---
+app.get('/whatsapp/status', (req, res) => {
+  if (!whatsapp) return res.json({ status: 'disabled' });
+  res.json(whatsapp.getStatus());
+});
+
+app.post('/whatsapp/disconnect', async (req, res) => {
+  if (!whatsapp) return res.status(400).json({ error: 'WhatsApp disabled' });
+  await whatsapp.disconnect();
+  // Restart logic? usually disconnect is logout.
+  // We might want to auto-restart to generate new QR.
+  setTimeout(() => whatsapp.start(), 1000);
+  res.json({ success: true });
 });
 
 // Endpoint for Agent to send messages out
 app.post('/send', async (req, res) => {
   try {
     const { source, content, metadata, type } = req.body;
-    console.log(`[Interfaces] DEBUG: /send called. Source: ${source}, Type: ${type}, Meta:`, JSON.stringify(metadata));
+    console.log(`[Interfaces] /send called. Source: ${source}, Type: ${type}, Meta:`, JSON.stringify(metadata));
 
     // WEB / SOCKET
     if (source === 'web' || (metadata && metadata.socketId)) {
@@ -137,10 +163,19 @@ app.post('/send', async (req, res) => {
         console.log(`[Interfaces] Sending Photo to ${metadata.chatId}`);
         await telegram.sendPhoto(metadata.chatId, content);
       } else {
-        console.log(`[Interfaces] Sending Text to ${metadata.chatId}: ${content.substring(0, 100).replace(/\n/g, ' ')}${content.length > 100 ? '...' : ''}`);
+        console.log(`[Interfaces] Sending Text to ${metadata.chatId}: ${content.substring(0, 300).replace(/\n/g, ' ')}${content.length > 300 ? '...' : ''}`);
         await telegram.sendMessage(metadata.chatId, content);
       }
 
+      return res.json({ success: true });
+    }
+
+    if (source === 'whatsapp' && whatsapp) {
+      if (!metadata || !metadata.chatId) {
+        throw new Error('Missing chatId in metadata for WhatsApp message');
+      }
+      // Currently supporting Text only in this block, need to expand if needed
+      await whatsapp.sendMessage(metadata.chatId, content);
       return res.json({ success: true });
     }
 

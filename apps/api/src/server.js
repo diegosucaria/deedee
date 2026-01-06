@@ -27,6 +27,7 @@ app.use('/v1/chat', audioChatRouter); // Mounts POST /v1/chat/audio
 app.use('/v1/briefing', briefingRouter);
 app.use('/v1/briefing', briefingRouter);
 app.use('/v1/city-image', cityImageRouter);
+app.use('/v1/whatsapp', require('./whatsapp'));
 
 // Proxy System Logs (Stream)
 const http = require('http');

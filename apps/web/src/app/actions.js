@@ -218,3 +218,23 @@ export async function cleanupData() {
         return { success: false, error: error.message };
     }
 }
+
+// --- WhatsApp ---
+export async function getWhatsAppStatus() {
+    try {
+        return await fetchAPI('/v1/whatsapp/status');
+    } catch (error) {
+        console.error('getWhatsAppStatus Error:', error);
+        return { status: 'error', error: error.message };
+    }
+}
+
+export async function disconnectWhatsApp() {
+    try {
+        await fetchAPI('/v1/whatsapp/disconnect', { method: 'POST' });
+        revalidatePath('/whatsapp');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
