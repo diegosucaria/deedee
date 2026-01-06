@@ -103,7 +103,7 @@ export default function ActiveJobsTable() {
                             <th className="px-6 py-3">Task</th>
                             <th className="px-6 py-3">Next Run</th>
                             <th className="px-6 py-3">Expires At</th>
-                            <th className="px-6 py-3 text-right">Actions</th>
+                            <th className="px-3 py-3 text-right">Actions</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-800">
@@ -152,7 +152,7 @@ export default function ActiveJobsTable() {
                                             <span className="text-zinc-600">-</span>
                                         )}
                                     </td>
-                                    <td className="px-6 py-4 text-right">
+                                    <td className="px-3 py-4 text-right">
                                         <div className="flex items-center justify-end gap-2">
                                             <button
                                                 onClick={() => handleRun(job.name)}

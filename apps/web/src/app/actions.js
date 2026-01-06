@@ -187,9 +187,10 @@ export async function getStatsCostTrend() {
     }
 }
 
-export async function getJobLogs(limit = 50) {
+export async function getJobLogs(page = 1, limit = 50) {
     try {
-        return await fetchAPI(`/v1/logs/jobs?limit=${limit}`);
+        const offset = (page - 1) * limit;
+        return await fetchAPI(`/v1/logs/jobs?limit=${limit}&offset=${offset}`);
     } catch (error) {
         console.error('getJobLogs Error:', error);
         return { logs: [] };

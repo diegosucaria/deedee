@@ -471,9 +471,10 @@ app.delete('/internal/aliases/:alias', (req, res) => {
 app.get('/internal/logs/jobs', (req, res) => {
   if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
   try {
-    const limit = parseInt(req.query.limit || '50', 10);
-    const logs = agent.db.getJobLogs(limit);
-    res.json({ logs });
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
+    const logs = agent.db.getJobLogs(limit, offset);
+    res.json(logs);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 

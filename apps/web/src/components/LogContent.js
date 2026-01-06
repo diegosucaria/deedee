@@ -74,44 +74,50 @@ export default function LogContent({ content, className }) {
 
     const hasJson = processedLines.some(l => l.pretty);
 
-    if (hasJson || lines.length > 5) {
+    if (hasJson) {
+        // If JSON is present, show the smart view immediately
         return (
             <div className={clsx("flex flex-col gap-1 min-w-0 w-full", className)}>
-                {!expanded && (
-                    <div
-                        onClick={() => setExpanded(true)}
-                        className="cursor-pointer text-xs text-indigo-400 hover:text-indigo-300 font-mono flex items-center gap-2 mb-1"
-                    >
-                        <RefreshCw className="w-3 h-3" />
-                        <span>View Full Log ({lines.length} lines)</span>
-                    </div>
-                )}
+                <div className="flex flex-col gap-1 w-full">
+                    {processedLines.map((l) => (
+                        <div key={l.id} className="text-xs font-mono break-words whitespace-pre-wrap text-zinc-400 w-full">
+                            {l.pretty ? (
+                                <details className="group my-1 open:bg-black/20 rounded">
+                                    <summary className="cursor-pointer text-indigo-300 hover:text-indigo-200 list-none flex items-center gap-2 select-none">
+                                        <span className="bg-indigo-500/10 border border-indigo-500/20 px-1 rounded text-[10px] font-bold">JSON</span>
+                                        <span className="opacity-50 truncate max-w-[300px]">{l.original.substring(0, 80)}...</span>
+                                    </summary>
+                                    <pre className="mt-1 p-2 bg-black/50 rounded border border-white/5 text-[10px] text-zinc-300 overflow-x-auto whitespace-pre shadow-inner">
+                                        {l.pretty}
+                                    </pre>
+                                </details>
+                            ) : (
+                                <div className="py-0.5">{l.original}</div>
+                            )}
+                        </div>
+                    ))}
+                </div>
+            </div>
+        );
+    }
 
-                {expanded ? (
-                    <div className="flex flex-col gap-1 border-l-2 border-zinc-800 pl-2 w-full">
-                        {processedLines.map((l) => (
-                            <div key={l.id} className="text-xs font-mono break-words whitespace-pre-wrap text-zinc-400 w-full">
-                                {l.pretty ? (
-                                    <details className="group my-1 open:bg-black/20 rounded">
-                                        <summary className="cursor-pointer text-indigo-300 hover:text-indigo-200 list-none flex items-center gap-2 select-none">
-                                            <span className="bg-indigo-500/10 border border-indigo-500/20 px-1 rounded text-[10px] font-bold">JSON</span>
-                                            <span className="opacity-50 truncate max-w-[300px]">{l.original.substring(0, 60)}...</span>
-                                        </summary>
-                                        <pre className="mt-1 p-2 bg-black/50 rounded border border-white/5 text-[10px] text-zinc-300 overflow-x-auto whitespace-pre shadow-inner">
-                                            {l.pretty}
-                                        </pre>
-                                    </details>
-                                ) : (
-                                    <div className="py-0.5">{l.original}</div>
-                                )}
-                            </div>
-                        ))}
-                        <button onClick={() => setExpanded(false)} className="text-[10px] text-zinc-500 hover:text-zinc-300 mt-2 text-left">Collapse</button>
+    // Long text logs without JSON -> Show "View Full Log"
+    if (lines.length > 5) {
+        return (
+            <div className={clsx("flex flex-col gap-1 min-w-0 w-full", className)}>
+                {!expanded ? (
+                    <div className="text-zinc-500 text-xs font-mono line-clamp-3 cursor-pointer break-all hover:text-zinc-300" onClick={() => setExpanded(true)}>
+                        {content}
+                        <div className="flex items-center gap-1 mt-1 text-indigo-400 text-[10px]">
+                            <RefreshCw className="w-3 h-3" /> Show all {lines.length} lines
+                        </div>
                     </div>
                 ) : (
-                    // Preview (last few lines? or first few?)
-                    <div className="text-zinc-500 text-xs font-mono line-clamp-3 cursor-pointer break-all" onClick={() => setExpanded(true)}>
-                        {content}
+                    <div className="flex flex-col gap-1 border-l-2 border-zinc-800 pl-2 w-full">
+                        <div className="text-xs font-mono break-words whitespace-pre-wrap text-zinc-400 w-full">
+                            {content}
+                        </div>
+                        <button onClick={() => setExpanded(false)} className="text-[10px] text-zinc-500 hover:text-zinc-300 mt-2 text-left">Collapse</button>
                     </div>
                 )}
             </div>

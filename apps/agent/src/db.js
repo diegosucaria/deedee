@@ -653,19 +653,26 @@ class AgentDB {
     `).run(jobName, status, output ? String(output) : null, durationMs);
   }
 
-  getJobLogs(limit = 50, jobName = null) {
+  getJobLogs(limit = 50, offset = 0, jobName = null) {
     let query = 'SELECT * FROM job_logs';
     const params = [];
+    const countParams = [];
 
     if (jobName) {
       query += ' WHERE job_name = ?';
       params.push(jobName);
+      countParams.push(jobName);
     }
 
-    query += ' ORDER BY timestamp DESC LIMIT ?';
-    params.push(limit);
+    // Get Total Count
+    const countQuery = `SELECT COUNT(*) as count FROM job_logs${jobName ? ' WHERE job_name = ?' : ''}`;
+    const total = this.db.prepare(countQuery).get(...countParams).count;
 
-    return this.db.prepare(query).all(...params);
+    query += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+
+    const logs = this.db.prepare(query).all(...params);
+    return { logs, total };
   }
 
   deleteJobLogs(ids) {
