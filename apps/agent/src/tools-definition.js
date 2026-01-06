@@ -221,7 +221,7 @@ const toolDefinitions = [
       },
       {
         name: "listJobs",
-        description: "List all currently scheduled jobs.",
+        description: "List all currently scheduled jobs with details (name, schedule, task description). Use this to find a job ID before cancelling or modifying it.",
         parameters: {
           type: "OBJECT",
           properties: {},

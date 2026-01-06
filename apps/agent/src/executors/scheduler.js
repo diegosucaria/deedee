@@ -193,8 +193,21 @@ class SchedulerExecutor extends BaseExecutor {
             }
 
             case 'listJobs': {
-                const jobs = Object.keys(scheduler.jobs);
-                return { jobs: jobs };
+                const jobList = [];
+                for (const [name, job] of Object.entries(scheduler.jobs)) {
+                    // Extract metadata from job object or DB payload if available
+                    const meta = job.metadata || {};
+                    const payload = meta.payload || {};
+
+                    jobList.push({
+                        name: name,
+                        cron: meta.cronExpression, // Original rule
+                        task: payload.task || 'No description',
+                        nextInvocation: job.nextInvocation() ? job.nextInvocation().toISOString() : null,
+                        expiresAt: meta.expiresAt
+                    });
+                }
+                return { jobs: jobList };
             }
 
             case 'cancelJob': {
