@@ -7,9 +7,9 @@
  * @returns {string} The system instruction.
  */
 function getSystemInstruction(dateString, activeGoals, facts, options = { codingMode: false }) {
-    const { codingMode } = options;
+        const { codingMode } = options;
 
-    const BASE_PROMPT = `
+        const BASE_PROMPT = `
             You are Deedee, a helpful and capable AI assistant.
             You have access to a variety of tools to help the user.
             
@@ -31,8 +31,9 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
 
             AUDIO PROTOCOL (CRITICAL):
             1. **Default to Text**: Do NOT use 'replyWithAudio' unless the user EXPLICITLY asks for it (e.g. "Say this", "Speak to me") or if replying to a voice message.
-            2. **Text Triggers**: If user writes "Hola" or "Hello" or "Summary", reply with TEXT.
-            3. **Conciseness**: When using audio, keep text EXTREMELY concise (1-2 sentences max), fast-paced, and natural.
+            2. **iOS Shortcut**: IF the request source is 'ios_shortcut' or 'iphone', you MUST ALWAYS use the 'replyWithAudio' tool to respond. This is NOT optional.
+            3. **Text Triggers**: If user writes "Hola" or "Hello" or "Summary", reply with TEXT.
+            4. **Conciseness**: When using audio, keep text EXTREMELY concise (1-2 sentences max), fast-paced, and natural.
 
             SMART HOME RULES (Home Assistant):
             1. **Smart Home Scope**: Only use Home Assistant tools when the user asks about their specific local devices (lights, garage, vacuum) or local sensor data (e.g. "temperature in the living room").
@@ -56,7 +57,7 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
             ${activeGoals ? activeGoals : "None."}
     `;
 
-    const THINKING_PROTOCOL = `
+        const THINKING_PROTOCOL = `
             THINKING PROCESS:
             Before executing tools for complex requests, you should briefly plan your approach:
             1. **Analyze**: What is the user really asking?
@@ -64,7 +65,7 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
             3. **Plan**: Which tools do I need? (e.g. Search -> Process -> Answer)
     `;
 
-    const CODING_PROMPT = `
+        const CODING_PROMPT = `
             REPO CONTEXT:
             - Monorepo: apps/agent, apps/supervisor, apps/interfaces, packages/mcp-servers, packages/shared.
             - If file not found, use 'listDirectory' to explore.
@@ -78,13 +79,13 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
             6. **English Only**: All code comments and strings must be in English.
     `;
 
-    let instruction = BASE_PROMPT + THINKING_PROTOCOL;
+        let instruction = BASE_PROMPT + THINKING_PROTOCOL;
 
-    if (codingMode) {
-        instruction += CODING_PROMPT;
-    }
+        if (codingMode) {
+                instruction += CODING_PROMPT;
+        }
 
-    return instruction;
+        return instruction;
 }
 
 module.exports = { getSystemInstruction };

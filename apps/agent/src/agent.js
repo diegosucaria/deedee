@@ -357,16 +357,21 @@ class Agent {
 
       // REPLY MODE INSTRUCTION
       const replyMode = message.metadata?.replyMode || 'auto';
+
+      // Force Audio for iOS Shortcut / iPhone to ensure consistent behavior
+      const isIOS = ['iphone', 'ios_shortcut'].includes(message.source);
+
       if (replyMode === 'text') {
         systemInstruction += `\n
             **OUTPUT RESTRICTION**: The user has explicitly requested a TEXT-ONLY response.
             - DO NOT call the 'replyWithAudio' tool.
             - Provide your response purely as text.
         `;
-      } else if (replyMode === 'audio' && !message.parts) { // Force audio if text input + mode=audio
+      } else if (isIOS || (replyMode === 'audio' && !message.parts)) {
         systemInstruction += `\n
-            **OUTPUT RESTRICTION**: The user has explicitly requested an AUDIO response.
+            **OUTPUT RESTRICTION**: The user is interacting via Voice/Audio.
             - YOU MUST call the 'replyWithAudio' tool to speak your response.
+            - DO NOT just return text.
         `;
       }
 

@@ -34,39 +34,58 @@ const LogContent = ({ content }) => {
         return input;
     };
 
-    // Helper to try parsing a single line
+    // Helper to extract and parse JSON using brace balancing
     const parseLine = (line) => {
-        try {
-            let contentToParse = line.trim();
-            if (!contentToParse) return null;
+        if (!line) return null;
+        let contentToParse = line.trim();
 
-            // Find start of JSON structure
-            const firstBrace = contentToParse.indexOf('{');
-            const firstBracket = contentToParse.indexOf('[');
+        // Scanner to find first valid JSON object/array
+        for (let i = 0; i < contentToParse.length; i++) {
+            const char = contentToParse[i];
+            if (char === '{' || char === '[') {
+                const isObject = char === '{';
+                const startChar = char;
+                const endChar = isObject ? '}' : ']';
 
-            let startIndex = -1;
-            if (firstBrace !== -1 && firstBracket !== -1) {
-                startIndex = Math.min(firstBrace, firstBracket);
-            } else if (firstBrace !== -1) {
-                startIndex = firstBrace;
-            } else if (firstBracket !== -1) {
-                startIndex = firstBracket;
+                let balance = 0;
+                let inQuote = false;
+                let escape = false;
+
+                // Scan forward from i
+                for (let j = i; j < contentToParse.length; j++) {
+                    const c = contentToParse[j];
+
+                    if (escape) { escape = false; continue; }
+                    if (c === '\\') { escape = true; continue; }
+                    if (c === '"') { inQuote = !inQuote; continue; }
+
+                    if (!inQuote) {
+                        if (c === startChar) balance++;
+                        else if (c === endChar) balance--;
+
+                        if (balance === 0) {
+                            // Found balanced end
+                            const candidate = contentToParse.substring(i, j + 1);
+                            try {
+                                let parsed = JSON.parse(candidate);
+                                if (typeof parsed === 'object' && parsed !== null) {
+                                    parsed = deepParse(parsed);
+                                    return JSON.stringify(parsed, null, 2);
+                                }
+                            } catch (e) {
+                                // Ignore syntax errors, maybe not the right close brace
+                            }
+                            // If we found a balanced block but it failed parsing, 
+                            // we usually stop because we found the matching brace for the start.
+                            // But for robustness, we could continue? 
+                            // For now, let's assume if it looks like a block but fails parse, it's not our JSON.
+                            break;
+                        }
+                    }
+                }
             }
-
-            if (startIndex !== -1) {
-                contentToParse = contentToParse.substring(startIndex);
-            } else {
-                return null; // No JSON start found
-            }
-
-            // Attempt Parse
-            let parsed = JSON.parse(contentToParse);
-            if (typeof parsed === 'object' && parsed !== null) {
-                parsed = deepParse(parsed);
-                return JSON.stringify(parsed, null, 2);
-            }
-        } catch (e) { return null; }
-        return null;
+        }
+        return null; // No JSON found
     };
 
     // Process all lines
@@ -136,7 +155,7 @@ export default function JobLogsTable() {
     const loadLogs = async () => {
         setLoading(true);
         try {
-            const data = await fetchAPI('/v1/internal/logs/jobs?limit=50');
+            const data = await fetchAPI('/v1/logs/jobs?limit=50');
             setLogs(data.logs || []);
         } catch (err) {
             console.error('Failed to load job logs:', err);
