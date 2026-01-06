@@ -24,7 +24,15 @@ function getFunctionCalls(response) {
 function getThinkingMessage(calls) {
     if (!calls || calls.length === 0) return 'Thinking...';
 
-    const name = calls[0].name;
+    // Handle parallel calls
+    if (calls.length > 1) {
+        const names = calls.map(c => (c.name || '').replace('default_api:', '')).join(', ');
+        return `Executing ${calls.length} tools: ${names}...`;
+    }
+
+    // Single call
+    let name = calls[0].name;
+    if (name && name.startsWith('default_api:')) name = name.replace('default_api:', '');
 
     switch (name) {
         case 'readFile': return 'Reading file...';
