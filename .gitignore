@@ -7,3 +7,4 @@ coverage
 .vscode
 data
 .last_boot_commit
+node_modules.nosync
