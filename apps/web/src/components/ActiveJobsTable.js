@@ -57,26 +57,26 @@ export default function ActiveJobsTable() {
     return (
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
             <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
+
                 <h3 className="text-lg font-semibold text-zinc-300 flex items-center gap-2">
-                    <h3 className="text-lg font-semibold text-zinc-300 flex items-center gap-2">
-                        <Clock className="w-5 h-5 text-sky-400" />
-                        Active Scheduled Jobs
-                    </h3>
-                    <div className="flex gap-2">
-                        <button
-                            onClick={() => setEditingJob({})}
-                            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-2"
-                        >
-                            <Plus className="w-4 h-4" />
-                            New Schedule
-                        </button>
-                        <button
-                            onClick={loadJobs}
-                            className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors"
-                        >
-                            <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
-                        </button>
-                    </div>
+                    <Clock className="w-5 h-5 text-sky-400" />
+                    Active Scheduled Jobs
+                </h3>
+                <div className="flex gap-2">
+                    <button
+                        onClick={() => setEditingJob({})}
+                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-2"
+                    >
+                        <Plus className="w-4 h-4" />
+                        New Schedule
+                    </button>
+                    <button
+                        onClick={loadJobs}
+                        className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors"
+                    >
+                        <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+                    </button>
+                </div>
             </div>
 
             {editingJob && (
