@@ -670,6 +670,31 @@ class AgentDB {
     console.log(`[DB] Cleaned up ${info.changes} old job logs.`);
     return info.changes;
   }
+
+  cleanupMetrics(retentionDays = 30) {
+    const info = this.db.prepare(`
+      DELETE FROM metrics 
+      WHERE timestamp < datetime('now', '-' || ? || ' days')
+    `).run(retentionDays);
+    console.log(`[DB] Cleaned up ${info.changes} old metrics.`);
+    return info.changes;
+  }
+
+  cleanupTokenUsage(retentionDays = 30) {
+    const info = this.db.prepare(`
+      DELETE FROM token_usage 
+      WHERE timestamp < datetime('now', '-' || ? || ' days')
+    `).run(retentionDays);
+    console.log(`[DB] Cleaned up ${info.changes} old token usage logs.`);
+    return info.changes;
+  }
+
+  forceCleanupAll() {
+    this.db.prepare('DELETE FROM metrics').run();
+    this.db.prepare('DELETE FROM token_usage').run();
+    this.db.prepare('DELETE FROM usage_logs').run(); // Also usage_logs (rate limiting)
+    console.log('[DB] FORCE CLEANUP: Deleted all metrics, token_usage, and usage_logs.');
+  }
 }
 
 module.exports = { AgentDB };

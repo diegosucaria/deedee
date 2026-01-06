@@ -2,6 +2,7 @@ export const dynamic = 'force-dynamic';
 import { fetchAPI } from '@/lib/api';
 import { BarChart3, MessageSquare, Brain, Clock, Zap, CheckCircle, Activity } from 'lucide-react';
 import StatsClient from './StatsClient';
+import CleanupButton from '@/components/CleanupButton';
 
 export default async function StatsPage() {
     let stats = null;
@@ -22,6 +23,9 @@ export default async function StatsPage() {
                 <Activity className="h-8 w-8 text-indigo-400" />
                 System Health & Stats
             </h1>
+            <div className="absolute top-8 right-8">
+                <CleanupButton />
+            </div>
 
             {/* Top Row: KPIs */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6">

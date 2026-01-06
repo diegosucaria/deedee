@@ -264,7 +264,11 @@ class Scheduler {
                 if (sysJob.name === 'nightly_consolidation') {
                     // Also run log cleanup
                     try {
-                        if (this.agent.db) this.agent.db.cleanupJobLogs(30);
+                        if (this.agent.db) {
+                            this.agent.db.cleanupJobLogs(30);
+                            this.agent.db.cleanupMetrics(30);
+                            this.agent.db.cleanupTokenUsage(30);
+                        }
                     } catch (e) {
                         console.error('[Scheduler] Log cleanup failed:', e);
                     }

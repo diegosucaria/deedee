@@ -195,3 +195,13 @@ export async function getJobLogs(limit = 50) {
         return { logs: [] };
     }
 }
+
+export async function cleanupData() {
+    try {
+        await fetchAPI('/v1/cleanup', { method: 'POST' });
+        revalidatePath('/stats');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
