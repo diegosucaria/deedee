@@ -523,8 +523,10 @@ class AgentDB {
   getLatencyTrend(limit = 100) {
     // Get avg latency per hour? Or just raw points for graph?
     // Let's get raw points for now: timestamp, value, type
+    // SQLite stores UTC strings by default, but returning them as-is makes JS treat them as local.
+    // Force 'Z' suffix to ensure ISO 8601 UTC interpretation.
     const stmt = this.db.prepare(`
-      SELECT timestamp, value, type, metadata FROM metrics 
+      SELECT strftime('%Y-%m-%dT%H:%M:%SZ', timestamp) as timestamp, value, type, metadata FROM metrics 
       WHERE type IN ('latency_router', 'latency_model', 'latency_e2e') 
       ORDER BY timestamp DESC LIMIT ?
     `);
@@ -533,7 +535,7 @@ class AgentDB {
 
   getTokenUsageTrend(limit = 100) {
     const stmt = this.db.prepare(`
-      SELECT timestamp, estimated_cost, total_tokens, model 
+      SELECT strftime('%Y-%m-%dT%H:%M:%SZ', timestamp) as timestamp, estimated_cost, total_tokens, model 
       FROM token_usage 
       ORDER BY timestamp DESC LIMIT ?
     `);
