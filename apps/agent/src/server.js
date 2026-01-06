@@ -276,6 +276,14 @@ app.get('/internal/stats', (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.post('/internal/cleanup', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    agent.db.clearMetrics();
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.get('/internal/stats/latency', (req, res) => {
   if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
   try {

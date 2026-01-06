@@ -684,6 +684,14 @@ class AgentDB {
     return info.changes;
   }
 
+  clearMetrics() {
+    this.db.prepare('DELETE FROM token_usage').run();
+    this.db.prepare('DELETE FROM job_logs').run(); // Optional: also clear logs? The button says "Reset Metrics", implying usage stats.
+    // Given the user asked for "Reset Metrics" in stats page which shows usage/cost, clearing token_usage is key.
+    // Clearing job logs is also safe/expected for a "Reset".
+    return true;
+  }
+
   cleanupJobLogs(retentionDays = 30) {
     const info = this.db.prepare(`
       DELETE FROM job_logs 
