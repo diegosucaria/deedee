@@ -46,8 +46,14 @@ const LogContent = ({ content }) => {
                             // Use robust parsing
                             const parsed = safeParse(candidate);
                             if (parsed) {
-                                const deep = deepParse(parsed);
-                                return JSON.stringify(deep, null, 2);
+                                try {
+                                    const deep = deepParse(parsed);
+                                    return JSON.stringify(deep, null, 2);
+                                } catch (err) {
+                                    console.error('deepParse failed:', err, candidate);
+                                }
+                            } else {
+                                console.warn('safeParse failed for candidate:', candidate.substring(0, 100));
                             }
                             // If parsing failed, break and continue scanning from i+1 would be ideal, 
                             // but our loop logic continues j. 

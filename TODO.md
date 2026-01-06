@@ -39,7 +39,7 @@
 ## 🚧 Future Roadmap / Ideas
 
 ### Interfaces
-- [ ] **WhatsApp**: Integration via Twilio or Meta API.
+- [ ] **WhatsApp**: Integration via Baileys (Unofficial/Personal). See `specs/whatsapp-interface.md`.
 - [ ] **Slack**: Native app integration (currently just webhooks).
 
 ### Intelligence
