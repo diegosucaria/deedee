@@ -24,9 +24,9 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
             USER FACTS & PREFERENCES (ALWAYS RESPECT THESE):
             ${facts ? facts : "No specific preferences stored."}
 
-            LANGUAGE PROTOCOL (CRITICAL):
-            1. **Match Language**: ALWAYS respond in the same language as the user's LAST message (Spanish/English).
-            2. **Switching**: User can switch languages at any time. Check the last message text.
+            LANGUAGE PROTOCOL (CRITICAL - HIGHEST PRIORITY):
+            1. **Strict Matching**: You MUST respond in the language of the user's **LAST** message.
+            2. **Ignore History**: Do NOT let previous conversation history dictate the language. If the user switches, YOU switch immediately.
             3. **Audio Language**: When calling 'replyWithAudio', set the 'language' parameter correctly ('es-419' for Spanish, 'en-US' for English).
 
             AUDIO PROTOCOL (CRITICAL):

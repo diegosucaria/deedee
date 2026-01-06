@@ -138,33 +138,63 @@ class TelegramService {
     }
   }
 
-  _escapeMarkdown(text) {
-    // Escapes special characters for MarkdownV2
-    // Characters to escape: _ * [ ] ( ) ~ ` > # + - = | { } . !
-    return text.replace(/([_*\[\]()~`>#\+\-=|{}.!])/g, '\\$1');
+  _escapeHTML(text) {
+    return text
+      .replace(/&/g, '&amp;')
+      .replace(/</g, '&lt;')
+      .replace(/>/g, '&gt;');
   }
 
   async sendMessage(chatId, content) {
     this.stopTyping(chatId);
     try {
-      // Heuristic: Split by code blocks (```) to escape text outside of them.
+      // Split by code blocks
       const parts = content.split('```');
       let finalMsg = '';
 
       for (let i = 0; i < parts.length; i++) {
+        let part = parts[i];
+
         if (i % 2 === 0) {
-          // Regular Text -> Escape
-          finalMsg += this._escapeMarkdown(parts[i]);
+          // Regular Text
+          // 1. Escape HTML special chars first
+          part = this._escapeHTML(part);
+
+          // 2. Convert Markdown to HTML
+          // Bold: **text** -> <b>text</b>
+          part = part.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
+
+          // Italic: *text* -> <i>text</i> (Basic check, might clash with bold if not careful, but bold is handled)
+          // We use a lookaround or just assume simple usage. 
+          // Let's use a simpler regex that requires non-star boundary to avoid messing with remaining **
+          // Actually, since we replaced ** already, single * is safe?
+          // But valid * might be part of ** if we missed it?
+          // Let's replace *text* -> <i>text</i>
+          part = part.replace(/\*([^\*]+?)\*/g, '<i>$1</i>');
+
+          // Inline Code: `text` -> <code>text</code>
+          part = part.replace(/`([^`]+?)`/g, '<code>$1</code>');
+
+          // Links: [text](url) -> <a href="url">text</a>
+          // Note: URL might have escaped brackets? No, we escaped < > & only.
+          part = part.replace(/\[([^\]]+?)\]\(([^)]+?)\)/g, '<a href="$2">$1</a>');
+
+          finalMsg += part;
         } else {
-          // Code Block -> Keep raw, wrap in fences
-          finalMsg += '```' + parts[i] + '```';
+          // Code Block
+          // Escape HTML
+          part = this._escapeHTML(part);
+          // Wrap in <pre><code> (Telegram treats <pre> as block)
+          // Removing leading newline often helps
+          if (part.startsWith('\n')) part = part.substring(1);
+          finalMsg += '<pre>' + part + '</pre>';
         }
       }
 
-      await this.bot.telegram.sendMessage(chatId, finalMsg, { parse_mode: 'MarkdownV2' });
+      await this.bot.telegram.sendMessage(chatId, finalMsg, { parse_mode: 'HTML' });
 
     } catch (err) {
-      console.warn('[Telegram] Failed to send MarkdownV2, falling back to plain text:', err.message);
+      console.warn('[Telegram] Failed to send HTML, falling back to plain text:', err.message);
       // Fallback to plain text
       await this.bot.telegram.sendMessage(chatId, content);
     }
