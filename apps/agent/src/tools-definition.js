@@ -17,6 +17,27 @@ const toolDefinitions = [
         }
       },
       {
+        name: "saveJobState",
+        description: "Save a value to the persistent state of the current scheduled job. Use this to remember things between runs (e.g. 'last_weather_status'). ONLY works within a scheduled job.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            key: { type: "STRING", description: "Key for the state (e.g., 'status')" },
+            value: { type: "STRING", description: "Value to store" }
+          },
+          required: ["key", "value"]
+        }
+      },
+      {
+        name: "getJobState",
+        description: "Retrieve a value from the persistent state of the current scheduled job. ONLY works within a scheduled job.",
+        parameters: {
+          type: "OBJECT",
+          properties: { key: { type: "STRING" } },
+          required: ["key"]
+        }
+      },
+      {
         name: "getFact",
         description: "Retrieve a fact from long-term memory",
         parameters: {

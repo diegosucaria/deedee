@@ -789,6 +789,22 @@ class Agent {
       const val = this.db.getKey(args.key);
       return val ? { value: val } : { info: 'Fact not found in database.' };
     }
+    if (executionName === 'saveJobState') {
+      const jobName = message.metadata?.jobName;
+      if (!jobName) return { error: "This tool can only be used within a scheduled job." };
+
+      const namespacedKey = `job:${jobName}:${args.key}`;
+      this.db.setKey(namespacedKey, args.value);
+      return { success: true, info: `State saved for job '${jobName}'` };
+    }
+    if (executionName === 'getJobState') {
+      const jobName = message.metadata?.jobName;
+      if (!jobName) return { error: "This tool can only be used within a scheduled job." };
+
+      const namespacedKey = `job:${jobName}:${args.key}`;
+      const val = this.db.getKey(namespacedKey);
+      return val ? { value: val } : { info: 'State not found.' };
+    }
     if (executionName === 'searchHistory') {
       // Use internal specific search or general DB search
       // Using existing searchMessages method

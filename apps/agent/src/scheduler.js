@@ -145,7 +145,8 @@ class Scheduler {
 
                     const msgSource = payload.targetSource || 'scheduler';
                     const msgMeta = {
-                        chatId: payload.targetChatId || `scheduled_${name}_${Date.now()}`
+                        chatId: payload.targetChatId || `scheduled_${name}_${Date.now()}`,
+                        jobName: name
                     };
 
                     let executionResult = null;

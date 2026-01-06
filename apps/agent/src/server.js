@@ -521,6 +521,14 @@ app.post('/internal/scheduler', (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.get('/internal/jobs/:name/state', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const state = agent.db.getJobState(req.params.name);
+    res.json({ state });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 if (require.main === module) {
   app.listen(port, () => {
     console.log(`Agent listening at http://localhost:${port}`);

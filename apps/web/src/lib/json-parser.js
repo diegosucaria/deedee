@@ -5,7 +5,9 @@ export const safeParse = (input) => {
     // 1. Try standard parse
     try {
         const parsed = JSON.parse(input);
-        if (typeof parsed === 'object' && parsed !== null) return parsed;
+        // [MODIFIED] Allow returning strings/primitives to support double-serialization unwrapping
+        // e.g. "{\"a\":1}" -> "{\"a\":1}" -> {a:1}
+        if (parsed !== null && parsed !== undefined) return parsed;
     } catch (e) {
         // Fallback below
     }
@@ -34,6 +36,25 @@ export const safeParse = (input) => {
         if (typeof parsed === 'object' && parsed !== null) return parsed;
     } catch (e) {
         // Failed
+    }
+
+    // 4. Try fixing invalid escape sequences (e.g. \}, \[, or just \a)
+    try {
+        // Replace backslash followed by any character that isn't a valid JSON escape char
+        // Valid: " \ / b f n r t u
+        const fixed = input.replace(/\\([^"\\/bfnrtu])/g, '$1');
+        const parsed = JSON.parse(fixed);
+        if (typeof parsed === 'object' && parsed !== null) return parsed;
+    } catch (e) {
+        // Failed
+    }
+
+    // [DEBUG] Log failure if it looked like JSON
+    if (input && typeof input === 'string') {
+        const trimmed = input.trim();
+        if (trimmed.startsWith('{') || trimmed.startsWith('[')) {
+            console.error('[JSON Parse Failed] Input looks like JSON but all strategies failed:', input.substring(0, 200));
+        }
     }
 
     return null;

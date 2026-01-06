@@ -12,7 +12,7 @@ export default function ActiveJobsTable() {
     const loadJobs = async () => {
         setLoading(true);
         try {
-            const data = await fetchAPI('/v1/internal/tasks');
+            const data = await fetchAPI('/v1/tasks');
             setJobs(data.jobs || []);
         } catch (err) {
             console.error('Failed to load tasks:', err);

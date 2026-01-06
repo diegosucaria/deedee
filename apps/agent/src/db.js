@@ -293,6 +293,21 @@ class AgentDB {
     });
   }
 
+  getJobState(jobName) {
+    const prefix = `job:${jobName}:%`;
+    const stmt = this.db.prepare('SELECT key, value, updated_at FROM kv_store WHERE key LIKE ? ORDER BY updated_at DESC');
+    return stmt.all(prefix).map(row => {
+      // Strip prefix for cleaner API response? Or keep full key?
+      // Let's strip prefix for easier reading: "status" instead of "job:weather:status"
+      const cleanKey = row.key.replace(`job:${jobName}:`, '');
+      try {
+        return { key: cleanKey, value: JSON.parse(row.value), updatedAt: row.updated_at };
+      } catch (e) {
+        return { key: cleanKey, value: row.value, updatedAt: row.updated_at };
+      }
+    });
+  }
+
   // --- Goals ---
   addGoal(description, metadata = {}) {
     const metaStr = JSON.stringify(metadata);
