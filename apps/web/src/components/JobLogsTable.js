@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { fetchAPI } from '@/lib/api';
+import { getJobLogs } from '@/app/actions';
 import { safeParse, deepParse } from '@/lib/json-parser';
 import { Clock, CheckCircle, XCircle, RefreshCw } from 'lucide-react';
 
@@ -134,7 +134,7 @@ export default function JobLogsTable() {
     const loadLogs = async () => {
         setLoading(true);
         try {
-            const data = await fetchAPI('/v1/logs/jobs?limit=50');
+            const data = await getJobLogs(50);
             setLogs(data.logs || []);
         } catch (err) {
             console.error('Failed to load job logs:', err);

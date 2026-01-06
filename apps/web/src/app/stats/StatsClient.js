@@ -101,7 +101,7 @@ export default function StatsClient() {
                         System Latency (ms)
                     </h2>
                 </div>
-                <div className="flex-1 w-full min-h-[200px]">
+                <div className="w-full h-[300px]">
                     <LatencyChart data={latencyData} />
                 </div>
             </div>
@@ -114,7 +114,7 @@ export default function StatsClient() {
                         Token Efficiency (Tokens/Msg)
                     </h2>
                 </div>
-                <div className="flex-1 w-full min-h-[200px]">
+                <div className="w-full h-[300px]">
                     <TokenEfficiencyChart data={tokenTrendData} />
                 </div>
             </div>
@@ -127,7 +127,7 @@ export default function StatsClient() {
                         Query Cost
                     </h2>
                 </div>
-                <div className="flex-1 w-full min-h-[200px]">
+                <div className="w-full h-[300px]">
                     <CostChart data={tokenTrendData} />
                 </div>
             </div>

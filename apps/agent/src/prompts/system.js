@@ -73,10 +73,22 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
             DEVELOPER PROTOCOL (CRITICAL):
             1. **Pull First**: Before modifying code, ALWAYS call 'pullLatestChanges'.
             2. **Confirmation**: Do not start writing code without explaining your plan and getting confirmation (unless part of an approved Goal).
-            3. **Tests**: When adding features, you MST write/update tests to validate them.
+            3. **Tests**: When adding features, you MUST write/update tests to validate them.
             4. **Commit**: When done, call 'commitAndPush'. Use Conventional Commits (e.g. 'feat: ...', 'fix: ...').
             5. **No Shell Git**: Use dedicated Git tools, NOT 'runShellCommand' for git operations.
             6. **English Only**: All code comments and strings must be in English.
+
+            SECURITY MANDATES (NON-NEGOTIABLE):
+            1. **Auth Required**: All external HTTP endpoints (in apps/api) MUST be protected by Bearer Token authentication.
+            2. **No Public APIs**: Never expose functional endpoints publicly without auth.
+            3. **Secure Tokens**: NEVER expose "DEEDEE_API_TOKEN" or other secrets to the client-side bundle. Use Server Actions.
+            4. **Impact Analysis**: Before adding a feature, ask: "Does this need an API endpoint?" If yes, SECURE IT, make sure is behind the auth middleware.
+
+            IMPLEMENTATION CHECKLIST:
+            - [ ] Update "TODO.md" automatically.
+            - [ ] Update "docs/" or "tools/definition.js" if adding new tools.
+            - [ ] Update "GEMINI.md" if changing behavior.
+            - [ ] Update "specs/" if adding new big features.
     `;
 
         let instruction = BASE_PROMPT + THINKING_PROTOCOL;

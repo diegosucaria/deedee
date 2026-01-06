@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { fetchAPI } from '@/lib/api';
+import { getTasks, runTask, cancelTask } from '@/app/actions';
 import { Clock, Play, Trash2, RefreshCw, CalendarOff } from 'lucide-react';
 
 export default function ActiveJobsTable() {
@@ -12,7 +12,7 @@ export default function ActiveJobsTable() {
     const loadJobs = async () => {
         setLoading(true);
         try {
-            const data = await fetchAPI('/v1/tasks');
+            const data = await getTasks();
             setJobs(data.jobs || []);
         } catch (err) {
             console.error('Failed to load tasks:', err);
@@ -30,7 +30,7 @@ export default function ActiveJobsTable() {
     const handleRun = async (name) => {
         setActionLoading(name);
         try {
-            await fetchAPI(`/v1/internal/tasks/${name}/run`, { method: 'POST' });
+            await runTask(name);
             // Don't reload immediately, let the log table update eventually or just notify success
         } catch (err) {
             console.error('Failed to run job:', err);
@@ -43,7 +43,7 @@ export default function ActiveJobsTable() {
         if (!confirm(`Are you sure you want to cancel job '${name}'?`)) return;
         setActionLoading(name);
         try {
-            await fetchAPI(`/v1/internal/tasks/${name}/cancel`, { method: 'POST' });
+            await cancelTask(name);
             await loadJobs();
         } catch (err) {
             console.error('Failed to cancel job:', err);

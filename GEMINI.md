@@ -27,7 +27,8 @@ You are working on **Deedee**, a personal, self-improving AI agent designed to r
 ### 4. API Security
 - **Strict Authentication**: All external HTTP endpoints (e.g., exposed via `apps/api`) MUST be protected by Bearer Token authentication (`DEEDEE_API_TOKEN`).
 - **No Public Endpoints**: Never expose functional endpoints publicly. Only `/health` may be public.
-- **Middleware**: Use a dedicated auth middleware for all `/v1` routes.
+- **Client-Side Security**: NEVER expose `DEEDEE_API_TOKEN` to the client-side bundle (no `NEXT_PUBLIC_` prefix).
+- **Frontend Data Fetching**: Use **Next.js Server Actions** (`apps/web/src/app/actions.js`) to fetch data from the API. The token should only exist in the server-side environment and be injected into requests within the Server Action.
 
 ### 2. TDD & Specs
 - **Workflow**:

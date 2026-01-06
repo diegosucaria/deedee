@@ -4,6 +4,15 @@ import { fetchAPI } from '@/lib/api';
 import { revalidatePath } from 'next/cache';
 
 // --- Tasks ---
+export async function getTasks() {
+    try {
+        return await fetchAPI('/v1/tasks');
+    } catch (error) {
+        console.error('getTasks Error:', error);
+        return { jobs: [] };
+    }
+}
+
 export async function cancelTask(name) {
     try {
         const encodedName = encodeURIComponent(name);
@@ -175,5 +184,14 @@ export async function getStatsCostTrend() {
     } catch (error) {
         console.error('getStatsCostTrend Error:', error);
         return [];
+    }
+}
+
+export async function getJobLogs(limit = 50) {
+    try {
+        return await fetchAPI(`/v1/logs/jobs?limit=${limit}`);
+    } catch (error) {
+        console.error('getJobLogs Error:', error);
+        return { logs: [] };
     }
 }

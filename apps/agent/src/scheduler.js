@@ -153,7 +153,7 @@ class Scheduler {
                     try {
                         await this.agent.processMessage({
                             role: 'user',
-                            content: `Scheduled Task: ${payload.task}`,
+                            content: `Scheduled Task: ${payload.task}\n\n[SYSTEM: This is a recurring job. To track changes between runs, use 'getJobState' to check previous data and 'saveJobState' to save new data.]`,
                             source: msgSource,
                             metadata: msgMeta
                         }, async (reply) => {
