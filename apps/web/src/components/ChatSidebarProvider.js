@@ -16,7 +16,7 @@ export function ChatSidebarProvider({ children }) {
     // Maybe auto-collapse on mobile eventually
 
     return (
-        <ChatSidebarContext.Provider value={{ isCollapsed, setIsCollapsed, toggleSidebar: () => setIsCollapsed(prev => !prev) }}>
+        <ChatSidebarContext.Provider value={{ isCollapsed, setCollapsed: setIsCollapsed, toggleSidebar: () => setIsCollapsed(prev => !prev) }}>
             {children}
         </ChatSidebarContext.Provider>
     );

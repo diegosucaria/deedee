@@ -330,7 +330,7 @@ export async function createSession() {
 
 export async function getSession(id) {
     try {
-        return await fetchAPI(`/v1/sessions/${id}`);
+        return await fetchAPI(`/v1/sessions/${encodeURIComponent(id)}`);
     } catch (error) {
         console.error(`getSession(${id}) Error:`, error);
         return null;
@@ -339,7 +339,7 @@ export async function getSession(id) {
 
 export async function updateSession(id, data) {
     try {
-        await fetchAPI(`/v1/sessions/${id}`, {
+        await fetchAPI(`/v1/sessions/${encodeURIComponent(id)}`, {
             method: 'PUT',
             body: JSON.stringify(data)
         });
@@ -352,7 +352,7 @@ export async function updateSession(id, data) {
 
 export async function deleteSession(id) {
     try {
-        await fetchAPI(`/v1/sessions/${id}`, { method: 'DELETE' });
+        await fetchAPI(`/v1/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
         revalidatePath('/sessions');
         return { success: true };
     } catch (error) {
