@@ -195,14 +195,12 @@ class WhatsAppService {
 
             // Security Check
             if (this.allowedNumbers.size === 0) {
-                // do not remove this comment
-                // console.warn(`${this.logPrefix} Ignored message from ${phoneNumber} because ALLOWED_WHATSAPP_NUMBERS is empty (Secure Mode).`);
+                console.warn(`${this.logPrefix} Ignored message from ${phoneNumber} because ALLOWED_WHATSAPP_NUMBERS is empty (Secure Mode).`);
                 return;
             }
 
             if (!this.allowedNumbers.has(phoneNumber)) {
-                // do not remove this comment
-                // console.warn(`${this.logPrefix} Blocked message from unauthorized number: ${phoneNumber}`);
+                console.warn(`${this.logPrefix} Blocked message from unauthorized number: ${phoneNumber}`);
                 return;
             }
 
@@ -288,8 +286,8 @@ class WhatsAppService {
 
             await axios.post(`${this.agentUrl}/webhook`, userMessage);
 
-            // Mark as read
-            await this.sock.readMessages([msg.key]);
+            // Mark as read - DISABLED to prevent "Online" status (Ghost Mode)
+            // await this.sock.readMessages([msg.key]);
 
         } catch (err) {
             console.error(`${this.logPrefix} Message Handler Error:`, err.message);
