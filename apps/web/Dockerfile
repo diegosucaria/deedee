@@ -8,7 +8,15 @@ RUN npm install turbo --global
 # when unrelated packages (like "agent" or "api") change.
 FROM base AS pruner
 WORKDIR /app
-COPY . .
+# Copy only package definitions first to cache the pruner layer
+COPY package.json package-lock.json turbo.json ./
+COPY apps/agent/package.json apps/agent/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY apps/interfaces/package.json apps/interfaces/package.json
+COPY apps/api/package.json apps/api/package.json
+COPY apps/supervisor/package.json apps/supervisor/package.json
+COPY packages/shared/package.json packages/shared/package.json
+COPY packages/mcp-servers/package.json packages/mcp-servers/package.json
 RUN turbo prune --scope=web --docker
 
 # --- Builder Stage ---

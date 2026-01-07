@@ -6,7 +6,21 @@ RUN npm install turbo --global
 # This stage uses "turbo prune" to generate a minimal "lockfile slice" for this specific app.
 FROM base AS pruner
 WORKDIR /app
-COPY . .
+# Copy only package definitions first to cache the pruner layer
+COPY package.json package-lock.json turbo.json ./
+COPY apps/agent/package.json apps/agent/package.json
+COPY apps/web/package.json apps/web/package.json
+COPY apps/interfaces/package.json apps/interfaces/package.json
+COPY apps/api/package.json apps/api/package.json
+COPY apps/supervisor/package.json apps/supervisor/package.json
+COPY packages/shared/package.json packages/shared/package.json
+COPY packages/mcp-servers/package.json packages/mcp-servers/package.json
+
+# Copy all package.json files from inside mcp-servers too if they exist, 
+# or we can rely on workspace definitions. 
+# For now, let's copy the specific one we know exists:
+# (Note: Plex MCP server is Python and not a workspace, so safe to skip here for turbo)
+
 RUN turbo prune --scope=@deedee/agent --docker
 
 # --- Builder Stage ---

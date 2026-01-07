@@ -35,3 +35,13 @@ coverage
 __tests__
 *.test.js
 *.spec.js
+
+# Temporary
+.drafts
+*.log
+*.tmp
+tmp
+
+# Images/Assets (if not needed in build context)
+documentation
+docs/*.png
