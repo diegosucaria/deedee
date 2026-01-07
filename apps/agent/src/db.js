@@ -298,6 +298,7 @@ class AgentDB {
     return this.db.prepare(`
       SELECT * FROM chat_sessions 
       WHERE is_archived = 0
+      AND id NOT LIKE 'scheduled_%'
       ORDER BY updated_at DESC 
       LIMIT ? OFFSET ?
     `).all(limit, offset);

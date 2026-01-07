@@ -589,7 +589,7 @@ app.post('/internal/scheduler', (req, res) => {
         role: 'user',
         content: `Scheduled Task: ${task}`,
         source: 'scheduler',
-        metadata: { chatId: `scheduled_${name}_${Date.now()}` }
+        metadata: { chatId: `scheduled_${name}` }
       }, async (reply) => {
         if (agent.interface) {
           await agent.interface.send(reply);
