@@ -305,111 +305,112 @@ export async function disconnectWhatsApp(session) {
     } catch (error) {
         return { success: false, error: error.message };
     }
+}
 
 
-    // --- MCP & Tools ---
-    export async function getMCPStatus() {
-        try {
-            const res = await fetchAPI('/v1/mcp/status');
-            return res.servers || [];
-        } catch (error) {
-            console.error('getMCPStatus Error:', error);
-            return [];
-        }
+// --- MCP & Tools ---
+export async function getMCPStatus() {
+    try {
+        const res = await fetchAPI('/v1/mcp/status');
+        return res.servers || [];
+    } catch (error) {
+        console.error('getMCPStatus Error:', error);
+        return [];
     }
+}
 
-    export async function getTools() {
-        try {
-            const res = await fetchAPI('/v1/live/tools'); // Reuse live endpoint or create new /v1/tools?
-            // Wait, I didn't create /v1/tools in dashboard.js but live.js has /tools.
-            // live.js is mounted at /v1/live. So /v1/live/tools.
-            // I can just use that.
-            return res.tools || [];
-        } catch (error) {
-            console.error('getTools Error:', error);
-            return [];
-        }
+export async function getTools() {
+    try {
+        const res = await fetchAPI('/v1/live/tools'); // Reuse live endpoint or create new /v1/tools?
+        // Wait, I didn't create /v1/tools in dashboard.js but live.js has /tools.
+        // live.js is mounted at /v1/live. So /v1/live/tools.
+        // I can just use that.
+        return res.tools || [];
+    } catch (error) {
+        console.error('getTools Error:', error);
+        return [];
     }
+}
 
-    // --- Chat Sessions ---
+// --- Chat Sessions ---
 
-    export async function createSession() {
-        try {
-            const session = await fetchAPI('/v1/sessions', {
-                method: 'POST',
-                body: JSON.stringify({ reuseEmpty: true })
-            });
-            revalidatePath('/sessions');
-            return { success: true, session };
-        } catch (error) {
-            return { success: false, error: error.message };
-        }
+export async function createSession() {
+    try {
+        const session = await fetchAPI('/v1/sessions', {
+            method: 'POST',
+            body: JSON.stringify({ reuseEmpty: true })
+        });
+        revalidatePath('/sessions');
+        return { success: true, session };
+    } catch (error) {
+        return { success: false, error: error.message };
     }
+}
 
-    export async function getSessions(limit = 50, offset = 0) {
-        try {
-            const res = await fetchAPI(`/v1/sessions?limit=${limit}&offset=${offset}`);
-            return res.sessions || [];
-        } catch (error) {
-            console.error('getSessions Error:', error);
-            return [];
-        }
+export async function getSessions(limit = 50, offset = 0) {
+    try {
+        const res = await fetchAPI(`/v1/sessions?limit=${limit}&offset=${offset}`);
+        return res.sessions || [];
+    } catch (error) {
+        console.error('getSessions Error:', error);
+        return [];
     }
+}
 
-    export async function getUserLocation() {
-        try {
-            const headersList = require('next/headers').headers();
-            const ip = headersList.get('x-forwarded-for') || headersList.get('remote-addr') || '';
-            // If IP is loopback or local, ipapi might fallback to server location, but better than nothing.
-            // x-forwarded-for can be a list "client, proxy1, proxy2"
-            const clientIp = ip.split(',')[0].trim();
+export async function getUserLocation() {
+    try {
+        const headersList = require('next/headers').headers();
+        const ip = headersList.get('x-forwarded-for') || headersList.get('remote-addr') || '';
+        // If IP is loopback or local, ipapi might fallback to server location, but better than nothing.
+        // x-forwarded-for can be a list "client, proxy1, proxy2"
+        const clientIp = ip.split(',')[0].trim();
 
-            const url = clientIp ? `https://ipapi.co/${clientIp}/json/` : 'https://ipapi.co/json/';
+        const url = clientIp ? `https://ipapi.co/${clientIp}/json/` : 'https://ipapi.co/json/';
 
-            const res = await fetch(url, { cache: 'no-store' });
+        const res = await fetch(url, { cache: 'no-store' });
 
-            if (res.status === 429) {
-                console.warn('[getUserLocation] IPAPI Rate Limit (429). Location data unavailable.');
-                return { success: false, error: 'Rate Limit' };
-            }
-
-            if (!res.ok) throw new Error(`IPAPI Error: ${res.status}`);
-            const data = await res.json();
-            return { success: true, data };
-        } catch (error) {
-            console.error('getUserLocation Error:', error.message);
-            return { success: false, error: error.message };
+        if (res.status === 429) {
+            console.warn('[getUserLocation] IPAPI Rate Limit (429). Location data unavailable.');
+            return { success: false, error: 'Rate Limit' };
         }
-    }
 
-    export async function getSession(id) {
-        try {
-            return await fetchAPI(`/v1/sessions/${encodeURIComponent(id)}`);
-        } catch (error) {
-            console.error(`getSession(${id}) Error:`, error);
-            return null;
-        }
+        if (!res.ok) throw new Error(`IPAPI Error: ${res.status}`);
+        const data = await res.json();
+        return { success: true, data };
+    } catch (error) {
+        console.error('getUserLocation Error:', error.message);
+        return { success: false, error: error.message };
     }
+}
 
-    export async function updateSession(id, data) {
-        try {
-            await fetchAPI(`/v1/sessions/${encodeURIComponent(id)}`, {
-                method: 'PUT',
-                body: JSON.stringify(data)
-            });
-            revalidatePath('/sessions');
-            return { success: true };
-        } catch (error) {
-            return { success: false, error: error.message };
-        }
+export async function getSession(id) {
+    try {
+        return await fetchAPI(`/v1/sessions/${encodeURIComponent(id)}`);
+    } catch (error) {
+        console.error(`getSession(${id}) Error:`, error);
+        return null;
     }
+}
 
-    export async function deleteSession(id) {
-        try {
-            await fetchAPI(`/v1/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
-            revalidatePath('/sessions');
-            return { success: true };
-        } catch (error) {
-            return { success: false, error: error.message };
-        }
+export async function updateSession(id, data) {
+    try {
+        await fetchAPI(`/v1/sessions/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            body: JSON.stringify(data)
+        });
+        revalidatePath('/sessions');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
     }
+}
+
+export async function deleteSession(id) {
+    try {
+        await fetchAPI(`/v1/sessions/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        revalidatePath('/sessions');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
