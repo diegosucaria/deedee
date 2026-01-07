@@ -156,10 +156,29 @@ class Agent {
         const msgCount = this.db.countMessages(chatId);
         this.db.ensureSession(chatId, message.source);
 
+        // Log Location on New Session
+        if (msgCount === 0 && message.metadata?.location) {
+          console.log(`[Agent] New Session ${chatId} started from location: ${message.metadata.location}`);
+        }
+
         // Auto-Title Trigger (Background)
-        if (msgCount === 0 && message.content && message.role === 'user') {
+        const hasContent = message.content || (message.parts && message.parts.length > 0);
+
+        if (msgCount === 0 && hasContent && message.role === 'user') {
+          console.log(`[Agent] Triggering Auto-Title for ${chatId}. MsgCount: ${msgCount}`);
+
+          let titleContext = message.content;
+          if (!titleContext && message.parts) {
+            const textPart = message.parts.find(p => p.text);
+            titleContext = textPart ? textPart.text : "User sent media";
+          }
+
           // Don't await - run in background
-          this._autoTitleSession(chatId, message.content).catch(console.error);
+          this._autoTitleSession(chatId, titleContext).catch(err => {
+            console.error(`[Agent] Auto-Title CRASHED for ${chatId}:`, err);
+          });
+        } else {
+          if (msgCount === 0) console.log(`[Agent] Skipped Auto-Title. HasContent: ${!!hasContent}, Role: ${message.role}`);
         }
       }
 
