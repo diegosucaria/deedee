@@ -30,7 +30,7 @@ describe('AgentDB', () => {
     };
     db.saveMessage(msg);
 
-    const history = db.getHistory(1);
+    const history = db.getHistory({ limit: 1 });
     expect(history[0].content).toBe('hello');
     expect(history[0].chat_id).toBe('123');
   });
@@ -50,5 +50,46 @@ describe('AgentDB', () => {
     db.completeGoal(info.lastInsertRowid);
     const pending = db.getPendingGoals();
     expect(pending).toHaveLength(0);
+  });
+
+  describe('Chat Sessions', () => {
+    it('should create and retrieve a session', () => {
+      const session = db.createSession({ id: 'test-session', title: 'Test Chat' });
+      const retrieved = db.getSession('test-session');
+      expect(retrieved).not.toBeNull();
+      expect(retrieved.id).toBe('test-session');
+      expect(retrieved.title).toBe('Test Chat');
+    });
+
+    it('should ensure valid session for valid source', () => {
+      const s1 = db.ensureSession('web-uuid', 'web');
+      expect(s1.title).toBe('New Chat');
+
+      const s2 = db.ensureSession('12345', 'telegram');
+      expect(s2.title).toBe('Telegram Chat');
+    });
+
+    it('should update session', () => {
+      db.createSession({ id: 'update-test', title: 'Old' });
+      db.updateSession('update-test', { title: 'New', isArchived: 1 });
+      const s = db.getSession('update-test');
+      expect(s.title).toBe('New');
+      expect(s.is_archived).toBe(1);
+    });
+
+    it('should delete session and cascading messages', () => {
+      db.createSession({ id: 'del-test', title: 'Del' });
+      db.saveMessage({ role: 'user', content: 'hi', metadata: { chatId: 'del-test' } });
+
+      const countBefore = db.countMessages('del-test');
+      expect(countBefore).toBe(1);
+
+      db.deleteSession('del-test');
+      const s = db.getSession('del-test');
+      expect(s).toBeUndefined();
+
+      const countAfter = db.countMessages('del-test');
+      expect(countAfter).toBe(0);
+    });
   });
 });

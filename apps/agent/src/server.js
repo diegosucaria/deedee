@@ -300,6 +300,52 @@ app.get('/internal/stats/usage', (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// --- Chat Sessions (Internal) ---
+app.get('/internal/sessions', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const limit = parseInt(req.query.limit) || 50;
+    const offset = parseInt(req.query.offset) || 0;
+    const sessions = agent.db.getSessions({ limit, offset });
+    res.json({ sessions });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/internal/sessions', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const { id, title } = req.body;
+    const session = agent.db.createSession({ id, title });
+    res.json(session);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.get('/internal/sessions/:id', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const session = agent.db.getSession(req.params.id);
+    if (!session) return res.status(404).json({ error: 'Session not found' });
+    res.json(session);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.put('/internal/sessions/:id', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const { title, isArchived } = req.body;
+    agent.db.updateSession(req.params.id, { title, isArchived });
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.delete('/internal/sessions/:id', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    agent.db.deleteSession(req.params.id);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 // --- History ---
 app.get('/internal/history', (req, res) => {
   if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
@@ -307,10 +353,11 @@ app.get('/internal/history', (req, res) => {
     const limit = parseInt(req.query.limit) || 100;
     const since = req.query.since;
     const until = req.query.until;
+    const chatId = req.query.chatId;
     const order = req.query.order || 'DESC';
 
     // Support legacy limit-only call or new options
-    const history = agent.db.getHistory({ limit, since, until, order });
+    const history = agent.db.getHistory({ limit, since, until, chatId, order });
     res.json({ history });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

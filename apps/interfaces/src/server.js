@@ -257,6 +257,73 @@ app.post('/send', async (req, res) => {
 
 
 
+// --- SESSION MANAGEMENT ---
+app.get('/sessions', async (req, res) => {
+  try {
+    const { limit, offset } = req.query;
+    const response = await axios.get(`${agentUrl}/internal/sessions`, { params: { limit, offset } });
+    res.json(response.data.sessions);
+  } catch (err) {
+    console.error('[Interfaces] Failed to get sessions:', err.message);
+    res.status(502).json({ error: 'Backend unavailable' });
+  }
+});
+
+app.post('/sessions', async (req, res) => {
+  try {
+    const response = await axios.post(`${agentUrl}/internal/sessions`, req.body);
+    res.json(response.data);
+  } catch (err) {
+    console.error('[Interfaces] Failed to create session:', err.message);
+    res.status(502).json({ error: 'Backend unavailable' });
+  }
+});
+
+app.get('/sessions/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    // Fetch Metadata
+    const sessionRes = await axios.get(`${agentUrl}/internal/sessions/${id}`);
+
+    // Fetch History
+    const historyRes = await axios.get(`${agentUrl}/internal/history`, { params: { chatId: id, limit: 100 } });
+
+    res.json({
+      ...sessionRes.data,
+      messages: historyRes.data.history
+    });
+  } catch (err) {
+    if (axios.isAxiosError(err) && err.response?.status === 404) {
+      return res.status(404).json({ error: 'Session not found' });
+    }
+    console.error('[Interfaces] Failed to get session details:', err.message);
+    res.status(502).json({ error: 'Backend unavailable' });
+  }
+});
+
+app.put('/sessions/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await axios.put(`${agentUrl}/internal/sessions/${id}`, req.body);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[Interfaces] Failed to update session:', err.message);
+    res.status(502).json({ error: 'Backend unavailable' });
+  }
+});
+
+app.delete('/sessions/:id', async (req, res) => {
+  try {
+    const { id } = req.params;
+    await axios.delete(`${agentUrl}/internal/sessions/${id}`);
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[Interfaces] Failed to delete session:', err.message);
+    res.status(502).json({ error: 'Backend unavailable' });
+  }
+});
+
 // Endpoint for Agent to report progress (e.g. "Routing...", "Thinking...")
 app.post('/progress', async (req, res) => {
   try {

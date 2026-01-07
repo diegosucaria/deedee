@@ -151,6 +151,18 @@ class Agent {
 
       const chatId = message.metadata?.chatId;
 
+      // Ensure Session Exists (Multi-Threaded Chat Support)
+      if (chatId) {
+        const msgCount = this.db.countMessages(chatId);
+        this.db.ensureSession(chatId, message.source);
+
+        // Auto-Title Trigger (Background)
+        if (msgCount === 0 && message.content && message.role === 'user') {
+          // Don't await - run in background
+          this._autoTitleSession(chatId, message.content).catch(console.error);
+        }
+      }
+
       // 0. Internal Health Check Interception
       if (message.metadata?.internal_health_check) {
         console.log('[Agent] Handling Internal Health Check. Skipping core logic.');
@@ -796,6 +808,35 @@ class Agent {
   }
 
 
+
+  async _autoTitleSession(chatId, firstMessageContent) {
+    try {
+      console.log(`[Agent] Auto-titling session ${chatId}...`);
+      // Use Flash for speed/cost
+      const model = process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
+      const prompt = `
+        Generate a short, concise title (3-5 words max) for a chat session that starts with this user message:
+        "${firstMessageContent}"
+        
+        Do not use quotes. Just the title.
+      `;
+
+      // Use a separate stateless call
+      const { GoogleGenAI } = await this._loadClientLibrary();
+      const client = new GoogleGenAI({ apiKey: this.config.googleApiKey });
+      const modelInstance = client.getGenerativeModel({ model });
+
+      const result = await modelInstance.generateContent(prompt);
+      const title = result.response.text().trim();
+
+      if (title) {
+        this.db.updateSession(chatId, { title });
+        console.log(`[Agent] Session ${chatId} titled: "${title}"`);
+      }
+    } catch (err) {
+      console.error('[Agent] Auto-titling failed:', err.message);
+    }
+  }
 
   async stop() {
     console.log('[Agent] Stopping...');

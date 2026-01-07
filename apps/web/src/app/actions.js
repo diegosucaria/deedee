@@ -23,7 +23,6 @@ export async function cancelTask(name) {
         return { success: false, error: error.message };
     }
 }
-// removed extra brace
 
 export async function runTask(name) {
     try {
@@ -274,6 +273,58 @@ export async function disconnectWhatsApp(session) {
             body: JSON.stringify({ session })
         });
         return { success: true, ...res };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+// --- Chat Sessions ---
+export async function getSessions(limit = 50, offset = 0) {
+    try {
+        return await fetchAPI(`/v1/sessions?limit=${limit}&offset=${offset}`);
+    } catch (error) {
+        console.error('getSessions Error:', error);
+        return [];
+    }
+}
+
+export async function createSession() {
+    try {
+        const session = await fetchAPI('/v1/sessions', { method: 'POST' });
+        revalidatePath('/sessions');
+        return { success: true, session };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function getSession(id) {
+    try {
+        return await fetchAPI(`/v1/sessions/${id}`);
+    } catch (error) {
+        console.error(`getSession(${id}) Error:`, error);
+        return null;
+    }
+}
+
+export async function updateSession(id, data) {
+    try {
+        await fetchAPI(`/v1/sessions/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify(data)
+        });
+        revalidatePath('/sessions');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function deleteSession(id) {
+    try {
+        await fetchAPI(`/v1/sessions/${id}`, { method: 'DELETE' });
+        revalidatePath('/sessions');
+        return { success: true };
     } catch (error) {
         return { success: false, error: error.message };
     }

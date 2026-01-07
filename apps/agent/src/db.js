@@ -124,7 +124,18 @@ class AgentDB {
         duration_ms INTEGER,
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
       );
+
+      CREATE TABLE IF NOT EXISTS chat_sessions (
+        id TEXT PRIMARY KEY,
+        title TEXT,
+        is_archived INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
     `);
+
+    // Migration: Backfill sessions for existing messages
+    this.migrateSessions();
 
     // Migration: Add metadata column if it doesn't exist (for existing DBs)
     try {
@@ -225,7 +236,103 @@ class AgentDB {
   }
 
 
+
+  // --- Chat Sessions ---
+  migrateSessions() {
+    // Find chat_ids in messages that don't have a session
+    const rows = this.db.prepare(`
+      SELECT DISTINCT chat_id FROM messages 
+      WHERE chat_id NOT IN (SELECT id FROM chat_sessions) 
+      AND chat_id IS NOT NULL
+    `).all();
+
+    if (rows.length > 0) {
+      console.log(`[DB] Migrating ${rows.length} legacy chats to sessions...`);
+      const stmt = this.db.prepare(`
+        INSERT INTO chat_sessions (id, title, created_at, updated_at)
+        VALUES (?, ?, ?, ?)
+      `);
+
+      const now = new Date().toISOString();
+      for (const row of rows) {
+        let title = 'Legacy Chat';
+        // Try to verify if it is an external source
+        if (row.chat_id.match(/^\d+$/) || row.chat_id.includes('@')) {
+          title = 'External Chat'; // Heuristic: numbers are usually Telegram/WhatsApp
+        }
+        stmt.run(row.chat_id, title, now, now);
+      }
+    }
+  }
+
+  createSession({ id, title }) {
+    const sessionId = id || crypto.randomUUID();
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO chat_sessions (id, title, created_at, updated_at)
+      VALUES (?, ?, ?, ?)
+    `).run(sessionId, title || 'New Chat', now, now);
+    return { id: sessionId, title, createdAt: now };
+  }
+
+  ensureSession(chatId, source = 'web') {
+    if (!chatId) return null;
+    let session = this.getSession(chatId);
+    if (!session) {
+      let title = 'New Chat';
+      if (source === 'telegram' || source === 'whatsapp') {
+        title = `${source.charAt(0).toUpperCase() + source.slice(1)} Chat`;
+      }
+      session = this.createSession({ id: chatId, title });
+      console.log(`[DB] Auto-created session ${chatId} (${title})`);
+    }
+    return session;
+  }
+
+  getSession(id) {
+    return this.db.prepare('SELECT * FROM chat_sessions WHERE id = ?').get(id);
+  }
+
+  getSessions({ limit = 50, offset = 0 } = {}) {
+    return this.db.prepare(`
+      SELECT * FROM chat_sessions 
+      WHERE is_archived = 0
+      ORDER BY updated_at DESC 
+      LIMIT ? OFFSET ?
+    `).all(limit, offset);
+  }
+
+  updateSession(id, { title, isArchived }) {
+    const updates = ['updated_at = CURRENT_TIMESTAMP'];
+    const args = [];
+
+    if (title !== undefined) {
+      updates.push('title = ?');
+      args.push(title);
+    }
+    if (isArchived !== undefined) {
+      updates.push('is_archived = ?');
+      args.push(isArchived ? 1 : 0);
+    }
+
+    args.push(id);
+    this.db.prepare(`UPDATE chat_sessions SET ${updates.join(', ')} WHERE id = ?`).run(...args);
+  }
+
+  deleteSession(id) {
+    // Transactional delete?
+    const deleteSession = this.db.transaction(() => {
+      this.db.prepare('DELETE FROM messages WHERE chat_id = ?').run(id);
+      this.db.prepare('DELETE FROM summaries WHERE chat_id = ?').run(id);
+      this.db.prepare('DELETE FROM token_usage WHERE chat_id = ?').run(id);
+      this.db.prepare('DELETE FROM chat_sessions WHERE id = ?').run(id);
+    });
+    deleteSession();
+    console.log(`[DB] Deleted session ${id} and all related data.`);
+  }
+
   // --- Messages ---
+
   saveMessage(msg) {
     const stmt = this.db.prepare(`
       INSERT INTO messages (id, role, content, parts, source, chat_id, cost, token_count, timestamp)
@@ -238,12 +345,16 @@ class AgentDB {
   }
 
   getHistory(options = {}) {
-    const { limit = 50, since, until, order = 'DESC' } = options;
+    const { limit = 50, since, until, chatId, order = 'DESC' } = options;
 
     let query = 'SELECT * FROM messages';
     const params = [];
     const conditions = [];
 
+    if (chatId) {
+      conditions.push('chat_id = ?');
+      params.push(chatId);
+    }
     if (since) {
       conditions.push('timestamp >= ?');
       params.push(since);
@@ -264,6 +375,12 @@ class AgentDB {
     const rows = stmt.all(...params);
 
     return rows;
+  }
+
+  countMessages(chatId) {
+    if (!chatId) return 0;
+    const stmt = this.db.prepare('SELECT COUNT(*) as count FROM messages WHERE chat_id = ?');
+    return stmt.get(chatId).count;
   }
 
   // --- KV Store (Memory) ---
