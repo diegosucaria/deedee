@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { getLiveToken, executeLiveTool } from '@/app/actions';
+import { getLiveToken, executeLiveTool, getLiveConfig } from '@/app/actions';
 import { Mic, MicOff, PhoneOff, Settings2, Terminal, X } from 'lucide-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/navigation';
@@ -30,16 +30,21 @@ export default function GeminiLivePage() {
     const connect = async () => {
         try {
             setStatus('connecting');
-            log('Getting Token...');
-            const { success, token, error } = await getLiveToken();
+            log('Getting Config & Token...');
 
-            if (!success || !token) throw new Error(error || 'No token');
+            // Parallel fetch for speed
+            const [config, auth] = await Promise.all([
+                getLiveConfig(),
+                getLiveToken()
+            ]);
+
+            if (!auth.success || !auth.token) throw new Error(auth.error || 'No token');
 
             // NOTE: The exact URL for global consumers is wss://generativelanguage.googleapis.com/...
             // We pass the token in the 'setup' message OR as a query param `access_token`. 
-            const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?access_token=${token}`;
+            const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?access_token=${auth.token}`;
 
-            log('Connecting WS...');
+            log(`Connecting (${config.model})...`);
             const ws = new WebSocket(wsUrl);
             wsRef.current = ws;
 
@@ -49,7 +54,7 @@ export default function GeminiLivePage() {
                 // 1. Send Setup
                 ws.send(JSON.stringify({
                     setup: {
-                        model: "models/gemini-2.0-flash-exp",
+                        model: config.model,
                         generation_config: {
                             response_modalities: ["AUDIO"]
                         },
