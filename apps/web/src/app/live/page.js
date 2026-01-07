@@ -96,6 +96,12 @@ export default function GeminiLivePage() {
                     }
                 }
 
+                // Interruption
+                if (data.serverContent?.interrupted) {
+                    log('Interrupted. Clearing audio queue.');
+                    clearAudioQueue();
+                }
+
                 // Tool Call
                 if (data.toolCall) {
                     log(`Tool Call: ${data.toolCall.functionCalls[0].name}`);
@@ -250,6 +256,15 @@ export default function GeminiLivePage() {
         return window.btoa(binary);
     };
 
+    const activeSourceRef = useRef(null);
+
+    const clearAudioQueue = () => {
+        if (activeSourceRef.current) {
+            try { activeSourceRef.current.stop(); } catch (e) { }
+            activeSourceRef.current = null;
+        }
+    };
+
     const queueAudio = (base64) => {
         // Decoding Raw PCM:
         const binaryString = window.atob(base64);
@@ -277,7 +292,9 @@ export default function GeminiLivePage() {
         const source = audioContextRef.current.createBufferSource();
         source.buffer = buffer;
         source.connect(audioContextRef.current.destination);
+        source.connect(audioContextRef.current.destination);
         source.start();
+        activeSourceRef.current = source;
     };
 
     return (
