@@ -28,11 +28,22 @@ export default function ChatSessionPage({ params }) {
 
     // Fetch Location (Option 2: IP-based)
     useEffect(() => {
+        // FAST: Check cache first
+        const cached = localStorage.getItem('deedee_user_location');
+        if (cached) {
+            setUserLocation(cached);
+            console.log('[Chat] Restored location from cache:', cached);
+        }
+
+        // SLOW: Update in background
         fetch('https://ipapi.co/json/')
             .then(res => res.json())
             .then(data => {
                 if (data.city && data.country_name) {
-                    setUserLocation(`${data.city}, ${data.country_name}`);
+                    const loc = `${data.city}, ${data.country_name}`;
+                    setUserLocation(loc);
+                    localStorage.setItem('deedee_user_location', loc);
+                    console.log('[Chat] Fetched & Cached Location:', loc);
                 }
             })
             .catch(err => console.warn('Location fetch failed:', err));
@@ -151,6 +162,8 @@ export default function ChatSessionPage({ params }) {
 
         // Auto-collapse sidebar on first message (or always, for focus)
         if (messages.length === 0) setCollapsed(true);
+
+        console.log('[Chat] Sending Message. Location:', userLocation);
 
         // Optimistic Update
         addMessage({
