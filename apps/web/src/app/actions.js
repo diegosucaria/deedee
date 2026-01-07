@@ -320,7 +320,10 @@ export async function getSessions(limit = 50, offset = 0) {
 
 export async function createSession() {
     try {
-        const session = await fetchAPI('/v1/sessions', { method: 'POST' });
+        const session = await fetchAPI('/v1/sessions', {
+            method: 'POST',
+            body: JSON.stringify({ reuseEmpty: true })
+        });
         revalidatePath('/sessions');
         return { success: true, session };
     } catch (error) {

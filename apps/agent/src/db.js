@@ -307,6 +307,27 @@ class AgentDB {
     `).all(limit, offset);
   }
 
+  getLatestEmptySession() {
+    // Find latest session with title 'New Chat'
+    const stmt = this.db.prepare(`
+       SELECT * FROM chat_sessions 
+       WHERE title = 'New Chat' 
+       AND is_archived = 0
+       ORDER BY created_at DESC 
+       LIMIT 1
+    `);
+    const session = stmt.get();
+
+    if (session) {
+      // Check message count
+      const count = this.countMessages(session.id);
+      if (count === 0) {
+        return session;
+      }
+    }
+    return null;
+  }
+
   updateSession(id, { title, isArchived }) {
     const updates = ['updated_at = CURRENT_TIMESTAMP'];
     const args = [];

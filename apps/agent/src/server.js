@@ -314,7 +314,16 @@ app.get('/internal/sessions', (req, res) => {
 app.post('/internal/sessions', (req, res) => {
   if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
   try {
-    const { id, title } = req.body;
+    const { id, title, reuseEmpty } = req.body;
+
+    if (reuseEmpty) {
+      const existing = agent.db.getLatestEmptySession();
+      if (existing) {
+        console.log(`[Agent] Reusing empty session ${existing.id}`);
+        return res.json(existing);
+      }
+    }
+
     const session = agent.db.createSession({ id, title });
     res.json(session);
   } catch (e) { res.status(500).json({ error: e.message }); }
