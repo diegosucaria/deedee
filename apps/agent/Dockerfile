@@ -47,7 +47,7 @@ ENV LANG=C.UTF-8
 ENV NODE_ENV=production
 
 # Install Runtime Dependencies: Python, UV, curl
-RUN apk add --no-cache python3 py3-pip curl gcompat
+RUN --mount=type=cache,target=/var/cache/apk apk add --no-cache python3 py3-pip curl gcompat
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:/root/.cargo/bin:$PATH"
 
@@ -59,13 +59,14 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 # Copy packages from builder to allow pip install
 # Note: "out/full" structure maintains paths
 COPY --from=builder /app/packages ./packages
-# Copy plex-mcp-server manually as it is not a node dependency
 # Copy plex-mcp-server manually
 COPY packages/plex-mcp-server ./packages/plex-mcp-server
 
 # Pre-install MCP Servers
-RUN uv pip install -r packages/plex-mcp-server/requirements.txt
-RUN uv pip install ha-mcp
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install -r packages/plex-mcp-server/requirements.txt
+RUN --mount=type=cache,target=/root/.cache/uv \
+    uv pip install ha-mcp
 
 # Copy built node_modules and app source
 COPY --from=builder /app/node_modules ./node_modules
