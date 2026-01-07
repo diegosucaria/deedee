@@ -75,7 +75,7 @@ class WhatsAppService {
                 defaultQueryTimeoutMs: undefined, // endless
                 connectTimeoutMs: 60000, // Increased timeout
                 keepAliveIntervalMs: 30000,
-                syncFullHistory: false,
+                syncFullHistory: true,
                 markOnlineOnConnect: false // Do not show "Online" status automatically
             });
 
