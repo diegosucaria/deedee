@@ -72,5 +72,10 @@ router.delete('/sessions/:id', (req, res) => proxyRequest(req, res, 'DELETE', `/
 // Config
 router.get('/config', (req, res) => proxyRequest(req, res, 'GET', '/internal/config'));
 router.post('/config', (req, res) => proxyRequest(req, res, 'POST', '/internal/config', req.body));
+router.get('/config/env', (req, res) => proxyRequest(req, res, 'GET', '/internal/config/env'));
+
+// Backups
+router.get('/backups', (req, res) => proxyRequest(req, res, 'GET', '/internal/backups'));
+router.post('/backups', (req, res) => proxyRequest(req, res, 'POST', '/internal/backups', req.body));
 
 module.exports = router;

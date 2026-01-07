@@ -221,6 +221,35 @@ export async function cleanupData() {
 
 
 // --- Configuration ---
+export async function getEnvConfig() {
+    try {
+        const res = await fetchAPI('/v1/config/env');
+        return res.env || {};
+    } catch (error) {
+        console.error('getEnvConfig Error:', error);
+        return {};
+    }
+}
+
+export async function getBackups() {
+    try {
+        const res = await fetchAPI('/v1/backups');
+        return res.files || [];
+    } catch (error) {
+        console.error('getBackups Error:', error);
+        return [];
+    }
+}
+
+export async function triggerBackup() {
+    try {
+        const res = await fetchAPI('/v1/backups', { method: 'POST' });
+        return { success: true, ...res };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function getAgentConfig() {
     try {
         return await fetchAPI('/v1/config');

@@ -1,17 +1,27 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getAgentConfig, updateAgentConfig } from '../actions';
+import { getAgentConfig, updateAgentConfig, getEnvConfig, getBackups } from '../actions';
 import { Settings, Check, AlertTriangle } from 'lucide-react';
+import BackupSettings from '@/components/BackupSettings';
+import EnvVariables from '@/components/EnvVariables';
 
 export default function SettingsPage() {
     const [config, setConfig] = useState(null);
+    const [env, setEnv] = useState({});
+    const [backups, setBackups] = useState([]);
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState(null);
 
     useEffect(() => {
-        getAgentConfig().then(data => {
-            setConfig(data);
+        Promise.all([
+            getAgentConfig(),
+            getEnvConfig(),
+            getBackups()
+        ]).then(([configData, envData, backupsData]) => {
+            setConfig(configData);
+            setEnv(envData);
+            setBackups(backupsData);
         });
     }, []);
 
@@ -88,6 +98,9 @@ export default function SettingsPage() {
                         </div>
                     )}
                 </div>
+
+                <BackupSettings backups={backups} />
+                <EnvVariables env={env} />
             </section>
         </div>
     );

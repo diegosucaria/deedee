@@ -101,6 +101,28 @@ class BackupManager {
             console.warn('[BackupManager] Rotation failed (non-critical):', err.message);
         }
     }
+
+    async getBackups() {
+        if (!this.bucketName) return { error: 'GCS_BACKUP_BUCKET not set' };
+
+        try {
+            const bucket = this.storage.bucket(this.bucketName);
+            const prefix = `${this.backupPath}/`;
+            const [files] = await bucket.getFiles({ prefix: prefix });
+
+            return files
+                .filter(f => f.name.endsWith('.zip'))
+                .map(f => ({
+                    name: path.basename(f.name),
+                    size: parseInt(f.metadata.size),
+                    updated: f.metadata.updated
+                }))
+                .sort((a, b) => new Date(b.updated) - new Date(a.updated));
+        } catch (e) {
+            console.error('[BackupManager] Failed to list backups:', e);
+            return [];
+        }
+    }
 }
 
 module.exports = { BackupManager };

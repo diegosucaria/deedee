@@ -608,6 +608,49 @@ app.post('/internal/scheduler', (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// --- Backups ---
+app.get('/internal/backups', async (req, res) => {
+  if (!agent || !agent.backupManager) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const files = await agent.backupManager.getBackups();
+    res.json({ files });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/internal/backups', async (req, res) => {
+  if (!agent || !agent.backupManager) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const result = await agent.backupManager.performBackup();
+    if (result.error) return res.status(500).json(result);
+    res.json(result);
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- Config / Env (Read-Only) ---
+app.get('/internal/config/env', (req, res) => {
+  // Allowlist of safe keys to display
+  const SAFE_KEYS = [
+    'NODE_ENV', 'PORT', 'AGENT_URL', 'INTERFACES_URL', 'SUPERVISOR_URL',
+    'RATE_LIMIT_HOURLY', 'RATE_LIMIT_DAILY', 'MAX_TOOL_LOOPS',
+    'ROUTER_MODEL', 'WORKER_FLASH', 'WORKER_PRO', 'WORKER_GOOGLE_SEARCH',
+    'GEMINI_TTS_MODEL', 'GEMINI_IMAGE_MODEL',
+    'GCS_BACKUP_BUCKET', 'GCS_BACKUP_PATH', 'ENABLE_WHATSAPP'
+  ];
+
+  const env = {};
+  SAFE_KEYS.forEach(key => {
+    if (process.env[key]) env[key] = process.env[key];
+  });
+
+  // Also check if secrets are set (boolean only)
+  env.HAS_GOOGLE_KEY = !!process.env.GOOGLE_API_KEY;
+  env.HAS_TELEGRAM_TOKEN = !!process.env.TELEGRAM_TOKEN;
+  env.HAS_SLACK_TOKEN = !!process.env.SLACK_TOKEN;
+  env.HAS_GITHUB_PAT = !!process.env.GITHUB_PAT;
+
+  res.json({ env });
+});
+
 app.get('/internal/jobs/:name/state', (req, res) => {
   if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
   try {
