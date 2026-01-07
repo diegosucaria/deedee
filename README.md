@@ -224,6 +224,9 @@ See the full documentation for details:
 -   **[Technical Sequence Diagrams](docs/sequence-diagrams.md)**: Visualizing the API Flow and MCP Execution.
 -   **[Memory & Persistence](docs/memory.md)**: How the SQLite database and "Self-Improvement" Works.
 -   **[MCP Configuration](docs/mcp-configuration.md)**: Guide to adding external tools (Home Assistant, Plex, etc).
+-   **[Security Model](docs/security.md)**: Details on "YOLO Mode", threat models, and access control.
+-   **[Docker Optimization](docs/docker-optimization.md)**: Explanation of Turbo Prune builds and caching strategy.
+-   **[Tools Master Plan](docs/tools-master-plan.md)**: Status and roadmap of all internal tools.
 
 1.  **Agent**: Node.js + LangChain/Gemini.
 2.  **Supervisor**: Watchdog + Git Operations.
