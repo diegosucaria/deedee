@@ -337,20 +337,19 @@ class AgentDB {
   }
 
   deleteEmptySessions() {
-    // Delete sessions with no messages older than 1 minute to avoid race conditions
-    // Using a subquery to count messages
+    // Delete sessions with no messages older than 24 hours (was 1 minute, which was too aggressive)
     const stmt = this.db.prepare(`
       DELETE FROM chat_sessions 
       WHERE id IN (
         SELECT cs.id FROM chat_sessions cs
         LEFT JOIN messages m ON cs.id = m.chat_id
         WHERE m.id IS NULL
-        AND cs.created_at < datetime('now', '-1 minute')
+        AND cs.created_at < datetime('now', '-24 hours')
       )
     `);
     const info = stmt.run();
     if (info.changes > 0) {
-      console.log(`[DB] Cleaned up ${info.changes} empty sessions.`);
+      console.log(`[DB] Cleaned up ${info.changes} empty sessions older than 24h.`);
     }
   }
 

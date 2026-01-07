@@ -848,10 +848,29 @@ class Agent {
       // Use a separate stateless call
       const { GoogleGenAI } = await this._loadClientLibrary();
       const client = new GoogleGenAI({ apiKey: this.config.googleApiKey });
-      const modelInstance = client.getGenerativeModel({ model });
 
-      const result = await modelInstance.generateContent(prompt);
-      const title = result.response.text().trim();
+      const response = await client.models.generateContent({
+        model: model,
+        contents: [
+          {
+            role: 'user',
+            parts: [{ text: prompt }]
+          }
+        ],
+        config: {
+          responseMimeType: 'text/plain',
+          temperature: 0.5
+        }
+      });
+
+      let title = '';
+      if (response && response.text) {
+        title = typeof response.text === 'function' ? response.text() : response.text;
+      } else if (response.candidates && response.candidates[0]) {
+        title = response.candidates[0].content.parts[0].text;
+      }
+
+      title = title ? title.trim().replace(/^"|"$/g, '') : '';
 
       if (title) {
         this.db.updateSession(chatId, { title });
