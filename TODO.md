@@ -41,6 +41,8 @@
 ### Interfaces
 - [x] **WhatsApp**: Integration via Baileys (Unofficial/Personal). See `docs/interfaces.md`.
 - [ ] **Automated Message Intros**: Add "I am DeeDee" introduction to automated/scheduler messages sent as User.
+- [ ] **Voice Interface**: Real-time Gemini Live API integration (Web).
+- [ ] **Chat Sessions**: Persistent history, threads, and management UI (ChatGPT-style).
 - [ ] **Slack**: Native app integration (currently just webhooks).
 
 ### Intelligence

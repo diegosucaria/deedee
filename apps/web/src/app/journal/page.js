@@ -2,6 +2,7 @@
 import Link from 'next/link';
 import { fetchAPI } from '@/lib/api';
 import { Book } from 'lucide-react';
+import JournalNav from '@/components/JournalNav';
 
 export const dynamic = 'force-dynamic';
 
@@ -9,7 +10,7 @@ export default async function JournalPage() {
     let files = [];
     try {
         const data = await fetchAPI('/v1/journal');
-        files = data.files || [];
+        files = (data.files || []).sort().reverse();
     } catch (err) {
         console.error('Journal fetch error:', err);
     }
@@ -20,6 +21,8 @@ export default async function JournalPage() {
                 <Book className="h-8 w-8 text-indigo-400" />
                 Journal
             </h1>
+
+            <JournalNav />
 
             {files.length === 0 ? (
                 <p className="text-zinc-500">No journal entries found.</p>

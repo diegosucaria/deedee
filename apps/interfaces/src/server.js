@@ -136,9 +136,16 @@ app.post('/whatsapp/connect', async (req, res) => {
   if (isWhatsAppDisabled) return res.status(400).json({ error: 'WhatsApp disabled' });
 
   const { session } = req.body; // 'assistant' or 'user'
+  console.log(`[Interfaces] Connect request for session: '${session}'. Body:`, JSON.stringify(req.body));
   const service = whatsappSessions[session];
 
-  if (!service) return res.status(400).json({ error: 'Invalid session ID' });
+  if (!service) {
+    if (!res.headersSent) {
+      console.error(`[Interfaces] Invalid session ID '${session}'. Available: ${Object.keys(whatsappSessions).join(', ')}`);
+      return res.status(400).json({ error: 'Invalid session ID' });
+    }
+    return;
+  }
 
   await service.connect();
   res.json({ success: true, message: `Connecting ${session}...` });
