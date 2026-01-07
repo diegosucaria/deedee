@@ -305,17 +305,7 @@ export async function disconnectWhatsApp(session) {
     } catch (error) {
         return { success: false, error: error.message };
     }
-    export async function disconnectWhatsApp(session) {
-        try {
-            const res = await fetchAPI('/v1/whatsapp/disconnect', {
-                method: 'POST',
-                body: JSON.stringify({ session })
-            });
-            return { success: true, ...res };
-        } catch (error) {
-            return { success: false, error: error.message };
-        }
-    }
+
 
     // --- MCP & Tools ---
     export async function getMCPStatus() {
