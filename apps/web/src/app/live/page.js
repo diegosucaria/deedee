@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { getLiveToken, executeLiveTool, getLiveConfig } from './actions';
+import { getLiveToken, executeLiveTool, getLiveConfig, getAgentTools } from './actions';
 import { Mic, MicOff, PhoneOff, Settings2, Terminal, X } from 'lucide-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/navigation';
@@ -35,12 +35,15 @@ export default function GeminiLivePage() {
             log('Getting Config & Token...');
 
             // Parallel fetch for speed
-            const [config, auth] = await Promise.all([
+            const [config, auth, toolsRes] = await Promise.all([
                 getLiveConfig(),
-                getLiveToken()
+                getLiveToken(),
+                getAgentTools()
             ]);
 
             if (!auth.success || !auth.token) throw new Error(auth.error || 'No token');
+            const tools = toolsRes.success ? toolsRes.tools : [];
+            log(`Loaded ${tools.length} Tools.`);
 
             // NOTE: The exact URL for global consumers is wss://generativelanguage.googleapis.com/...
             // We pass the token in the 'setup' message OR as a query param `access_token`. 
@@ -54,27 +57,26 @@ export default function GeminiLivePage() {
                 log('WS Open. Sending Setup...');
 
                 // 1. Send Setup
-                ws.send(JSON.stringify({
+                const setupMsg = {
                     setup: {
                         model: config.model,
                         generation_config: {
                             response_modalities: ["AUDIO"]
                         },
+                        system_instruction: {
+                            parts: [{
+                                text: "You are DeeDee, a helpful and friendly home assistant. You can control the smart home, answer questions, and execute tools. You speak both English and Spanish fluently and should detect the user's language preference automatically."
+                            }]
+                        },
                         tools: [
                             // We can fetch these from backend or hardcode common ones
                             { google_search: {} },
-                            {
-                                function_declarations: [
-                                    {
-                                        name: "turn_on_light",
-                                        description: "Turn on a light in the house",
-                                        parameters: { type: "OBJECT", properties: { room: { type: "STRING" } } }
-                                    }
-                                ]
-                            }
+                            { function_declarations: tools }
                         ]
                     }
-                }));
+                };
+
+                ws.send(JSON.stringify(setupMsg));
 
                 // 2. Start Audio
                 await startAudio();

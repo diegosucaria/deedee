@@ -32,3 +32,13 @@ export async function getLiveConfig() {
     }
     return { model };
 }
+
+export async function getAgentTools() {
+    try {
+        const response = await fetchAPI('/v1/live/tools');
+        return { success: true, tools: response.tools || [] };
+    } catch (error) {
+        console.error('getAgentTools Error:', error);
+        return { success: false, error: error.message, tools: [] };
+    }
+}

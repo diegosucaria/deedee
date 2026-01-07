@@ -29,4 +29,16 @@ router.post('/tools/execute', async (req, res) => {
     }
 });
 
+// 3. List Available Tools
+router.get('/tools', async (req, res) => {
+    try {
+        const response = await axios.get(`${AGENT_URL}/internal/tools`);
+        res.json(response.data);
+    } catch (error) {
+        console.error('[API] listTools Error:', error.message);
+        const status = error.response ? error.response.status : 502;
+        res.status(status).json({ error: 'Failed to list tools', details: error.message });
+    }
+});
+
 module.exports = router;

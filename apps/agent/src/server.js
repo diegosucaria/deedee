@@ -694,6 +694,16 @@ app.post('/live/token', async (req, res) => {
   }
 });
 
+// --- Live Tool Sync ---
+app.get('/internal/tools', async (req, res) => {
+  if (!agent || !agent.mcp) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const tools = await agent.mcp.getTools();
+    // Wrap to JSON structure
+    res.json({ tools });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/tools/execute', async (req, res) => {
   if (!agent || !agent.toolExecutor) return res.status(503).json({ error: 'Agent not ready' });
   try {
