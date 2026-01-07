@@ -21,6 +21,9 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
         - **Image Bypass**: Direct execution of image generation, skipping the reasoning model for speed.
         - **Parallel Tools**: Executes multiple tool calls concurrently for faster turnaround.
     - **Safety Guard**: Verifies sensitive tool usage (e.g., shell commands) and blocks ambiguous dictation commands (`iphone` source).
+    - **Hybrid Search Strategy**:
+        - **Native Grounding**: Uses Gemini's built-in Google Search grounding for text-only queries (Speed/Accuracy).
+        - **Standard Tool**: Uses a polyfill `googleSearch` tool for Auto-Audio and multimodal contexts where native grounding is unsupported.
     - **Google Search Split**: To bypass model limitations (Gemini 3 Preview vs Tools), general search queries are executed via a side-channel call to a Flash/Pro model (`WORKER_GOOGLE_SEARCH`) instead of the main agent model.
     - **MCP Manager**: Orchestrates tools via the Model Context Protocol.
     - **Backup Manager**: Automates nightly zipping and uploading of `/app/data` to Google Cloud Storage with retention policy.
@@ -48,6 +51,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 - **Supported Channels**:
     - **Socket.io**: Real-time event-based communication for Web Interface.
     - **Telegram**: Long-Polling Bot. Supports Global Stop (`/stop`) and Audio Messages.
+    - **WhatsApp**: Multi-Device connection via `@whiskeysockets/baileys`. Supports text, audio, and images.
     - **Internal Webhook**: Legacy ingress for async messages.
 
 ### 5. Web Interface (`apps/web`)

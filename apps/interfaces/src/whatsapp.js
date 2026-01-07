@@ -9,7 +9,7 @@ class WhatsAppService {
         this.agentUrl = agentUrl;
         this.sock = null;
         this.qr = null;
-        this.status = 'disconnected'; // disconnected, connecting, connected, scan_qr
+        this.status = 'disconnected';
         this.authFolder = path.join(process.cwd(), 'data', 'baileys_auth');
 
         // Ensure auth folder exists
@@ -33,7 +33,9 @@ class WhatsAppService {
             console.log('[WhatsApp] Starting service...');
 
             // Dynamic Import for ESM Module in CJS
-            const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay } = await import('@whiskeysockets/baileys');
+            // Import downloadMediaMessage as well
+            const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay, downloadMediaMessage } = await import('@whiskeysockets/baileys');
+            this.downloadMediaMessage = downloadMediaMessage; // Save for later use
 
             const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
 
@@ -53,7 +55,7 @@ class WhatsAppService {
                 if (qr) {
                     console.log('[WhatsApp] QR Code generated');
                     this.status = 'scan_qr';
-                    this.qr = await QRCode.toDataURL(qr); // Generate Base64 Data URL for UI
+                    this.qr = await QRCode.toDataURL(qr);
                 }
 
                 if (connection === 'close') {
@@ -76,10 +78,8 @@ class WhatsAppService {
                 }
             });
 
-            // --- CREDENTIALS UPDATE ---
             this.sock.ev.on('creds.update', saveCreds);
 
-            // --- MESSAGES UPSERT ---
             this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
                 if (type !== 'notify') return;
 
@@ -99,7 +99,6 @@ class WhatsAppService {
     async handleMessage(msg) {
         try {
             const remoteJid = msg.key.remoteJid;
-            // Filter out status broadcast, groups (if strict), me
             if (remoteJid === 'status@broadcast' || msg.key.fromMe) return;
 
             const phoneNumber = remoteJid.split('@')[0];
@@ -112,13 +111,11 @@ class WhatsAppService {
 
             console.log(`[WhatsApp] Received from ${phoneNumber}`);
 
-            // Extract Content
             const messageContent = msg.message;
-            const key = msg.key;
-
             let text = '';
             let type = 'text';
-            let parts = null;
+            let buffer = null;
+            let mimeType = null;
 
             // Simple Text
             if (messageContent.conversation) {
@@ -129,16 +126,47 @@ class WhatsAppService {
             // Audio
             else if (messageContent.audioMessage) {
                 type = 'audio';
-                text = '[Voice]';
+                text = '[Voice Message]';
+                mimeType = messageContent.audioMessage.mimetype;
+                if (this.downloadMediaMessage) {
+                    try {
+                        // Download buffer
+                        buffer = await this.downloadMediaMessage(msg, 'buffer', {}, { logger: console });
+                        console.log(`[WhatsApp] Downloaded audio: ${buffer.length} bytes`);
+                    } catch (e) {
+                        console.error('[WhatsApp] Audio Download Failed:', e);
+                    }
+                }
             }
             // Image
             else if (messageContent.imageMessage) {
                 type = 'image';
                 text = messageContent.imageMessage.caption || '[Image]';
+                mimeType = messageContent.imageMessage.mimetype;
+                if (this.downloadMediaMessage) {
+                    try {
+                        buffer = await this.downloadMediaMessage(msg, 'buffer', {}, { logger: console });
+                        console.log(`[WhatsApp] Downloaded image: ${buffer.length} bytes`);
+                    } catch (e) {
+                        console.error('[WhatsApp] Image Download Failed:', e);
+                    }
+                }
             }
 
-            const userMessage = createUserMessage(text, 'whatsapp', phoneNumber); // Use phone as ID
+            const userMessage = createUserMessage(text, 'whatsapp', phoneNumber);
             userMessage.metadata = { chatId: remoteJid, phoneNumber };
+
+            // Inline Data for Agent
+            if (buffer) {
+                userMessage.parts = userMessage.parts || [];
+                // Agent expects inlineData for multimodal
+                userMessage.parts.push({
+                    inlineData: {
+                        mimeType: mimeType || (type === 'audio' ? 'audio/ogg' : 'image/jpeg'),
+                        data: buffer.toString('base64')
+                    }
+                });
+            }
 
             await axios.post(`${this.agentUrl}/webhook`, userMessage);
 
@@ -150,12 +178,24 @@ class WhatsAppService {
         }
     }
 
-    async sendMessage(toJid, content) {
+    async sendMessage(toJid, content, options = {}) {
         if (!this.sock) throw new Error('WhatsApp not initialized');
 
         try {
-            console.log(`[WhatsApp] Sending to ${toJid}:`, content.substring(0, 50));
-            await this.sock.sendMessage(toJid, { text: content });
+            const type = options.type || 'text';
+            console.log(`[WhatsApp] Sending ${type} to ${toJid}`);
+
+            if (type === 'text') {
+                await this.sock.sendMessage(toJid, { text: content });
+            } else if (type === 'audio') {
+                // Content is base64 string
+                const buffer = Buffer.from(content, 'base64');
+                await this.sock.sendMessage(toJid, { audio: buffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
+            } else if (type === 'image') {
+                const buffer = Buffer.from(content, 'base64');
+                await this.sock.sendMessage(toJid, { image: buffer });
+            }
+
         } catch (e) {
             console.error('[WhatsApp] Send Failed:', e.message);
         }
@@ -163,13 +203,11 @@ class WhatsAppService {
 
     async disconnect() {
         try {
-            // Force logout
             if (this.sock) {
                 await this.sock.logout();
                 this.sock = null;
             }
             this.status = 'disconnected';
-            // Clear data folder
             fs.rmSync(this.authFolder, { recursive: true, force: true });
         } catch (e) {
             console.error('[WhatsApp] Disconnect Error:', e);

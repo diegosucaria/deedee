@@ -174,8 +174,17 @@ app.post('/send', async (req, res) => {
       if (!metadata || !metadata.chatId) {
         throw new Error('Missing chatId in metadata for WhatsApp message');
       }
-      // Currently supporting Text only in this block, need to expand if needed
-      await whatsapp.sendMessage(metadata.chatId, content);
+
+      if (type === 'audio') {
+        console.log(`[Interfaces] Sending Voice to WhatsApp ${metadata.chatId}`);
+        await whatsapp.sendMessage(metadata.chatId, content, { type: 'audio' });
+      } else if (type === 'image') {
+        console.log(`[Interfaces] Sending Image to WhatsApp ${metadata.chatId}`);
+        await whatsapp.sendMessage(metadata.chatId, content, { type: 'image' });
+      } else {
+        // Text
+        await whatsapp.sendMessage(metadata.chatId, content, { type: 'text' });
+      }
       return res.json({ success: true });
     }
 

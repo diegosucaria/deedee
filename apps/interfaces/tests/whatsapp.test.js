@@ -7,11 +7,13 @@ jest.mock('@whiskeysockets/baileys', () => ({
     default: jest.fn(() => ({
         ev: { on: jest.fn() },
         sendMessage: jest.fn(),
-        logout: jest.fn()
+        logout: jest.fn(),
+        readMessages: jest.fn()
     })),
     useMultiFileAuthState: jest.fn(() => ({ state: {}, saveCreds: jest.fn() })),
     DisconnectReason: { loggedOut: 401 },
-    delay: jest.fn()
+    delay: jest.fn(),
+    downloadMediaMessage: jest.fn().mockResolvedValue(Buffer.from('mockbuffer'))
 }));
 
 jest.mock('qrcode', () => ({
@@ -26,6 +28,7 @@ describe('WhatsAppService', () => {
         // Silence console logs
         jest.spyOn(console, 'log').mockImplementation(() => { });
         jest.spyOn(console, 'error').mockImplementation(() => { });
+        jest.spyOn(console, 'warn').mockImplementation(() => { });
     });
 
     test('should initialize with status disconnected', () => {
@@ -42,12 +45,29 @@ describe('WhatsAppService', () => {
         expect(status.status).toBe('disconnected');
         expect(status.qr).toBeNull();
     });
+
+    test('sendMessage should handle audio', async () => {
+        await whatsapp.start(); // Init sock
+        await whatsapp.sendMessage('123@s.whatsapp.net', 'base64audio', { type: 'audio' });
+        expect(whatsapp.sock.sendMessage).toHaveBeenCalledWith(
+            '123@s.whatsapp.net',
+            expect.objectContaining({ audio: expect.any(Buffer), ptt: true })
+        );
+    });
+
+    test('sendMessage should handle image', async () => {
+        await whatsapp.start(); // Init sock
+        await whatsapp.sendMessage('123@s.whatsapp.net', 'base64image', { type: 'image' });
+        expect(whatsapp.sock.sendMessage).toHaveBeenCalledWith(
+            '123@s.whatsapp.net',
+            expect.objectContaining({ image: expect.any(Buffer) })
+        );
+    });
 });
 
 describe('WhatsApp API Endpoints', () => {
     test('GET /whatsapp/status should return status', async () => {
         const res = await request(app).get('/whatsapp/status');
-        // Might be disabled or enabled depending on env in test run, but should return json
         expect(res.statusCode).toBe(200);
         expect(res.body).toHaveProperty('status');
     });

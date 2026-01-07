@@ -99,6 +99,7 @@ Everything is customizable via environment variables. Like which models to use.
     -   **Smart Reminders**: "Remind me to call Mom at 5pm" (One-off, auto-deleting tasks).
     -   **Morning Briefing**: `GET /v1/briefing` generates a concise audio-ready summary of your day.
 -   **🛑 Safety**: Global `/stop` command instantly kills any runaway agent loops.
+-   **💬 WhatsApp**: Full integration (Text/Voice/Images) with generic QR Code management.
 
 ---
 
@@ -123,13 +124,20 @@ Deedee comes equipped with a suite of tools, both internal and via MCP.
 
 ---
 
-## �🤖 Telegram Bot Setup
+## 🤖 Telegram & WhatsApp Setup
 
-1.  Open Telegram and search for **@BotFather**.
-2.  Send `/newbot` and follow the instructions to name your bot.
-3.  Copy the **HTTP API Token** (this is your `TELEGRAM_TOKEN`).
-4.  Search for **@userinfobot**.
-5.  Send `/start` to get your **ID** (this is your `ALLOWED_TELEGRAM_IDS`).
+Deedee supports both Telegram and WhatsApp (via Baileys).
+
+### Telegram
+1.  **Create Bot**: Use **@BotFather** to get a `TELEGRAM_TOKEN`.
+2.  **Allowlist**: Use **@userinfobot** to get your ID -> `ALLOWED_TELEGRAM_IDS`.
+
+### WhatsApp
+1.  **Dashboard**: Go to `/interfaces` on your deployed Deedee.
+2.  **Scan**: Link your device using the QR Code.
+3.  **Secure**: Set `ALLOWED_WHATSAPP_NUMBERS` in `.env` (comma-separated).
+
+👉 **[Read the Interfaces Guide](docs/interfaces.md)** for full details.
 
 ---
 
