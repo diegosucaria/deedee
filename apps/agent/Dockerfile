@@ -1,25 +1,34 @@
-# Builder Stage
-FROM node:24-alpine AS builder
+FROM node:24-alpine AS base
+RUN apk add --no-cache libc6-compat python3 py3-pip make g++ git
+RUN npm install turbo --global
+
+# --- Pruner Stage ---
+# This stage uses "turbo prune" to generate a minimal "lockfile slice" for this specific app.
+FROM base AS pruner
 WORKDIR /app
-ENV LANG=C.UTF-8
+COPY . .
+RUN turbo prune --scope=@deedee/agent --docker
 
-# Install build dependencies (python, make, g++) for native modules
-RUN apk add --no-cache python3 py3-pip make g++ git
+# --- Builder Stage ---
+FROM base AS builder
+WORKDIR /app
 
-# Copy root config
-COPY package.json package-lock.json* ./
+# Copy pruned lockfile and package.json
+COPY --from=pruner /app/out/json/ .
+COPY --from=pruner /app/out/package-lock.json ./package-lock.json
 
-# Copy workspaces
-COPY apps/agent ./apps/agent
-COPY packages ./packages
-
-# Install dependencies (production + dev for build)
+# Install dependencies (cached)
 RUN npm install
 
-# Prune dev dependencies to reduce size for the next stage
+# Copy source code
+COPY --from=pruner /app/out/full/ .
+
+# No build step needed for agent (it's node), but we can prune dev deps here if we want specific install
+# But typically we just use the node_modules we have. 
+# However, to be clean, we can do:
 RUN npm prune --production
 
-# Runner Stage
+# --- Runner Stage ---
 FROM node:24-alpine AS runner
 WORKDIR /app
 ENV LANG=C.UTF-8
@@ -35,14 +44,15 @@ ENV VIRTUAL_ENV=/opt/venv
 RUN uv venv $VIRTUAL_ENV
 ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 
-# Copy packages first to allow pip install
+# Copy packages from builder to allow pip install
+# Note: "out/full" structure maintains paths
 COPY --from=builder /app/packages ./packages
 
 # Pre-install MCP Servers
 RUN uv pip install -r packages/plex-mcp-server/requirements.txt
 RUN uv pip install ha-mcp
 
-# Copy built node_modules and app source from builder
+# Copy built node_modules and app source
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/apps/agent ./apps/agent
 COPY --from=builder /app/package.json ./package.json

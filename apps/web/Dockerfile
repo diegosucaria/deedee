@@ -1,31 +1,35 @@
 FROM node:24-alpine AS base
-
-# Check https://github.com/nodejs/docker-node/tree/b4117f9333da4138b03a546ec926ef50a31506c3#nodealpine to understand why libc6-compat might be needed.
 RUN apk add --no-cache libc6-compat
+RUN npm install turbo --global
+
+# --- Pruner Stage ---
+# This stage uses "turbo prune" to generate a minimal "lockfile slice" for this specific app.
+# It isolates only the dependencies needed for "web", preventing unnecessary cache misses 
+# when unrelated packages (like "agent" or "api") change.
+FROM base AS pruner
 WORKDIR /app
+COPY . .
+RUN turbo prune --scope=web --docker
 
-# Copy root config
-COPY package.json package-lock.json* ./
-
-# Copy web workspace
-COPY apps/web ./apps/web
-
-# Install dependencies (from root to link workspaces)
-RUN npm install
-
-# Rebuild the source code only when needed
+# --- Builder Stage ---
 FROM base AS builder
 WORKDIR /app
-COPY --from=base /app/node_modules ./node_modules
-# Copy full source from build context (root)
-COPY . .
 
-# Build Web App
-WORKDIR /app/apps/web
+# First, copy ONLY the pruned lockfile and package.json files
+COPY --from=pruner /app/out/json/ .
+COPY --from=pruner /app/out/package-lock.json ./package-lock.json
+
+# Install dependencies (this step is now cached unless "web" dependencies change)
+RUN npm install
+
+# Copy the source code
+COPY --from=pruner /app/out/full/ .
+
+# Build the project
 ENV NEXT_TELEMETRY_DISABLED 1
-RUN npm run build
+RUN turbo run build --filter=web...
 
-# Production image, copy all the files and run next
+# --- Runner Stage ---
 FROM base AS runner
 WORKDIR /app
 
@@ -36,8 +40,6 @@ RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
 # Copy standalone output
-# For monorepos, Next.js standalone output typically mirrors the folder structure
-# So we copy the contents of standalone to /app
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/public ./apps/web/public
@@ -49,5 +51,4 @@ EXPOSE 3000
 ENV PORT 3000
 ENV HOSTNAME "0.0.0.0"
 
-# I need to configure next.config.mjs to output: "standalone" for this to work.
 CMD ["node", "apps/web/server.js"]
