@@ -1,4 +1,3 @@
-const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay } = require('@whiskeysockets/baileys');
 const { createUserMessage } = require('@deedee/shared/src/types');
 const axios = require('axios');
 const path = require('path');
@@ -32,6 +31,10 @@ class WhatsAppService {
     async start() {
         try {
             console.log('[WhatsApp] Starting service...');
+
+            // Dynamic Import for ESM Module in CJS
+            const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay } = await import('@whiskeysockets/baileys');
+
             const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
 
             this.sock = makeWASocket({
@@ -127,14 +130,6 @@ class WhatsAppService {
             else if (messageContent.audioMessage) {
                 type = 'audio';
                 text = '[Voice]';
-                // Download Buffer
-                // Note: For simplicity, assuming downloadMediaMessage is available or polyfilled via makeWASocket helpers
-                // Baileys v6+ might require a helper. 
-                // We'll trust standard implementation or add download logic if needed.
-                // For now, let's mark it so Agent knows.
-                // Providing actual audio content requires `@whiskeysockets/baileys-store` or helper.
-                // Let's defer strict download logic to a simple try-block using built-in method if exposed, 
-                // or we need to import downloadMediaMessage from baileys
             }
             // Image
             else if (messageContent.imageMessage) {
@@ -144,9 +139,6 @@ class WhatsAppService {
 
             const userMessage = createUserMessage(text, 'whatsapp', phoneNumber); // Use phone as ID
             userMessage.metadata = { chatId: remoteJid, phoneNumber };
-
-            // Handle Audio/Image download if needed (Placeholder logic)
-            // For now, sending text metadata
 
             await axios.post(`${this.agentUrl}/webhook`, userMessage);
 
