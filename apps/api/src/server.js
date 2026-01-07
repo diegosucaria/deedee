@@ -25,11 +25,10 @@ app.use('/v1', dashboardRouter); // Dashboard routes (journal, tasks, facts)
 app.use('/v1/chat', chatRouter);
 app.use('/v1/chat', audioChatRouter); // Mounts POST /v1/chat/audio
 app.use('/v1/briefing', briefingRouter);
-app.use('/v1/briefing', briefingRouter);
 app.use('/v1/city-image', cityImageRouter);
 app.use('/v1/whatsapp', require('./whatsapp'));
 
-// Proxy System Logs (Stream)
+// BETTER: Add to apps/api/src/dashboard.js if it proxies to agent.
 const http = require('http');
 app.get('/v1/logs/:container', (req, res) => {
     // Stream from Supervisor

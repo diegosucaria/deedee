@@ -330,15 +330,28 @@ class Agent {
         ['iphone', 'ios_shortcut'].includes(message.source) ||
         message.metadata?.replyMode === 'audio';
 
-      let useNativeSearch = false;
+      let useNativeSearch = false; // Default baseline
+
+      // Load Configuration
+      const searchConfig = this.db.getKey('config:search_strategy') || { mode: 'HYBRID' };
+      const strategyMode = searchConfig.mode || 'HYBRID';
 
       if (decision.toolMode === 'SEARCH') {
-        if (isAudioContext) {
-          console.log('[Agent] Mode: SEARCH requested, but Audio Context detected. Forcing STANDARD mode (Polyfill Search + TTS).');
+        if (strategyMode === 'NATIVE_ONLY') {
+          console.log('[Agent] Mode: SEARCH. Config forced NATIVE_ONLY.');
+          useNativeSearch = true;
+        } else if (strategyMode === 'STANDARD_ONLY') {
+          console.log('[Agent] Mode: SEARCH. Config forced STANDARD_ONLY.');
           useNativeSearch = false;
         } else {
-          console.log('[Agent] Mode: SEARCH (Native Google Grounding). Text-only context.');
-          useNativeSearch = true;
+          // HYBRID (Default Logic)
+          if (isAudioContext) {
+            console.log('[Agent] Mode: SEARCH requested, but Audio Context detected. Forcing STANDARD mode (Polyfill Search + TTS).');
+            useNativeSearch = false;
+          } else {
+            console.log('[Agent] Mode: SEARCH (Native Google Grounding). Text-only context.');
+            useNativeSearch = true;
+          }
         }
       }
 

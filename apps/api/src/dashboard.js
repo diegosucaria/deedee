@@ -62,4 +62,8 @@ router.get('/aliases', (req, res) => proxyRequest(req, res, 'GET', '/internal/al
 router.post('/aliases', (req, res) => proxyRequest(req, res, 'POST', '/internal/aliases', req.body));
 router.delete('/aliases/:alias', (req, res) => proxyRequest(req, res, 'DELETE', `/internal/aliases/${req.params.alias}`));
 
+// Config
+router.get('/config', (req, res) => proxyRequest(req, res, 'GET', '/internal/config'));
+router.post('/config', (req, res) => proxyRequest(req, res, 'POST', '/internal/config', req.body));
+
 module.exports = router;

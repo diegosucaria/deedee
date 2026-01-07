@@ -91,6 +91,26 @@ if (!isWhatsAppDisabled) {
   console.log('[Interfaces] WhatsApp explicitly disabled.');
 }
 
+// Authentication Middleware
+const authMiddleware = (req, res, next) => {
+  // Skip auth for health check if needed, but best to secure everything strictly or allow specific paths.
+  // User requested "secure as other apis".
+  // Internal services usually share DEEDEE_API_TOKEN.
+
+  // We allow /health public
+  if (req.path === '/health') return next();
+
+  // Determine strictness. If interfaces is internal, maybe we trust network? 
+  // But user asked for security.
+  const token = req.headers.authorization?.split(' ')[1];
+  if (token !== process.env.DEEDEE_API_TOKEN) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+};
+
+app.use(authMiddleware);
+
 app.get('/health', (req, res) => {
   res.json({ status: 'ok', services: { telegram: !!telegram, whatsapp: !!whatsapp, socket: true } });
 });
@@ -99,6 +119,12 @@ app.get('/health', (req, res) => {
 app.get('/whatsapp/status', (req, res) => {
   if (!whatsapp) return res.json({ status: 'disabled' });
   res.json(whatsapp.getStatus());
+});
+
+app.post('/whatsapp/connect', async (req, res) => {
+  if (!whatsapp) return res.status(400).json({ error: 'WhatsApp disabled' });
+  await whatsapp.connect();
+  res.json({ success: true, message: 'Connecting...' });
 });
 
 app.post('/whatsapp/disconnect', async (req, res) => {

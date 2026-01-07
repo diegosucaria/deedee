@@ -14,7 +14,7 @@ class TelegramService {
     if (this.allowedIds.size > 0) {
       console.log(`[Telegram] Security Enforced. Allowed IDs: ${Array.from(this.allowedIds).join(', ')}`);
     } else {
-      console.warn(`[Telegram] ⚠️ WARNING: No ALLOWED_TELEGRAM_IDS set. Bot is PUBLIC.`);
+      console.error(`[Telegram] 🛑 SECURITY ERROR: No ALLOWED_TELEGRAM_IDS set. Ignoring ALL messages.`);
     }
 
     this.bot.on('text', this.handleMessage.bind(this));
@@ -52,7 +52,7 @@ class TelegramService {
   }
 
   _isAllowed(userId) {
-    if (this.allowedIds.size === 0) return true; // Open by default if not configured
+    if (this.allowedIds.size === 0) return false; // Secure by default: Block if not configured
     return this.allowedIds.has(userId);
   }
 

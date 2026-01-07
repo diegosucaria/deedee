@@ -11,7 +11,13 @@ Deedee uses [Baileys](https://github.com/WhiskeySockets/Baileys) to connect to W
 2.  **Environment Variables**:
     -   `ALLOWED_WHATSAPP_NUMBERS`: Comma-separated list of phone numbers (with country code, no `+`) allowed to talk to the bot.
         -   Example: `ALLOWED_WHATSAPP_NUMBERS=15550123456,15550987654`
-        -   **Warning**: If left empty, the bot is **PUBLIC** and will reply to anyone.
+        -   **Security**: If left empty, the bot **IGNORES ALL MESSAGES** (Secure by Default). You *must* set this to enable access.
+
+    > [!TIP]
+    > **Recommended Setup**: Run Deedee on a **secondary phone number** (spare SIM/WA Business).
+    > 1.  Scan the QR code with your **Secondary Phone** (Deedee becomes this number).
+    > 2.  Set `ALLOWED_WHATSAPP_NUMBERS` to your **Primary Phone Number**.
+    > 3.  You (Primary) -> Message -> Deedee (Secondary). Deedee executes tasks and replies.
 3.  **Linking**:
     -   Go to your Deedee Dashboard: `https://<your-url>/interfaces` (or `/whatsapp`).
     -   Click the **WhatsApp** tab.

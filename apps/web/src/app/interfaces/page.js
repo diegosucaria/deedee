@@ -23,8 +23,8 @@ export default function InterfacesPage() {
                     <button
                         onClick={() => setActiveTab('whatsapp')}
                         className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'whatsapp'
-                                ? 'bg-zinc-800 text-white shadow-sm'
-                                : 'text-zinc-500 hover:text-zinc-300'
+                            ? 'bg-zinc-800 text-white shadow-sm'
+                            : 'text-zinc-500 hover:text-zinc-300'
                             }`}
                     >
                         <div className="flex items-center space-x-2">
@@ -35,8 +35,8 @@ export default function InterfacesPage() {
                     <button
                         onClick={() => setActiveTab('telegram')}
                         className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'telegram'
-                                ? 'bg-zinc-800 text-white shadow-sm'
-                                : 'text-zinc-500 hover:text-zinc-300'
+                            ? 'bg-zinc-800 text-white shadow-sm'
+                            : 'text-zinc-500 hover:text-zinc-300'
                             }`}
                     >
                         <div className="flex items-center space-x-2">
@@ -60,6 +60,7 @@ function WhatsAppManager() {
     const [status, setStatus] = useState('loading');
     const [qr, setQr] = useState(null);
     const [allowed, setAllowed] = useState([]);
+    const [me, setMe] = useState(null);
     const [error, setError] = useState(null);
 
     const fetchStatus = async () => {
@@ -72,6 +73,7 @@ function WhatsAppManager() {
                 setStatus(data.status || 'disconnected');
                 setQr(data.qr);
                 setAllowed(data.allowedNumbers || []);
+                setMe(data.me || null);
             }
         } catch (e) {
             console.error(e);
@@ -105,6 +107,7 @@ function WhatsAppManager() {
                 status={status}
                 qr={qr}
                 allowed={allowed}
+                me={me}
                 onDisconnect={handleDisconnect}
             />
         </div>
@@ -126,13 +129,13 @@ function TelegramInfo() {
     );
 }
 
-function StatusCard({ status, qr, allowed, onDisconnect }) {
+function StatusCard({ status, qr, allowed, me, onDisconnect }) {
     return (
         <div className="space-y-6">
             <div className="flex items-center space-x-4">
                 <div className={`w-3 h-3 rounded-full ${status === 'connected' ? 'bg-green-500 shadow-[0_0_10px_rgba(34,197,94,0.5)]' :
-                        status === 'scan_qr' ? 'bg-yellow-500 animate-pulse' :
-                            'bg-red-500'
+                    status === 'scan_qr' ? 'bg-yellow-500 animate-pulse' :
+                        'bg-red-500'
                     }`} />
                 <span className="text-lg font-medium capitalize text-zinc-200">{status.replace('_', ' ')}</span>
             </div>
@@ -149,6 +152,20 @@ function StatusCard({ status, qr, allowed, onDisconnect }) {
                     <div className="p-4 bg-green-500/10 border border-green-500/20 rounded-lg text-green-400">
                         Authentication Successful. Agent is listening using your account.
                     </div>
+
+                    {/* Identity Display */}
+                    {me && (
+                        <div className="bg-zinc-800/50 p-4 rounded-lg flex items-center justify-between border border-zinc-700">
+                            <div>
+                                <h3 className="text-xs font-semibold uppercase tracking-wider text-zinc-500 mb-1">Linked Identity</h3>
+                                <div className="flex items-center space-x-2">
+                                    <span className="text-zinc-200 font-mono text-lg font-bold">{me.id}</span>
+                                    {me.name && <span className="text-zinc-400 text-sm">({me.name})</span>}
+                                </div>
+                            </div>
+                        </div>
+                    )}
+
                     {allowed.length > 0 && (
                         <div className="mt-4">
                             <h3 className="text-sm font-medium text-zinc-500 mb-2 uppercase tracking-wider">Allowed Numbers</h3>

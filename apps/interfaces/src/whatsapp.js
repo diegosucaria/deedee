@@ -24,7 +24,7 @@ class WhatsAppService {
         if (this.allowedNumbers.size > 0) {
             console.log(`[WhatsApp] Security Enforced. Allowed Numbers: ${Array.from(this.allowedNumbers).join(', ')}`);
         } else {
-            console.warn(`[WhatsApp] ⚠️ WARNING: No ALLOWED_WHATSAPP_NUMBERS set. Bot is PUBLIC.`);
+            console.error(`[WhatsApp] 🛑 SECURITY ERROR: No ALLOWED_WHATSAPP_NUMBERS set. Ignoring ALL messages.`);
         }
     }
 
@@ -33,8 +33,28 @@ class WhatsAppService {
     }
 
     async start() {
+        console.log('[WhatsApp] Service initializing...');
+
+        // Check if we have credentials
+        const hasCreds = fs.existsSync(path.join(this.authFolder, 'creds.json'));
+        if (hasCreds) {
+            console.log('[WhatsApp] Session found. Auto-connecting...');
+            await this.connect();
+        } else {
+            console.log('[WhatsApp] No session found. Standing by for manual connection.');
+            this.status = 'disconnected';
+        }
+    }
+
+    async connect() {
+        if (this.status === 'connected' || this.status === 'connecting') {
+            console.log('[WhatsApp] Already connected or connecting.');
+            return;
+        }
+
         try {
-            console.log('[WhatsApp] Starting service...');
+            console.log('[WhatsApp] Connecting...');
+            this.status = 'connecting';
 
             // Dynamic Import via helper for testability
             const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay, downloadMediaMessage } = await this._importBaileys();
@@ -44,9 +64,9 @@ class WhatsAppService {
 
             this.sock = makeWASocket({
                 auth: state,
-                // printQRInTerminal: true, // Deprecated
+                printQRInTerminal: true, // Useful for logs still
                 defaultQueryTimeoutMs: undefined, // endless
-                connectTimeoutMs: 10000,
+                connectTimeoutMs: 60000, // Increased timeout
                 keepAliveIntervalMs: 30000,
                 syncFullHistory: false
             });
@@ -62,17 +82,35 @@ class WhatsAppService {
                 }
 
                 if (connection === 'close') {
-                    const shouldReconnect = (lastDisconnect?.error)?.output?.statusCode !== DisconnectReason.loggedOut;
-                    console.log(`[WhatsApp] Connection closed due to ${lastDisconnect?.error}, reconnecting: ${shouldReconnect}`);
+                    // baileys-specific error codes
+                    const statusCode = (lastDisconnect?.error)?.output?.statusCode;
+                    const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+
+                    console.log(`[WhatsApp] Connection closed (Status: ${statusCode}). Reconnect: ${shouldReconnect}`);
+
+                    // If we were scanning QR and it failed/closed (e.g. timeout), do NOT auto-reconnect infinite loop.
+                    // Only auto-reconnect if we were previously 'connected' or if it's a verifiable generic network error.
+                    // For simplicity: If loggedOut -> Stop. 
+                    // If we were parsing QR and connection closed -> likely timed out -> Stop (allow user to retry manually).
+
+                    if (this.status === 'scan_qr') {
+                        console.log('[WhatsApp] Connection closed while scanning QR. Stopping auto-retry to prevent loop.');
+                        this.status = 'disconnected';
+                        this.qr = null;
+                        this.sock = null;
+                        return;
+                    }
+
                     this.status = 'disconnected';
                     this.qr = null;
 
                     if (shouldReconnect) {
                         this.status = 'connecting';
                         // Backoff
-                        setTimeout(() => this.start(), 5000);
+                        setTimeout(() => this.connect(), 5000); // Call connect() instead of start()
                     } else {
                         console.log('[WhatsApp] Logged out. Delete session to restart.');
+                        this.sock = null;
                     }
                 } else if (connection === 'open') {
                     console.log('[WhatsApp] Connection opened');
@@ -93,9 +131,8 @@ class WhatsAppService {
             });
 
         } catch (err) {
-            console.error('[WhatsApp] Start Error:', err);
-            // Retry
-            setTimeout(() => this.start(), 10000);
+            console.error('[WhatsApp] Connect Error:', err);
+            this.status = 'disconnected';
         }
     }
 
@@ -107,7 +144,12 @@ class WhatsAppService {
             const phoneNumber = remoteJid.split('@')[0];
 
             // Security Check
-            if (this.allowedNumbers.size > 0 && !this.allowedNumbers.has(phoneNumber)) {
+            if (this.allowedNumbers.size === 0) {
+                console.warn(`[WhatsApp] Ignored message from ${phoneNumber} because ALLOWED_WHATSAPP_NUMBERS is empty (Secure Mode).`);
+                return;
+            }
+
+            if (!this.allowedNumbers.has(phoneNumber)) {
                 console.warn(`[WhatsApp] Blocked message from unauthorized number: ${phoneNumber}`);
                 return;
             }
@@ -154,6 +196,15 @@ class WhatsAppService {
                         console.error('[WhatsApp] Image Download Failed:', e);
                     }
                 }
+            } else {
+                // Unknown / Protocol Message / Reaction
+                console.log(`[WhatsApp] Ignored unhandled message type keys: ${Object.keys(messageContent).join(', ')}`);
+                return;
+            }
+
+            if (!text && !buffer) {
+                console.warn('[WhatsApp] Received message with no content (empty text and no media). Ignoring.');
+                return;
             }
 
             const userMessage = createUserMessage(text, 'whatsapp', phoneNumber);
@@ -218,10 +269,21 @@ class WhatsAppService {
     }
 
     getStatus() {
+        // me: { id: "12345@s.whatsapp.net", name: "Name" }
+        const me = this.sock?.user;
+        let formattedMe = null;
+        if (me) {
+            formattedMe = {
+                id: me.id.split(':')[0].split('@')[0], // Extract number
+                name: me.name
+            };
+        }
+
         return {
             status: this.status,
             qr: this.qr,
-            allowedNumbers: Array.from(this.allowedNumbers)
+            allowedNumbers: Array.from(this.allowedNumbers),
+            me: formattedMe
         };
     }
 }

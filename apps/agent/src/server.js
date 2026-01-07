@@ -82,7 +82,7 @@ app.get('/health', (req, res) => {
 app.post('/webhook', (req, res) => {
   const message = req.body;
 
-  if (!message || !message.content) {
+  if (!message || (!message.content && !message.parts)) {
     return res.status(400).json({ error: 'Invalid message format' });
   }
 
@@ -471,6 +471,27 @@ app.delete('/internal/aliases/:alias', (req, res) => {
   if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
   try {
     agent.db.deleteAlias(req.params.alias);
+    res.json({ success: true });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+// --- Configuration ---
+app.get('/internal/config', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const searchStrategy = agent.db.getKey('config:search_strategy') || { mode: 'HYBRID' };
+    res.json({ searchStrategy });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
+app.post('/internal/config', (req, res) => {
+  if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const { key, value } = req.body;
+    // Keys allowed: 'search_strategy'
+    if (key !== 'search_strategy') return res.status(400).json({ error: 'Invalid config key' });
+
+    agent.db.setKey(`config:${key}`, value);
     res.json({ success: true });
   } catch (e) { res.status(500).json({ error: e.message }); }
 });

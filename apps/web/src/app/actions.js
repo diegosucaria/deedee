@@ -219,20 +219,54 @@ export async function cleanupData() {
     }
 }
 
-// --- WhatsApp ---
+
+
+// --- Configuration ---
+export async function getAgentConfig() {
+    try {
+        return await fetchAPI('/v1/config');
+    } catch (error) {
+        console.error('getAgentConfig Error:', error);
+        return { searchStrategy: { mode: 'HYBRID' } };
+    }
+}
+
+export async function updateAgentConfig(key, value) {
+    try {
+        await fetchAPI('/v1/config', {
+            method: 'POST',
+            body: JSON.stringify({ key, value })
+        });
+        revalidatePath('/settings');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+// --- WhatsApp Actions ---
+
 export async function getWhatsAppStatus() {
     try {
         return await fetchAPI('/v1/whatsapp/status');
     } catch (error) {
-        console.error('getWhatsAppStatus Error:', error);
+        console.warn('getWhatsAppStatus Error:', error.message);
         return { status: 'error', error: error.message };
+    }
+}
+
+export async function connectWhatsApp() {
+    try {
+        const res = await fetchAPI('/v1/whatsapp/connect', { method: 'POST' });
+        return { success: true, ...res };
+    } catch (error) {
+        return { success: false, error: error.message };
     }
 }
 
 export async function disconnectWhatsApp() {
     try {
         await fetchAPI('/v1/whatsapp/disconnect', { method: 'POST' });
-        revalidatePath('/interfaces');
         return { success: true };
     } catch (error) {
         return { success: false, error: error.message };

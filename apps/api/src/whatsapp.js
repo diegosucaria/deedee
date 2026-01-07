@@ -8,7 +8,11 @@ const interfacesUrl = process.env.INTERFACES_URL || 'http://interfaces:5000';
 const proxyRequest = async (req, res, method, path, data) => {
     try {
         const url = `${interfacesUrl}${path}`;
-        const response = await axios({ method, url, data, params: req.query });
+        const headers = {
+            'Authorization': `Bearer ${process.env.DEEDEE_API_TOKEN}`,
+            'Content-Type': 'application/json'
+        };
+        const response = await axios({ method, url, data, params: req.query, headers });
         res.json(response.data);
     } catch (error) {
         console.error(`[API] WhatsApp Proxy Error (${method} ${path}):`, error.message);
@@ -24,6 +28,8 @@ router.get('/status', (req, res) => proxyRequest(req, res, 'GET', '/whatsapp/sta
 router.get('/qr', (req, res) => proxyRequest(req, res, 'GET', '/whatsapp/qr')); // (Actually status returns QR, maybe this endpoint is redundant or specific for pure image?)
 // Status endpoint in interfaces service returns { status, qr (base64) }. Ideally we use that.
 // But if we want a dedicated endpoint later, fine. For now, rely on status.
+
+router.post('/connect', (req, res) => proxyRequest(req, res, 'POST', '/whatsapp/connect'));
 
 router.post('/disconnect', (req, res) => proxyRequest(req, res, 'POST', '/whatsapp/disconnect'));
 

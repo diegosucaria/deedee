@@ -10,6 +10,9 @@ jest.mock('qrcode', () => ({
     toDataURL: jest.fn().mockResolvedValue('data:image/png;base64,mockqr')
 }));
 
+jest.mock('axios');
+
+
 describe('WhatsAppService', () => {
     let whatsapp;
     let mockBaileys;
@@ -48,8 +51,15 @@ describe('WhatsAppService', () => {
         expect(whatsapp.status).toBe('disconnected');
     });
 
-    test('start() should initialize socket', async () => {
+    test('start() should stay disconnected if no credentials', async () => {
+        // Ensure no creds exist (mocked or implicitly via temp dir)
         await whatsapp.start();
+        expect(whatsapp.sock).toBeNull();
+        expect(whatsapp.status).toBe('disconnected');
+    });
+
+    test('connect() should initialize socket', async () => {
+        await whatsapp.connect();
         expect(whatsapp._importBaileys).toHaveBeenCalled();
         expect(whatsapp.sock).toBeDefined();
     });
@@ -61,7 +71,7 @@ describe('WhatsAppService', () => {
     });
 
     test('sendMessage should handle audio', async () => {
-        await whatsapp.start();
+        await whatsapp.connect();
         await whatsapp.sendMessage('123@s.whatsapp.net', 'base64audio', { type: 'audio' });
         expect(whatsapp.sock.sendMessage).toHaveBeenCalledWith(
             '123@s.whatsapp.net',
@@ -70,12 +80,53 @@ describe('WhatsAppService', () => {
     });
 
     test('sendMessage should handle image', async () => {
-        await whatsapp.start();
+        await whatsapp.connect();
         await whatsapp.sendMessage('123@s.whatsapp.net', 'base64image', { type: 'image' });
         expect(whatsapp.sock.sendMessage).toHaveBeenCalledWith(
             '123@s.whatsapp.net',
             expect.objectContaining({ image: expect.any(Buffer) })
         );
+    });
+
+    test('should ignore message if allowed list is empty (Secure Default)', async () => {
+        // Mock allowed list as empty (default in test env)
+        whatsapp.allowedNumbers = new Set();
+        const spyWarn = jest.spyOn(console, 'warn');
+        const spyAxios = jest.spyOn(require('axios'), 'post'); // We need to mock axios requirement at top
+
+        await whatsapp.handleMessage({
+            key: { remoteJid: '123456@s.whatsapp.net', fromMe: false },
+            message: { conversation: 'Hello' }
+        });
+
+        expect(spyWarn).toHaveBeenCalledWith(expect.stringContaining('ALLOWED_WHATSAPP_NUMBERS is empty'));
+        expect(spyAxios).not.toHaveBeenCalled();
+    });
+
+    test('should block unauthorized number', async () => {
+        whatsapp.allowedNumbers = new Set(['999999']);
+        const spyWarn = jest.spyOn(console, 'warn');
+        const spyAxios = jest.spyOn(require('axios'), 'post');
+
+        await whatsapp.handleMessage({
+            key: { remoteJid: '123456@s.whatsapp.net', fromMe: false },
+            message: { conversation: 'Hello' }
+        });
+
+        expect(spyWarn).toHaveBeenCalledWith(expect.stringContaining('Blocked message from unauthorized number'));
+        expect(spyAxios).not.toHaveBeenCalled();
+    });
+
+    test('should allow authorized number', async () => {
+        whatsapp.allowedNumbers = new Set(['123456']);
+        const spyAxios = jest.spyOn(require('axios'), 'post').mockResolvedValue({});
+
+        await whatsapp.handleMessage({
+            key: { remoteJid: '123456@s.whatsapp.net', fromMe: false },
+            message: { conversation: 'Hello' }
+        });
+
+        expect(spyAxios).toHaveBeenCalled();
     });
 });
 
@@ -94,8 +145,14 @@ describe('WhatsApp API Endpoints', () => {
     // For unit testing endpoints, it is better if we could mock the service.
     // But for now, let's keep the simple status test.
 
+    beforeAll(() => {
+        process.env.DEEDEE_API_TOKEN = 'test-token';
+    });
+
     test('GET /whatsapp/status should return status', async () => {
-        const res = await request(app).get('/whatsapp/status');
+        const res = await request(app)
+            .get('/whatsapp/status')
+            .set('Authorization', 'Bearer test-token');
         expect(res.statusCode).toBe(200);
         expect(res.body).toHaveProperty('status');
     });
