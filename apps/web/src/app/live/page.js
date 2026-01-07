@@ -155,15 +155,21 @@ export default function GeminiLivePage() {
     };
 
     const startAudio = async () => {
-        const ctx = new (window.AudioContext || window.webkitAudioContext)({ sampleRate: 16000 }); // Try to force 16k
+        // Use system default sample rate for Context to avoid hardware issues
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
         audioContextRef.current = ctx;
 
         await ctx.audioWorklet.addModule('/audio-processor.js');
 
+        // Input: Try to get 24kHz if possible (matches Gemini default), otherwise we'll capture whatever
+        // and tell Gemini 24k (if browser resamples) or we rely on constraints.
+        // Most browsers usually honor sampleRate constraint by resampling if HW doesn't support it.
+        const TARGET_RATE = 24000;
+
         const stream = await navigator.mediaDevices.getUserMedia({
             audio: {
                 channelCount: 1,
-                sampleRate: 16000,
+                sampleRate: TARGET_RATE,
                 echoCancellation: true,
                 noiseSuppression: true
             }
@@ -176,16 +182,24 @@ export default function GeminiLivePage() {
         worklet.port.onmessage = (e) => {
             if (isMuted || !wsRef.current || wsRef.current.readyState !== WebSocket.OPEN) return;
 
-            // e.data is Float32Array
-            // Convert to PCM16 standard
+            // e.data is Float32Array from Worklet
+            // Note: Worklet runs at ctx.sampleRate (e.g. 44.1k or 48k). 
+            // If we asked getUserMedia for 24k and got it, ctx might still be 48k? 
+            // Actually, if we want to send 24k, we should probably just tell Gemini what the ACTUAL rate is.
+            // But for now, let's assume constraints worked or we set 24k context.
+            // Let's rely on constraint.
+
             const pcm16 = floatTo16BitPCM(e.data);
             const base64 = arrayBufferToBase64(pcm16);
 
             // Send Realtime Input
+            // IMPORTANT: If ctx is 48k, we are sending 48k data. We must tell Gemini 48k.
+            const actualRate = ctx.sampleRate; // This is the Single Source of Truth for what we are sending
+
             wsRef.current.send(JSON.stringify({
                 realtimeInput: {
                     mediaChunks: [{
-                        mimeType: "audio/pcm;rate=16000",
+                        mimeType: `audio/pcm;rate=${actualRate}`,
                         data: base64
                     }]
                 }
@@ -197,13 +211,13 @@ export default function GeminiLivePage() {
         };
 
         source.connect(worklet);
-        worklet.connect(ctx.destination); // Keep alive? mute?
+        worklet.connect(ctx.destination); // Keep alive
         workletNodeRef.current = worklet;
     };
 
     const stopAudio = () => {
         streamRef.current?.getTracks().forEach(t => t.stop());
-        audioContextRef.current?.close();
+        try { audioContextRef.current?.close(); } catch (e) { }
 
         streamRef.current = null;
         audioContextRef.current = null;
@@ -237,10 +251,6 @@ export default function GeminiLivePage() {
     };
 
     const queueAudio = (base64) => {
-        // Decode and play logic is complex for PCM streaming without header.
-        // Simpler: Use a Worklet or just BufferSource if chunks are large enough.
-        // For latency, we want to play chunks immediately.
-
         // Decoding Raw PCM:
         const binaryString = window.atob(base64);
         const bytes = new Uint8Array(binaryString.length);
@@ -259,21 +269,14 @@ export default function GeminiLivePage() {
 
     const playPCMChunk = (pcmData) => {
         if (!audioContextRef.current) return;
-        const buffer = audioContextRef.current.createBuffer(1, pcmData.length, 16000); // Server sends 24k? 16k? Usually matches input or 24k.
-        // Google Live API default is 24kHz output usually? Let's check spec. 
-        // Spec says 24000Hz usually. Let's assume 24000 if it sounds high pitched.
-        // Actually, let's reset context to 24000 if we can, or resample.
-        // For now hardcode 24000 for output.
+        // Gemini Always sends 24kHz for now
+        const buffer = audioContextRef.current.createBuffer(1, pcmData.length, 24000);
 
         buffer.getChannelData(0).set(pcmData);
 
         const source = audioContextRef.current.createBufferSource();
         source.buffer = buffer;
         source.connect(audioContextRef.current.destination);
-
-        // Simple queueing
-        // Real implementation needs a proper queue time tracker
-        // This runs immediately = overlap potential
         source.start();
     };
 
