@@ -24,9 +24,11 @@ WORKDIR /app
 # Copy ONLY the pruned lockfile first (CACHE HIT if deps haven't changed)
 COPY --from=pruner /app/out/json/ .
 COPY --from=pruner /app/out/package-lock.json ./package-lock.json
+# Install and Prune deps (Fully Cached Layer)
 RUN npm install
-# Copy source code
-COPY --from=pruner /app/out/full/ .
+RUN npm prune --production
+# Copy source code (Frequent Changes - Layer Invalidated often)
+COPY . .
 # ... build steps ...
 ```
 
