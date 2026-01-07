@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { fetchAPI } from '@/lib/api';
-import { Mic, MicOff, PhoneOff, Settings2, Terminal } from 'lucide-react';
+import { Mic, MicOff, PhoneOff, Settings2, Terminal, X } from 'lucide-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/navigation';
 
@@ -317,11 +317,12 @@ export default function GeminiLivePage() {
 
             {/* Controls */}
             <div className="absolute bottom-12 flex items-center gap-6 z-20">
+                {/* Exit Button */}
                 <button
                     onClick={() => router.push('/')}
-                    className="p-4 rounded-full bg-zinc-800 text-white hover:bg-zinc-700 transition-colors"
+                    className="absolute top-6 right-6 p-4 rounded-full bg-zinc-800/50 text-white hover:bg-zinc-700/80 transition-all z-50 backdrop-blur-sm"
                 >
-                    <Settings2 className="w-6 h-6" />
+                    <X className="w-6 h-6" />
                 </button>
 
                 {!isConnected ? (
