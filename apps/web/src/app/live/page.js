@@ -306,62 +306,62 @@ export default function GeminiLivePage() {
             </div>
 
             {/* Controls */}
-            <div className="absolute bottom-12 flex items-center gap-6 z-20">
-                {/* Exit Button */}
-                <button
-                    onClick={() => router.push('/')}
-                    className="absolute top-6 right-6 p-4 rounded-full bg-zinc-900/50 text-zinc-400 hover:text-white hover:bg-zinc-800/80 transition-all z-50 backdrop-blur-md border border-white/5 hover:border-white/10 group"
-                >
-                    <X className="w-5 h-5 group-hover:scale-110 transition-transform" />
-                </button>
 
-                {/* Controls */}
-                <div className="absolute bottom-12 flex items-center gap-8 z-20">
-                    {!isConnected ? (
+            {/* Exit Button */}
+            <button
+                onClick={() => router.push('/')}
+                className="absolute top-6 right-6 p-4 rounded-full bg-zinc-900/50 text-zinc-400 hover:text-white hover:bg-zinc-800/80 transition-all z-50 backdrop-blur-md border border-white/5 hover:border-white/10 group"
+            >
+                <X className="w-5 h-5 group-hover:scale-110 transition-transform" />
+            </button>
+
+            {/* Controls */}
+            <div className="absolute bottom-12 flex items-center gap-8 z-20">
+                {!isConnected ? (
+                    <button
+                        onClick={connect}
+                        disabled={status === 'connecting'}
+                        className={clsx(
+                            "group relative flex items-center justify-center w-20 h-20 rounded-full transition-all duration-300",
+                            status === 'connecting'
+                                ? "bg-zinc-800 cursor-wait opacity-80"
+                                : "bg-white text-black hover:scale-105 active:scale-95 shadow-[0_0_40px_-10px_rgba(255,255,255,0.3)] hover:shadow-[0_0_60px_-15px_rgba(255,255,255,0.4)]"
+                        )}
+                    >
+                        {status === 'connecting' ? (
+                            <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                        ) : (
+                            <Mic className="w-8 h-8" />
+                        )}
+                    </button>
+                ) : (
+                    <div className="flex items-center gap-6 p-2 rounded-full bg-zinc-900/40 backdrop-blur-xl border border-white/5 shadow-2xl">
                         <button
-                            onClick={connect}
-                            disabled={status === 'connecting'}
+                            onClick={() => setIsMuted(!isMuted)}
                             className={clsx(
-                                "group relative flex items-center justify-center w-20 h-20 rounded-full transition-all duration-300",
-                                status === 'connecting'
-                                    ? "bg-zinc-800 cursor-wait opacity-80"
-                                    : "bg-white text-black hover:scale-105 active:scale-95 shadow-[0_0_40px_-10px_rgba(255,255,255,0.3)] hover:shadow-[0_0_60px_-15px_rgba(255,255,255,0.4)]"
+                                "flex items-center justify-center w-16 h-16 rounded-full transition-all duration-200 border",
+                                isMuted
+                                    ? "bg-red-500/10 border-red-500/50 text-red-500 hover:bg-red-500/20"
+                                    : "bg-white/5 border-white/5 text-white hover:bg-white/10"
                             )}
                         >
-                            {status === 'connecting' ? (
-                                <div className="w-8 h-8 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                            ) : (
-                                <Mic className="w-8 h-8" />
-                            )}
+                            {isMuted ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
                         </button>
-                    ) : (
-                        <div className="flex items-center gap-6 p-2 rounded-full bg-zinc-900/40 backdrop-blur-xl border border-white/5 shadow-2xl">
-                            <button
-                                onClick={() => setIsMuted(!isMuted)}
-                                className={clsx(
-                                    "flex items-center justify-center w-16 h-16 rounded-full transition-all duration-200 border",
-                                    isMuted
-                                        ? "bg-red-500/10 border-red-500/50 text-red-500 hover:bg-red-500/20"
-                                        : "bg-white/5 border-white/5 text-white hover:bg-white/10"
-                                )}
-                            >
-                                {isMuted ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
-                            </button>
 
-                            <button
-                                onClick={disconnect}
-                                className="flex items-center justify-center w-16 h-16 rounded-full bg-red-500 text-white hover:bg-red-600 transition-all duration-200 hover:rotate-90 hover:scale-105 active:scale-95 shadow-lg shadow-red-500/20"
-                            >
-                                <PhoneOff className="w-7 h-7" />
-                            </button>
-                        </div>
-                    )}
-                </div>
-
-                {/* Logs Debug Overlay */}
-                <div className="absolute top-4 left-4 font-mono text-xs text-zinc-600 max-w-xs pointer-events-none">
-                    {logs.map((l, i) => <div key={i}>{l}</div>)}
-                </div>
+                        <button
+                            onClick={disconnect}
+                            className="flex items-center justify-center w-16 h-16 rounded-full bg-red-500 text-white hover:bg-red-600 transition-all duration-200 hover:rotate-90 hover:scale-105 active:scale-95 shadow-lg shadow-red-500/20"
+                        >
+                            <PhoneOff className="w-7 h-7" />
+                        </button>
+                    </div>
+                )}
             </div>
-            );
+
+            {/* Logs Debug Overlay */}
+            <div className="absolute top-4 left-4 font-mono text-xs text-zinc-600 max-w-xs pointer-events-none">
+                {logs.map((l, i) => <div key={i}>{l}</div>)}
+            </div>
+        </div>
+    );
 }
