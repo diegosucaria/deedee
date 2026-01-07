@@ -28,25 +28,41 @@ export default function ChatSessionPage({ params }) {
 
     // Fetch Location (Option 2: IP-based)
     useEffect(() => {
-        // FAST: Check cache first
-        const cached = localStorage.getItem('deedee_user_location');
-        if (cached) {
-            setUserLocation(cached);
-            console.log('[Chat] Restored location from cache:', cached);
+        const CACHE_KEY = 'deedee_user_location';
+        const TIME_KEY = 'deedee_location_timestamp';
+        const TTL = 30 * 60 * 1000; // 30 minutes
+
+        const cachedLoc = localStorage.getItem(CACHE_KEY);
+        const cachedTime = localStorage.getItem(TIME_KEY);
+        const now = Date.now();
+
+        // Check if cache is valid
+        if (cachedLoc && cachedTime && (now - parseInt(cachedTime) < TTL)) {
+            setUserLocation(cachedLoc);
+            console.log('[Chat] Using valid cached location:', cachedLoc);
+            return; // Skip fetch
         }
 
-        // SLOW: Update in background
+        // If stale or missing, fetch in background
+        if (cachedLoc) setUserLocation(cachedLoc); // Use stale while revalidating
+
         fetch('https://ipapi.co/json/')
             .then(res => res.json())
             .then(data => {
                 if (data.city && data.country_name) {
                     const loc = `${data.city}, ${data.country_name}`;
                     setUserLocation(loc);
-                    localStorage.setItem('deedee_user_location', loc);
-                    console.log('[Chat] Fetched & Cached Location:', loc);
+                    localStorage.setItem(CACHE_KEY, loc);
+                    localStorage.setItem(TIME_KEY, now.toString());
+                    console.log('[Chat] Fetched & Updated Location:', loc);
                 }
             })
-            .catch(err => console.warn('Location fetch failed:', err));
+            .catch(err => {
+                console.warn('Location fetch failed:', err);
+                if (err.status === 429 && cachedLoc) {
+                    console.log('[Chat] API Rate Limit. Fallback to cached:', cachedLoc);
+                }
+            });
     }, []);
 
     // Fetch Session History
