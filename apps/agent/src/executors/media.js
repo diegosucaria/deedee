@@ -54,8 +54,8 @@ class MediaExecutor extends BaseExecutor {
 
             case 'replyWithAudio': {
                 const text = args.text;
-                const language = args.language || 'en-US';
-                console.log(`[MediaExecutor] Generating audio for: "${text.substring(0, 30)}..." with optional lang: ${language}`);
+                const language = args.languageCode || args.language || 'detect';
+                console.log(`[MediaExecutor] Generating audio for: "${text.substring(0, 30)}..." (Lang: ${language})`);
 
                 const modelName = process.env.GEMINI_TTS_MODEL || process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
                 const audioResponse = await client.models.generateContent({

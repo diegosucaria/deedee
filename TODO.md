@@ -33,6 +33,14 @@
     - [x] Auto-summarization of long chats (Long-term memory).
     - [x] Real-time Cost Tracking on stats dashboard.
     - [x] `searchHistory` tool for deep recall.
+- [x] **DevOps & Infrastructure**:
+    - [x] **Docker Optimization**: "Double Prune" strategy for cached builds (minutes -> seconds).
+    - [x] **Native Modules**: Fixed `better-sqlite3` builds on Alpine.
+    - [x] **Web Assets**: Updated Logos, Favicons, and Metadata.
+- [x] **WhatsApp Improvements**:
+    - [x] **Ghost Mode**: Disabled auto-read receipts.
+    - [x] **Session Persistence**: Fixed Docker volume mounting.
+    - [x] **LID Support**: Fixed blocking of Linked Identity messages.
 
 ---
 
