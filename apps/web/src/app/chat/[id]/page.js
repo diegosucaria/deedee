@@ -143,6 +143,23 @@ export default function ChatSessionPage({ params }) {
             setThinkingStatus(data.status);
         });
 
+        // Handle Session Updates (Auto-Titling)
+        newSocket.on('session:update', (data) => {
+            console.log('[Chat] Received session update:', data);
+            // Parse content if it's a string (Agent sends JSON string)
+            let update = data;
+            if (typeof data.content === 'string') {
+                try { update = JSON.parse(data.content); } catch (e) { }
+            }
+
+            if (update.id === chatId) {
+                if (update.title) {
+                    setSessionTitle(update.title);
+                    router.refresh(); // Refresh Sidebar
+                }
+            }
+        });
+
         setSocket(newSocket);
         return () => newSocket.close();
     }, [chatId, router]);

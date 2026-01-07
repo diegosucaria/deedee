@@ -15,7 +15,10 @@ router.post('/', async (req, res) => {
         const payload = {
             content: message,
             source: source || 'api',
-            metadata: { chatId: chatId },
+            metadata: {
+                ...(req.body.metadata || {}), // Pass through frontend metadata (location, etc)
+                chatId: chatId
+            },
             role: 'user',
             type: 'text'
         };
