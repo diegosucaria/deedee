@@ -28,13 +28,16 @@ class WhatsAppService {
         }
     }
 
+    async _importBaileys() {
+        return import('@whiskeysockets/baileys');
+    }
+
     async start() {
         try {
             console.log('[WhatsApp] Starting service...');
 
-            // Dynamic Import for ESM Module in CJS
-            // Import downloadMediaMessage as well
-            const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay, downloadMediaMessage } = await import('@whiskeysockets/baileys');
+            // Dynamic Import via helper for testability
+            const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay, downloadMediaMessage } = await this._importBaileys();
             this.downloadMediaMessage = downloadMediaMessage; // Save for later use
 
             const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
