@@ -250,14 +250,6 @@ export async function triggerBackup() {
     }
 }
 
-export async function getLiveConfig() {
-    let model = process.env.WORKER_LIVE || 'models/gemini-2.0-flash-exp';
-    if (model && !model.startsWith('models/')) {
-        model = `models/${model}`;
-    }
-    return { model };
-}
-
 export async function getAgentConfig() {
     try {
         return await fetchAPI('/v1/config');

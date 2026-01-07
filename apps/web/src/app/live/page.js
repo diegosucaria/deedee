@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { getLiveToken, executeLiveTool, getLiveConfig } from '@/app/actions';
+import { getLiveToken, executeLiveTool, getLiveConfig } from './actions';
 import { Mic, MicOff, PhoneOff, Settings2, Terminal, X } from 'lucide-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/navigation';
