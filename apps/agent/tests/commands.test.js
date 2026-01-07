@@ -26,7 +26,10 @@ jest.mock('../src/db', () => ({
         getAllFacts: jest.fn().mockReturnValue([]),
         saveSummary: jest.fn(),
         getLatestSummary: jest.fn().mockReturnValue(null),
-        searchMessages: jest.fn().mockReturnValue([])
+        searchMessages: jest.fn().mockReturnValue([]),
+        deleteMessagesSince: jest.fn(), // Added
+        ensureSession: jest.fn(), // Added
+        countMessages: jest.fn().mockReturnValue(10) // Should be > 0 to avoid auto-title trigger in tests
     }))
 }));
 
