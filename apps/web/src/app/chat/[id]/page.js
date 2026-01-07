@@ -82,7 +82,7 @@ export default function ChatSessionPage({ params }) {
                             return typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
                         }
                         // For assistant messages, keep existing logic
-                        return m.content || (m.parts ? m.parts.map(p => p.text).join('') : '');
+                        return m.content || ((m.parts && Array.isArray(m.parts)) ? m.parts.map(p => p.text).join('') : '');
                     })(),
                     type: m.type || 'text',
                     timestamp: m.timestamp

@@ -337,11 +337,17 @@ export async function getUserLocation() {
         const url = clientIp ? `https://ipapi.co/${clientIp}/json/` : 'https://ipapi.co/json/';
 
         const res = await fetch(url, { cache: 'no-store' });
+
+        if (res.status === 429) {
+            console.warn('[getUserLocation] IPAPI Rate Limit (429). Location data unavailable.');
+            return { success: false, error: 'Rate Limit' };
+        }
+
         if (!res.ok) throw new Error(`IPAPI Error: ${res.status}`);
         const data = await res.json();
         return { success: true, data };
     } catch (error) {
-        console.error('getUserLocation Error:', error);
+        console.error('getUserLocation Error:', error.message);
         return { success: false, error: error.message };
     }
 }
