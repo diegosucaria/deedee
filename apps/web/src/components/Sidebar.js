@@ -36,7 +36,7 @@ export function Sidebar() {
                 <div className="flex items-center">
                     <div className="relative h-8 w-8 shrink-0">
                         <Image
-                            src="/logo-rounded.svg"
+                            src="/logo-square.svg"
                             alt="DeeDee Logo"
                             fill
                             className="object-contain"
