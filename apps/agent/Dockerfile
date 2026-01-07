@@ -35,7 +35,8 @@ COPY --from=pruner /app/out/package-lock.json ./package-lock.json
 RUN npm install
 
 # Copy source code
-COPY --from=pruner /app/out/full/ .
+# Copy source code
+COPY . .
 
 # No build step needed for agent (it's node), but we can prune dev deps here if we want specific install
 # But typically we just use the node_modules we have. 
@@ -62,7 +63,8 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 # Note: "out/full" structure maintains paths
 COPY --from=builder /app/packages ./packages
 # Copy plex-mcp-server manually as it is not a node dependency
-COPY --from=pruner /app/packages/plex-mcp-server ./packages/plex-mcp-server
+# Copy plex-mcp-server manually
+COPY packages/plex-mcp-server ./packages/plex-mcp-server
 
 # Pre-install MCP Servers
 RUN uv pip install -r packages/plex-mcp-server/requirements.txt

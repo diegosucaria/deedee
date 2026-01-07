@@ -31,7 +31,8 @@ COPY --from=pruner /app/out/package-lock.json ./package-lock.json
 RUN npm install
 
 # Copy the source code
-COPY --from=pruner /app/out/full/ .
+# Copy the source code
+COPY . .
 
 # Build the project
 ENV NEXT_TELEMETRY_DISABLED 1

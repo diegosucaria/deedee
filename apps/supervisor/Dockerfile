@@ -29,7 +29,8 @@ COPY --from=pruner /app/out/package-lock.json ./package-lock.json
 RUN npm install
 
 # Copy source code
-COPY --from=pruner /app/out/full/ .
+# Copy source code
+COPY . .
 
 RUN npm prune --production
 
