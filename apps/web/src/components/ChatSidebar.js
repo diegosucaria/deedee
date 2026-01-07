@@ -65,13 +65,19 @@ export default function ChatSidebar({ sessions = [] }) {
     };
 
     return (
-        <div className={clsx(
-            "flex h-full flex-col border-r border-zinc-800 bg-zinc-900/50 hidden md:flex transition-all duration-300 relative",
-            isCollapsed ? "w-16" : "w-64"
-        )}>
+        <div
+            onClick={() => isCollapsed && toggleSidebar()}
+            className={clsx(
+                "flex h-full flex-col border-r border-zinc-800 bg-zinc-900/50 hidden md:flex transition-all duration-300 relative",
+                isCollapsed ? "w-16 cursor-pointer" : "w-64"
+            )}
+        >
             <div className="p-4 flex items-center justify-center">
                 <button
-                    onClick={handleNewChat}
+                    onClick={(e) => {
+                        e.stopPropagation(); // Prevent double-toggle from container
+                        handleNewChat();
+                    }}
                     disabled={isCreating}
                     className={clsx(
                         "flex items-center justify-center rounded-lg bg-indigo-600 font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50",
@@ -91,7 +97,10 @@ export default function ChatSidebar({ sessions = [] }) {
 
                         if (isEditing && !isCollapsed) {
                             return (
-                                <div key={session.id} className="flex items-center gap-2 rounded-lg bg-zinc-800 px-3 py-2 text-sm">
+                                <div key={session.id}
+                                    onClick={(e) => e.stopPropagation()} // Input shouldn't trigger expansion if somehow collapsed (logic prevents this but safe)
+                                    className="flex items-center gap-2 rounded-lg bg-zinc-800 px-3 py-2 text-sm"
+                                >
                                     <input
                                         type="text"
                                         value={editTitle}
@@ -132,7 +141,10 @@ export default function ChatSidebar({ sessions = [] }) {
                                 </div>
 
                                 {!isCollapsed && (
-                                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-800/50 rounded-md backdrop-blur-sm">
+                                    <div
+                                        onClick={(e) => e.stopPropagation()}
+                                        className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-800/50 rounded-md backdrop-blur-sm"
+                                    >
                                         <button
                                             onClick={(e) => startRename(e, session)}
                                             className="p-1.5 hover:text-indigo-400 transition-colors"
@@ -158,7 +170,10 @@ export default function ChatSidebar({ sessions = [] }) {
             {/* Toggle Button */}
             <div className="p-2 border-t border-zinc-800 flex justify-end">
                 <button
-                    onClick={toggleSidebar}
+                    onClick={(e) => {
+                        e.stopPropagation(); // Independent toggle
+                        toggleSidebar();
+                    }}
                     className="p-2 text-zinc-500 hover:text-white transition-colors rounded-lg hover:bg-zinc-800"
                 >
                     {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
