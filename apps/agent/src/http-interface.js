@@ -21,10 +21,15 @@ class HttpInterface extends EventEmitter {
    */
   async send(message) {
     try {
-      console.log(`[HttpInterface] Sending to ${message.source}...`);
-
       let content = message.content;
       let type = message.type || 'text';
+
+      console.log(`[HttpInterface] Sending to ${message.source}...`);
+      if (typeof content === 'string') {
+        console.log(`[HttpInterface] Content-Type: ${type} | Preview: "${content.substring(0, 250)}${content.length > 250 ? '...' : ''}"`);
+      } else {
+        console.log(`[HttpInterface] Content-Type: ${type} | (Binary/Object)`);
+      }
 
       // Check for audio/image parts (Gemini style)
       if (message.parts && message.parts.length > 0) {

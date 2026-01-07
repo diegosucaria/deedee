@@ -13,14 +13,17 @@ describe('HttpInterface', () => {
         jest.clearAllMocks();
     });
 
-    test('send() should include Authorization header', async () => {
+    test('send() should include Authorization header and log content', async () => {
         axios.post.mockResolvedValue({ data: {} });
+        const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => { });
 
         await httpInterface.send({
             source: 'telegram',
             content: 'hello',
             metadata: { chatId: '123' }
         });
+
+        expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Preview: "hello"'));
 
         expect(axios.post).toHaveBeenCalledWith(
             `${mockUrl}/send`,
@@ -31,6 +34,7 @@ describe('HttpInterface', () => {
                 })
             })
         );
+        consoleSpy.mockRestore();
     });
 
     test('sendProgress() should include Authorization header', async () => {
