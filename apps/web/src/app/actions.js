@@ -318,15 +318,22 @@ export async function getSessions(limit = 50, offset = 0) {
     }
 }
 
-export async function createSession() {
+export async function getUserLocation() {
     try {
-        const session = await fetchAPI('/v1/sessions', {
-            method: 'POST',
-            body: JSON.stringify({ reuseEmpty: true })
-        });
-        revalidatePath('/sessions');
-        return { success: true, session };
+        const headersList = require('next/headers').headers();
+        const ip = headersList.get('x-forwarded-for') || headersList.get('remote-addr') || '';
+        // If IP is loopback or local, ipapi might fallback to server location, but better than nothing.
+        // x-forwarded-for can be a list "client, proxy1, proxy2"
+        const clientIp = ip.split(',')[0].trim();
+
+        const url = clientIp ? `https://ipapi.co/${clientIp}/json/` : 'https://ipapi.co/json/';
+
+        const res = await fetch(url, { cache: 'no-store' });
+        if (!res.ok) throw new Error(`IPAPI Error: ${res.status}`);
+        const data = await res.json();
+        return { success: true, data };
     } catch (error) {
+        console.error('getUserLocation Error:', error);
         return { success: false, error: error.message };
     }
 }
