@@ -37,9 +37,9 @@ class CommandHandler {
             return true;
         }
 
-        if (content === '/clear_all') {
+        if (content === '/clear_all' || content === '/delete_all_sessions') {
             this.db.clearAllHistory();
-            const reply = createAssistantMessage('All chat history cleared from database.');
+            const reply = createAssistantMessage('All chat sessions and history deleted from database.');
             reply.metadata = { chatId, systemAction: 'CLEAR_HISTORY' };
             reply.source = message.source;
             await this.interface.send(reply);

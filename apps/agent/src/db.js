@@ -608,9 +608,9 @@ class AgentDB {
   }
 
   clearAllHistory() {
-    const stmt = this.db.prepare('DELETE FROM messages');
-    const info = stmt.run();
-    console.log(`[DB] Cleared ALL history (${info.changes} messages)`);
+    this.db.exec('DELETE FROM messages');
+    this.db.exec('DELETE FROM chat_sessions');
+    console.log(`[DB] Cleared ALL history and sessions.`);
   }
 
   deleteMessagesSince(chatId, timestamp) {
