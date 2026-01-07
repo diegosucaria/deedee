@@ -1,5 +1,5 @@
 FROM node:24-alpine AS base
-RUN apk add --no-cache libc6-compat
+RUN apk add --no-cache libc6-compat python3 py3-pip make g++
 RUN npm install turbo --global
 
 # --- Pruner Stage ---
