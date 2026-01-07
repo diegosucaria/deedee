@@ -266,6 +266,7 @@ class AgentDB {
   }
 
   createSession({ id, title }) {
+    this.deleteEmptySessions(); // Cleanup abandoned sessions
     const sessionId = id || crypto.randomUUID();
     const now = new Date().toISOString();
     this.db.prepare(`
@@ -329,6 +330,26 @@ class AgentDB {
     });
     deleteSession();
     console.log(`[DB] Deleted session ${id} and all related data.`);
+    deleteSession();
+    console.log(`[DB] Deleted session ${id} and all related data.`);
+  }
+
+  deleteEmptySessions() {
+    // Delete sessions with no messages older than 1 minute to avoid race conditions
+    // Using a subquery to count messages
+    const stmt = this.db.prepare(`
+      DELETE FROM chat_sessions 
+      WHERE id IN (
+        SELECT cs.id FROM chat_sessions cs
+        LEFT JOIN messages m ON cs.id = m.chat_id
+        WHERE m.id IS NULL
+        AND cs.created_at < datetime('now', '-1 minute')
+      )
+    `);
+    const info = stmt.run();
+    if (info.changes > 0) {
+      console.log(`[DB] Cleaned up ${info.changes} empty sessions.`);
+    }
   }
 
   // --- Messages ---
