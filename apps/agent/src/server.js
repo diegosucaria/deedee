@@ -325,6 +325,11 @@ app.get('/internal/sessions/:id', (req, res) => {
   try {
     const session = agent.db.getSession(req.params.id);
     if (!session) return res.status(404).json({ error: 'Session not found' });
+
+    // Include recent history
+    const history = agent.db.getHistory({ chatId: req.params.id, limit: 100 });
+    session.messages = history;
+
     res.json(session);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
