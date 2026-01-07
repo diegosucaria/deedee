@@ -5,7 +5,7 @@ import { LatencyChart, TokenEfficiencyChart, CostChart } from '@/components/Inte
 import { RefreshCw, Activity, Cpu, DollarSign } from 'lucide-react';
 import { getStatsLatency, getStatsUsage, getStatsCostTrend } from '../actions';
 
-export default function StatsClient() {
+export default function StatsClient({ startDate, endDate }) {
     const [latencyData, setLatencyData] = useState([]);
     const [tokenTrendData, setTokenTrendData] = useState([]);
     const [usageData, setUsageData] = useState(null);
@@ -14,8 +14,14 @@ export default function StatsClient() {
     const fetchData = async () => {
         setLoading(true);
         try {
+            // Build query params
+            const params = new URLSearchParams();
+            if (startDate) params.append('start', startDate);
+            if (endDate) params.append('end', endDate);
+            const qs = params.toString() ? `?${params.toString()}` : '';
+
             // Fetch Latency
-            const latData = await getStatsLatency();
+            const latData = await getStatsLatency(qs);
 
             // Group and Map latency data
             // Group by Metadata.runId OR ChatId OR Timestamp (proximity)
@@ -61,7 +67,7 @@ export default function StatsClient() {
             setLatencyData(chartData);
 
             // Fetch Token Trend (Cost & Tokens)
-            const trend = await getStatsCostTrend();
+            const trend = await getStatsCostTrend(qs);
             // Process trend for charts.
             // DB returns: { timestamp, estimated_cost, total_tokens, model }
             const mappedTrend = trend.map(t => ({
@@ -73,7 +79,7 @@ export default function StatsClient() {
             setTokenTrendData(mappedTrend);
 
             // Fetch Usage
-            const usageJson = await getStatsUsage();
+            const usageJson = await getStatsUsage(qs);
             setUsageData(usageJson);
 
         } catch (e) {
@@ -87,7 +93,7 @@ export default function StatsClient() {
         fetchData();
         const interval = setInterval(fetchData, 10000);
         return () => clearInterval(interval);
-    }, []);
+    }, [startDate, endDate]);
 
     if (loading && !latencyData.length) return <div className="p-4 text-zinc-500 animate-pulse">Loading stats...</div>;
 

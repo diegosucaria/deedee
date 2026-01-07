@@ -1,13 +1,13 @@
-export const dynamic = 'force-dynamic';
-import { fetchAPI } from '@/lib/api';
-import { BarChart3, MessageSquare, Brain, Clock, Zap, CheckCircle, Activity } from 'lucide-react';
-import StatsClient from './StatsClient';
-import CleanupButton from '@/components/CleanupButton';
+import CleanMetricsButton from '@/components/CleanMetricsButton'; // Rename CleanupButton if needed or use existing
+import DateIntervalSelector from '@/components/DateIntervalSelector';
 
-export default async function StatsPage() {
+export default async function StatsPage({ searchParams }) {
+    const params = new URLSearchParams(searchParams);
+    const queryString = params.toString() ? `?${params.toString()}` : '';
+
     let stats = null;
     try {
-        stats = await fetchAPI('/v1/stats');
+        stats = await fetchAPI(`/v1/stats${queryString}`);
     } catch (err) {
         console.error('Stats fetch error:', err);
         return <div className="p-8 text-red-500">Error loading stats. ({err.message})</div>;
@@ -19,12 +19,15 @@ export default async function StatsPage() {
 
     return (
         <div className="p-8 max-w-6xl mx-auto space-y-8">
-            <h1 className="text-3xl font-bold mb-8 flex items-center gap-3">
-                <Activity className="h-8 w-8 text-indigo-400" />
-                System Health & Stats
-            </h1>
-            <div className="absolute top-8 right-8">
-                <CleanupButton />
+            <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
+                <h1 className="text-3xl font-bold flex items-center gap-3">
+                    <Activity className="h-8 w-8 text-indigo-400" />
+                    System Health & Stats
+                </h1>
+                <div className="flex items-center gap-4">
+                    <DateIntervalSelector />
+                    <CleanMetricsButton />
+                </div>
             </div>
 
             {/* Top Row: KPIs */}
@@ -37,7 +40,7 @@ export default async function StatsPage() {
                     bg="bg-blue-400/10 border-blue-400/20"
                 />
                 <StatCard
-                    title="Avg Response (24h)"
+                    title={params.get('start') ? "Avg Response (Range)" : "Avg Response (24h)"}
                     value={latency?.avg24h ? `${latency.avg24h}ms` : '-'}
                     icon={Zap}
                     color="text-yellow-400"
@@ -51,7 +54,7 @@ export default async function StatsPage() {
                     bg="bg-purple-400/10 border-purple-400/20"
                 />
                 <StatCard
-                    title="Journal (7 Days)"
+                    title={params.get('start') ? "Journal (Range)" : "Journal (7 Days)"}
                     value={journal?.last7DaysEntries || 0}
                     icon={CheckCircle}
                     color="text-emerald-400"
@@ -60,7 +63,7 @@ export default async function StatsPage() {
             </div>
 
             {/* Middle Row: Charts */}
-            <StatsClient />
+            <StatsClient startDate={searchParams?.start} endDate={searchParams?.end} />
 
             {/* Bottom Row: Details */}
             <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">

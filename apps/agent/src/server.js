@@ -262,10 +262,11 @@ app.post('/internal/tasks/:id/run', async (req, res) => {
 app.get('/internal/stats', (req, res) => {
   if (!agent || !agent.db || !agent.journal) return res.status(503).json({ error: 'Agent not ready' });
   try {
-    const dbStats = agent.db.getStats();
-    const journalStats = agent.journal.getStats();
-    const latencyStats = agent.db.getLatencyStats();
-    const contextStats = agent.smartContext.getStats();
+    const { start, end } = req.query;
+    const dbStats = agent.db.getStats(start, end);
+    const journalStats = agent.journal.getStats(start, end);
+    const latencyStats = agent.db.getLatencyStats(start, end);
+    const contextStats = agent.smartContext.getStats(); // Context stats are global/current
 
     res.json({
       ...dbStats,
@@ -287,7 +288,8 @@ app.post('/internal/cleanup', (req, res) => {
 app.get('/internal/stats/latency', (req, res) => {
   if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
   try {
-    const trend = agent.db.getLatencyTrend(100);
+    const { limit, start, end } = req.query;
+    const trend = agent.db.getLatencyTrend(limit || 100, start, end);
     res.json(trend);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -295,7 +297,8 @@ app.get('/internal/stats/latency', (req, res) => {
 app.get('/internal/stats/usage', (req, res) => {
   if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
   try {
-    const usage = agent.db.getTokenUsageStats();
+    const { start, end } = req.query;
+    const usage = agent.db.getTokenUsageStats(start, end);
     res.json(usage);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
@@ -522,8 +525,9 @@ app.post('/internal/aliases', (req, res) => {
 app.get('/internal/stats/cost-trend', (req, res) => {
   if (!agent || !agent.db) return res.status(503).json({ error: 'Agent not ready' });
   try {
+    const { start, end } = req.query;
     const limit = parseInt(req.query.limit || '100', 10);
-    const trend = agent.db.getTokenUsageTrend(limit);
+    const trend = agent.db.getTokenUsageTrend(limit, start, end);
     res.json(trend);
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
