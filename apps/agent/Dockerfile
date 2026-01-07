@@ -47,6 +47,8 @@ ENV PATH="$VIRTUAL_ENV/bin:$PATH"
 # Copy packages from builder to allow pip install
 # Note: "out/full" structure maintains paths
 COPY --from=builder /app/packages ./packages
+# Copy plex-mcp-server manually as it is not a node dependency
+COPY --from=pruner /app/packages/plex-mcp-server ./packages/plex-mcp-server
 
 # Pre-install MCP Servers
 RUN uv pip install -r packages/plex-mcp-server/requirements.txt
