@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { getAgentConfig, updateAgentConfig } from '../actions';
 import { Settings, Check, AlertTriangle } from 'lucide-react';
 
-import WhatsAppSettings from '../../components/WhatsAppSettings';
+import { Settings, Check, AlertTriangle } from 'lucide-react';
 
 export default function SettingsPage() {
     const [config, setConfig] = useState(null);
@@ -90,9 +90,6 @@ export default function SettingsPage() {
                         </div>
                     )}
                 </div>
-
-                {/* WhatsApp Settings */}
-                <WhatsAppSettings />
             </section>
         </div>
     );

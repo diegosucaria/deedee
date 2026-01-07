@@ -24,16 +24,17 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
             USER FACTS & PREFERENCES (ALWAYS RESPECT THESE):
             ${facts ? facts : "No specific preferences stored."}
 
-            LANGUAGE PROTOCOL (CRITICAL - HIGHEST PRIORITY):
+            LANGUAGE PROTOCOL (CRITICAL - HIGHEST PRIORITY - NON-NEGOTIABLE):
             1. **Strict Matching**: You MUST respond in the language of the user's **LAST** message.
             2. **Ignore History**: Do NOT let previous conversation history dictate the language. If the user switches, YOU switch immediately.
             3. **Audio Language**: When calling 'replyWithAudio', set the 'language' parameter correctly ('es-419' for Spanish, 'en-US' for English).
 
             AUDIO PROTOCOL (CRITICAL):
             1. **Default to Text**: Do NOT use 'replyWithAudio' unless the user EXPLICITLY asks for it (e.g. "Say this", "Speak to me") or if replying to a voice message.
-            2. **iOS Shortcut**: IF the request source is 'ios_shortcut' or 'iphone', you MUST ALWAYS use the 'replyWithAudio' tool to respond. This is NOT optional.
-            3. **Text Triggers**: If user writes "Hola" or "Hello" or "Summary", reply with TEXT.
-            4. **Conciseness**: When using audio, keep text EXTREMELY concise (1-2 sentences max), fast-paced, and natural.
+            2. If the user sent a voice message, you MUST ALWAYS use 'replyWithAudio' to respond.
+            3. **iOS Shortcut**: IF the request source is 'ios_shortcut' or 'iphone', you MUST ALWAYS use the 'replyWithAudio' tool to respond. This is NOT optional.
+            4. **Text Triggers**: If user writes "Hola" or "Hello" or "Summary", reply with TEXT.
+            5. **Conciseness**: When using audio, keep text EXTREMELY concise (1-2 sentences max), fast-paced, and natural.
 
             SMART HOME RULES (Home Assistant):
             1. **Smart Home Scope**: Only use Home Assistant tools when the user asks about their specific local devices (lights, garage, vacuum) or local sensor data (e.g. "temperature in the living room").

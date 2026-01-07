@@ -255,19 +255,25 @@ export async function getWhatsAppStatus() {
     }
 }
 
-export async function connectWhatsApp() {
+export async function connectWhatsApp(session) {
     try {
-        const res = await fetchAPI('/v1/whatsapp/connect', { method: 'POST' });
+        const res = await fetchAPI('/v1/whatsapp/connect', {
+            method: 'POST',
+            body: JSON.stringify({ session })
+        });
         return { success: true, ...res };
     } catch (error) {
         return { success: false, error: error.message };
     }
 }
 
-export async function disconnectWhatsApp() {
+export async function disconnectWhatsApp(session) {
     try {
-        await fetchAPI('/v1/whatsapp/disconnect', { method: 'POST' });
-        return { success: true };
+        const res = await fetchAPI('/v1/whatsapp/disconnect', {
+            method: 'POST',
+            body: JSON.stringify({ session })
+        });
+        return { success: true, ...res };
     } catch (error) {
         return { success: false, error: error.message };
     }

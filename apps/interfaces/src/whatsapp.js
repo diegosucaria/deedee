@@ -5,12 +5,13 @@ const fs = require('fs');
 const QRCode = require('qrcode');
 
 class WhatsAppService {
-    constructor(agentUrl) {
+    constructor(agentUrl, sessionId = 'default') {
         this.agentUrl = agentUrl;
+        this.sessionId = sessionId;
         this.sock = null;
         this.qr = null;
         this.status = 'disconnected';
-        this.authFolder = path.join(process.cwd(), 'data', 'baileys_auth');
+        this.authFolder = path.join(process.cwd(), 'data', `baileys_auth_${sessionId}`);
 
         // Ensure auth folder exists
         if (!fs.existsSync(this.authFolder)) {
@@ -21,10 +22,12 @@ class WhatsAppService {
         const allowed = process.env.ALLOWED_WHATSAPP_NUMBERS || '';
         this.allowedNumbers = new Set(allowed.split(',').map(id => id.trim().replace(/[^0-9]/g, '')).filter(id => id.length > 0));
 
+        this.logPrefix = `[WhatsApp:${this.sessionId}]`;
+
         if (this.allowedNumbers.size > 0) {
-            console.log(`[WhatsApp] Security Enforced. Allowed Numbers: ${Array.from(this.allowedNumbers).join(', ')}`);
+            console.log(`${this.logPrefix} Security Enforced. Allowed Numbers: ${Array.from(this.allowedNumbers).join(', ')}`);
         } else {
-            console.error(`[WhatsApp] 🛑 SECURITY ERROR: No ALLOWED_WHATSAPP_NUMBERS set. Ignoring ALL messages.`);
+            console.error(`${this.logPrefix} 🛑 SECURITY ERROR: No ALLOWED_WHATSAPP_NUMBERS set. Ignoring ALL messages.`);
         }
     }
 
@@ -33,27 +36,27 @@ class WhatsAppService {
     }
 
     async start() {
-        console.log('[WhatsApp] Service initializing...');
+        console.log(`${this.logPrefix} Service initializing...`);
 
         // Check if we have credentials
         const hasCreds = fs.existsSync(path.join(this.authFolder, 'creds.json'));
         if (hasCreds) {
-            console.log('[WhatsApp] Session found. Auto-connecting...');
+            console.log(`${this.logPrefix} Session found. Auto-connecting...`);
             await this.connect();
         } else {
-            console.log('[WhatsApp] No session found. Standing by for manual connection.');
+            console.log(`${this.logPrefix} No session found. Standing by for manual connection.`);
             this.status = 'disconnected';
         }
     }
 
     async connect() {
         if (this.status === 'connected' || this.status === 'connecting') {
-            console.log('[WhatsApp] Already connected or connecting.');
+            console.log(`${this.logPrefix} Already connected or connecting.`);
             return;
         }
 
         try {
-            console.log('[WhatsApp] Connecting...');
+            console.log(`${this.logPrefix} Connecting...`);
             this.status = 'connecting';
 
             // Dynamic Import via helper for testability
@@ -76,7 +79,7 @@ class WhatsAppService {
                 const { connection, lastDisconnect, qr } = update;
 
                 if (qr) {
-                    console.log('[WhatsApp] QR Code generated');
+                    console.log(`${this.logPrefix} QR Code generated`);
                     this.status = 'scan_qr';
                     this.qr = await QRCode.toDataURL(qr);
                 }
@@ -86,15 +89,15 @@ class WhatsAppService {
                     const statusCode = (lastDisconnect?.error)?.output?.statusCode;
                     const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
-                    console.log(`[WhatsApp] Connection closed (Status: ${statusCode}). Reconnect: ${shouldReconnect}`);
+                    console.log(`${this.logPrefix} Connection closed (Status: ${statusCode}). Reconnect: ${shouldReconnect}`);
 
                     // If we were scanning QR and it failed/closed (e.g. timeout), do NOT auto-reconnect infinite loop.
                     // Only auto-reconnect if we were previously 'connected' or if it's a verifiable generic network error.
-                    // For simplicity: If loggedOut -> Stop. 
+                    // For simplicity: If loggedOut -> Stop.
                     // If we were parsing QR and connection closed -> likely timed out -> Stop (allow user to retry manually).
 
                     if (this.status === 'scan_qr') {
-                        console.log('[WhatsApp] Connection closed while scanning QR. Stopping auto-retry to prevent loop.');
+                        console.log(`${this.logPrefix} Connection closed while scanning QR. Stopping auto-retry to prevent loop.`);
                         this.status = 'disconnected';
                         this.qr = null;
                         this.sock = null;
@@ -109,11 +112,11 @@ class WhatsAppService {
                         // Backoff
                         setTimeout(() => this.connect(), 5000); // Call connect() instead of start()
                     } else {
-                        console.log('[WhatsApp] Logged out. Delete session to restart.');
+                        console.log(`${this.logPrefix} Logged out. Delete session to restart.`);
                         this.sock = null;
                     }
                 } else if (connection === 'open') {
-                    console.log('[WhatsApp] Connection opened');
+                    console.log(`${this.logPrefix} Connection opened`);
                     this.status = 'connected';
                     this.qr = null;
                 }
@@ -131,7 +134,7 @@ class WhatsAppService {
             });
 
         } catch (err) {
-            console.error('[WhatsApp] Connect Error:', err);
+            console.error(`${this.logPrefix} Connect Error:`, err);
             this.status = 'disconnected';
         }
     }
@@ -145,16 +148,16 @@ class WhatsAppService {
 
             // Security Check
             if (this.allowedNumbers.size === 0) {
-                console.warn(`[WhatsApp] Ignored message from ${phoneNumber} because ALLOWED_WHATSAPP_NUMBERS is empty (Secure Mode).`);
+                console.warn(`${this.logPrefix} Ignored message from ${phoneNumber} because ALLOWED_WHATSAPP_NUMBERS is empty (Secure Mode).`);
                 return;
             }
 
             if (!this.allowedNumbers.has(phoneNumber)) {
-                console.warn(`[WhatsApp] Blocked message from unauthorized number: ${phoneNumber}`);
+                console.warn(`${this.logPrefix} Blocked message from unauthorized number: ${phoneNumber}`);
                 return;
             }
 
-            console.log(`[WhatsApp] Received from ${phoneNumber}`);
+            console.log(`${this.logPrefix} Received from ${phoneNumber}`);
 
             const messageContent = msg.message;
             let text = '';
@@ -177,9 +180,9 @@ class WhatsAppService {
                     try {
                         // Download buffer
                         buffer = await this.downloadMediaMessage(msg, 'buffer', {}, { logger: console });
-                        console.log(`[WhatsApp] Downloaded audio: ${buffer.length} bytes`);
+                        console.log(`${this.logPrefix} Downloaded audio: ${buffer.length} bytes`);
                     } catch (e) {
-                        console.error('[WhatsApp] Audio Download Failed:', e);
+                        console.error(`${this.logPrefix} Audio Download Failed:`, e);
                     }
                 }
             }
@@ -191,24 +194,25 @@ class WhatsAppService {
                 if (this.downloadMediaMessage) {
                     try {
                         buffer = await this.downloadMediaMessage(msg, 'buffer', {}, { logger: console });
-                        console.log(`[WhatsApp] Downloaded image: ${buffer.length} bytes`);
+                        console.log(`${this.logPrefix} Downloaded image: ${buffer.length} bytes`);
                     } catch (e) {
-                        console.error('[WhatsApp] Image Download Failed:', e);
+                        console.error(`${this.logPrefix} Image Download Failed:`, e);
                     }
                 }
             } else {
                 // Unknown / Protocol Message / Reaction
-                console.log(`[WhatsApp] Ignored unhandled message type keys: ${Object.keys(messageContent).join(', ')}`);
+                console.log(`${this.logPrefix} Ignored unhandled message type keys: ${Object.keys(messageContent).join(', ')}`);
                 return;
             }
 
             if (!text && !buffer) {
-                console.warn('[WhatsApp] Received message with no content (empty text and no media). Ignoring.');
+                console.warn(`${this.logPrefix} Received message with no content (empty text and no media). Ignoring.`);
                 return;
             }
 
             const userMessage = createUserMessage(text, 'whatsapp', phoneNumber);
-            userMessage.metadata = { chatId: remoteJid, phoneNumber };
+            // Append session ID to metadata
+            userMessage.metadata = { chatId: remoteJid, phoneNumber, session: this.sessionId };
 
             // Inline Data for Agent
             if (buffer) {
@@ -228,16 +232,16 @@ class WhatsAppService {
             await this.sock.readMessages([msg.key]);
 
         } catch (err) {
-            console.error('[WhatsApp] Message Handler Error:', err.message);
+            console.error(`${this.logPrefix} Message Handler Error:`, err.message);
         }
     }
 
     async sendMessage(toJid, content, options = {}) {
-        if (!this.sock) throw new Error('WhatsApp not initialized');
+        if (!this.sock) throw new Error(`${this.logPrefix} WhatsApp not initialized`);
 
         try {
             const type = options.type || 'text';
-            console.log(`[WhatsApp] Sending ${type} to ${toJid}`);
+            console.log(`${this.logPrefix} Sending ${type} to ${toJid}`);
 
             if (type === 'text') {
                 await this.sock.sendMessage(toJid, { text: content });
@@ -251,7 +255,7 @@ class WhatsAppService {
             }
 
         } catch (e) {
-            console.error('[WhatsApp] Send Failed:', e.message);
+            console.error(`${this.logPrefix} Send Failed:`, e.message);
         }
     }
 
@@ -264,7 +268,7 @@ class WhatsAppService {
             this.status = 'disconnected';
             fs.rmSync(this.authFolder, { recursive: true, force: true });
         } catch (e) {
-            console.error('[WhatsApp] Disconnect Error:', e);
+            console.error(`${this.logPrefix} Disconnect Error:`, e);
         }
     }
 
@@ -283,7 +287,8 @@ class WhatsAppService {
             status: this.status,
             qr: this.qr,
             allowedNumbers: Array.from(this.allowedNumbers),
-            me: formattedMe
+            me: formattedMe,
+            session: this.sessionId
         };
     }
 }

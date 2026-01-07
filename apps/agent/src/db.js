@@ -687,7 +687,7 @@ class AgentDB {
   clearMetrics() {
     this.db.prepare('DELETE FROM token_usage').run();
     this.db.prepare('DELETE FROM job_logs').run();
-    this.db.prepare('DELETE FROM metrics').run(); // Clean up latency/performance metrics
+    this.db.prepare('DELETE FROM metrics').run();
     return true;
   }
 

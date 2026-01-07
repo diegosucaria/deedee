@@ -1,24 +1,22 @@
-// Disable background services for this test file
-process.env.ENABLE_WHATSAPP = 'false';
-process.env.TELEGRAM_TOKEN = ''; // Ensure Telegram doesn't start either
 
-const { WhatsAppService } = require('../src/whatsapp');
-const { app } = require('../src/server');
 const request = require('supertest');
+const { WhatsAppService } = require('../src/whatsapp');
 
+// Mock external dependencies
 jest.mock('qrcode', () => ({
     toDataURL: jest.fn().mockResolvedValue('data:image/png;base64,mockqr')
 }));
-
 jest.mock('axios');
 
-
-describe('WhatsAppService', () => {
+describe('WhatsAppService Unit Tests', () => {
     let whatsapp;
     let mockBaileys;
 
     beforeEach(() => {
-        whatsapp = new WhatsAppService('http://mock-agent');
+        // Reset mocks and instances
+        jest.clearAllMocks();
+
+        whatsapp = new WhatsAppService('http://mock-agent', 'test-session');
 
         // Silence console logs
         jest.spyOn(console, 'log').mockImplementation(() => { });
@@ -43,16 +41,12 @@ describe('WhatsAppService', () => {
         jest.spyOn(whatsapp, '_importBaileys').mockResolvedValue(mockBaileys);
     });
 
-    afterEach(() => {
-        jest.restoreAllMocks();
-    });
-
     test('should initialize with status disconnected', () => {
         expect(whatsapp.status).toBe('disconnected');
+        expect(whatsapp.sessionId).toBe('test-session');
     });
 
     test('start() should stay disconnected if no credentials', async () => {
-        // Ensure no creds exist (mocked or implicitly via temp dir)
         await whatsapp.start();
         expect(whatsapp.sock).toBeNull();
         expect(whatsapp.status).toBe('disconnected');
@@ -68,6 +62,7 @@ describe('WhatsAppService', () => {
         const status = whatsapp.getStatus();
         expect(status.status).toBe('disconnected');
         expect(status.qr).toBeNull();
+        expect(status.session).toBe('test-session');
     });
 
     test('sendMessage should handle audio', async () => {
@@ -89,10 +84,9 @@ describe('WhatsAppService', () => {
     });
 
     test('should ignore message if allowed list is empty (Secure Default)', async () => {
-        // Mock allowed list as empty (default in test env)
         whatsapp.allowedNumbers = new Set();
         const spyWarn = jest.spyOn(console, 'warn');
-        const spyAxios = jest.spyOn(require('axios'), 'post'); // We need to mock axios requirement at top
+        const spyAxios = require('axios').post;
 
         await whatsapp.handleMessage({
             key: { remoteJid: '123456@s.whatsapp.net', fromMe: false },
@@ -106,7 +100,7 @@ describe('WhatsAppService', () => {
     test('should block unauthorized number', async () => {
         whatsapp.allowedNumbers = new Set(['999999']);
         const spyWarn = jest.spyOn(console, 'warn');
-        const spyAxios = jest.spyOn(require('axios'), 'post');
+        const spyAxios = require('axios').post;
 
         await whatsapp.handleMessage({
             key: { remoteJid: '123456@s.whatsapp.net', fromMe: false },
@@ -119,7 +113,8 @@ describe('WhatsAppService', () => {
 
     test('should allow authorized number', async () => {
         whatsapp.allowedNumbers = new Set(['123456']);
-        const spyAxios = jest.spyOn(require('axios'), 'post').mockResolvedValue({});
+        const spyAxios = require('axios').post;
+        spyAxios.mockResolvedValue({});
 
         await whatsapp.handleMessage({
             key: { remoteJid: '123456@s.whatsapp.net', fromMe: false },
@@ -130,30 +125,63 @@ describe('WhatsAppService', () => {
     });
 });
 
-describe('WhatsApp API Endpoints', () => {
-    // We need to inject the mock into the `whatsapp` instance created inside server.js
-    // BUT server.js creates its own instance. 
-    // This is a limitation of the current test setup: we probably can't easily mock the internal instance in server.js 
-    // without dependency injection or module mocking.
-    // However, the previous tests didn't seem to crash on this.
-    // Let's rely on the fact that if we can't mock the one in server.js easily without module mocking,
-    // we should at least ensure it doesn't crash.
-    // Actually, server.js logic: `if (telegramToken)` -> starts telegram.
-    // `whatsapp` is started by default.
-    // If we want to test /whatsapp/status, we hit the real instance.
-    // The real instance will try to connect (and fail/retry).
-    // For unit testing endpoints, it is better if we could mock the service.
-    // But for now, let's keep the simple status test.
+describe('WhatsApp API Integration Tests', () => {
+    let app;
+    let mockStart;
+    let mockConnect;
 
     beforeAll(() => {
+        jest.resetModules(); // Reset cache to reload server.js
+
+        // Configure Env for this test suite
+        process.env.ENABLE_WHATSAPP = 'true';
+        process.env.TELEGRAM_TOKEN = '';
         process.env.DEEDEE_API_TOKEN = 'test-token';
+        process.env.ALLOWED_WHATSAPP_NUMBERS = '123,456';
+
+        // Re-require WhatsAppService to get the FRESH class definition that server.js will use
+        // This is crucial because resetModules() creates a new instance of the module registry
+        const { WhatsAppService: FreshWhatsAppService } = require('../src/whatsapp');
+
+        // Spy on the FRESH prototype
+        mockStart = jest.spyOn(FreshWhatsAppService.prototype, 'start').mockResolvedValue();
+        mockConnect = jest.spyOn(FreshWhatsAppService.prototype, 'connect').mockResolvedValue();
+
+        // Now require server
+        const serverModule = require('../src/server');
+        app = serverModule.app;
     });
 
-    test('GET /whatsapp/status should return status', async () => {
+    afterAll(() => {
+        jest.restoreAllMocks();
+    });
+
+    test('GET /whatsapp/status should return status for both sessions', async () => {
         const res = await request(app)
             .get('/whatsapp/status')
             .set('Authorization', 'Bearer test-token');
+
         expect(res.statusCode).toBe(200);
-        expect(res.body).toHaveProperty('status');
+        // Should contain both keys
+        expect(res.body).toHaveProperty('assistant');
+        expect(res.body).toHaveProperty('user');
+
+        // Check structure
+        expect(res.body.assistant).toHaveProperty('status');
+        expect(res.body.assistant).toHaveProperty('session', 'assistant');
+        expect(res.body.user).toHaveProperty('session', 'user');
+
+        // Confirm start() was called for both
+        expect(mockStart).toHaveBeenCalledTimes(2);
+    });
+
+    test('POST /whatsapp/connect should trigger connect on correct session', async () => {
+        const res = await request(app)
+            .post('/whatsapp/connect')
+            .set('Authorization', 'Bearer test-token')
+            .send({ session: 'user' });
+
+        expect(res.statusCode).toBe(200);
+        expect(mockConnect).toHaveBeenCalled();
     });
 });

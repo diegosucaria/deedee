@@ -13,26 +13,27 @@ Deedee uses [Baileys](https://github.com/WhiskeySockets/Baileys) to connect to W
         -   Example: `ALLOWED_WHATSAPP_NUMBERS=15550123456,15550987654`
         -   **Security**: If left empty, the bot **IGNORES ALL MESSAGES** (Secure by Default). You *must* set this to enable access.
 
-    > [!TIP]
-    > **Recommended Setup**: Run Deedee on a **secondary phone number** (spare SIM/WA Business).
-    > 1.  Scan the QR code with your **Secondary Phone** (Deedee becomes this number).
-    > 2.  Set `ALLOWED_WHATSAPP_NUMBERS` to your **Primary Phone Number**.
-    > 3.  You (Primary) -> Message -> Deedee (Secondary). Deedee executes tasks and replies.
-3.  **Connection (On-Demand)**:
-    -   Go to **Settings** -> **WhatsApp Connection**.
-    -   Click **Connect**.
-    -   A QR Code will appear.
-    -   Open WhatsApp on your phone -> **Linked Devices** -> **Link a Device**.
-    -   Scan the QR Code.
+3.  **Connection (Dual Identity)**:
+    Deedee now supports two simultaneous WhatsApp sessions:
+    
+    *   **Assistant Identity**: This is Deedee's own number. Use this for the bot to reply to you as itself.
+    *   **User Identity (Impersonation)**: This is *your* number (linked as a Companion Device). Use this if you want Deedee to send messages *as you* (e.g., replying to others on your behalf).
+
+    **To Connect:**
+    -   Go to **Interfaces** page independently.
+    -   You will see two cards: "Assistant Identity" and "User Identity".
+    -   Click **Start Session** on the one you want to link.
+    -   Scan the QR Code with the respective WhatsApp account (Linked Devices).
+
 4.  **Status**:
-    -   The settings panel will show "Connected" and your device info.
-    -   You can **Disconnect** at any time to wipe the session securely.
-    -   Session data is stored persistently in `/app/data/baileys_auth`.
+    -   The interface panel shows the status of both sessions.
+    -   Session data is stored in `data/baileys_auth_assistant` and `data/baileys_auth_user`.
 
 ### Features
+-   **Dual Session Routing**: The agent automatically routes messages to the correct session based on the tool usage (`session: 'assistant'` vs `'user'`).
 -   **Text**: Send/Receive text messages.
 -   **Audio**: Receive voice notes (Agent transcribes them). Send voice replies (Agent uses TTS).
--   **Images**: Receive images (Agent analyzes them).
+-   **Images**: Receive images (Agent analyzes them). Send generated images.
 -   **Security**: Ignores messages from unknown numbers if `ALLOWED_WHATSAPP_NUMBERS` is set.
 
 ---

@@ -82,26 +82,25 @@ if (telegramToken) {
 }
 
 // WhatsApp Init
-// Enabled by default. To disable, set ENABLE_WHATSAPP=false explicitly if needed, but per requirements we just run it.
+// Enabled by default. To disable, set ENABLE_WHATSAPP=false explicitly if needed.
 const isWhatsAppDisabled = process.env.ENABLE_WHATSAPP === 'false';
+const whatsappSessions = {};
+
 if (!isWhatsAppDisabled) {
-  whatsapp = new WhatsAppService(agentUrl);
-  whatsapp.start().catch(console.error);
+  whatsappSessions.assistant = new WhatsAppService(agentUrl, 'assistant');
+  whatsappSessions.user = new WhatsAppService(agentUrl, 'user');
+
+  // Start both
+  Object.values(whatsappSessions).forEach(ws => ws.start().catch(console.error));
 } else {
   console.log('[Interfaces] WhatsApp explicitly disabled.');
 }
 
 // Authentication Middleware
 const authMiddleware = (req, res, next) => {
-  // Skip auth for health check if needed, but best to secure everything strictly or allow specific paths.
-  // User requested "secure as other apis".
-  // Internal services usually share DEEDEE_API_TOKEN.
-
-  // We allow /health public
+  // Skip auth for health check
   if (req.path === '/health') return next();
 
-  // Determine strictness. If interfaces is internal, maybe we trust network? 
-  // But user asked for security.
   const token = req.headers.authorization?.split(' ')[1];
   if (token !== process.env.DEEDEE_API_TOKEN) {
     return res.status(401).json({ error: 'Unauthorized' });
@@ -112,26 +111,50 @@ const authMiddleware = (req, res, next) => {
 app.use(authMiddleware);
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', services: { telegram: !!telegram, whatsapp: !!whatsapp, socket: true } });
+  res.json({
+    status: 'ok',
+    services: {
+      telegram: !!telegram,
+      whatsapp: Object.keys(whatsappSessions).length > 0,
+      socket: true
+    }
+  });
 });
 
 // --- WHATSAPP ENDPOINTS ---
 app.get('/whatsapp/status', (req, res) => {
-  if (!whatsapp) return res.json({ status: 'disabled' });
-  res.json(whatsapp.getStatus());
+  if (isWhatsAppDisabled) return res.json({ status: 'disabled' });
+
+  const status = {};
+  for (const [key, service] of Object.entries(whatsappSessions)) {
+    status[key] = service.getStatus();
+  }
+  res.json(status);
 });
 
 app.post('/whatsapp/connect', async (req, res) => {
-  if (!whatsapp) return res.status(400).json({ error: 'WhatsApp disabled' });
-  await whatsapp.connect();
-  res.json({ success: true, message: 'Connecting...' });
+  if (isWhatsAppDisabled) return res.status(400).json({ error: 'WhatsApp disabled' });
+
+  const { session } = req.body; // 'assistant' or 'user'
+  const service = whatsappSessions[session];
+
+  if (!service) return res.status(400).json({ error: 'Invalid session ID' });
+
+  await service.connect();
+  res.json({ success: true, message: `Connecting ${session}...` });
 });
 
 app.post('/whatsapp/disconnect', async (req, res) => {
-  if (!whatsapp) return res.status(400).json({ error: 'WhatsApp disabled' });
-  await whatsapp.disconnect();
+  if (isWhatsAppDisabled) return res.status(400).json({ error: 'WhatsApp disabled' });
+
+  const { session } = req.body;
+  const service = whatsappSessions[session];
+
+  if (!service) return res.status(400).json({ error: 'Invalid session ID' });
+
+  await service.disconnect();
   // Auto-restart to generate new QR
-  setTimeout(() => whatsapp.start(), 1000);
+  setTimeout(() => service.start(), 1000);
   res.json({ success: true });
 });
 
@@ -143,9 +166,6 @@ app.post('/send', async (req, res) => {
 
     // WEB / SOCKET
     if (source === 'web' || (metadata && metadata.socketId)) {
-      // Ideally we use metadata.chatId (which might be the room) or metadata.socketId
-      // We'll broadcast to the room (chatId) if we join rooms, or just to the specific socket if explicit.
-      // Flexible: emit to chatId
       const target = metadata.chatId || metadata.socketId;
       console.log(`[Interfaces] DEBUG: Emitting to target: ${target}`);
 
@@ -161,17 +181,14 @@ app.post('/send', async (req, res) => {
 
     // SCHEDULER (Internal)
     if (source === 'scheduler') {
-      // Suppress "Thinking..." interim messages for notifications
       if (content.startsWith('Thinking...') || content.startsWith('Action **')) {
-        console.log(`[Interfaces] Scheduler output (suppressed): ${content}`);
         return res.json({ success: true });
       }
 
       if (telegram && defaultTelegramId) {
-        console.log(`[Interfaces] Scheduler output: Routing to default Telegram ID (${defaultTelegramId}): ${content}`);
         await telegram.sendMessage(defaultTelegramId, `📅 *Scheduled Task Update*\n\n${content}`);
       } else {
-        console.log(`[Interfaces] Scheduler output (logged only): ${content}`);
+        console.log(`[Interfaces] Scheduler output: ${content}`);
       }
       return res.json({ success: true });
     }
@@ -182,35 +199,44 @@ app.post('/send', async (req, res) => {
       }
 
       if (type === 'audio') {
-        // content is expected to be base64 string or url
-        console.log(`[Interfaces] Sending Voice to ${metadata.chatId}`);
         await telegram.sendVoice(metadata.chatId, content);
       } else if (type === 'image') {
-        console.log(`[Interfaces] Sending Photo to ${metadata.chatId}`);
         await telegram.sendPhoto(metadata.chatId, content);
       } else {
-        console.log(`[Interfaces] Sending Text to ${metadata.chatId}: ${content.substring(0, 300).replace(/\n/g, ' ')}${content.length > 300 ? '...' : ''}`);
         await telegram.sendMessage(metadata.chatId, content);
       }
 
       return res.json({ success: true });
     }
 
-    if (source === 'whatsapp' && whatsapp) {
+    if (source === 'whatsapp') {
+      // Determine which session to use
+      // metadata.session should be 'assistant' or 'user' if set by tool
+      // Default to 'assistant' if not specified, OR if coming from a reply to 'assistant' session?
+      // When we receive a message in whatsapp.js, we put session in metadata.
+      // So if this is a reply, metadata.session should be present.
+
+      const targetSessionId = metadata?.session || 'assistant';
+      const service = whatsappSessions[targetSessionId];
+
+      if (!service) {
+        console.warn(`[Interfaces] WhatsApp session '${targetSessionId}' not found. Falling back to assistant.`);
+      }
+
+      // Final fallback
+      const finalService = service || whatsappSessions.assistant;
+
+      if (!finalService) {
+        throw new Error('No WhatsApp service available');
+      }
+
       if (!metadata || !metadata.chatId) {
         throw new Error('Missing chatId in metadata for WhatsApp message');
       }
 
-      if (type === 'audio') {
-        console.log(`[Interfaces] Sending Voice to WhatsApp ${metadata.chatId}`);
-        await whatsapp.sendMessage(metadata.chatId, content, { type: 'audio' });
-      } else if (type === 'image') {
-        console.log(`[Interfaces] Sending Image to WhatsApp ${metadata.chatId}`);
-        await whatsapp.sendMessage(metadata.chatId, content, { type: 'image' });
-      } else {
-        // Text
-        await whatsapp.sendMessage(metadata.chatId, content, { type: 'text' });
-      }
+      const options = { type: type || 'text' };
+      await finalService.sendMessage(metadata.chatId, content, options);
+
       return res.json({ success: true });
     }
 
@@ -221,6 +247,8 @@ app.post('/send', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
+
 
 // Endpoint for Agent to report progress (e.g. "Routing...", "Thinking...")
 app.post('/progress', async (req, res) => {

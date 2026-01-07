@@ -325,6 +325,21 @@ const toolDefinitions = [
           required: ["alias"]
         }
       },
+      {
+        name: "sendMessage",
+        description: "Send a message to a specific user via WhatsApp or other services. Useful for initiating conversations, sending reminders to specific numbers, or replying with impersonation.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            to: { type: "STRING", description: "The recipient's phone number or ID. For WhatsApp, just the number (e.g. 15550001234)." },
+            content: { type: "STRING", description: "The message content. If type is 'image' or 'audio', this must be a base64 encoded string." },
+            service: { type: "STRING", description: "Optional. Service to use. Default: 'whatsapp'." },
+            session: { type: "STRING", description: "Optional. The identity/session to send FROM. Values: 'assistant' (default), 'user' (impersonation)." },
+            type: { type: "STRING", description: "Optional. The type of message. Values: 'text' (default), 'image', 'audio'." }
+          },
+          required: ["to", "content"]
+        }
+      },
       // Audio / TTS
       {
         name: "replyWithAudio",

@@ -1,151 +1,192 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { RefreshCw, Smartphone, LogOut, Loader2, AlertCircle } from 'lucide-react';
+import { RefreshCw, Smartphone, LogOut, Loader2, AlertCircle, ScanLine } from 'lucide-react';
 import { getWhatsAppStatus, connectWhatsApp, disconnectWhatsApp } from '../app/actions';
 
 export default function WhatsAppSettings() {
-    const [status, setStatus] = useState({ status: 'loading' });
-    const [loading, setLoading] = useState(false);
+    const [statusData, setStatusData] = useState(null);
+    const [loading, setLoading] = useState(false); // Global loading state or per card?
     const [error, setError] = useState(null);
 
     const fetchStatus = async () => {
         try {
             const data = await getWhatsAppStatus();
-            setStatus(data);
-            return data;
+            // Data format: { assistant: {...}, user: {...} } or { status: 'disabled' }
+            setStatusData(data);
         } catch (err) {
             console.error('Failed to fetch WhatsApp status:', err);
-            // setStatus({ status: 'error' });
+            setError('Failed to fetch status');
         }
     };
 
     useEffect(() => {
         fetchStatus();
-        const interval = setInterval(fetchStatus, 3000); // Poll status every 3s
+        const interval = setInterval(fetchStatus, 3000);
         return () => clearInterval(interval);
     }, []);
 
+    if (!statusData) return <div className="p-8 text-center text-zinc-500">Loading WhatsApp status...</div>;
+    if (statusData.status === 'disabled') return <div className="p-6 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400">WhatsApp is disabled.</div>;
+
+    const sessions = [
+        { key: 'assistant', title: 'Assistant Identity', description: 'Deedee answers as herself using this number.' },
+        { key: 'user', title: 'User Identity (Impersonation)', description: 'Deedee acts on your behalf (e.g. sending messages as you).' }
+    ];
+
+    return (
+        <div className="space-y-6">
+            <div className="flex items-center justify-between">
+                <h2 className="text-xl font-semibold flex items-center gap-2 text-white">
+                    <Smartphone className="w-6 h-6 text-green-500" />
+                    WhatsApp Sessions
+                </h2>
+                <button
+                    onClick={fetchStatus}
+                    className="p-2 hover:bg-zinc-800 rounded-lg transition-colors text-zinc-400"
+                    title="Refresh Status"
+                >
+                    <RefreshCw className="w-4 h-4" />
+                </button>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+                {sessions.map(session => (
+                    <SessionCard
+                        key={session.key}
+                        sessionKey={session.key}
+                        title={session.title}
+                        description={session.description}
+                        data={statusData[session.key] || { status: 'disconnected' }}
+                        refresh={fetchStatus}
+                    />
+                ))}
+            </div>
+
+            {error && (
+                <div className="bg-red-500/10 text-red-400 p-4 rounded-lg flex items-center gap-2">
+                    <AlertCircle className="w-4 h-4" />
+                    {error}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function SessionCard({ sessionKey, title, description, data, refresh }) {
+    const [busy, setBusy] = useState(false);
+    const [cardError, setCardError] = useState(null);
+
+    const isConnected = data.status === 'connected';
+    const isScanning = data.status === 'scan_qr' || data.status === 'connecting';
+
     const handleConnect = async () => {
-        setLoading(true);
-        setError(null);
-        const res = await connectWhatsApp();
-        if (!res.success) {
-            setError(res.error || 'Failed to connect');
-        }
-        setLoading(false);
-        fetchStatus();
+        setBusy(true);
+        setCardError(null);
+        const res = await connectWhatsApp(sessionKey);
+        if (!res.success) setCardError(res.error || 'Connection failed');
+        await refresh();
+        setBusy(false);
     };
 
     const handleDisconnect = async () => {
-        if (!confirm('Are you sure you want to disconnect? You will need to re-scan the QR code.')) return;
-        setLoading(true);
-        const res = await disconnectWhatsApp();
-        if (!res.success) {
-            setError(res.error || 'Failed to disconnect');
-        }
-        setLoading(false);
-        fetchStatus();
+        if (!confirm(`Disconnect ${title}?`)) return;
+        setBusy(true);
+        const res = await disconnectWhatsApp(sessionKey);
+        if (!res.success) setCardError(res.error || 'Disconnect failed');
+        await refresh();
+        setBusy(false);
     };
 
-    const isConnected = status.status === 'connected';
-    const isScanning = status.status === 'scan_qr' || status.status === 'connecting';
-    const qrCode = status.qr;
-
     return (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-            <div className="p-6 border-b border-zinc-800 flex justify-between items-center">
-                <div>
-                    <h2 className="text-lg font-semibold text-white flex items-center gap-2">
-                        <Smartphone className="w-5 h-5 text-green-500" />
-                        WhatsApp Connection
-                    </h2>
-                    <p className="text-sm text-zinc-400 mt-1">
-                        Connect a WhatsApp account to enable the agent to message you.
-                    </p>
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden flex flex-col">
+            <div className="p-6 border-b border-zinc-800 bg-zinc-900/50 flex-grow-0">
+                <div className="flex justify-between items-start mb-2">
+                    <h3 className="font-semibold text-white">{title}</h3>
+                    <Badge status={data.status} />
                 </div>
-                <div className="flex items-center gap-2">
-                    <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${isConnected ? 'bg-green-500/10 text-green-400' :
-                            isScanning ? 'bg-yellow-500/10 text-yellow-400' :
-                                'bg-zinc-700/50 text-zinc-400'
-                        }`}>
-                        {status.status === 'scan_qr' ? 'AWAITING SCAN' : status.status.toUpperCase()}
-                    </span>
-                </div>
+                <p className="text-sm text-zinc-400 min-h-[40px]">{description}</p>
             </div>
 
-            <div className="p-6">
-                {error && (
-                    <div className="bg-red-500/10 text-red-400 p-3 rounded-lg text-sm mb-4 flex items-center gap-2">
-                        <AlertCircle className="w-4 h-4" />
-                        {error}
+            <div className="p-6 flex-grow flex flex-col justify-center min-h-[240px]">
+                {cardError && (
+                    <div className="mb-4 text-xs text-red-400 bg-red-500/10 p-2 rounded">
+                        {cardError}
                     </div>
                 )}
 
                 {isConnected ? (
-                    <div className="flex flex-col md:flex-row items-center justify-between gap-6">
-                        <div className="flex items-center gap-4">
-                            <div className="w-16 h-16 bg-zinc-800 rounded-full flex items-center justify-center text-2xl">
-                                📱
+                    <div className="space-y-4">
+                        <div className="flex items-center gap-3 bg-zinc-800/50 p-3 rounded-lg border border-zinc-700/50">
+                            <div className="w-10 h-10 bg-green-500/20 text-green-500 rounded-full flex items-center justify-center font-bold">
+                                WA
                             </div>
-                            <div>
-                                <h3 className="font-medium text-white">Connected Device</h3>
-                                <p className="text-zinc-400 text-sm">
-                                    {status.me?.name || 'Unknown Device'} ({status.me?.id || '...'})
-                                </p>
-                                <p className="text-zinc-500 text-xs mt-1">
-                                    Allowed Numbers: {status.allowedNumbers?.join(', ') || 'None'}
-                                </p>
+                            <div className="overflow-hidden">
+                                <div className="text-sm font-medium text-white truncate">{data.me?.name || 'WhatsApp User'}</div>
+                                <div className="text-xs text-zinc-500 font-mono truncate">{data.me?.id || 'Unknown ID'}</div>
                             </div>
                         </div>
                         <button
                             onClick={handleDisconnect}
-                            disabled={loading}
-                            className="px-4 py-2 bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20 rounded-lg text-sm font-medium transition-colors flex items-center gap-2"
+                            disabled={busy}
+                            className="w-full py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
                         >
-                            {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
+                            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
                             Disconnect
                         </button>
                     </div>
-                ) : (
-                    <div className="flex flex-col items-center justify-center py-4">
-                        {status.status === 'scan_qr' && qrCode ? (
-                            <div className="text-center space-y-4 animate-in fade-in duration-500">
-                                <div className="bg-white p-2 rounded-lg inline-block">
+                ) : isScanning ? (
+                    <div className="text-center">
+                        {data.qr ? (
+                            <div className="space-y-4">
+                                <div className="bg-white p-2 rounded-lg inline-block shadow-lg">
                                     {/* eslint-disable-next-line @next/next/no-img-element */}
-                                    <img src={qrCode} alt="WhatsApp QR Code" className="w-64 h-64" />
+                                    <img src={data.qr} alt="QR Code" className="w-40 h-40" />
                                 </div>
-                                <p className="text-zinc-400 text-sm">
-                                    Open WhatsApp on your phone,<br />go to <strong>Linked Devices</strong> and scan the code.
-                                </p>
-                            </div>
-                        ) : isScanning ? (
-                            <div className="text-center py-12">
-                                <Loader2 className="w-8 h-8 text-indigo-500 animate-spin mx-auto mb-3" />
-                                <p className="text-zinc-400">Initializing connection...</p>
+                                <p className="text-xs text-zinc-500">Scan with WhatsApp</p>
                             </div>
                         ) : (
-                            <div className="text-center py-8">
-                                <div className="w-16 h-16 bg-zinc-800 rounded-full flex items-center justify-center text-zinc-600 mx-auto mb-4">
-                                    <Smartphone className="w-8 h-8" />
-                                </div>
-                                <h3 className="text-white font-medium mb-2">No Active Session</h3>
-                                <p className="text-zinc-400 text-sm max-w-sm mx-auto mb-6">
-                                    The agent is currently disconnected from WhatsApp. Start a new session to pair your device.
-                                </p>
-                                <button
-                                    onClick={handleConnect}
-                                    disabled={loading}
-                                    className="px-6 py-2.5 bg-green-600 hover:bg-green-500 text-white rounded-lg font-medium transition-colors flex items-center gap-2 mx-auto"
-                                >
-                                    {loading ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                                    Start Session
-                                </button>
+                            <div className="py-8">
+                                <Loader2 className="w-8 h-8 text-indigo-500 animate-spin mx-auto mb-2" />
+                                <span className="text-sm text-zinc-400">Initializing...</span>
                             </div>
                         )}
+                    </div>
+                ) : (
+                    <div className="text-center py-4">
+                        <div className="w-12 h-12 bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-3 text-zinc-600">
+                            <ScanLine className="w-6 h-6" />
+                        </div>
+                        <button
+                            onClick={handleConnect}
+                            disabled={busy}
+                            className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                        >
+                            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                            Start Session
+                        </button>
                     </div>
                 )}
             </div>
         </div>
+    );
+}
+
+function Badge({ status }) {
+    const styles = {
+        connected: 'bg-green-500/10 text-green-400 border-green-500/20',
+        scan_qr: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
+        connecting: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
+        disconnected: 'bg-zinc-700/30 text-zinc-500 border-zinc-700/50',
+        error: 'bg-red-500/10 text-red-400 border-red-500/20'
+    };
+
+    const style = styles[status] || styles.disconnected;
+    const label = status === 'scan_qr' ? 'SCAN QR' : status.toUpperCase();
+
+    return (
+        <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${style}`}>
+            {label}
+        </span>
     );
 }

@@ -5,6 +5,7 @@ const { SmartHomeExecutor } = require('./executors/smarthome');
 const { SchedulerExecutor } = require('./executors/scheduler');
 const { GSuiteExecutor } = require('./executors/gsuite');
 const { MediaExecutor } = require('./executors/media');
+const { CommunicationExecutor } = require('./executors/communication');
 
 class ToolExecutor {
     /**
@@ -19,7 +20,8 @@ class ToolExecutor {
             new SmartHomeExecutor(services),
             new SchedulerExecutor(services),
             new GSuiteExecutor(services),
-            new MediaExecutor(services)
+            new MediaExecutor(services),
+            new CommunicationExecutor(services)
         ];
     }
 
