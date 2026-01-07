@@ -4,8 +4,6 @@ import { useState, useEffect } from 'react';
 import { getAgentConfig, updateAgentConfig } from '../actions';
 import { Settings, Check, AlertTriangle } from 'lucide-react';
 
-import { Settings, Check, AlertTriangle } from 'lucide-react';
-
 export default function SettingsPage() {
     const [config, setConfig] = useState(null);
     const [saving, setSaving] = useState(false);

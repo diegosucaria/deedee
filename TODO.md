@@ -39,7 +39,8 @@
 ## 🚧 Future Roadmap / Ideas
 
 ### Interfaces
-- [ ] **WhatsApp**: Integration via Baileys (Unofficial/Personal). See `specs/whatsapp-interface.md`.
+- [x] **WhatsApp**: Integration via Baileys (Unofficial/Personal). See `docs/interfaces.md`.
+- [ ] **Automated Message Intros**: Add "I am DeeDee" introduction to automated/scheduler messages sent as User.
 - [ ] **Slack**: Native app integration (currently just webhooks).
 
 ### Intelligence
