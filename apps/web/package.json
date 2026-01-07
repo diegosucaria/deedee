@@ -7,7 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
-    "test:actions": "node scripts/verify-actions.js"
+    "test:actions": "node scripts/verify-actions.js",
+    "test": "npm run lint && npm run test:actions"
   },
   "dependencies": {
     "clsx": "^2.1.1",

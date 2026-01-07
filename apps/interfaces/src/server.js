@@ -25,7 +25,13 @@ app.use(express.json({ limit: '50mb' }));
 
 // --- SOCKET.IO ---
 io.on("connection", (socket) => {
-  console.log(`[Interfaces] Socket connected: ${socket.id}`);
+  const { chatId } = socket.handshake.query;
+  console.log(`[Interfaces] Socket connected: ${socket.id} (ChatID: ${chatId || 'None'})`);
+
+  if (chatId) {
+    socket.join(chatId);
+    console.log(`[Interfaces] Socket ${socket.id} joined room ${chatId}`);
+  }
 
   // Forward client message to Agent
   socket.on("chat:message", async (data) => {
