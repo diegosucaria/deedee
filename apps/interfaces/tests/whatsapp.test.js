@@ -123,6 +123,37 @@ describe('WhatsAppService Unit Tests', () => {
 
         expect(spyAxios).toHaveBeenCalled();
     });
+
+    test('should reconnect on 515 error even if status is scan_qr', async () => {
+        await whatsapp.connect();
+        
+        // Simulate QR code generation first
+        const qrCallback = mockBaileys.default.mock.results[0].value.ev.on.mock.calls.find(c => c[0] === 'connection.update')[1];
+        await qrCallback({ qr: 'mock-qr' });
+        expect(whatsapp.status).toBe('scan_qr');
+
+        // Spy on connect to ensure it is called again
+        const connectSpy = jest.spyOn(whatsapp, 'connect');
+
+        // Simulate 515 error
+        jest.useFakeTimers();
+        await qrCallback({ 
+            connection: 'close', 
+            lastDisconnect: { 
+                error: { output: { statusCode: 515 } } 
+            } 
+        });
+
+        // Current implementation stops auto-retry on scan_qr, so this expect might fail before the fix
+        // We want to ensure it DOES verify the fix.
+        // Fast-forward timer for the 5000ms delay
+        jest.runAllTimers();
+        
+        expect(whatsapp.status).toBe('connecting');
+        expect(connectSpy).toHaveBeenCalledTimes(1); 
+        
+        jest.useRealTimers();
+    });
 });
 
 describe('WhatsApp API Integration Tests', () => {

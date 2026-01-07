@@ -67,7 +67,7 @@ class WhatsAppService {
 
             this.sock = makeWASocket({
                 auth: state,
-                printQRInTerminal: true, // Useful for logs still
+                // printQRInTerminal: true, // DEPRECATED: Handled manually
                 defaultQueryTimeoutMs: undefined, // endless
                 connectTimeoutMs: 60000, // Increased timeout
                 keepAliveIntervalMs: 30000,
@@ -95,8 +95,9 @@ class WhatsAppService {
                     // Only auto-reconnect if we were previously 'connected' or if it's a verifiable generic network error.
                     // For simplicity: If loggedOut -> Stop.
                     // If we were parsing QR and connection closed -> likely timed out -> Stop (allow user to retry manually).
+                    // EXCEPTION: Status 515 (Stream Errored) is common and should retry even during QR scan
 
-                    if (this.status === 'scan_qr') {
+                    if (this.status === 'scan_qr' && statusCode !== 515) {
                         console.log(`${this.logPrefix} Connection closed while scanning QR. Stopping auto-retry to prevent loop.`);
                         this.status = 'disconnected';
                         this.qr = null;
