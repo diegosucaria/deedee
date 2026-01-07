@@ -14,6 +14,7 @@ You are working on **Deedee**, a personal, self-improving AI agent designed to r
   - **Repo**: [https://github.com/diegosucaria/deedee](https://github.com/diegosucaria/deedee)
   - **Target**: Balena Fleet `g_diego_sucaria/deedee` (Raspberry Pi).
   - **CI/CD**: GitHub Actions triggers `balena push`.
+  - **Mandate**: You **MUST** run a build (`npm run build` or specific service build) before pushing to ensure no regressions.
 
 ## 🛡️ Critical Mandates
 
