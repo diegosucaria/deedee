@@ -1,6 +1,7 @@
 
 const request = require('supertest');
 const { WhatsAppService } = require('../src/whatsapp');
+const fs = require('fs');
 
 // Mock external dependencies
 jest.mock('qrcode', () => ({
@@ -126,7 +127,7 @@ describe('WhatsAppService Unit Tests', () => {
 
     test('should reconnect on 515 error even if status is scan_qr', async () => {
         await whatsapp.connect();
-        
+
         // Simulate QR code generation first
         const qrCallback = mockBaileys.default.mock.results[0].value.ev.on.mock.calls.find(c => c[0] === 'connection.update')[1];
         await qrCallback({ qr: 'mock-qr' });
@@ -137,22 +138,121 @@ describe('WhatsAppService Unit Tests', () => {
 
         // Simulate 515 error
         jest.useFakeTimers();
-        await qrCallback({ 
-            connection: 'close', 
-            lastDisconnect: { 
-                error: { output: { statusCode: 515 } } 
-            } 
+        await qrCallback({
+            connection: 'close',
+            lastDisconnect: {
+                error: { output: { statusCode: 515 } }
+            }
         });
 
         // Current implementation stops auto-retry on scan_qr, so this expect might fail before the fix
         // We want to ensure it DOES verify the fix.
         // Fast-forward timer for the 5000ms delay
         jest.runAllTimers();
-        
+
         expect(whatsapp.status).toBe('connecting');
-        expect(connectSpy).toHaveBeenCalledTimes(1); 
-        
+        expect(connectSpy).toHaveBeenCalledTimes(1);
+
+
         jest.useRealTimers();
+    });
+
+    test('should clear session after N consecutive 515 errors', async () => {
+        // We trigger it somewhat manually to verify the logic increment
+        whatsapp.reconnectAttempts = 4;
+        await whatsapp.connect();
+
+        const qrCallback = mockBaileys.default.mock.results[0].value.ev.on.mock.calls.find(c => c[0] === 'connection.update')[1];
+
+        // 5th attempt (increment happens on error)
+        jest.spyOn(whatsapp, 'disconnect');
+        jest.spyOn(fs, 'rmSync');
+
+        await qrCallback({
+            connection: 'close',
+            lastDisconnect: {
+                error: { output: { statusCode: 515 } }
+            }
+        });
+
+        // reconnectAttempts should be 5 now, trigger wipe
+        expect(whatsapp.disconnect).toHaveBeenCalled();
+        // Since disconnect calls rmSync, we verify that too
+        expect(fs.rmSync).toHaveBeenCalledWith(whatsapp.authFolder, expect.anything());
+    });
+
+    test('should unwrap ephemeral message', async () => {
+        whatsapp.allowedNumbers = new Set(['123456']);
+        const spyAxios = require('axios').post;
+        spyAxios.mockResolvedValue({});
+
+        await whatsapp.handleMessage({
+            key: { remoteJid: '123456@s.whatsapp.net', fromMe: false },
+            message: {
+                ephemeralMessage: {
+                    message: {
+                        conversation: 'Secret Hello'
+                    }
+                }
+            }
+        });
+
+        expect(spyAxios).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+                content: 'Secret Hello'
+            })
+        );
+    });
+
+    test('should unwrap viewOnce message', async () => {
+        whatsapp.allowedNumbers = new Set(['123456']);
+        const spyAxios = require('axios').post;
+        spyAxios.mockResolvedValue({});
+
+        await whatsapp.handleMessage({
+            key: { remoteJid: '123456@s.whatsapp.net', fromMe: false },
+            message: {
+                viewOnceMessage: {
+                    message: {
+                        imageMessage: {
+                            caption: 'Sneaky Image'
+                        }
+                    }
+                }
+            }
+        });
+
+        expect(spyAxios).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+                content: 'Sneaky Image'
+            })
+        );
+    });
+    test('should handle LID remoteJid by checking participant or resolving', async () => {
+        whatsapp.allowedNumbers = new Set(['123456']);
+        const spyAxios = require('axios').post;
+        spyAxios.mockResolvedValue({});
+        const spyWarn = jest.spyOn(console, 'warn');
+
+        await whatsapp.handleMessage({
+            key: {
+                remoteJid: '999999999@lid',
+                participant: '123456@s.whatsapp.net', // The real phone number
+                fromMe: false
+            },
+            message: { conversation: 'Hello from LID' }
+        });
+
+        // It should SUCCEED because it finds 123456 in participant
+        expect(spyAxios).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({
+                content: 'Hello from LID'
+            })
+        );
+        expect(spyWarn).not.toHaveBeenCalled();
     });
 });
 

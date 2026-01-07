@@ -11,6 +11,7 @@ class WhatsAppService {
         this.sock = null;
         this.qr = null;
         this.status = 'disconnected';
+        this.reconnectAttempts = 0;
         this.authFolder = path.join(process.cwd(), 'data', `baileys_auth_${sessionId}`);
 
         // Ensure auth folder exists
@@ -71,7 +72,8 @@ class WhatsAppService {
                 defaultQueryTimeoutMs: undefined, // endless
                 connectTimeoutMs: 60000, // Increased timeout
                 keepAliveIntervalMs: 30000,
-                syncFullHistory: false
+                syncFullHistory: false,
+                markOnlineOnConnect: false // Do not show "Online" status automatically
             });
 
             // --- CONNECTION UPDATE ---
@@ -90,6 +92,19 @@ class WhatsAppService {
                     const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
                     console.log(`${this.logPrefix} Connection closed (Status: ${statusCode}). Reconnect: ${shouldReconnect}`);
+
+                    // Auto-Recovery for loop 515
+                    if (statusCode === 515) {
+                        this.reconnectAttempts++;
+                        console.log(`${this.logPrefix} Stream Error 515 count: ${this.reconnectAttempts}`);
+                        if (this.reconnectAttempts >= 5) {
+                            console.error(`${this.logPrefix} Too many 515 errors. Corruption likely. Wiping session.`);
+                            await this.disconnect();
+                            // Restart to generate NEW QR
+                            setTimeout(() => this.start(), 1000);
+                            return;
+                        }
+                    }
 
                     // If we were scanning QR and it failed/closed (e.g. timeout), do NOT auto-reconnect infinite loop.
                     // Only auto-reconnect if we were previously 'connected' or if it's a verifiable generic network error.
@@ -120,6 +135,7 @@ class WhatsAppService {
                     console.log(`${this.logPrefix} Connection opened`);
                     this.status = 'connected';
                     this.qr = null;
+                    this.reconnectAttempts = 0; // Reset on success
                 }
             });
 
@@ -145,7 +161,17 @@ class WhatsAppService {
             const remoteJid = msg.key.remoteJid;
             if (remoteJid === 'status@broadcast' || msg.key.fromMe) return;
 
-            const phoneNumber = remoteJid.split('@')[0];
+            let phoneNumber = remoteJid.split('@')[0];
+
+            // Handle LID: If remoteJid is an LID, check if we have a participant (likely the real phone JID)
+            // This happens when a primary device sends a message to the bot (assistant)
+            if (remoteJid.includes('@lid') && msg.key.participant) {
+                const participantNumber = msg.key.participant.split('@')[0];
+                if (participantNumber) {
+                    console.log(`${this.logPrefix} Resolving LID ${phoneNumber} to participant ${participantNumber}`);
+                    phoneNumber = participantNumber;
+                }
+            }
 
             // Security Check
             if (this.allowedNumbers.size === 0) {
@@ -160,7 +186,18 @@ class WhatsAppService {
 
             console.log(`${this.logPrefix} Received from ${phoneNumber}`);
 
-            const messageContent = msg.message;
+            // Unwrapping Logic
+            let messageContent = msg.message;
+            if (messageContent.ephemeralMessage) {
+                messageContent = messageContent.ephemeralMessage.message;
+            } else if (messageContent.viewOnceMessage) {
+                messageContent = messageContent.viewOnceMessage.message;
+            } else if (messageContent.viewOnceMessageV2) {
+                messageContent = messageContent.viewOnceMessageV2.message;
+            } else if (messageContent.documentWithCaptionMessage) {
+                messageContent = messageContent.documentWithCaptionMessage.message;
+            }
+
             let text = '';
             let type = 'text';
             let buffer = null;

@@ -157,14 +157,24 @@ function SessionCard({ sessionKey, title, description, data, refresh }) {
                         <div className="w-12 h-12 bg-zinc-800 rounded-full flex items-center justify-center mx-auto mb-3 text-zinc-600">
                             <ScanLine className="w-6 h-6" />
                         </div>
-                        <button
-                            onClick={handleConnect}
-                            disabled={busy}
-                            className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
-                        >
-                            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
-                            Start Session
-                        </button>
+                        <div className="space-y-3">
+                            <button
+                                onClick={handleConnect}
+                                disabled={busy}
+                                className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                            >
+                                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <RefreshCw className="w-4 h-4" />}
+                                Start Session
+                            </button>
+
+                            <button
+                                onClick={handleDisconnect}
+                                disabled={busy}
+                                className="w-full py-2 bg-zinc-800 hover:bg-zinc-700 text-red-400 rounded-lg text-xs font-medium transition-colors"
+                            >
+                                Force Reset
+                            </button>
+                        </div>
                     </div>
                 )}
             </div>
