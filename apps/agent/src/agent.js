@@ -393,6 +393,11 @@ class Agent {
 
       let systemInstruction = getSystemInstruction(new Date().toString(), pendingGoals, facts, { codingMode: isCodingMode });
 
+      // In-Context User Location
+      if (message.metadata?.location) {
+        systemInstruction += `\n\n**USER LOCATION**: The user is currently in **${message.metadata.location}**. Use this for context (weather, time, local queries) if queried.`;
+      }
+
       if (['iphone', 'ios_shortcut'].includes(message.source)) {
         systemInstruction += `\n
             **DICTATION SAFEGUARD**: You are receiving input from iOS Voice Dictation. It is prone to errors.
@@ -832,6 +837,14 @@ class Agent {
       if (title) {
         this.db.updateSession(chatId, { title });
         console.log(`[Agent] Session ${chatId} titled: "${title}"`);
+
+        // Notify client to update UI
+        await this.interface.send({
+          source: 'web',
+          type: 'session_update',
+          content: JSON.stringify({ id: chatId, title }),
+          metadata: { chatId }
+        });
       }
     } catch (err) {
       console.error('[Agent] Auto-titling failed:', err.message);

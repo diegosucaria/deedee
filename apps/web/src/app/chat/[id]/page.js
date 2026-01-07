@@ -10,8 +10,11 @@ import { useChatSidebar } from '@/components/ChatSidebarProvider';
 
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || undefined;
 
+import { useRouter } from 'next/navigation';
+
 export default function ChatSessionPage({ params }) {
     const { id: chatId } = params;
+    const router = useRouter(); // For refreshing sidebar on title update
     const [socket, setSocket] = useState(null);
     const [isConnected, setIsConnected] = useState(false);
     const { setCollapsed } = useChatSidebar();
@@ -20,7 +23,20 @@ export default function ChatSessionPage({ params }) {
     const [isWaiting, setIsWaiting] = useState(false);
     const [thinkingStatus, setThinkingStatus] = useState('');
     const [sessionTitle, setSessionTitle] = useState('');
+    const [userLocation, setUserLocation] = useState(null);
     const messagesEndRef = useRef(null);
+
+    // Fetch Location (Option 2: IP-based)
+    useEffect(() => {
+        fetch('https://ipapi.co/json/')
+            .then(res => res.json())
+            .then(data => {
+                if (data.city && data.country_name) {
+                    setUserLocation(`${data.city}, ${data.country_name}`);
+                }
+            })
+            .catch(err => console.warn('Location fetch failed:', err));
+    }, []);
 
     // Fetch Session History
     useEffect(() => {
@@ -62,6 +78,14 @@ export default function ChatSessionPage({ params }) {
             setIsConnected(false);
         });
 
+        // Handle Session Updates (Auto-Titling)
+        newSocket.on('session:update', (data) => {
+            if (data.id === chatId) {
+                if (data.title) setSessionTitle(data.title);
+                router.refresh(); // Refresh server components (Sidebar)
+            }
+        });
+
         newSocket.on('agent:message', (data) => {
             if (data.metadata?.chatId && data.metadata.chatId !== chatId) return; // Filter by chatID
 
@@ -98,7 +122,7 @@ export default function ChatSessionPage({ params }) {
 
         setSocket(newSocket);
         return () => newSocket.close();
-    }, [chatId]);
+    }, [chatId, router]);
 
     // Auto-scroll
     useEffect(() => {
@@ -126,7 +150,10 @@ export default function ChatSessionPage({ params }) {
 
         socket.emit('chat:message', {
             content: content,
-            chatId: chatId // Explicitly associate
+            chatId: chatId,
+            metadata: {
+                location: userLocation // Send location context
+            }
         });
     };
 
@@ -136,7 +163,6 @@ export default function ChatSessionPage({ params }) {
             <header className="flex h-16 items-center justify-between border-b border-zinc-800 bg-zinc-950 px-6">
                 <div className="flex flex-col">
                     <h1 className="text-xl font-semibold text-white truncate max-w-sm">{sessionTitle || 'Chat'}</h1>
-                    <span className="text-[10px] text-zinc-500 font-mono">{chatId}</span>
                 </div>
                 <div className="flex items-center gap-2">
                     {isConnected ? (

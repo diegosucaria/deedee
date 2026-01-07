@@ -177,6 +177,12 @@ app.post('/send', async (req, res) => {
       console.log(`[Interfaces] DEBUG: Emitting to target: ${target}`);
 
       if (target) {
+        if (type === 'session_update') {
+          // Special event for session updates (title change)
+          io.to(target).emit('session:update', JSON.parse(content));
+          return res.json({ success: true });
+        }
+
         io.to(target).emit('agent:message', {
           content,
           type: type || 'text',
