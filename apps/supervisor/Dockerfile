@@ -1,5 +1,5 @@
 # Builder Stage
-FROM node:18-alpine AS builder
+FROM node:24-alpine AS builder
 WORKDIR /app
 ENV LANG=C.UTF-8
 
@@ -20,7 +20,7 @@ RUN npm install
 RUN npm prune --production
 
 # Runner Stage
-FROM node:18-alpine AS runner
+FROM node:24-alpine AS runner
 WORKDIR /app
 ENV LANG=C.UTF-8
 ENV NODE_ENV=production
