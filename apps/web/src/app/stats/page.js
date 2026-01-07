@@ -1,4 +1,4 @@
-import CleanMetricsButton from '@/components/CleanMetricsButton'; // Rename CleanupButton if needed or use existing
+import CleanupButton from '@/components/CleanupButton';
 import DateIntervalSelector from '@/components/DateIntervalSelector';
 
 export default async function StatsPage({ searchParams }) {
