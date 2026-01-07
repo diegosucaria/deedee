@@ -32,16 +32,12 @@ COPY --from=pruner /app/out/json/ .
 COPY --from=pruner /app/out/package-lock.json ./package-lock.json
 
 # Install dependencies (cached)
+# Install dependencies (cached)
 RUN npm install
+RUN npm prune --production
 
-# Copy source code
 # Copy source code
 COPY . .
-
-# No build step needed for agent (it's node), but we can prune dev deps here if we want specific install
-# But typically we just use the node_modules we have. 
-# However, to be clean, we can do:
-RUN npm prune --production
 
 # --- Runner Stage ---
 FROM node:24-alpine AS runner

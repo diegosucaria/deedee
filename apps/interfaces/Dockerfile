@@ -26,13 +26,12 @@ COPY --from=pruner /app/out/json/ .
 COPY --from=pruner /app/out/package-lock.json ./package-lock.json
 
 # Install dependencies
+# Install dependencies
 RUN npm install
+RUN npm prune --production
 
-# Copy source code
 # Copy source code
 COPY . .
-
-RUN npm prune --production
 
 # --- Runner Stage ---
 FROM node:24-alpine AS runner
