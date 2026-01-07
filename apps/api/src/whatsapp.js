@@ -29,8 +29,8 @@ router.get('/qr', (req, res) => proxyRequest(req, res, 'GET', '/whatsapp/qr')); 
 // Status endpoint in interfaces service returns { status, qr (base64) }. Ideally we use that.
 // But if we want a dedicated endpoint later, fine. For now, rely on status.
 
-router.post('/connect', (req, res) => proxyRequest(req, res, 'POST', '/whatsapp/connect'));
+router.post('/connect', (req, res) => proxyRequest(req, res, 'POST', '/whatsapp/connect', req.body));
 
-router.post('/disconnect', (req, res) => proxyRequest(req, res, 'POST', '/whatsapp/disconnect'));
+router.post('/disconnect', (req, res) => proxyRequest(req, res, 'POST', '/whatsapp/disconnect', req.body));
 
 module.exports = router;

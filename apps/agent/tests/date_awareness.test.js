@@ -17,7 +17,8 @@ jest.mock('../src/db', () => ({
         getAllFacts: jest.fn().mockReturnValue([]),
         saveSummary: jest.fn(),
         getLatestSummary: jest.fn().mockReturnValue(null),
-        searchMessages: jest.fn().mockReturnValue([])
+        searchMessages: jest.fn().mockReturnValue([]),
+        getKey: jest.fn()
     }))
 }));
 

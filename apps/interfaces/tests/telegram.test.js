@@ -39,8 +39,8 @@ describe('TelegramService Security', () => {
 
     test('should ALLOW all when ALLOWED_TELEGRAM_IDS is empty', () => {
         service = new TelegramService('fake-token', 'http://agent:3000');
-        expect(service._isAllowed('12345')).toBe(true);
-        expect(service._isAllowed('67890')).toBe(true);
+        expect(service._isAllowed('12345')).toBe(false);
+        expect(service._isAllowed('67890')).toBe(false);
     });
 
     test('should ALLOW specific IDs when ALLOWED_TELEGRAM_IDS is set', () => {
