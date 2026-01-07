@@ -17,12 +17,15 @@ describe('WhatsAppService Unit Tests', () => {
         // Reset mocks and instances
         jest.clearAllMocks();
 
-        whatsapp = new WhatsAppService('http://mock-agent', 'test-session');
-
-        // Silence console logs
+        // Silence console logs BEFORE instantiation
         jest.spyOn(console, 'log').mockImplementation(() => { });
         jest.spyOn(console, 'error').mockImplementation(() => { });
         jest.spyOn(console, 'warn').mockImplementation(() => { });
+
+        // Mock Env
+        process.env.ALLOWED_WHATSAPP_NUMBERS = '123456';
+
+        whatsapp = new WhatsAppService('http://mock-agent', 'test-session');
 
         // Create a robust mock for Baileys
         mockBaileys = {
@@ -245,7 +248,6 @@ describe('WhatsAppService Unit Tests', () => {
             message: { conversation: 'Hello from LID' }
         });
 
-        // It should SUCCEED because it finds 123456 in participant
         expect(spyAxios).toHaveBeenCalledWith(
             expect.anything(),
             expect.objectContaining({
@@ -253,6 +255,48 @@ describe('WhatsAppService Unit Tests', () => {
             })
         );
         expect(spyWarn).not.toHaveBeenCalled();
+    });
+
+    test('should resolve LID via internal map if participant is missing (Fix Verification)', async () => {
+        const lidJid = '987654321@lid';
+        const realNumber = '987654321';
+
+        whatsapp.allowedNumbers = new Set([realNumber]);
+        const spyAxios = require('axios').post;
+        spyAxios.mockResolvedValue({});
+        const spyError = jest.spyOn(console, 'error');
+
+        // 1. Simulate Contact Sync (Population of Map)
+        // Access mock directly from the socket instance
+        await whatsapp.connect();
+
+        // Wait for async initialization
+        await new Promise(resolve => setTimeout(resolve, 50));
+
+        if (!whatsapp.sock) throw new Error('Socket not initialized');
+
+        const contactsListener = whatsapp.sock.ev.on.mock.calls.find(c => c[0] === 'contacts.upsert')[1];
+
+        contactsListener([
+            { id: `${realNumber}@s.whatsapp.net`, lid: lidJid }
+        ]);
+
+        // 2. Handle Message (Missing Participant)
+        await whatsapp.handleMessage({
+            key: {
+                remoteJid: lidJid,
+                // participant is undefined
+                fromMe: false
+            },
+            message: { conversation: 'Hello' }
+        });
+
+        // 3. Verify Success
+        expect(spyAxios).toHaveBeenCalledWith(
+            expect.anything(),
+            expect.objectContaining({ content: 'Hello' })
+        );
+        expect(spyError).not.toHaveBeenCalled();
     });
 });
 

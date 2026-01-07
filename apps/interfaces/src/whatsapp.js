@@ -12,6 +12,7 @@ class WhatsAppService {
         this.qr = null;
         this.status = 'disconnected';
         this.reconnectAttempts = 0;
+        this.lidMap = new Map(); // Store LID -> Phone Number mapping
         this.authFolder = path.join(process.cwd(), 'data', `baileys_auth_${sessionId}`);
 
         // Ensure auth folder exists
@@ -141,11 +142,21 @@ class WhatsAppService {
 
             this.sock.ev.on('creds.update', saveCreds);
 
+            this.sock.ev.on('contacts.upsert', (contacts) => {
+                for (const contact of contacts) {
+                    if (contact.lid) {
+                        const phone = contact.id.split('@')[0];
+                        this.lidMap.set(contact.lid, phone);
+                        this.lidMap.set(`${contact.lid}@lid`, phone);
+                    }
+                }
+            });
+
             this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
                 if (type !== 'notify') return;
 
                 for (const msg of messages) {
-                    if (!msg.message) continue;
+                    if (!msg.message || msg.message.protocolMessage) continue;
                     await this.handleMessage(msg);
                 }
             });
@@ -165,11 +176,18 @@ class WhatsAppService {
 
             // Handle LID: If remoteJid is an LID, check if we have a participant (likely the real phone JID)
             // This happens when a primary device sends a message to the bot (assistant)
-            if (remoteJid.includes('@lid') && msg.key.participant) {
-                const participantNumber = msg.key.participant.split('@')[0];
-                if (participantNumber) {
-                    console.log(`${this.logPrefix} Resolving LID ${phoneNumber} to participant ${participantNumber}`);
-                    phoneNumber = participantNumber;
+            if (remoteJid.includes('@lid')) {
+                if (msg.key.participant) {
+                    const participantNumber = msg.key.participant.split('@')[0];
+                    if (participantNumber) {
+                        console.log(`${this.logPrefix} Resolving LID (via participant) ${phoneNumber} to ${participantNumber}`);
+                        phoneNumber = participantNumber;
+                    }
+                } else if (this.lidMap.has(remoteJid)) {
+                    // Fallback to internal map
+                    const resolvedMapNumber = this.lidMap.get(remoteJid);
+                    console.log(`${this.logPrefix} Resolving LID (via map) ${phoneNumber} to ${resolvedMapNumber}`);
+                    phoneNumber = resolvedMapNumber;
                 }
             }
 
