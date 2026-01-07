@@ -308,6 +308,20 @@ export async function disconnectWhatsApp(session) {
 }
 
 // --- Chat Sessions ---
+
+export async function createSession() {
+    try {
+        const session = await fetchAPI('/v1/sessions', {
+            method: 'POST',
+            body: JSON.stringify({ reuseEmpty: true })
+        });
+        revalidatePath('/sessions');
+        return { success: true, session };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function getSessions(limit = 50, offset = 0) {
     try {
         const res = await fetchAPI(`/v1/sessions?limit=${limit}&offset=${offset}`);
