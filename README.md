@@ -68,6 +68,11 @@ Open Telegram and message your bot:
 Everything is customizable via environment variables. Like which models to use.
   
   ![Dual Brain Architecture](docs/dual-brain.png)
+  
+- **💬 Persistent Chat Sessions**:
+    - **Multi-Threaded**: Create multiple concurrent chats (like ChatGPT).
+    - **Auto-Titling**: Automatically names your sessions based on context.
+    - **History**: Full conversation history persisted and searchable.
 
 - **💡 Smart Context & Memory**:
     - **Long-Term Memory**: Automatically compresses old conversations into summaries (`token_threshold` triggered) to maintain continuity without token bloat.

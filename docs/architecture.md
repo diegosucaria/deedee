@@ -20,6 +20,9 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
         - **Adaptive Context**: Dynamically sizing history (10 vs 50 msgs) based on model complexity.
         - **Image Bypass**: Direct execution of image generation, skipping the reasoning model for speed.
         - **Parallel Tools**: Executes multiple tool calls concurrently for faster turnaround.
+    - **Session Management**:
+        - **Persistent Threads**: Manages multiple `chat_sessions` with auto-titling.
+        - **Referential Integrity**: Ensures every message belongs to a valid session (`ensureSession`).
     - **Safety Guard**: Verifies sensitive tool usage (e.g., shell commands) and blocks ambiguous dictation commands (`iphone` source).
     - **Hybrid Search Strategy**:
         - **Native Grounding**: Uses Gemini's built-in Google Search grounding for text-only queries (Speed/Accuracy).
@@ -39,6 +42,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 - **Type**: Express Service (Port 3001)
 - **Routes**:
     - `POST /v1/chat`: Synchronous chat interface.
+    - `GET /v1/sessions`: Chat session management.
     - `GET /v1/briefing`: Generates a spoken morning briefing (text).
     - `GET /v1/city-image`: Generates a weather-aware city wallpaper (PNG).
     - `GET /v1/journal`, `/v1/tasks`, `/v1/facts`: Dashboard data endpoints.
@@ -57,7 +61,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 ### 5. Web Interface (`apps/web`)
 - **Type**: Next.js 14 App (Port 3002)
 - **Role**: Visual Dashboard & detailed Chat.
-- **Features**: Real-time Chat, Markdown Journal, Memory Bank, Task Scheduler.
+- **Features**: Real-time Chat with Sessions, Markdown Journal, Memory Bank, Task Scheduler.
 - **Auth**:
     - **User**: Relies on Reverse Proxy (Authelia/Authentik).
     - **Service**: Injected `DEEDEE_API_TOKEN` for secure API communication (Server Actions).
