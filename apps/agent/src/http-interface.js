@@ -5,9 +5,14 @@ class HttpInterface extends EventEmitter {
   /**
    * @param {string} interfacesUrl - e.g. 'http://interfaces:5000'
    */
-  constructor(interfacesUrl) {
+  /**
+   * @param {string} interfacesUrl - e.g. 'http://interfaces:5000'
+   * @param {string} [apiToken] - Optional token for Authorization header
+   */
+  constructor(interfacesUrl, apiToken) {
     super();
     this.interfacesUrl = interfacesUrl;
+    this.apiToken = apiToken || process.env.DEEDEE_API_TOKEN;
   }
 
   /**
@@ -41,6 +46,10 @@ class HttpInterface extends EventEmitter {
         content: content,
         metadata: message.metadata,
         type: type
+      }, {
+        headers: {
+          'Authorization': `Bearer ${this.apiToken}`
+        }
       });
       return true;
     } catch (error) {
@@ -51,7 +60,11 @@ class HttpInterface extends EventEmitter {
 
   async sendProgress(chatId, status) {
     try {
-      await axios.post(`${this.interfacesUrl}/progress`, { chatId, status });
+      await axios.post(`${this.interfacesUrl}/progress`, { chatId, status }, {
+        headers: {
+          'Authorization': `Bearer ${this.apiToken}`
+        }
+      });
     } catch (error) {
       // fire and forget
     }
