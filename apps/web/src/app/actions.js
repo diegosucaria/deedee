@@ -232,7 +232,7 @@ export async function getWhatsAppStatus() {
 export async function disconnectWhatsApp() {
     try {
         await fetchAPI('/v1/whatsapp/disconnect', { method: 'POST' });
-        revalidatePath('/whatsapp');
+        revalidatePath('/interfaces');
         return { success: true };
     } catch (error) {
         return { success: false, error: error.message };

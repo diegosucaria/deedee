@@ -82,12 +82,13 @@ if (telegramToken) {
 }
 
 // WhatsApp Init
-const enableWhatsApp = process.env.ENABLE_WHATSAPP === 'true' || process.env.ENABLE_WHATSAPP === '1';
-if (enableWhatsApp) {
+// Enabled by default. To disable, set ENABLE_WHATSAPP=false explicitly if needed, but per requirements we just run it.
+const isWhatsAppDisabled = process.env.ENABLE_WHATSAPP === 'false';
+if (!isWhatsAppDisabled) {
   whatsapp = new WhatsAppService(agentUrl);
   whatsapp.start().catch(console.error);
 } else {
-  console.log('[Interfaces] WhatsApp disabled (ENABLE_WHATSAPP not set).');
+  console.log('[Interfaces] WhatsApp explicitly disabled.');
 }
 
 app.get('/health', (req, res) => {
@@ -103,8 +104,7 @@ app.get('/whatsapp/status', (req, res) => {
 app.post('/whatsapp/disconnect', async (req, res) => {
   if (!whatsapp) return res.status(400).json({ error: 'WhatsApp disabled' });
   await whatsapp.disconnect();
-  // Restart logic? usually disconnect is logout.
-  // We might want to auto-restart to generate new QR.
+  // Auto-restart to generate new QR
   setTimeout(() => whatsapp.start(), 1000);
   res.json({ success: true });
 });
