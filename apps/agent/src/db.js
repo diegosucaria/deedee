@@ -299,6 +299,7 @@ class AgentDB {
       SELECT * FROM chat_sessions 
       WHERE is_archived = 0
       AND id NOT LIKE 'scheduled_%'
+      AND id NOT LIKE 'api_city_image_%'
       ORDER BY updated_at DESC 
       LIMIT ? OFFSET ?
     `).all(limit, offset);

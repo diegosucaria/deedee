@@ -2,15 +2,17 @@
 
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { Plus, MessageSquare, Trash2, Pencil, Check, X } from 'lucide-react';
+import { Plus, MessageSquare, Trash2, Pencil, Check, X, ChevronLeft, ChevronRight, Sidebar as SidebarIcon } from 'lucide-react';
 import { clsx } from 'clsx';
 import { createSession, deleteSession, updateSession } from '@/app/actions';
 import { useState } from 'react';
+import { useChatSidebar } from './ChatSidebarProvider';
 
 export default function ChatSidebar({ sessions = [] }) {
     const params = useParams();
     const router = useRouter();
     const activeId = params.id;
+    const { isCollapsed, toggleSidebar } = useChatSidebar();
     const [isCreating, setIsCreating] = useState(false);
     const [editingSessionId, setEditingSessionId] = useState(null);
     const [editTitle, setEditTitle] = useState('');
@@ -63,15 +65,22 @@ export default function ChatSidebar({ sessions = [] }) {
     };
 
     return (
-        <div className="flex h-full w-64 flex-col border-r border-zinc-800 bg-zinc-900/50 hidden md:flex">
-            <div className="p-4">
+        <div className={clsx(
+            "flex h-full flex-col border-r border-zinc-800 bg-zinc-900/50 hidden md:flex transition-all duration-300 relative",
+            isCollapsed ? "w-16" : "w-64"
+        )}>
+            <div className="p-4 flex items-center justify-center">
                 <button
                     onClick={handleNewChat}
                     disabled={isCreating}
-                    className="flex w-full items-center justify-center gap-2 rounded-lg bg-indigo-600 px-4 py-2.5 text-sm font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50"
+                    className={clsx(
+                        "flex items-center justify-center rounded-lg bg-indigo-600 font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50",
+                        isCollapsed ? "h-10 w-10 p-0" : "w-full gap-2 px-4 py-2.5 text-sm"
+                    )}
+                    title="New Chat"
                 >
                     <Plus className="h-4 w-4" />
-                    {isCreating ? 'Creating...' : 'New Chat'}
+                    {!isCollapsed && (isCreating ? 'Creating...' : 'New Chat')}
                 </button>
             </div>
 
@@ -80,7 +89,7 @@ export default function ChatSidebar({ sessions = [] }) {
                     {sessions.map((session) => {
                         const isEditing = editingSessionId === session.id;
 
-                        if (isEditing) {
+                        if (isEditing && !isCollapsed) {
                             return (
                                 <div key={session.id} className="flex items-center gap-2 rounded-lg bg-zinc-800 px-3 py-2 text-sm">
                                     <input
@@ -109,37 +118,51 @@ export default function ChatSidebar({ sessions = [] }) {
                                 key={session.id}
                                 href={`/chat/${session.id}`}
                                 className={clsx(
-                                    "group flex items-center justify-between rounded-lg px-3 py-2 text-sm transition-colors",
+                                    "group flex items-center rounded-lg py-2 text-sm transition-colors",
                                     activeId === session.id
                                         ? "bg-zinc-800 text-white"
-                                        : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200"
+                                        : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200",
+                                    isCollapsed ? "justify-center px-0" : "justify-between px-3"
                                 )}
+                                title={session.title || 'New Chat'}
                             >
-                                <div className="flex items-center gap-3 overflow-hidden">
+                                <div className={clsx("flex items-center overflow-hidden", isCollapsed ? "gap-0" : "gap-3")}>
                                     <MessageSquare className="h-4 w-4 shrink-0 opacity-50" />
-                                    <span className="truncate">{session.title || 'New Chat'}</span>
+                                    {!isCollapsed && <span className="truncate">{session.title || 'New Chat'}</span>}
                                 </div>
 
-                                <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-800/50 rounded-md backdrop-blur-sm">
-                                    <button
-                                        onClick={(e) => startRename(e, session)}
-                                        className="p-1.5 hover:text-indigo-400 transition-colors"
-                                        title="Rename"
-                                    >
-                                        <Pencil className="h-3 w-3" />
-                                    </button>
-                                    <button
-                                        onClick={(e) => handleDelete(e, session.id)}
-                                        className="p-1.5 hover:text-red-400 transition-colors"
-                                        title="Delete"
-                                    >
-                                        <Trash2 className="h-3.5 w-3.5" />
-                                    </button>
-                                </div>
+                                {!isCollapsed && (
+                                    <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-800/50 rounded-md backdrop-blur-sm">
+                                        <button
+                                            onClick={(e) => startRename(e, session)}
+                                            className="p-1.5 hover:text-indigo-400 transition-colors"
+                                            title="Rename"
+                                        >
+                                            <Pencil className="h-3 w-3" />
+                                        </button>
+                                        <button
+                                            onClick={(e) => handleDelete(e, session.id)}
+                                            className="p-1.5 hover:text-red-400 transition-colors"
+                                            title="Delete"
+                                        >
+                                            <Trash2 className="h-3.5 w-3.5" />
+                                        </button>
+                                    </div>
+                                )}
                             </Link>
                         );
                     })}
                 </div>
+            </div>
+
+            {/* Toggle Button */}
+            <div className="p-2 border-t border-zinc-800 flex justify-end">
+                <button
+                    onClick={toggleSidebar}
+                    className="p-2 text-zinc-500 hover:text-white transition-colors rounded-lg hover:bg-zinc-800"
+                >
+                    {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+                </button>
             </div>
         </div>
     );

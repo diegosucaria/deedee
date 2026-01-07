@@ -6,6 +6,7 @@ import ReactMarkdown from 'react-markdown';
 import { Send, Play, Wifi, WifiOff } from 'lucide-react';
 import clsx from 'clsx';
 import { getSession } from '../../actions';
+import { useChatSidebar } from '@/components/ChatSidebarProvider';
 
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || undefined;
 
@@ -13,6 +14,7 @@ export default function ChatSessionPage({ params }) {
     const { id: chatId } = params;
     const [socket, setSocket] = useState(null);
     const [isConnected, setIsConnected] = useState(false);
+    const { setCollapsed } = useChatSidebar();
     const [messages, setMessages] = useState([]);
     const [inputValue, setInputValue] = useState('');
     const [isWaiting, setIsWaiting] = useState(false);
@@ -110,6 +112,9 @@ export default function ChatSessionPage({ params }) {
         const content = inputValue;
         setInputValue('');
         setIsWaiting(true);
+
+        // Auto-collapse sidebar on first message (or always, for focus)
+        if (messages.length === 0) setCollapsed(true);
 
         // Optimistic Update
         addMessage({
