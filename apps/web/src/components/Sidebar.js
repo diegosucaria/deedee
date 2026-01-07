@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { MessageSquare, Book, ClipboardList, Database, Activity, Target, Clock, Tags, Terminal, PieChart, ChevronLeft, ChevronRight } from 'lucide-react';
+import { MessageSquare, Book, ClipboardList, Database, Activity, Target, Clock, Tags, Terminal, PieChart, ChevronLeft, ChevronRight, Share2 } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 
@@ -13,6 +13,7 @@ const navItems = [
     { name: 'Brain', href: '/brain', icon: Activity },
     { name: 'Logs', href: '/logs', icon: Terminal },
     { name: 'History', href: '/history', icon: Clock },
+    { name: 'Interfaces', href: '/interfaces', icon: Share2 },
     { name: 'Stats', href: '/stats', icon: PieChart },
 ];
 
