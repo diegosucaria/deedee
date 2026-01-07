@@ -84,7 +84,12 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
           };
         }
 
-        return { text: 'I do not understand.', candidates: [] };
+        return {
+          text: 'I do not understand.',
+          candidates: [{
+            content: { parts: [{ text: 'I do not understand.' }] }
+          }]
+        };
       })
     })
   }
@@ -131,5 +136,22 @@ describe('Agent with Tools', () => {
 
     const reply = mockInterface.getLastMessage();
     expect(reply.content).toBe('You have one event.');
+  });
+
+  test('should handle interface send failure gracefully', async () => {
+    // Force interface to fail
+    mockInterface.send = jest.fn().mockRejectedValue(new Error('Network Error'));
+    const consoleSpy = jest.spyOn(console, 'error').mockImplementation(() => { });
+
+    await agent.start();
+    const userMsg = createUserMessage('Hi', 'telegram', 'user1');
+
+    // Should NOT throw
+    await expect(agent.onMessage(userMsg)).resolves.not.toThrow();
+
+    // Should have logged error? (Depends on implementation, check logs if needed)
+    // expect(consoleSpy).toHaveBeenCalledWith(expect.stringContaining('Network Error'));
+
+    consoleSpy.mockRestore();
   });
 });

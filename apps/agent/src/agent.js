@@ -775,7 +775,11 @@ class Agent {
       const errReply = createAssistantMessage(`Error: ${error.message} (Automatic Rollback performed)`);
       errReply.metadata = { chatId: message.metadata?.chatId };
       errReply.source = message.source;
-      await sendCallback(errReply);
+      try {
+        await sendCallback(errReply);
+      } catch (sendErr) {
+        console.error('[Agent] Failed to send error reply to user:', sendErr.message);
+      }
       executionSummary.replies.push(errReply);
     } finally {
       const e2eDuration = Date.now() - e2eStart;
