@@ -62,6 +62,13 @@ router.get('/aliases', (req, res) => proxyRequest(req, res, 'GET', '/internal/al
 router.post('/aliases', (req, res) => proxyRequest(req, res, 'POST', '/internal/aliases', req.body));
 router.delete('/aliases/:alias', (req, res) => proxyRequest(req, res, 'DELETE', `/internal/aliases/${req.params.alias}`));
 
+// Sessions
+router.get('/sessions', (req, res) => proxyRequest(req, res, 'GET', '/internal/sessions'));
+router.post('/sessions', (req, res) => proxyRequest(req, res, 'POST', '/internal/sessions', req.body));
+router.get('/sessions/:id', (req, res) => proxyRequest(req, res, 'GET', `/internal/sessions/${req.params.id}`));
+router.put('/sessions/:id', (req, res) => proxyRequest(req, res, 'PUT', `/internal/sessions/${req.params.id}`, req.body));
+router.delete('/sessions/:id', (req, res) => proxyRequest(req, res, 'DELETE', `/internal/sessions/${req.params.id}`));
+
 // Config
 router.get('/config', (req, res) => proxyRequest(req, res, 'GET', '/internal/config'));
 router.post('/config', (req, res) => proxyRequest(req, res, 'POST', '/internal/config', req.body));
