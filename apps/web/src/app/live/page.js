@@ -20,6 +20,8 @@ export default function GeminiLivePage() {
     const streamRef = useRef(null);
     const audioQueueRef = useRef([]);
     const isPlayingRef = useRef(false);
+    const nextStartTimeRef = useRef(0);
+
 
     const log = (msg) => setLogs(p => [...p.slice(-4), msg]);
 
@@ -164,6 +166,8 @@ export default function GeminiLivePage() {
         // Use system default sample rate for Context to avoid hardware issues
         const ctx = new (window.AudioContext || window.webkitAudioContext)();
         audioContextRef.current = ctx;
+        nextStartTimeRef.current = 0; // Reset scheduler
+
 
         await ctx.audioWorklet.addModule('/audio-processor.js');
 
@@ -260,10 +264,18 @@ export default function GeminiLivePage() {
 
     const clearAudioQueue = () => {
         if (activeSourceRef.current) {
-            try { activeSourceRef.current.stop(); } catch (e) { }
+            try {
+                activeSourceRef.current.stop();
+                activeSourceRef.current.disconnect();
+            } catch (e) { }
             activeSourceRef.current = null;
         }
+        // Sync scheduler to current time to avoid large gaps or overlaps after clear
+        if (audioContextRef.current) {
+            nextStartTimeRef.current = audioContextRef.current.currentTime;
+        }
     };
+
 
     const queueAudio = (base64) => {
         // Decoding Raw PCM:
@@ -284,18 +296,32 @@ export default function GeminiLivePage() {
 
     const playPCMChunk = (pcmData) => {
         if (!audioContextRef.current) return;
+        const ctx = audioContextRef.current;
         // Gemini Always sends 24kHz for now
-        const buffer = audioContextRef.current.createBuffer(1, pcmData.length, 24000);
+        const buffer = ctx.createBuffer(1, pcmData.length, 24000);
 
         buffer.getChannelData(0).set(pcmData);
 
-        const source = audioContextRef.current.createBufferSource();
+        const source = ctx.createBufferSource();
         source.buffer = buffer;
-        source.connect(audioContextRef.current.destination);
-        source.connect(audioContextRef.current.destination);
-        source.start();
+        source.connect(ctx.destination);
+
+        // --- Scheduler Logic ---
+        const currentTime = ctx.currentTime;
+
+        // If next start time is behind current time (latency, gap), play immediately
+        if (nextStartTimeRef.current < currentTime) {
+            nextStartTimeRef.current = currentTime;
+        }
+
+        source.start(nextStartTimeRef.current);
+
+        // Advance scheduler
+        nextStartTimeRef.current += buffer.duration;
+
         activeSourceRef.current = source;
     };
+
 
     return (
         <div className="flex h-full w-full flex-col items-center justify-center bg-black text-white relative overflow-hidden">
