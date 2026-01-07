@@ -310,7 +310,8 @@ export async function disconnectWhatsApp(session) {
 // --- Chat Sessions ---
 export async function getSessions(limit = 50, offset = 0) {
     try {
-        return await fetchAPI(`/v1/sessions?limit=${limit}&offset=${offset}`);
+        const res = await fetchAPI(`/v1/sessions?limit=${limit}&offset=${offset}`);
+        return res.sessions || [];
     } catch (error) {
         console.error('getSessions Error:', error);
         return [];
