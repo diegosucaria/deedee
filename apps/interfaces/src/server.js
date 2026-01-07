@@ -40,13 +40,39 @@ io.on("connection", (socket) => {
       console.log(`[Interfaces] Received socket message from ${socket.id}`);
       // Send to Agent
       const payload = {
-        content: data.content,
         source: 'web',
         metadata: {
           chatId: data.chatId || socket.id,
-          socketId: socket.id
+          socketId: socket.id,
+          location: data.metadata?.location // Pass through location
         }
       };
+
+      // Construct Multimodal Parts
+      if (data.files && Array.isArray(data.files) && data.files.length > 0) {
+        const parts = [];
+
+        // 1. Text Part
+        if (data.content) {
+          parts.push({ text: data.content });
+        }
+
+        // 2. File Parts
+        for (const file of data.files) {
+          if (file.data && file.mimeType) {
+            parts.push({
+              inline_data: {
+                mime_type: file.mimeType,
+                data: file.data
+              }
+            });
+          }
+        }
+        payload.parts = parts;
+      } else {
+        // Text Only
+        payload.content = data.content;
+      }
 
       const response = await axios.post(`${agentUrl}/chat`, payload);
 
