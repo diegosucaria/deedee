@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { fetchAPI } from '@/lib/api';
+import { getLiveToken, executeLiveTool } from '@/app/actions';
 import { Mic, MicOff, PhoneOff, Settings2, Terminal, X } from 'lucide-react';
 import clsx from 'clsx';
 import { useRouter } from 'next/navigation';
@@ -31,21 +31,11 @@ export default function GeminiLivePage() {
         try {
             setStatus('connecting');
             log('Getting Token...');
-            const { token } = await fetchAPI('/v1/live/token', { method: 'POST' });
+            const { success, token, error } = await getLiveToken();
 
-            if (!token) throw new Error('No token');
+            if (!success || !token) throw new Error(error || 'No token');
 
-            const url = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${process.env.NEXT_PUBLIC_GOOGLE_API_KEY || ''}`; // Key not needed if using token? Actually usually token is bearer.
-            // Wait, for ephemeral tokens on Vertex/GenAI, we usually use the access token. 
-            // The docs say: "Bearer <token>" in handshake or URL param? 
-            // Let's assume Bearer header isn't possible in browser WebSocket API. 
-            // For the new Live API, we send "setup" message. 
-            // Actually, usually we pass `access_token` in query param or custom header if client allows. 
-            // Standard browser WS doesn't allow headers. 
-            // Try query param `access_token` or `key`.
-            // User spec said "Client-to-Server connection... mediated by backend for tokens".
-            // Let's try constructing the URL with the token.
-
+            const url = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${process.env.NEXT_PUBLIC_GOOGLE_API_KEY || ''}`;
             // NOTE: The exact URL for global consumers is wss://generativelanguage.googleapis.com/...
             // We pass the token in the 'setup' message OR as a query param `access_token`. 
             const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?access_token=${token}`;
@@ -134,15 +124,16 @@ export default function GeminiLivePage() {
         for (const call of toolCall.functionCalls) {
             try {
                 // Proxy to Backend
-                const res = await fetchAPI('/v1/live/tools/execute', {
-                    method: 'POST',
-                    body: JSON.stringify({ name: call.name, args: call.args })
-                });
+                const res = await executeLiveTool(call.name, call.args);
 
-                responses.push({
-                    name: call.name,
-                    response: { result: res.result || res }
-                });
+                if (res.success) {
+                    responses.push({
+                        name: call.name,
+                        response: { result: res.result }
+                    });
+                } else {
+                    throw new Error(res.error);
+                }
             } catch (e) {
                 responses.push({
                     name: call.name,
