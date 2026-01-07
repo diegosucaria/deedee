@@ -35,7 +35,6 @@ export default function GeminiLivePage() {
 
             if (!success || !token) throw new Error(error || 'No token');
 
-            const url = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?key=${process.env.NEXT_PUBLIC_GOOGLE_API_KEY || ''}`;
             // NOTE: The exact URL for global consumers is wss://generativelanguage.googleapis.com/...
             // We pass the token in the 'setup' message OR as a query param `access_token`. 
             const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?access_token=${token}`;
