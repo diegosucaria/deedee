@@ -74,6 +74,9 @@ router.get('/config', (req, res) => proxyRequest(req, res, 'GET', '/internal/con
 router.post('/config', (req, res) => proxyRequest(req, res, 'POST', '/internal/config', req.body));
 router.get('/config/env', (req, res) => proxyRequest(req, res, 'GET', '/internal/config/env'));
 
+// MCP Status
+router.get('/mcp/status', (req, res) => proxyRequest(req, res, 'GET', '/internal/mcp/status'));
+
 // Backups
 router.get('/backups', (req, res) => proxyRequest(req, res, 'GET', '/internal/backups'));
 router.post('/backups', (req, res) => proxyRequest(req, res, 'POST', '/internal/backups', req.body));

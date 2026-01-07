@@ -1,14 +1,17 @@
 import { fetchAPI } from '@/lib/api';
 import BrainTabs from '@/components/BrainTabs';
+import { getTools, getMCPStatus } from '../actions';
 
 export const dynamic = 'force-dynamic';
 
 export default async function BrainPage() {
     // Parallel data fetching
-    const [goalsData, factsData, aliasesData] = await Promise.all([
+    const [goalsData, factsData, aliasesData, tools, servers] = await Promise.all([
         fetchAPI('/v1/goals').catch(e => ({ goals: [] })),
         fetchAPI('/v1/facts').catch(e => ({ facts: [] })),
-        fetchAPI('/v1/aliases').catch(e => ({ aliases: [] }))
+        fetchAPI('/v1/aliases').catch(e => ({ aliases: [] })),
+        getTools(),
+        getMCPStatus()
     ]);
 
     return (
@@ -23,6 +26,8 @@ export default async function BrainPage() {
                     goals={goalsData.goals || []}
                     facts={factsData.facts || []}
                     aliases={aliasesData.aliases || []}
+                    tools={tools || []}
+                    servers={servers || []}
                 />
             </section>
         </main>

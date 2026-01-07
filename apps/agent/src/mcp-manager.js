@@ -209,6 +209,38 @@ class MCPManager {
         console.log(`[MCP] Tool cache refreshed. ${this.toolCache.length} tools found.`);
     }
 
+    async getStatus() {
+        const statuses = [];
+        // Read config to know all potential servers
+        let config = {};
+        try {
+            if (fs.existsSync(this.configPath)) {
+                config = JSON.parse(fs.readFileSync(this.configPath, 'utf-8'));
+            }
+        } catch (e) {
+            console.error('[MCP] Failed to read config for status:', e);
+        }
+
+        const configuredNames = Object.keys(config);
+
+        for (const name of configuredNames) {
+            if (config[name].disabled) {
+                statuses.push({ name, status: 'disabled' });
+                continue;
+            }
+
+            const client = this.clients.get(name);
+            if (client) {
+                // Check if actually connected? The map implies it.
+                // We could ping? For now assume connected if in map.
+                statuses.push({ name, status: 'connected', type: config[name].transport });
+            } else {
+                statuses.push({ name, status: 'disconnected' });
+            }
+        }
+        return statuses;
+    }
+
     async getTools() {
         // Return cached tools. If empty, try one refresh (unless truly empty)
         if (this.toolCache.length === 0 && this.clients.size > 0) {

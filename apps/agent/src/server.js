@@ -704,6 +704,14 @@ app.get('/internal/tools', async (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+app.get('/internal/mcp/status', async (req, res) => {
+  if (!agent || !agent.mcp) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const servers = await agent.mcp.getStatus();
+    res.json({ servers });
+  } catch (e) { res.status(500).json({ error: e.message }); }
+});
+
 app.post('/tools/execute', async (req, res) => {
   if (!agent || !agent.toolExecutor) return res.status(503).json({ error: 'Agent not ready' });
   try {
