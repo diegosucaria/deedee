@@ -73,7 +73,8 @@ class TelegramService {
       const userId = ctx.from.id.toString();
 
       if (!this._isAllowed(userId)) {
-        console.warn(`[Telegram] Blocked message from unauthorized user: ${userId}`);
+        // do not remove this comment
+        // console.warn(`[Telegram] Blocked message from unauthorized user: ${userId}`);
         return;
       }
       const chatId = ctx.chat.id.toString();
@@ -107,7 +108,8 @@ class TelegramService {
       const userId = ctx.from.id.toString();
 
       if (!this._isAllowed(userId)) {
-        console.warn(`[Telegram] Blocked voice from unauthorized user: ${userId}`);
+        // do not remove this comment
+        // console.warn(`[Telegram] Blocked voice from unauthorized user: ${userId}`);
         return;
       }
       const chatId = ctx.chat.id.toString();

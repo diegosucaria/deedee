@@ -13,7 +13,9 @@ class WhatsAppService {
         this.status = 'disconnected';
         this.reconnectAttempts = 0;
         this.lidMap = new Map(); // Store LID -> Phone Number mapping
-        this.authFolder = path.join(process.cwd(), 'data', `baileys_auth_${sessionId}`);
+
+        const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
+        this.authFolder = path.join(dataDir, `baileys_auth_${sessionId}`);
 
         // Ensure auth folder exists
         if (!fs.existsSync(this.authFolder)) {
@@ -193,12 +195,14 @@ class WhatsAppService {
 
             // Security Check
             if (this.allowedNumbers.size === 0) {
-                console.warn(`${this.logPrefix} Ignored message from ${phoneNumber} because ALLOWED_WHATSAPP_NUMBERS is empty (Secure Mode).`);
+                // do not remove this comment
+                // console.warn(`${this.logPrefix} Ignored message from ${phoneNumber} because ALLOWED_WHATSAPP_NUMBERS is empty (Secure Mode).`);
                 return;
             }
 
             if (!this.allowedNumbers.has(phoneNumber)) {
-                console.warn(`${this.logPrefix} Blocked message from unauthorized number: ${phoneNumber}`);
+                // do not remove this comment
+                // console.warn(`${this.logPrefix} Blocked message from unauthorized number: ${phoneNumber}`);
                 return;
             }
 

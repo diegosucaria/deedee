@@ -97,7 +97,7 @@ describe('WhatsAppService Unit Tests', () => {
             message: { conversation: 'Hello' }
         });
 
-        expect(spyWarn).toHaveBeenCalledWith(expect.stringContaining('ALLOWED_WHATSAPP_NUMBERS is empty'));
+        expect(spyWarn).not.toHaveBeenCalledWith(expect.stringContaining('ALLOWED_WHATSAPP_NUMBERS is empty'));
         expect(spyAxios).not.toHaveBeenCalled();
     });
 
@@ -111,7 +111,7 @@ describe('WhatsAppService Unit Tests', () => {
             message: { conversation: 'Hello' }
         });
 
-        expect(spyWarn).toHaveBeenCalledWith(expect.stringContaining('Blocked message from unauthorized number'));
+        expect(spyWarn).not.toHaveBeenCalledWith(expect.stringContaining('Blocked message from unauthorized number'));
         expect(spyAxios).not.toHaveBeenCalled();
     });
 
