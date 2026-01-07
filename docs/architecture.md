@@ -51,7 +51,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 - **Supported Channels**:
     - **Socket.io**: Real-time event-based communication for Web Interface.
     - **Telegram**: Long-Polling Bot. Supports Global Stop (`/stop`) and Audio Messages.
-    - **WhatsApp**: Multi-Device connection via `@whiskeysockets/baileys`. Supports text, audio, and images.
+    - **WhatsApp**: Multi-Device connection via `@whiskeysockets/baileys`. On-Demand connection via Settings. Supports text, audio, and images.
     - **Internal Webhook**: Legacy ingress for async messages.
 
 ### 5. Web Interface (`apps/web`)

@@ -99,7 +99,7 @@ Everything is customizable via environment variables. Like which models to use.
     -   **Smart Reminders**: "Remind me to call Mom at 5pm" (One-off, auto-deleting tasks).
     -   **Morning Briefing**: `GET /v1/briefing` generates a concise audio-ready summary of your day.
 -   **🛑 Safety**: Global `/stop` command instantly kills any runaway agent loops.
--   **💬 WhatsApp**: Full integration (Text/Voice/Images) with generic QR Code management.
+-   **💬 WhatsApp**: Full integration (Text/Voice/Images) with On-Demand QR connection.
 
 ---
 
@@ -133,8 +133,8 @@ Deedee supports both Telegram and WhatsApp (via Baileys).
 2.  **Allowlist**: Use **@userinfobot** to get your ID -> `ALLOWED_TELEGRAM_IDS`.
 
 ### WhatsApp
-1.  **Dashboard**: Go to `/interfaces` on your deployed Deedee.
-2.  **Scan**: Link your device using the QR Code.
+1.  **Settings**: Go to `/settings` (or Settings page) on your dashboard.
+2.  **Connect**: Click "Connect" in the WhatsApp section to generate a QR Code.
 3.  **Secure**: Set `ALLOWED_WHATSAPP_NUMBERS` in `.env` (comma-separated).
 
 👉 **[Read the Interfaces Guide](docs/interfaces.md)** for full details.

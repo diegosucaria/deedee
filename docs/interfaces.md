@@ -7,7 +7,7 @@ Deedee communicates with you through various "Interfaces". The main `apps/interf
 Deedee uses [Baileys](https://github.com/WhiskeySockets/Baileys) to connect to WhatsApp Multi-Device.
 
 ### Setup
-1.  **Enable**: The service is enabled by default.
+1.  **Enable**: The service is enabled by default, but starts in **Standby Mode**.
 2.  **Environment Variables**:
     -   `ALLOWED_WHATSAPP_NUMBERS`: Comma-separated list of phone numbers (with country code, no `+`) allowed to talk to the bot.
         -   Example: `ALLOWED_WHATSAPP_NUMBERS=15550123456,15550987654`
@@ -18,14 +18,15 @@ Deedee uses [Baileys](https://github.com/WhiskeySockets/Baileys) to connect to W
     > 1.  Scan the QR code with your **Secondary Phone** (Deedee becomes this number).
     > 2.  Set `ALLOWED_WHATSAPP_NUMBERS` to your **Primary Phone Number**.
     > 3.  You (Primary) -> Message -> Deedee (Secondary). Deedee executes tasks and replies.
-3.  **Linking**:
-    -   Go to your Deedee Dashboard: `https://<your-url>/interfaces` (or `/whatsapp`).
-    -   Click the **WhatsApp** tab.
-    -   You will see a QR Code.
+3.  **Connection (On-Demand)**:
+    -   Go to **Settings** -> **WhatsApp Connection**.
+    -   Click **Connect**.
+    -   A QR Code will appear.
     -   Open WhatsApp on your phone -> **Linked Devices** -> **Link a Device**.
     -   Scan the QR Code.
 4.  **Status**:
-    -   The dashboard will show "Connected".
+    -   The settings panel will show "Connected" and your device info.
+    -   You can **Disconnect** at any time to wipe the session securely.
     -   Session data is stored persistently in `/app/data/baileys_auth`.
 
 ### Features
