@@ -157,8 +157,15 @@ class Agent {
         this.db.ensureSession(chatId, message.source);
 
         // Log Location on New Session
-        if (msgCount === 0 && message.metadata?.location) {
-          console.log(`[Agent] New Session ${chatId} started from location: ${message.metadata.location}`);
+        // DEBUG: Log all metadata to see what's happening
+        // console.log(`[Agent] Metadata for ${chatId}:`, JSON.stringify(message.metadata));
+
+        if (msgCount === 0) {
+          if (message.metadata?.location) {
+            console.log(`[Agent] New Session ${chatId} started from location: ${message.metadata.location}`);
+          } else {
+            console.log(`[Agent] New Session ${chatId} started. (No location data in metadata)`);
+          }
         }
 
         // Auto-Title Trigger (Background)
