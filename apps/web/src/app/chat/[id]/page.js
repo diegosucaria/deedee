@@ -47,7 +47,19 @@ export default function ChatSessionPage({ params }) {
                 // Normalize history
                 const history = (data.messages || []).map(m => ({
                     role: m.role === 'model' ? 'assistant' : m.role,
-                    content: m.content || (m.parts ? m.parts.map(p => p.text).join('') : ''),
+                    content: (() => {
+                        if (m.role === 'user') {
+                            // Multimodal Check (User messages only)
+                            // Fix: Safe check for parts array
+                            if (m.parts && Array.isArray(m.parts)) {
+                                return m.parts.map(p => p.text).join(' ');
+                            }
+                            // Fallback for string content
+                            return typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+                        }
+                        // For assistant messages, keep existing logic
+                        return m.content || (m.parts ? m.parts.map(p => p.text).join('') : '');
+                    })(),
                     type: m.type || 'text',
                     timestamp: m.timestamp
                 }));
