@@ -39,7 +39,7 @@ class WhatsAppService {
 
             this.sock = makeWASocket({
                 auth: state,
-                printQRInTerminal: true, // Also print to logs for backup
+                // printQRInTerminal: true, // Deprecated
                 defaultQueryTimeoutMs: undefined, // endless
                 connectTimeoutMs: 10000,
                 keepAliveIntervalMs: 30000,
