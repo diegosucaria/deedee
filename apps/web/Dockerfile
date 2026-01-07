@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 FROM node:24-alpine AS base
 RUN apk add --no-cache libc6-compat
 RUN npm install turbo --global
@@ -37,8 +36,7 @@ COPY . .
 
 # Build the project
 ENV NEXT_TELEMETRY_DISABLED 1
-RUN --mount=type=cache,target=/app/apps/web/.next/cache \
-    turbo run build --filter=web...
+RUN turbo run build --filter=web...
 
 # --- Runner Stage ---
 FROM base AS runner

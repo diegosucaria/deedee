@@ -1,4 +1,3 @@
-# syntax=docker/dockerfile:1
 FROM node:24-alpine AS base
 RUN apk add --no-cache libc6-compat python3 py3-pip make g++ git
 RUN npm install turbo --global
@@ -47,7 +46,7 @@ ENV LANG=C.UTF-8
 ENV NODE_ENV=production
 
 # Install Runtime Dependencies: Python, UV, curl
-RUN --mount=type=cache,target=/var/cache/apk apk add --no-cache python3 py3-pip curl gcompat
+RUN apk add --no-cache python3 py3-pip curl gcompat
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:/root/.cargo/bin:$PATH"
 
@@ -63,10 +62,8 @@ COPY --from=builder /app/packages ./packages
 COPY packages/plex-mcp-server ./packages/plex-mcp-server
 
 # Pre-install MCP Servers
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install -r packages/plex-mcp-server/requirements.txt
-RUN --mount=type=cache,target=/root/.cache/uv \
-    uv pip install ha-mcp
+RUN uv pip install -r packages/plex-mcp-server/requirements.txt
+RUN uv pip install ha-mcp
 
 # Copy built node_modules and app source
 COPY --from=builder /app/node_modules ./node_modules
