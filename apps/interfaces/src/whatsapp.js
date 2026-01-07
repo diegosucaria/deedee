@@ -109,7 +109,7 @@ class WhatsAppService {
                     this.qr = null;
 
                     if (shouldReconnect) {
-                        this.status = 'connecting';
+                        console.log(`${this.logPrefix} Reconnecting in 5s...`);
                         // Backoff
                         setTimeout(() => this.connect(), 5000); // Call connect() instead of start()
                     } else {
