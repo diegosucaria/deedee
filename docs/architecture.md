@@ -42,10 +42,16 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 - **Type**: Express Service (Port 3001)
 - **Routes**:
     - `POST /v1/chat`: Synchronous chat interface.
-    - `GET /v1/sessions`: Chat session management.
+    - `GET /v1/sessions`: Chat session management (CRUD).
+    - `GET /v1/history`: Retrieve full chat history & summaries.
     - `GET /v1/briefing`: Generates a spoken morning briefing (text).
     - `GET /v1/city-image`: Generates a weather-aware city wallpaper (PNG).
     - `GET /v1/journal`, `/v1/tasks`, `/v1/facts`: Dashboard data endpoints.
+    - `GET /v1/goals`: Manage agent goals (CRUD).
+    - `GET /v1/config`: Read/Write system configuration & env.
+    - `GET /v1/backups`: Manage backup archives.
+    - `GET /v1/logs/:container`: Stream real-time logs (SSE-like).
+    - `POST /v1/whatsapp`: Control WhatsApp sessions (connect/disconnect).
 - **Auth**: Bearer Token (`DEEDEE_API_TOKEN`). All routes protected.
 - **Flow**: Client -> API -> Agent (Waits for full processing) -> API -> Client JSON Response.
 
@@ -54,6 +60,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 - **Port**: `5000`
 - **Supported Channels**:
     - **Socket.io**: Real-time event-based communication for Web Interface.
+        - Emits: `agent:message` (Stream), `agent:thinking` (Status), `session:update` (Auto-Title).
     - **Telegram**: Long-Polling Bot. Supports Global Stop (`/stop`) and Audio Messages.
     - **WhatsApp**: Dual-Session connection (Assistant + User/Impersonation) via `@whiskeysockets/baileys`. On-Demand connection via Interfaces UI. Supports text, audio, and images.
     - **Internal Webhook**: Legacy ingress for async messages.

@@ -27,6 +27,7 @@ app.use('/v1/chat', audioChatRouter); // Mounts POST /v1/chat/audio
 app.use('/v1/briefing', briefingRouter);
 app.use('/v1/city-image', cityImageRouter);
 app.use('/v1/whatsapp', require('./whatsapp'));
+app.use('/v1/live', require('./live'));
 
 // BETTER: Add to apps/api/src/dashboard.js if it proxies to agent.
 const http = require('http');

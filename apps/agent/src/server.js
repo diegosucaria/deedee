@@ -664,6 +664,44 @@ app.get('/internal/jobs/:name/state', (req, res) => {
   } catch (e) { res.status(500).json({ error: e.message }); }
 });
 
+// --- GEMINI LIVE (Real-time) ---
+const { GoogleAuth } = require('google-auth-library');
+
+app.post('/live/token', async (req, res) => {
+  try {
+    const auth = new GoogleAuth({
+      scopes: 'https://www.googleapis.com/auth/generative-language.retriever.readonly'
+    });
+    const client = await auth.getClient();
+    const token = await client.getAccessToken();
+    res.json({ token: token.token });
+  } catch (error) {
+    console.error('[Agent] Failed to generate ephemeral token:', error);
+    res.status(500).json({ error: 'Token generation failed' });
+  }
+});
+
+app.post('/tools/execute', async (req, res) => {
+  if (!agent || !agent.toolExecutor) return res.status(503).json({ error: 'Agent not ready' });
+  try {
+    const { name, args } = req.body;
+    console.log(`[Agent] Executing tool request from Live Client: ${name}`, args);
+
+    // Context simulation for the tool executor
+    const context = {
+      message: { source: 'live', metadata: { chatId: 'live-session' } },
+      sendCallback: async (msg) => console.log('[Agent] Live Tool Output:', msg), // No-op for direct response
+      processMessage: agent.processMessage
+    };
+
+    const result = await agent.toolExecutor.execute(name, args, context);
+    res.json({ result });
+  } catch (error) {
+    console.error('[Agent] Live Tool Execution Failed:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 if (require.main === module) {
   app.listen(port, () => {
     console.log(`Agent listening at http://localhost:${port}`);
