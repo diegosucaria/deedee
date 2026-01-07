@@ -1,6 +1,8 @@
 import { fetchAPI } from '@/lib/api';
 import HistoryList from '@/components/HistoryList';
 import SummaryList from '@/components/SummaryList';
+import SessionFilter from '@/components/SessionFilter';
+import { getSessions } from '../actions';
 import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
@@ -9,17 +11,26 @@ export default async function HistoryPage({ searchParams }) {
     const view = searchParams.view || 'messages'; // 'messages' or 'summaries'
     let history = [];
     let summaries = [];
+    let sessions = [];
 
     const limit = searchParams.limit || 100;
     const since = searchParams.since;
     const order = searchParams.order || 'desc';
+    const chatId = searchParams.chatId;
 
     try {
         if (view === 'messages') {
             const query = new URLSearchParams({ limit, order });
             if (since) query.append('since', since);
-            const data = await fetchAPI(`/v1/history?${query.toString()}`);
-            history = data.history || [];
+            if (chatId) query.append('chatId', chatId);
+
+            const [historyData, sessionsData] = await Promise.all([
+                fetchAPI(`/v1/history?${query.toString()}`),
+                getSessions(100)
+            ]);
+
+            history = historyData.history || [];
+            sessions = sessionsData || [];
         } else {
             const data = await fetchAPI('/v1/summaries?limit=50');
             summaries = data.summaries || [];
@@ -31,13 +42,16 @@ export default async function HistoryPage({ searchParams }) {
     return (
         <main className="flex h-screen flex-col bg-zinc-950 text-zinc-200 p-6 md:p-12 overflow-y-auto w-full">
             <header className="mb-8 max-w-5xl mx-auto w-full">
-                <div className="flex items-center justify-between">
+                <div className="flex items-center justify-between flex-wrap gap-4">
                     <div>
                         <h1 className="text-3xl font-bold tracking-tight text-white mb-2">Message History</h1>
                         <p className="text-zinc-400">
                             {view === 'messages' ? `Raw log of database interactions (Last ${limit}).` : 'Compressed summaries of past conversations.'}
                         </p>
                     </div>
+                    {view === 'messages' && (
+                        <SessionFilter sessions={sessions} />
+                    )}
                 </div>
 
                 {/* Tabs */}

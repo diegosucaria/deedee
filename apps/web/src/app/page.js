@@ -14,6 +14,9 @@ export default function HomePage() {
         const res = await createSession();
         if (res.success && res.session) {
           router.push(`/chat/${res.session.id}`);
+        } else {
+          console.error('Failed to create session (API):', res.error);
+          // Optional: Set some error state to show to user
         }
       } catch (e) {
         console.error('Failed to create session:', e);
