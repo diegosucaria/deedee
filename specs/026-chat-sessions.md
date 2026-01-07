@@ -58,3 +58,9 @@ Enable persistent, multi-threaded chat sessions similar to ChatGPT/Gemini Web UI
     *   URL Routing: `/chat/:id`
     *   Optimistic updates for immediate feedback.
     *   Markdown rendering for bot responses.
+
+## Implementation Details
+*   **Backfilling**: A `migrateSessions()` function runs on Agent startup. It scans for messages with a `Metadata` JSON string containing `chatId` but no corresponding `chat_sessions` entry, creating one automatically.
+*   **Enforcement**: `ensureSession(chatId)` is called before processing any message to guarantee referential integrity.
+*   **Router**: `apps/agent/src/router.js` now receives filtered history specific to the active `chatId`.
+
