@@ -1,0 +1,12 @@
+<?xml version="1.0" encoding="utf-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0.0711 0.0354 389.9349 392.6401" width="389.935px" height="392.64px">
+  <defs>
+    <linearGradient id="sunrise-gradient" x1="256" y1="0" x2="256" y2="512" gradientUnits="userSpaceOnUse" gradientTransform="matrix(0.836561, 0, 0, 0.836561, 41.882385, 52.448847)">
+      <stop stop-color="#F47D50"/>
+      <stop offset="1" stop-color="#2C7A7B"/>
+    </linearGradient>
+  </defs>
+  <circle cx="256.042" cy="266.609" r="214.16" fill="url(#sunrise-gradient)" style="stroke-width: 1;" transform="matrix(0.9103820323944092, 0, 0, 0.9166979789733887, -38.0574951171875, -48.044471740722656)"/>
+  <path d="M 101.891 220.674 L 296.858 220.673" stroke="white" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" style="stroke-width: 32; transform-origin: 199.375px 220.674px;"/>
+  <path d="M 124.519 210.458 C 124.519 169.799 157.253 136.838 197.632 136.838 C 238.011 136.838 270.745 169.799 270.745 210.458" stroke="white" stroke-width="32" stroke-linecap="round" stroke-linejoin="round" style="stroke-width: 32;"/>
+</svg>

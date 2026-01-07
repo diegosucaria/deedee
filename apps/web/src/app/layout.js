@@ -7,6 +7,16 @@ const inter = Inter({ subsets: ["latin"] });
 export const metadata = {
   title: "DeeDee Interface",
   description: "AI Agent Dashboard",
+  icons: {
+    icon: "/favicon-32x32.png",
+    shortcut: "/favicon.ico",
+    apple: "/apple-touch-icon.png",
+    other: {
+      rel: "apple-touch-icon-precomposed",
+      url: "/apple-touch-icon.png",
+    },
+  },
+  manifest: "/site.webmanifest",
 };
 
 export default function RootLayout({ children }) {

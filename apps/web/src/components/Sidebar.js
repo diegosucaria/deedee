@@ -1,6 +1,7 @@
 'use client';
 
 import Link from 'next/link';
+import Image from 'next/image';
 import { usePathname } from 'next/navigation';
 import { MessageSquare, Book, ClipboardList, Database, Activity, Target, Clock, Tags, Terminal, PieChart, ChevronLeft, ChevronRight, Share2, Settings } from 'lucide-react';
 import { clsx } from 'clsx';
@@ -33,8 +34,13 @@ export function Sidebar() {
             {/* Header */}
             <div className={clsx("flex items-center mb-8 px-4", isCollapsed ? "justify-center" : "justify-between")}>
                 <div className="flex items-center">
-                    <div className="flex h-8 w-8 items-center justify-center rounded-lg bg-gradient-to-br from-indigo-500 to-purple-600 shadow-lg shadow-indigo-500/20 shrink-0">
-                        <Activity className="h-5 w-5 text-white" />
+                    <div className="relative h-8 w-8 shrink-0">
+                        <Image
+                            src="/logo-rounded.svg"
+                            alt="DeeDee Logo"
+                            fill
+                            className="object-contain"
+                        />
                     </div>
                     <span className={clsx("ml-3 text-lg font-bold tracking-tight text-white overflow-hidden transition-all", isCollapsed ? "w-0 opacity-0 hidden" : "w-auto opacity-100 block")}>
                         DeeDee
