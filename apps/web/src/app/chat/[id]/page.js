@@ -5,7 +5,7 @@ import { io } from 'socket.io-client';
 import ReactMarkdown from 'react-markdown';
 import { Send, Play, Wifi, WifiOff } from 'lucide-react';
 import clsx from 'clsx';
-import { getSession } from '../../actions';
+import { getSession, getUserLocation } from '../../actions';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
 
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || undefined;
@@ -46,11 +46,11 @@ export default function ChatSessionPage({ params }) {
         // If stale or missing, fetch in background
         if (cachedLoc) setUserLocation(cachedLoc); // Use stale while revalidating
 
-        fetch('https://ipapi.co/json/')
-            .then(res => res.json())
-            .then(data => {
-                if (data.city && data.country_name) {
-                    const loc = `${data.city}, ${data.country_name}`;
+        // Use Server Action to avoid CORS
+        getUserLocation()
+            .then(res => {
+                if (res.success && res.data.city && res.data.country_name) {
+                    const loc = `${res.data.city}, ${res.data.country_name}`;
                     setUserLocation(loc);
                     localStorage.setItem(CACHE_KEY, loc);
                     localStorage.setItem(TIME_KEY, now.toString());
@@ -59,9 +59,6 @@ export default function ChatSessionPage({ params }) {
             })
             .catch(err => {
                 console.warn('Location fetch failed:', err);
-                if (err.status === 429 && cachedLoc) {
-                    console.log('[Chat] API Rate Limit. Fallback to cached:', cachedLoc);
-                }
             });
     }, []);
 
