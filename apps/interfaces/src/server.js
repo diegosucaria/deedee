@@ -61,8 +61,8 @@ io.on("connection", (socket) => {
         for (const file of data.files) {
           if (file.data && file.mimeType) {
             parts.push({
-              inline_data: {
-                mime_type: file.mimeType,
+              inlineData: {
+                mimeType: file.mimeType,
                 data: file.data
               }
             });

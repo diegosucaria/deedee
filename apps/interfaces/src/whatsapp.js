@@ -431,6 +431,9 @@ class WhatsAppService {
         // this.store.contacts is an object { id: { ... } }
         const contacts = Object.values(this.store.contacts);
         console.log(`${this.logPrefix} Searching ${contacts.length} contacts for: "${q}"...`);
+        if (contacts.length > 0) {
+            console.log(`${this.logPrefix} Sample contact:`, JSON.stringify(contacts[0]));
+        }
 
         const results = [];
 
