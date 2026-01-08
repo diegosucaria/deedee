@@ -35,7 +35,7 @@ export function PersonCard({ person, onEdit, onDelete }) {
             </div>
 
             {/* Info */}
-            <div className="flex-1 min-w-0">
+            <div className="flex-1 min-w-0 pr-16">
                 <h3 className="font-semibold text-foreground truncate">{person.name}</h3>
                 <div className="flex items-center text-xs text-muted-foreground space-x-2 mt-0.5">
                     {person.relationship && (
@@ -56,12 +56,12 @@ export function PersonCard({ person, onEdit, onDelete }) {
             </div>
 
             {/* Actions */}
-            <div className="flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity">
-                <button onClick={() => onEdit(person)} className="p-2 hover:bg-secondary rounded-full transition-colors">
-                    <Edit size={16} className="text-muted-foreground hover:text-foreground" />
+            <div className="absolute right-3 top-1/2 -translate-y-1/2 flex space-x-1 opacity-0 group-hover:opacity-100 transition-opacity bg-card/80 backdrop-blur-sm p-1 rounded-lg border border-border shadow-sm">
+                <button onClick={() => onEdit(person)} className="p-1.5 hover:bg-secondary rounded-md transition-colors">
+                    <Edit size={14} className="text-muted-foreground hover:text-foreground" />
                 </button>
-                <button onClick={() => onDelete(person.id)} className="p-2 hover:bg-destructive/10 rounded-full transition-colors">
-                    <Trash2 size={16} className="text-destructive" />
+                <button onClick={() => onDelete(person.id)} className="p-1.5 hover:bg-destructive/10 rounded-md transition-colors">
+                    <Trash2 size={14} className="text-destructive" />
                 </button>
             </div>
         </motion.div>

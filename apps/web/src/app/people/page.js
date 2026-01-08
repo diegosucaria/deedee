@@ -155,9 +155,9 @@ export default function PeoplePage() {
                                             <label className="text-xs font-medium uppercase text-muted-foreground">Relation</label>
                                             <input name="relationship" defaultValue={editingPerson?.relationship} className="input-field w-full" placeholder="Friend" />
                                         </div>
-                                        <div className="space-y-2">
+                                        <div className="space-y-2 col-span-2">
                                             <label className="text-xs font-medium uppercase text-muted-foreground">Notes</label>
-                                            <input name="notes" defaultValue={editingPerson?.notes} className="input-field w-full" placeholder="Met at..." />
+                                            <textarea name="notes" defaultValue={editingPerson?.notes} className="input-field w-full min-h-[100px] py-2" placeholder="Met at..." />
                                         </div>
                                     </div>
                                 </div>
