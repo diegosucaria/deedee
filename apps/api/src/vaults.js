@@ -1,40 +1,103 @@
 const express = require('express');
-const { createProxyMiddleware } = require('http-proxy-middleware');
-
+const axios = require('axios');
 const router = express.Router();
+const multer = require('multer');
+const FormData = require('form-data');
+const fs = require('fs');
+
 const AGENT_URL = process.env.AGENT_URL || 'http://agent:3000';
 
-// Proxy /v1/vaults/* to Agent Service
-// Auth is already handled by Gateway's server.js mounting this under /v1 (which uses authMiddleware)
+// Multer for handling file uploads in the Gateway
+const upload = multer({
+    dest: '/tmp/uploads/',
+    limits: { fileSize: 50 * 1024 * 1024 }
+});
 
-// We need to rewrite the path because the router is mounted at /v1/vaults
-// but the Agent also expects /v1/vaults ?
-// In apps/agent/src/server.js: app.use('/v1/vaults', createVaultRouter(agent));
-// So request to Gateway: /v1/vaults/foo
-// Should go to Agent: /v1/vaults/foo
-// Proxy middleware usually strips mount point if not configured otherwise. 
-// But here we are inside a Router(). 
+// Helper for proxying
+const proxyRequest = async (req, res, method, path, data, headers = {}) => {
+    try {
+        const url = `${AGENT_URL}${path}`;
+        const config = { method, url, params: req.query, headers };
 
-// Let's look at live.js pattern.
-// If live.js uses http-proxy-middleware, I'll copy exact config.
+        if (data) config.data = data;
 
-const proxy = createProxyMiddleware({
-    target: AGENT_URL,
-    changeOrigin: true,
-    pathRewrite: (path, req) => {
-        // Express Router strips the mount point ('/v1/vaults'), so 'path' is relative (e.g. '/' or '/123')
-        // We need to prepend '/v1/vaults' so the Agent receives the full path.
-        return '/v1/vaults' + (path === '/' ? '' : path);
-    },
-    onProxyReq: (proxyReq, req, res) => {
-        // Optional: Log proxying
-    },
-    onError: (err, req, res) => {
-        console.error('[API] Vault Proxy Error:', err);
-        res.status(502).json({ error: 'Agent Service Unavailable' });
+        const response = await axios(config);
+
+        // Forward content-type if it's a file download
+        if (response.headers['content-type']) {
+            res.setHeader('Content-Type', response.headers['content-type']);
+        }
+        // If it's a stream (download), pipe it? Axios default is json/text unless specified.
+        // For simple JSON API:
+        res.json(response.data);
+    } catch (error) {
+        console.error(`[API] Vault Proxy Error (${method} ${path}):`, error.message);
+        const status = error.response ? error.response.status : 502;
+        const data = error.response ? error.response.data : { error: 'Agent unavailable' };
+        res.status(status).json(data);
+    }
+};
+
+// GET /v1/vaults
+router.get('/', (req, res) => proxyRequest(req, res, 'GET', '/v1/vaults'));
+
+// POST /v1/vaults
+router.post('/', (req, res) => proxyRequest(req, res, 'POST', '/v1/vaults', req.body));
+
+// DELETE /v1/vaults/:id
+router.delete('/:id', (req, res) => proxyRequest(req, res, 'DELETE', `/v1/vaults/${req.params.id}`));
+
+// GET /v1/vaults/:id
+router.get('/:id', (req, res) => proxyRequest(req, res, 'GET', `/v1/vaults/${req.params.id}`));
+
+// POST /v1/vaults/:id/wiki
+router.post('/:id/wiki', (req, res) => proxyRequest(req, res, 'POST', `/v1/vaults/${req.params.id}/wiki`, req.body));
+
+// POST /v1/vaults/:id/files (Upload)
+router.post('/:id/files', upload.single('file'), async (req, res) => {
+    // Handling Multipart Proxying manually with axios + form-data
+    if (!req.file) return res.status(400).json({ error: 'No file uploaded' });
+
+    try {
+        const form = new FormData();
+        form.append('file', fs.createReadStream(req.file.path), req.file.originalname);
+
+        const url = `${AGENT_URL}/v1/vaults/${req.params.id}/files`;
+
+        const response = await axios.post(url, form, {
+            headers: {
+                ...form.getHeaders()
+            }
+        });
+
+        // Cleanup temp file
+        fs.unlink(req.file.path, () => { });
+        res.json(response.data);
+    } catch (error) {
+        fs.unlink(req.file.path, () => { });
+        console.error('[API] Vault Upload Proxy Error:', error.message);
+        res.status(502).json({ error: 'Upload failed' });
     }
 });
 
-router.use('/', proxy);
+// GET /v1/vaults/:id/files/:filename (Download)
+router.get('/:id/files/:filename', async (req, res) => {
+    const { id, filename } = req.params;
+    const url = `${AGENT_URL}/v1/vaults/${id}/files/${filename}`;
+
+    try {
+        const response = await axios({
+            method: 'GET',
+            url: url,
+            responseType: 'stream'
+        });
+
+        res.setHeader('Content-Type', response.headers['content-type'] || 'application/octet-stream');
+        response.data.pipe(res);
+    } catch (error) {
+        console.error('[API] Vault Download Proxy Error:', error.message);
+        res.status(502).json({ error: 'Download failed' });
+    }
+});
 
 module.exports = router;
