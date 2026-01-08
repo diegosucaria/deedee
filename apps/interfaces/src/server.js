@@ -402,6 +402,22 @@ app.post('/progress', async (req, res) => {
   }
 });
 
+// Endpoint for Agent to broadcast events to all clients
+app.post('/broadcast', (req, res) => {
+  try {
+    const { event, data } = req.body;
+    console.log(`[Interfaces] Broadcasting event: ${event}`);
+
+    if (event) {
+      io.emit(event, data);
+    }
+    res.json({ success: true });
+  } catch (error) {
+    console.error('[Interfaces] Broadcast Error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
 if (require.main === module) {
   server.listen(port, () => {
     console.log(`Interfaces listening at http://localhost:${port}`);

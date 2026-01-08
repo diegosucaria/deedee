@@ -59,6 +59,26 @@ describe('Settings API', () => {
         });
     });
 
+    test('POST /internal/settings should broadcast update if interface exists', async () => {
+        const mockRun = jest.fn();
+        mockDb.db.prepare.mockReturnValue({ run: mockRun });
+
+        mockAgent.interface = {
+            broadcast: jest.fn().mockResolvedValue(true)
+        };
+
+        const res = await request(app)
+            .post('/internal/settings')
+            .send({ key: 'broadcast_test', value: 123 });
+
+        expect(res.statusCode).toBe(200);
+        expect(mockAgent.interface.broadcast).toHaveBeenCalledWith('entity:update', {
+            type: 'setting',
+            key: 'broadcast_test',
+            value: 123
+        });
+    });
+
     test('POST /internal/settings should reject missing key', async () => {
         const res = await request(app)
             .post('/internal/settings')

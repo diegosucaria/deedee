@@ -51,8 +51,11 @@ function createSettingsRouter(agent) {
 
             console.log(`[Settings] Updated ${key}`);
 
-            // Notify via Socket if applicable implementation exists
-            // if (agent.io) agent.io.emit('entity:update', { type: 'setting', key, value });
+            // Notify via Socket (Broadcast via Interfaces service)
+            if (agent.interface) {
+                // fire and forget
+                agent.interface.broadcast('entity:update', { type: 'setting', key, value }).catch(console.error);
+            }
 
             res.json({ success: true, key, value });
         } catch (error) {

@@ -111,7 +111,8 @@ export function Sidebar() {
 
                     <button
                         onClick={() => setIsCollapsed(!isCollapsed)}
-                        className="text-zinc-500 hover:text-white hidden md:block"
+                        className="text-zinc-500 hover:text-white hidden md:flex items-center justify-center p-2 rounded-lg hover:bg-zinc-900 transition-colors"
+                        title={isCollapsed ? "Expand Sidebar" : "Collapse Sidebar"}
                     >
                         {isCollapsed ? <ChevronRight className="w-5 h-5" /> : <ChevronLeft className="w-5 h-5" />}
                     </button>

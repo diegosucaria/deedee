@@ -76,6 +76,25 @@ class HttpInterface extends EventEmitter {
   }
 
   /**
+   * Broadcasts an event to all connected clients via the Interface Service.
+   * @param {string} event - Event name (e.g., 'entity:update')
+   * @param {Object} data - Event payload
+   */
+  async broadcast(event, data) {
+    try {
+      await axios.post(`${this.interfacesUrl}/broadcast`, { event, data }, {
+        headers: {
+          'Authorization': `Bearer ${this.apiToken}`
+        }
+      });
+      return true;
+    } catch (error) {
+      console.error('[HttpInterface] Broadcast Error:', error.message);
+      return false;
+    }
+  }
+
+  /**
    * Called by the Webhook Handler to inject a message from outside.
    * @param {import('@deedee/shared/src/types').Message} message 
    */

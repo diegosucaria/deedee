@@ -105,8 +105,6 @@ const { createLiveRouter } = require('./routes/live');
 const { createToolRouter } = require('./routes/tools');
 const { createSettingsRouter } = require('./routes/settings');
 
-// ... (Agent instantiation code remains above)
-
 // Mount Live Router (works without Agent instance for Config/Token)
 app.use('/live', createLiveRouter(agent));
 
