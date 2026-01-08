@@ -275,9 +275,14 @@ class Agent {
   /**
    * Helper to send message efficiently with streaming and token broadcasting
    */
-  async _generateStream(session, payload, chatId) {
+  async _generateStream(session, payload, chatId, source) {
     try {
-      const result = await session.sendMessageStream(payload);
+      let result;
+      if (source === 'web') {
+        result = await session.sendMessageStream(payload);
+      } else {
+        result = await session.sendMessage(payload);
+      }
 
       // Detect if result itself is the stream (Async Generator)
       let stream = result.stream || result;
@@ -286,9 +291,9 @@ class Agent {
       }
 
       // Handle streaming
-      if (stream && typeof stream[Symbol.asyncIterator] === 'function') {
+      if (source === 'web' && stream && typeof stream[Symbol.asyncIterator] === 'function') {
         for await (const chunk of stream) {
-          const text = chunk.text();
+          const text = chunk.text;
           if (text) {
             this.interface.emit('chat:token', {
               id: chatId,
@@ -298,8 +303,7 @@ class Agent {
           }
         }
       } else {
-        console.warn('[Agent] sendMessageStream result is not iterable.');
-        console.log('[Agent] Stream Result Keys:', Object.keys(result));
+        // Non-streaming or no stream returned
       }
 
       // Get final response
@@ -779,7 +783,7 @@ ${files.length > 0 ? files.join(", ") : "No files yet."}
         const modelStart = Date.now();
         try {
           // STREAMING IMPLEMENTATION
-          response = await this._generateStream(session, { message: message.parts || message.content }, chatId);
+          response = await this._generateStream(session, { message: message.parts || message.content }, chatId, message.source);
 
           const modelDuration = Date.now() - modelStart;
           console.timeEnd(timerLabel);
@@ -1009,7 +1013,14 @@ ${files.length > 0 ? files.join(", ") : "No files yet."}
 
         try {
           // FIX: Pass parts directly for correct ContentUnion matching in SDK
-          const result = await session.sendMessageStream(functionResponseParts);
+          const payload = functionResponseParts;
+          let result;
+
+          if (message.source === 'web') {
+            result = await session.sendMessageStream(payload);
+          } else {
+            result = await session.sendMessage(payload);
+          }
 
           // Detect if result itself is the stream (Async Generator)
           let stream = result.stream || result;
