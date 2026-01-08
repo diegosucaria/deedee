@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import { RefreshCw, Smartphone, LogOut, Loader2, AlertCircle, ScanLine } from 'lucide-react';
 import { getWhatsAppStatus, connectWhatsApp, disconnectWhatsApp } from '../app/actions';
 import ContactList from './ContactList';
