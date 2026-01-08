@@ -14,7 +14,12 @@ const REQUIRED_ACTIONS = [
     'getTasks',
     'runTask',
     // Helpers
-    'getEnvConfig'
+    'runTask',
+    // Helpers
+    'getEnvConfig',
+    // Settings
+    'getVoiceSettings',
+    'saveVoiceSettings'
 ];
 
 const REQUIRED_LIVE_ACTIONS = [

@@ -81,4 +81,8 @@ router.get('/mcp/status', (req, res) => proxyRequest(req, res, 'GET', '/internal
 router.get('/backups', (req, res) => proxyRequest(req, res, 'GET', '/internal/backups'));
 router.post('/backups', (req, res) => proxyRequest(req, res, 'POST', '/internal/backups', req.body));
 
+// Settings (Agent)
+router.get('/settings', (req, res) => proxyRequest(req, res, 'GET', '/internal/settings'));
+router.post('/settings', (req, res) => proxyRequest(req, res, 'POST', '/internal/settings', req.body));
+
 module.exports = router;

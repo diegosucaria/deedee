@@ -272,6 +272,31 @@ export async function updateAgentConfig(key, value) {
     }
 }
 
+export async function getVoiceSettings() {
+    try {
+        const res = await fetchAPI('/v1/settings');
+        // Expecting { settings: { key: value } } or array?
+        // Server implementation of GET /internal/settings returns { key: value } object.
+        return res?.voice || 'Kore';
+    } catch (error) {
+        console.error('getVoiceSettings Error:', error);
+        return 'Kore';
+    }
+}
+
+export async function saveVoiceSettings(voice) {
+    try {
+        await fetchAPI('/v1/settings', {
+            method: 'POST',
+            body: JSON.stringify({ key: 'voice', value: voice })
+        });
+        revalidatePath('/settings');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 // --- WhatsApp Actions ---
 
 export async function getWhatsAppStatus() {
