@@ -278,14 +278,22 @@ class Agent {
         }
       }
 
-      return await result.response;
+      const response = await result.response;
+      if (!response) {
+        console.warn('[Agent] Stream result.response is undefined. Raw result:', JSON.stringify(result, null, 2));
+      }
+      return response;
     } catch (e) {
       console.error(`[Agent] sendMessageStream failed: ${e.message}`);
       // Fallback to non-streaming if streaming specifically fails
       try {
         console.warn('[Agent] Falling back to non-streaming sendMessage...');
         const result = await session.sendMessage(payload);
-        return result.response;
+        const response = result.response;
+        if (!response) {
+          console.warn('[Agent] Fallback result.response is undefined. Raw result:', JSON.stringify(result, null, 2));
+        }
+        return response;
       } catch (innerE) {
         throw innerE;
       }
