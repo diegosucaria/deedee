@@ -39,6 +39,7 @@ Enable Deedee to maintain a persistent registry of "People" (Contacts) with whom
     -   System fetches the top N most active chats from `AgentDB.messages` (grouped by phone/chatId) that are *not* already in the People registry.
     -   For each candidate, the system retrieves the last 50 messages.
     -   **LLM Processing**: The Agent analyzes the conversation to answer:
+        -   *Implementation Note*: Uses `@google/genai` SDK (`client.models.generateContent`) with `process.env.WORKER_FLASH` (default: `gemini-2.0-flash-exp`).
         -   "What is the likely name of this person?"
         -   "What is the relationship to the user?" (e.g., Mom, Boss, Plumber)
         -   "Is this a contact worth saving?" (Confidence score)
