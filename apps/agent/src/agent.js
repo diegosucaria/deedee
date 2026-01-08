@@ -267,18 +267,22 @@ class Agent {
       const result = await session.sendMessageStream(payload);
 
       // Stream handling
-      for await (const chunk of result.stream) {
-        const text = chunk.text();
-        if (text) {
-          this.interface.emit('chat:token', {
-            id: chatId,
-            token: text,
-            timestamp: Date.now()
-          });
+      if (result.stream) {
+        for await (const chunk of result.stream) {
+          const text = chunk.text();
+          if (text) {
+            this.interface.emit('chat:token', {
+              id: chatId,
+              token: text,
+              timestamp: Date.now()
+            });
+          }
         }
+      } else {
+        console.warn('[Agent] sendMessageStream returned no stream property. Raw:', JSON.stringify(result, null, 2));
       }
 
-      const response = await result.response;
+      const response = await (result.response || (result.candidates ? result : undefined));
       if (!response) {
         console.warn('[Agent] Stream result.response is undefined. Raw result:', JSON.stringify(result, null, 2));
       }
@@ -289,9 +293,11 @@ class Agent {
       try {
         console.warn('[Agent] Falling back to non-streaming sendMessage...');
         const result = await session.sendMessage(payload);
-        const response = result.response;
+        // Sometimes the SDK returns the response directly (impl-dependent)
+        const response = result.response || (result.candidates ? result : undefined);
+
         if (!response) {
-          console.warn('[Agent] Fallback result.response is undefined. Raw result:', JSON.stringify(result, null, 2));
+          console.warn('[Agent] Fallback response is undefined. Raw result:', JSON.stringify(result, null, 2));
         }
         return response;
       } catch (innerE) {
