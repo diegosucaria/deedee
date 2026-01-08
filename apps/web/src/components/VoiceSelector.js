@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useRef } from 'react';
-import { Play, Pause, Check } from 'lucide-react';
+import { Play, Pause, Check, Loader2 } from 'lucide-react';
+import { previewVoice } from '../app/actions';
 
 const VOICES = [
     { id: 'Puck', name: 'Puck', description: 'Energetic & clear' },
@@ -11,18 +12,12 @@ const VOICES = [
     { id: 'Aoede', name: 'Aoede', description: 'Soft & helpful' },
 ];
 
-// Determine sample availability: we can use simple placeholder audio files or external URLs if allowed.
-// For now, let's assume assets exist in /public/samples/ or use a mock URL.
-// Since we don't have files yet, the Play button might just log or fail gracefully.
-// User requested "play button to read a sample". We can try to use browser TTS as fallback? 
-// No, user specifically wants to sample the *Gemini* voices.
-// We'll point to a placeholder path, and user can add files later.
-
 export default function VoiceSelector({ selectedVoice, onSelect }) {
     const [playing, setPlaying] = useState(null);
+    const [loading, setLoading] = useState(null);
     const audioRef = useRef(null);
 
-    const handlePlay = (voiceId, e) => {
+    const handlePlay = async (voiceId, e) => {
         e.stopPropagation();
 
         if (playing === voiceId) {
@@ -31,24 +26,45 @@ export default function VoiceSelector({ selectedVoice, onSelect }) {
             return;
         }
 
-        // Stop current
         if (audioRef.current) {
             audioRef.current.pause();
+            setPlaying(null);
         }
 
-        // Start new
-        // Note: You need to place sample files in apps/web/public/samples/VOICE_ID.mp3
-        const audio = new Audio(`/samples/${voiceId}.mp3`);
+        setLoading(voiceId);
+
+        // Generate Live Sample if not cached (simple logic for now: always generate)
+        const res = await previewVoice(voiceId, `Hi, I am ${voiceId}. This is what I sound like.`);
+
+        if (!res.success) {
+            alert('Failed to generate sample: ' + res.error);
+            setLoading(null);
+            return;
+        }
+
+        const audio = new Audio(`data:audio/wav;base64,${res.audio_base64}`);
         audioRef.current = audio;
 
-        audio.onended = () => setPlaying(null);
-        audio.onerror = () => {
-            alert(`Sample for ${voiceId} not found. Please add /public/samples/${voiceId}.mp3`);
+        audio.onended = () => {
             setPlaying(null);
+            setLoading(null);
         };
 
-        audio.play().catch(e => console.error('Play error', e));
-        setPlaying(voiceId);
+        // Handle error during playback
+        audio.onerror = (err) => {
+            console.error('Audio playback error:', err);
+            setPlaying(null);
+            setLoading(null);
+        };
+
+        try {
+            await audio.play();
+            setPlaying(voiceId);
+        } catch (err) {
+            console.error('Play failed:', err);
+        } finally {
+            setLoading(null);
+        }
     };
 
     return (
@@ -58,8 +74,8 @@ export default function VoiceSelector({ selectedVoice, onSelect }) {
                     key={voice.id}
                     onClick={() => onSelect(voice.id)}
                     className={`cursor-pointer group flex items-start justify-between p-4 rounded-lg border transition-all ${selectedVoice === voice.id
-                            ? 'bg-indigo-500/10 border-indigo-500/50 hover:bg-indigo-500/20'
-                            : 'bg-zinc-800/30 border-zinc-700/50 hover:bg-zinc-800/80 hover:border-zinc-600'
+                        ? 'bg-indigo-500/10 border-indigo-500/50 hover:bg-indigo-500/20'
+                        : 'bg-zinc-800/30 border-zinc-700/50 hover:bg-zinc-800/80 hover:border-zinc-600'
                         }`}
                 >
                     <div>
@@ -75,7 +91,13 @@ export default function VoiceSelector({ selectedVoice, onSelect }) {
                             className="p-2 rounded-full bg-zinc-700/50 hover:bg-zinc-600/80 text-zinc-300 transition-colors"
                             title="Preview Voice"
                         >
-                            {playing === voice.id ? <Pause className="w-4 h-4 fill-current" /> : <Play className="w-4 h-4 fill-current" />}
+                            {loading === voice.id ? (
+                                <Loader2 className="w-4 h-4 animate-spin text-zinc-400" />
+                            ) : playing === voice.id ? (
+                                <Pause className="w-4 h-4 fill-current" />
+                            ) : (
+                                <Play className="w-4 h-4 fill-current" />
+                            )}
                         </button>
 
                         {selectedVoice === voice.id && (

@@ -297,6 +297,21 @@ export async function saveVoiceSettings(voice) {
     }
 }
 
+export async function previewVoice(voice, text) {
+    try {
+        const res = await fetchAPI('/v1/settings/tts/preview', {
+            method: 'POST',
+            body: JSON.stringify({ voice, text })
+        });
+        if (res.audio_base64) {
+            return { success: true, audio_base64: res.audio_base64 };
+        }
+        return { success: false, error: 'No audio returned' };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 // --- WhatsApp Actions ---
 
 export async function getWhatsAppStatus() {

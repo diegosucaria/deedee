@@ -84,5 +84,6 @@ router.post('/backups', (req, res) => proxyRequest(req, res, 'POST', '/internal/
 // Settings (Agent)
 router.get('/settings', (req, res) => proxyRequest(req, res, 'GET', '/internal/settings'));
 router.post('/settings', (req, res) => proxyRequest(req, res, 'POST', '/internal/settings', req.body));
+router.post('/settings/tts/preview', (req, res) => proxyRequest(req, res, 'POST', '/internal/settings/tts/preview', req.body));
 
 module.exports = router;
