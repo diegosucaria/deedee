@@ -54,6 +54,9 @@ describe('Agent Health Check', () => {
                     sendMessageStream: jest.fn().mockResolvedValue({
                         stream: (async function* () { yield { text: () => "Hello" }; })(),
                         response: Promise.resolve({ candidates: [{ content: { role: 'model', parts: [{ text: 'Hello' }] } }] })
+                    }),
+                    sendMessage: jest.fn().mockResolvedValue({
+                        response: { candidates: [{ content: { role: 'model', parts: [{ text: 'Hello' }] } }] }
                     })
                 })
             }

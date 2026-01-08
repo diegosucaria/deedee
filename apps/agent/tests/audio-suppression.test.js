@@ -55,6 +55,20 @@ describe('Audio Response Suppression', () => {
                                 text: () => "I just spoke to you.",
                                 candidates: [{ content: { parts: [{ text: "I just spoke to you." }] } }]
                             })
+                        }),
+                    sendMessage: jest.fn()
+                        .mockResolvedValueOnce({
+                            response: {
+                                candidates: [{
+                                    content: { parts: [{ functionCall: { name: 'replyWithAudio', args: { text: 'Hello' } } }] }
+                                }]
+                            }
+                        })
+                        .mockResolvedValueOnce({
+                            response: {
+                                text: () => "I just spoke to you.",
+                                candidates: [{ content: { parts: [{ text: "I just spoke to you." }] } }]
+                            }
                         })
                 })
             }

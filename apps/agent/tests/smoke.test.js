@@ -95,6 +95,36 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
           })(),
           response: Promise.resolve(result)
         };
+      }),
+      sendMessage: jest.fn().mockImplementation(async (payload) => {
+        let result = {};
+        if (typeof payload?.message === 'string' && payload.message.includes('You are the Router')) {
+          result = {
+            text: () => JSON.stringify({ model: 'FLASH', reason: 'Test Mock' }),
+            candidates: [{ content: { parts: [{ text: JSON.stringify({ model: 'FLASH', reason: 'Test Mock' }) }] } }]
+          };
+        }
+        else if (typeof payload?.message === 'string' && payload.message.toLowerCase().includes('calendar')) {
+          result = {
+            text: () => undefined,
+            candidates: [{
+              content: { parts: [{ functionCall: { name: 'listEvents', args: {} } }] }
+            }]
+          };
+        }
+        else if (Array.isArray(payload?.message) && payload.message[0]?.functionResponse) {
+          result = {
+            text: () => 'You have one event.',
+            candidates: [{ content: { parts: [{ text: 'You have one event.' }] } }]
+          };
+        }
+        else {
+          result = {
+            text: () => 'I do not understand.',
+            candidates: [{ content: { parts: [{ text: 'I do not understand.' }] } }]
+          };
+        }
+        return { response: result };
       })
     })
   }

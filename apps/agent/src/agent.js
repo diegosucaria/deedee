@@ -263,50 +263,18 @@ class Agent {
    * Helper to send message efficiently with streaming and token broadcasting
    */
   async _generateStream(session, payload, chatId) {
-    let streamResult;
+    // STREAMING DISABLED (2026-01-08)
+    // We are disabling streaming per user request due to persistent issues with empty responses.
+    // See TODO.md to re-enable.
+
     try {
-      streamResult = await session.sendMessageStream(payload);
+      const result = await session.sendMessage(payload);
+      // Simulate stream end for consistency if needed, but here we just return the response.
+      return result.response;
     } catch (e) {
-      // Fallback for mocked tests that might not have sendMessageStream implementation despite checks
-      // OR real errors.
-      // But we want to enforce streaming.
+      console.error(`[Agent] sendMessage failed: ${e.message}`);
       throw e;
     }
-
-    // Process stream for UI updates
-    if (streamResult.stream) {
-      for await (const chunk of streamResult.stream) {
-        const chunkText = chunk.text();
-        if (chunkText) {
-          this.interface.broadcast('agent:token', {
-            chatId,
-            content: chunkText,
-            timestamp: new Date().toISOString()
-          }).catch(err => {
-            // In tests, this might fail if broadcast mock returns undefined. 
-            // We fixed the mock to return Promise.
-          });
-        }
-      }
-    } else {
-      // Fallback: If no stream property (e.g. mocked or different API behavior),
-      // we might not get tokens. But we safe guard against crash.
-      console.warn('sendMessageStream returned no stream property.');
-    }
-
-    // Safety Check: Ensure we have a valid response structure
-    if (!streamResult.response) {
-      // Fallback: If SDK returns candidates directly (bug/outlier)
-      if (streamResult.candidates) {
-        return streamResult;
-      }
-      // If we have nothing, we must throw or return a stub to prevent upstream crash
-      console.error('[Agent] Invalid streamResult:', JSON.stringify(streamResult));
-      throw new Error('Invalid response from sendMessageStream (No response promise or candidates).');
-    }
-
-    // Return full response for internal logic
-    return await streamResult.response;
   }
 
   /**
