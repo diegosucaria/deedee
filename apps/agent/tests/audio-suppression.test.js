@@ -54,7 +54,7 @@ describe('Audio Response Suppression', () => {
         agent._executeTool = jest.fn().mockImplementation(async (name, args, msg, sc) => {
             if (name === 'replyWithAudio') {
                 // Simulate sending audio
-                await sc({ parts: [{ inlineData: { mimeType: 'audio/wav', data: 'fake' } }] });
+                await sc({ parts: [{ inlineData: { mimeType: 'audio/mp3', data: 'fake' } }] });
                 return { success: true, info: 'Audio sent to user.' };
             }
         });

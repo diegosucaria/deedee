@@ -74,15 +74,15 @@ describe('Agent TTS', () => {
       parts: expect.arrayContaining([
         expect.objectContaining({
           inlineData: expect.objectContaining({
-            mimeType: 'audio/wav'
+            mimeType: 'audio/mp3'
           })
         })
       ])
     }));
 
-    // Verify content is a base64 string and looks like a WAV
+    // Verify content matches input (Passthrough MP3)
     const sentMsg = mockSendCallback.mock.calls[0][0];
     const base64Audio = sentMsg.parts[0].inlineData.data;
-    expect(base64Audio).toMatch(/^UklGR/);
+    expect(base64Audio).toBe(Buffer.from('rawAudioData').toString('base64'));
   });
 });

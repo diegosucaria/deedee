@@ -53,9 +53,26 @@ class MediaExecutor extends BaseExecutor {
             }
 
             case 'replyWithAudio': {
+                const { client, db } = this.services;
                 const text = args.text;
                 const language = args.languageCode || args.language || 'detect';
-                console.log(`[MediaExecutor] Generating audio for: "${text.substring(0, 30)}..." (Lang: ${language})`);
+
+                // Fetch Voice Setting
+                let voiceName = 'Kore'; // Default
+                try {
+                    const row = db.db.prepare('SELECT value FROM agent_settings WHERE key = ?').get('voice');
+                    if (row) {
+                        try {
+                            voiceName = JSON.parse(row.value);
+                        } catch (e) {
+                            voiceName = row.value;
+                        }
+                    }
+                } catch (err) {
+                    console.error('[MediaExecutor] Failed to fetch voice setting:', err.message);
+                }
+
+                console.log(`[MediaExecutor] Generating audio for: "${text.substring(0, 30)}..." (Voice: ${voiceName}, Lang: ${language})`);
 
                 const modelName = process.env.GEMINI_TTS_MODEL || process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
                 const audioResponse = await client.models.generateContent({
@@ -64,11 +81,12 @@ class MediaExecutor extends BaseExecutor {
                         parts: [{ text: `Please read the following text aloud in a natural, fast-paced, clear voice. Return ONLY the audio data. Text: "${text}"` }]
                     }],
                     config: {
+                        responseMimeType: 'audio/mp3',
                         responseModalities: ['AUDIO'],
                         speechConfig: {
                             voiceConfig: {
                                 prebuiltVoiceConfig: {
-                                    voiceName: "Kore"
+                                    voiceName: voiceName
                                 }
                             }
                         }
@@ -87,12 +105,14 @@ class MediaExecutor extends BaseExecutor {
                     throw new Error('No audio returned from Gemini.');
                 }
 
-                const rawBuffer = Buffer.from(audioData, 'base64');
-                const wavHeader = createWavHeader(rawBuffer.length, 24000, 1, 16);
-                const wavBuffer = Buffer.concat([wavHeader, rawBuffer]);
+                const audioBuffer = Buffer.from(audioData, 'base64');
+
+                // Note: Gemini now returns MP3 (as requested in config), so we don't need to add a WAV header.
+                // const wavHeader = createWavHeader(rawBuffer.length, 24000, 1, 16);
+                // const wavBuffer = Buffer.concat([wavHeader, rawBuffer]);
 
                 const audioMsg = createAssistantMessage('');
-                audioMsg.parts = [{ inlineData: { mimeType: 'audio/wav', data: wavBuffer.toString('base64') } }];
+                audioMsg.parts = [{ inlineData: { mimeType: 'audio/mp3', data: audioBuffer.toString('base64') } }];
                 audioMsg.metadata = { chatId: message.metadata?.chatId };
                 audioMsg.source = message.source;
 

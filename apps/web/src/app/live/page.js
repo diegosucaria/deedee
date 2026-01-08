@@ -106,7 +106,7 @@ export default function GeminiLivePage() {
                             speech_config: {
                                 voice_config: {
                                     prebuilt_voice_config: {
-                                        voice_name: voice
+                                        voice_name: voicePref || voice
                                     }
                                 }
                             }
