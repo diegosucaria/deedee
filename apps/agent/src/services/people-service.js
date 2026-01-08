@@ -60,6 +60,10 @@ class PeopleService {
 
         if (candidates.length === 0) return [];
 
+        // DEBUG, delete this later
+        console.log(`[People] Analyzing ${candidates.length} candidates...`);
+        console.log(candidates);
+
         // 3. LLM Analysis
         const analysis = await this._analyzeCandidates(candidates);
         return analysis;
