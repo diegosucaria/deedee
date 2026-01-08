@@ -28,6 +28,9 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
         - **Native Grounding**: Uses Gemini's built-in Google Search grounding for text-only queries (Speed/Accuracy).
         - **Standard Tool**: Uses a polyfill `googleSearch` tool for Auto-Audio and multimodal contexts where native grounding is unsupported.
     - **Google Search Split**: To bypass model limitations (Gemini 3 Preview vs Tools), general search queries are executed via a side-channel call to a Flash/Pro model (`WORKER_GOOGLE_SEARCH`) instead of the main agent model.
+    -   **Settings Manager**:
+        -   **Unified Config**: Centralized key-value store (`agent_settings` table) for all dynamic behaviors (Voice, Search Strategy, etc.).
+        -   **Read-Through Cache**: On-boot hydration into memory for synchronous, high-performance tool access.
     - **MCP Manager**: Orchestrates tools via the Model Context Protocol.
     - **Backup Manager**: Automates nightly zipping and uploading of `/app/data` to Google Cloud Storage with retention policy.
 
@@ -49,6 +52,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - `GET /v1/journal`, `/v1/tasks`, `/v1/facts`: Dashboard data endpoints.
     - `GET /v1/goals`: Manage agent goals (CRUD).
     - `GET /v1/config`: Read/Write system configuration & env.
+    - `POST /v1/settings`: Update runtime settings (updates DB + Cache).
     - `GET /v1/backups`: Manage backup archives.
     - `GET /v1/logs/:container`: Stream real-time logs (SSE-like).
     - `POST /v1/whatsapp`: Control WhatsApp sessions (connect/disconnect).
@@ -65,7 +69,11 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - **Socket.io**: Real-time event-based communication for Web Interface.
         - Emits: `agent:message` (Stream), `agent:thinking` (Status), `session:update` (Auto-Title).
     - **Telegram**: Long-Polling Bot. Supports Global Stop (`/stop`) and Audio Messages.
-    - **WhatsApp**: Dual-Session connection (Assistant + User/Impersonation) via `@whiskeysockets/baileys`. On-Demand connection via Interfaces UI. Supports text, audio, and images.
+    - **WhatsApp**:
+        - **Dual Session Architecture**: Runs two concurrent Baileys sockets:
+            1.  **Assistant Session**: The bot account (Listens & Replies).
+            2.  **User Session**: The linked user account (Acts on behalf of User).
+        - **Features**: Syncs contacts, sends text/audio/images, supports "Contact Search".
     - **Internal Webhook**: Legacy ingress for async messages.
 
 ### 5. Web Interface (`apps/web`)

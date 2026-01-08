@@ -109,6 +109,12 @@ Everything is customizable via environment variables. Like which models to use.
     -   **Interruptible**: Natural conversations.
     -   **Tool-Enabled**: Can use all agent tools (e.g. "Send a WhatsApp to Alice").
     -   **Configurable Voice**: Choose from multiple personas (Puck, Kore, Charon) via Settings.
+-   **⚙️ Runtime Settings Manager**:
+    -   **Dynamic Configuration**: Change voice, search strategy, and system behaviors on-the-fly without restarting.
+    -   **In-Memory Caching**: Ultra-low latency access for core tools.
+-   **📞 Dual-Brain WhatsApp**:
+    -   **Assistant Mode**: The bot replies to you.
+    -   **User Mode**: The bot acts *as you* (e.g. "Tell Mom I'll be late") using your linked device session.
 
 ---
 
@@ -245,3 +251,38 @@ See the full documentation for details:
 ## 📄 License
 
 MIT License. See [LICENSE](LICENSE) file.
+
+---
+
+## 👨‍💻 Developer Notes & AI Context
+
+> [!IMPORTANT]
+> **NOTE TO AI AGENTS**: Before designing or implementing new features (especially related to Audio, Search, or Real-time APIs), **YOU MUST READ THIS SECTION**. It contains critical constraints and patterns discovered through hard-fought debugging. Ignore them at your own peril.
+
+### 1. Audio Generation (Gemini API)
+- **Constraint**: The `generateContent` method with `responseModalities: ['AUDIO']` **DOES NOT** support the `responseMimeType` parameter (e.g., `audio/mp3` throws `INVALID_ARGUMENT`).
+- **Solution**: The API returns raw PCM/WAV-like buffer. You **MUST** wrapping it with a valid **WAV Header (RIFF)** (24kHz, 1ch, 16-bit) using `apps/agent/src/utils/audio.js` -> `createWavHeader` before sending it to the client.
+
+### 2. Runtime Settings (Read-Through Cache)
+- **Pattern**: Core logic (like `MediaExecutor`) needs synchronous access to settings (e.g., `voice`). DB access is too slow/risky for every call.
+- **Solution**: 
+    1. `Agent.loadSettings()` loads rows into `agent.settings` (in-memory) at boot.
+    2. Updates via `POST /settings` write to DB **AND** refresh the in-memory cache immediately.
+    3. Always access `this.services.agent.settings[key]` first.
+
+### 3. Live API (WebSockets)
+- **Constraint**: The Live API schema validation is incredibly strict. It forbids `additionalProperties` and certain `$ref` structures.
+- **Solution**: Use the `cleanSchema` utility in `apps/web/src/app/live/page.js` to strip unauthorized keys before sending tools.
+- **Handshake**: Voice preferences **MUST** be sent in the initial `setup` message.
+
+### 4. Search Strategy (Hybrid)
+- **Constraint**: Native `googleSearch` (Grounding) **CANNOT** be combined with functional tools (like TTS) in the same turn.
+- **Solution**: `agent.js` implements a **Hybrid Strategy**:
+    - **Text Context**: Uses Native Grounding (Better citations).
+    - **Audio Context**: Uses a Polyfill Tool (`google_search`) to allow mixing with `replyWithAudio`.
+
+### 5. Multi-Brain Architecture (WhatsApp)
+- **Pattern**: To support "acting as user" vs "acting as assistant", we maintain TWO distinct Baileys sessions:
+    - **Assistant**: The bot account.
+    - **User**: The user's linked device (for acting on their behalf).
+- **Storage**: Managed by `InterfacesService` with distinct auth dirs.
