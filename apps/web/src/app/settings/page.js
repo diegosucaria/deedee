@@ -14,6 +14,7 @@ export default function SettingsPage() {
     const [voice, setVoice] = useState('Kore');
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState(null);
+    const [activeTab, setActiveTab] = useState('general');
 
     useEffect(() => {
         Promise.all([
@@ -63,6 +64,12 @@ export default function SettingsPage() {
 
     const currentMode = config?.searchStrategy?.mode || 'HYBRID';
 
+    const tabs = [
+        { id: 'general', label: 'General' },
+        { id: 'backups', label: 'Backups' },
+        { id: 'environment', label: 'Environment' },
+    ];
+
     return (
         <div className="flex h-screen flex-col bg-zinc-950 text-zinc-200 p-6 md:p-12 overflow-y-auto w-full">
             <header className="mb-8 max-w-3xl mx-auto w-full">
@@ -70,67 +77,96 @@ export default function SettingsPage() {
                     <Settings className="w-8 h-8 text-zinc-400" />
                     Agent Settings
                 </h1>
-                <p className="text-zinc-400">Configure global behavior strategies.</p>
+                <p className="text-zinc-400">Configure global behaviors and system preferences.</p>
+
+                {/* Tabs */}
+                <div className="flex space-x-1 mt-6 bg-zinc-900/50 p-1 rounded-lg border border-zinc-800/50 w-fit">
+                    {tabs.map(tab => (
+                        <button
+                            key={tab.id}
+                            onClick={() => setActiveTab(tab.id)}
+                            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === tab.id
+                                    ? 'bg-zinc-800 text-white shadow-sm'
+                                    : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'
+                                }`}
+                        >
+                            {tab.label}
+                        </button>
+                    ))}
+                </div>
             </header>
 
-            <section className="max-w-3xl mx-auto w-full space-y-8">
-                {/* Search Strategy Card */}
-                <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-                    <div className="p-6 border-b border-zinc-800">
-                        <h2 className="text-lg font-semibold text-white">Hybrid Search Strategy</h2>
-                        <p className="text-sm text-zinc-400 mt-1">
-                            Controls how the agent deploys search tools.
-                        </p>
-                    </div>
+            <section className="max-w-3xl mx-auto w-full space-y-8 pb-20">
+                {activeTab === 'general' && (
+                    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        {/* Search Strategy Card */}
+                        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+                            <div className="p-6 border-b border-zinc-800">
+                                <h2 className="text-lg font-semibold text-white">Hybrid Search Strategy</h2>
+                                <p className="text-sm text-zinc-400 mt-1">
+                                    Controls how the agent deploys search tools.
+                                </p>
+                            </div>
 
-                    <div className="p-6 space-y-4">
-                        <StrategyOption
-                            id="HYBRID"
-                            title="Hybrid (Auto)"
-                            description="Automatically switches between Native Google Search (for text) and Polyfill Search (for audio context) to balance speed and features."
-                            isSelected={currentMode === 'HYBRID'}
-                            onSelect={() => handleSave('search_strategy', 'HYBRID')}
-                        />
+                            <div className="p-6 space-y-4">
+                                <StrategyOption
+                                    id="HYBRID"
+                                    title="Hybrid (Auto)"
+                                    description="Automatically switches between Native Google Search (for text) and Polyfill Search (for audio context) to balance speed and features."
+                                    isSelected={currentMode === 'HYBRID'}
+                                    onSelect={() => handleSave('search_strategy', 'HYBRID')}
+                                />
 
-                        <StrategyOption
-                            id="NATIVE_ONLY"
-                            title="Native Only (Performance)"
-                            description="Forces Google Grounding. Faster and cheaper, but CANNOT output Audio/TTS or mix with other tools."
-                            isSelected={currentMode === 'NATIVE_ONLY'}
-                            onSelect={() => handleSave('search_strategy', 'NATIVE_ONLY')}
-                            warning="Audio responses will fail in this mode."
-                        />
+                                <StrategyOption
+                                    id="NATIVE_ONLY"
+                                    title="Native Only (Performance)"
+                                    description="Forces Google Grounding. Faster and cheaper, but CANNOT output Audio/TTS or mix with other tools."
+                                    isSelected={currentMode === 'NATIVE_ONLY'}
+                                    onSelect={() => handleSave('search_strategy', 'NATIVE_ONLY')}
+                                    warning="Audio responses will fail in this mode."
+                                />
 
-                        <StrategyOption
-                            id="STANDARD_ONLY"
-                            title="Standard Only (Compatibility)"
-                            description="Forces Polyfill Search (Tool Use). Slower, but allows text-to-speech mixing and multi-tool chains."
-                            isSelected={currentMode === 'STANDARD_ONLY'}
-                            onSelect={() => handleSave('search_strategy', 'STANDARD_ONLY')}
-                        />
-                    </div>
-                    {error && (
-                        <div className="bg-red-500/10 text-red-400 p-4 text-sm border-t border-red-500/20">
-                            Error saving settings: {error}
+                                <StrategyOption
+                                    id="STANDARD_ONLY"
+                                    title="Standard Only (Compatibility)"
+                                    description="Forces Polyfill Search (Tool Use). Slower, but allows text-to-speech mixing and multi-tool chains."
+                                    isSelected={currentMode === 'STANDARD_ONLY'}
+                                    onSelect={() => handleSave('search_strategy', 'STANDARD_ONLY')}
+                                />
+                            </div>
+                            {error && (
+                                <div className="bg-red-500/10 text-red-400 p-4 text-sm border-t border-red-500/20">
+                                    Error saving settings: {error}
+                                </div>
+                            )}
                         </div>
-                    )}
-                </div>
 
-                <BackupSettings backups={backups} />
-                <EnvVariables env={env} />
+                        {/* Voice Settings Card */}
+                        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+                            <div className="p-6 border-b border-zinc-800">
+                                <h2 className="text-lg font-semibold text-white">Live Agent Voice</h2>
+                                <p className="text-sm text-zinc-400 mt-1">
+                                    Choose the voice persona for Gemini Live sessions.
+                                </p>
+                            </div>
+                            <div className="p-6">
+                                <VoiceSelector selectedVoice={voice} onSelect={handleVoiceChange} />
+                            </div>
+                        </div>
+                    </div>
+                )}
 
-                {/* Voice Settings Card */}
-                <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-                    <div className="p-6 border-b border-zinc-800">
-                        <h2 className="text-lg font-semibold text-white">Live Agent Voice</h2>
-                        <p className="text-sm text-zinc-400 mt-1">
-                            Choose the voice persona for Gemini Live sessions.
-                        </p>
+                {activeTab === 'backups' && (
+                    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <BackupSettings backups={backups} />
                     </div>
-                    <div className="p-6">
-                        <VoiceSelector selectedVoice={voice} onSelect={handleVoiceChange} />
+                )}
+
+                {activeTab === 'environment' && (
+                    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <EnvVariables env={env} />
                     </div>
-                </div>
+                )}
             </section>
         </div>
     );
