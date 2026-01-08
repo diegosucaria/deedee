@@ -413,22 +413,73 @@ export async function getUserLocation() {
     try {
         const headersList = require('next/headers').headers();
         const ip = headersList.get('x-forwarded-for') || headersList.get('remote-addr') || '';
-        // If IP is loopback or local, ipapi might fallback to server location, but better than nothing.
-        // x-forwarded-for can be a list "client, proxy1, proxy2"
         const clientIp = ip.split(',')[0].trim();
 
-        const url = clientIp ? `https://ipapi.co/${clientIp}/json/` : 'https://ipapi.co/json/';
+        // 1. Define Providers with normalization logic
+        // We use a simple array of async functions to try in order.
+        const providers = [
+            // Provider 1: ipapi.co (HTTPS, Rate Limit: 1000/day)
+            async () => {
+                const url = clientIp ? `https://ipapi.co/${clientIp}/json/` : 'https://ipapi.co/json/';
+                const res = await fetch(url, { cache: 'no-store' });
+                if (!res.ok) throw new Error(`Status ${res.status}`);
+                const data = await res.json();
+                if (data.error) throw new Error(data.reason || 'API Error');
+                return {
+                    city: data.city,
+                    country: data.country_name,
+                    lat: data.latitude,
+                    lon: data.longitude,
+                    ip: data.ip
+                };
+            },
+            // Provider 2: ipwho.is (HTTPS, Rate Limit: 10k/month, No Auth)
+            async () => {
+                const url = clientIp ? `https://ipwho.is/${clientIp}` : 'https://ipwho.is/';
+                const res = await fetch(url, { cache: 'no-store' });
+                if (!res.ok) throw new Error(`Status ${res.status}`);
+                const data = await res.json();
+                if (!data.success) throw new Error(data.message || 'API Error');
+                return {
+                    city: data.city,
+                    country: data.country,
+                    lat: data.latitude,
+                    lon: data.longitude,
+                    ip: data.ip
+                };
+            },
+            // Provider 3: ip-api.com (HTTP, Rate Limit: 45/min)
+            // Note: HTTP only for free tier, might be an issue if strict mixed-content, but server-side is fine.
+            async () => {
+                const url = clientIp ? `http://ip-api.com/json/${clientIp}` : 'http://ip-api.com/json/';
+                const res = await fetch(url, { cache: 'no-store' });
+                if (!res.ok) throw new Error(`Status ${res.status}`);
+                const data = await res.json();
+                if (data.status === 'fail') throw new Error(data.message || 'API Error');
+                return {
+                    city: data.city,
+                    country: data.country,
+                    lat: data.lat,
+                    lon: data.lon,
+                    ip: data.query
+                };
+            }
+        ];
 
-        const res = await fetch(url, { cache: 'no-store' });
-
-        if (res.status === 429) {
-            console.warn('[getUserLocation] IPAPI Rate Limit (429). Location data unavailable.');
-            return { success: false, error: 'Rate Limit' };
+        // 2. Iterate and Try
+        for (const [index, provider] of providers.entries()) {
+            try {
+                const location = await provider();
+                // console.log(`[getUserLocation] Success with provider ${index + 1}`);
+                return { success: true, data: location };
+            } catch (error) {
+                console.warn(`[getUserLocation] Provider ${index + 1} failed: ${error.message}`);
+                // Continue to next provider
+            }
         }
 
-        if (!res.ok) throw new Error(`IPAPI Error: ${res.status}`);
-        const data = await res.json();
-        return { success: true, data };
+        throw new Error('All geolocation providers failed.');
+
     } catch (error) {
         console.error('getUserLocation Error:', error.message);
         return { success: false, error: error.message };
