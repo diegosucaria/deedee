@@ -116,6 +116,12 @@ Everything is customizable via environment variables. Like which models to use.
     -   **Assistant Mode**: The bot replies to you.
     -   **User Mode**: The bot acts *as you* (e.g. "Tell Mom I'll be late") using your linked device session.
 
+-   **🗄️ Life Vaults**:
+    -   **Topic-Based Knowledge**: Persistent file storage and wiki for specific life areas (e.g. "Health", "Finance", "Car").
+    -   **Context Switching**: Agent automatically switches context when discussing a vault topic.
+    -   **File Management**: Upload invoices, medical reports, or manuals. The Agent can find and read them.
+    -   **Wiki**: Auto-updating `index.md` for each vault acting as a high-level summary.
+
 ---
 
 ##  Tools & Capabilities
@@ -130,7 +136,9 @@ Deedee comes equipped with a suite of tools, both internal and via MCP.
 -   **Journal**: `logJournal`, `readJournal`, `searchJournal` (Second Brain).
 -   **Scheduling**: `scheduleJob` (Cron), `setReminder` (One-off).
 -   **Communication**: `replyWithAudio` (Native TTS), `sendEmail`.
+-   **Communication**: `replyWithAudio` (Native TTS), `sendEmail`.
 -   **Productivity**: `listEvents` (Calendar).
+-   **Life Vaults**: `createVault`, `addToVault` (Ingest files), `readVaultPage`, `listVaultFiles` (RAG-lite).
 
 ### MCP Servers (Model Context Protocol)
 -   **Plex**: Media library search and status (`plex_mcp_server`).

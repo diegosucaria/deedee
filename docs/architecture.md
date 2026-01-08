@@ -32,7 +32,12 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
         -   **Unified Config**: Centralized key-value store (`agent_settings` table) for all dynamic behaviors (Voice, Search Strategy, etc.).
         -   **Read-Through Cache**: On-boot hydration into memory for synchronous, high-performance tool access.
     - **MCP Manager**: Orchestrates tools via the Model Context Protocol.
+    - **MCP Manager**: Orchestrates tools via the Model Context Protocol.
     - **Backup Manager**: Automates nightly zipping and uploading of `/app/data` to Google Cloud Storage with retention policy.
+    - **Vault Manager**:
+        - **Filesystem Backed**: Stores vaults as directories in `/app/data/vaults/{topic}`.
+        - **Sanitization**: Ensures safe filenames and prevents traversal.
+        - **Auto-Context**: Injects active vault index and file lists into the prompt when a topic is selected.
 
 ### 2. Supervisor (`apps/supervisor`)
 - **Role**: The Immune System.
@@ -58,7 +63,11 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - `POST /v1/whatsapp`: Control WhatsApp sessions (connect/disconnect).
     - `GET /v1/whatsapp/contacts`: Search synced WhatsApp contacts.
     - `POST /v1/live/token`: Proxy for Gemini Live ephemeral tokens.
+    - `POST /v1/live/token`: Proxy for Gemini Live ephemeral tokens.
     - `POST /v1/live/tools/execute`: Proxy for Gemini Live client-side tool execution.
+    - `GET /v1/vaults`: List and manage Life Vaults.
+    - `POST /v1/vaults/:id/files`: Secure file upload to vaults. [Proxy -> Agent]
+    - `GET /v1/vaults/:id/files/:filename`: Secure file download. [Proxy -> Agent]
 - **Auth**: Bearer Token (`DEEDEE_API_TOKEN`). All routes protected.
 - **Flow**: Client -> API -> Agent (Waits for full processing) -> API -> Client JSON Response.
 
