@@ -3,11 +3,10 @@
 import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import ReactMarkdown from 'react-markdown';
-import { Send, Play, Wifi, WifiOff, Mic, Image as ImageIcon, X, Loader2, StopCircle } from 'lucide-react';
+import { Send, Play, Wifi, WifiOff, Mic, Image as ImageIcon, X, Loader2, StopCircle, Box, ChevronDown } from 'lucide-react';
 import clsx from 'clsx';
-import { getSession, getUserLocation } from '../../actions';
+import { getSession, getUserLocation, getVaults } from '../../actions';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
-
 
 
 import { useRouter } from 'next/navigation';
@@ -26,12 +25,21 @@ export default function ChatSessionPage({ params }) {
     const [userLocation, setUserLocation] = useState(null);
     const messagesEndRef = useRef(null);
 
+    // Vault State
+    const [vaults, setVaults] = useState([]);
+    const [selectedVault, setSelectedVault] = useState('none');
+
     // Multimodal State
     const [isRecording, setIsRecording] = useState(false);
     const [audioBlob, setAudioBlob] = useState(null);
     const [selectedImage, setSelectedImage] = useState(null); // { file, preview }
     const mediaRecorderRef = useRef(null);
     const audioChunksRef = useRef([]);
+
+    // Fetch Vaults
+    useEffect(() => {
+        getVaults().then(setVaults).catch(console.error);
+    }, []);
 
     // Fetch Location (Option 2: IP-based)
     useEffect(() => {
@@ -113,7 +121,7 @@ export default function ChatSessionPage({ params }) {
             newSocket = io({
                 path: '/socket.io',
                 reconnectionAttempts: 5,
-                transports: ['websocket'], // Force websocket to avoid polling issues
+                // Removed 'websocket' transport constraint to allow polling fallback via proxy
                 query: { chatId } // Identify session
             });
 
@@ -351,7 +359,8 @@ export default function ChatSessionPage({ params }) {
             files: files,
             chatId: chatId,
             metadata: {
-                location: userLocation
+                location: userLocation,
+                vaultId: selectedVault !== 'none' ? selectedVault : undefined
             }
         });
     };
@@ -363,7 +372,22 @@ export default function ChatSessionPage({ params }) {
                 <div className="flex flex-col">
                     <h1 className="text-xl font-semibold text-white truncate max-w-sm">{sessionTitle || 'Chat'}</h1>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-4">
+                    {/* Vault Selector */}
+                    <div className="relative group">
+                        <select
+                            value={selectedVault}
+                            onChange={(e) => setSelectedVault(e.target.value)}
+                            className="appearance-none bg-zinc-900 border border-zinc-700 text-zinc-300 text-sm rounded-lg pl-3 pr-8 py-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 hover:border-zinc-600 transition-colors cursor-pointer outline-none"
+                        >
+                            <option value="none">No Vault</option>
+                            {vaults.map(v => (
+                                <option key={v.id} value={v.id}>{v.name} Vault</option>
+                            ))}
+                        </select>
+                        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500 pointer-events-none" />
+                    </div>
+
                     {isConnected ? (
                         <span className="flex items-center gap-2 text-xs text-emerald-500 bg-emerald-500/10 px-2 py-1 rounded-full">
                             <Wifi className="h-3 w-3" /> Online

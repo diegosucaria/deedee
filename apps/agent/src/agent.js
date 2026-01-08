@@ -202,6 +202,17 @@ class Agent {
           }
         }
 
+        // Handle Vault Context Switch
+        if (message.metadata?.vaultId) {
+          if (message.metadata.vaultId === 'none') {
+            this.activeTopics.delete(chatId);
+            console.log(`[Agent] Chat ${chatId} exited vault context.`);
+          } else {
+            this.activeTopics.set(chatId, message.metadata.vaultId);
+            console.log(`[Agent] Chat ${chatId} switched to vault context: ${message.metadata.vaultId}`);
+          }
+        }
+
         // Auto-Title Trigger (Background)
         const hasContent = message.content || (message.parts && message.parts.length > 0);
 
