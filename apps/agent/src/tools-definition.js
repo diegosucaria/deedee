@@ -365,6 +365,81 @@ const toolDefinitions = [
           },
           required: ["text"]
         }
+      },
+      // Life Vaults
+      {
+        name: "createVault",
+        description: "Create a new Life Vault for a specific topic (e.g. 'health', 'finance').",
+        parameters: {
+          type: "OBJECT",
+          properties: { topic: { type: "STRING" } },
+          required: ["topic"]
+        }
+      },
+      {
+        name: "listVaults",
+        description: "List all existing Life Vaults and their stats.",
+        parameters: {
+          type: "OBJECT",
+          properties: {},
+          required: []
+        }
+      },
+      {
+        name: "addToVault",
+        description: "Add a file to a specific vault and update the wiki. THIS ALSO SWITCHES THE SESSION CONTEXT to that vault.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            topic: { type: "STRING", description: "Target vault (e.g. 'health')" },
+            file_path: { type: "STRING", description: "Absolute path to the temp file to ingest (usually from a previous tool output or upload)" },
+            summary: { type: "STRING", description: "Brief description of what this file is (e.g. 'Blood Test 2024')" }
+          },
+          required: ["topic", "file_path", "summary"]
+        }
+      },
+      {
+        name: "readVaultPage",
+        description: "Read a markdown page from a vault (defaults to index.md).",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            topic: { type: "STRING" },
+            page: { type: "STRING", description: "Filename (e.g. 'index.md', 'summary.md')" }
+          },
+          required: ["topic", "page"]
+        }
+      },
+      {
+        name: "writeVaultPage",
+        description: "Create or Update a markdown page in a vault.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            topic: { type: "STRING" },
+            page: { type: "STRING" },
+            content: { type: "STRING" }
+          },
+          required: ["topic", "page", "content"]
+        }
+      },
+      {
+        name: "listVaultFiles",
+        description: "List raw files stored in a vault.",
+        parameters: {
+          type: "OBJECT",
+          properties: { topic: { type: "STRING" } },
+          required: ["topic"]
+        }
+      },
+      {
+        name: "setSessionTopic",
+        description: "Manually switch the current chat session to focus on a specific Vault topic (e.g. 'health'). This loads the vault context.",
+        parameters: {
+          type: "OBJECT",
+          properties: { topic: { type: "STRING" } },
+          required: ["topic"]
+        }
       }
     ]
   }

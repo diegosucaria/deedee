@@ -6,6 +6,7 @@ const { SchedulerExecutor } = require('./executors/scheduler');
 const { GSuiteExecutor } = require('./executors/gsuite');
 const { MediaExecutor } = require('./executors/media');
 const { CommunicationExecutor } = require('./executors/communication');
+const { VaultExecutor } = require('./executors/vault');
 
 class ToolExecutor {
     /**
@@ -16,6 +17,7 @@ class ToolExecutor {
         this.executors = [
             new FileSystemExecutor(services),
             new MemoryExecutor(services),
+            new VaultExecutor(services), // Add Vault Executor
             new ProductivityExecutor(services),
             new SmartHomeExecutor(services),
             new SchedulerExecutor(services),

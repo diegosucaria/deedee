@@ -15,6 +15,7 @@ const { ConfirmationManager } = require('./confirmation-manager');
 const { ToolExecutor } = require('./tool-executor');
 const path = require('path');
 const { JournalManager } = require('./journal');
+const VaultManager = require('./vault-manager');
 const { BackupManager } = require('./backup');
 const { Scheduler } = require('./scheduler');
 const axios = require('axios');
@@ -31,6 +32,8 @@ class Agent {
 
     // Persistence
     this.db = new AgentDB();
+    // Fallback for tests where dbPath might be undefined due to mocking
+    const dataDir = this.db.dbPath ? path.dirname(this.db.dbPath) : path.join(process.cwd(), 'data');
     this.smartContext = new SmartContextManager(this.db, this.client); // Client is null here, need to set later
 
     // Router
@@ -43,14 +46,14 @@ class Agent {
     this.gsuite = new GSuiteTools();
     this.local = new LocalTools('/app/source');
     this.journal = new JournalManager();
+    this.vaults = new VaultManager(dataDir); // Initialize Vaults with dynamic path
     this.backupManager = new BackupManager(this);
 
     this.confirmationManager = new ConfirmationManager(this.db);
     // Shared state for stopping execution
     this.stopFlags = new Set();
-    this.confirmationManager = new ConfirmationManager(this.db);
-    // Shared state for stopping execution
-    this.stopFlags = new Set();
+    this.activeTopics = new Map(); // Store active vault topics per chatId
+
     this.commandHandler = new CommandHandler(this.db, this.interface, this.confirmationManager, this.stopFlags);
     this.rateLimiter = new RateLimiter(this.db);
 
@@ -62,6 +65,7 @@ class Agent {
     this.toolExecutor = new ToolExecutor({
       local: this.local,
       journal: this.journal,
+      vaults: this.vaults, // Pass Vaults to Executor
       scheduler: this.scheduler,
       gsuite: this.gsuite,
       mcp: this.mcp,
@@ -114,6 +118,9 @@ class Agent {
 
     // Load Scheduled Jobs
     await this.scheduler.loadJobs();
+
+    // Initialize Vaults
+    await this.vaults.initialize();
 
     // Ensure System Maintenance Jobs
     this.scheduler.ensureSystemJobs();
@@ -445,6 +452,39 @@ class Agent {
       const isCodingMode = decision.model === 'PRO';
 
       let systemInstruction = getSystemInstruction(new Date().toString(), pendingGoals, facts, { codingMode: isCodingMode });
+
+      // --- LIFE VAULTS CONTEXT INJECTION ---
+      const activeTopic = this.activeTopics.get(chatId);
+      if (activeTopic) {
+        try {
+          // Read Wiki
+          const wikiContent = await this.vaults.readVaultPage(activeTopic, 'index.md');
+          // List Files
+          const files = await this.vaults.listVaultFiles(activeTopic);
+
+          if (wikiContent) {
+            console.log(`[Agent] Injecting Vault Context: ${activeTopic}`);
+            systemInstruction += `\n
+\n=== 📂 ACTIVE VAULT: ${activeTopic.toUpperCase()} ===
+You are now accessing the user's ${activeTopic} knowledge base.
+
+## SUMMARY (from index.md):
+${wikiContent}
+
+## AVAILABLE FILES:
+${files.length > 0 ? files.join(", ") : "No files yet."}
+
+## INSTRUCTIONS:
+- Use this context to answer questions.
+- If you need to see a specific file's details, use 'readVaultFile'.
+- If you receive new information, use 'updateVaultPage' to keep the index fresh.
+================================
+`;
+          }
+        } catch (err) {
+          console.error(`[Agent] Failed to inject vault context for ${activeTopic}:`, err);
+        }
+      }
 
       // In-Context User Location
       if (message.metadata?.location) {

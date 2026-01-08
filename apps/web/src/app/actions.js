@@ -517,3 +517,92 @@ export async function deleteSession(id) {
         return { success: false, error: error.message };
     }
 }
+// --- Life Vaults ---
+export async function getVaults() {
+    try {
+        return await fetchAPI('/v1/vaults');
+    } catch (error) {
+        console.error('getVaults Error:', error);
+        return [];
+    }
+}
+
+export async function createVault(topic) {
+    try {
+        const res = await fetchAPI('/v1/vaults', {
+            method: 'POST',
+            body: JSON.stringify({ topic })
+        });
+        revalidatePath('/vaults');
+        return { success: true, ...res };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function getVault(id) {
+    try {
+        return await fetchAPI(`/v1/vaults/${encodeURIComponent(id)}`);
+    } catch (error) {
+        console.error(`getVault(${id}) Error:`, error);
+        return null; // or throw
+    }
+}
+
+export async function updateVaultPage(id, content, page = 'index.md') {
+    try {
+        await fetchAPI(`/v1/vaults/${encodeURIComponent(id)}/wiki`, {
+            method: 'POST',
+            body: JSON.stringify({ content, page })
+        });
+        revalidatePath(`/vaults/${id}`);
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function uploadVaultFile(id, formData) {
+    // Note: formData must contain 'file'
+    // fetchAPI handles JSON usually. For Multipart, we might need a separate client-side logic OR use fetch directly inside this action.
+    // However, Server Actions can accept FormData. But sending it to external API requires careful handling.
+    // fetchAPI wrapper might set Content-Type: application/json automatically?
+    // Let's look at `fetchAPI`. I assume it's in `src/lib/api.js`.
+    // If fetchAPI doesn't support FormData, we use generic fetch with token if needed (but API token is server side).
+
+    // Check if I can see `fetchAPI`.
+    // Assuming generic approach:
+
+    try {
+        // We need to bypass fetchAPI if it enforces JSON. 
+        // But assuming I can't check it right now. I'll take a safer path: use internal helper if possible, or replicate fetchAPI logic for FormData.
+        // Actually user rule says: "Use Next.js Server Actions... to fetch data from the API."
+
+        // Let's trust I can handle it here.
+        // We need to construct a Request to the Agent API.
+
+        // Re-implementing simplified generic fetch for FormData:
+        // Use API_URL from lib/api to ensure consistency (e.g. Docker dns)
+        const { API_URL } = require('@/lib/api');
+        const { DEEDEE_API_TOKEN } = process.env;
+
+        const res = await fetch(`${API_URL}/v1/vaults/${encodeURIComponent(id)}/files`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${DEEDEE_API_TOKEN}`,
+                // Do NOT set Content-Type for FormData, browser/node sets it with boundary
+            },
+            body: formData // in Server Action, this is native FormData
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || res.statusText);
+        }
+
+        revalidatePath(`/vaults/${id}`);
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}

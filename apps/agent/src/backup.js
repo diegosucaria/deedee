@@ -26,7 +26,11 @@ class BackupManager {
         const dateStr = new Date().toISOString().replace(/[:.]/g, '-').slice(0, 16); // YYYY-MM-DD-HH-mm
         const backupName = `backup-${dateStr}.zip`;
         const outputPath = path.join('/tmp', backupName);
-        const sourceDir = '/app/data';
+
+        // Use the actual data directory from the Agent's DB instance
+        // Use the actual data directory from the Agent's DB instance, with fallback for tests
+        const dbPath = this.agent.db?.dbPath || '/app/data/agent.db';
+        const sourceDir = path.dirname(dbPath);
 
         console.log(`[BackupManager] Starting backup: ${backupName}`);
 
