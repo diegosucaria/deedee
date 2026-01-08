@@ -266,9 +266,15 @@ class Agent {
     try {
       const result = await session.sendMessageStream(payload);
 
-      // Stream handling
-      if (result.stream) {
-        for await (const chunk of result.stream) {
+      // Detect if result itself is the stream (Async Generator)
+      let stream = result.stream || result;
+      if (!stream[Symbol.asyncIterator] && result.stream) {
+        stream = result.stream;
+      }
+
+      // Handle streaming
+      if (stream && typeof stream[Symbol.asyncIterator] === 'function') {
+        for await (const chunk of stream) {
           const text = chunk.text();
           if (text) {
             this.interface.emit('chat:token', {
@@ -279,24 +285,24 @@ class Agent {
           }
         }
       } else {
-        console.warn('[Agent] sendMessageStream returned no stream property.');
+        console.warn('[Agent] sendMessageStream result is not iterable.');
         console.log('[Agent] Stream Result Keys:', Object.keys(result));
       }
 
-      // Check if response is a promise and await it
+      // Get final response
       let response = result.response;
       if (response && typeof response.then === 'function') {
         response = await response;
       }
 
-      // Fallback for direct result
+      // Fallback: If result matches standard structure
       if (!response && result.candidates) {
         response = result;
       }
 
       if (!response) {
-        console.warn('[Agent] Stream result.response is undefined.');
-        console.log('[Agent] Stream Result Keys:', Object.keys(result));
+        console.warn('[Agent] Stream result.response is undefined. Trying to recover...');
+        console.log('[Agent] Raw Result Keys:', Object.keys(result));
       }
       return response;
     } catch (e) {
