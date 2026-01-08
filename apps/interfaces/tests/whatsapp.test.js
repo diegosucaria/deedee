@@ -170,12 +170,12 @@ describe('WhatsAppService Unit Tests', () => {
 
     test('should clear session after N consecutive 515 errors', async () => {
         // We trigger it somewhat manually to verify the logic increment
-        whatsapp.reconnectAttempts = 4;
+        whatsapp.reconnectAttempts = 9;
         await whatsapp.connect();
 
         const qrCallback = mockBaileys.default.mock.results[0].value.ev.on.mock.calls.find(c => c[0] === 'connection.update')[1];
 
-        // 5th attempt (increment happens on error)
+        // 10th attempt (increment happens on error)
         jest.spyOn(whatsapp, 'disconnect');
         jest.spyOn(fs, 'rmSync');
 
@@ -186,8 +186,8 @@ describe('WhatsAppService Unit Tests', () => {
             }
         });
 
-        // reconnectAttempts should be 5 now, trigger wipe
-        expect(whatsapp.disconnect).toHaveBeenCalled();
+        // reconnectAttempts should be 10 now, trigger wipe
+        expect(whatsapp.disconnect).toHaveBeenCalledWith(true);
         // Since disconnect calls rmSync, we verify that too
         expect(fs.rmSync).toHaveBeenCalledWith(whatsapp.authFolder, expect.anything());
     });

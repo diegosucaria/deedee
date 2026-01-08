@@ -212,7 +212,7 @@ app.post('/whatsapp/disconnect', async (req, res) => {
 
   if (!service) return res.status(400).json({ error: 'Invalid session ID' });
 
-  await service.disconnect();
+  await service.disconnect(true); // Explicitly clear session on manual disconnect
   // Auto-restart to generate new QR
   setTimeout(() => service.start(), 1000);
   res.json({ success: true });

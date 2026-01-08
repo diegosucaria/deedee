@@ -124,9 +124,9 @@ class WhatsAppService {
                     if (statusCode === 515) {
                         this.reconnectAttempts++;
                         console.log(`${this.logPrefix} Stream Error 515 count: ${this.reconnectAttempts}`);
-                        if (this.reconnectAttempts >= 5) {
+                        if (this.reconnectAttempts >= 10) {
                             console.error(`${this.logPrefix} Too many 515 errors. Corruption likely. Wiping session.`);
-                            await this.disconnect();
+                            await this.disconnect(true); // Explicit wipe
                             // Restart to generate NEW QR
                             setTimeout(() => this.start(), 1000);
                             return;
@@ -149,9 +149,8 @@ class WhatsAppService {
                         // Backoff
                         setTimeout(() => this.connect(), 5000);
                     } else {
-                        console.log(`${this.logPrefix} Logged out. Delete session to restart.`);
-                        this.sock = null;
-                        this.store = null; // Clear store on logout?
+                        console.log(`${this.logPrefix} Logged out by Server. Clearing session.`);
+                        await this.disconnect(true); // Wipe if server says logged out
                     }
                 } else if (connection === 'open') {
                     console.log(`${this.logPrefix} Connection opened`);
@@ -320,17 +319,26 @@ class WhatsAppService {
         }
     }
 
-    async disconnect() {
+    async disconnect(clearSession = false) {
         try {
             if (this.sock) {
-                await this.sock.logout();
+                // Only calling logout if we intend to clear session or if socket is active?
+                // logout() sends a query to server to invalidate creds.
+                // If we just want to stop, we should use end()
+                if (clearSession) {
+                    await this.sock.logout();
+                } else {
+                    this.sock.end(undefined); // Just close connection
+                }
                 this.sock = null;
             }
             this.status = 'disconnected';
-            // fs.rmSync(this.authFolder, { recursive: true, force: true }); // Keep auth by default? No, disconnect implies logout usuallly?
-            // Actually test expects rmSync
-            if (fs.existsSync(this.authFolder)) {
-                fs.rmSync(this.authFolder, { recursive: true, force: true });
+
+            if (clearSession) {
+                if (fs.existsSync(this.authFolder)) {
+                    console.log(`${this.logPrefix} Deleting session files...`);
+                    fs.rmSync(this.authFolder, { recursive: true, force: true });
+                }
             }
         } catch (e) {
             console.error(`${this.logPrefix} Disconnect Error:`, e);
