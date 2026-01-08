@@ -420,8 +420,12 @@ export async function getUserLocation() {
         const providers = [
             // Provider 1: ipapi.co (HTTPS, Rate Limit: 1000/day)
             async () => {
+                console.log('[getUserLocation] Trying Provider 1 (ipapi.co)...');
                 const url = clientIp ? `https://ipapi.co/${clientIp}/json/` : 'https://ipapi.co/json/';
-                const res = await fetch(url, { cache: 'no-store' });
+                const res = await fetch(url, {
+                    cache: 'no-store',
+                    signal: AbortSignal.timeout(3000) // 3s Timeout
+                });
                 if (!res.ok) throw new Error(`Status ${res.status}`);
                 const data = await res.json();
                 if (data.error) throw new Error(data.reason || 'API Error');
@@ -435,8 +439,12 @@ export async function getUserLocation() {
             },
             // Provider 2: ipwho.is (HTTPS, Rate Limit: 10k/month, No Auth)
             async () => {
+                console.log('[getUserLocation] Trying Provider 2 (ipwho.is)...');
                 const url = clientIp ? `https://ipwho.is/${clientIp}` : 'https://ipwho.is/';
-                const res = await fetch(url, { cache: 'no-store' });
+                const res = await fetch(url, {
+                    cache: 'no-store',
+                    signal: AbortSignal.timeout(3000) // 3s Timeout
+                });
                 if (!res.ok) throw new Error(`Status ${res.status}`);
                 const data = await res.json();
                 if (!data.success) throw new Error(data.message || 'API Error');
@@ -451,8 +459,12 @@ export async function getUserLocation() {
             // Provider 3: ip-api.com (HTTP, Rate Limit: 45/min)
             // Note: HTTP only for free tier, might be an issue if strict mixed-content, but server-side is fine.
             async () => {
+                console.log('[getUserLocation] Trying Provider 3 (ip-api.com)...');
                 const url = clientIp ? `http://ip-api.com/json/${clientIp}` : 'http://ip-api.com/json/';
-                const res = await fetch(url, { cache: 'no-store' });
+                const res = await fetch(url, {
+                    cache: 'no-store',
+                    signal: AbortSignal.timeout(3000) // 3s Timeout
+                });
                 if (!res.ok) throw new Error(`Status ${res.status}`);
                 const data = await res.json();
                 if (data.status === 'fail') throw new Error(data.message || 'API Error');
@@ -470,7 +482,7 @@ export async function getUserLocation() {
         for (const [index, provider] of providers.entries()) {
             try {
                 const location = await provider();
-                // console.log(`[getUserLocation] Success with provider ${index + 1}`);
+                console.log(`[getUserLocation] Success with provider ${index + 1}`);
                 return { success: true, data: location };
             } catch (error) {
                 console.warn(`[getUserLocation] Provider ${index + 1} failed: ${error.message}`);
