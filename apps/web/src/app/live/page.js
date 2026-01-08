@@ -97,11 +97,18 @@ export default function GeminiLivePage() {
                     setup: {
                         model: config.model,
                         generation_config: {
-                            response_modalities: ["AUDIO"]
+                            response_modalities: ["AUDIO"],
+                            speech_config: {
+                                voice_config: {
+                                    prebuilt_voice_config: {
+                                        voice_name: "Aoede" // Valid names: Puck, Charon, Kore, Fenrir, Aoede
+                                    }
+                                }
+                            }
                         },
                         system_instruction: {
                             parts: [{
-                                text: "You are DeeDee, a helpful and friendly home assistant. You can control the smart home, answer questions, and execute tools. You speak both English and Spanish fluently and should detect the user's language preference automatically."
+                                text: "You are DeeDee, a helpful and friendly home assistant. You can control the smart home, answer questions, and execute tools. You speak both English and Spanish fluently. IMPORTANT: Listen carefully to the user's language. If the user speaks Spanish, you MUST reply in Spanish. If the user speaks English, reply in English. Adapt to the user's language preference automatically immediately."
                             }]
                         },
                         tools: [
