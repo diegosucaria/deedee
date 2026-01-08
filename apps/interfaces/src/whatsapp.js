@@ -65,8 +65,43 @@ class WhatsAppService {
             console.log(`${this.logPrefix} Connecting...`);
             this.status = 'connecting';
 
+            // Simple In-Memory Store Polyfill (Since it's missing from latest Baileys export)
+            function makeInMemoryStore(config) {
+                return {
+                    contacts: {},
+                    bind(ev) {
+                        ev.on('contacts.upsert', (contacts) => {
+                            for (const c of contacts) {
+                                this.contacts[c.id] = { ...this.contacts[c.id], ...c };
+                            }
+                        });
+                        ev.on('contacts.update', (updates) => {
+                            for (const u of updates) {
+                                if (this.contacts[u.id]) {
+                                    Object.assign(this.contacts[u.id], u);
+                                }
+                            }
+                        });
+                    },
+                    readFromFile(path) {
+                        if (fs.existsSync(path)) {
+                            try {
+                                const data = JSON.parse(fs.readFileSync(path, 'utf-8'));
+                                this.contacts = data.contacts || {};
+                            } catch (e) {
+                                console.error('Failed to read store file:', e);
+                            }
+                        }
+                    },
+                    writeToFile(path) {
+                        fs.writeFileSync(path, JSON.stringify({ contacts: this.contacts }, null, 2));
+                    }
+                };
+            }
+
+            // ... inside connect ...
             // Dynamic Import via helper
-            const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay, downloadMediaMessage, makeInMemoryStore } = await this._importBaileys();
+            const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay, downloadMediaMessage } = await this._importBaileys();
             this.downloadMediaMessage = downloadMediaMessage; // Save for later use
 
             // Initialize Store if not already done

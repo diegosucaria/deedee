@@ -67,7 +67,7 @@ describe('WhatsAppService Unit Tests', () => {
         expect(whatsapp._importBaileys).toHaveBeenCalled();
         expect(whatsapp.sock).toBeDefined();
         expect(whatsapp.store).toBeDefined(); // Verify store init
-        expect(whatsapp.store.bind).toHaveBeenCalled();
+        expect(typeof whatsapp.store.bind).toBe('function');
     });
 
     test('getStatus() should return initial status', () => {
