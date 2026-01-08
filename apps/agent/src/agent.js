@@ -989,7 +989,33 @@ ${files.length > 0 ? files.join(", ") : "No files yet."}
         console.time(toolTimerLabel);
 
         try {
-          response = await this._generateStream(session, { message: functionResponseParts }, chatId);
+          const result = await session.sendMessageStream({ parts: functionResponseParts });
+
+          // Detect if result itself is the stream (Async Generator)
+          let stream = result.stream || result;
+          if (!stream[Symbol.asyncIterator] && result.stream) {
+            stream = result.stream;
+          }
+
+          // Handle streaming
+          const finalResponsePromise = (async () => {
+            // Iterate to drain stream and trigger tokens
+            if (stream && typeof stream[Symbol.asyncIterator] === 'function') {
+              for await (const chunk of stream) {
+                const text = chunk.text();
+                if (text) this.interface.emit('chat:token', { id: chatId, token: text, timestamp: Date.now() });
+              }
+            }
+
+            // Await final response
+            let resp = result.response;
+            if (resp && typeof resp.then === 'function') resp = await resp;
+            if (!resp && result.candidates) resp = result;
+            return resp;
+          })();
+
+          response = await finalResponsePromise;
+
         } catch (e) {
           console.error('[Agent] Tool response streaming failed:', e);
           throw e;

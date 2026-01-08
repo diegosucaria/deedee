@@ -98,11 +98,11 @@ export default function ActiveJobsTable() {
                 <table className="w-full text-sm text-left">
                     <thead className="bg-zinc-950 text-zinc-500 uppercase text-xs">
                         <tr>
-                            <th className="px-4 py-3">Job Name</th>
-                            <th className="px-4 py-3">Schedule / Type</th>
-                            <th className="px-4 py-3">Task</th>
-                            <th className="px-4 py-3">Next Run</th>
-                            <th className="px-4 py-3">Expires At</th>
+                            <th className="px-2 py-3">Job Name</th>
+                            <th className="px-2 py-3">Schedule / Type</th>
+                            <th className="px-2 py-3">Task</th>
+                            <th className="px-2 py-3">Next Run</th>
+                            <th className="px-2 py-3">Expires At</th>
                             <th className="px-3 py-3 text-right">Actions</th>
                         </tr>
                     </thead>
@@ -139,7 +139,7 @@ export default function ActiveJobsTable() {
                                             {job.task || '-'}
                                         </div>
                                     </td>
-                                    <td className="px-4 py-4 text-zinc-400 whitespace-nowrap">
+                                    <td className="px-2 py-4 text-zinc-400 whitespace-nowrap">
                                         {job.nextInvocation ? new Date(job.nextInvocation).toLocaleString() : '-'}
                                     </td>
                                     <td className="px-4 py-4 text-zinc-400 whitespace-nowrap">

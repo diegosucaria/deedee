@@ -12,9 +12,22 @@ class CommunicationExecutor extends BaseExecutor {
 
                 const svc = service || 'whatsapp';
 
-                // Sanitize 'to' (Remove non-digits)
-                // This fixes the 'invalid JID' error when 'to' contains '+' or spaces
-                const cleanTo = to.replace(/[^0-9]/g, '');
+                // ALIAS RESOLUTION
+                let target = to;
+                const ALIASES = {
+                    'me': '5493546407162', // TODO: Load from Config/Env
+                    'diego': '5493546407162',
+                    'myself': '5493546407162',
+                    'owner': '5493546407162'
+                };
+
+                if (ALIASES[target.toLowerCase()]) {
+                    target = ALIASES[target.toLowerCase()];
+                    console.log(`[CommunicationExecutor] Resolved alias '${to}' to '${target}'`);
+                }
+
+                // Sanitize 'to' (Allow + for international, remove spaces/dashes)
+                const cleanTo = target.replace(/[^0-9]/g, '');
 
                 if (!cleanTo || cleanTo.length < 5) {
                     throw new Error(`Invalid phone number: ${to}`);
