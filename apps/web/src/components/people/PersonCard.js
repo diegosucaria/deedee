@@ -4,10 +4,8 @@ import { motion } from 'framer-motion';
 import { User, Phone, Edit, Trash2 } from 'lucide-react';
 import Image from 'next/image';
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:5000';
-
 export function PersonCard({ person, onEdit, onDelete }) {
-    const avatarUrl = `${API_URL}/v1/people/${person.id}/avatar`;
+    const avatarUrl = `/api/v1/people/${encodeURIComponent(person.id)}/avatar`;
 
     return (
         <motion.div

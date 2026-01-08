@@ -8,7 +8,7 @@ import clsx from 'clsx';
 import { getSession, getUserLocation } from '../../actions';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
 
-const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL || undefined;
+
 
 import { useRouter } from 'next/navigation';
 
@@ -110,7 +110,8 @@ export default function ChatSessionPage({ params }) {
         let isMounted = true;
 
         const initSocket = () => {
-            newSocket = io(SOCKET_URL, {
+            newSocket = io({
+                path: '/socket.io',
                 reconnectionAttempts: 5,
                 transports: ['websocket'], // Force websocket to avoid polling issues
                 query: { chatId } // Identify session
