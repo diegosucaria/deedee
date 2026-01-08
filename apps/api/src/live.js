@@ -16,6 +16,18 @@ router.post('/token', async (req, res) => {
     }
 });
 
+// 1b. Get Live Config
+router.get('/config', async (req, res) => {
+    try {
+        const response = await axios.get(`${AGENT_URL}/live/config`);
+        res.json(response.data);
+    } catch (error) {
+        console.error('[API] Live Config Error:', error.message);
+        const status = error.response ? error.response.status : 502;
+        res.status(status).json({ error: 'Failed to get live config' });
+    }
+});
+
 // 2. Execute Backend Tools
 router.post('/tools/execute', async (req, res) => {
     try {

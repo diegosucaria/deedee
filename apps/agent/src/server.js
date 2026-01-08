@@ -694,6 +694,11 @@ app.post('/live/token', async (req, res) => {
   }
 });
 
+app.get('/live/config', (req, res) => {
+  const model = process.env.WORKER_LIVE || 'models/gemini-2.0-flash-exp';
+  res.json({ model });
+});
+
 // --- Live Tool Sync ---
 app.get('/internal/tools', async (req, res) => {
   if (!agent || !agent.mcp) return res.status(503).json({ error: 'Agent not ready' });

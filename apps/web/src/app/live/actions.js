@@ -26,11 +26,17 @@ export async function executeLiveTool(name, args) {
 }
 
 export async function getLiveConfig() {
-    let model = process.env.WORKER_LIVE || 'models/gemini-2.0-flash-exp';
-    if (model && !model.startsWith('models/')) {
-        model = `models/${model}`;
+    try {
+        const response = await fetchAPI('/v1/live/config');
+        let model = response.model || 'models/gemini-2.0-flash-exp';
+        if (model && !model.startsWith('models/')) {
+            model = `models/${model}`;
+        }
+        return { model };
+    } catch (error) {
+        console.error('getLiveConfig Error:', error);
+        return { model: 'models/gemini-2.0-flash-exp' };
     }
-    return { model };
 }
 
 export async function getAgentTools() {
