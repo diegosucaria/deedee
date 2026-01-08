@@ -8,6 +8,7 @@ const axios = require('axios');
 const app = express();
 const server = http.createServer(app);
 const io = new Server(server, {
+  maxHttpBufferSize: 5e7, // 50MB
   cors: {
     origin: "*", // Adjust for production
     methods: ["GET", "POST"]
