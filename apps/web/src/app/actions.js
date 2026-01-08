@@ -186,6 +186,15 @@ export async function getStatsCostTrend() {
     }
 }
 
+export async function getDailyCostTrend() {
+    try {
+        return await fetchAPI('/v1/stats/daily-cost');
+    } catch (error) {
+        console.error('getDailyCostTrend Error:', error);
+        return [];
+    }
+}
+
 export async function getJobLogs(page = 1, limit = 50) {
     try {
         const offset = (page - 1) * limit;

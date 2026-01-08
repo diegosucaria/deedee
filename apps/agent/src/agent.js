@@ -263,17 +263,32 @@ class Agent {
    * Helper to send message efficiently with streaming and token broadcasting
    */
   async _generateStream(session, payload, chatId) {
-    // STREAMING DISABLED (2026-01-08)
-    // We are disabling streaming per user request due to persistent issues with empty responses.
-    // See TODO.md to re-enable.
-
     try {
-      const result = await session.sendMessage(payload);
-      // Simulate stream end for consistency if needed, but here we just return the response.
-      return result.response;
+      const result = await session.sendMessageStream(payload);
+
+      // Stream handling
+      for await (const chunk of result.stream) {
+        const text = chunk.text();
+        if (text) {
+          this.interface.emit('chat:token', {
+            id: chatId,
+            token: text,
+            timestamp: Date.now()
+          });
+        }
+      }
+
+      return await result.response;
     } catch (e) {
-      console.error(`[Agent] sendMessage failed: ${e.message}`);
-      throw e;
+      console.error(`[Agent] sendMessageStream failed: ${e.message}`);
+      // Fallback to non-streaming if streaming specifically fails
+      try {
+        console.warn('[Agent] Falling back to non-streaming sendMessage...');
+        const result = await session.sendMessage(payload);
+        return result.response;
+      } catch (innerE) {
+        throw innerE;
+      }
     }
   }
 
@@ -726,6 +741,7 @@ ${files.length > 0 ? files.join(", ") : "No files yet."}
           this.db.logMetric('latency_model', modelDuration, { model: selectedModel, chatId, runId });
 
           // Validation
+          if (!response) throw new Error('Response object is undefined.');
           const initialCandidates = response.candidates || [];
           const firstCandidate = initialCandidates[0];
           const parts = firstCandidate?.content?.parts || [];
@@ -740,6 +756,10 @@ ${files.length > 0 ? files.join(", ") : "No files yet."}
           console.warn(`[Agent] Empty response detected (FinishReason: ${firstCandidate?.finishReason}). Retrying...`);
         } catch (e) {
           console.warn(`[Agent] Model request failed: ${e.message}. Retrying...`);
+          // DEBUG: Log full object if possible
+          if (response) {
+            console.log('[Agent] Full Response Object:', JSON.stringify(response, null, 2));
+          }
           if (retryCount === MAX_EMPTY_RETRIES) throw e; // Re-throw on last attempt
         }
 

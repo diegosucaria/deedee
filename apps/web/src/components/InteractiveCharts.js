@@ -167,3 +167,37 @@ export function TokenEfficiencyChart({ data }) {
         </ResponsiveContainer>
     );
 }
+
+export function DailyCostChart({ data }) {
+    if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-zinc-600">No Data</div>;
+
+    return (
+        <ResponsiveContainer width="100%" height="100%">
+            <BarChart
+                data={data}
+                margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                syncId="synced-charts"
+            >
+                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                <XAxis
+                    dataKey="date"
+                    stroke="#71717a"
+                    fontSize={12}
+                    tickFormatter={(date) => new Date(date).toLocaleDateString([], { month: 'numeric', day: 'numeric' })}
+                />
+                <YAxis
+                    stroke="#71717a"
+                    fontSize={12}
+                    tickFormatter={(val) => `$${val.toFixed(2)}`}
+                />
+                <Tooltip
+                    contentStyle={{ backgroundColor: '#18181b', borderColor: '#3f3f46', color: '#e4e4e7' }}
+                    cursor={{ fill: '#27272a' }}
+                    formatter={(val) => [`$${val.toFixed(4)}`, 'Cost']}
+                />
+                <Legend />
+                <Bar dataKey="cost" name="Cost ($)" fill="#ef4444" radius={[4, 4, 0, 0]} />
+            </BarChart>
+        </ResponsiveContainer>
+    );
+}

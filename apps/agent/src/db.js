@@ -854,22 +854,38 @@ class AgentDB {
     return stmt.all(limit).reverse();
   }
 
+  getDailyCostTrend(limit = 7) {
+    const stmt = this.db.prepare(`
+      SELECT 
+        date(timestamp, 'localtime') as date, 
+        SUM(estimated_cost) as cost, 
+        SUM(total_tokens) as tokens 
+      FROM token_usage 
+      GROUP BY date(timestamp, 'localtime') 
+      ORDER BY date(timestamp, 'localtime') DESC 
+      LIMIT ?
+    `);
+    return stmt.all(limit).reverse();
+  }
+
   getTokenUsageStats() {
     // Total tokens today
     const todayQuery = this.db.prepare(`
       SELECT 
         SUM(prompt_tokens) as prompt, 
         SUM(candidate_tokens) as candidate, 
-        SUM(total_tokens) as total 
+        SUM(total_tokens) as total,
+        SUM(estimated_cost) as cost
       FROM token_usage 
-      WHERE timestamp > date('now', 'localtime')
+      WHERE date(timestamp, 'localtime') = date('now', 'localtime')
     `).get();
 
     return {
       today: {
         prompt: todayQuery?.prompt || 0,
         candidate: todayQuery?.candidate || 0,
-        total: todayQuery?.total || 0
+        total: todayQuery?.total || 0,
+        cost: todayQuery?.cost || 0
       }
     };
   }

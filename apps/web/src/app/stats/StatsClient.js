@@ -1,13 +1,14 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { LatencyChart, TokenEfficiencyChart, CostChart } from '@/components/InteractiveCharts';
+import { LatencyChart, TokenEfficiencyChart, DailyCostChart } from '@/components/InteractiveCharts';
 import { RefreshCw, Activity, Cpu, DollarSign } from 'lucide-react';
-import { getStatsLatency, getStatsUsage, getStatsCostTrend } from '../actions';
+import { getStatsLatency, getStatsUsage, getStatsCostTrend, getDailyCostTrend } from '../actions';
 
 export default function StatsClient({ startDate, endDate }) {
     const [latencyData, setLatencyData] = useState([]);
     const [tokenTrendData, setTokenTrendData] = useState([]);
+    const [dailyCostData, setDailyCostData] = useState([]);
     const [usageData, setUsageData] = useState(null);
     const [loading, setLoading] = useState(true);
 
@@ -78,6 +79,10 @@ export default function StatsClient({ startDate, endDate }) {
 
             setTokenTrendData(mappedTrend);
 
+            // Fetch Daily Cost Trend
+            const dailyCost = await getDailyCostTrend();
+            setDailyCostData(dailyCost);
+
             // Fetch Usage
             const usageJson = await getStatsUsage(qs);
             setUsageData(usageJson);
@@ -130,11 +135,11 @@ export default function StatsClient({ startDate, endDate }) {
                 <div className="flex items-center justify-between mb-4">
                     <h2 className="text-xl font-semibold flex items-center gap-2 text-zinc-300">
                         <DollarSign className="w-5 h-5 text-red-400" />
-                        Query Cost
+                        Daily Cost Trend
                     </h2>
                 </div>
                 <div className="w-full h-[300px]">
-                    <CostChart data={tokenTrendData} />
+                    <DailyCostChart data={dailyCostData} />
                 </div>
             </div>
 
@@ -157,6 +162,10 @@ export default function StatsClient({ startDate, endDate }) {
                         <div className="p-4 rounded-lg bg-zinc-950 border border-zinc-800">
                             <p className="text-sm text-zinc-500 mb-1">Candidate Tokens (Output)</p>
                             <p className="text-2xl font-bold text-indigo-400">{usageData.today.candidate?.toLocaleString() || 0}</p>
+                        </div>
+                        <div className="p-4 rounded-lg bg-zinc-950 border border-zinc-800 col-span-1 md:col-span-3">
+                            <p className="text-sm text-zinc-500 mb-1">Today's Cost</p>
+                            <p className="text-2xl font-bold text-red-400">${usageData.today.cost ? Number(usageData.today.cost).toFixed(4) : '0.0000'}</p>
                         </div>
                     </div>
                 </div>

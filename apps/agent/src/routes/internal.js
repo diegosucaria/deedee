@@ -242,6 +242,15 @@ function createInternalRouter(agent) {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
+    router.get('/stats/daily-cost', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const limit = parseInt(req.query.limit || '7', 10);
+            const trend = agent.db.getDailyCostTrend(limit);
+            res.json(trend);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
     // --- Sessions / History ---
     router.get('/sessions', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });

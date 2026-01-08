@@ -64,4 +64,4 @@
 - [ ] **Optimize MCP Startup**: Bake `ha-mcp` into Docker image to avoid `uvx` runtime download.
 - [ ] **Knowledge Base ("Second Brain")**: Integration with Obsidian/Notion for long-term knowledge management.
 - [ ] **Long-term Persistence**: Dedicated storage for files (PDFs, Images) and structured data (Health, Financial) for longitudinal analysis.
-- [ ] **Chat Streaming**: Re-enable streaming responses (currently disabled due to `gemini-2.5-flash` issues).
+- [x] **Chat Streaming**: Re-enable streaming responses (Completed).
