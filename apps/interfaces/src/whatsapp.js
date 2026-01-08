@@ -138,6 +138,22 @@ class WhatsAppService {
             // Bind Store
             this.store.bind(this.sock.ev);
 
+            // History Sync - Critical for initial contacts
+            this.sock.ev.on('messaging-history.set', ({ contacts }) => {
+                if (contacts) {
+                    console.log(`${this.logPrefix} History Sync: Received ${contacts.length} contacts.`);
+                    // Manually populate store if needed, though bind() handles upsert.
+                    // But bind() might miss history set if not explicitly handled in polyfill.
+                    // Our polyfill only handles 'contacts.upsert' and 'contacts.update'.
+                    // So we must manually injecting into polyfill store here or update polyfill?
+                    // Let's update the polyfill logic in memory here since we can't easily change the inner function now.
+                    // Actually, simpler: just iterate and upsert them.
+                    for (const c of contacts) {
+                        this.store.contacts[c.id] = { ...this.store.contacts[c.id], ...c };
+                    }
+                }
+            });
+
             // --- CONNECTION UPDATE ---
             this.sock.ev.on('connection.update', async (update) => {
                 const { connection, lastDisconnect, qr } = update;
@@ -356,14 +372,16 @@ class WhatsAppService {
 
     async disconnect(clearSession = false) {
         try {
+            console.log(`${this.logPrefix} Disconnecting... (Clear: ${clearSession})`);
             if (this.sock) {
-                // Only calling logout if we intend to clear session or if socket is active?
-                // logout() sends a query to server to invalidate creds.
-                // If we just want to stop, we should use end()
                 if (clearSession) {
-                    await this.sock.logout();
+                    try {
+                        await this.sock.logout();
+                    } catch (err) {
+                        console.warn(`${this.logPrefix} Logout failed (ignoring): ${err.message}`);
+                    }
                 } else {
-                    this.sock.end(undefined); // Just close connection
+                    this.sock.end(undefined);
                 }
                 this.sock = null;
             }
@@ -372,7 +390,11 @@ class WhatsAppService {
             if (clearSession) {
                 if (fs.existsSync(this.authFolder)) {
                     console.log(`${this.logPrefix} Deleting session files...`);
-                    fs.rmSync(this.authFolder, { recursive: true, force: true });
+                    try {
+                        fs.rmSync(this.authFolder, { recursive: true, force: true });
+                    } catch (e) {
+                        console.error(`${this.logPrefix} Failed to delete session files:`, e);
+                    }
                 }
             }
         } catch (e) {
@@ -405,7 +427,7 @@ class WhatsAppService {
 
         // this.store.contacts is an object { id: { ... } }
         const contacts = Object.values(this.store.contacts);
-        console.log(`${this.logPrefix} Searching contacts for: "${q}". Total in store: ${contacts.length}`);
+        console.log(`${this.logPrefix} Searching ${contacts.length} contacts for: "${q}"...`);
 
         const results = [];
 
