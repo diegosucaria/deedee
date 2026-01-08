@@ -304,7 +304,7 @@ export async function previewVoice(voice, text) {
             body: JSON.stringify({ voice, text })
         });
         if (res.audio_base64) {
-            return { success: true, audio_base64: res.audio_base64 };
+            return { success: true, audio_base64: res.audio_base64, mimeType: res.mimeType };
         }
         return { success: false, error: 'No audio returned' };
     } catch (error) {

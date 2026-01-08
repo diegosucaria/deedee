@@ -42,7 +42,8 @@ export default function VoiceSelector({ selectedVoice, onSelect }) {
             return;
         }
 
-        const audio = new Audio(`data:audio/wav;base64,${res.audio_base64}`);
+        const mimeType = res.mimeType || 'audio/wav';
+        const audio = new Audio(`data:${mimeType};base64,${res.audio_base64}`);
         audioRef.current = audio;
 
         audio.onended = () => {

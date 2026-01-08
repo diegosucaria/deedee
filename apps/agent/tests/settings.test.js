@@ -86,4 +86,34 @@ describe('Settings API', () => {
 
         expect(res.statusCode).toBe(400);
     });
+
+    test('POST /internal/settings/tts/preview should return audio and mimeType', async () => {
+        // Mock Gemini client
+        mockAgent.config = { googleApiKey: 'fake_key' };
+        mockAgent.client = {
+            models: {
+                generateContent: jest.fn().mockResolvedValue({
+                    candidates: [{
+                        content: {
+                            parts: [{
+                                inlineData: {
+                                    data: 'SGVsbG8=',
+                                    mimeType: 'audio/mp3'
+                                }
+                            }]
+                        }
+                    }]
+                })
+            }
+        };
+
+        const res = await request(app)
+            .post('/internal/settings/tts/preview')
+            .send({ text: 'Hello', voice: 'Puck' });
+
+        expect(res.statusCode).toBe(200);
+        expect(res.body.success).toBe(true);
+        expect(res.body.audio_base64).toBe('SGVsbG8=');
+        expect(res.body.mimeType).toBe('audio/mp3');
+    });
 });

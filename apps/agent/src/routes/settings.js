@@ -102,10 +102,13 @@ function createSettingsRouter(agent) {
             });
 
             let audioData = null;
+            let mimeType = 'audio/wav'; // Default
+
             if (audioResponse.candidates && audioResponse.candidates[0].content && audioResponse.candidates[0].content.parts) {
                 const part = audioResponse.candidates[0].content.parts[0];
                 if (part.inlineData) {
                     audioData = part.inlineData.data;
+                    if (part.inlineData.mimeType) mimeType = part.inlineData.mimeType;
                 }
             }
 
@@ -115,7 +118,7 @@ function createSettingsRouter(agent) {
 
             // Return as base64 JSON because raw binary through simplified proxy routers can be tricky with body-parser
             // and we need to consume it easily in the frontend action.
-            res.json({ success: true, audio_base64: audioData });
+            res.json({ success: true, audio_base64: audioData, mimeType });
 
         } catch (error) {
             console.error('[Settings] TTS Failed:', error);
