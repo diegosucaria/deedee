@@ -645,6 +645,32 @@ export async function uploadVaultFile(id, formData) {
         return { success: false, error: error.message };
     }
 }
+export async function deleteVaultFile(id, filename) {
+    try {
+        const { API_URL } = require('@/lib/api');
+        const { DEEDEE_API_TOKEN } = process.env;
+
+        const res = await fetch(`${API_URL}/v1/vaults/${encodeURIComponent(id)}/files`, {
+            method: 'DELETE',
+            headers: {
+                'Authorization': `Bearer ${DEEDEE_API_TOKEN}`,
+                'Content-Type': 'application/json'
+            },
+            body: JSON.stringify({ filename })
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || res.statusText);
+        }
+
+        revalidatePath(`/vaults/${id}`);
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 // --- Chat Files ---
 export async function uploadChatFile(chatId, formData) {
     // Note: formData must contain 'file'

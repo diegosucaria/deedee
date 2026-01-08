@@ -167,6 +167,23 @@ class VaultManager {
         }
     }
 
+    async deleteVaultFile(topic, filename) {
+        const safeTopic = this.sanitizeTopic(topic);
+        const safeFilename = path.basename(filename);
+        const filePath = path.join(this.vaultsDir, safeTopic, 'files', safeFilename);
+
+        try {
+            await fs.access(filePath);
+            await fs.unlink(filePath);
+            return true;
+        } catch (error) {
+            if (error.code === 'ENOENT') {
+                throw new Error(`File '${safeFilename}' not found in vault '${safeTopic}'.`);
+            }
+            throw error;
+        }
+    }
+
     sanitizeTopic(topic) {
         return topic.toLowerCase()
             .replace(/\s+/g, '-') // Replace spaces with dashes

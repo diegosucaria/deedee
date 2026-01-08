@@ -105,6 +105,25 @@ module.exports = (agent) => {
         }
     });
 
+    // DELETE /v1/vaults/:id/files - Delete a file
+    router.delete('/:id/files', async (req, res) => {
+        const { id } = req.params;
+        const { filename } = req.body; // Or query? Let's support body for safety.
+
+        if (!filename) return res.status(400).json({ error: 'Filename is required' });
+
+        try {
+            await agent.vaults.deleteVaultFile(id, filename);
+            res.json({ success: true, message: 'File deleted' });
+        } catch (error) {
+            if (error.message.includes('not found')) {
+                res.status(404).json({ error: error.message });
+            } else {
+                res.status(500).json({ error: error.message });
+            }
+        }
+    });
+
     // GET /v1/vaults/:id/files/:filename - Download file
     router.get('/:id/files/:filename', async (req, res) => {
         const { id, filename } = req.params;

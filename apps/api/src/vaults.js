@@ -80,6 +80,10 @@ router.post('/:id/files', upload.single('file'), async (req, res) => {
     }
 });
 
+// DELETE /v1/vaults/:id/files
+router.delete('/:id/files', (req, res) => proxyRequest(req, res, 'DELETE', `/v1/vaults/${req.params.id}/files`, req.body));
+
+
 // GET /v1/vaults/:id/files/:filename (Download)
 router.get('/:id/files/:filename', async (req, res) => {
     const { id, filename } = req.params;

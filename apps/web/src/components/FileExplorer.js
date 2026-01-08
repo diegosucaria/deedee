@@ -1,3 +1,5 @@
+import { deleteVaultFile } from '@/app/actions';
+
 export default function FileExplorer({ files, vaultId, className }) {
     if (!files || files.length === 0) {
         return (
@@ -20,20 +22,33 @@ export default function FileExplorer({ files, vaultId, className }) {
     return (
         <div className={`flex flex-col gap-2 ${className}`}>
             {files.map((file, i) => (
-                <div key={i} className="flex items-center justify-between p-2 bg-gray-50 hover:bg-gray-100 rounded border border-gray-200">
+                <div key={i} className="flex items-center justify-between p-2 bg-zinc-900 hover:bg-zinc-800 rounded border border-zinc-800 group transition-colors">
                     <div className="flex items-center gap-2 overflow-hidden">
-                        <span className="text-gray-500">📄</span>
-                        <span className="text-sm font-medium truncate" title={file}>{file}</span>
+                        <span className="text-zinc-500">📄</span>
+                        <span className="text-sm font-medium text-zinc-300 truncate" title={file}>{file}</span>
                     </div>
-                    {/* Download Link Placeholder - Assumes a proxy route will exist */}
-                    <a
-                        href={`/api/proxy/vaults/${vaultId}/files/${file}`}
-                        target="_blank"
-                        rel="noopener noreferrer"
-                        className="text-xs text-blue-600 hover:underline"
-                    >
-                        Download
-                    </a>
+                    <div className="flex items-center gap-2 opacity-0 group-hover:opacity-100 transition-opacity">
+                        {/* Proxy Download Link */}
+                        <a
+                            href={`/api/proxy/vaults/${vaultId}/files/${file}`}
+                            target="_blank"
+                            rel="noopener noreferrer"
+                            className="text-xs text-indigo-400 hover:text-indigo-300"
+                        >
+                            Download
+                        </a>
+                        <button
+                            onClick={async () => {
+                                if (confirm(`Delete ${file}?`)) {
+                                    await deleteVaultFile(vaultId, file);
+                                }
+                            }}
+                            className="text-xs text-rose-500 hover:text-rose-400 p-1 hover:bg-rose-500/10 rounded"
+                            title="Delete File"
+                        >
+                            Delete
+                        </button>
+                    </div>
                 </div>
             ))}
         </div>

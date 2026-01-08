@@ -35,9 +35,9 @@ export default function WikiEditor({ vaultId, initialContent, pageName }) {
     };
 
     return (
-        <div className="flex flex-col h-full border rounded-lg bg-white shadow-sm overflow-hidden">
-            <div className="bg-gray-50 px-4 py-2 border-b flex justify-between items-center">
-                <span className="font-semibold text-gray-700 text-sm">
+        <div className="flex flex-col h-full border border-zinc-800 rounded-lg bg-zinc-950 shadow-sm overflow-hidden">
+            <div className="bg-zinc-900 px-4 py-2 border-b border-zinc-800 flex justify-between items-center">
+                <span className="font-semibold text-zinc-400 text-sm">
                     {pageName || 'index.md'}
                     {isDirty && <span className="text-amber-500 ml-2 text-xs">● Unsaved</span>}
                 </span>
@@ -45,15 +45,15 @@ export default function WikiEditor({ vaultId, initialContent, pageName }) {
                     onClick={handleSave}
                     disabled={isSaving || !isDirty}
                     className={`px-3 py-1 rounded text-xs font-medium transition-colors ${isDirty
-                            ? 'bg-blue-600 text-white hover:bg-blue-700'
-                            : 'bg-gray-200 text-gray-400 cursor-not-allowed'
+                        ? 'bg-blue-600 text-white hover:bg-blue-700'
+                        : 'bg-gray-200 text-gray-400 cursor-not-allowed'
                         }`}
                 >
                     {isSaving ? 'Saving...' : 'Save'}
                 </button>
             </div>
             <textarea
-                className="flex-1 w-full p-4 resize-none focus:outline-none font-mono text-sm leading-relaxed"
+                className="flex-1 w-full p-4 resize-none focus:outline-none font-mono text-sm leading-relaxed bg-zinc-950 text-zinc-300 placeholder-zinc-600"
                 value={content}
                 onChange={(e) => { setContent(e.target.value); setIsDirty(true); }}
                 onKeyDown={handleKeyDown}

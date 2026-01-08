@@ -115,4 +115,21 @@ describe('VaultManager', () => {
         // proving it didn't traverse. 
         expect(content).toBeNull();
     });
+
+    test('should delete a vault file', async () => {
+        await vaultManager.createVault('files-test');
+        const sourceFile = path.join(TEST_DATA_DIR, 'source.txt');
+        fs.writeFileSync(sourceFile, 'Delete me');
+        await vaultManager.addToVault('files-test', sourceFile, 'to-delete.txt');
+
+        const result = await vaultManager.deleteVaultFile('files-test', 'to-delete.txt');
+        expect(result).toBe(true);
+        expect(fs.existsSync(path.join(TEST_DATA_DIR, 'vaults/files-test/files/to-delete.txt'))).toBe(false);
+    });
+
+    test('should throw error when deleting non-existent file', async () => {
+        await vaultManager.createVault('files-test-2');
+        await expect(vaultManager.deleteVaultFile('files-test-2', 'missing.txt'))
+            .rejects.toThrow("File 'missing.txt' not found");
+    });
 });

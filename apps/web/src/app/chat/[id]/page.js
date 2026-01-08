@@ -78,62 +78,88 @@ export default function ChatSessionPage({ params }) {
             });
     }, []);
 
-    // Fetch Session History
+    // Safe Message Normalizer
+    const normalizeMessage = (m) => {
+        try {
+            const role = m.role === 'model' ? 'assistant' : m.role;
+            let type = m.type || 'text';
+            let content = m.content || '';
+
+            const hasParts = m.parts && Array.isArray(m.parts);
+
+            // 1. Function Call
+            if (hasParts && m.parts.some(p => p.functionCall)) {
+                const fc = m.parts.find(p => p.functionCall)?.functionCall;
+                if (fc) {
+                    type = 'function_call';
+                    content = JSON.stringify({
+                        type: 'function_call',
+                        name: fc.name,
+                        args: fc.args
+                    });
+                    return { role, content, type, timestamp: m.timestamp };
+                }
+            }
+
+            // 2. Function Response
+            if (m.role === 'function' || (hasParts && m.parts.some(p => p.functionResponse))) {
+                // Safe extraction
+                const part = hasParts ? m.parts.find(p => p.functionResponse) : null;
+                // Fallback if role is function but no parts (unlikely in Gemini but possible in DB)
+                const fr = part?.functionResponse || m.functionResponse;
+
+                if (fr) {
+                    type = 'function_response';
+                    content = JSON.stringify({
+                        type: 'function_response',
+                        name: fr.name,
+                        result: fr.response
+                    });
+                    return { role, content, type, timestamp: m.timestamp };
+                }
+            }
+
+            // 3. User Multimodal
+            if (m.role === 'user' && hasParts) {
+                // Join text parts
+                content = m.parts.filter(p => p.text).map(p => p.text).join(' ');
+                // If content is empty/missing, it might be purely attachment.
+                // The current UI handles separate messages for attachments usually, 
+                // but this history comes from DB/Gemini which groups them.
+                // For now, let's ensure we return string content.
+                if (!content && m.content) content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+            } else if (m.role === 'assistant' && hasParts) {
+                content = m.parts.map(p => p.text).join('');
+            }
+
+            // Final fallback for content
+            if (!content && typeof m.content === 'string') content = m.content;
+            if (!content) content = '';
+
+            return { role, content, type, timestamp: m.timestamp };
+
+        } catch (error) {
+            console.error('[Chat] Message Normalization Failed:', error, m);
+            return {
+                role: 'system',
+                content: 'Error loading message.',
+                type: 'text',
+                timestamp: m.timestamp
+            };
+        }
+    };
+
     useEffect(() => {
         const loadSession = async () => {
-            const data = await getSession(chatId);
-            if (data) {
-                setSessionTitle(data.title);
-                // Normalize history
-                const history = (data.messages || []).map(m => ({
-                    role: m.role === 'model' ? 'assistant' : m.role,
-                    content: (() => {
-                        // FUNCTION CALL (Model asking to run tool)
-                        if (m.parts && Array.isArray(m.parts) && m.parts.some(p => p.functionCall)) {
-                            const fc = m.parts.find(p => p.functionCall)?.functionCall;
-                            return JSON.stringify({
-                                type: 'function_call',
-                                name: fc.name,
-                                args: fc.args
-                            });
-                        }
-
-                        // FUNCTION RESPONSE (Result of tool)
-                        if (m.role === 'function' || (m.parts && Array.isArray(m.parts) && m.parts.some(p => p.functionResponse))) {
-                            const fr = m.parts?.find(p => p.functionResponse)?.functionResponse || m.functionResponse; // Helper or direct?
-                            // Gemini API structure: parts[{ functionResponse: { name, response } }]
-                            // My DB saves it exactly like Gemini structure usually.
-                            // Let's safe access:
-                            const part = (m.parts && Array.isArray(m.parts)) ? m.parts.find(p => p.functionResponse) : null;
-                            if (part) {
-                                return JSON.stringify({
-                                    type: 'function_response',
-                                    name: part.functionResponse.name,
-                                    result: part.functionResponse.response
-                                });
-                            }
-                        }
-
-                        if (m.role === 'user') {
-                            // Multimodal Check (User messages only)
-                            // Fix: Safe check for parts array
-                            if (m.parts && Array.isArray(m.parts)) {
-                                return m.parts.map(p => p.text).join(' ');
-                            }
-                            // Fallback for string content
-                            return typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-                        }
-                        // For assistant messages, keep existing logic
-                        return m.content || ((m.parts && Array.isArray(m.parts)) ? m.parts.map(p => p.text).join('') : '');
-                    })(),
-                    type: (() => {
-                        if (m.parts && Array.isArray(m.parts) && m.parts.some(p => p.functionCall)) return 'function_call';
-                        if (m.role === 'function' || (m.parts && Array.isArray(m.parts) && m.parts.some(p => p.functionResponse))) return 'function_response';
-                        return m.type || 'text';
-                    })(),
-                    timestamp: m.timestamp
-                }));
-                setMessages(history);
+            try {
+                const data = await getSession(chatId);
+                if (data) {
+                    setSessionTitle(data.title);
+                    const history = (data.messages || []).map(normalizeMessage);
+                    setMessages(history);
+                }
+            } catch (err) {
+                console.error('Failed to load session:', err);
             }
         };
         loadSession();
