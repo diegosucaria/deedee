@@ -123,7 +123,9 @@ class Agent {
         }]
       });
 
-      const text = result.response.text();
+      const text = (result.response && typeof result.response.text === 'function') ? result.response.text() : '';
+      if (!text) return;
+
       // Extract JSON
       const jsonMatch = text.match(/\{[\s\S]*\}/);
       if (!jsonMatch) return;
@@ -959,10 +961,16 @@ ${files.length > 0 ? files.join(", ") : "No files yet."}
           }
 
           // Build API Payload (Send CLEAN result to Model)
+          // SDK Requirement: 'response' must be an object map.
+          let apiResponse = dbToolResult;
+          if (typeof dbToolResult !== 'object' || dbToolResult === null || Array.isArray(dbToolResult)) {
+            apiResponse = { result: dbToolResult };
+          }
+
           functionResponseParts.push({
             functionResponse: {
               name: call.name,
-              response: { result: dbToolResult }
+              response: apiResponse
             }
           });
 
@@ -970,7 +978,7 @@ ${files.length > 0 ? files.join(", ") : "No files yet."}
           dbFunctionResponseParts.push({
             functionResponse: {
               name: call.name,
-              response: { result: dbToolResult }
+              response: apiResponse
             }
           });
         }
