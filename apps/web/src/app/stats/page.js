@@ -1,6 +1,12 @@
 import CleanupButton from '@/components/CleanupButton';
 import DateIntervalSelector from '@/components/DateIntervalSelector';
+import StatsClient from './StatsClient';
+import { fetchAPI } from '@/lib/api';
+import { Activity, MessageSquare, Zap, Brain, CheckCircle, BarChart3, Clock } from 'lucide-react';
 
+// Re-alias CleanupButton if it was named CleanMetricsButton in usage, or import correct one.
+// Based on usage <CleanMetricsButton />, but import is CleanupButton.
+const CleanMetricsButton = CleanupButton;
 export default async function StatsPage({ searchParams }) {
     const params = new URLSearchParams(searchParams);
     const queryString = params.toString() ? `?${params.toString()}` : '';

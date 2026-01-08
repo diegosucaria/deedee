@@ -385,7 +385,6 @@ class WhatsAppService {
                 }
                 this.sock = null;
             }
-            this.status = 'disconnected';
 
             if (clearSession) {
                 if (fs.existsSync(this.authFolder)) {
@@ -399,6 +398,10 @@ class WhatsAppService {
             }
         } catch (e) {
             console.error(`${this.logPrefix} Disconnect Error:`, e);
+        } finally {
+            // CRITICAL: Always reset status to allow reconnect
+            this.status = 'disconnected';
+            this.qr = null;
         }
     }
 

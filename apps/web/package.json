@@ -11,9 +11,9 @@
     "test": "npm run lint && npm run test:actions"
   },
   "dependencies": {
+    "client-only": "^0.0.1",
     "clsx": "^2.1.1",
     "lucide-react": "^0.562.0",
-    "client-only": "^0.0.1",
     "next": "^14.2.3",
     "react": "^18.3.1",
     "react-dom": "^18.3.1",
@@ -25,8 +25,8 @@
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "babel-plugin-react-compiler": "1.0.0",
-    "eslint": "8",
-    "eslint-config-next": "14",
+    "eslint": "^9.39.2",
+    "eslint-config-next": "^16.1.1",
     "tailwindcss": "^4"
   }
 }
