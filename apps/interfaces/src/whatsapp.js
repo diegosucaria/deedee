@@ -65,10 +65,12 @@ class WhatsAppService {
             console.log(`${this.logPrefix} Connecting...`);
             this.status = 'connecting';
 
-            // Simple In-Memory Store Polyfill (Since it's missing from latest Baileys export)
+            // Simple In-Memory Store Polyfill (Expanded for History)
             function makeInMemoryStore(config) {
+                const LIMIT = config.limit || 50;
                 return {
                     contacts: {},
+                    messages: {}, // chatId -> [msgs]
                     bind(ev) {
                         ev.on('contacts.upsert', (contacts) => {
                             for (const c of contacts) {
@@ -82,19 +84,46 @@ class WhatsAppService {
                                 }
                             }
                         });
+                        ev.on('messages.upsert', ({ messages, type }) => {
+                            for (const msg of messages) {
+                                const jid = msg.key.remoteJid;
+                                if (!jid) continue;
+
+                                // Filter: Text only (Ram optimization)
+                                const content = msg.message;
+                                if (!content) continue;
+                                const isText = content.conversation || content.extendedTextMessage;
+                                if (!isText) continue;
+
+                                if (!this.messages[jid]) this.messages[jid] = [];
+
+                                // Check for duplicates
+                                const exists = this.messages[jid].find(m => m.key.id === msg.key.id);
+                                if (exists) continue;
+
+                                this.messages[jid].push(msg);
+
+                                // Sort and Limit
+                                this.messages[jid].sort((a, b) => (a.messageTimestamp || 0) - (b.messageTimestamp || 0));
+                                if (this.messages[jid].length > LIMIT) {
+                                    this.messages[jid] = this.messages[jid].slice(-LIMIT);
+                                }
+                            }
+                        });
                     },
                     readFromFile(path) {
                         if (fs.existsSync(path)) {
                             try {
                                 const data = JSON.parse(fs.readFileSync(path, 'utf-8'));
                                 this.contacts = data.contacts || {};
+                                this.messages = data.messages || {};
                             } catch (e) {
                                 console.error('Failed to read store file:', e);
                             }
                         }
                     },
                     writeToFile(path) {
-                        fs.writeFileSync(path, JSON.stringify({ contacts: this.contacts }, null, 2));
+                        fs.writeFileSync(path, JSON.stringify({ contacts: this.contacts, messages: this.messages }, null, 2));
                     }
                 };
             }
@@ -106,7 +135,10 @@ class WhatsAppService {
 
             // Initialize Store if not already done
             if (!this.store) {
-                this.store = makeInMemoryStore({});
+                // Configurable Limit
+                const STORE_LIMIT = process.env.WHATSAPP_STORE_LIMIT ? parseInt(process.env.WHATSAPP_STORE_LIMIT) : 50;
+                this.store = makeInMemoryStore({ limit: STORE_LIMIT });
+
                 const storePath = path.join(process.env.DATA_DIR || path.join(process.cwd(), 'data'), `baileys_store_${this.sessionId}.json`);
                 try {
                     this.store.readFromFile(storePath);
@@ -130,7 +162,7 @@ class WhatsAppService {
                 defaultQueryTimeoutMs: undefined, // endless
                 connectTimeoutMs: 60000, // Increased timeout
                 keepAliveIntervalMs: 30000,
-                syncFullHistory: true,
+                syncFullHistory: true, // Request full history
                 markOnlineOnConnect: false // Do not show "Online" status automatically,
                 // getMessage: async (key) => { ... } // Optional: support history reading for bots
             });
@@ -139,20 +171,26 @@ class WhatsAppService {
             this.store.bind(this.sock.ev);
 
             // History Sync - Critical for initial contacts
-            this.sock.ev.on('messaging-history.set', ({ contacts }) => {
+            this.sock.ev.on('messaging-history.set', ({ contacts, messages }) => {
                 if (contacts) {
                     console.log(`${this.logPrefix} History Sync: Received ${contacts.length} contacts.`);
-                    // Manually populate store if needed, though bind() handles upsert.
-                    // But bind() might miss history set if not explicitly handled in polyfill.
-                    // Our polyfill only handles 'contacts.upsert' and 'contacts.update'.
-                    // So we must manually injecting into polyfill store here or update polyfill?
-                    // Let's update the polyfill logic in memory here since we can't easily change the inner function now.
-                    // Actually, simpler: just iterate and upsert them.
                     for (const c of contacts) {
                         this.store.contacts[c.id] = { ...this.store.contacts[c.id], ...c };
                     }
                 }
+                // Handle synced messages
+                if (messages) {
+                    console.log(`${this.logPrefix} History Sync: Received ${messages.length} messages.`);
+                    // Manually upsert to trigger polyfill logic
+                    this.store.bind({
+                        on: (event, cb) => {
+                            if (event === 'messages.upsert') cb({ messages, type: 'notify' });
+                        }
+                    });
+                }
             });
+
+
 
             // --- CONNECTION UPDATE ---
             this.sock.ev.on('connection.update', async (update) => {
@@ -462,6 +500,51 @@ class WhatsAppService {
             notify: c.notify,
             phone: c.id.split('@')[0]
         }));
+    }
+
+    // --- New Methods for Smart Learn ---
+
+    getRecentChats(limit = 10) {
+        if (!this.store || !this.store.messages) return [];
+
+        // Sort JIDs by latest message timestamp
+        const chats = Object.keys(this.store.messages).map(jid => {
+            const msgs = this.store.messages[jid];
+            const lastMsg = msgs[msgs.length - 1];
+            return {
+                jid,
+                lastTimestamp: lastMsg ? (lastMsg.messageTimestamp || 0) : 0,
+                msgCount: msgs.length,
+                snippets: msgs.slice(-3).map(m => m.message?.conversation || m.message?.extendedTextMessage?.text || '[Media]')
+            };
+        });
+
+        chats.sort((a, b) => b.lastTimestamp - a.lastTimestamp);
+        return chats.slice(0, limit);
+    }
+
+    getChatHistory(jid, limit = 50) {
+        if (!this.store || !this.store.messages || !this.store.messages[jid]) return [];
+        return this.store.messages[jid].slice(-limit).map(m => {
+            // Simplify for agent consumption
+            const content = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
+            const fromMe = m.key.fromMe;
+            return {
+                role: fromMe ? 'assistant' : 'user',
+                content,
+                timestamp: m.messageTimestamp
+            };
+        });
+    }
+
+    async getProfilePicture(jid) {
+        if (!this.sock) return null;
+        try {
+            return await this.sock.profilePictureUrl(jid, 'image');
+        } catch (e) {
+            // 404/401 implies no picture
+            return null;
+        }
     }
 }
 

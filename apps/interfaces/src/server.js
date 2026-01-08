@@ -185,6 +185,51 @@ app.get('/whatsapp/contacts', (req, res) => {
   return res.json(service.getContacts());
 });
 
+app.get('/whatsapp/recent', (req, res) => {
+  if (isWhatsAppDisabled) return res.json([]);
+  const { session, limit } = req.query;
+  const targetSession = session || 'user'; // Default to user for history checking?
+  // Usually history for 'learning' comes from 'user' session? Or 'assistant'?
+  // If 'user' session acts as the mirror of user's phone, it has the history.
+  // 'assistant' session only has history of meaningful chats with assistant.
+  // Smart Learn usually targets 'user' session history if available (User mirroring), 
+  // or 'assistant' if it's just a bot. 
+  // Given "Dual Session" architecture, we probably want 'user' (the real WhatsApp account mirroring) 
+  // or fallback to 'assistant'. The query param handles it.
+
+  const service = whatsappSessions[targetSession];
+  if (!service) return res.status(400).json({ error: 'Invalid session' });
+
+  const l = parseInt(limit) || 10;
+  res.json(service.getRecentChats(l));
+});
+
+app.get('/whatsapp/history', (req, res) => {
+  if (isWhatsAppDisabled) return res.json([]);
+  const { session, jid, limit } = req.query;
+  if (!jid) return res.status(400).json({ error: 'Missing jid' });
+
+  const targetSession = session || 'user';
+  const service = whatsappSessions[targetSession];
+  if (!service) return res.status(400).json({ error: 'Invalid session' });
+
+  const l = parseInt(limit) || 50;
+  res.json(service.getChatHistory(jid, l));
+});
+
+app.get('/whatsapp/profile', async (req, res) => {
+  if (isWhatsAppDisabled) return res.json({ url: null });
+  const { session, jid } = req.query;
+  if (!jid) return res.status(400).json({ error: 'Missing jid' });
+
+  const targetSession = session || 'user';
+  const service = whatsappSessions[targetSession];
+  if (!service) return res.status(400).json({ error: 'Invalid session' });
+
+  const url = await service.getProfilePicture(jid);
+  res.json({ url });
+});
+
 app.post('/whatsapp/connect', async (req, res) => {
   if (isWhatsAppDisabled) return res.status(400).json({ error: 'WhatsApp disabled' });
 

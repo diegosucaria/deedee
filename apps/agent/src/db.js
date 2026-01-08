@@ -146,6 +146,18 @@ class AgentDB {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         PRIMARY KEY (service, contact_id)
       );
+
+      CREATE TABLE IF NOT EXISTS people (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        phone TEXT,
+        relationship TEXT,
+        source TEXT DEFAULT 'manual',
+        notes TEXT,
+        metadata TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
     `);
 
     // Migration: Backfill sessions for existing messages
@@ -247,6 +259,81 @@ class AgentDB {
 
   deleteMessage(id) {
     this.db.prepare('DELETE FROM messages WHERE id = ?').run(id);
+  }
+
+  // --- People / Contacts ---
+
+  createPerson(person) {
+    const id = person.id || crypto.randomUUID();
+    const metaStr = person.metadata ? JSON.stringify(person.metadata) : '{}';
+    const stmt = this.db.prepare(`
+      INSERT INTO people (id, name, phone, relationship, source, notes, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(id, person.name, person.phone, person.relationship, person.source || 'manual', person.notes, metaStr);
+    return id;
+  }
+
+  getPerson(id) {
+    // Try by ID first, then phone
+    let stmt = this.db.prepare('SELECT * FROM people WHERE id = ?');
+    let row = stmt.get(id);
+
+    if (!row) {
+      stmt = this.db.prepare('SELECT * FROM people WHERE phone = ?');
+      row = stmt.get(id);
+    }
+
+    if (row) {
+      if (row.metadata) row.metadata = JSON.parse(row.metadata);
+    }
+    return row;
+  }
+
+  updatePerson(id, updates) {
+    const fields = [];
+    const args = [];
+
+    if (updates.name !== undefined) { fields.push('name = ?'); args.push(updates.name); }
+    if (updates.phone !== undefined) { fields.push('phone = ?'); args.push(updates.phone); }
+    if (updates.relationship !== undefined) { fields.push('relationship = ?'); args.push(updates.relationship); }
+    if (updates.notes !== undefined) { fields.push('notes = ?'); args.push(updates.notes); }
+    if (updates.metadata !== undefined) { fields.push('metadata = ?'); args.push(JSON.stringify(updates.metadata)); }
+
+    if (fields.length === 0) return;
+
+    fields.push('updated_at = CURRENT_TIMESTAMP');
+    args.push(id);
+
+    const sql = `UPDATE people SET ${fields.join(', ')} WHERE id = ?`;
+    this.db.prepare(sql).run(...args);
+  }
+
+  deletePerson(id) {
+    this.db.prepare('DELETE FROM people WHERE id = ?').run(id);
+  }
+
+  listPeople() {
+    return this.db.prepare('SELECT * FROM people ORDER BY name ASC').all().map(row => ({
+      ...row,
+      metadata: row.metadata ? JSON.parse(row.metadata) : {}
+    }));
+  }
+
+  searchPeople(query) {
+    if (!query) return [];
+    const wildcard = `%${query}%`;
+    const stmt = this.db.prepare(`
+      SELECT * FROM people 
+      WHERE name LIKE ? 
+      OR relationship LIKE ? 
+      OR notes LIKE ? 
+      OR phone LIKE ?
+    `);
+    return stmt.all(wildcard, wildcard, wildcard, wildcard).map(row => ({
+      ...row,
+      metadata: row.metadata ? JSON.parse(row.metadata) : {}
+    }));
   }
 
 

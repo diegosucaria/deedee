@@ -105,6 +105,7 @@ const { createLiveRouter } = require('./routes/live');
 const { createToolRouter } = require('./routes/tools');
 const { createSettingsRouter } = require('./routes/settings');
 const createVaultRouter = require('./routes/vaults');
+const { createPeopleRouter } = require('./routes/people');
 
 // Mount Live Router (works without Agent instance for Config/Token)
 app.use('/live', createLiveRouter(agent));
@@ -112,6 +113,7 @@ app.use('/live', createLiveRouter(agent));
 if (agent) {
   // Mount Modular Routers
   app.use('/internal/settings', createSettingsRouter(agent));
+  app.use('/internal/people', createPeopleRouter(agent)); // Mount People Router
   app.use('/internal', createInternalRouter(agent));
   app.use('/v1/vaults', createVaultRouter(agent));
   app.use('/', createToolRouter(agent)); // Mounts at root because it handles /tools/execute AND /internal/tools

@@ -628,3 +628,79 @@ export async function uploadVaultFile(id, formData) {
         return { success: false, error: error.message };
     }
 }
+// --- People ---
+export async function getPeople() {
+    try {
+        return await fetchAPI('/v1/people');
+    } catch (error) {
+        console.error('getPeople Error:', error);
+        return [];
+    }
+}
+
+export async function getPerson(id) {
+    try {
+        return await fetchAPI(`/v1/people/${encodeURIComponent(id)}`);
+    } catch (error) {
+        console.error(`getPerson(${id}) Error:`, error);
+        return null;
+    }
+}
+
+export async function createPerson(prevState, formData) {
+    try {
+        const name = formData.get('name');
+        const phone = formData.get('phone');
+        if (!name) return { success: false, error: 'Name is required' };
+
+        const payload = {
+            name,
+            phone,
+            relationship: formData.get('relationship'),
+            notes: formData.get('notes'),
+            source: 'web'
+        };
+
+        await fetchAPI('/v1/people', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+        });
+        revalidatePath('/people');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function updatePerson(id, data) {
+    try {
+        await fetchAPI(`/v1/people/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            body: JSON.stringify(data)
+        });
+        revalidatePath('/people');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function deletePerson(id) {
+    try {
+        await fetchAPI(`/v1/people/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        revalidatePath('/people');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function triggerSmartLearn() {
+    try {
+        const res = await fetchAPI('/v1/people/learn', { method: 'POST' });
+        return { success: true, candidates: res.candidates };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+

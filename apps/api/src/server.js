@@ -30,6 +30,7 @@ app.use('/v1/city-image', cityImageRouter);
 app.use('/v1/whatsapp', require('./whatsapp'));
 app.use('/v1/live', require('./live'));
 app.use('/v1/vaults', require('./vaults'));
+app.use('/v1/people', require('./routes/people'));
 
 // BETTER: Add to apps/api/src/dashboard.js if it proxies to agent.
 const http = require('http');

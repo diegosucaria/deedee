@@ -353,6 +353,71 @@ const toolDefinitions = [
           required: ["query"]
         }
       },
+      // People Management
+      {
+        name: "listPeople",
+        description: "List all known people/contacts in the database.",
+        parameters: {
+          type: "OBJECT",
+          properties: {},
+          required: []
+        }
+      },
+      {
+        name: "getPerson",
+        description: "Get details of a specific person by ID or phone number.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            idOrPhone: { type: "STRING", description: "The UUID or Phone number of the person." }
+          },
+          required: ["idOrPhone"]
+        }
+      },
+      {
+        name: "searchPeople",
+        description: "Fuzzy search people by name, relationship, or notes.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            query: { type: "STRING", description: "Search query." }
+          },
+          required: ["query"]
+        }
+      },
+      {
+        name: "updatePerson",
+        description: "Update details for a person.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            id: { type: "STRING", description: "The person's UUID." },
+            updates: {
+              type: "OBJECT",
+              description: "Fields to update (name, phone, relationship, notes, metadata).",
+              properties: {
+                name: { type: "STRING" },
+                phone: { type: "STRING" },
+                relationship: { type: "STRING" },
+                notes: { type: "STRING" },
+                metadata: { type: "STRING" } // JSON string or object handling depends on Agent
+              }
+            }
+          },
+          required: ["id", "updates"]
+        }
+      },
+      {
+        name: "deletePerson",
+        description: "Delete a person from the database.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            id: { type: "STRING" }
+          },
+          required: ["id"]
+        }
+      },
       // Audio / TTS
       {
         name: "replyWithAudio",
