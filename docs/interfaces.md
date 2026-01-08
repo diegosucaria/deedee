@@ -77,7 +77,7 @@ Deedee supports the high-performance **Gemini Live API** for real-time, low-late
 The agent can now resolve contact names to phone numbers using your WhatsApp contact list.
 
 ### Usage
--   **Sync**: Contacts are automatically verified when they message the bot or when the bot syncs the session.
+-   **Sync**: You can manually import contacts from the Web UI (People Page) using the "Sync WhatsApp" button. Contacts are also passively verified when they message the bot.
 -   **Search**: You can search contacts in the Web UI settings to verify visibility.
 -   **Tool**: The agent uses the `searchContacts` tool to find numbers when you say "Send message to Alice".
 -   **Safeguard**: The agent will NOT send messages to unknown numbers by default unless explicitly instructed (or if they are in the `allowedNumbers` list).

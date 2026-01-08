@@ -55,7 +55,7 @@ class LocalTools {
     }
   }
 
-  async runShellCommand(command) {
+  async runShellCommand(command, options = {}) {
     // Basic validation to prevent running interactive tools that hang or highly destructive commands
     const binary = command.trim().split(' ')[0];
 
@@ -69,7 +69,7 @@ class LocalTools {
       console.log(`[LocalTools] Executing: ${command}`);
       const { stdout, stderr } = await execAsync(command, {
         cwd: this.workDir,
-        timeout: 30000 // 30s timeout
+        timeout: options.timeout || 30000 // default 30s
       });
       return { stdout: stdout.trim(), stderr: stderr.trim() };
     } catch (error) {
