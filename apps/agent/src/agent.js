@@ -110,6 +110,17 @@ class Agent {
         }
         `;
 
+      const schema = {
+        type: "object",
+        properties: {
+          vaultId: { type: "string" },
+          title: { type: "string" },
+          date: { type: "string" },
+          summary: { type: "string" }
+        },
+        required: ["vaultId", "title", "date", "summary"]
+      };
+
       // We use a separate model call (Flash is fine)
       const model = process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
       const result = await this.client.models.generateContent({
@@ -120,17 +131,17 @@ class Agent {
             { inlineData: { mimeType, data } },
             { text: prompt }
           ]
-        }]
+        }],
+        config: {
+          responseMimeType: 'application/json',
+          responseSchema: schema
+        }
       });
 
       const text = (result.response && typeof result.response.text === 'function') ? result.response.text() : '';
       if (!text) return;
 
-      // Extract JSON
-      const jsonMatch = text.match(/\{[\s\S]*\}/);
-      if (!jsonMatch) return;
-
-      const analysis = JSON.parse(jsonMatch[0]);
+      const analysis = JSON.parse(text);
       console.log(`[Agent] File Analysis:`, analysis);
 
       // ALWAYS update title if it's a new chat (heuristic)
@@ -997,7 +1008,7 @@ ${files.length > 0 ? files.join(", ") : "No files yet."}
         console.time(toolTimerLabel);
 
         try {
-          const result = await session.sendMessageStream({ parts: functionResponseParts });
+          const result = await session.sendMessageStream({ message: { parts: functionResponseParts } });
 
           // Detect if result itself is the stream (Async Generator)
           let stream = result.stream || result;
@@ -1180,6 +1191,14 @@ ${files.length > 0 ? files.join(", ") : "No files yet."}
         Do not use quotes. Just the title.
       `;
 
+      const schema = {
+        type: "object",
+        properties: {
+          title: { type: "string" }
+        },
+        required: ["title"]
+      };
+
       // Use a separate stateless call
       const { GoogleGenAI } = await this._loadClientLibrary();
       const client = new GoogleGenAI({ apiKey: this.config.googleApiKey });
@@ -1193,19 +1212,25 @@ ${files.length > 0 ? files.join(", ") : "No files yet."}
           }
         ],
         config: {
-          responseMimeType: 'text/plain',
+          responseMimeType: 'application/json',
+          responseSchema: schema,
           temperature: 0.5
         }
       });
 
       let title = '';
-      if (response && response.text) {
-        title = typeof response.text === 'function' ? response.text() : response.text;
-      } else if (response.candidates && response.candidates[0]) {
-        title = response.candidates[0].content.parts[0].text;
+      const text = (response && response.text) ? (typeof response.text === 'function' ? response.text() : response.text) : '';
+
+      if (text) {
+        try {
+          const json = JSON.parse(text);
+          title = json.title;
+        } catch (e) {
+          console.warn('[Agent] Failed to parse title JSON:', e);
+        }
       }
 
-      title = title ? title.trim().replace(/^"|"$/g, '') : '';
+      title = title ? title.trim() : '';
 
       if (title) {
         this.db.updateSession(chatId, { title });
