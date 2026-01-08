@@ -305,7 +305,10 @@ MIT License. See [LICENSE](LICENSE) file.
 - **Server-Sent Events (SSE)**: Use for **Unidirectional** streams (e.g., `GET /v1/logs`). Lighter, native auto-reconnect, traversing proxies easily.
 - **Socket.io**: Use for **Bidirectional** state (e.g., Chat, "Thinking" indicators).
 
-### 7. Frontend Security (Server Actions)
+### 7. Frontend Security (Server Actions & Config)
 - **Constraint**: The `DEEDEE_API_TOKEN` gives full control over the agent.
-- **Rule**: NEVER expose it to the client bundle (no `NEXT_PUBLIC_` env vars).
-- **Solution**: Use **Next.js Server Actions** (`apps/web/src/app/actions.js`) as a secure proxy. The token lives only on the server side; the client calls the action, and the action calls the API.
+- **Rule**: NEVER expose it - or the API URL - to the client bundle (no `NEXT_PUBLIC_` env vars for sensitive configs).
+- **Solution**: 
+    1. Use **Next.js Server Actions** (`apps/web/src/app/actions.js`) as a secure proxy for data fetching.
+    2. Use **Next.js Rewrites** (`next.config.mjs`) to proxy client-side requests (like images/socket) to backend services. 
+    3. **DO NOT** use `process.env.NEXT_PUBLIC_API_URL` in React components. Use relative paths (e.g., `/api/...`).
