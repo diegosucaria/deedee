@@ -574,6 +574,16 @@ export async function updateVaultPage(id, content, page = 'index.md') {
     }
 }
 
+export async function deleteVault(id) {
+    try {
+        await fetchAPI(`/v1/vaults/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        revalidatePath('/vaults');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function uploadVaultFile(id, formData) {
     // Note: formData must contain 'file'
     // fetchAPI handles JSON usually. For Multipart, we might need a separate client-side logic OR use fetch directly inside this action.

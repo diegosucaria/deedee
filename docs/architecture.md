@@ -32,7 +32,6 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
         -   **Unified Config**: Centralized key-value store (`agent_settings` table) for all dynamic behaviors (Voice, Search Strategy, etc.).
         -   **Read-Through Cache**: On-boot hydration into memory for synchronous, high-performance tool access.
     - **MCP Manager**: Orchestrates tools via the Model Context Protocol.
-    - **MCP Manager**: Orchestrates tools via the Model Context Protocol.
     - **Backup Manager**: Automates nightly zipping and uploading of `/app/data` to Google Cloud Storage with retention policy.
     - **Vault Manager**:
         - **Filesystem Backed**: Stores vaults as directories in `/app/data/vaults/{topic}`.

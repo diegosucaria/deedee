@@ -136,7 +136,6 @@ Deedee comes equipped with a suite of tools, both internal and via MCP.
 -   **Journal**: `logJournal`, `readJournal`, `searchJournal` (Second Brain).
 -   **Scheduling**: `scheduleJob` (Cron), `setReminder` (One-off).
 -   **Communication**: `replyWithAudio` (Native TTS), `sendEmail`.
--   **Communication**: `replyWithAudio` (Native TTS), `sendEmail`.
 -   **Productivity**: `listEvents` (Calendar).
 -   **Life Vaults**: `createVault`, `addToVault` (Ingest files), `readVaultPage`, `listVaultFiles` (RAG-lite).
 

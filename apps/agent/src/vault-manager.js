@@ -70,6 +70,25 @@ class VaultManager {
         return safeTopic;
     }
 
+    async deleteVault(topic) {
+        const safeTopic = this.sanitizeTopic(topic);
+        const vaultPath = path.join(this.vaultsDir, safeTopic);
+
+        try {
+            await fs.access(vaultPath);
+            await fs.rm(vaultPath, { recursive: true, force: true });
+            return true;
+        } catch (error) {
+            // If it doesn't exist, technically it's already "deleted", but let's throw if needed?
+            // "force: true" in rm handles non-existence usually, but access check is safer for logic.
+            // If access fails, it doesn't exist.
+            if (error.code === 'ENOENT') {
+                throw new Error(`Vault '${safeTopic}' does not exist.`);
+            }
+            throw error;
+        }
+    }
+
     async addToVault(topic, sourcePath, filename) {
         const safeTopic = this.sanitizeTopic(topic);
         const safeFilename = path.basename(filename); // Ensure no path traversal

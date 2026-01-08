@@ -19,6 +19,8 @@ class VaultExecutor extends BaseExecutor {
                 return this.updateVaultPage(args.topic, args.page, args.content);
             case 'listVaultFiles':
                 return this.listVaultFiles(args.topic);
+            case 'deleteVault':
+                return this.deleteVault(args.topic);
             case 'setSessionTopic':
                 return this.setSessionTopic(args.topic, context);
             default:
@@ -34,6 +36,11 @@ class VaultExecutor extends BaseExecutor {
     async listVaults() {
         const vaults = await this.services.vaults.listVaults();
         return JSON.stringify(vaults, null, 2);
+    }
+
+    async deleteVault(topic) {
+        await this.services.vaults.deleteVault(topic);
+        return `Vault '${topic}' and all its contents have been permanently deleted.`;
     }
 
     async addToVault(topic, filePath, summary, context) {

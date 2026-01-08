@@ -77,4 +77,17 @@ describe('VaultManager', () => {
         expect(id).toBe('my-cool-stuff');
         expect(fs.existsSync(path.join(TEST_DATA_DIR, 'vaults/my-cool-stuff'))).toBe(true);
     });
+
+    test('should delete a vault', async () => {
+        await vaultManager.createVault('temp-vault');
+        expect(fs.existsSync(path.join(TEST_DATA_DIR, 'vaults/temp-vault'))).toBe(true);
+
+        const result = await vaultManager.deleteVault('temp-vault');
+        expect(result).toBe(true);
+        expect(fs.existsSync(path.join(TEST_DATA_DIR, 'vaults/temp-vault'))).toBe(false);
+    });
+
+    test('should throw error when deleting non-existent vault', async () => {
+        await expect(vaultManager.deleteVault('non-existent')).rejects.toThrow("Vault 'non-existent' does not exist.");
+    });
 });

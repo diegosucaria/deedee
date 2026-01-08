@@ -44,6 +44,17 @@ module.exports = (agent) => {
         }
     });
 
+    // DELETE /v1/vaults/:id - Delete a vault
+    router.delete('/:id', async (req, res) => {
+        const { id } = req.params;
+        try {
+            await agent.vaults.deleteVault(id);
+            res.json({ success: true, message: 'Vault deleted' });
+        } catch (error) {
+            res.status(500).json({ error: error.message });
+        }
+    });
+
     // GET /v1/vaults/:id - Get vault details (index + files)
     router.get('/:id', async (req, res) => {
         const { id } = req.params;

@@ -377,6 +377,15 @@ const toolDefinitions = [
         }
       },
       {
+        name: "deleteVault",
+        description: "Permanently delete a Life Vault and all its contents. Use with caution.",
+        parameters: {
+          type: "OBJECT",
+          properties: { topic: { type: "STRING" } },
+          required: ["topic"]
+        }
+      },
+      {
         name: "listVaults",
         description: "List all existing Life Vaults and their stats.",
         parameters: {
