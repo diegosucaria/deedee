@@ -1,4 +1,5 @@
 const { BaseExecutor } = require('./base');
+const path = require('path');
 
 class VaultExecutor extends BaseExecutor {
     constructor(services) {
@@ -86,7 +87,5 @@ class VaultExecutor extends BaseExecutor {
         return `Session topic switched to '${topic}'. System instructions will update on next turn.`;
     }
 }
-
-const path = require('path');
 
 module.exports = { VaultExecutor };
