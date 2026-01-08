@@ -101,7 +101,7 @@ export default function GeminiLivePage() {
                             speech_config: {
                                 voice_config: {
                                     prebuilt_voice_config: {
-                                        voice_name: "Aoede" // Valid names: Puck, Charon, Kore, Fenrir, Aoede
+                                        voice_name: "Kore"
                                     }
                                 }
                             }
@@ -151,9 +151,16 @@ export default function GeminiLivePage() {
                 }
 
                 // Tool Call
-                if (data.toolCall) {
-                    log(`Tool Call: ${data.toolCall.functionCalls[0].name}`);
-                    handleToolCall(data.toolCall);
+                // API v1alpha might return it at top level or inside serverContent
+                const toolCall = data.toolCall || data.serverContent?.toolCall;
+
+                if (toolCall) {
+                    console.log('[Live] Tool Call Received:', JSON.stringify(toolCall, null, 2));
+                    log(`Tool Call: ${toolCall.functionCalls[0].name}`);
+                    handleToolCall(toolCall);
+                } else if (data.serverContent && !data.serverContent.modelTurn && !data.serverContent.turnComplete) {
+                    // Log other server content events (like interruptions or unknown)
+                    console.log('[Live] Server Content:', JSON.stringify(data.serverContent, null, 2));
                 }
             };
 
@@ -182,18 +189,28 @@ export default function GeminiLivePage() {
         for (const call of toolCall.functionCalls) {
             try {
                 // Proxy to Backend
+                console.log(`[Live] Executing tool: ${call.name} with args:`, call.args);
                 const res = await executeLiveTool(call.name, call.args);
+                console.log(`[Live] Tool ${call.name} result:`, res);
 
                 if (res.success) {
                     responses.push({
+                        id: call.id, // Important: Pass back the call ID if present (Gemini often requires it)
                         name: call.name,
                         response: { result: res.result }
                     });
                 } else {
-                    throw new Error(res.error);
+                    console.error(`[Live] Tool ${call.name} failed:`, res.error);
+                    responses.push({
+                        id: call.id,
+                        name: call.name,
+                        response: { error: res.error }
+                    });
                 }
             } catch (e) {
+                console.error(`[Live] Tool execution exception:`, e);
                 responses.push({
+                    id: call.id,
                     name: call.name,
                     response: { error: e.message }
                 });
@@ -201,11 +218,14 @@ export default function GeminiLivePage() {
         }
 
         // Send Response
-        wsRef.current?.send(JSON.stringify({
+        const responseMsg = {
             toolResponse: {
                 functionResponses: responses
             }
-        }));
+        };
+
+        console.log('[Live] Sending Tool Response:', JSON.stringify(responseMsg, null, 2));
+        wsRef.current?.send(JSON.stringify(responseMsg));
     };
 
     const startAudio = async () => {
