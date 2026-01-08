@@ -9,7 +9,7 @@ const CustomTooltip = ({ active, payload, label }) => {
     if (active && payload && payload.length) {
         return (
             <div className="bg-zinc-900 border border-zinc-700 p-3 rounded shadow-lg text-sm">
-                <p className="text-zinc-400 mb-2">{new Date(label).toLocaleTimeString()}</p>
+                <p className="text-zinc-400 mb-2">{new Date(label).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', month: 'numeric', day: 'numeric' })}</p>
                 {payload.map((p, index) => (
                     <p key={index} style={{ color: p.color }} className="font-mono">
                         {p.name}: <span className="font-bold">{p.value}</span>{p.unit}
@@ -21,9 +21,33 @@ const CustomTooltip = ({ active, payload, label }) => {
     return null;
 };
 
+// Helper: Generate ticks for every 6 hours (00:00, 06:00, 12:00, 18:00) covering the data range
+const getSmartTicks = (data) => {
+    if (!data || data.length === 0) return undefined;
+    const timestamps = data.map(d => d.timestamp).sort((a, b) => a - b);
+    const start = timestamps[0];
+    const end = timestamps[timestamps.length - 1];
+
+    const ticks = [];
+    let current = new Date(start);
+    current.setMinutes(0, 0, 0); // Round down to nearest hour? 
+    // Better: Start at the previous 6-hour mark
+    const h = current.getHours();
+    const remainder = h % 6;
+    current.setHours(h - remainder, 0, 0, 0);
+
+    while (current.getTime() <= end) {
+        const t = current.getTime();
+        if (t >= start) ticks.push(t);
+        current.setHours(current.getHours() + 6);
+    }
+    return ticks.length > 0 ? ticks : undefined;
+};
+
 export function LatencyChart({ data }) {
     // Fix impurity: capture reference time
     const now = new Date().getTime();
+    const ticks = getSmartTicks(data);
 
     if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-zinc-600">No Data</div>;
 
@@ -34,13 +58,14 @@ export function LatencyChart({ data }) {
                 margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
                 syncId="synced-charts"
             >
-                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" horizontal={true} vertical={true} />
                 <XAxis
                     dataKey="timestamp"
                     stroke="#71717a"
                     fontSize={12}
                     type="number"
                     domain={['dataMin', 'dataMax']}
+                    ticks={ticks}
                     tickFormatter={(ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 />
                 <YAxis
@@ -86,6 +111,7 @@ export function LatencyChart({ data }) {
 
 export function CostChart({ data }) {
     const now = new Date().getTime();
+    const ticks = getSmartTicks(data);
     if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-zinc-600">No Data</div>;
 
     return (
@@ -95,13 +121,14 @@ export function CostChart({ data }) {
                 margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
                 syncId="synced-charts"
             >
-                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" horizontal={true} vertical={true} />
                 <XAxis
                     dataKey="timestamp"
                     stroke="#71717a"
                     fontSize={12}
                     type="number"
                     domain={['dataMin', 'dataMax']}
+                    ticks={ticks}
                     tickFormatter={(ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 />
                 <YAxis
@@ -128,6 +155,7 @@ export function CostChart({ data }) {
 
 export function TokenEfficiencyChart({ data }) {
     const now = new Date().getTime();
+    const ticks = getSmartTicks(data);
     if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-zinc-600">No Data</div>;
 
     // Aggregate or use raw? Assuming raw trend data of requests
@@ -138,13 +166,14 @@ export function TokenEfficiencyChart({ data }) {
                 margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
                 syncId="synced-charts"
             >
-                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" horizontal={true} vertical={true} />
                 <XAxis
                     dataKey="timestamp"
                     stroke="#71717a"
                     fontSize={12}
                     type="number"
                     domain={['dataMin', 'dataMax']}
+                    ticks={ticks}
                     tickFormatter={(ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                 />
                 <YAxis
