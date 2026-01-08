@@ -409,11 +409,21 @@ export async function getSessions(limit = 50, offset = 0) {
     }
 }
 
+const LOCATION_CACHE = new Map();
+const CACHE_TTL = 2 * 60 * 60 * 1000; // 2 hours
+
 export async function getUserLocation() {
     try {
         const headersList = require('next/headers').headers();
         const ip = headersList.get('x-forwarded-for') || headersList.get('remote-addr') || '';
         const clientIp = ip.split(',')[0].trim();
+
+        // 0. Check Cache
+        const cached = LOCATION_CACHE.get(clientIp);
+        if (cached && (Date.now() - cached.timestamp < CACHE_TTL)) {
+            console.log(`[getUserLocation] Cache Hit for IP: ${clientIp}`);
+            return { success: true, data: cached.data };
+        }
 
         // 1. Define Providers with normalization logic
         // We use a simple array of async functions to try in order.
@@ -483,6 +493,13 @@ export async function getUserLocation() {
             try {
                 const location = await provider();
                 console.log(`[getUserLocation] Success with provider ${index + 1}`);
+
+                // Cache Result
+                LOCATION_CACHE.set(clientIp, {
+                    data: location,
+                    timestamp: Date.now()
+                });
+
                 return { success: true, data: location };
             } catch (error) {
                 console.warn(`[getUserLocation] Provider ${index + 1} failed: ${error.message}`);

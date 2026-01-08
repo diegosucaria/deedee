@@ -33,38 +33,27 @@ export default function VaultList({ vaults }) {
 
     return (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
-            {/* Create Card */}
-            <div
-                onClick={handleCreate}
-                className="flex flex-col items-center justify-center p-8 bg-dashed border-2 border-gray-300 border-dashed rounded-xl hover:border-blue-500 hover:bg-blue-50 cursor-pointer transition-all group"
-            >
-                <div className="w-12 h-12 rounded-full bg-gray-100 flex items-center justify-center mb-3 group-hover:bg-blue-100 transition-colors">
-                    <span className="text-2xl text-gray-400 group-hover:text-blue-500">+</span>
-                </div>
-                <span className="font-medium text-gray-500 group-hover:text-blue-600">Create New Vault</span>
-            </div>
-
             {/* Existing Vaults */}
             {vaults.map((vault) => (
                 <div
                     key={vault.id}
                     onClick={() => router.push(`/vaults/${vault.id}`)}
-                    className="relative flex flex-col p-6 bg-white border border-gray-200 rounded-xl shadow-sm hover:shadow-md hover:border-blue-300 transition-all cursor-pointer group"
+                    className="relative flex flex-col p-6 bg-zinc-900 border border-zinc-800 rounded-xl shadow-sm hover:shadow-md hover:border-indigo-500/50 transition-all cursor-pointer group"
                 >
                     <div className="flex items-center justify-between mb-4">
-                        <h3 className="text-xl font-bold text-gray-800 capitalize">{vault.id}</h3>
-                        <span className="text-xs bg-gray-100 text-gray-600 px-2 py-1 rounded-full">
+                        <h3 className="text-xl font-bold text-zinc-100 capitalize">{vault.id}</h3>
+                        <span className="text-xs bg-zinc-800 text-zinc-400 px-2 py-1 rounded-full">
                             {vault.filesCount || 0} files
                         </span>
                     </div>
-                    <p className="text-sm text-gray-500 line-clamp-3 mb-2">
+                    <p className="text-sm text-zinc-500 line-clamp-3 mb-2">
                         Click to view knowledge base.
                     </p>
 
                     {/* Delete Button (Visible on Hover) */}
                     <button
                         onClick={(e) => handleDelete(e, vault.id)}
-                        className="absolute top-2 right-2 p-2 text-gray-400 hover:text-red-500 hover:bg-red-50 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
+                        className="absolute top-2 right-2 p-2 text-zinc-500 hover:text-red-400 hover:bg-red-500/10 rounded-full opacity-0 group-hover:opacity-100 transition-opacity"
                         title="Delete Vault"
                     >
                         <svg xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24" strokeWidth={1.5} stroke="currentColor" className="w-5 h-5">
@@ -73,6 +62,17 @@ export default function VaultList({ vaults }) {
                     </button>
                 </div>
             ))}
+
+            {/* Create Card (Moved to Last) */}
+            <div
+                onClick={handleCreate}
+                className="flex flex-col items-center justify-center p-8 bg-zinc-900/50 border-2 border-zinc-800 border-dashed rounded-xl hover:border-indigo-500 hover:bg-zinc-900 cursor-pointer transition-all group"
+            >
+                <div className="w-12 h-12 rounded-full bg-zinc-800 flex items-center justify-center mb-3 group-hover:bg-indigo-500/20 transition-colors">
+                    <span className="text-2xl text-zinc-500 group-hover:text-indigo-400">+</span>
+                </div>
+                <span className="font-medium text-zinc-500 group-hover:text-indigo-400">Create New Vault</span>
+            </div>
         </div>
     );
 }

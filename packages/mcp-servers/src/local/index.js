@@ -14,9 +14,17 @@ class LocalTools {
     this.workDir = workDir;
   }
 
+  _resolveSafe(targetPath) {
+    const fullPath = path.resolve(this.workDir, targetPath);
+    if (!fullPath.startsWith(path.resolve(this.workDir))) {
+      throw new Error(`Access denied: Path '${targetPath}' resolves outside of working directory.`);
+    }
+    return fullPath;
+  }
+
   async readFile(filePath) {
     try {
-      const fullPath = path.resolve(this.workDir, filePath);
+      const fullPath = this._resolveSafe(filePath);
       return await fs.readFile(fullPath, 'utf8');
     } catch (error) {
       throw new Error(`Failed to read file: ${error.message}`);
@@ -25,7 +33,7 @@ class LocalTools {
 
   async writeFile(filePath, content) {
     try {
-      const fullPath = path.resolve(this.workDir, filePath);
+      const fullPath = this._resolveSafe(filePath);
       await fs.mkdir(path.dirname(fullPath), { recursive: true });
       await fs.writeFile(fullPath, content, 'utf8');
       return { success: true, path: fullPath };
@@ -36,7 +44,7 @@ class LocalTools {
 
   async listDirectory(dirPath) {
     try {
-      const fullPath = path.resolve(this.workDir, dirPath);
+      const fullPath = this._resolveSafe(dirPath);
       const files = await fs.readdir(fullPath, { withFileTypes: true });
       return files.map(dirent => ({
         name: dirent.name,

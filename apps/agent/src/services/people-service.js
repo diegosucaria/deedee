@@ -93,10 +93,20 @@ Return a JSON array of objects with this schema:
 Output pure JSON only.`;
 
         try {
-            const model = this.agent.client.getGenerativeModel({ model: 'gemini-2.0-flash-exp' });
-            const result = await model.generateContent(prompt);
-            const response = result.response;
-            const text = response.text();
+            const modelName = process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
+            const response = await this.agent.client.models.generateContent({
+                model: modelName,
+                contents: prompt
+            });
+
+            // Robust Response Handling (matching agent.js / helpers.js)
+            const candidate = response.candidates?.[0];
+            const part = candidate?.content?.parts?.[0];
+            const text = part?.text || '';
+
+            if (!text) {
+                throw new Error('No text returned from model');
+            }
 
             // Extract JSON
             const jsonMatch = text.match(/\[.*\]/s);

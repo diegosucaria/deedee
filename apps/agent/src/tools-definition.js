@@ -473,6 +473,18 @@ const toolDefinitions = [
         }
       },
       {
+        name: "readVaultFile",
+        description: "Read a specific file from the active vault.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            topic: { type: "STRING" },
+            filename: { type: "STRING", description: "Name of the file to read (must exist in the vault)" }
+          },
+          required: ["topic", "filename"]
+        }
+      },
+      {
         name: "readVaultPage",
         description: "Read a markdown page from a vault (defaults to index.md).",
         parameters: {

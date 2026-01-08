@@ -44,7 +44,7 @@ io.on("connection", (socket) => {
         metadata: {
           chatId: data.chatId || socket.id,
           socketId: socket.id,
-          location: data.metadata?.location // Pass through location
+          ...data.metadata // Pass through everything (location, vaultId, etc)
         }
       };
 

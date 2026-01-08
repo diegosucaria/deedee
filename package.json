@@ -8,7 +8,7 @@
     "packages/*"
   ],
   "scripts": {
-    "test": "NODE_OPTIONS=--experimental-vm-modules jest apps/web --passWithNoTests",
+    "test": "NODE_OPTIONS=--experimental-vm-modules jest",
     "lint": "eslint .",
     "build": "npm run build --workspace=apps/web",
     "prepare": "husky"

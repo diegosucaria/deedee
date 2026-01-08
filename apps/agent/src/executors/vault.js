@@ -20,6 +20,8 @@ class VaultExecutor extends BaseExecutor {
                 return this.updateVaultPage(args.topic, args.page, args.content);
             case 'listVaultFiles':
                 return this.listVaultFiles(args.topic);
+            case 'readVaultFile':
+                return this.readVaultFile(args.topic, args.filename);
             case 'deleteVault':
                 return this.deleteVault(args.topic);
             case 'setSessionTopic':
@@ -74,6 +76,16 @@ class VaultExecutor extends BaseExecutor {
     async listVaultFiles(topic) {
         const files = await this.services.vaults.listVaultFiles(topic);
         return JSON.stringify(files);
+    }
+
+    async readVaultFile(topic, filename) {
+        try {
+            const content = await this.services.vaults.readVaultFile(topic, filename);
+            if (content === null) return `File '${filename}' not found in vault '${topic}'.`;
+            return content;
+        } catch (err) {
+            return `Error reading file: ${err.message}`;
+        }
     }
 
     async setSessionTopic(topic, context) {

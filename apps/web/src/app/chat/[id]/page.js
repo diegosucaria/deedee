@@ -3,9 +3,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import ReactMarkdown from 'react-markdown';
-import { Send, Play, Wifi, WifiOff, Mic, Image as ImageIcon, X, Loader2, StopCircle, Box, ChevronDown } from 'lucide-react';
+import { Send, Play, Wifi, WifiOff, Mic, Image as ImageIcon, X, Loader2, StopCircle, Box, ChevronDown, Activity, DollarSign, Wallet, Code2, CheckCircle2 } from 'lucide-react';
 import clsx from 'clsx';
-import { getSession, getUserLocation, getVaults } from '../../actions';
+import { getSession, getUserLocation, getVaults, updateSession } from '../../actions';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
 
 
@@ -45,7 +45,7 @@ export default function ChatSessionPage({ params }) {
     useEffect(() => {
         const CACHE_KEY = 'deedee_user_location';
         const TIME_KEY = 'deedee_location_timestamp';
-        const TTL = 30 * 60 * 1000; // 30 minutes
+        const TTL = 2 * 60 * 60 * 1000; // 2 hours
 
         const cachedLoc = localStorage.getItem(CACHE_KEY);
         const cachedTime = localStorage.getItem(TIME_KEY);
@@ -87,6 +87,32 @@ export default function ChatSessionPage({ params }) {
                 const history = (data.messages || []).map(m => ({
                     role: m.role === 'model' ? 'assistant' : m.role,
                     content: (() => {
+                        // FUNCTION CALL (Model asking to run tool)
+                        if (m.parts && m.parts.some(p => p.functionCall)) {
+                            const fc = m.parts.find(p => p.functionCall)?.functionCall;
+                            return JSON.stringify({
+                                type: 'function_call',
+                                name: fc.name,
+                                args: fc.args
+                            });
+                        }
+
+                        // FUNCTION RESPONSE (Result of tool)
+                        if (m.role === 'function' || (m.parts && m.parts.some(p => p.functionResponse))) {
+                            const fr = m.parts?.find(p => p.functionResponse)?.functionResponse || m.functionResponse; // Helper or direct?
+                            // Gemini API structure: parts[{ functionResponse: { name, response } }]
+                            // My DB saves it exactly like Gemini structure usually.
+                            // Let's safe access:
+                            const part = m.parts?.find(p => p.functionResponse);
+                            if (part) {
+                                return JSON.stringify({
+                                    type: 'function_response',
+                                    name: part.functionResponse.name,
+                                    result: part.functionResponse.response
+                                });
+                            }
+                        }
+
                         if (m.role === 'user') {
                             // Multimodal Check (User messages only)
                             // Fix: Safe check for parts array
@@ -99,7 +125,11 @@ export default function ChatSessionPage({ params }) {
                         // For assistant messages, keep existing logic
                         return m.content || ((m.parts && Array.isArray(m.parts)) ? m.parts.map(p => p.text).join('') : '');
                     })(),
-                    type: m.type || 'text',
+                    type: (() => {
+                        if (m.parts && m.parts.some(p => p.functionCall)) return 'function_call';
+                        if (m.role === 'function' || (m.parts && m.parts.some(p => p.functionResponse))) return 'function_response';
+                        return m.type || 'text';
+                    })(),
                     timestamp: m.timestamp
                 }));
                 setMessages(history);
@@ -376,11 +406,24 @@ export default function ChatSessionPage({ params }) {
                     {/* Vault Selector */}
                     <div className="relative group flex items-center bg-zinc-900 border border-zinc-700 rounded-lg focus-within:ring-1 focus-within:ring-indigo-500 focus-within:border-indigo-500 transition-all hover:border-zinc-600">
                         <div className="pl-2.5 flex items-center pointer-events-none">
-                            <Box className={clsx("h-4 w-4", selectedVault !== 'none' ? "text-indigo-400" : "text-zinc-500")} />
+                            {selectedVault === 'health' ? <Activity className="h-4 w-4 text-rose-400" /> :
+                                selectedVault === 'finance' ? <DollarSign className="h-4 w-4 text-emerald-400" /> :
+                                    selectedVault !== 'none' ? <Box className="h-4 w-4 text-indigo-400" /> :
+                                        <Box className="h-4 w-4 text-zinc-500" />}
                         </div>
                         <select
                             value={selectedVault}
-                            onChange={(e) => setSelectedVault(e.target.value)}
+                            onChange={(e) => {
+                                const newVault = e.target.value;
+                                setSelectedVault(newVault);
+                                // Persist context
+                                updateSession(chatId, {
+                                    metadata: {
+                                        vaultId: newVault,
+                                        location: userLocation // Preserve location if exists
+                                    }
+                                }).catch(console.error);
+                            }}
                             className="appearance-none bg-transparent text-zinc-300 text-sm pl-2 pr-8 py-1.5 cursor-pointer outline-none border-none w-full"
                         >
                             <option value="none">General Context</option>
@@ -436,6 +479,32 @@ export default function ChatSessionPage({ params }) {
                                         alt="Generated Image"
                                         className="w-full h-auto max-h-96 object-cover"
                                     />
+                                </div>
+                            ) : msg.type === 'function_call' ? (
+                                <div className="font-mono text-xs">
+                                    <div className="flex items-center gap-2 text-indigo-300 mb-1">
+                                        <Code2 className="h-3 w-3" />
+                                        <span>Using Tool: {JSON.parse(msg.content).name}</span>
+                                    </div>
+                                    <div className="bg-black/20 rounded p-2 overflow-x-auto text-zinc-400">
+                                        {JSON.stringify(JSON.parse(msg.content).args)}
+                                    </div>
+                                </div>
+                            ) : msg.type === 'function_response' ? (
+                                <div className="font-mono text-xs">
+                                    <div className="flex items-center gap-2 text-emerald-400 mb-1">
+                                        <CheckCircle2 className="h-3 w-3" />
+                                        <span>Tool Result: {JSON.parse(msg.content).name}</span>
+                                    </div>
+                                    <details className="cursor-pointer group">
+                                        <summary className="text-zinc-500 hover:text-zinc-300 transition-colors list-none">
+                                            <span className="group-open:hidden">View Output</span>
+                                            <span className="hidden group-open:inline">Hide Output</span>
+                                        </summary>
+                                        <div className="mt-2 bg-black/20 rounded p-2 overflow-x-auto text-zinc-400 whitespace-pre-wrap max-h-48 overflow-y-auto">
+                                            {JSON.stringify(JSON.parse(msg.content).result, null, 2)}
+                                        </div>
+                                    </details>
                                 </div>
                             ) : (
                                 <div className="markdown prose prose-invert prose-sm max-w-none">

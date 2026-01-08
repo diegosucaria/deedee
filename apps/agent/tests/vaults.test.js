@@ -90,4 +90,29 @@ describe('VaultManager', () => {
     test('should throw error when deleting non-existent vault', async () => {
         await expect(vaultManager.deleteVault('non-existent')).rejects.toThrow("Vault 'non-existent' does not exist.");
     });
+
+    test('should read a specific file from vault', async () => {
+        await vaultManager.createVault('research');
+        const sourceFile = path.join(TEST_DATA_DIR, 'source.txt');
+        fs.writeFileSync(sourceFile, 'Important data');
+
+        await vaultManager.addToVault('research', sourceFile, 'data.txt');
+
+        const content = await vaultManager.readVaultFile('research', 'data.txt');
+        expect(content).toBe('Important data');
+
+        const nonExistent = await vaultManager.readVaultFile('research', 'missing.txt');
+        expect(nonExistent).toBeNull();
+    });
+
+    test('should prevent vault path traversal', async () => {
+        await vaultManager.createVault('secure');
+        // This should just read 'passwd' from inside the vault (which doesn't exist) 
+        // effectively sanitizing the path, rather than throwing/reading real /etc/passwd
+        const content = await vaultManager.readVaultFile('secure', '../../../../etc/passwd');
+
+        // Since it sanitizes to just 'passwd' inside the vault, it should return null (file not found)
+        // proving it didn't traverse. 
+        expect(content).toBeNull();
+    });
 });

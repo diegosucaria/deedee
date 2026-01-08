@@ -46,4 +46,19 @@ describe('LocalTools', () => {
     await expect(tools.runShellCommand('rm -rf /'))
       .rejects.toThrow(/blocked/);
   });
+
+  test('readFile should block path traversal', async () => {
+    await expect(tools.readFile('../outside.txt'))
+      .rejects.toThrow(/Access denied/);
+  });
+
+  test('writeFile should block path traversal', async () => {
+    await expect(tools.writeFile('../outside.txt', 'evil'))
+      .rejects.toThrow(/Access denied/);
+  });
+
+  test('listDirectory should block path traversal', async () => {
+    await expect(tools.listDirectory('..'))
+      .rejects.toThrow(/Access denied/);
+  });
 });
