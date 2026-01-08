@@ -279,12 +279,24 @@ class Agent {
           }
         }
       } else {
-        console.warn('[Agent] sendMessageStream returned no stream property. Raw:', JSON.stringify(result, null, 2));
+        console.warn('[Agent] sendMessageStream returned no stream property.');
+        console.log('[Agent] Stream Result Keys:', Object.keys(result));
       }
 
-      const response = await (result.response || (result.candidates ? result : undefined));
+      // Check if response is a promise and await it
+      let response = result.response;
+      if (response && typeof response.then === 'function') {
+        response = await response;
+      }
+
+      // Fallback for direct result
+      if (!response && result.candidates) {
+        response = result;
+      }
+
       if (!response) {
-        console.warn('[Agent] Stream result.response is undefined. Raw result:', JSON.stringify(result, null, 2));
+        console.warn('[Agent] Stream result.response is undefined.');
+        console.log('[Agent] Stream Result Keys:', Object.keys(result));
       }
       return response;
     } catch (e) {
