@@ -90,6 +90,7 @@ function createSettingsRouter(agent) {
                     parts: [{ text: `Please read this text naturally. Text: "${text}"` }]
                 }],
                 config: {
+                    responseMimeType: 'audio/mp3',
                     responseModalities: ['AUDIO'],
                     speechConfig: {
                         voiceConfig: {
@@ -115,6 +116,8 @@ function createSettingsRouter(agent) {
             if (!audioData) {
                 throw new Error('No audio returned from Gemini.');
             }
+
+            console.log(`[Settings] TTS Generated. MimeType: ${mimeType}, Size: ${audioData.length}`);
 
             // Return as base64 JSON because raw binary through simplified proxy routers can be tricky with body-parser
             // and we need to consume it easily in the frontend action.
