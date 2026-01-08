@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
-import { Plus, MessageSquare, Trash2, Pencil, Check, X, ChevronLeft, ChevronRight, Sidebar as SidebarIcon } from 'lucide-react';
+import { Plus, MessageSquare, Trash2, Pencil, Check, X, ChevronLeft, ChevronRight, Sidebar as SidebarIcon, Heart, Banknote } from 'lucide-react';
 import { clsx } from 'clsx';
 import { createSession, deleteSession, updateSession } from '@/app/actions';
 import { useState } from 'react';
@@ -64,6 +64,13 @@ export default function ChatSidebar({ sessions = [] }) {
         }
     };
 
+    const getSessionIcon = (title) => {
+        const lower = (title || '').toLowerCase();
+        if (lower.includes('health')) return { Icon: Heart, className: 'text-red-400' };
+        if (lower.includes('finance')) return { Icon: Banknote, className: 'text-emerald-400' };
+        return { Icon: MessageSquare, className: 'opacity-50' };
+    };
+
     return (
         <div
             onClick={() => isCollapsed && toggleSidebar()}
@@ -94,6 +101,7 @@ export default function ChatSidebar({ sessions = [] }) {
                 <div className="space-y-1">
                     {sessions.map((session) => {
                         const isEditing = editingSessionId === session.id;
+                        const { Icon, className: iconClass } = getSessionIcon(session.title);
 
                         if (isEditing && !isCollapsed) {
                             return (
@@ -136,7 +144,7 @@ export default function ChatSidebar({ sessions = [] }) {
                                 title={session.title || 'New Chat'}
                             >
                                 <div className={clsx("flex items-center overflow-hidden", isCollapsed ? "gap-0" : "gap-3")}>
-                                    <MessageSquare className="h-4 w-4 shrink-0 opacity-50" />
+                                    <Icon className={clsx("h-4 w-4 shrink-0", iconClass)} />
                                     {!isCollapsed && <span className="truncate">{session.title || 'New Chat'}</span>}
                                 </div>
 
