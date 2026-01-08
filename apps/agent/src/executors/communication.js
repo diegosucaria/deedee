@@ -17,21 +17,27 @@ class CommunicationExecutor extends BaseExecutor {
 
                 // Fetch owner phone from DB or Env
                 let ownerPhone = process.env.MY_PHONE;
+                let ownerName = 'diego'; // Default fallback
+
                 try {
                     // Check if method exists (it should now)
                     if (this.services.db.getAgentSetting) {
-                        const dbSettings = this.services.db.getAgentSetting('owner_phone');
-                        if (dbSettings && dbSettings.value) {
-                            ownerPhone = dbSettings.value;
+                        const phoneSetting = this.services.db.getAgentSetting('owner_phone');
+                        if (phoneSetting && phoneSetting.value) {
+                            ownerPhone = phoneSetting.value;
+                        }
+                        const nameSetting = this.services.db.getAgentSetting('owner_name');
+                        if (nameSetting && nameSetting.value) {
+                            ownerName = nameSetting.value.toLowerCase();
                         }
                     }
-                } catch (e) { console.warn('[Communication] Failed to fetch owner_phone:', e); }
+                } catch (e) { console.warn('[Communication] Failed to fetch settings:', e); }
 
                 const ALIASES = {
                     'me': ownerPhone,
-                    'diego': ownerPhone,
                     'myself': ownerPhone,
-                    'owner': ownerPhone
+                    'owner': ownerPhone,
+                    [ownerName]: ownerPhone // Dynamic name
                 };
 
                 if (ALIASES[target.toLowerCase()]) {

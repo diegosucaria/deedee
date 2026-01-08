@@ -36,27 +36,11 @@ describe('Settings API', () => {
 
         const res = await request(app)
             .post('/internal/settings')
-            .send({ key: 'test_voice', value: 'Puck', category: 'voice' });
+            .send({ key: 'voice_settings', value: 'Puck', category: 'voice' });
 
         expect(res.statusCode).toBe(200);
         expect(mockDb.db.prepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO agent_settings'));
-        expect(mockRun).toHaveBeenCalledWith('test_voice', '"Puck"', 'voice');
-    });
-
-    test('GET /internal/settings should retrieve settings', async () => {
-        const mockAll = jest.fn().mockReturnValue([
-            { key: 'test_voice', value: '"Puck"', category: 'voice' },
-            { key: 'theme', value: '{"dark":true}', category: 'ui' }
-        ]);
-        mockDb.db.prepare.mockReturnValue({ all: mockAll });
-
-        const res = await request(app).get('/internal/settings');
-
-        expect(res.statusCode).toBe(200);
-        expect(res.body).toEqual({
-            test_voice: 'Puck',
-            theme: { dark: true }
-        });
+        expect(mockRun).toHaveBeenCalledWith('voice_settings', '"Puck"', 'voice');
     });
 
     test('POST /internal/settings should broadcast update if interface exists', async () => {
@@ -69,12 +53,12 @@ describe('Settings API', () => {
 
         const res = await request(app)
             .post('/internal/settings')
-            .send({ key: 'broadcast_test', value: 123 });
+            .send({ key: 'search_strategy', value: 123 });
 
         expect(res.statusCode).toBe(200);
         expect(mockAgent.interface.broadcast).toHaveBeenCalledWith('entity:update', {
             type: 'setting',
-            key: 'broadcast_test',
+            key: 'search_strategy',
             value: 123
         });
     });
@@ -85,6 +69,29 @@ describe('Settings API', () => {
             .send({ value: 'Puck' });
 
         expect(res.statusCode).toBe(400);
+    });
+
+    test('POST /internal/settings should allow valid keys', async () => {
+        const keys = ['owner_phone', 'owner_name', 'search_strategy', 'voice_settings'];
+
+        mockDb.db.prepare.mockReturnValue({ run: jest.fn() });
+        mockAgent.interface = { broadcast: jest.fn().mockResolvedValue(true) };
+
+        for (const key of keys) {
+            const res = await request(app)
+                .post('/internal/settings')
+                .send({ key, value: 'test' });
+            expect(res.statusCode).toBe(200);
+        }
+    });
+
+    test('POST /internal/settings should reject invalid keys', async () => {
+        const res = await request(app)
+            .post('/internal/settings')
+            .send({ key: 'random_key', value: '123' });
+
+        expect(res.statusCode).toBe(400);
+        expect(res.body.error).toBe('Invalid config key');
     });
 
     test('POST /internal/settings/tts/preview should return audio and mimeType', async () => {

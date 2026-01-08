@@ -109,6 +109,21 @@ export default function SettingsPage() {
                             <div className="space-y-4">
                                 <div>
                                     <label className="block text-sm font-medium text-zinc-400 mb-1">
+                                        Your Name
+                                    </label>
+                                    <input
+                                        type="text"
+                                        defaultValue={config?.owner_name || ''}
+                                        onBlur={(e) => handleSave('owner_name', e.target.value)}
+                                        placeholder="e.g. Diego"
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500/50 outline-none"
+                                    />
+                                    <p className="text-xs text-zinc-500 mt-1">
+                                        How the agent should address you.
+                                    </p>
+                                </div>
+                                <div>
+                                    <label className="block text-sm font-medium text-zinc-400 mb-1">
                                         Your Phone Number (WhatsApp)
                                     </label>
                                     <input
