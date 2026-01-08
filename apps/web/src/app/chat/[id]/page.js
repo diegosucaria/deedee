@@ -89,7 +89,7 @@ export default function ChatSessionPage({ params }) {
                     role: m.role === 'model' ? 'assistant' : m.role,
                     content: (() => {
                         // FUNCTION CALL (Model asking to run tool)
-                        if (m.parts && m.parts.some(p => p.functionCall)) {
+                        if (m.parts && Array.isArray(m.parts) && m.parts.some(p => p.functionCall)) {
                             const fc = m.parts.find(p => p.functionCall)?.functionCall;
                             return JSON.stringify({
                                 type: 'function_call',
@@ -99,12 +99,12 @@ export default function ChatSessionPage({ params }) {
                         }
 
                         // FUNCTION RESPONSE (Result of tool)
-                        if (m.role === 'function' || (m.parts && m.parts.some(p => p.functionResponse))) {
+                        if (m.role === 'function' || (m.parts && Array.isArray(m.parts) && m.parts.some(p => p.functionResponse))) {
                             const fr = m.parts?.find(p => p.functionResponse)?.functionResponse || m.functionResponse; // Helper or direct?
                             // Gemini API structure: parts[{ functionResponse: { name, response } }]
                             // My DB saves it exactly like Gemini structure usually.
                             // Let's safe access:
-                            const part = m.parts?.find(p => p.functionResponse);
+                            const part = (m.parts && Array.isArray(m.parts)) ? m.parts.find(p => p.functionResponse) : null;
                             if (part) {
                                 return JSON.stringify({
                                     type: 'function_response',
@@ -127,8 +127,8 @@ export default function ChatSessionPage({ params }) {
                         return m.content || ((m.parts && Array.isArray(m.parts)) ? m.parts.map(p => p.text).join('') : '');
                     })(),
                     type: (() => {
-                        if (m.parts && m.parts.some(p => p.functionCall)) return 'function_call';
-                        if (m.role === 'function' || (m.parts && m.parts.some(p => p.functionResponse))) return 'function_response';
+                        if (m.parts && Array.isArray(m.parts) && m.parts.some(p => p.functionCall)) return 'function_call';
+                        if (m.role === 'function' || (m.parts && Array.isArray(m.parts) && m.parts.some(p => p.functionResponse))) return 'function_response';
                         return m.type || 'text';
                     })(),
                     timestamp: m.timestamp
