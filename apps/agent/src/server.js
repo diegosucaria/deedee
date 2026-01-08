@@ -172,8 +172,8 @@ app.post('/chat', async (req, res) => {
 });
 
 if (require.main === module) {
-  app.listen(port, () => {
-    console.log(`Agent listening at http://localhost:${port}`);
+  app.listen(port, '0.0.0.0', () => {
+    console.log(`Agent listening at http://0.0.0.0:${port}`);
   });
 }
 
