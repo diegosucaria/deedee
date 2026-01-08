@@ -5,6 +5,9 @@ const { createUserMessage } = require('@deedee/shared/src/types');
 // Mock DB
 jest.mock('../src/db', () => ({
   AgentDB: jest.fn().mockImplementation(() => ({
+    db: {
+      prepare: jest.fn().mockReturnValue({ all: jest.fn().mockReturnValue([]) })
+    },
     saveMessage: jest.fn(),
     getKey: jest.fn(),
     setKey: jest.fn(),
@@ -55,6 +58,7 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
         // Helper to extract text from payload
         const getPayloadText = (p) => {
           if (typeof p === 'string') return p;
+          if (Array.isArray(p)) return ''; // FIX: Handle direct array payload (Function Response)
           if (p?.parts && p.parts[0]?.text) return p.parts[0].text;
           if (p?.message) {
             if (typeof p.message === 'string') return p.message;
@@ -65,7 +69,9 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
         };
 
         const payloadText = getPayloadText(payload);
-        const hasFunctionResponse = payload?.parts?.some(part => part.functionResponse) ||
+        const hasFunctionResponse =
+          (Array.isArray(payload) && payload.some(part => part.functionResponse)) || // FIX: New Array handling
+          payload?.parts?.some(part => part.functionResponse) ||
           (Array.isArray(payload?.message) && payload.message[0]?.functionResponse) ||
           (payload?.message?.parts?.some && payload.message.parts.some(part => part.functionResponse));
 
@@ -117,6 +123,7 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
         let result = {};
         const getPayloadText = (p) => {
           if (typeof p === 'string') return p;
+          if (Array.isArray(p)) return ''; // FIX: Handle direct array payload
           if (p?.parts && p.parts[0]?.text) return p.parts[0].text;
           if (p?.message) {
             if (typeof p.message === 'string') return p.message;
@@ -127,7 +134,9 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
         };
 
         const payloadText = getPayloadText(payload);
-        const hasFunctionResponse = payload?.parts?.some(part => part.functionResponse) ||
+        const hasFunctionResponse =
+          (Array.isArray(payload) && payload.some(part => part.functionResponse)) || // FIX: New Array handling
+          payload?.parts?.some(part => part.functionResponse) ||
           (Array.isArray(payload?.message) && payload.message[0]?.functionResponse) ||
           (payload?.message?.parts?.some && payload.message.parts.some(part => part.functionResponse));
 
