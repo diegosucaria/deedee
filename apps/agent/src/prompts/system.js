@@ -78,6 +78,7 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
             4. **Commit**: When done, call 'commitAndPush'. Use Conventional Commits (e.g. 'feat: ...', 'fix: ...').
             5. **No Shell Git**: Use dedicated Git tools, NOT 'runShellCommand' for git operations.
             6. **English Only**: All code comments and strings must be in English.
+            7. **Spec Mandate**: For huge/significant features or core architecture changes, you MUST write a detailed design document in 'specs/' before writing code. Design first, build second.
 
             SECURITY MANDATES (NON-NEGOTIABLE):
             1. **Auth Required**: All external HTTP endpoints (in apps/api) MUST be protected by Bearer Token authentication.
