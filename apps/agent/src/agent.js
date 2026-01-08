@@ -56,6 +56,9 @@ class Agent {
 
     this.scheduler = new Scheduler(this);
 
+    // In-Memory Settings Cache
+    this.settings = {};
+
     this.toolExecutor = new ToolExecutor({
       local: this.local,
       journal: this.journal,
@@ -64,11 +67,32 @@ class Agent {
       mcp: this.mcp,
       client: null, // Will be populated in processMessage
       interface: this.interface,
-      db: this.db
+      db: this.db,
+      agent: this
     });
 
     this.processMessage = this.processMessage.bind(this);
     this.onMessage = this.onMessage.bind(this);
+    this.loadSettings = this.loadSettings.bind(this);
+  }
+
+  async loadSettings() {
+    try {
+      const stmt = this.db.db.prepare('SELECT key, value FROM agent_settings');
+      const rows = stmt.all();
+
+      this.settings = rows.reduce((acc, row) => {
+        try {
+          acc[row.key] = JSON.parse(row.value);
+        } catch (e) {
+          acc[row.key] = row.value;
+        }
+        return acc;
+      }, {});
+      console.log(`[Agent] Loaded ${Object.keys(this.settings).length} settings from DB.`);
+    } catch (err) {
+      console.error('[Agent] Failed to load settings:', err);
+    }
   }
 
   async _loadClientLibrary() {
@@ -84,6 +108,9 @@ class Agent {
 
     // Initialize MCP
     await this.mcp.init();
+
+    // Load Runtime Settings
+    await this.loadSettings();
 
     // Load Scheduled Jobs
     await this.scheduler.loadJobs();

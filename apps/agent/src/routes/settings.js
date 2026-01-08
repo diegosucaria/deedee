@@ -51,6 +51,11 @@ function createSettingsRouter(agent) {
 
             console.log(`[Settings] Updated ${key}`);
 
+            // Update In-Memory Cache
+            if (agent.settings) {
+                agent.settings[key] = value;
+            }
+
             // Notify via Socket (Broadcast via Interfaces service)
             if (agent.interface) {
                 // fire and forget
@@ -90,7 +95,6 @@ function createSettingsRouter(agent) {
                     parts: [{ text: `Please read this text naturally. Text: "${text}"` }]
                 }],
                 config: {
-                    responseMimeType: 'audio/mp3',
                     responseModalities: ['AUDIO'],
                     speechConfig: {
                         voiceConfig: {
@@ -109,9 +113,27 @@ function createSettingsRouter(agent) {
                 const part = audioResponse.candidates[0].content.parts[0];
                 if (part.inlineData) {
                     audioData = part.inlineData.data;
-                    if (part.inlineData.mimeType) mimeType = part.inlineData.mimeType;
+                    // Gemini returns raw PCM for audio modality usually, or whatever implementation detail.
+                    // We will wrap it below.
                 }
             }
+
+            if (!audioData) {
+                throw new Error('No audio returned from Gemini.');
+            }
+
+            // Wrap in WAV header (as we do in media executor)
+            const { createWavHeader } = require('../../utils/audio');
+            const rawBuffer = Buffer.from(audioData, 'base64');
+            const wavHeader = createWavHeader(rawBuffer.length, 24000, 1, 16);
+            const wavBuffer = Buffer.concat([wavHeader, rawBuffer]);
+
+            // Re-encode to base64
+            const finalAudioBase64 = wavBuffer.toString('base64');
+
+            console.log(`[Settings] TTS Generated. MimeType: ${mimeType}, Size: ${finalAudioBase64.length}`);
+
+            res.json({ success: true, audio_base64: finalAudioBase64, mimeType });
 
             if (!audioData) {
                 throw new Error('No audio returned from Gemini.');

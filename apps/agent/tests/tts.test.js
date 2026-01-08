@@ -28,6 +28,12 @@ describe('Agent TTS', () => {
       saveScheduledJob: jest.fn(),
       deleteScheduledJob: jest.fn(),
       saveMessage: jest.fn(),
+      db: {
+        prepare: jest.fn().mockReturnValue({
+          get: jest.fn().mockReturnValue({ value: JSON.stringify('Kore') }),
+          all: jest.fn().mockReturnValue([])
+        })
+      }
     };
 
     // Force _loadClientLibrary to return our mock
@@ -54,8 +60,10 @@ describe('Agent TTS', () => {
   });
 
   test('replyWithAudio calls Gemini API and sends audio', async () => {
-    // Manually inject client for direct tool execution test
+    // Manually inject client and sync DB for direct tool execution test
     agent.toolExecutor.services.client = agent.client;
+    agent.toolExecutor.services.db = agent.db;
+    agent.toolExecutor.services.agent = agent;
 
     const mockSendCallback = jest.fn();
     const mockMessage = { metadata: { chatId: 'test-chat' }, source: 'telegram' };
@@ -74,15 +82,16 @@ describe('Agent TTS', () => {
       parts: expect.arrayContaining([
         expect.objectContaining({
           inlineData: expect.objectContaining({
-            mimeType: 'audio/mp3'
+            mimeType: 'audio/wav'
           })
         })
       ])
     }));
 
-    // Verify content matches input (Passthrough MP3)
+    // Verify content matches input (WAV Wrapped)
     const sentMsg = mockSendCallback.mock.calls[0][0];
     const base64Audio = sentMsg.parts[0].inlineData.data;
-    expect(base64Audio).toBe(Buffer.from('rawAudioData').toString('base64'));
+    // Should start with RIFF (WAV header)
+    expect(base64Audio).toMatch(/^UklGR/);
   });
 });
