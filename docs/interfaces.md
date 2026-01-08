@@ -55,3 +55,29 @@ Deedee connects via the standard Telegram Bot API (Long Polling).
 -   **Commands**:
     -   `/stop`: Instantly kills any running agent processing loop.
     -   `/clear`: Clears conversation history (Context).
+
+---
+
+## 🎙️ Gemini Live (Real-Time)
+Deedee supports the high-performance **Gemini Live API** for real-time, low-latency voice interaction.
+
+### Architecture
+-   **Client**: The Web UI (`apps/web`) establishes a WebSocket connection directly to Google's servers.
+-   **Proxy**: Initial authentication is handled via `POST /v1/live/token` on the API, which proxies to the Agent to generate an ephemeral token.
+-   **Tools**: The Client acts as a "Tool Client", executing tools locally (like `get_weather`) or forwarding complex tool calls (like `send_whatsapp`) back to the Agent via `POST /v1/live/tools/execute` (which proxies to `POST /tools/execute` on the Agent).
+
+### Features
+-   **Language Detection**: Automatically detects language based on the user's voice (configured via system instruction).
+-   **Interruptibility**: You can interrupt the model at any time.
+-   **Tool Use**: Full access to Deedee's toolset (WhatsApp, Calendar, etc.) via the proxy mechanism.
+
+---
+
+## 🔍 WhatsApp Contact Integration
+The agent can now resolve contact names to phone numbers using your WhatsApp contact list.
+
+### Usage
+-   **Sync**: Contacts are automatically verified when they message the bot or when the bot syncs the session.
+-   **Search**: You can search contacts in the Web UI settings to verify visibility.
+-   **Tool**: The agent uses the `searchContacts` tool to find numbers when you say "Send message to Alice".
+-   **Safeguard**: The agent will NOT send messages to unknown numbers by default unless explicitly instructed (or if they are in the `allowedNumbers` list).

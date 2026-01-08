@@ -104,7 +104,10 @@ Everything is customizable via environment variables. Like which models to use.
     -   **Smart Reminders**: "Remind me to call Mom at 5pm" (One-off, auto-deleting tasks).
     -   **Morning Briefing**: `GET /v1/briefing` generates a concise audio-ready summary of your day.
 -   **🛑 Safety**: Global `/stop` command instantly kills any runaway agent loops.
--   **💬 WhatsApp**: Full integration (Text/Voice/Images) with On-Demand QR connection.
+-   **💬 WhatsApp**: Full integration with **Dual Session** support (Assistant + User) and **Contact Search**.
+-   **🎙️ Gemini Live**: Real-time, low-latency voice interaction via the Web UI.
+    -   **Interruptible**: Natural conversations.
+    -   **Tool-Enabled**: Can use all agent tools (e.g. "Send a WhatsApp to Alice").
 
 ---
 
