@@ -1008,7 +1008,8 @@ ${files.length > 0 ? files.join(", ") : "No files yet."}
         console.time(toolTimerLabel);
 
         try {
-          const result = await session.sendMessageStream({ message: { parts: functionResponseParts } });
+          // FIX: Pass parts directly for correct ContentUnion matching in SDK
+          const result = await session.sendMessageStream(functionResponseParts);
 
           // Detect if result itself is the stream (Async Generator)
           let stream = result.stream || result;
@@ -1021,7 +1022,14 @@ ${files.length > 0 ? files.join(", ") : "No files yet."}
             // Iterate to drain stream and trigger tokens
             if (stream && typeof stream[Symbol.asyncIterator] === 'function') {
               for await (const chunk of stream) {
-                const text = chunk.text();
+                // FIX: chunk.text might not be a function in some SDK versions or response types
+                let text;
+                if (typeof chunk.text === 'function') {
+                  text = chunk.text();
+                } else {
+                  text = chunk.text;
+                }
+
                 if (text) this.interface.emit('chat:token', { id: chatId, token: text, timestamp: Date.now() });
               }
             }
@@ -1037,6 +1045,8 @@ ${files.length > 0 ? files.join(", ") : "No files yet."}
 
         } catch (e) {
           console.error('[Agent] Tool response streaming failed:', e);
+          // DEBUG: Log the raw payload to help diagnose SDK validation errors
+          console.log('[Agent] FAILING PAYLOAD (functionResponseParts):', JSON.stringify(functionResponseParts, null, 2));
           throw e;
         }
 
