@@ -123,7 +123,7 @@ function createSettingsRouter(agent) {
             }
 
             // Wrap in WAV header (as we do in media executor)
-            const { createWavHeader } = require('../../utils/audio');
+            const { createWavHeader } = require('../utils/audio');
             const rawBuffer = Buffer.from(audioData, 'base64');
             const wavHeader = createWavHeader(rawBuffer.length, 24000, 1, 16);
             const wavBuffer = Buffer.concat([wavHeader, rawBuffer]);
