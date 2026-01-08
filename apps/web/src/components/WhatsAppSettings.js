@@ -3,11 +3,13 @@
 import { useState, useEffect } from 'react';
 import { RefreshCw, Smartphone, LogOut, Loader2, AlertCircle, ScanLine } from 'lucide-react';
 import { getWhatsAppStatus, connectWhatsApp, disconnectWhatsApp } from '../app/actions';
+import ContactList from './ContactList';
 
 export default function WhatsAppSettings() {
     const [statusData, setStatusData] = useState(null);
     const [loading, setLoading] = useState(false); // Global loading state or per card?
     const [error, setError] = useState(null);
+    const [showContacts, setShowContacts] = useState(null); // 'assistant' or 'user' or null
 
     const fetchStatus = async () => {
         try {
@@ -59,6 +61,7 @@ export default function WhatsAppSettings() {
                         description={session.description}
                         data={statusData[session.key] || { status: 'disconnected' }}
                         refresh={fetchStatus}
+                        onShowContacts={() => setShowContacts(session.key)}
                     />
                 ))}
             </div>
@@ -69,11 +72,18 @@ export default function WhatsAppSettings() {
                     {error}
                 </div>
             )}
+
+            {showContacts && (
+                <ContactList
+                    session={showContacts}
+                    onClose={() => setShowContacts(null)}
+                />
+            )}
         </div>
     );
 }
 
-function SessionCard({ sessionKey, title, description, data, refresh }) {
+function SessionCard({ sessionKey, title, description, data, refresh, onShowContacts }) {
     const [busy, setBusy] = useState(false);
     const [cardError, setCardError] = useState(null);
 
@@ -126,14 +136,23 @@ function SessionCard({ sessionKey, title, description, data, refresh }) {
                                 <div className="text-xs text-zinc-500 font-mono truncate">{data.me?.id || 'Unknown ID'}</div>
                             </div>
                         </div>
-                        <button
-                            onClick={handleDisconnect}
-                            disabled={busy}
-                            className="w-full py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
-                        >
-                            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
-                            Disconnect
-                        </button>
+                        <div className="flex gap-2">
+                            <button
+                                onClick={onShowContacts}
+                                className="flex-1 py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                            >
+                                <Smartphone className="w-4 h-4" />
+                                Contacts
+                            </button>
+                            <button
+                                onClick={handleDisconnect}
+                                disabled={busy}
+                                className="flex-1 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                            >
+                                {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
+                                Disconnect
+                            </button>
+                        </div>
                     </div>
                 ) : isScanning ? (
                     <div className="text-center">
@@ -178,7 +197,7 @@ function SessionCard({ sessionKey, title, description, data, refresh }) {
                     </div>
                 )}
             </div>
-        </div>
+        </div >
     );
 }
 

@@ -307,6 +307,18 @@ export async function disconnectWhatsApp(session) {
     }
 }
 
+export async function getWhatsAppContacts(session, query) {
+    try {
+        let url = `/v1/whatsapp/contacts?session=${session}`;
+        if (query) url += `&query=${encodeURIComponent(query)}`;
+
+        return await fetchAPI(url);
+    } catch (error) {
+        console.warn('getWhatsAppContacts Error:', error.message);
+        return [];
+    }
+}
+
 
 // --- MCP & Tools ---
 export async function getMCPStatus() {

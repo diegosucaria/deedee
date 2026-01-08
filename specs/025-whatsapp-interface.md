@@ -88,3 +88,10 @@ You can configure Deedee in two main ways using the same codebase:
 ## Risks / mitigations
 - **Disconnects**: Baileys connection can be flaky. Implement robust reconnection logic with exponential backoff.
 - **Session Loss**: Ensure `/app/data` is mounted correctly in `docker-compose.yml`.
+
+## Contact Resolution & Impersonation
+To enable the Agent to send messages "from" the user (impersonation), we support:
+1.  **Dual Sessions**: `assistant` (Bot) and `user` (You).
+2.  **Contact Learning**: The `WhatsAppService` listens to `contacts.upsert` and maintains a local cache of contacts (Name -> Phone).
+3.  **Search API**: `GET /whatsapp/contacts` allows the Agent (and UI) to find a contact's phone number by name.
+4.  **Agent Tool**: `searchContacts` tool helps the LLM resolve names like "Mom" to actual phone numbers before sending.

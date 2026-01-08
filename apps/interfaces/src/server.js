@@ -164,6 +164,27 @@ app.get('/whatsapp/status', (req, res) => {
   res.json(status);
 });
 
+app.get('/whatsapp/contacts', (req, res) => {
+  if (isWhatsAppDisabled) return res.json([]);
+
+  const { session, query } = req.query;
+  const targetSession = session || 'user';
+  const service = whatsappSessions[targetSession];
+
+  if (!service) {
+    if (!res.headersSent) {
+      return res.status(400).json({ error: 'Invalid session ID' });
+    }
+    return;
+  }
+
+  if (query) {
+    return res.json(service.searchContacts(query));
+  }
+
+  return res.json(service.getContacts());
+});
+
 app.post('/whatsapp/connect', async (req, res) => {
   if (isWhatsAppDisabled) return res.status(400).json({ error: 'WhatsApp disabled' });
 

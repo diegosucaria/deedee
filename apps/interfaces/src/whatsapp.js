@@ -13,6 +13,7 @@ class WhatsAppService {
         this.status = 'disconnected';
         this.reconnectAttempts = 0;
         this.lidMap = new Map(); // Store LID -> Phone Number mapping
+        this.contacts = new Map(); // Store Contact Details: id -> { id, name, notify }
 
         const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
         this.authFolder = path.join(dataDir, `baileys_auth_${sessionId}`);
@@ -146,10 +147,26 @@ class WhatsAppService {
 
             this.sock.ev.on('contacts.upsert', (contacts) => {
                 for (const contact of contacts) {
+                    // Update LID Map
                     if (contact.lid) {
                         const phone = contact.id.split('@')[0];
                         this.lidMap.set(contact.lid, phone);
                         this.lidMap.set(`${contact.lid}@lid`, phone);
+                    }
+
+                    // Update Contact Map
+                    // We merge existing data because updates might be partial
+                    const existing = this.contacts.get(contact.id) || {};
+                    const updated = {
+                        ...existing,
+                        ...contact,
+                        name: contact.name || existing.name,
+                        notify: contact.notify || existing.notify
+                    };
+
+                    // Only store if we have some useful info beyond just ID
+                    if (updated.name || updated.notify) {
+                        this.contacts.set(contact.id, updated);
                     }
                 }
             });
@@ -348,6 +365,37 @@ class WhatsAppService {
             me: formattedMe,
             session: this.sessionId
         };
+    }
+
+    searchContacts(query) {
+        if (!query) return [];
+        const q = query.toLowerCase();
+        const results = [];
+
+        for (const [id, contact] of this.contacts.entries()) {
+            const name = (contact.name || '').toLowerCase();
+            const notify = (contact.notify || '').toLowerCase();
+            const phone = id.split('@')[0];
+
+            if (name.includes(q) || notify.includes(q) || phone.includes(q)) {
+                results.push({
+                    id: contact.id,
+                    name: contact.name,
+                    notify: contact.notify,
+                    phone
+                });
+            }
+        }
+        return results;
+    }
+
+    getContacts() {
+        return Array.from(this.contacts.values()).map(c => ({
+            id: c.id,
+            name: c.name,
+            notify: c.notify,
+            phone: c.id.split('@')[0]
+        }));
     }
 }
 

@@ -298,6 +298,30 @@ describe('WhatsAppService Unit Tests', () => {
         );
         expect(spyError).not.toHaveBeenCalled();
     });
+
+    test('should search contacts correctly', async () => {
+        // Populate contacts manually
+        whatsapp.contacts.set('123@s.whatsapp.net', { id: '123@s.whatsapp.net', name: 'Diego', notify: 'Diego S' });
+        whatsapp.contacts.set('456@s.whatsapp.net', { id: '456@s.whatsapp.net', name: 'Mom', notify: 'Mami' });
+
+        // Search by name
+        const res1 = whatsapp.searchContacts('Diego');
+        expect(res1).toHaveLength(1);
+        expect(res1[0].phone).toBe('123');
+
+        // Search by notify
+        const res2 = whatsapp.searchContacts('Mami');
+        expect(res2).toHaveLength(1);
+        expect(res2[0].phone).toBe('456');
+
+        // Search by phone
+        const res3 = whatsapp.searchContacts('456');
+        expect(res3).toHaveLength(1);
+
+        // No match
+        const res4 = whatsapp.searchContacts('Dad');
+        expect(res4).toHaveLength(0);
+    });
 });
 
 describe('WhatsApp API Integration Tests', () => {

@@ -340,6 +340,18 @@ const toolDefinitions = [
           required: ["to", "content"]
         }
       },
+      {
+        name: "searchContacts",
+        description: "Search for a contact's phone number by name. Use this to find who to text. Returns a list of matches with names and phone numbers.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            query: { type: "STRING", description: "Name to search for (e.g. 'Mom', 'Diego')." },
+            session: { type: "STRING", description: "Optional. Session to search in. Default: 'user'." }
+          },
+          required: ["query"]
+        }
+      },
       // Audio / TTS
       {
         name: "replyWithAudio",
