@@ -136,6 +136,7 @@ class AgentDB {
         id TEXT PRIMARY KEY,
         title TEXT,
         is_archived INTEGER DEFAULT 0,
+        is_pinned INTEGER DEFAULT 0,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
@@ -193,6 +194,11 @@ class AgentDB {
     // Migration: Add expires_at to scheduled_jobs
     try {
       this.db.exec("ALTER TABLE scheduled_jobs ADD COLUMN expires_at DATETIME");
+    } catch (err) { }
+
+    // Migration: Add is_pinned to chat_sessions
+    try {
+      this.db.exec("ALTER TABLE chat_sessions ADD COLUMN is_pinned INTEGER DEFAULT 0");
     } catch (err) { }
   }
 
@@ -403,7 +409,8 @@ class AgentDB {
       AND id NOT LIKE 'api_city_image_%'
       AND id LIKE '%-%' -- Keep only UUIDs (Web sessions), filters out numeric Telegram IDs
       AND id NOT LIKE '%@%' -- Filter out WhatsApp IDs just in case
-      ORDER BY updated_at DESC 
+      AND id NOT LIKE '%@%' -- Filter out WhatsApp IDs just in case
+      ORDER BY is_pinned DESC, updated_at DESC 
       LIMIT ? OFFSET ?
     `).all(limit, offset);
   }
@@ -429,7 +436,7 @@ class AgentDB {
     return null;
   }
 
-  updateSession(id, { title, isArchived }) {
+  updateSession(id, { title, isArchived, isPinned }) {
     const updates = ['updated_at = CURRENT_TIMESTAMP'];
     const args = [];
 
@@ -440,6 +447,10 @@ class AgentDB {
     if (isArchived !== undefined) {
       updates.push('is_archived = ?');
       args.push(isArchived ? 1 : 0);
+    }
+    if (isPinned !== undefined) {
+      updates.push('is_pinned = ?');
+      args.push(isPinned ? 1 : 0);
     }
 
     args.push(id);

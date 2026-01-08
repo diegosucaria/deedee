@@ -283,8 +283,8 @@ function createInternalRouter(agent) {
     router.put('/sessions/:id', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
         try {
-            const { title, isArchived } = req.body;
-            agent.db.updateSession(req.params.id, { title, isArchived });
+            const { title, isArchived, isPinned } = req.body;
+            agent.db.updateSession(req.params.id, { title, isArchived, isPinned });
             res.json({ success: true });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
