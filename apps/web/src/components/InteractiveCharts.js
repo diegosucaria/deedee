@@ -22,6 +22,9 @@ const CustomTooltip = ({ active, payload, label }) => {
 };
 
 export function LatencyChart({ data }) {
+    // Fix impurity: capture reference time
+    const now = new Date().getTime();
+
     if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-zinc-600">No Data</div>;
 
     return (
@@ -47,7 +50,7 @@ export function LatencyChart({ data }) {
                 />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend />
-                <ReferenceLine x={Date.now()} stroke="#f472b6" label="Now" strokeDasharray="3 3" />
+                <ReferenceLine x={now} stroke="#f472b6" label="Now" strokeDasharray="3 3" />
                 <Line
                     type="monotone"
                     dataKey="e2e"
@@ -82,6 +85,7 @@ export function LatencyChart({ data }) {
 }
 
 export function CostChart({ data }) {
+    const now = new Date().getTime();
     if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-zinc-600">No Data</div>;
 
     return (
@@ -107,7 +111,7 @@ export function CostChart({ data }) {
                 />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend />
-                <ReferenceLine x={Date.now()} stroke="#ef4444" label="Now" strokeDasharray="3 3" />
+                <ReferenceLine x={now} stroke="#ef4444" label="Now" strokeDasharray="3 3" />
                 <Area
                     type="monotone"
                     dataKey="estimated_cost"
@@ -123,6 +127,7 @@ export function CostChart({ data }) {
 }
 
 export function TokenEfficiencyChart({ data }) {
+    const now = new Date().getTime();
     if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-zinc-600">No Data</div>;
 
     // Aggregate or use raw? Assuming raw trend data of requests
@@ -148,7 +153,7 @@ export function TokenEfficiencyChart({ data }) {
                 />
                 <Tooltip content={<CustomTooltip />} />
                 <Legend />
-                <ReferenceLine x={Date.now()} stroke="#fbbf24" label="Now" strokeDasharray="3 3" />
+                <ReferenceLine x={now} stroke="#fbbf24" label="Now" strokeDasharray="3 3" />
                 <Area
                     type="monotone"
                     dataKey="tokens"

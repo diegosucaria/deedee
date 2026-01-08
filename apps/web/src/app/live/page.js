@@ -1,7 +1,8 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { getLiveToken, executeLiveTool, getLiveConfig, getAgentTools, getVoiceSettings } from './actions';
+import { getLiveToken, executeLiveTool, getLiveConfig, getAgentTools } from './actions';
+import { getVoiceSettings } from '../actions';
 import { Mic, MicOff, PhoneOff, Settings2, Terminal, X } from 'lucide-react';
 import AudioSettingsDialog from '@/components/AudioSettingsDialog';
 import clsx from 'clsx';

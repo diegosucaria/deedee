@@ -11,7 +11,7 @@ export default function WhatsAppSettings() {
     const [error, setError] = useState(null);
     const [showContacts, setShowContacts] = useState(null); // 'assistant' or 'user' or null
 
-    const fetchStatus = async () => {
+    const fetchStatus = useCallback(async () => {
         try {
             const data = await getWhatsAppStatus();
             // Data format: { assistant: {...}, user: {...} } or { status: 'disabled' }
@@ -20,13 +20,13 @@ export default function WhatsAppSettings() {
             console.error('Failed to fetch WhatsApp status:', err);
             setError('Failed to fetch status');
         }
-    };
+    }, []);
 
     useEffect(() => {
         fetchStatus();
         const interval = setInterval(fetchStatus, 3000);
         return () => clearInterval(interval);
-    }, []);
+    }, [fetchStatus]);
 
     if (!statusData) return <div className="p-8 text-center text-zinc-500">Loading WhatsApp status...</div>;
     if (statusData.status === 'disabled') return <div className="p-6 bg-zinc-900 border border-zinc-800 rounded-xl text-zinc-400">WhatsApp is disabled.</div>;

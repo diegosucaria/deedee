@@ -32,7 +32,8 @@ app.use('/v1/live', require('./live'));
 
 // BETTER: Add to apps/api/src/dashboard.js if it proxies to agent.
 const http = require('http');
-app.get('/v1/logs/:container', (req, res) => {
+// Protected Log Stream
+app.get('/v1/logs/:container', authMiddleware, (req, res) => {
     // Stream from Supervisor
     const container = req.params.container;
     const tail = req.query.tail || 100;

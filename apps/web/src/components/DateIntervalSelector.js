@@ -25,12 +25,16 @@ export default function DateIntervalSelector() {
         { label: 'All Time', value: 'all' },
     ];
 
-    useEffect(() => {
-        // Sync preset if URL empty
-        if (!initialStart && !initialEnd && !isCustom) {
-            handlePresetChange('24h');
-        }
-    }, []);
+    const updateUrl = (start, end) => {
+        const params = new URLSearchParams(searchParams);
+        if (start) params.set('start', start);
+        else params.delete('start');
+
+        if (end) params.set('end', end);
+        else params.delete('end');
+
+        router.replace(`?${params.toString()}`);
+    };
 
     const handlePresetChange = (value) => {
         setPreset(value);
@@ -55,6 +59,13 @@ export default function DateIntervalSelector() {
         updateUrl(startIso, endIso);
     };
 
+    useEffect(() => {
+        // Sync preset if URL empty
+        if (!initialStart && !initialEnd && !isCustom) {
+            handlePresetChange('24h');
+        }
+    }, []);
+
     const handleCustomApply = () => {
         if (!startDate || !endDate) return;
         setIsCustom(true);
@@ -68,16 +79,7 @@ export default function DateIntervalSelector() {
         updateUrl(s.toISOString(), e.toISOString());
     };
 
-    const updateUrl = (start, end) => {
-        const params = new URLSearchParams(searchParams);
-        if (start) params.set('start', start);
-        else params.delete('start');
 
-        if (end) params.set('end', end);
-        else params.delete('end');
-
-        router.replace(`?${params.toString()}`);
-    };
 
     return (
         <div className="flex flex-wrap items-center gap-4 bg-zinc-900 border border-zinc-800 p-2 rounded-xl">
