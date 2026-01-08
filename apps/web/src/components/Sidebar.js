@@ -10,14 +10,14 @@ import { twMerge } from 'tailwind-merge';
 const navItems = [
     { name: 'Chat', href: '/', icon: MessageSquare },
     { name: 'Live', href: '/live', icon: Mic },
-    { name: 'Journal', href: '/journal', icon: Book },
     { name: 'Tasks', href: '/tasks', icon: ClipboardList },
-    { name: 'Brain', href: '/brain', icon: Activity },
-    { name: 'Logs', href: '/logs', icon: Terminal },
-    { name: 'History', href: '/history', icon: Clock },
+    { name: 'Journal', href: '/journal', icon: Book },
     { name: 'Vaults', href: '/vaults', icon: Lock },
-    { name: 'Interfaces', href: '/interfaces', icon: Share2 },
+    { name: 'Brain', href: '/brain', icon: Activity },
+    { name: 'History', href: '/history', icon: Clock },
     { name: 'Stats', href: '/stats', icon: PieChart },
+    { name: 'Logs', href: '/logs', icon: Terminal },
+    { name: 'Interfaces', href: '/interfaces', icon: Share2 },
     { name: 'Settings', href: '/settings', icon: Settings },
 ];
 
