@@ -133,17 +133,7 @@ function createSettingsRouter(agent) {
 
             console.log(`[Settings] TTS Generated. MimeType: ${mimeType}, Size: ${finalAudioBase64.length}`);
 
-            res.json({ success: true, audio_base64: finalAudioBase64, mimeType });
-
-            if (!audioData) {
-                throw new Error('No audio returned from Gemini.');
-            }
-
-            console.log(`[Settings] TTS Generated. MimeType: ${mimeType}, Size: ${audioData.length}`);
-
-            // Return as base64 JSON because raw binary through simplified proxy routers can be tricky with body-parser
-            // and we need to consume it easily in the frontend action.
-            res.json({ success: true, audio_base64: audioData, mimeType });
+            return res.json({ success: true, audio_base64: finalAudioBase64, mimeType });
 
         } catch (error) {
             console.error('[Settings] TTS Failed:', error);

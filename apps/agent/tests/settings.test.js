@@ -113,7 +113,8 @@ describe('Settings API', () => {
 
         expect(res.statusCode).toBe(200);
         expect(res.body.success).toBe(true);
-        expect(res.body.audio_base64).toBe('SGVsbG8=');
-        expect(res.body.mimeType).toBe('audio/mp3');
+        // Should start with RIFF (WAV header)
+        expect(res.body.audio_base64).toMatch(/^UklGR/);
+        expect(res.body.mimeType).toBe('audio/wav');
     });
 });
