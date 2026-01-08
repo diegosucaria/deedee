@@ -108,6 +108,7 @@ Everything is customizable via environment variables. Like which models to use.
 -   **🎙️ Gemini Live**: Real-time, low-latency voice interaction via the Web UI.
     -   **Interruptible**: Natural conversations.
     -   **Tool-Enabled**: Can use all agent tools (e.g. "Send a WhatsApp to Alice").
+    -   **Configurable Voice**: Choose from multiple personas (Puck, Kore, Charon) via Settings.
 
 ---
 
