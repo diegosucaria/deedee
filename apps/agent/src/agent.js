@@ -277,6 +277,9 @@ class Agent {
    */
   async _generateStream(session, payload, chatId, source) {
     try {
+      // DEBUG: Log payload to diagnose ContentUnion errors
+      console.log(`[Agent] _generateStream payload (${source}):`, typeof payload === 'object' ? JSON.stringify(payload).substring(0, 200) : payload);
+
       let result;
       if (source === 'web') {
         result = await session.sendMessageStream(payload);
