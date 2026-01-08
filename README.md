@@ -286,3 +286,13 @@ MIT License. See [LICENSE](LICENSE) file.
     - **Assistant**: The bot account.
     - **User**: The user's linked device (for acting on their behalf).
 - **Storage**: Managed by `InterfacesService` with distinct auth dirs.
+
+### 6. Real-Time Strategy (SSE vs Socket.io)
+- **Pattern**: Choosing the right transport for the job.
+- **Server-Sent Events (SSE)**: Use for **Unidirectional** streams (e.g., `GET /v1/logs`). Lighter, native auto-reconnect, traversing proxies easily.
+- **Socket.io**: Use for **Bidirectional** state (e.g., Chat, "Thinking" indicators).
+
+### 7. Frontend Security (Server Actions)
+- **Constraint**: The `DEEDEE_API_TOKEN` gives full control over the agent.
+- **Rule**: NEVER expose it to the client bundle (no `NEXT_PUBLIC_` env vars).
+- **Solution**: Use **Next.js Server Actions** (`apps/web/src/app/actions.js`) as a secure proxy. The token lives only on the server side; the client calls the action, and the action calls the API.
