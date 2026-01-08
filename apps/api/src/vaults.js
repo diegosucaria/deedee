@@ -21,9 +21,10 @@ const AGENT_URL = process.env.AGENT_URL || 'http://agent:3000';
 const proxy = createProxyMiddleware({
     target: AGENT_URL,
     changeOrigin: true,
-    pathRewrite: {
-        // If mounted at /v1/vaults, strict proxying matches downstream.
-        // No rewrite needed if names match.
+    pathRewrite: (path, req) => {
+        // Express Router strips the mount point ('/v1/vaults'), so 'path' is relative (e.g. '/' or '/123')
+        // We need to prepend '/v1/vaults' so the Agent receives the full path.
+        return '/v1/vaults' + (path === '/' ? '' : path);
     },
     onProxyReq: (proxyReq, req, res) => {
         // Optional: Log proxying
