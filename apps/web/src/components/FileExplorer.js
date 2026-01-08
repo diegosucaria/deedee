@@ -1,3 +1,5 @@
+'use client';
+
 import { deleteVaultFile } from '@/app/actions';
 
 export default function FileExplorer({ files, vaultId, className }) {

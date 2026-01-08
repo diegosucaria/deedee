@@ -85,11 +85,20 @@ export default function ChatSessionPage({ params }) {
             let type = m.type || 'text';
             let content = m.content || '';
 
-            const hasParts = m.parts && Array.isArray(m.parts);
+            // Handle DB raw rows where parts is a JSON string
+            let parts = m.parts;
+            if (typeof parts === 'string') {
+                try { parts = JSON.parse(parts); } catch (e) {
+                    console.warn('[Chat] Failed to parse parts JSON:', e);
+                    parts = null;
+                }
+            }
+
+            const hasParts = parts && Array.isArray(parts);
 
             // 1. Function Call
-            if (hasParts && m.parts.some(p => p.functionCall)) {
-                const fc = m.parts.find(p => p.functionCall)?.functionCall;
+            if (hasParts && parts.some(p => p.functionCall)) {
+                const fc = parts.find(p => p.functionCall)?.functionCall;
                 if (fc) {
                     type = 'function_call';
                     content = JSON.stringify({
@@ -102,9 +111,9 @@ export default function ChatSessionPage({ params }) {
             }
 
             // 2. Function Response
-            if (m.role === 'function' || (hasParts && m.parts.some(p => p.functionResponse))) {
+            if (m.role === 'function' || (hasParts && parts.some(p => p.functionResponse))) {
                 // Safe extraction
-                const part = hasParts ? m.parts.find(p => p.functionResponse) : null;
+                const part = hasParts ? parts.find(p => p.functionResponse) : null;
                 // Fallback if role is function but no parts (unlikely in Gemini but possible in DB)
                 const fr = part?.functionResponse || m.functionResponse;
 
@@ -122,14 +131,14 @@ export default function ChatSessionPage({ params }) {
             // 3. User Multimodal
             if (m.role === 'user' && hasParts) {
                 // Join text parts
-                content = m.parts.filter(p => p.text).map(p => p.text).join(' ');
+                content = parts.filter(p => p.text).map(p => p.text).join(' ');
                 // If content is empty/missing, it might be purely attachment.
                 // The current UI handles separate messages for attachments usually, 
                 // but this history comes from DB/Gemini which groups them.
                 // For now, let's ensure we return string content.
                 if (!content && m.content) content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
             } else if (m.role === 'assistant' && hasParts) {
-                content = m.parts.map(p => p.text).join('');
+                content = parts.map(p => p.text).join('');
             }
 
             // Final fallback for content

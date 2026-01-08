@@ -274,18 +274,24 @@ class Agent {
     }
 
     // Process stream for UI updates
-    for await (const chunk of streamResult.stream) {
-      const chunkText = chunk.text();
-      if (chunkText) {
-        this.interface.broadcast('agent:token', {
-          chatId,
-          content: chunkText,
-          timestamp: new Date().toISOString()
-        }).catch(err => {
-          // In tests, this might fail if broadcast mock returns undefined. 
-          // We fixed the mock to return Promise.
-        });
+    if (streamResult.stream) {
+      for await (const chunk of streamResult.stream) {
+        const chunkText = chunk.text();
+        if (chunkText) {
+          this.interface.broadcast('agent:token', {
+            chatId,
+            content: chunkText,
+            timestamp: new Date().toISOString()
+          }).catch(err => {
+            // In tests, this might fail if broadcast mock returns undefined. 
+            // We fixed the mock to return Promise.
+          });
+        }
       }
+    } else {
+      // Fallback: If no stream property (e.g. mocked or different API behavior),
+      // we might not get tokens. But we safe guard against crash.
+      console.warn('sendMessageStream returned no stream property.');
     }
 
     // Return full response for internal logic

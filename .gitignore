@@ -8,3 +8,5 @@ coverage
 data
 .last_boot_commit
 node_modules.nosync
+*.db
+apps/agent/tests/test_people.db

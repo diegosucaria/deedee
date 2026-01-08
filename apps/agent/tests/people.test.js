@@ -26,7 +26,7 @@ describe('People Feature Integration', () => {
     beforeAll(async () => {
         // Init separate DB
         if (fs.existsSync(TEST_DB_PATH)) {
-            try { fs.unlinkSync(TEST_DB_PATH); } catch (e) { }
+            try { fs.rmSync(TEST_DB_PATH, { recursive: true, force: true }); } catch (e) { }
         }
         db = new AgentDB(TEST_DB_PATH);
         db.init();
@@ -57,7 +57,7 @@ describe('People Feature Integration', () => {
         await new Promise(r => setTimeout(r, 500));
 
         if (fs.existsSync(TEST_DB_PATH)) {
-            try { fs.unlinkSync(TEST_DB_PATH); } catch (e) { console.error('Failed to unlink test db:', e.message); }
+            try { fs.rmSync(TEST_DB_PATH, { recursive: true, force: true }); } catch (e) { console.error('Failed to unlink test db:', e.message); }
         }
     });
 
