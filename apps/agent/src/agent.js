@@ -277,70 +277,22 @@ class Agent {
    */
   async _generateStream(session, payload, chatId, source) {
     try {
-      // DEBUG: Log payload to diagnose ContentUnion errors
+      // DEBUG: Log payload
       console.log(`[Agent] _generateStream payload (${source}):`, typeof payload === 'object' ? JSON.stringify(payload).substring(0, 200) : payload);
 
-      let result;
-      if (source === 'web') {
-        result = await session.sendMessageStream(payload);
-      } else {
-        result = await session.sendMessage(payload);
-      }
+      // EMERGENCY ROLLBACK: Disable streaming completely.
+      // Use standard sendMessage for stability.
+      const result = await session.sendMessage(payload);
 
-      // Detect if result itself is the stream (Async Generator)
-      let stream = result.stream || result;
-      if (!stream[Symbol.asyncIterator] && result.stream) {
-        stream = result.stream;
-      }
-
-      // Handle streaming
-      if (source === 'web' && stream && typeof stream[Symbol.asyncIterator] === 'function') {
-        for await (const chunk of stream) {
-          const text = chunk.text;
-          if (text) {
-            this.interface.emit('chat:token', {
-              id: chatId,
-              token: text,
-              timestamp: Date.now()
-            });
-          }
-        }
-      } else {
-        // Non-streaming or no stream returned
-      }
-
-      // Get final response
       let response = result.response;
-      if (response && typeof response.then === 'function') {
-        response = await response;
-      }
-
-      // Fallback: If result matches standard structure
       if (!response && result.candidates) {
         response = result;
       }
 
-      if (!response) {
-        console.warn('[Agent] Stream result.response is undefined. Trying to recover...');
-        console.log('[Agent] Raw Result Keys:', Object.keys(result));
-      }
       return response;
     } catch (e) {
-      console.error(`[Agent] sendMessageStream failed: ${e.message}`);
-      // Fallback to non-streaming if streaming specifically fails
-      try {
-        console.warn('[Agent] Falling back to non-streaming sendMessage...');
-        const result = await session.sendMessage(payload);
-        // Sometimes the SDK returns the response directly (impl-dependent)
-        const response = result.response || (result.candidates ? result : undefined);
-
-        if (!response) {
-          console.warn('[Agent] Fallback response is undefined. Raw result:', JSON.stringify(result, null, 2));
-        }
-        return response;
-      } catch (innerE) {
-        throw innerE;
-      }
+      console.error(`[Agent] sendMessage failed: ${e.message}`);
+      throw e;
     }
   }
 
@@ -1015,53 +967,21 @@ ${files.length > 0 ? files.join(", ") : "No files yet."}
         console.time(toolTimerLabel);
 
         try {
-          // FIX: Pass parts directly for correct ContentUnion matching in SDK
+          // FIX: Pass parts directly
           const payload = functionResponseParts;
-          let result;
 
-          if (message.source === 'web') {
-            result = await session.sendMessageStream(payload);
-          } else {
-            result = await session.sendMessage(payload);
-          }
+          // EMERGENCY ROLLBACK: Disable streaming completely.
+          const result = await session.sendMessage(payload);
 
-          // Detect if result itself is the stream (Async Generator)
-          let stream = result.stream || result;
-          if (!stream[Symbol.asyncIterator] && result.stream) {
-            stream = result.stream;
-          }
+          let resp = result.response;
+          if (!resp && result.candidates) resp = result;
 
-          // Handle streaming
-          const finalResponsePromise = (async () => {
-            // Iterate to drain stream and trigger tokens
-            if (stream && typeof stream[Symbol.asyncIterator] === 'function') {
-              for await (const chunk of stream) {
-                // FIX: chunk.text might not be a function in some SDK versions or response types
-                let text;
-                if (typeof chunk.text === 'function') {
-                  text = chunk.text();
-                } else {
-                  text = chunk.text;
-                }
-
-                if (text) this.interface.emit('chat:token', { id: chatId, token: text, timestamp: Date.now() });
-              }
-            }
-
-            // Await final response
-            let resp = result.response;
-            if (resp && typeof resp.then === 'function') resp = await resp;
-            if (!resp && result.candidates) resp = result;
-            return resp;
-          })();
-
-          response = await finalResponsePromise;
+          response = resp;
 
         } catch (e) {
-          console.error('[Agent] Tool response streaming failed:', e);
-          // DEBUG: Log the raw payload to help diagnose SDK validation errors
+          console.error('[Agent] Tool response failed:', e);
           console.log('[Agent] FAILING PAYLOAD (functionResponseParts):', JSON.stringify(functionResponseParts, null, 2));
-          throw e;
+          throw e; // Re-throw to trigger retry logic if needed
         }
 
         console.timeEnd(toolTimerLabel);
