@@ -87,6 +87,16 @@ const createPeopleRouter = (agent) => {
     });
 
     // Smart Learn Trigger
+    router.post('/sync', async (req, res) => {
+        try {
+            const stats = await agent.peopleService.syncFromWhatsApp();
+            res.json({ success: true, stats });
+        } catch (error) {
+            console.error('[People] Sync Error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
     router.post('/learn', async (req, res) => {
         try {
             const { limit, offset } = req.body;

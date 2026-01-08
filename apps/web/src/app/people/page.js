@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Plus, Search, Sparkles, UserPlus } from 'lucide-react';
-import { getPeople, createPerson, updatePerson, deletePerson } from '@/app/actions';
+import { Plus, Search, Sparkles, UserPlus, RefreshCw } from 'lucide-react';
+import { getPeople, createPerson, updatePerson, deletePerson, syncWhatsAppContacts } from '@/app/actions';
 import { PersonCard } from '@/components/people/PersonCard';
 import { SmartLearnModal } from '@/components/people/SmartLearnModal';
 
@@ -12,6 +12,7 @@ export default function PeoplePage() {
     const [loading, setLoading] = useState(true);
     const [query, setQuery] = useState('');
     const [isSmartLearnOpen, setSmartLearnOpen] = useState(false);
+    const [syncing, setSyncing] = useState(false);
 
     // Edit/Create Modal State (Simplified inline or separate?)
     // Let's use a simple state for now.
@@ -27,6 +28,18 @@ export default function PeoplePage() {
         const res = await getPeople();
         setPeople(res || []);
         setLoading(false);
+    };
+
+    const handleSync = async () => {
+        setSyncing(true);
+        const res = await syncWhatsAppContacts();
+        setSyncing(false);
+        if (res.success) {
+            alert(`Synced ${res.stats.added} contacts! (Skipped ${res.stats.skipped})`);
+            loadPeople();
+        } else {
+            alert('Failed to sync: ' + res.error);
+        }
     };
 
     const filteredPeople = people.filter(p =>
@@ -77,6 +90,14 @@ export default function PeoplePage() {
                     >
                         <Plus size={18} />
                         <span>Add Person</span>
+                    </button>
+                    <button
+                        onClick={handleSync}
+                        disabled={syncing}
+                        className="flex items-center space-x-2 px-4 py-2 rounded-md hover:bg-secondary/50 text-foreground transition-colors border border-transparent hover:border-primary/20 disabled:opacity-50"
+                    >
+                        <RefreshCw size={18} className={`text-green-500 ${syncing ? 'animate-spin' : ''}`} />
+                        <span>{syncing ? 'Syncing...' : 'Sync WhatsApp'}</span>
                     </button>
                     <button
                         onClick={() => setSmartLearnOpen(true)}

@@ -50,10 +50,13 @@ export default function SettingsPage() {
         // Optimistic update
         setConfig(prev => ({
             ...prev,
-            searchStrategy: { ...prev?.searchStrategy, mode: value }
+            [key]: value, // Support top-level keys like owner_phone
+            searchStrategy: key === 'search_strategy' ? { ...prev?.searchStrategy, mode: value } : prev?.searchStrategy
         }));
 
-        const res = await updateAgentConfig('search_strategy', { mode: value });
+        const payload = key === 'search_strategy' ? { mode: value } : value;
+        const res = await updateAgentConfig(key, payload);
+
         setSaving(false);
         if (!res.success) {
             setError(res.error);
@@ -86,8 +89,8 @@ export default function SettingsPage() {
                             key={tab.id}
                             onClick={() => setActiveTab(tab.id)}
                             className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === tab.id
-                                    ? 'bg-zinc-800 text-white shadow-sm'
-                                    : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'
+                                ? 'bg-zinc-800 text-white shadow-sm'
+                                : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'
                                 }`}
                         >
                             {tab.label}
@@ -99,6 +102,29 @@ export default function SettingsPage() {
             <section className="max-w-3xl mx-auto w-full space-y-8 pb-20">
                 {activeTab === 'general' && (
                     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+
+                        {/* Owner Phone */}
+                        <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
+                            <h2 className="text-lg font-semibold text-white mb-4">Owner Contact</h2>
+                            <div className="space-y-4">
+                                <div>
+                                    <label className="block text-sm font-medium text-zinc-400 mb-1">
+                                        Your Phone Number (WhatsApp)
+                                    </label>
+                                    <input
+                                        type="text"
+                                        defaultValue={config?.owner_phone || ''}
+                                        onBlur={(e) => handleSave('owner_phone', e.target.value)}
+                                        placeholder="e.g. 549351..."
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500/50 outline-none"
+                                    />
+                                    <p className="text-xs text-zinc-500 mt-1">
+                                        Used to resolve "me", "diego", "owner" in messages.
+                                    </p>
+                                </div>
+                            </div>
+                        </div>
+
                         {/* Search Strategy Card */}
                         <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
                             <div className="p-6 border-b border-zinc-800">

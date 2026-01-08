@@ -23,12 +23,33 @@ class Scheduler {
         let rule = cronExpression;
         if (options.oneOff) {
             rule = new Date(cronExpression);
-            console.log(`[Scheduler] Scheduling One-Off Job '${name}'`);
-            console.log(`[Scheduler] Raw Input: ${cronExpression}`);
-            console.log(`[Scheduler] Parsed Date: ${rule.toString()} (ISO: ${rule.toISOString()})`);
-            console.log(`[Scheduler] Server Time: ${new Date().toString()} (ISO: ${new Date().toISOString()})`);
             if (rule.getTime() <= Date.now()) {
-                console.warn(`[Scheduler] WARNING: One-off job '${name}' is scheduled in the PAST! It might run immediately or not at all.`);
+                console.warn(`[Scheduler] One-off job '${name}' is scheduled in the PAST (${rule.toISOString()}). Running IMMEDIATELY.`);
+
+                // Execute immediately
+                (async () => {
+                    try {
+                        console.log(`[Scheduler] Immediate execution of '${name}'...`);
+                        const result = await callback();
+                        // Log success
+                        if (this.agent.db) {
+                            let output = result ? (typeof result === 'object' ? JSON.stringify(result) : String(result)) : null;
+                            this.agent.db.logJobExecution(name, 'success', output, 0);
+                        }
+                    } catch (err) {
+                        console.error(`[Scheduler] Immediate job '${name}' failed:`, err);
+                        if (this.agent.db) this.agent.db.logJobExecution(name, 'failure', err.message, 0);
+                    } finally {
+                        // Cleanup
+                        console.log(`[Scheduler] Immediate job '${name}' completed. Cleaning up...`);
+                        delete this.jobs[name];
+                        if (this.agent.db) {
+                            this.agent.db.deleteScheduledJob(name);
+                            this.agent.db.deleteJobState(name);
+                        }
+                    }
+                })();
+                return; // SKIP normal scheduling
             }
         }
 

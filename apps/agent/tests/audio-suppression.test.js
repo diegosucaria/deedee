@@ -6,7 +6,7 @@ describe('Audio Response Suppression', () => {
     let agent;
 
     beforeEach(() => {
-        agent = new Agent({ interface: { send: jest.fn(), on: jest.fn(), broadcast: jest.fn().mockResolvedValue(true) }, googleApiKey: 'fake' });
+        agent = new Agent({ interface: { send: jest.fn(), on: jest.fn(), broadcast: jest.fn().mockResolvedValue(true), emit: jest.fn() }, googleApiKey: 'fake' });
         agent.db = {
             saveMessage: jest.fn(),
             getHistoryForChat: jest.fn(),

@@ -1046,6 +1046,16 @@ class AgentDB {
     this.db.prepare('DELETE FROM usage_logs').run(); // Also usage_logs (rate limiting)
     console.log('[DB] FORCE CLEANUP: Deleted all metrics, token_usage, and usage_logs.');
   }
+  getAgentSetting(key) {
+    const stmt = this.db.prepare('SELECT value FROM agent_settings WHERE key = ?');
+    const row = stmt.get(key);
+    if (!row) return null;
+    try {
+      return { key, value: JSON.parse(row.value) };
+    } catch (e) {
+      return { key, value: row.value };
+    }
+  }
 }
 
 module.exports = { AgentDB };

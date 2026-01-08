@@ -14,14 +14,30 @@ class CommunicationExecutor extends BaseExecutor {
 
                 // ALIAS RESOLUTION
                 let target = to;
+
+                // Fetch owner phone from DB or Env
+                let ownerPhone = process.env.MY_PHONE;
+                try {
+                    // Check if method exists (it should now)
+                    if (this.services.db.getAgentSetting) {
+                        const dbSettings = this.services.db.getAgentSetting('owner_phone');
+                        if (dbSettings && dbSettings.value) {
+                            ownerPhone = dbSettings.value;
+                        }
+                    }
+                } catch (e) { console.warn('[Communication] Failed to fetch owner_phone:', e); }
+
                 const ALIASES = {
-                    'me': '5493546407162', // TODO: Load from Config/Env
-                    'diego': '5493546407162',
-                    'myself': '5493546407162',
-                    'owner': '5493546407162'
+                    'me': ownerPhone,
+                    'diego': ownerPhone,
+                    'myself': ownerPhone,
+                    'owner': ownerPhone
                 };
 
                 if (ALIASES[target.toLowerCase()]) {
+                    if (!ALIASES[target.toLowerCase()]) {
+                        throw new Error(`Alias '${target}' used but 'owner_phone' is not configured in Settings or Env (MY_PHONE).`);
+                    }
                     target = ALIASES[target.toLowerCase()];
                     console.log(`[CommunicationExecutor] Resolved alias '${to}' to '${target}'`);
                 }

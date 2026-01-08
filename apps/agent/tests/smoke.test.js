@@ -52,8 +52,20 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
       sendMessageStream: jest.fn().mockImplementation(async (payload) => {
         let result = {};
 
+        // Helper to extract text from payload
+        const getPayloadText = (p) => {
+          if (typeof p === 'string') return p;
+          if (p?.parts && p.parts[0]?.text) return p.parts[0].text;
+          if (p?.message) return p.message; // Legacy check
+          return '';
+        };
+
+        const payloadText = getPayloadText(payload);
+        const hasFunctionResponse = payload?.parts?.some(part => part.functionResponse) ||
+          (Array.isArray(payload?.message) && payload.message[0]?.functionResponse);
+
         // Case A: Router Request
-        if (typeof payload?.message === 'string' && payload.message.includes('You are the Router')) {
+        if (payloadText.includes('You are the Router')) {
           result = {
             text: () => JSON.stringify({ model: 'FLASH', reason: 'Test Mock' }),
             candidates: [{ content: { parts: [{ text: JSON.stringify({ model: 'FLASH', reason: 'Test Mock' }) }] } }]
@@ -61,7 +73,7 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
         }
 
         // Case B: User Message ({ message: string })
-        else if (typeof payload?.message === 'string' && payload.message.toLowerCase().includes('calendar')) {
+        else if (payloadText.toLowerCase().includes('calendar')) {
           result = {
             text: () => undefined,
             candidates: [{
@@ -71,7 +83,7 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
         }
 
         // Case C: Function Response
-        else if (Array.isArray(payload?.message) && payload.message[0]?.functionResponse) {
+        else if (hasFunctionResponse) {
           result = {
             text: () => 'You have one event.',
             candidates: [{ content: { parts: [{ text: 'You have one event.' }] } }]
@@ -98,13 +110,24 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
       }),
       sendMessage: jest.fn().mockImplementation(async (payload) => {
         let result = {};
-        if (typeof payload?.message === 'string' && payload.message.includes('You are the Router')) {
+        const getPayloadText = (p) => {
+          if (typeof p === 'string') return p;
+          if (p?.parts && p.parts[0]?.text) return p.parts[0].text;
+          if (p?.message) return p.message; // Legacy check
+          return '';
+        };
+
+        const payloadText = getPayloadText(payload);
+        const hasFunctionResponse = payload?.parts?.some(part => part.functionResponse) ||
+          (Array.isArray(payload?.message) && payload.message[0]?.functionResponse);
+
+        if (payloadText.includes('You are the Router')) {
           result = {
             text: () => JSON.stringify({ model: 'FLASH', reason: 'Test Mock' }),
             candidates: [{ content: { parts: [{ text: JSON.stringify({ model: 'FLASH', reason: 'Test Mock' }) }] } }]
           };
         }
-        else if (typeof payload?.message === 'string' && payload.message.toLowerCase().includes('calendar')) {
+        else if (payloadText.toLowerCase().includes('calendar')) {
           result = {
             text: () => undefined,
             candidates: [{
@@ -112,7 +135,7 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
             }]
           };
         }
-        else if (Array.isArray(payload?.message) && payload.message[0]?.functionResponse) {
+        else if (hasFunctionResponse) {
           result = {
             text: () => 'You have one event.',
             candidates: [{ content: { parts: [{ text: 'You have one event.' }] } }]

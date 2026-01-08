@@ -97,6 +97,71 @@ class PeopleService {
         return analysis;
     }
 
+    // --- Sync ---
+    async syncFromWhatsApp() {
+        const existingPeople = this.agent.db.listPeople();
+        const existingPhones = new Set(existingPeople.map(p => p.phone ? p.phone.replace(/\D/g, '') : '').filter(Boolean));
+
+        // Fetch contacts from WhatsApp (Session: user)
+        // We want the user's phone book, which is mirrored in the 'user' session.
+        let whatsappContacts = [];
+        try {
+            const res = await axios.get(`${this.interfacesUrl}/whatsapp/contacts`, {
+                params: { session: 'user' },
+                headers: { 'Authorization': `Bearer ${process.env.DEEDEE_API_TOKEN}` }
+            });
+            whatsappContacts = res.data || [];
+        } catch (e) {
+            console.error('[People] Sync failed to fetch contacts:', e.message);
+            throw new Error('Failed to fetch WhatsApp contacts');
+        }
+
+        const stats = { added: 0, skipped: 0, total: whatsappContacts.length };
+
+        for (const contact of whatsappContacts) {
+            const phone = contact.phone || contact.id.split('@')[0];
+            const name = contact.name || contact.notify; // Prefer name (from phonebook), fallback to notify (public name)
+
+            // Skip if no name or if strictly just a number (unless it's a Notify name?)
+            // We want explicit contacts usually.
+            if (!name) {
+                stats.skipped++;
+                continue;
+            }
+
+            // Check duplicate
+            if (existingPhones.has(phone)) {
+                stats.skipped++;
+                continue;
+            }
+
+            // Create Person
+            // If contact.name is set, it means it is in the phone book.
+            // If only contact.notify is set, it's just a person we chatted with but didn't save.
+            // Sync strictly *saved* contacts? Or all?
+            // "Sync Contacts" usually implies importing the phone book.
+            // WhatsApp Service 'getContacts' returns store.contacts. 
+            // Baileys 'contacts.upsert' provides 'name' only if it is in the phone book (on mobile sync).
+            // So checking `contact.name` is the correct filter for "Saved Contacts".
+            if (!contact.name) {
+                stats.skipped++;
+                continue;
+            }
+
+            this.agent.db.createPerson({
+                name: contact.name,
+                phone: phone,
+                source: 'whatsapp_sync',
+                identifiers: { whatsapp: phone },
+                metadata: { synced_at: new Date().toISOString() }
+            });
+            existingPhones.add(phone);
+            stats.added++;
+        }
+
+        return stats;
+    }
+
     async _analyzeCandidates(candidates) {
         if (!this.agent.client) return [];
 

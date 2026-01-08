@@ -12,7 +12,7 @@ const navItems = [
     { name: 'Live', href: '/live', icon: Mic },
     { name: 'Tasks', href: '/tasks', icon: ClipboardList },
     { name: 'Journal', href: '/journal', icon: Book },
-    { name: 'Contacts', href: '/people', icon: Users },
+    { name: 'People', href: '/people', icon: Users },
     { name: 'Vaults', href: '/vaults', icon: Lock },
     { name: 'Brain', href: '/brain', icon: Activity },
     { name: 'History', href: '/history', icon: Clock },

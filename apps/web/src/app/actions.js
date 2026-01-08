@@ -727,6 +727,16 @@ export async function getPerson(id) {
     }
 }
 
+export async function syncWhatsAppContacts() {
+    try {
+        const res = await fetchAPI('/v1/people/sync', { method: 'POST' });
+        revalidatePath('/people');
+        return { success: true, stats: res.stats };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+}
+
 export async function createPerson(prevState, formData) {
     try {
         const name = formData.get('name');
