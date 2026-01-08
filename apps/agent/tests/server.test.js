@@ -27,6 +27,13 @@ describe('Agent Server API', () => {
     // We just want to ensure it doesn't 404 or 500
     expect([200, 503]).toContain(res.statusCode);
   });
+
+  test('GET /live/config should return model', async () => {
+    // Mock process.env just for this test if possible, or rely on default
+    const res = await request(app).get('/live/config');
+    expect(res.statusCode).toBe(200);
+    expect(res.body).toHaveProperty('model');
+  });
 });
 
 afterAll(async () => {

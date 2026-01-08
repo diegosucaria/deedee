@@ -181,13 +181,180 @@ class WhatsAppService {
         }
     }
 
-    // ... handleMessage ...
+    async handleMessage(msg) {
+        try {
+            const remoteJid = msg.key.remoteJid;
+            if (remoteJid === 'status@broadcast' || msg.key.fromMe) return;
 
-    // ... sendMessage ...
+            let phoneNumber = remoteJid.split('@')[0];
 
-    // ... disconnect ...
+            // Handle LID: If remoteJid is an LID, check if we have a participant (likely the real phone JID)
+            if (remoteJid.includes('@lid')) {
+                if (msg.key.participant) {
+                    const participantNumber = msg.key.participant.split('@')[0];
+                    if (participantNumber) {
+                        console.log(`${this.logPrefix} Resolving LID (via participant) ${phoneNumber} to ${participantNumber}`);
+                        phoneNumber = participantNumber;
+                    }
+                } else if (this.lidMap.has(remoteJid)) {
+                    const resolvedMapNumber = this.lidMap.get(remoteJid);
+                    console.log(`${this.logPrefix} Resolving LID (via map) ${phoneNumber} to ${resolvedMapNumber}`);
+                    phoneNumber = resolvedMapNumber;
+                }
+            }
 
-    // ... getStatus ...
+            // Security Check
+            if (this.allowedNumbers.size === 0) {
+                console.warn(`${this.logPrefix} Ignored message from ${phoneNumber} because ALLOWED_WHATSAPP_NUMBERS is empty (Secure Mode).`);
+                return;
+            }
+
+            if (!this.allowedNumbers.has(phoneNumber)) {
+                console.warn(`${this.logPrefix} Blocked message from unauthorized number: ${phoneNumber}`);
+                return;
+            }
+
+            console.log(`${this.logPrefix} Received from ${phoneNumber}`);
+
+            // Unwrapping Logic
+            let messageContent = msg.message;
+            if (messageContent.ephemeralMessage) {
+                messageContent = messageContent.ephemeralMessage.message;
+            } else if (messageContent.viewOnceMessage) {
+                messageContent = messageContent.viewOnceMessage.message;
+            } else if (messageContent.viewOnceMessageV2) {
+                messageContent = messageContent.viewOnceMessageV2.message;
+            } else if (messageContent.documentWithCaptionMessage) {
+                messageContent = messageContent.documentWithCaptionMessage.message;
+            }
+
+            let text = '';
+            let type = 'text';
+            let buffer = null;
+            let mimeType = null;
+
+            // Simple Text
+            if (messageContent.conversation) {
+                text = messageContent.conversation;
+            } else if (messageContent.extendedTextMessage) {
+                text = messageContent.extendedTextMessage.text;
+            }
+            // Audio
+            else if (messageContent.audioMessage) {
+                type = 'audio';
+                text = '[Voice Message]';
+                mimeType = messageContent.audioMessage.mimetype;
+                if (this.downloadMediaMessage) {
+                    try {
+                        buffer = await this.downloadMediaMessage(msg, 'buffer', {}, { logger: console });
+                        console.log(`${this.logPrefix} Downloaded audio: ${buffer.length} bytes`);
+                    } catch (e) {
+                        console.error(`${this.logPrefix} Audio Download Failed:`, e);
+                    }
+                }
+            }
+            // Image
+            else if (messageContent.imageMessage) {
+                type = 'image';
+                text = messageContent.imageMessage.caption || '[Image]';
+                mimeType = messageContent.imageMessage.mimetype;
+                if (this.downloadMediaMessage) {
+                    try {
+                        buffer = await this.downloadMediaMessage(msg, 'buffer', {}, { logger: console });
+                        console.log(`${this.logPrefix} Downloaded image: ${buffer.length} bytes`);
+                    } catch (e) {
+                        console.error(`${this.logPrefix} Image Download Failed:`, e);
+                    }
+                }
+            } else {
+                return;
+            }
+
+            if (!text && !buffer) {
+                console.warn(`${this.logPrefix} Received message with no content. Ignoring.`);
+                return;
+            }
+
+            const userMessage = createUserMessage(text, 'whatsapp', phoneNumber);
+            // Append session ID to metadata
+            userMessage.metadata = { chatId: remoteJid, phoneNumber, session: this.sessionId };
+
+            // Inline Data for Agent
+            if (buffer) {
+                userMessage.parts = userMessage.parts || [];
+                userMessage.parts.push({
+                    inlineData: {
+                        mimeType: mimeType || (type === 'audio' ? 'audio/ogg' : 'image/jpeg'),
+                        data: buffer.toString('base64')
+                    }
+                });
+            }
+
+            await axios.post(`${this.agentUrl}/webhook`, userMessage);
+
+        } catch (err) {
+            console.error(`${this.logPrefix} Message Handler Error:`, err.message);
+        }
+    }
+
+    async sendMessage(toJid, content, options = {}) {
+        if (!this.sock) throw new Error(`${this.logPrefix} WhatsApp not initialized`);
+
+        try {
+            const type = options.type || 'text';
+            console.log(`${this.logPrefix} Sending ${type} to ${toJid}`);
+
+            if (type === 'text') {
+                await this.sock.sendMessage(toJid, { text: content });
+            } else if (type === 'audio') {
+                const buffer = Buffer.from(content, 'base64');
+                await this.sock.sendMessage(toJid, { audio: buffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
+            } else if (type === 'image') {
+                const buffer = Buffer.from(content, 'base64');
+                await this.sock.sendMessage(toJid, { image: buffer });
+            }
+
+        } catch (e) {
+            console.error(`${this.logPrefix} Send Failed:`, e.message);
+            throw e;
+        }
+    }
+
+    async disconnect() {
+        try {
+            if (this.sock) {
+                await this.sock.logout();
+                this.sock = null;
+            }
+            this.status = 'disconnected';
+            // fs.rmSync(this.authFolder, { recursive: true, force: true }); // Keep auth by default? No, disconnect implies logout usuallly?
+            // Actually test expects rmSync
+            if (fs.existsSync(this.authFolder)) {
+                fs.rmSync(this.authFolder, { recursive: true, force: true });
+            }
+        } catch (e) {
+            console.error(`${this.logPrefix} Disconnect Error:`, e);
+        }
+    }
+
+    getStatus() {
+        const me = this.sock?.user;
+        let formattedMe = null;
+        if (me) {
+            formattedMe = {
+                id: me.id.split(':')[0].split('@')[0],
+                name: me.name
+            };
+        }
+
+        return {
+            status: this.status,
+            qr: this.qr,
+            allowedNumbers: Array.from(this.allowedNumbers),
+            me: formattedMe,
+            session: this.sessionId
+        };
+    }
 
     searchContacts(query) {
         if (!query || !this.store) return [];
