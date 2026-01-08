@@ -783,7 +783,7 @@ ${files.length > 0 ? files.join(", ") : "No files yet."}
         const modelStart = Date.now();
         try {
           // STREAMING IMPLEMENTATION
-          response = await this._generateStream(session, { message: message.parts || message.content }, chatId, message.source);
+          response = await this._generateStream(session, message.parts || message.content, chatId, message.source);
 
           const modelDuration = Date.now() - modelStart;
           console.timeEnd(timerLabel);
