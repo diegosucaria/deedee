@@ -185,6 +185,19 @@ app.get('/whatsapp/contacts', (req, res) => {
   return res.json(service.getContacts());
 });
 
+app.get('/whatsapp/contact', (req, res) => {
+  if (isWhatsAppDisabled) return res.json(null);
+  const { session, jid } = req.query;
+  if (!jid) return res.status(400).json({ error: 'Missing jid' });
+
+  const targetSession = session || 'user';
+  const service = whatsappSessions[targetSession];
+
+  if (!service) return res.status(400).json({ error: 'Invalid session' });
+
+  return res.json(service.getContact(jid));
+});
+
 app.get('/whatsapp/recent', (req, res) => {
   if (isWhatsAppDisabled) return res.json([]);
   const { session, limit } = req.query;

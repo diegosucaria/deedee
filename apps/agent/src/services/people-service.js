@@ -9,7 +9,7 @@ class PeopleService {
         this.interfacesUrl = process.env.INTERFACES_URL || 'http://localhost:5000';
     }
 
-    async suggestPeopleFromHistory() {
+    async suggestPeopleFromHistory({ limit = 5, offset = 0 } = {}) {
         // 0. Build exclusion set from DB (Phone + Identifiers)
         const existingPeople = this.agent.db.listPeople();
         const existingIdentifiers = new Set();
@@ -24,19 +24,50 @@ class PeopleService {
             }
         }
 
-        // 1. Fetch Recent Chats
+        // 1. Fetch Recent Chats (Fetch ample amount to handle filtering and pagination)
+        // We fetch (offset + limit * 3) to ensure we have enough candidates after filtering
+        // This is a heuristic.
+        const fetchLimit = (offset + limit) * 4;
+
         const recentRes = await axios.get(`${this.interfacesUrl}/whatsapp/recent`, {
-            params: { session: 'user', limit: 30 }, // Fetch more to filter down
+            params: { session: 'user', limit: fetchLimit },
             headers: { 'Authorization': `Bearer ${process.env.DEEDEE_API_TOKEN}` }
         });
         const recentChats = recentRes.data || [];
 
         const candidates = [];
+        let skipped = 0;
 
         // 2. Filter & Gather Context
         for (const chat of recentChats) {
             const phone = chat.jid.split('@')[0];
+
+            // Skip existing contacts
             if (existingIdentifiers.has(phone)) continue;
+
+            // Skip if we haven't reached offset yet regarding *valid* new candidates
+            // Actually, offset usually applies to the raw list, but here we want "next 5 suggestions".
+            // So we should count valid candidates.
+
+            // Re-fetching contact info to check name/notify
+            let contactName = null;
+            try {
+                const contactRes = await axios.get(`${this.interfacesUrl}/whatsapp/contact`, {
+                    params: { session: 'user', jid: chat.jid },
+                    headers: { 'Authorization': `Bearer ${process.env.DEEDEE_API_TOKEN}` }
+                });
+                if (contactRes.data) {
+                    contactName = contactRes.data.name || contactRes.data.notify;
+                }
+            } catch (e) { /* ignore */ }
+
+            // Pagination Logic: We act as a generator. We skip valid candidates until offset.
+            if (skipped < offset) {
+                skipped++;
+                continue;
+            }
+
+            if (candidates.length >= limit) break;
 
             // Fetch History
             try {
@@ -51,6 +82,7 @@ class PeopleService {
                 candidates.push({
                     jid: chat.jid,
                     phone,
+                    knownName: contactName,
                     messages: messages
                 });
             } catch (e) {
@@ -60,10 +92,6 @@ class PeopleService {
 
         if (candidates.length === 0) return [];
 
-        // DEBUG, delete this later
-        // console.log(`[People] Analyzing ${candidates.length} candidates...`);
-        // console.log(candidates);
-
         // 3. LLM Analysis
         const analysis = await this._analyzeCandidates(candidates);
         return analysis;
@@ -72,12 +100,9 @@ class PeopleService {
     async _analyzeCandidates(candidates) {
         if (!this.agent.client) return [];
 
-        // Batch analysis: increased limit as requested
-        const topCandidates = candidates.slice(0, 15);
-
         let prompt = `You are a helpful assistant managing my contacts.
 Analyze the following conversation snippets from WhatsApp and suggest which people I should add to my contacts.
-For each person, infer their REAL NAME (e.g. "John Doe", "Maria", "Mom") distinct from their relationship.
+I will provide the Known Name (from WhatsApp) if available. Use it as the primary name, but refine it if the conversation reveals a better real name (e.g. "Mom" instead of "Martha").
 Also extract any contact identifiers mentioned (Email, Instagram Handle, etc).
 
 Only suggest people who seem to be personal contacts (friends, family, colleagues, service providers). Ignore spam or strictly transactional bots.
@@ -85,16 +110,18 @@ Only suggest people who seem to be personal contacts (friends, family, colleague
 Candidates:
 `;
 
-        for (const c of topCandidates) {
+        for (const c of candidates) {
             const transcript = c.messages.map(m => `${m.role === 'assistant' ? 'Me' : 'Them'}: ${m.content}`).join('\n');
-            prompt += `\n--- Candidate Phone: ${c.phone} ---\n${transcript.substring(0, 1500)}\n`; // Cap context
+            const nameInfo = c.knownName ? `(Known Name: "${c.knownName}")` : '(Name Unknown)';
+
+            prompt += `\n--- Candidate Phone: ${c.phone} ${nameInfo} ---\n${transcript.substring(0, 1500)}\n`;
         }
 
         prompt += `\n
 Return a JSON array of objects with this schema:
 {
-  "phone": "extracted phone",
-  "suggestedName": "Inferred Real Name (e.g. 'Diego', 'Mom', 'Dr. Smith')",
+  "phone": "extracted phone (same as candidate)",
+  "suggestedName": "Real Name (e.g. 'Diego', 'Mom')",
   "relationship": "Relationship (e.g. 'Friend', 'Mother', 'Cardiologist')",
   "identifiers": { "email": "...", "instagram": "..." },
   "reason": "Brief explanation",

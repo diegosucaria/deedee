@@ -502,22 +502,35 @@ class WhatsAppService {
         }));
     }
 
+    getContact(jid) {
+        if (!this.store || !this.store.contacts[jid]) return null;
+        const c = this.store.contacts[jid];
+        return {
+            id: c.id,
+            name: c.name,
+            notify: c.notify,
+            phone: c.id.split('@')[0]
+        };
+    }
+
     // --- New Methods for Smart Learn ---
 
     getRecentChats(limit = 10) {
         if (!this.store || !this.store.messages) return [];
 
         // Sort JIDs by latest message timestamp
-        const chats = Object.keys(this.store.messages).map(jid => {
-            const msgs = this.store.messages[jid];
-            const lastMsg = msgs[msgs.length - 1];
-            return {
-                jid,
-                lastTimestamp: lastMsg ? (lastMsg.messageTimestamp || 0) : 0,
-                msgCount: msgs.length,
-                snippets: msgs.slice(-3).map(m => m.message?.conversation || m.message?.extendedTextMessage?.text || '[Media]')
-            };
-        });
+        const chats = Object.keys(this.store.messages)
+            .filter(jid => !jid.includes('@g.us')) // Filter out Groups
+            .map(jid => {
+                const msgs = this.store.messages[jid];
+                const lastMsg = msgs[msgs.length - 1];
+                return {
+                    jid,
+                    lastTimestamp: lastMsg ? (lastMsg.messageTimestamp || 0) : 0,
+                    msgCount: msgs.length,
+                    snippets: msgs.slice(-3).map(m => m.message?.conversation || m.message?.extendedTextMessage?.text || '[Media]')
+                };
+            });
 
         chats.sort((a, b) => b.lastTimestamp - a.lastTimestamp);
         return chats.slice(0, limit);

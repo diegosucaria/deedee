@@ -89,7 +89,11 @@ const createPeopleRouter = (agent) => {
     // Smart Learn Trigger
     router.post('/learn', async (req, res) => {
         try {
-            const candidates = await peopleService.suggestPeopleFromHistory();
+            const { limit, offset } = req.body;
+            const candidates = await peopleService.suggestPeopleFromHistory({
+                limit: parseInt(limit) || 5,
+                offset: parseInt(offset) || 0
+            });
             res.json({ candidates });
         } catch (error) {
             console.error('[People] Learn Error:', error);
