@@ -39,6 +39,14 @@ Deedee uses a local SQLite database to maintain state across restarts. This ensu
     - `searchJournal(query)`: Semantic/Text search across all entries.
 - **Automation**: `nightly_consolidation` job summarizes chat logs into the journal at midnight.
 
+### 5. Social Memory (People)
+- **Table**: `people`
+- **Content**: Contact information, relationships, and interaction notes.
+- **Agent Access**:
+    - `listPeople()`, `getPerson(id)`, `searchPeople(query)`: Retrieval.
+    - `updatePerson(id, updates)`: Modification.
+- **Automation**: "Smart Learn" analyzes WhatsApp history to suggest new contacts.
+
 ## Self-Improvement Workflow
 1.  **Plan**: Agent decides to add a feature.
 2.  **Persist**: Agent calls `db.addGoal("Update agent.js to add feature X")`.
@@ -71,5 +79,17 @@ CREATE TABLE goals (
   description TEXT,
   status TEXT,
   metadata TEXT -- JSON string (e.g. { "chatId": "123" })
+);
+
+CREATE TABLE people (
+  id TEXT PRIMARY KEY,
+  name TEXT,
+  phone TEXT,
+  relationship TEXT,
+  source TEXT,
+  notes TEXT,
+  metadata TEXT, -- JSON
+  created_at DATETIME,
+  updated_at DATETIME
 );
 ```

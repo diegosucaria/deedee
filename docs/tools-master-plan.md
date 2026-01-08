@@ -38,6 +38,11 @@ This document tracks the status of all tools available to the Deedee agent, thei
 | `deleteDeviceAlias` | Smart Home | Remove an alias | `executors/smarthome.js` | ✅ |
 | `sendMessage` | Communication | Send WhatsApp/text message | `executors/communication.js` | ✅ |
 | `replyWithAudio` | Communication | Send audio response (TTS) | `executors/communication.js` | ✅ |
+| `listPeople` | Social | List all known contacts | `executors/people.js` | ✅ |
+| `getPerson` | Social | Get person details by ID/Phone | `executors/people.js` | ✅ |
+| `searchPeople` | Social | Search people by name/notes | `executors/people.js` | ✅ |
+| `updatePerson` | Social | Update person details | `executors/people.js` | ✅ |
+| `deletePerson` | Social | Delete a person | `executors/people.js` | ✅ |
 
 ## 🚧 Planned Tools (Roadmap)
 

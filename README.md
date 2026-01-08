@@ -116,6 +116,11 @@ Everything is customizable via environment variables. Like which models to use.
     -   **Assistant Mode**: The bot replies to you.
     -   **User Mode**: The bot acts *as you* (e.g. "Tell Mom I'll be late") using your linked device session.
 
+-   **👥 People & Contacts**:
+    -   **Smart Learn**: AI automatically analyzes your WhatsApp history to identify key contacts and relationships.
+    -   **Unified UI**: Manage contacts, add notes, and view avatars in a beautiful grid layout.
+    -   **Agent Aware**: The agent knows who your "Mom" or "Best Friend" is and can contact them appropriately.
+
 -   **🗄️ Life Vaults**:
     -   **Topic-Based Knowledge**: Persistent file storage and wiki for specific life areas (e.g. "Health", "Finance", "Car").
     -   **Context Switching**: Agent automatically switches context when discussing a vault topic.
