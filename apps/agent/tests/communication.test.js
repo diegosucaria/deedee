@@ -9,10 +9,14 @@ describe('CommunicationExecutor', () => {
         mockInterfaceService = {
             send: jest.fn().mockResolvedValue({ success: true })
         };
-        mockServices = {
-            interface: mockInterfaceService
+        const services = {
+            interface: mockInterfaceService,
+            db: {
+                isVerifiedContact: jest.fn().mockReturnValue(true), // Default to verified for tests
+                verifyContact: jest.fn()
+            }
         };
-        executor = new CommunicationExecutor(mockServices);
+        executor = new CommunicationExecutor(services);
     });
 
     test('sendMessage should default to assistant session and text type', async () => {

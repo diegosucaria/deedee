@@ -23,6 +23,9 @@ class WhatsAppService {
             fs.mkdirSync(this.authFolder, { recursive: true });
         }
 
+        this.contactsFile = path.join(dataDir, `whatsapp_contacts_${sessionId}.json`);
+        this.loadContacts();
+
         // Allowed Numbers
         const allowed = process.env.ALLOWED_WHATSAPP_NUMBERS || '';
         this.allowedNumbers = new Set(allowed.split(',').map(id => id.trim().replace(/[^0-9]/g, '')).filter(id => id.length > 0));
@@ -33,6 +36,30 @@ class WhatsAppService {
             console.log(`${this.logPrefix} Security Enforced. Allowed Numbers: ${Array.from(this.allowedNumbers).join(', ')}`);
         } else {
             console.error(`${this.logPrefix} 🛑 SECURITY ERROR: No ALLOWED_WHATSAPP_NUMBERS set. Ignoring ALL messages.`);
+        }
+    }
+
+    loadContacts() {
+        try {
+            if (fs.existsSync(this.contactsFile)) {
+                const data = fs.readFileSync(this.contactsFile, 'utf-8');
+                const contactsObj = JSON.parse(data);
+                for (const [id, contact] of Object.entries(contactsObj)) {
+                    this.contacts.set(id, contact);
+                }
+                console.log(`${this.logPrefix} Loaded ${this.contacts.size} contacts from disk.`);
+            }
+        } catch (e) {
+            console.error(`${this.logPrefix} Failed to load contacts:`, e.message);
+        }
+    }
+
+    saveContacts() {
+        try {
+            const contactsObj = Object.fromEntries(this.contacts);
+            fs.writeFileSync(this.contactsFile, JSON.stringify(contactsObj, null, 2));
+        } catch (e) {
+            console.error(`${this.logPrefix} Failed to save contacts:`, e.message);
         }
     }
 
@@ -146,6 +173,7 @@ class WhatsAppService {
             this.sock.ev.on('creds.update', saveCreds);
 
             this.sock.ev.on('contacts.upsert', (contacts) => {
+                console.log(`${this.logPrefix} received ${contacts.length} contacts via upsert.`);
                 for (const contact of contacts) {
                     // Update LID Map
                     if (contact.lid) {
@@ -169,6 +197,8 @@ class WhatsAppService {
                         this.contacts.set(contact.id, updated);
                     }
                 }
+                console.log(`${this.logPrefix} Total contacts in memory: ${this.contacts.size}`);
+                this.saveContacts();
             });
 
             this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
@@ -370,6 +400,8 @@ class WhatsAppService {
     searchContacts(query) {
         if (!query) return [];
         const q = query.toLowerCase();
+        console.log(`${this.logPrefix} Searching contacts for: "${q}". Total contacts: ${this.contacts.size}`);
+
         const results = [];
 
         for (const [id, contact] of this.contacts.entries()) {

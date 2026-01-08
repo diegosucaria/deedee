@@ -52,11 +52,37 @@ export default function GeminiLivePage() {
             // We pass the token in the 'setup' message OR as a query param `access_token`. 
             const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?access_token=${auth.token}`;
 
-            // Clean tools for Gemini (remove serverName or other non-standard props)
+            // Helper to clean schema recursively
+            const cleanSchema = (schema) => {
+                if (!schema || typeof schema !== 'object') return schema;
+                const { type, description, properties, required, items, enum: enumValues } = schema;
+
+                const clean = {};
+                if (type) clean.type = type;
+                if (description) clean.description = description;
+                if (enumValues) clean.enum = enumValues;
+
+                if (properties) {
+                    clean.properties = {};
+                    for (const [key, value] of Object.entries(properties)) {
+                        clean.properties[key] = cleanSchema(value);
+                    }
+                }
+
+                if (required) clean.required = required;
+
+                if (items) {
+                    clean.items = cleanSchema(items);
+                }
+
+                return clean;
+            };
+
+            // Clean tools for Gemini
             const cleanTools = tools.map(t => ({
                 name: t.name,
                 description: t.description,
-                parameters: t.parameters
+                parameters: cleanSchema(t.parameters)
             }));
 
             log(`Connecting (${config.model})...`);

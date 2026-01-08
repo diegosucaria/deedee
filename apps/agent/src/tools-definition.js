@@ -335,7 +335,8 @@ const toolDefinitions = [
             content: { type: "STRING", description: "The message content. If type is 'image' or 'audio', this must be a base64 encoded string." },
             service: { type: "STRING", description: "Optional. Service to use. Default: 'whatsapp'." },
             session: { type: "STRING", description: "Optional. The identity/session to send FROM. Values: 'assistant' (default), 'user' (impersonation)." },
-            type: { type: "STRING", description: "Optional. The type of message. Values: 'text' (default), 'image', 'audio'." }
+            type: { type: "STRING", description: "Optional. The type of message. Values: 'text' (default), 'image', 'audio'." },
+            force: { type: "BOOLEAN", description: "Optional. Set to true to bypass the 'First Time Contact' safeguard." }
           },
           required: ["to", "content"]
         }

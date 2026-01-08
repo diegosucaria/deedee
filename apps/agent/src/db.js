@@ -132,6 +132,13 @@ class AgentDB {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
+
+      CREATE TABLE IF NOT EXISTS verified_contacts (
+        service TEXT NOT NULL,
+        contact_id TEXT NOT NULL,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (service, contact_id)
+      );
     `);
 
     // Migration: Backfill sessions for existing messages
@@ -674,6 +681,22 @@ class AgentDB {
     const stmt = this.db.prepare('SELECT entity_id FROM entity_aliases WHERE alias = ?');
     const row = stmt.get(alias.toLowerCase());
     return row ? row.entity_id : null;
+  }
+
+  // --- Trusted/Verified Contacts ---
+  isVerifiedContact(service, contactId) {
+    const stmt = this.db.prepare('SELECT 1 FROM verified_contacts WHERE service = ? AND contact_id = ?');
+    return !!stmt.get(service, contactId);
+  }
+
+  verifyContact(service, contactId) {
+    try {
+      const stmt = this.db.prepare('INSERT OR IGNORE INTO verified_contacts (service, contact_id) VALUES (?, ?)');
+      stmt.run(service, contactId);
+      console.log(`[DB] Verified contact ${contactId} for ${service}`);
+    } catch (e) {
+      console.error('[DB] Failed to verify contact:', e);
+    }
   }
 
   // --- Metrics & Analytics ---
