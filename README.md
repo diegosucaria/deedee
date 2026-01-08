@@ -282,10 +282,11 @@ MIT License. See [LICENSE](LICENSE) file.
     - **Audio Context**: Uses a Polyfill Tool (`google_search`) to allow mixing with `replyWithAudio`.
 
 ### 5. Multi-Brain Architecture (WhatsApp)
-- **Pattern**: To support "acting as user" vs "acting as assistant", we maintain TWO distinct Baileys sessions:
-    - **Assistant**: The bot account.
-    - **User**: The user's linked device (for acting on their behalf).
-- **Storage**: Managed by `InterfacesService` with distinct auth dirs.
+- **Pattern**: To support "acting as user" vs "acting as assistant", we maintain TWO distinct Baileys sessions.
+- **Critical Gotchas**:
+    1. **JID Formatting**: Baileys is strict. IDs must be `number@s.whatsapp.net`. You **MUST** strip `+` signs from phone numbers before appending the suffix.
+    2. **Store Polyfill**: The `@whiskeysockets/baileys` package does *not* correctly export `makeInMemoryStore` in the CJS build. We implemented a manual polyfill/binding in `apps/interfaces/src/whatsapp.js` to ensure contact syncing works. Do not blindly import it.
+    3. **"Me" Handling**: Messages sent *by* the user (via phone) appear in the stream. We must filter them out to prevent the agent from replying to itself, unless specifically in "listening" mode.
 
 ### 6. Real-Time Strategy (SSE vs Socket.io)
 - **Pattern**: Choosing the right transport for the job.
