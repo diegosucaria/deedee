@@ -374,18 +374,21 @@ export default function ChatSessionPage({ params }) {
                 </div>
                 <div className="flex items-center gap-4">
                     {/* Vault Selector */}
-                    <div className="relative group">
+                    <div className="relative group flex items-center bg-zinc-900 border border-zinc-700 rounded-lg focus-within:ring-1 focus-within:ring-indigo-500 focus-within:border-indigo-500 transition-all hover:border-zinc-600">
+                        <div className="pl-2.5 flex items-center pointer-events-none">
+                            <Box className={clsx("h-4 w-4", selectedVault !== 'none' ? "text-indigo-400" : "text-zinc-500")} />
+                        </div>
                         <select
                             value={selectedVault}
                             onChange={(e) => setSelectedVault(e.target.value)}
-                            className="appearance-none bg-zinc-900 border border-zinc-700 text-zinc-300 text-sm rounded-lg pl-3 pr-8 py-1.5 focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 hover:border-zinc-600 transition-colors cursor-pointer outline-none"
+                            className="appearance-none bg-transparent text-zinc-300 text-sm pl-2 pr-8 py-1.5 cursor-pointer outline-none border-none w-full"
                         >
-                            <option value="none">No Vault</option>
+                            <option value="none">General Context</option>
                             {vaults.map(v => (
-                                <option key={v.id} value={v.id}>{v.name} Vault</option>
+                                <option key={v.id} value={v.id}>{v.name}</option>
                             ))}
                         </select>
-                        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 text-zinc-500 pointer-events-none" />
+                        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-zinc-500 pointer-events-none" />
                     </div>
 
                     {isConnected ? (
