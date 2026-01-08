@@ -56,13 +56,18 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
         const getPayloadText = (p) => {
           if (typeof p === 'string') return p;
           if (p?.parts && p.parts[0]?.text) return p.parts[0].text;
-          if (p?.message) return p.message; // Legacy check
+          if (p?.message) {
+            if (typeof p.message === 'string') return p.message;
+            if (p.message.parts && p.message.parts[0]?.text) return p.message.parts[0].text;
+            return '';
+          }
           return '';
         };
 
         const payloadText = getPayloadText(payload);
         const hasFunctionResponse = payload?.parts?.some(part => part.functionResponse) ||
-          (Array.isArray(payload?.message) && payload.message[0]?.functionResponse);
+          (Array.isArray(payload?.message) && payload.message[0]?.functionResponse) ||
+          (payload?.message?.parts?.some && payload.message.parts.some(part => part.functionResponse));
 
         // Case A: Router Request
         if (payloadText.includes('You are the Router')) {
@@ -113,13 +118,18 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
         const getPayloadText = (p) => {
           if (typeof p === 'string') return p;
           if (p?.parts && p.parts[0]?.text) return p.parts[0].text;
-          if (p?.message) return p.message; // Legacy check
+          if (p?.message) {
+            if (typeof p.message === 'string') return p.message;
+            if (p.message.parts && p.message.parts[0]?.text) return p.message.parts[0].text;
+            return '';
+          }
           return '';
         };
 
         const payloadText = getPayloadText(payload);
         const hasFunctionResponse = payload?.parts?.some(part => part.functionResponse) ||
-          (Array.isArray(payload?.message) && payload.message[0]?.functionResponse);
+          (Array.isArray(payload?.message) && payload.message[0]?.functionResponse) ||
+          (payload?.message?.parts?.some && payload.message.parts.some(part => part.functionResponse));
 
         if (payloadText.includes('You are the Router')) {
           result = {
