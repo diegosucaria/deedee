@@ -200,6 +200,11 @@ class AgentDB {
     try {
       this.db.exec("ALTER TABLE chat_sessions ADD COLUMN is_pinned INTEGER DEFAULT 0");
     } catch (err) { }
+
+    // Migration: Add identifiers to people
+    try {
+      this.db.exec("ALTER TABLE people ADD COLUMN identifiers TEXT");
+    } catch (err) { }
   }
 
   // --- Scheduled Jobs ---
@@ -272,11 +277,12 @@ class AgentDB {
   createPerson(person) {
     const id = person.id || crypto.randomUUID();
     const metaStr = person.metadata ? JSON.stringify(person.metadata) : '{}';
+    const identifiersStr = person.identifiers ? JSON.stringify(person.identifiers) : '{}';
     const stmt = this.db.prepare(`
-      INSERT INTO people (id, name, phone, relationship, source, notes, metadata)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO people (id, name, phone, relationship, source, notes, metadata, identifiers)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    stmt.run(id, person.name, person.phone, person.relationship, person.source || 'manual', person.notes, metaStr);
+    stmt.run(id, person.name, person.phone, person.relationship, person.source || 'manual', person.notes, metaStr, identifiersStr);
     return id;
   }
 
@@ -292,6 +298,12 @@ class AgentDB {
 
     if (row) {
       if (row.metadata) row.metadata = JSON.parse(row.metadata);
+      if (row.identifiers) row.identifiers = JSON.parse(row.identifiers);
+      // Backwards compat: If identifiers empty/null but phone exists, populate identifiers.whatsapp
+      if (!row.identifiers || Object.keys(row.identifiers).length === 0) {
+        row.identifiers = {};
+        if (row.phone) row.identifiers.whatsapp = row.phone;
+      }
     }
     return row;
   }
@@ -305,6 +317,7 @@ class AgentDB {
     if (updates.relationship !== undefined) { fields.push('relationship = ?'); args.push(updates.relationship); }
     if (updates.notes !== undefined) { fields.push('notes = ?'); args.push(updates.notes); }
     if (updates.metadata !== undefined) { fields.push('metadata = ?'); args.push(JSON.stringify(updates.metadata)); }
+    if (updates.identifiers !== undefined) { fields.push('identifiers = ?'); args.push(JSON.stringify(updates.identifiers)); }
 
     if (fields.length === 0) return;
 
@@ -322,7 +335,8 @@ class AgentDB {
   listPeople() {
     return this.db.prepare('SELECT * FROM people ORDER BY name ASC').all().map(row => ({
       ...row,
-      metadata: row.metadata ? JSON.parse(row.metadata) : {}
+      metadata: row.metadata ? JSON.parse(row.metadata) : {},
+      identifiers: row.identifiers ? JSON.parse(row.identifiers) : {}
     }));
   }
 
@@ -338,7 +352,8 @@ class AgentDB {
     `);
     return stmt.all(wildcard, wildcard, wildcard, wildcard).map(row => ({
       ...row,
-      metadata: row.metadata ? JSON.parse(row.metadata) : {}
+      metadata: row.metadata ? JSON.parse(row.metadata) : {},
+      identifiers: row.identifiers ? JSON.parse(row.identifiers) : {}
     }));
   }
 

@@ -48,7 +48,8 @@ export function SmartLearnModal({ isOpen, onClose, onLearned }) {
                     phone: c.phone,
                     relationship: c.relationship,
                     notes: c.reason,
-                    metadata: JSON.stringify({ confidence: c.confidence, source: 'smart_learn' })
+                    metadata: JSON.stringify({ confidence: c.confidence, source: 'smart_learn' }),
+                    identifiers: JSON.stringify(c.identifiers || {})
                 }));
             }
             onLearned();
@@ -124,16 +125,33 @@ export function SmartLearnModal({ isOpen, onClose, onLearned }) {
                                         className={`p-3 rounded-lg border cursor-pointer transition-colors flex items-start space-x-3 ${selected.has(c.phone) ? 'border-primary bg-primary/10' : 'border-border hover:border-primary/50'}`}
                                         onClick={() => toggleCandidate(c.phone)}
                                     >
-                                        <div className={`mt-1 w-5 h-5 rounded-full border flex items-center justify-center ${selected.has(c.phone) ? 'bg-primary border-primary' : 'border-muted-foreground'}`}>
+                                        <div className={`mt-1 w-5 h-5 rounded-full border flex items-center justify-center flex-shrink-0 ${selected.has(c.phone) ? 'bg-primary border-primary' : 'border-muted-foreground'}`}>
                                             {selected.has(c.phone) && <CheckCircle size={12} className="text-primary-foreground" />}
                                         </div>
-                                        <div className="flex-1">
-                                            <div className="flex justify-between">
-                                                <span className="font-semibold">{c.suggestedName}</span>
-                                                <span className="text-xs text-muted-foreground">{c.relationship}</span>
+                                        <div className="flex-1 min-w-0">
+                                            <div className="flex justify-between items-start">
+                                                <span className="font-semibold truncate pr-2">{c.suggestedName}</span>
+                                                <span className="text-xs px-2 py-0.5 rounded-full bg-secondary text-secondary-foreground whitespace-nowrap">{c.relationship}</span>
                                             </div>
-                                            <p className="text-xs text-muted-foreground mt-0.5">{c.phone}</p>
-                                            <p className="text-xs italic text-muted-foreground/70 mt-1">"{c.reason}"</p>
+
+                                            <p className="text-xs text-muted-foreground mt-0.5 font-mono">{c.phone}</p>
+
+                                            {/* Identifiers Badges */}
+                                            {c.identifiers && Object.keys(c.identifiers).length > 0 && (
+                                                <div className="flex flex-wrap gap-1 mt-1.5">
+                                                    {Object.entries(c.identifiers).map(([key, val]) => (
+                                                        key !== 'whatsapp' && (
+                                                            <span key={key} className="text-[10px] px-1.5 py-0.5 rounded bg-muted text-muted-foreground border border-border">
+                                                                {key}: {val}
+                                                            </span>
+                                                        )
+                                                    ))}
+                                                </div>
+                                            )}
+
+                                            <p className="text-xs italic text-muted-foreground/70 mt-2 border-l-2 border-primary/20 pl-2">
+                                                "{c.reason}"
+                                            </p>
                                         </div>
                                     </div>
                                 ))}

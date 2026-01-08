@@ -21,7 +21,13 @@ app.get('/health', (req, res) => {
 });
 
 // Protected V1 Routes
-app.use('/v1', authMiddleware);
+app.use('/v1', (req, res, next) => {
+    // Public Routes
+    if (req.method === 'GET' && req.path.match(/^\/people\/.*\/avatar$/)) {
+        return next();
+    }
+    return authMiddleware(req, res, next);
+});
 app.use('/v1', dashboardRouter); // Dashboard routes (journal, tasks, facts)
 app.use('/v1/chat', chatRouter);
 app.use('/v1/chat', audioChatRouter); // Mounts POST /v1/chat/audio

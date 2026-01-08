@@ -10,17 +10,23 @@ class PeopleService {
     }
 
     async suggestPeopleFromHistory() {
+        // 0. Build exclusion set from DB (Phone + Identifiers)
         const existingPeople = this.agent.db.listPeople();
-        const existingPhones = new Set(existingPeople.map(p => {
-            // Extract phone from ID or phone field
-            // ID logic often uses phone. Check DB implementation.
-            // If ID is UUID, check phone field.
-            return p.phone ? p.phone.replace(/\D/g, '') : null;
-        }).filter(Boolean));
+        const existingIdentifiers = new Set();
 
-        // 1. Fetch Recent Chats (User session preferred for mirroring real phone)
+        for (const p of existingPeople) {
+            if (p.phone) existingIdentifiers.add(p.phone.replace(/\D/g, ''));
+            // Check identifiers JSON
+            if (p.identifiers) {
+                Object.values(p.identifiers).forEach(val => {
+                    if (typeof val === 'string') existingIdentifiers.add(val.replace(/\D/g, ''));
+                });
+            }
+        }
+
+        // 1. Fetch Recent Chats
         const recentRes = await axios.get(`${this.interfacesUrl}/whatsapp/recent`, {
-            params: { session: 'user', limit: 20 },
+            params: { session: 'user', limit: 30 }, // Fetch more to filter down
             headers: { 'Authorization': `Bearer ${process.env.DEEDEE_API_TOKEN}` }
         });
         const recentChats = recentRes.data || [];
@@ -30,7 +36,7 @@ class PeopleService {
         // 2. Filter & Gather Context
         for (const chat of recentChats) {
             const phone = chat.jid.split('@')[0];
-            if (existingPhones.has(phone)) continue;
+            if (existingIdentifiers.has(phone)) continue;
 
             // Fetch History
             try {
@@ -62,31 +68,31 @@ class PeopleService {
     async _analyzeCandidates(candidates) {
         if (!this.agent.client) return [];
 
-        // Batch analysis or single? Batch is cheaper but context heavy.
-        // Let's do top 5 candidates max to save context.
-        const topCandidates = candidates.slice(0, 5);
+        // Batch analysis: increased limit as requested
+        const topCandidates = candidates.slice(0, 15);
 
         let prompt = `You are a helpful assistant managing my contacts.
 Analyze the following conversation snippets from WhatsApp and suggest which people I should add to my contacts.
-For each person, infer their name, my relationship to them, and a summary of why you think so.
-Only suggest people who seem to be personal contacts (friends, family, colleagues, service providers). Ignore spam or strictly transactional bots.
+For each person, infer their REAL NAME (e.g. "John Doe", "Maria", "Mom") distinct from their relationship.
+Also extract any contact identifiers mentioned (Email, Instagram Handle, etc).
 
-Existing Contacts: (Already filtered out)
+Only suggest people who seem to be personal contacts (friends, family, colleagues, service providers). Ignore spam or strictly transactional bots.
 
 Candidates:
 `;
 
         for (const c of topCandidates) {
             const transcript = c.messages.map(m => `${m.role === 'assistant' ? 'Me' : 'Them'}: ${m.content}`).join('\n');
-            prompt += `\n--- Candidate Phone: ${c.phone} ---\n${transcript.substring(0, 2000)}\n`; // Cap context per person
+            prompt += `\n--- Candidate Phone: ${c.phone} ---\n${transcript.substring(0, 1500)}\n`; // Cap context
         }
 
         prompt += `\n
 Return a JSON array of objects with this schema:
 {
   "phone": "extracted phone",
-  "suggestedName": "Inferred Name",
-  "relationship": "Friend | Mother | Plumber etc",
+  "suggestedName": "Inferred Real Name (e.g. 'Diego', 'Mom', 'Dr. Smith')",
+  "relationship": "Relationship (e.g. 'Friend', 'Mother', 'Cardiologist')",
+  "identifiers": { "email": "...", "instagram": "..." },
   "reason": "Brief explanation",
   "confidence": 0-1
 }
@@ -99,7 +105,7 @@ Output pure JSON only.`;
                 contents: prompt
             });
 
-            // Robust Response Handling (matching agent.js / helpers.js)
+            // Robust Response Handling
             const candidate = response.candidates?.[0];
             const part = candidate?.content?.parts?.[0];
             const text = part?.text || '';
@@ -112,11 +118,16 @@ Output pure JSON only.`;
             const jsonMatch = text.match(/\[.*\]/s);
             if (jsonMatch) {
                 const data = JSON.parse(jsonMatch[0]);
-                // Merge with JIDs
+                // Merge with JIDs and formatted identifiers
                 return data.map(d => ({
                     ...d,
                     id: d.phone, // Temporary ID
-                    jid: `${d.phone}@s.whatsapp.net` // Heuristic
+                    jid: `${d.phone}@s.whatsapp.net`,
+                    // Ensure identifiers object includes what we know
+                    identifiers: {
+                        whatsapp: d.phone,
+                        ...(d.identifiers || {})
+                    }
                 }));
             }
         } catch (e) {

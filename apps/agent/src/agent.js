@@ -294,6 +294,17 @@ class Agent {
       console.warn('sendMessageStream returned no stream property.');
     }
 
+    // Safety Check: Ensure we have a valid response structure
+    if (!streamResult.response) {
+      // Fallback: If SDK returns candidates directly (bug/outlier)
+      if (streamResult.candidates) {
+        return streamResult;
+      }
+      // If we have nothing, we must throw or return a stub to prevent upstream crash
+      console.error('[Agent] Invalid streamResult:', JSON.stringify(streamResult));
+      throw new Error('Invalid response from sendMessageStream (No response promise or candidates).');
+    }
+
     // Return full response for internal logic
     return await streamResult.response;
   }
