@@ -43,6 +43,7 @@ const proxyToAgent = async (req, res, method, path, data) => {
 router.get('/', (req, res) => proxyToAgent(req, res, 'GET', '', null));
 router.post('/', (req, res) => proxyToAgent(req, res, 'POST', '', req.body));
 router.post('/learn', (req, res) => proxyToAgent(req, res, 'POST', '/learn', req.body));
+router.post('/sync', (req, res) => proxyToAgent(req, res, 'POST', '/sync', req.body));
 router.get('/:id', (req, res) => proxyToAgent(req, res, 'GET', `/${req.params.id}`, null));
 router.put('/:id', (req, res) => proxyToAgent(req, res, 'PUT', `/${req.params.id}`, req.body));
 router.delete('/:id', (req, res) => proxyToAgent(req, res, 'DELETE', `/${req.params.id}`, null));

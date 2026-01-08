@@ -37,6 +37,12 @@ app.use('/v1/whatsapp', require('./whatsapp'));
 app.use('/v1/live', require('./live'));
 app.use('/v1/vaults', require('./vaults'));
 app.use('/v1/people', require('./routes/people'));
+app.use('/v1/settings', require('./routes/settings'));   // [NEW]
+app.use('/v1/config', require('./routes/config'));       // [NEW]
+app.use('/v1/aliases', require('./routes/aliases'));     // [NEW]
+app.use('/v1/goals', require('./routes/goals'));         // [NEW]
+app.use('/v1/facts', require('./routes/facts'));         // [NEW]
+app.use('/v1/backups', require('./routes/backups'));     // [NEW]
 
 // BETTER: Add to apps/api/src/dashboard.js if it proxies to agent.
 const http = require('http');

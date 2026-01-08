@@ -113,15 +113,17 @@ function createInternalRouter(agent) {
     router.get('/tasks', (req, res) => {
         if (!agent.scheduler) return res.status(503).json({ error: 'Scheduler not ready' });
         try {
-            const jobs = Object.values(agent.scheduler.jobs).map(j => ({
-                name: j.metadata?.name || 'unknown',
-                cron: j.metadata?.cronExpression || 'unknown',
-                task: j.metadata?.payload?.task || '',
-                isSystem: j.metadata?.payload?.isSystem || false,
-                isOneOff: j.metadata?.payload?.isOneOff || false,
-                expiresAt: j.metadata?.expiresAt || null,
-                nextInvocation: j.nextInvocation()
-            }));
+            const jobs = Object.values(agent.scheduler.jobs)
+                .filter(j => !j.metadata?.payload?.isSystem) // Hide system jobs
+                .map(j => ({
+                    name: j.metadata?.name || 'unknown',
+                    cron: j.metadata?.cronExpression || 'unknown',
+                    task: j.metadata?.payload?.task || '',
+                    isSystem: j.metadata?.payload?.isSystem || false,
+                    isOneOff: j.metadata?.payload?.isOneOff || false,
+                    expiresAt: j.metadata?.expiresAt || null,
+                    nextInvocation: j.nextInvocation()
+                }));
             res.json({ jobs });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });

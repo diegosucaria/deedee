@@ -422,6 +422,7 @@ class AgentDB {
       WHERE is_archived = 0
       AND id NOT LIKE 'scheduled_%'
       AND id NOT LIKE 'api_city_image_%'
+      AND id NOT LIKE 'sys_%' -- Exclude system internal sessions
       AND id LIKE '%-%' -- Keep only UUIDs (Web sessions), filters out numeric Telegram IDs
       AND id NOT LIKE '%@%' -- Filter out WhatsApp IDs just in case
       AND id NOT LIKE '%@%' -- Filter out WhatsApp IDs just in case
