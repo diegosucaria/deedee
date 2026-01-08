@@ -645,6 +645,34 @@ export async function uploadVaultFile(id, formData) {
         return { success: false, error: error.message };
     }
 }
+// --- Chat Files ---
+export async function uploadChatFile(chatId, formData) {
+    // Note: formData must contain 'file'
+    // This is for Generic Chat Uploads (files.js)
+    try {
+        const { API_URL } = require('@/lib/api');
+        const { DEEDEE_API_TOKEN } = process.env;
+
+        const res = await fetch(`${API_URL}/v1/chat/${encodeURIComponent(chatId)}/files`, {
+            method: 'POST',
+            headers: {
+                'Authorization': `Bearer ${DEEDEE_API_TOKEN}`,
+            },
+            body: formData
+        });
+
+        if (!res.ok) {
+            const err = await res.json();
+            throw new Error(err.error || res.statusText);
+        }
+
+        const data = await res.json();
+        return { success: true, ...data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 // --- People ---
 export async function getPeople() {
     try {

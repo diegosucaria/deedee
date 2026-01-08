@@ -104,6 +104,7 @@ const { createInternalRouter } = require('./routes/internal');
 const { createLiveRouter } = require('./routes/live');
 const { createToolRouter } = require('./routes/tools');
 const { createSettingsRouter } = require('./routes/settings');
+const createFilesRouter = require('./routes/files');
 const createVaultRouter = require('./routes/vaults');
 const { createPeopleRouter } = require('./routes/people');
 
@@ -114,7 +115,8 @@ if (agent) {
   // Mount Modular Routers
   app.use('/internal/settings', createSettingsRouter(agent));
   app.use('/internal/people', createPeopleRouter(agent)); // Mount People Router
-  app.use('/internal', createInternalRouter(agent));
+  app.use('/v1/chat', createFilesRouter(agent)); // Mounted at /v1/chat so POST /v1/chat/:id/files works
+  app.use('/internal', createInternalRouter(agent)); // Internal Router (Protected)
   app.use('/v1/vaults', createVaultRouter(agent));
   app.use('/', createToolRouter(agent)); // Mounts at root because it handles /tools/execute AND /internal/tools
 }

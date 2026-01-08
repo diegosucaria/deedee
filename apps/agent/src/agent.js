@@ -80,6 +80,114 @@ class Agent {
     this.loadSettings = this.loadSettings.bind(this);
   }
 
+  async _analyzeAttachment(chatId, part, currentVaultId) {
+    console.log(`[Agent] Analyzing attachment for ${chatId}...`);
+    try {
+      const { mimeType, data } = part.inlineData;
+
+      // Fetch available vaults
+      const vaults = await this.vaults.listVaults();
+      const vaultList = vaults.map(v => `- **${v.id}**: ${v.id === 'health' ? 'Medical records, prescriptions, workout plans, diet' : v.id === 'finance' ? 'Invoices, receipts, tax docs, bank statements' : 'Items related to ' + v.id}`).join('\n        ');
+
+      // Construct prompt
+      const prompt = `
+        Analyze this document/file.
+        Your goal is to determine if this file belongs to one of our specific Life Vaults:
+        ${vaultList}
+        
+        If it belongs to one of these, you MUST output the vault ID.
+        If it is generic or unclear, output "none".
+
+        Also generate a short, descriptive title for this file/chat (max 6 words).
+        Extract the likely "document date" (YYYY-MM-DD) if found, otherwise use today.
+
+        Output JSON ONLY:
+        {
+            "vaultId": "Vault ID (e.g. health, finance) or 'none'",
+            "title": "String",
+            "date": "YYYY-MM-DD",
+            "summary": "One sentence summary of content"
+        }
+        `;
+
+      // We use a separate model call (Flash is fine)
+      const model = process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
+      const result = await this.client.models.generateContent({
+        model: model,
+        contents: [{
+          role: 'user',
+          parts: [
+            { inlineData: { mimeType, data } },
+            { text: prompt }
+          ]
+        }]
+      });
+
+      const text = result.response.text();
+      // Extract JSON
+      const jsonMatch = text.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) return;
+
+      const analysis = JSON.parse(jsonMatch[0]);
+      console.log(`[Agent] File Analysis:`, analysis);
+
+      // ALWAYS update title if it's a new chat (heuristic)
+      // Or if the current title is "New Chat"
+      const session = this.db.getSession(chatId);
+      if (session && (session.title === 'New Chat' || session.title === 'User sent media')) {
+        this.db.updateSession(chatId, { title: analysis.title });
+        // Emit update
+        this.interface.emit('session:update', { id: chatId, title: analysis.title });
+      }
+
+      // Logic: Move to Vault if detected AND not already there
+      if (analysis.vaultId !== 'none' && analysis.vaultId !== currentVaultId) {
+        // We need to "move" the file.
+        // Problem: We only have the base64 data here, user uploaded it to generic storage?
+        // Actually, the frontend uploads via POST /files, THEN sends the message.
+        // But the message contains the base64 data (inlineData) because we mirror it for the LLM.
+        // Ideally we'd know the file path on disk.
+        // Metadata should carry the path? 
+        // The frontend should pass the `path` in the message metadata if it uploaded it.
+        // Let's assume for now we might need to re-save it if we don't have the path, 
+        // OR we fix frontend to send path in metadata.
+        // Saving from base64 is reliable enough here since we have the data.
+
+        // 1. Save to Vault
+        const filename = `${analysis.title.replace(/[^a-z0-9]/gi, '_')}.${mimeType.split('/')[1]}`; // approximate ext
+        // Better: use unique ID
+        const safeFilename = `${Date.now()}_${analysis.title.substring(0, 20).replace(/[^a-z0-9]/gi, '_')}.${mimeType.split('/')[1]}`;
+
+        // Write to temp, then addToVault? Or direct?
+        // VaultManager.addToVault takes a source path.
+        const tempPath = path.join('/tmp', safeFilename);
+        await fs.promises.writeFile(tempPath, Buffer.from(data, 'base64'));
+
+        // Add to Vault
+        await this.vaults.addToVault(analysis.vaultId, tempPath, safeFilename);
+
+        // Cleanup temp
+        await fs.promises.unlink(tempPath);
+
+        // 2. Update Vault Wiki
+        const wikiEntry = `\n\n## Added on ${analysis.date}\n- **File**: ${safeFilename}\n- **Title**: ${analysis.title}\n- **Summary**: ${analysis.summary}`;
+        const currentWiki = await this.vaults.readVaultPage(analysis.vaultId, 'index.md') || `# ${analysis.vaultId} Vault`;
+        await this.vaults.updateVaultPage(analysis.vaultId, 'index.md', currentWiki + wikiEntry);
+
+        // 3. Switch Context
+        this.activeTopics.set(chatId, analysis.vaultId);
+
+        // 4. Notify User
+        const notification = createAssistantMessage(`📂 I've detected this is a **${analysis.vaultId}** document.\n\nI've filed it in your **${analysis.vaultId}** vault and updated the context.`);
+        notification.metadata = { chatId, vaultId: analysis.vaultId }; // Update frontend state
+        await this.interface.send(notification);
+      }
+
+    } catch (e) {
+      console.error('[Agent] Attachment analysis failed:', e);
+    }
+  }
+
   async loadSettings() {
     try {
       const stmt = this.db.db.prepare('SELECT key, value FROM agent_settings');
@@ -231,6 +339,36 @@ class Agent {
           });
         } else {
           if (msgCount === 0) console.log(`[Agent] Skipped Auto-Title. HasContent: ${!!hasContent}, Role: ${message.role}`);
+        }
+
+        // --- SMART FILE ANALYSIS ---
+        // Trigger if:
+        // 1. User message contains a file (or attachment)
+        // 2. We are in a generic context (vaultId is 'none' or undefined)
+        // 3. It's a relatively new session (msgCount < 5) to avoid re-analyzing old stuff? Or always?
+        // Let's do it for any NEW user message that has attachments.
+
+        // We need to detect "attachments". The frontend sends them as `parts` with inlineData or fileData.
+        // OR as separate messages. The frontend logic sends mixed content now.
+        // Let's look for parts with mimeType that are NOT audio/image (or usually documents).
+        // Actually PDF is application/pdf.
+
+        if (message.parts && message.role === 'user') {
+          const attachment = message.parts.find(p => p.inlineData && !p.inlineData.mimeType.startsWith('audio/') && !p.inlineData.mimeType.startsWith('image/'));
+          // Or maybe we treat images as potentially vault-worthy too (receipts, medical scans)?
+          // Let's broaden to "any non-audio" for now, or specific PDF focus?
+          // User mentioned "PDFs to act on them... blood.pdf". 
+          // Let's classify anything that looks substantive. PDF, Text, Images.
+          // Exclude Audio (Voice Notes).
+
+          const candidatePart = message.parts.find(p =>
+            p.inlineData && !p.inlineData.mimeType.startsWith('audio/')
+          );
+
+          if (candidatePart) {
+            // Run in background to not block chat latency
+            this._analyzeAttachment(chatId, candidatePart, message.metadata?.vaultId || 'none').catch(console.error);
+          }
         }
       }
 

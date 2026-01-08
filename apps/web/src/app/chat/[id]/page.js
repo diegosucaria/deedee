@@ -3,9 +3,9 @@
 import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import ReactMarkdown from 'react-markdown';
-import { Send, Play, Wifi, WifiOff, Mic, Image as ImageIcon, X, Loader2, StopCircle, Box, ChevronDown, Activity, DollarSign, Wallet, Code2, CheckCircle2 } from 'lucide-react';
+import { Send, Play, Wifi, WifiOff, Mic, Image as ImageIcon, X, Loader2, StopCircle, Box, ChevronDown, Activity, DollarSign, Wallet, Code2, CheckCircle2, Paperclip, FileIcon } from 'lucide-react';
 import clsx from 'clsx';
-import { getSession, getUserLocation, getVaults, updateSession } from '../../actions';
+import { getSession, getUserLocation, getVaults, updateSession, uploadChatFile } from '../../actions';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
 
 
@@ -35,6 +35,7 @@ export default function ChatSessionPage({ params }) {
     const [selectedImage, setSelectedImage] = useState(null); // { file, preview }
     const mediaRecorderRef = useRef(null);
     const audioChunksRef = useRef([]);
+    const [selectedFile, setSelectedFile] = useState(null); // { file, name, size }
 
     // Fetch Vaults
     useEffect(() => {
@@ -299,9 +300,21 @@ export default function ChatSessionPage({ params }) {
         }
     };
 
+    const handleFileSelect = (e) => {
+        const file = e.target.files[0];
+        if (file) {
+            setSelectedFile({
+                file,
+                name: file.name,
+                size: (file.size / 1024 / 1024).toFixed(2) + ' MB'
+            });
+        }
+    };
+
     const clearAttachments = () => {
         setSelectedImage(null);
         setAudioBlob(null);
+        setSelectedFile(null);
     };
 
     const blobToBase64 = (blob) => {
@@ -320,7 +333,8 @@ export default function ChatSessionPage({ params }) {
 
     const handleSendMessage = async (e) => {
         e.preventDefault();
-        if ((!inputValue.trim() && !audioBlob && !selectedImage) || !socket) return;
+        e.preventDefault();
+        if ((!inputValue.trim() && !audioBlob && !selectedImage && !selectedFile) || !socket) return;
 
         const content = inputValue;
         const files = [];
@@ -369,6 +383,61 @@ export default function ChatSessionPage({ params }) {
                 type: 'image',
                 timestamp: new Date().toISOString()
             });
+        }
+
+        // Process Generic File
+        if (selectedFile) {
+            // 1. Upload File first to get "path" if needed, OR send inlineData.
+            // Plan: Upload via Action -> Get Path/Metadata -> Send Msg with Metadata + InlineData (for immediate Analysis).
+            // Actually, we need to send inlineData for Gemini to analyze it immediately without re-reading from disk if possible?
+            // BUT: Large files? 
+            // Agent._analyzeAttachment relies on `part.inlineData`. 
+            // So we MUST send inlineData.
+            // AND we should probably upload it for persistence.
+
+            try {
+                // Upload in background or await? Await to ensure success?
+                const formData = new FormData();
+                formData.append('file', selectedFile.file);
+
+                // Optimistic UI for file?
+                addMessage({
+                    role: 'user',
+                    content: `📎 Uploading: ${selectedFile.name}...`,
+                    type: 'text',
+                    timestamp: new Date().toISOString()
+                });
+
+                const uploadRes = await uploadChatFile(chatId, formData);
+                if (!uploadRes.success) throw new Error(uploadRes.error);
+
+                // Convert to Base64 for analysis
+                const base64File = await new Promise((resolve) => {
+                    const reader = new FileReader();
+                    reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                    reader.readAsDataURL(selectedFile.file);
+                });
+
+                files.push({
+                    mimeType: selectedFile.file.type || 'application/octet-stream',
+                    data: base64File
+                });
+
+                // Update optimistic message? Or just let the main flow proceed.
+                // We'll let the main flow send the actual message with attachment data.
+
+                addMessage({
+                    role: 'user',
+                    content: `📄 Sent file: ${selectedFile.name}`,
+                    type: 'text', // Simple representation for now
+                    timestamp: new Date().toISOString()
+                });
+
+            } catch (err) {
+                console.error('File Upload Error:', err);
+                alert('Failed to upload file');
+                return;
+            }
         }
 
         // If text exists and we haven't just sent attachments solely...
@@ -563,6 +632,21 @@ export default function ChatSessionPage({ params }) {
                         </div>
                     )}
 
+                    {selectedFile && (
+                        <div className="flex gap-4 mb-3 px-2">
+                            <div className="relative flex items-center justify-center p-3 bg-zinc-900 border border-zinc-700 rounded-lg gap-3">
+                                <FileIcon className="h-8 w-8 text-indigo-400" />
+                                <div className="flex flex-col">
+                                    <span className="text-sm text-zinc-200 font-medium truncate max-w-[150px]">{selectedFile.name}</span>
+                                    <span className="text-xs text-zinc-500">{selectedFile.size}</span>
+                                </div>
+                                <button onClick={() => setSelectedFile(null)} type="button" className="absolute -top-2 -right-2 bg-zinc-800 rounded-full p-1 border border-zinc-600 hover:bg-zinc-700">
+                                    <X className="w-3 h-3 text-white" />
+                                </button>
+                            </div>
+                        </div>
+                    )}
+
                     <div className="flex gap-3 items-end">
                         {/* Audio / Recording Controls */}
                         {isRecording ? (
@@ -605,6 +689,26 @@ export default function ChatSessionPage({ params }) {
                             </label>
                         </div>
 
+                        {/* File Picker */}
+                        <div className="relative">
+                            <input
+                                type="file"
+                                onChange={handleFileSelect}
+                                className="hidden"
+                                id="file-upload"
+                                disabled={!!selectedFile}
+                            />
+                            <label
+                                htmlFor="file-upload"
+                                className={clsx(
+                                    "flex items-center justify-center h-12 w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 transition-all cursor-pointer",
+                                    selectedFile ? "opacity-30 cursor-not-allowed" : "hover:text-emerald-400 hover:border-emerald-500/50"
+                                )}
+                            >
+                                <Paperclip className="h-5 w-5" />
+                            </label>
+                        </div>
+
                         {/* Text Input */}
                         <input
                             type="text"
@@ -623,7 +727,7 @@ export default function ChatSessionPage({ params }) {
                         {/* Send Button */}
                         <button
                             type="submit"
-                            disabled={!isConnected || (!inputValue.trim() && !audioBlob && !selectedImage)}
+                            disabled={!isConnected || (!inputValue.trim() && !audioBlob && !selectedImage && !selectedFile)}
                             className="flex items-center justify-center h-12 w-12 rounded-xl bg-indigo-600 text-white transition-colors hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             <Send className="h-5 w-5" />
