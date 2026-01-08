@@ -6,7 +6,7 @@ describe('Audio Response Suppression', () => {
     let agent;
 
     beforeEach(() => {
-        agent = new Agent({ interface: { send: jest.fn(), on: jest.fn() }, googleApiKey: 'fake' });
+        agent = new Agent({ interface: { send: jest.fn(), on: jest.fn(), broadcast: jest.fn().mockResolvedValue(true) }, googleApiKey: 'fake' });
         agent.db = {
             saveMessage: jest.fn(),
             getHistoryForChat: jest.fn(),
@@ -36,14 +36,25 @@ describe('Audio Response Suppression', () => {
         agent.client = {
             chats: {
                 create: () => ({
-                    sendMessage: jest.fn()
+                    sendMessageStream: jest.fn()
                         .mockResolvedValueOnce({ // First call: Function Call
-                            candidates: [{
-                                content: { parts: [{ functionCall: { name: 'replyWithAudio', args: { text: 'Hello' } } }] }
-                            }]
+                            stream: (async function* () {
+                                // No stream chunks needed for function call usually, or empty
+                            })(),
+                            response: Promise.resolve({
+                                candidates: [{
+                                    content: { parts: [{ functionCall: { name: 'replyWithAudio', args: { text: 'Hello' } } }] }
+                                }]
+                            })
                         })
                         .mockResolvedValueOnce({ // Second call: Final Text Response
-                            text: () => "I just spoke to you."
+                            stream: (async function* () {
+                                yield { text: () => "I just spoke to you." };
+                            })(),
+                            response: Promise.resolve({
+                                text: () => "I just spoke to you.",
+                                candidates: [{ content: { parts: [{ text: "I just spoke to you." }] } }]
+                            })
                         })
                 })
             }

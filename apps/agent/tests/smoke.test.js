@@ -49,46 +49,51 @@ jest.mock('../src/mcp-manager', () => ({
 const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
   chats: {
     create: jest.fn().mockReturnValue({
-      sendMessage: jest.fn().mockImplementation(async (payload) => {
+      sendMessageStream: jest.fn().mockImplementation(async (payload) => {
+        let result = {};
+
         // Case A: Router Request
         if (typeof payload?.message === 'string' && payload.message.includes('You are the Router')) {
-          return {
-            text: JSON.stringify({ model: 'FLASH', reason: 'Test Mock' }),
+          result = {
+            text: () => JSON.stringify({ model: 'FLASH', reason: 'Test Mock' }),
             candidates: [{ content: { parts: [{ text: JSON.stringify({ model: 'FLASH', reason: 'Test Mock' }) }] } }]
           };
         }
 
         // Case B: User Message ({ message: string })
-        if (typeof payload?.message === 'string' && payload.message.toLowerCase().includes('calendar')) {
-          return {
-            text: undefined,
+        else if (typeof payload?.message === 'string' && payload.message.toLowerCase().includes('calendar')) {
+          result = {
+            text: () => undefined,
             candidates: [{
-              content: {
-                parts: [{
-                  functionCall: { name: 'listEvents', args: {} }
-                }]
-              }
+              content: { parts: [{ functionCall: { name: 'listEvents', args: {} } }] }
             }]
           };
         }
 
-        // Case B: Function Response
-        if (Array.isArray(payload?.message) && payload.message[0]?.functionResponse) {
-          return {
-            text: 'You have one event.',
-            candidates: [{
-              content: {
-                parts: [{ text: 'You have one event.' }]
-              }
-            }]
+        // Case C: Function Response
+        else if (Array.isArray(payload?.message) && payload.message[0]?.functionResponse) {
+          result = {
+            text: () => 'You have one event.',
+            candidates: [{ content: { parts: [{ text: 'You have one event.' }] } }]
           };
         }
 
+        // Default
+        else {
+          result = {
+            text: () => 'I do not understand.',
+            candidates: [{ content: { parts: [{ text: 'I do not understand.' }] } }]
+          };
+        }
+
+        // Return stream structure
         return {
-          text: 'I do not understand.',
-          candidates: [{
-            content: { parts: [{ text: 'I do not understand.' }] }
-          }]
+          stream: (async function* () {
+            if (result.candidates[0].content.parts[0].text) {
+              yield { text: () => result.candidates[0].content.parts[0].text };
+            }
+          })(),
+          response: Promise.resolve(result)
         };
       })
     })
@@ -106,6 +111,7 @@ describe('Agent with Tools', () => {
     jest.useFakeTimers();
     jest.clearAllMocks();
     mockInterface = new MockInterface();
+    mockInterface.broadcast = jest.fn().mockResolvedValue(true);
     agent = new Agent({
       googleApiKey: 'fake-key',
       interface: mockInterface

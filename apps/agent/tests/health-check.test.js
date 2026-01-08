@@ -7,7 +7,7 @@ describe('Agent Health Check', () => {
 
     beforeEach(() => {
         // Mock config
-        agent = new Agent({ interface: { send: jest.fn(), on: jest.fn() }, googleApiKey: 'fake' });
+        agent = new Agent({ interface: { send: jest.fn(), on: jest.fn(), broadcast: jest.fn().mockResolvedValue(true) }, googleApiKey: 'fake' });
         // Mock DB to avoid errors, though health check should skip it
         agent.db = {
             saveMessage: jest.fn(),
@@ -48,7 +48,16 @@ describe('Agent Health Check', () => {
         // Mock router causing throw to exit early or mock full chain? 
         // Let's just expect it NOT to return immediate PONG logic.
         agent.router = { route: jest.fn().mockResolvedValue({ model: 'FLASH' }) };
-        agent.client = { chats: { create: () => ({ sendMessage: jest.fn().mockResolvedValue({ candidates: [{ content: { role: 'model', parts: [{ text: 'Hello' }] } }] }) }) } };
+        agent.client = {
+            chats: {
+                create: () => ({
+                    sendMessageStream: jest.fn().mockResolvedValue({
+                        stream: (async function* () { yield { text: () => "Hello" }; })(),
+                        response: Promise.resolve({ candidates: [{ content: { role: 'model', parts: [{ text: 'Hello' }] } }] })
+                    })
+                })
+            }
+        };
         agent.mcp = { getTools: jest.fn().mockResolvedValue([]) };
 
         const sendCallback = jest.fn();

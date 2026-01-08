@@ -1,6 +1,7 @@
 'use client';
 import { useRouter } from 'next/navigation';
 import { createVault, deleteVault } from '@/app/actions';
+import { Box, Activity, DollarSign, Wallet, Plane } from 'lucide-react';
 
 export default function VaultList({ vaults }) {
     const router = useRouter();
@@ -41,7 +42,15 @@ export default function VaultList({ vaults }) {
                     className="relative flex flex-col p-6 bg-zinc-900 border border-zinc-800 rounded-xl shadow-sm hover:shadow-md hover:border-indigo-500/50 transition-all cursor-pointer group"
                 >
                     <div className="flex items-center justify-between mb-4">
-                        <h3 className="text-xl font-bold text-zinc-100 capitalize">{vault.id}</h3>
+                        <div className="flex items-center gap-3">
+                            <div className="p-2 bg-zinc-800 rounded-lg">
+                                {vault.id === 'health' ? <Activity className="h-5 w-5 text-rose-400" /> :
+                                    vault.id === 'finance' ? <DollarSign className="h-5 w-5 text-emerald-400" /> :
+                                        vault.id === 'travel' ? <Plane className="h-5 w-5 text-sky-400" /> :
+                                            <Box className="h-5 w-5 text-indigo-400" />}
+                            </div>
+                            <h3 className="text-xl font-bold text-zinc-100 capitalize">{vault.id}</h3>
+                        </div>
                         <span className="text-xs bg-zinc-800 text-zinc-400 px-2 py-1 rounded-full">
                             {vault.filesCount || 0} files
                         </span>

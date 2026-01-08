@@ -260,6 +260,39 @@ class Agent {
   }
 
   /**
+   * Helper to send message efficiently with streaming and token broadcasting
+   */
+  async _generateStream(session, payload, chatId) {
+    let streamResult;
+    try {
+      streamResult = await session.sendMessageStream(payload);
+    } catch (e) {
+      // Fallback for mocked tests that might not have sendMessageStream implementation despite checks
+      // OR real errors.
+      // But we want to enforce streaming.
+      throw e;
+    }
+
+    // Process stream for UI updates
+    for await (const chunk of streamResult.stream) {
+      const chunkText = chunk.text();
+      if (chunkText) {
+        this.interface.broadcast('agent:token', {
+          chatId,
+          content: chunkText,
+          timestamp: new Date().toISOString()
+        }).catch(err => {
+          // In tests, this might fail if broadcast mock returns undefined. 
+          // We fixed the mock to return Promise.
+        });
+      }
+    }
+
+    // Return full response for internal logic
+    return await streamResult.response;
+  }
+
+  /**
    * Core processing logic.
    * @param {object} message - Incoming message
    * @param {function} sendCallback - Async function(reply) to handle responses
@@ -700,12 +733,14 @@ ${files.length > 0 ? files.join(", ") : "No files yet."}
 
         const modelStart = Date.now();
         try {
-          response = await session.sendMessage({ message: message.parts || message.content });
+          // STREAMING IMPLEMENTATION
+          response = await this._generateStream(session, { message: message.parts || message.content }, chatId);
+
           const modelDuration = Date.now() - modelStart;
           console.timeEnd(timerLabel);
           this.db.logMetric('latency_model', modelDuration, { model: selectedModel, chatId, runId });
 
-          // Validation: Check if response is effectively empty
+          // Validation
           const initialCandidates = response.candidates || [];
           const firstCandidate = initialCandidates[0];
           const parts = firstCandidate?.content?.parts || [];
@@ -911,12 +946,18 @@ ${files.length > 0 ? files.join(", ") : "No files yet."}
           source: message.source
         });
 
+
         // 5. Send All Results back to Gemini
         const toolTimerLabel = `[Agent] Model Tool Response (${selectedModel}) - ${Date.now()}`;
         console.time(toolTimerLabel);
-        response = await session.sendMessage({
-          message: functionResponseParts
-        });
+
+        try {
+          response = await this._generateStream(session, { message: functionResponseParts }, chatId);
+        } catch (e) {
+          console.error('[Agent] Tool response streaming failed:', e);
+          throw e;
+        }
+
         console.timeEnd(toolTimerLabel);
 
         // USAGE LOGGING (Tool Loop)

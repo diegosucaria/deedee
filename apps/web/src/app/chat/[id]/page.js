@@ -205,7 +205,8 @@ export default function ChatSessionPage({ params }) {
                     role: 'assistant',
                     content: data.content,
                     type: data.type,
-                    timestamp: data.timestamp
+                    timestamp: data.timestamp,
+                    isFinal: true // Mark as final to stop appending stream
                 });
 
                 if (data.type === 'audio') {
@@ -223,6 +224,37 @@ export default function ChatSessionPage({ params }) {
                 if (data.metadata?.chatId && data.metadata.chatId !== chatId) return;
                 setIsWaiting(true);
                 setThinkingStatus(data.status);
+            });
+
+            // STREAMING HANDLER
+            newSocket.on('agent:token', (data) => {
+                if (!isMounted) return;
+                if (data.chatId !== chatId) return;
+
+                setIsWaiting(false); // Stop waiting indicator
+
+                setMessages((prev) => {
+                    const lastMsg = prev[prev.length - 1];
+                    // If last message is assistant text, append.
+                    // If not, creates new assistant message.
+                    if (lastMsg && lastMsg.role === 'assistant' && lastMsg.type === 'text' && !lastMsg.isFinal) {
+                        return [
+                            ...prev.slice(0, -1),
+                            { ...lastMsg, content: lastMsg.content + data.content }
+                        ];
+                    } else {
+                        // Start new message
+                        return [
+                            ...prev,
+                            {
+                                role: 'assistant',
+                                content: data.content,
+                                type: 'text',
+                                timestamp: data.timestamp
+                            }
+                        ];
+                    }
+                });
             });
 
             if (isMounted) setSocket(newSocket);
