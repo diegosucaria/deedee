@@ -52,6 +52,13 @@ export default function GeminiLivePage() {
             // We pass the token in the 'setup' message OR as a query param `access_token`. 
             const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?access_token=${auth.token}`;
 
+            // Clean tools for Gemini (remove serverName or other non-standard props)
+            const cleanTools = tools.map(t => ({
+                name: t.name,
+                description: t.description,
+                parameters: t.parameters
+            }));
+
             log(`Connecting (${config.model})...`);
             const ws = new WebSocket(wsUrl);
             wsRef.current = ws;
@@ -74,7 +81,7 @@ export default function GeminiLivePage() {
                         tools: [
                             // Only include if defined
                             { google_search: {} },
-                            ...(tools.length > 0 ? [{ function_declarations: tools }] : [])
+                            ...(cleanTools.length > 0 ? [{ function_declarations: cleanTools }] : [])
                         ]
                     }
                 };
@@ -185,7 +192,7 @@ export default function GeminiLivePage() {
         const stream = await navigator.mediaDevices.getUserMedia({
             video: false, // EXPLICITLY disable video to prevent camera light
             audio: {
-                // deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined, // selectedDeviceId is not defined in this scope
+                deviceId: selectedDeviceId ? { exact: selectedDeviceId } : undefined,
                 channelCount: 1,
                 sampleRate: TARGET_RATE,
                 echoCancellation: true,
@@ -373,6 +380,12 @@ export default function GeminiLivePage() {
             >
                 <X className="w-5 h-5 group-hover:scale-110 transition-transform" />
             </button>
+            <button
+                onClick={() => setShowSettings(true)}
+                className="absolute top-6 left-6 p-4 rounded-full bg-zinc-900/50 text-zinc-400 hover:text-white hover:bg-zinc-800/80 transition-all z-50 backdrop-blur-md border border-white/5 hover:border-white/10 group"
+            >
+                <Settings2 className="w-5 h-5 group-hover:scale-110 transition-transform" />
+            </button>
 
             {/* Controls */}
             <div className="absolute bottom-12 flex items-center gap-8 z-20">
@@ -421,6 +434,16 @@ export default function GeminiLivePage() {
             <div className="absolute top-4 left-4 font-mono text-xs text-zinc-600 max-w-xs pointer-events-none">
                 {logs.map((l, i) => <div key={i}>{l}</div>)}
             </div>
+
+            <AudioSettingsDialog
+                isOpen={showSettings}
+                onClose={() => setShowSettings(false)}
+                selectedDeviceId={selectedDeviceId}
+                onDeviceSelect={(id) => {
+                    setSelectedDeviceId(id);
+                    setShowSettings(false);
+                }}
+            />
         </div>
     );
 }
