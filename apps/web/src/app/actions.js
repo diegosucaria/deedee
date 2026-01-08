@@ -775,9 +775,12 @@ export async function deletePerson(id) {
     }
 }
 
-export async function triggerSmartLearn() {
+export async function triggerSmartLearn(offset = 0, limit = 5) {
     try {
-        const res = await fetchAPI('/v1/people/learn', { method: 'POST' });
+        const res = await fetchAPI('/v1/people/learn', {
+            method: 'POST',
+            body: JSON.stringify({ limit, offset })
+        });
         return { success: true, candidates: res.candidates };
     } catch (error) {
         return { success: false, error: error.message };

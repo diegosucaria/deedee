@@ -7,27 +7,73 @@ import { triggerSmartLearn, createPerson } from '@/app/actions';
 
 export function SmartLearnModal({ isOpen, onClose, onLearned }) {
     const [status, setStatus] = useState('idle'); // idle, analyzing, reviewing, saving
+    const [loadingMore, setLoadingMore] = useState(false);
     const [candidates, setCandidates] = useState([]);
     const [selected, setSelected] = useState(new Set());
     const [error, setError] = useState(null);
+    const [offset, setOffset] = useState(0);
+    const [hasMore, setHasMore] = useState(true);
+
+    const LIMIT = 5;
 
     const startAnalysis = async () => {
         setStatus('analyzing');
         setError(null);
+        setCandidates([]);
+        setOffset(0);
+        setHasMore(true);
+
         try {
-            const res = await triggerSmartLearn();
+            const res = await triggerSmartLearn(0, LIMIT);
             if (!res.success) throw new Error(res.error);
+
             if (!res.candidates || res.candidates.length === 0) {
                 setStatus('empty');
+                setHasMore(false);
             } else {
                 setCandidates(res.candidates);
                 // Select all by default
                 setSelected(new Set(res.candidates.map(c => c.phone)));
                 setStatus('reviewing');
+                setOffset(LIMIT);
+                if (res.candidates.length < LIMIT) setHasMore(false);
             }
         } catch (e) {
             setError(e.message);
             setStatus('idle');
+        }
+    };
+
+    const loadMore = async () => {
+        setLoadingMore(true);
+        setError(null);
+        try {
+            const res = await triggerSmartLearn(offset, LIMIT);
+            if (!res.success) throw new Error(res.error);
+
+            if (res.candidates && res.candidates.length > 0) {
+                // Filter duplicates just in case
+                const existingPhones = new Set(candidates.map(c => c.phone));
+                const newCandidates = res.candidates.filter(c => !existingPhones.has(c.phone));
+
+                setCandidates(prev => [...prev, ...newCandidates]);
+
+                // Auto-select new ones
+                setSelected(prev => {
+                    const next = new Set(prev);
+                    newCandidates.forEach(c => next.add(c.phone));
+                    return next;
+                });
+
+                setOffset(prev => prev + LIMIT);
+                if (res.candidates.length < LIMIT) setHasMore(false);
+            } else {
+                setHasMore(false);
+            }
+        } catch (e) {
+            setError(e.message);
+        } finally {
+            setLoadingMore(false);
         }
     };
 
@@ -156,6 +202,20 @@ export function SmartLearnModal({ isOpen, onClose, onLearned }) {
                                     </div>
                                 ))}
                             </div>
+
+                            {/* Load More Button */}
+                            {hasMore && (
+                                <button
+                                    onClick={loadMore}
+                                    disabled={loadingMore}
+                                    className="w-full py-2 text-sm text-muted-foreground hover:text-foreground border border-dashed border-border rounded-lg flex items-center justify-center hover:bg-secondary/10 transition-colors"
+                                >
+                                    {loadingMore ? <Loader2 size={16} className="animate-spin mr-2" /> : <UserPlus size={16} className="mr-2" />}
+                                    {loadingMore ? 'Analyzing next batch...' : 'Load More Candidates'}
+                                </button>
+                            )}
+
+                            {error && <p className="text-destructive text-sm text-center">{error}</p>}
                         </div>
                     )}
                 </div>
