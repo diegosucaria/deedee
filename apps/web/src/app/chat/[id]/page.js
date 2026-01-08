@@ -106,82 +106,97 @@ export default function ChatSessionPage({ params }) {
 
     // Initialize Socket
     useEffect(() => {
-        const newSocket = io(SOCKET_URL, {
-            reconnectionAttempts: 5,
-            query: { chatId } // Identify session
-        });
+        let newSocket;
+        let isMounted = true;
 
-        newSocket.on('connect', () => {
-            console.log('Socket connected:', newSocket.id);
-            setIsConnected(true);
-        });
-
-        newSocket.on('disconnect', () => {
-            console.log('Socket disconnected');
-            setIsConnected(false);
-        });
-
-        // Handle Session Updates (Auto-Titling)
-        newSocket.on('session:update', (data) => {
-            if (data.id === chatId) {
-                if (data.title) setSessionTitle(data.title);
-                router.refresh(); // Refresh server components (Sidebar)
-            }
-        });
-
-        newSocket.on('agent:message', (data) => {
-            if (data.metadata?.chatId && data.metadata.chatId !== chatId) return; // Filter by chatID
-
-            // Check for "Thinking..." messages
-            if (data.content && (data.content.startsWith('Thinking...') || data.content.startsWith('Still working...'))) {
-                setIsWaiting(true);
-                return;
-            }
-
-            setIsWaiting(false);
-
-            addMessage({
-                role: 'assistant',
-                content: data.content,
-                type: data.type,
-                timestamp: data.timestamp
+        const initSocket = () => {
+            newSocket = io(SOCKET_URL, {
+                reconnectionAttempts: 5,
+                transports: ['websocket'], // Force websocket to avoid polling issues
+                query: { chatId } // Identify session
             });
 
-            if (data.type === 'audio') {
-                try {
-                    const audio = new Audio(data.content.startsWith('data:') ? data.content : `data:audio/wav;base64,${data.content}`);
-                    audio.play().catch(e => console.warn('Auto-play blocked:', e));
-                } catch (e) {
-                    console.error('Audio decode error', e);
+            newSocket.on('connect', () => {
+                if (isMounted) {
+                    console.log('Socket connected:', newSocket.id);
+                    setIsConnected(true);
                 }
-            }
-        });
+            });
 
-        newSocket.on('agent:thinking', (data) => {
-            if (data.metadata?.chatId && data.metadata.chatId !== chatId) return;
-            setIsWaiting(true);
-            setThinkingStatus(data.status);
-        });
-
-        // Handle Session Updates (Auto-Titling)
-        newSocket.on('session:update', (data) => {
-            console.log('[Chat] Received session update:', data);
-            // Parse content if it's a string (Agent sends JSON string)
-            let update = data;
-            if (typeof data.content === 'string') {
-                try { update = JSON.parse(data.content); } catch (e) { }
-            }
-
-            if (update.id === chatId) {
-                if (update.title) {
-                    setSessionTitle(update.title);
-                    router.refresh(); // Refresh Sidebar
+            newSocket.on('disconnect', (reason) => {
+                if (isMounted) {
+                    console.log('Socket disconnected:', reason);
+                    setIsConnected(false);
                 }
-            }
-        });
+            });
 
-        setSocket(newSocket);
-        return () => newSocket.close();
+            // Handle Session Updates (Auto-Titling)
+            newSocket.on('session:update', (data) => {
+                if (!isMounted) return;
+
+                // Parse content if it's a string (Agent sends JSON string)
+                let update = data;
+                if (typeof data.content === 'string') {
+                    try { update = JSON.parse(data.content); } catch (e) { }
+                }
+
+                if (update.id === chatId) {
+                    if (update.title) {
+                        setSessionTitle(update.title);
+                        router.refresh();
+                    }
+                }
+            });
+
+
+            newSocket.on('agent:message', (data) => {
+                if (!isMounted) return;
+                if (data.metadata?.chatId && data.metadata.chatId !== chatId) return; // Filter by chatID
+
+                // Check for "Thinking..." messages
+                if (data.content && (data.content.startsWith('Thinking...') || data.content.startsWith('Still working...'))) {
+                    setIsWaiting(true);
+                    return;
+                }
+
+                setIsWaiting(false);
+
+                addMessage({
+                    role: 'assistant',
+                    content: data.content,
+                    type: data.type,
+                    timestamp: data.timestamp
+                });
+
+                if (data.type === 'audio') {
+                    try {
+                        const audio = new Audio(data.content.startsWith('data:') ? data.content : `data:audio/wav;base64,${data.content}`);
+                        audio.play().catch(e => console.warn('Auto-play blocked:', e));
+                    } catch (e) {
+                        console.error('Audio decode error', e);
+                    }
+                }
+            });
+
+            newSocket.on('agent:thinking', (data) => {
+                if (!isMounted) return;
+                if (data.metadata?.chatId && data.metadata.chatId !== chatId) return;
+                setIsWaiting(true);
+                setThinkingStatus(data.status);
+            });
+
+            if (isMounted) setSocket(newSocket);
+        };
+
+        initSocket();
+
+        return () => {
+            isMounted = false;
+            if (newSocket) {
+                newSocket.disconnect();
+                newSocket.close(); // Ensure explicit close
+            }
+        };
     }, [chatId, router]);
 
     // Auto-scroll
