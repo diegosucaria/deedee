@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { getLiveToken, executeLiveTool, getLiveConfig, getAgentTools } from './actions';
+import { getLiveToken, executeLiveTool, getLiveConfig, getAgentTools, getVoiceSettings } from './actions';
 import { Mic, MicOff, PhoneOff, Settings2, Terminal, X } from 'lucide-react';
 import AudioSettingsDialog from '@/components/AudioSettingsDialog';
 import clsx from 'clsx';
@@ -14,6 +14,7 @@ export default function GeminiLivePage() {
     const [status, setStatus] = useState('idle'); // idle, connecting, active, error
     const [volume, setVolume] = useState(0);
     const [logs, setLogs] = useState([]);
+    const [voice, setVoice] = useState('Kore');
 
     const audioContextRef = useRef(null);
     const wsRef = useRef(null);
@@ -38,11 +39,14 @@ export default function GeminiLivePage() {
             log('Getting Config & Token...');
 
             // Parallel fetch for speed
-            const [config, auth, toolsRes] = await Promise.all([
+            const [config, auth, toolsRes, voicePref] = await Promise.all([
                 getLiveConfig(),
                 getLiveToken(),
-                getAgentTools()
+                getAgentTools(),
+                getVoiceSettings()
             ]);
+
+            if (voicePref) setVoice(voicePref);
 
             if (!auth.success || !auth.token) throw new Error(auth.error || 'No token');
             const tools = toolsRes.success ? toolsRes.tools : [];
@@ -101,7 +105,7 @@ export default function GeminiLivePage() {
                             speech_config: {
                                 voice_config: {
                                     prebuilt_voice_config: {
-                                        voice_name: "Kore"
+                                        voice_name: voice
                                     }
                                 }
                             }

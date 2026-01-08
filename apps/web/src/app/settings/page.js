@@ -1,15 +1,17 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getAgentConfig, updateAgentConfig, getEnvConfig, getBackups } from '../actions';
+import { getAgentConfig, updateAgentConfig, getEnvConfig, getBackups, getVoiceSettings, saveVoiceSettings } from '../actions';
 import { Settings, Check, AlertTriangle } from 'lucide-react';
 import BackupSettings from '@/components/BackupSettings';
 import EnvVariables from '@/components/EnvVariables';
+import VoiceSelector from '@/components/VoiceSelector';
 
 export default function SettingsPage() {
     const [config, setConfig] = useState(null);
     const [env, setEnv] = useState({});
     const [backups, setBackups] = useState([]);
+    const [voice, setVoice] = useState('Kore');
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState(null);
 
@@ -17,13 +19,28 @@ export default function SettingsPage() {
         Promise.all([
             getAgentConfig(),
             getEnvConfig(),
-            getBackups()
-        ]).then(([configData, envData, backupsData]) => {
+            getBackups(),
+            getVoiceSettings()
+        ]).then(([configData, envData, backupsData, voiceData]) => {
             setConfig(configData);
             setEnv(envData);
             setBackups(backupsData);
+            setVoice(voiceData);
         });
     }, []);
+
+    const handleVoiceChange = async (newVoice) => {
+        setSaving(true);
+        // Optimistic
+        setVoice(newVoice);
+        const res = await saveVoiceSettings(newVoice);
+        setSaving(false);
+        if (!res.success) {
+            setError(res.error);
+            // Revert
+            getVoiceSettings().then(setVoice);
+        }
+    };
 
     const handleSave = async (key, value) => {
         setSaving(true);
@@ -101,6 +118,19 @@ export default function SettingsPage() {
 
                 <BackupSettings backups={backups} />
                 <EnvVariables env={env} />
+
+                {/* Voice Settings Card */}
+                <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+                    <div className="p-6 border-b border-zinc-800">
+                        <h2 className="text-lg font-semibold text-white">Live Agent Voice</h2>
+                        <p className="text-sm text-zinc-400 mt-1">
+                            Choose the voice persona for Gemini Live sessions.
+                        </p>
+                    </div>
+                    <div className="p-6">
+                        <VoiceSelector selectedVoice={voice} onSelect={handleVoiceChange} />
+                    </div>
+                </div>
             </section>
         </div>
     );

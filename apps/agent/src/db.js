@@ -94,6 +94,13 @@ class AgentDB {
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
+      CREATE TABLE IF NOT EXISTS agent_settings (
+        key TEXT PRIMARY KEY,
+        value TEXT NOT NULL, -- JSON string
+        category TEXT DEFAULT 'general',
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
       CREATE TABLE IF NOT EXISTS token_usage (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         model TEXT NOT NULL,
