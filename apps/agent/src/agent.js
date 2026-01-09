@@ -21,6 +21,7 @@ const { Scheduler } = require('./scheduler');
 const axios = require('axios');
 const { getSystemInstruction } = require('./prompts/system');
 const { getFunctionCalls, getThinkingMessage } = require('./utils/helpers');
+const { PeopleService } = require('./services/people-service');
 
 
 
@@ -58,6 +59,9 @@ class Agent {
     this.rateLimiter = new RateLimiter(this.db);
 
     this.scheduler = new Scheduler(this);
+
+    // Services
+    this.peopleService = new PeopleService(this);
 
     // In-Memory Settings Cache
     this.settings = {};
