@@ -805,38 +805,6 @@ export async function triggerSmartLearn(offset = 0, limit = 5) {
 // --- Watchers ---
 export async function getWatchers() {
     try {
-        const res = await fetchAPI('/v1/config/watchers?status=active');
-        return res.watchers || [];
-    } catch (e) {
-        console.error('getWatchers Error:', e);
-        return [];
-    }
-}
-
-export async function createWatcher(name, contactString, condition, instruction) {
-    try {
-        await fetchAPI('/v1/config/watchers', {
-            method: 'POST',
-            body: JSON.stringify({ name, contactString, condition, instruction })
-        });
-        revalidatePath('/tasks');
-        return { success: true };
-    } catch (e) { return { success: false, error: e.message }; }
-}
-
-export async function deleteWatcher(id) {
-    try {
-        await fetchAPI(`/v1/config/watchers/${encodeURIComponent(id)}`, { method: 'DELETE' });
-        revalidatePath('/tasks');
-        return { success: true };
-    } catch (e) { return { success: false, error: e.message }; }
-}
-
-
-
-// --- Watchers ---
-export async function getWatchers() {
-    try {
         const res = await fetchAPI('/v1/config/watchers');
         return res.watchers || [];
     } catch (e) {
@@ -883,9 +851,9 @@ export async function toggleWatcher(id, status) {
         // Wait, grep in Step 1953 only showed GET, POST, DELETE.
         // I might need to implement PUT in backend first if missing.
         // For now, let's implement the action optimistically.
-        await fetchAPI(`/v1/config/watchers/${encodeURIComponent(id)}`, { 
-            method: 'PUT', 
-            body: JSON.stringify({ status }) 
+        await fetchAPI(`/v1/config/watchers/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            body: JSON.stringify({ status })
         });
         revalidatePath('/tasks');
         return { success: true };
