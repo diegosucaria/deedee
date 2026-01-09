@@ -72,7 +72,7 @@ export default function ContactList({ session, onClose }) {
                         </div>
                     ) : (
                         contacts.map((c) => (
-                            <ContactRow key={c.id} contact={c} />
+                            <ContactRow key={c.id} contact={c} session={session} />
                         ))
                     )}
                 </div>
@@ -86,7 +86,7 @@ export default function ContactList({ session, onClose }) {
     );
 }
 
-function ContactRow({ contact }) {
+function ContactRow({ contact, session }) {
     const [status, setStatus] = useState('idle'); // idle, loading, success, error
 
     const handleImport = async () => {
@@ -113,8 +113,19 @@ function ContactRow({ contact }) {
     return (
         <div className="p-3 hover:bg-zinc-800/50 rounded-lg flex items-center justify-between gap-3 transition-colors group">
             <div className="flex items-center gap-3 overflow-hidden">
-                <div className="w-10 h-10 bg-indigo-500/10 text-indigo-400 rounded-full flex items-center justify-center flex-shrink-0">
-                    <User className="w-5 h-5" />
+                <div className="w-10 h-10 bg-indigo-500/10 text-indigo-400 rounded-full flex items-center justify-center flex-shrink-0 relative overflow-hidden">
+                    <img
+                        src={`/api/whatsapp/avatar?jid=${encodeURIComponent(contact.id)}&session=${'user'}`}
+                        alt={contact.name}
+                        className="w-full h-full object-cover"
+                        onError={(e) => {
+                            e.target.style.display = 'none';
+                            e.target.nextSibling.style.display = 'flex';
+                        }}
+                    />
+                    <div className="absolute inset-0 flex items-center justify-center bg-indigo-500/10 hidden">
+                        <User className="w-5 h-5" />
+                    </div>
                 </div>
                 <div className="overflow-hidden">
                     <div className="font-medium text-zinc-200 truncate">
