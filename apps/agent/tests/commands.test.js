@@ -85,7 +85,7 @@ describe('Slash Commands', () => {
         await agent.onMessage(msg);
 
         expect(mockClearHistory).toHaveBeenCalledWith('chat123');
-        expect(mockInterface.getLastMessage().content).toBe('Chat history cleared.');
+        expect(mockInterface.getLastMessage().content).toBe('Current chat history cleared.');
         // Should NOT save message (it's a command)
         expect(mockSaveMessage).not.toHaveBeenCalled();
     });
