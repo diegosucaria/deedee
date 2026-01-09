@@ -26,6 +26,8 @@ jest.mock('../src/db', () => ({
         deleteJobState: jest.fn(),
         getHistoryForChat: jest.fn().mockReturnValue([]), // Added
         deleteMessagesSince: jest.fn(), // Added
+        getLatestSummary: jest.fn().mockReturnValue(null), // Added
+        getFactsFormatted: jest.fn().mockReturnValue(""), // Added
         close: jest.fn().mockResolvedValue()
     }))
 }));

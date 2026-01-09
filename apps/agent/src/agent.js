@@ -1239,13 +1239,16 @@ IF you are asked to draft a message for the user, or if you are replying via the
       }
       executionSummary.replies.push(errReply);
     } finally {
-      const e2eDuration = Date.now() - e2eStart;
-      this.db.logMetric('latency_e2e', e2eDuration, { chatId: message.metadata?.chatId, runId });
-      // Only log cost if it exists (might be 0 for internal health checks or errors before model calls)
-      if (typeof e2eCost !== 'undefined') {
-        console.log(`[Agent] E2E Request Duration: ${e2eDuration}ms | Total Cost: $${e2eCost.toFixed(6)}`);
-      } else {
-        console.log(`[Agent] E2E Request Duration: ${e2eDuration}ms`);
+      const isPassiveMode = message.source === 'whatsapp:user';
+      if (!isPassiveMode) {
+        const e2eDuration = Date.now() - e2eStart;
+        this.db.logMetric('latency_e2e', e2eDuration, { chatId: message.metadata?.chatId, runId });
+        // Only log cost if it exists (might be 0 for internal health checks or errors before model calls)
+        if (typeof e2eCost !== 'undefined') {
+          console.log(`[Agent] E2E Request Duration: ${e2eDuration}ms | Total Cost: $${e2eCost.toFixed(6)}`);
+        } else {
+          console.log(`[Agent] E2E Request Duration: ${e2eDuration}ms`);
+        }
       }
     }
 
