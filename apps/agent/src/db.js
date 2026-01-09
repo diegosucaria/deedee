@@ -163,7 +163,22 @@ class AgentDB {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
+
+      CREATE TABLE IF NOT EXISTS watchers (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        name TEXT,
+        contact_string TEXT NOT NULL,
+        person_id TEXT,
+        condition TEXT NOT NULL,
+        instruction TEXT NOT NULL,
+        status TEXT DEFAULT 'active', -- active, triggered, paused
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        last_triggered_at DATETIME
+      );
     `);
+
+    // Migration: Add watchers table if missing (idempotent via create table if not exists, but for updates just in case)
+    // ...
 
     // Migration: Backfill sessions for existing messages
     this.migrateSessions();
@@ -656,6 +671,53 @@ class AgentDB {
   completeGoal(id) {
     const stmt = this.db.prepare("UPDATE goals SET status = 'completed' WHERE id = ?");
     stmt.run(id);
+  }
+
+  // --- Watchers ---
+  createWatcher(watcher) {
+    const stmt = this.db.prepare(`
+        INSERT INTO watchers (name, contact_string, person_id, condition, instruction, status)
+        VALUES (?, ?, ?, ?, ?, ?)
+    `);
+    return stmt.run(
+      watcher.name || 'New Watcher',
+      watcher.contactString,
+      watcher.personId || null,
+      watcher.condition,
+      watcher.instruction,
+      watcher.status || 'active'
+    );
+  }
+
+  getWatchers(status = 'active') {
+    const stmt = this.db.prepare(`
+        SELECT * FROM watchers 
+        WHERE status = ? 
+        ORDER BY created_at DESC
+    `);
+    return stmt.all(status);
+  }
+
+  getAllWatchers() {
+    return this.db.prepare('SELECT * FROM watchers ORDER BY created_at DESC').all();
+  }
+
+  updateWatcher(id, updates) {
+    const fields = [];
+    const args = [];
+
+    if (updates.status) { fields.push('status = ?'); args.push(updates.status); }
+    if (updates.lastTriggeredAt) { fields.push('last_triggered_at = ?'); args.push(updates.lastTriggeredAt); }
+
+    if (fields.length === 0) return;
+    args.push(id);
+
+    const sql = `UPDATE watchers SET ${fields.join(', ')} WHERE id = ?`;
+    this.db.prepare(sql).run(...args);
+  }
+
+  deleteWatcher(id) {
+    this.db.prepare('DELETE FROM watchers WHERE id = ?').run(id);
   }
 
   // --- Rate Limiting ---

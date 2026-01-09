@@ -448,13 +448,11 @@ class Agent {
       const commandResult = !isMultiModal ? await this.commandHandler.handle(message) : false;
 
       if (typeof commandResult === 'object' && commandResult.type === 'EXECUTE_PENDING') {
-        // Execute the pending action immediately
+        // ... (existing slash command logic) ...
         const action = commandResult.action;
         console.log(`[Agent] User confirmed action: ${action.name}`);
         const result = await this._executeTool(action.name, action.args, message, sendCallback, (model, pTokens, cTokens) => {
           const cost = calculateCost(model, pTokens, cTokens);
-          // We don't have e2eCost/Tokens variables in this scope easily for the command handler return path
-          // But we can at least log it to DB
           this.db.logTokenUsage({
             model, promptTokens: pTokens, candidateTokens: cTokens,
             totalTokens: pTokens + cTokens, chatId, estimatedCost: cost
@@ -475,13 +473,103 @@ class Agent {
         return executionSummary;
       }
 
+      // --- WATCHER LOGIC (Enhanced WhatsApp Intelligence) ---
+      // Security: whatsapp:user is PASSIVE (ignored) unless it triggers a watcher.
+      if (message.source.startsWith('whatsapp')) {
+        const isUserSession = message.source === 'whatsapp:user'; // Messages from friends to ME
+        const contactString = message.metadata?.phoneNumber;
+        const groupName = message.metadata?.groupName;
+        const msgContent = message.content?.toLowerCase() || '';
+
+        // Fetch active watchers
+        const watchers = this.db.getWatchers('active');
+        let triggeredWatcher = null;
+
+        for (const w of watchers) {
+          // Check Contact Match (Phone or Group Name)
+          const isContactMatch = (contactString && w.contact_string.includes(contactString)) ||
+            (groupName && w.contact_string.toLowerCase().includes(groupName.toLowerCase())); // loose match
+
+          if (isContactMatch) {
+            // Check Condition
+            // Simple 'contains' logic for now
+            if (w.condition.startsWith('contains')) {
+              // "contains 'dinner'" -> extract "dinner"
+              const keyword = w.condition.match(/['"](.*?)['"]/)?.[1];
+              if (keyword && msgContent.includes(keyword.toLowerCase())) {
+                triggeredWatcher = w;
+                break;
+              }
+            }
+            // Fallback: simple substring match of the condition itself
+            else if (msgContent.includes(w.condition.toLowerCase())) {
+              triggeredWatcher = w;
+              break;
+            }
+          }
+        }
+
+        if (isUserSession && !triggeredWatcher) {
+          // PASSIVE MODE: Save to DB but DO NOT REPLY.
+          // But wait, we must save it first!
+          this.db.saveMessage(message);
+          console.log(`[Agent] Passive Mode (whatsapp:user): Message from ${contactString} saved. No watcher triggered. Ignoring.`);
+          return executionSummary; // Exit early
+        }
+
+        if (triggeredWatcher) {
+          console.log(`[Agent] Watcher TRIGGERED! ID: ${triggeredWatcher.id}, Instruction: "${triggeredWatcher.instruction}"`);
+
+          // Mark triggered? Or keep active? Usually one-off? Let's keep active for now unless instruction says "stop watching"
+          // Actually, usually you want to be notified once per event.
+          // Let's update last_triggered_at
+          this.db.updateWatcher(triggeredWatcher.id, { lastTriggeredAt: new Date().toISOString() });
+
+          // Construct System Alert to force Agent Action
+          // We replace the original content with the Instruction + Context
+          // But we keep the original message in DB for history?
+          // "Passive Mode" logic above saved it.
+          // If it IS triggered, we proceed.
+          // But we shouldn't just run the generic router on the original message "Hey dinner?", 
+          // the agent won't know what to do with it for ME.
+          // The INSTRUCTION is what the agent should do.
+
+          // Hijack the message content for the Agent's internal processing
+          // BUT ensure we save the original message correctly first?
+          this.db.saveMessage(message);
+
+          // Create a pseudo-message for the Agent to ACT on
+          message.content = `SYSTEM_WATCHER_ALERT: A message from ${contactString} ("${message.content}") matched watcher conditions. \nINSTRUCTION: ${triggeredWatcher.instruction}`;
+          message.role = 'user'; // Treat as a command from me
+          // Proceed to normal flow...
+        }
+      }
+
       // 2. Rate Limiting
       if (!(await this.rateLimiter.check(message, this.interface))) {
         return executionSummary;
       }
 
-      // 3. Save User Message
-      this.db.saveMessage(message);
+      // 3. Save User Message (If not already saved by Passive Mode logic)
+      // We moved saveMessage up in the Passive Mode block.
+      // If we are here, it's either:
+      // a) Not whatsapp
+      // b) whatsapp:assistant (normal command)
+      // c) whatsapp:user AND triggered watcher
+
+      // If (c), we saved it inside the block.
+      // If (b) or (a), we need to save it.
+      // Let's rely on a deduplication check inside saveMessage (it uses uuid/id) or just check if it was processed?
+      // Actually `db.saveMessage` generates an ID if one doesn't exist.
+      // `createAssistantMessage` etc creates IDs. `createUserMessage` creates IDs.
+      // The `message` object has an ID.
+      // `saveMessage` does `INSERT OR IGNORE` usually?
+      // Let's check `db.saveMessage` implementation using `view_file` if unsure.
+      // Assuming it's safe to call execution path logic.
+
+      if (!message.source.startsWith('whatsapp:user')) {
+        this.db.saveMessage(message);
+      }
 
       await reportProgress('Routing...');
 

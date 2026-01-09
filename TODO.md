@@ -42,12 +42,15 @@
     - [x] **Ghost Mode**: Disabled auto-read receipts.
     - [x] **Session Persistence**: Fixed Docker volume mounting.
     - [x] **LID Support**: Fixed blocking of Linked Identity messages.
+- [x] **Enhanced Intelligence**:
+    - [x] **Message Watchers**: Passive monitoring of 'user' session with conditional triggers.
+    - [x] **Dual Session Logic**: 'Assistant' (Strict) vs 'User' (Passive/Mirror).
+    - [x] **Conversation Tools**: `listConversations`, `readChatHistory`.
 
 ---
 
 ## 🚧 Future Roadmap / Ideas
 
-### Interfaces
 ### Interfaces
 - [ ] **Automated Message Intros**: Add "I am DeeDee" introduction to automated/scheduler messages sent as User.
 - [ ] **Voice Interface**: Real-time Gemini Live API integration (Web).

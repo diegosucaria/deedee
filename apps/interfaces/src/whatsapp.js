@@ -292,14 +292,22 @@ class WhatsAppService {
             }
 
             // Security Check
-            if (this.allowedNumbers.size === 0) {
-                console.warn(`${this.logPrefix} Ignored message from ${phoneNumber} because ALLOWED_WHATSAPP_NUMBERS is empty (Secure Mode).`);
-                return;
-            }
+            // RELAXED for 'user' session (Passive Mode) - We want to read EVERYTHING
+            if (this.sessionId !== 'user') {
+                if (this.allowedNumbers.size === 0) {
+                    console.warn(`${this.logPrefix} Ignored message from ${phoneNumber} because ALLOWED_WHATSAPP_NUMBERS is empty (Secure Mode).`);
+                    return;
+                }
 
-            if (!this.allowedNumbers.has(phoneNumber)) {
-                console.warn(`${this.logPrefix} Blocked message from unauthorized number: ${phoneNumber}`);
-                return;
+                if (!this.allowedNumbers.has(phoneNumber)) {
+                    console.warn(`${this.logPrefix} Blocked message from unauthorized number: ${phoneNumber}`);
+                    return;
+                }
+            } else {
+                // For user session, we might want to log that we are processing a message from a non-allowed number
+                if (!this.allowedNumbers.has(phoneNumber)) {
+                    // console.log(`${this.logPrefix} Passive Mode: Processing message from ${phoneNumber}`);
+                }
             }
 
             console.log(`${this.logPrefix} Received from ${phoneNumber}`);
@@ -363,9 +371,19 @@ class WhatsAppService {
                 return;
             }
 
-            const userMessage = createUserMessage(text, 'whatsapp', phoneNumber);
+            // Distinguish Source like 'whatsapp:user' vs 'whatsapp:assistant'
+            const source = `whatsapp:${this.sessionId}`;
+            const userMessage = createUserMessage(text, source, phoneNumber);
+
             // Append session ID to metadata
-            userMessage.metadata = { chatId: remoteJid, phoneNumber, session: this.sessionId };
+            const isGroup = remoteJid.endsWith('@g.us');
+            userMessage.metadata = {
+                chatId: remoteJid,
+                phoneNumber,
+                session: this.sessionId,
+                isGroup,
+                groupName: isGroup ? 'Unknown Group' : undefined // We could fetch subject if needed
+            };
 
             // Inline Data for Agent
             if (buffer) {

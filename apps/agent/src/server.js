@@ -102,6 +102,7 @@ app.post('/webhook', (req, res) => {
 
 const { createInternalRouter } = require('./routes/internal');
 const { createLiveRouter } = require('./routes/live');
+const { createWatchersRouter } = require('./routes/watchers'); // NEW
 const { createToolRouter } = require('./routes/tools');
 const { createSettingsRouter } = require('./routes/settings');
 const createFilesRouter = require('./routes/files');
@@ -114,6 +115,7 @@ app.use('/live', createLiveRouter(agent));
 if (agent) {
   // Mount Modular Routers
   app.use('/internal/settings', createSettingsRouter(agent));
+  app.use('/internal/watchers', createWatchersRouter(agent)); // NEW
   app.use('/internal/people', createPeopleRouter(agent)); // Mount People Router
   app.use('/v1/chat', createFilesRouter(agent)); // Mounted at /v1/chat so POST /v1/chat/:id/files works
   app.use('/internal', createInternalRouter(agent)); // Internal Router (Protected)

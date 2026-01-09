@@ -23,4 +23,30 @@ router.post('/', (req, res) => proxyToAgent(req, res, 'POST', '/internal/setting
 // Route /config/env to /internal/config/env (Legacy Internal Router)
 router.get('/env', (req, res) => proxyToAgent(req, res, 'GET', '/internal/config/env', null));
 
+// Proxy settings
+router.use('/settings', (req, res) => {
+    // ... logic ...
+});
+
+router.get('/watchers', async (req, res) => {
+    try {
+        const response = await axios.get(`${agentUrl}/internal/watchers`, { params: req.query });
+        res.json(response.data);
+    } catch (e) { res.status(502).json({ error: 'Agent unavailable' }); }
+});
+
+router.post('/watchers', async (req, res) => {
+    try {
+        const response = await axios.post(`${agentUrl}/internal/watchers`, req.body);
+        res.json(response.data);
+    } catch (e) { res.status(502).json({ error: 'Agent unavailable' }); }
+});
+
+router.delete('/watchers/:id', async (req, res) => {
+    try {
+        await axios.delete(`${agentUrl}/internal/watchers/${req.params.id}`);
+        res.json({ success: true });
+    } catch (e) { res.status(502).json({ error: 'Agent unavailable' }); }
+});
+
 module.exports = router;

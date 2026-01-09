@@ -160,6 +160,67 @@ class CommunicationExecutor extends BaseExecutor {
                 return { success: true, info: `Message sent to ${cleanTo}` };
             }
 
+            case 'addWatcher': {
+                const { contactString, condition, instruction } = args;
+                console.log(`[CommunicationExecutor] Adding watcher for '${contactString}'`);
+                // Use AgentDB directly
+                const result = this.services.db.createWatcher({
+                    contactString,
+                    condition,
+                    instruction,
+                    status: 'active'
+                });
+                return { success: true, info: `Watcher added. ID: ${result.lastInsertRowid}` };
+            }
+
+            case 'readChatHistory': {
+                const { contact, limit, session } = args;
+                console.log(`[CommunicationExecutor] reading history for ${contact}`);
+
+                // Resolve Contact Alias First?
+                // Reuse alias resolution logic? For now, assume phone or resolving inside agent if tool caller did it.
+                // Or I can copy the resolution logic. Let's do simple cleaning first.
+                // Assuming contact is phone number or JID.
+                const cleanContact = contact.replace(/[^0-9]/g, '');
+                const jid = `${cleanContact}@s.whatsapp.net`;
+
+                try {
+                    const interfacesUrl = process.env.INTERFACES_URL || 'http://interfaces:5000';
+                    const res = await axios.get(`${interfacesUrl}/whatsapp/history`, {
+                        params: { jid, limit: limit || 10, session: session || 'user' }
+                    });
+
+                    const messages = res.data;
+                    if (!messages || messages.length === 0) return { info: "No history found." };
+
+                    const formatted = messages.map(m => `[${new Date(m.timestamp).toLocaleString()}] ${m.fromMe ? 'Me' : 'Them'}: ${m.message?.conversation || m.message?.extendedTextMessage?.text || '[Media]'}`).join('\n');
+
+                    return { success: true, info: `History with ${contact}:\n${formatted}` };
+                } catch (e) {
+                    console.error('[Communication] Failed to fetch history:', e.message);
+                    return { success: false, error: "Failed to read history. Interfaces service might be down or contact invalid." };
+                }
+            }
+
+            case 'listConversations': {
+                const { limit, session } = args;
+                try {
+                    const interfacesUrl = process.env.INTERFACES_URL || 'http://interfaces:5000';
+                    const res = await axios.get(`${interfacesUrl}/whatsapp/recent`, {
+                        params: { limit: limit || 10, session: session || 'user' }
+                    });
+
+                    const chats = res.data;
+                    if (!chats || chats.length === 0) return { info: "No active conversations found." };
+
+                    const list = chats.map(c => `- ${c.name || c.jid} (Last: ${new Date(c.t * 1000).toLocaleString()})`).join('\n');
+                    return { success: true, info: `Recent Conversations:\n${list}` };
+                } catch (e) {
+                    console.error('[Communication] Failed to list conversations:', e.message);
+                    return { success: false, error: "Failed to list conversations." };
+                }
+            }
+
             default: return null;
         }
     }

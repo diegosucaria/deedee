@@ -422,6 +422,45 @@ const toolDefinitions = [
           required: ["id"]
         }
       },
+      // Watchers & WhatsApp Intelligence
+      {
+        name: "addWatcher",
+        description: "Register a new message watcher. The agent will silently monitor incoming messages and execute the instruction ONLY when the condition is met. Use this for 'Tell me when X happens' or 'If X replies, say Y'.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            contactString: { type: "STRING", description: "The contact name or phone number to watch (e.g. 'Mom', '1234567890')." },
+            condition: { type: "STRING", description: "The condition to match. Currently supports 'contains \"keyword\"' (case-insensitive)." },
+            instruction: { type: "STRING", description: "What to do when triggered. (e.g. 'Reply with \"I am busy\"' or 'Notify me')." }
+          },
+          required: ["contactString", "condition", "instruction"]
+        }
+      },
+      {
+        name: "readChatHistory",
+        description: "Read the recent message history with a specific contact. Use this to catch up on a conversation or understand context before replying.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            contact: { type: "STRING", description: "The contact phone number or ID (e.g. '1234567890')." },
+            limit: { type: "NUMBER", description: "Optional. Number of messages to retrieve. Default is 10." },
+            session: { type: "STRING", description: "Optional. 'user' (default) or 'assistant'." }
+          },
+          required: ["contact"]
+        }
+      },
+      {
+        name: "listConversations",
+        description: "List recent active conversations from WhatsApp. Use this to see who has messaged recently.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            limit: { type: "NUMBER", description: "Optional. Number of conversations to list. Default is 10." },
+            session: { type: "STRING", description: "Optional. 'user' (default) or 'assistant'." }
+          },
+          required: []
+        }
+      },
       // Audio / TTS
       {
         name: "replyWithAudio",

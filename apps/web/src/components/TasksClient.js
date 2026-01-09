@@ -6,6 +6,7 @@ import { useRouter } from 'next/navigation';
 import CreateTaskForm from '@/components/CreateTaskForm';
 import JobLogsTable from '@/components/JobLogsTable';
 import ActiveJobsTable from '@/components/ActiveJobsTable';
+import WatchersTable from '@/components/WatchersTable';
 
 export default function TasksClient() {
     const router = useRouter();
@@ -26,6 +27,13 @@ export default function TasksClient() {
                 >
                     Active Scheduled Jobs
                     {activeTab === 'active' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-indigo-500" />}
+                </button>
+                <button
+                    onClick={() => setActiveTab('watchers')}
+                    className={`pb-2 px-1 text-sm font-medium transition-colors relative whitespace-nowrap flex items-center gap-2 ${activeTab === 'watchers' ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                >
+                    Message Watchers
+                    {activeTab === 'watchers' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-indigo-500" />}
                 </button>
                 <button
                     onClick={() => setActiveTab('manage')}
@@ -52,6 +60,12 @@ export default function TasksClient() {
             {activeTab === 'active' && (
                 <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
                     <ActiveJobsTable />
+                </div>
+            )}
+
+            {activeTab === 'watchers' && (
+                <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
+                    <WatchersTable />
                 </div>
             )}
         </div>

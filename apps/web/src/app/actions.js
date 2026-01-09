@@ -802,3 +802,34 @@ export async function triggerSmartLearn(offset = 0, limit = 5) {
     }
 }
 
+// --- Watchers ---
+export async function getWatchers() {
+    try {
+        const res = await fetchAPI('/v1/config/watchers?status=active');
+        return res.watchers || [];
+    } catch (e) {
+        console.error('getWatchers Error:', e);
+        return [];
+    }
+}
+
+export async function createWatcher(name, contactString, condition, instruction) {
+    try {
+        await fetchAPI('/v1/config/watchers', {
+            method: 'POST',
+            body: JSON.stringify({ name, contactString, condition, instruction })
+        });
+        revalidatePath('/tasks');
+        return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+}
+
+export async function deleteWatcher(id) {
+    try {
+        await fetchAPI(`/v1/config/watchers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        revalidatePath('/tasks');
+        return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+}
+
+
