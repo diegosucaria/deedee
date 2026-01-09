@@ -138,7 +138,20 @@ export default function ChatSessionPage({ params }) {
                 // For now, let's ensure we return string content.
                 if (!content && m.content) content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
             } else if (m.role === 'assistant' && hasParts) {
-                content = parts.map(p => p.text).join('');
+                // Check for Media (Audio/Image) in parts
+                const audioPart = parts.find(p => p.inlineData && p.inlineData.mimeType.startsWith('audio/'));
+                const imagePart = parts.find(p => p.inlineData && p.inlineData.mimeType.startsWith('image/'));
+
+                if (audioPart) {
+                    type = 'audio';
+                    content = audioPart.inlineData.data;
+                } else if (imagePart) {
+                    type = 'image';
+                    content = imagePart.inlineData.data;
+                } else {
+                    // Text
+                    content = parts.map(p => p.text).join('');
+                }
             }
 
             // Final fallback for content
@@ -240,9 +253,18 @@ export default function ChatSessionPage({ params }) {
 
                 setIsWaiting(false);
 
+                // Extract content for media types if 'content' is empty but 'parts' exist
+                let msgContent = data.content;
+                if (data.parts && (data.type === 'audio' || data.type === 'image')) {
+                    const mediaPart = data.parts.find(p => p.inlineData);
+                    if (mediaPart) {
+                        msgContent = mediaPart.inlineData.data;
+                    }
+                }
+
                 addMessage({
                     role: 'assistant',
-                    content: data.content,
+                    content: msgContent,
                     type: data.type,
                     timestamp: data.timestamp,
                     isFinal: true // Mark as final to stop appending stream
@@ -250,7 +272,8 @@ export default function ChatSessionPage({ params }) {
 
                 if (data.type === 'audio') {
                     try {
-                        const audio = new Audio(data.content.startsWith('data:') ? data.content : `data:audio/wav;base64,${data.content}`);
+                        const audioSrc = msgContent.startsWith('data:') ? msgContent : `data:audio/wav;base64,${msgContent}`;
+                        const audio = new Audio(audioSrc);
                         audio.play().catch(e => console.warn('Auto-play blocked:', e));
                     } catch (e) {
                         console.error('Audio decode error', e);
