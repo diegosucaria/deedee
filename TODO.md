@@ -75,3 +75,4 @@
 - [x] **Settings UI**: Reorganized settings into tabs (General, Communication, Interfaces, Backups) and added UI for new features.
 - [x] **Contact Import**: Added Import CSV/WhatsApp feature to People page.
 - [x] **Validation**: Enhanced API validation for configuration keys.
+- [x] **Deduplication**: Fixed double tool execution bug in Agent.

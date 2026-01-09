@@ -81,8 +81,6 @@ class Router {
 
 
             let text = '{}';
-            console.log('[Router] Raw Response:', response ? (typeof response) : 'undefined');
-
             if (!response) {
                 throw new Error('Received undefined response from LLM');
             }
@@ -94,6 +92,8 @@ class Router {
             } else if (response.candidates && response.candidates[0] && response.candidates[0].content) {
                 text = response.candidates[0].content.parts[0].text;
             }
+
+            console.log('[Router] Raw Text:', text);
 
             // Cleanup potential markdown blocks if the model wrapped JSON
             text = text.replace(/```json/g, '').replace(/```/g, '').trim();
