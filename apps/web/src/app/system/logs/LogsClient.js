@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { Terminal, RefreshCw, Layers, Layout, AlertCircle, ChevronLeft, ChevronRight, ArrowUpCircle, ArrowDownCircle, PauseCircle, PlayCircle, Clock } from 'lucide-react';
+import { Terminal, RefreshCw, Layers, Layout, AlertCircle, ChevronLeft, ChevronRight, ArrowUpCircle, ArrowDownCircle, PauseCircle, PlayCircle, Clock, Maximize2, Minimize2 } from 'lucide-react';
 import clsx from 'clsx';
 import { API_URL } from '@/lib/api';
 import LogContent from '@/components/LogContent';
@@ -33,8 +33,11 @@ export default function LogsClient({ token }) {
     const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
     const [autoScroll, setAutoScroll] = useState(true);
     const [showTimestamps, setShowTimestamps] = useState(false);
+    const [isExpanded, setIsExpanded] = useState(false);
     const readerRef = useRef(null);
     const logsEndRef = useRef(null);
+
+
 
     useEffect(() => {
         let retryTimeout = null;
@@ -193,7 +196,10 @@ export default function LogsClient({ token }) {
     };
 
     return (
-        <div className="flex flex-col bg-zinc-950 text-green-500 font-mono overflow-hidden h-[80vh] border border-zinc-800 rounded-xl">
+        <div className={clsx(
+            "flex flex-col bg-zinc-950 text-green-500 font-mono overflow-hidden border border-zinc-800 rounded-xl transition-all duration-300",
+            isExpanded ? "fixed inset-0 z-[100] rounded-none border-0 m-0 w-screen h-screen" : "h-[80vh]"
+        )}>
             {/* Header */}
             <header className="flex h-14 items-center justify-between border-b border-zinc-800 bg-zinc-900 px-4 shrink-0">
                 <div className="flex items-center gap-3">
@@ -247,6 +253,16 @@ export default function LogsClient({ token }) {
                         className={clsx("transition-colors", showTimestamps ? "text-indigo-400" : "text-zinc-600 hover:text-zinc-400")}
                     >
                         <Clock className="w-4 h-4" />
+                    </button>
+
+                    <div className="h-4 w-px bg-zinc-700 mx-2" />
+
+                    <button
+                        onClick={() => setIsExpanded(!isExpanded)}
+                        title={isExpanded ? "Exit Fullscreen" : "Fullscreen"}
+                        className={clsx("transition-colors", isExpanded ? "text-indigo-400" : "text-zinc-600 hover:text-zinc-400")}
+                    >
+                        {isExpanded ? <Minimize2 className="w-4 h-4" /> : <Maximize2 className="w-4 h-4" />}
                     </button>
 
                     <div className="h-4 w-px bg-zinc-700 mx-2" />

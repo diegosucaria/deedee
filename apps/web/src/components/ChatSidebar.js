@@ -97,12 +97,22 @@ export default function ChatSidebar({ sessions = [] }) {
             'Older': []
         };
 
+        // Functional Day logic: A day starts at 4 AM.
+        // If it's 3 AM on Tuesday, it counts as Monday.
+        const getFunctionalDate = (d) => {
+            const date = new Date(d);
+            date.setHours(date.getHours() - 4); // Shift back 4 hours
+            return new Date(date.getFullYear(), date.getMonth(), date.getDate()); // Normalize to midnight
+        };
+
         const now = new Date();
-        const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
-        const yesterday = new Date(today);
-        yesterday.setDate(yesterday.getDate() - 1);
-        const lastWeek = new Date(today);
-        lastWeek.setDate(lastWeek.getDate() - 7);
+        const functionalToday = getFunctionalDate(now);
+
+        const functionalYesterday = new Date(functionalToday);
+        functionalYesterday.setDate(functionalYesterday.getDate() - 1);
+
+        const functionalLastWeek = new Date(functionalToday);
+        functionalLastWeek.setDate(functionalLastWeek.getDate() - 7);
 
         sessions.forEach(session => {
             if (session.is_pinned) {
@@ -110,16 +120,15 @@ export default function ChatSidebar({ sessions = [] }) {
                 return;
             }
 
-            // Parse Date correctly (Safari/safe)
-            const date = new Date(session.updated_at || session.created_at);
-            // Normalize to midnight for comparison
-            const dateMidnight = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+            // Parse Date
+            const sessionDate = new Date(session.updated_at || session.created_at);
+            const functionalSessionDate = getFunctionalDate(sessionDate);
 
-            if (dateMidnight.getTime() === today.getTime()) {
+            if (functionalSessionDate.getTime() === functionalToday.getTime()) {
                 groups['Today'].push(session);
-            } else if (dateMidnight.getTime() === yesterday.getTime()) {
+            } else if (functionalSessionDate.getTime() === functionalYesterday.getTime()) {
                 groups['Yesterday'].push(session);
-            } else if (dateMidnight > lastWeek) {
+            } else if (functionalSessionDate > functionalLastWeek) {
                 groups['Last Week'].push(session);
             } else {
                 groups['Older'].push(session);

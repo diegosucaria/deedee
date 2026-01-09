@@ -353,8 +353,10 @@ class AgentDB {
       OR relationship LIKE ? 
       OR notes LIKE ? 
       OR phone LIKE ?
+      OR ? LIKE ('%' || name || '%')
     `);
-    return stmt.all(wildcard, wildcard, wildcard, wildcard).map(row => ({
+    // Pass wildcard 4 times, then raw query once for the reverse match
+    return stmt.all(wildcard, wildcard, wildcard, wildcard, query).map(row => ({
       ...row,
       metadata: row.metadata ? JSON.parse(row.metadata) : {},
       identifiers: row.identifiers ? JSON.parse(row.identifiers) : {}

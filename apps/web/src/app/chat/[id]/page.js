@@ -584,75 +584,82 @@ export default function ChatSessionPage({ params }) {
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
-                {messages.map((msg, idx) => (
-                    <div
-                        key={idx}
-                        className={clsx(
-                            'flex w-full',
-                            msg.role === 'user' ? 'justify-end' : 'justify-start'
-                        )}
-                    >
+                {messages
+                    .filter(msg => {
+                        // Hide tool calls/responses by default as requested
+                        if (msg.type === 'function_call' || msg.type === 'function_response') return false;
+                        if (msg.role === 'tool') return false; // Gemini tool responses
+                        return true;
+                    })
+                    .map((msg, idx) => (
                         <div
+                            key={idx}
                             className={clsx(
-                                'max-w-[85%] rounded-2xl px-5 py-3 shadow-sm md:max-w-[70%]',
-                                msg.role === 'user'
-                                    ? 'bg-indigo-600 text-white rounded-tr-none'
-                                    : 'bg-zinc-800 text-zinc-200 rounded-tl-none border border-zinc-700'
+                                'flex w-full',
+                                msg.role === 'user' ? 'justify-end' : 'justify-start'
                             )}
                         >
-                            {msg.type === 'audio' ? (
-                                <div className="flex items-center gap-3">
-                                    <div className="h-10 w-10 bg-indigo-500/20 rounded-full flex items-center justify-center">
-                                        <Play className="h-5 w-5 text-indigo-400" />
-                                    </div>
-                                    <span className="text-sm italic text-zinc-400">Audio Message</span>
-                                    <audio controls src={msg.content.startsWith('data:') ? msg.content : `data:audio/wav;base64,${msg.content}`} className="hidden" />
-                                </div>
-                            ) : msg.type === 'image' ? (
-                                <div className="rounded-lg overflow-hidden">
-                                    <img
-                                        src={msg.content.startsWith('data:') ? msg.content : `data:image/png;base64,${msg.content}`}
-                                        alt="Generated Image"
-                                        className="w-full h-auto max-h-96 object-cover"
-                                    />
-                                </div>
-                            ) : msg.type === 'function_call' ? (
-                                <div className="font-mono text-xs">
-                                    <div className="flex items-center gap-2 text-indigo-300 mb-1">
-                                        <Code2 className="h-3 w-3" />
-                                        <span>Using Tool: {JSON.parse(msg.content).name}</span>
-                                    </div>
-                                    <div className="bg-black/20 rounded p-2 overflow-x-auto text-zinc-400">
-                                        {JSON.stringify(JSON.parse(msg.content).args)}
-                                    </div>
-                                </div>
-                            ) : msg.type === 'function_response' ? (
-                                <div className="font-mono text-xs">
-                                    <div className="flex items-center gap-2 text-emerald-400 mb-1">
-                                        <CheckCircle2 className="h-3 w-3" />
-                                        <span>Tool Result: {JSON.parse(msg.content).name}</span>
-                                    </div>
-                                    <details className="cursor-pointer group">
-                                        <summary className="text-zinc-500 hover:text-zinc-300 transition-colors list-none">
-                                            <span className="group-open:hidden">View Output</span>
-                                            <span className="hidden group-open:inline">Hide Output</span>
-                                        </summary>
-                                        <div className="mt-2 bg-black/20 rounded p-2 overflow-x-auto text-zinc-400 whitespace-pre-wrap max-h-48 overflow-y-auto">
-                                            {JSON.stringify(JSON.parse(msg.content).result, null, 2)}
+                            <div
+                                className={clsx(
+                                    'max-w-[85%] rounded-2xl px-5 py-3 shadow-sm md:max-w-[70%]',
+                                    msg.role === 'user'
+                                        ? 'bg-indigo-600 text-white rounded-tr-none'
+                                        : 'bg-zinc-800 text-zinc-200 rounded-tl-none border border-zinc-700'
+                                )}
+                            >
+                                {msg.type === 'audio' ? (
+                                    <div className="flex items-center gap-3">
+                                        <div className="h-10 w-10 bg-indigo-500/20 rounded-full flex items-center justify-center">
+                                            <Play className="h-5 w-5 text-indigo-400" />
                                         </div>
-                                    </details>
+                                        <span className="text-sm italic text-zinc-400">Audio Message</span>
+                                        <audio controls src={msg.content.startsWith('data:') ? msg.content : `data:audio/wav;base64,${msg.content}`} className="hidden" />
+                                    </div>
+                                ) : msg.type === 'image' ? (
+                                    <div className="rounded-lg overflow-hidden">
+                                        <img
+                                            src={msg.content.startsWith('data:') ? msg.content : `data:image/png;base64,${msg.content}`}
+                                            alt="Generated Image"
+                                            className="w-full h-auto max-h-96 object-cover"
+                                        />
+                                    </div>
+                                ) : msg.type === 'function_call' ? (
+                                    <div className="font-mono text-xs">
+                                        <div className="flex items-center gap-2 text-indigo-300 mb-1">
+                                            <Code2 className="h-3 w-3" />
+                                            <span>Using Tool: {JSON.parse(msg.content).name}</span>
+                                        </div>
+                                        <div className="bg-black/20 rounded p-2 overflow-x-auto text-zinc-400">
+                                            {JSON.stringify(JSON.parse(msg.content).args)}
+                                        </div>
+                                    </div>
+                                ) : msg.type === 'function_response' ? (
+                                    <div className="font-mono text-xs">
+                                        <div className="flex items-center gap-2 text-emerald-400 mb-1">
+                                            <CheckCircle2 className="h-3 w-3" />
+                                            <span>Tool Result: {JSON.parse(msg.content).name}</span>
+                                        </div>
+                                        <details className="cursor-pointer group">
+                                            <summary className="text-zinc-500 hover:text-zinc-300 transition-colors list-none">
+                                                <span className="group-open:hidden">View Output</span>
+                                                <span className="hidden group-open:inline">Hide Output</span>
+                                            </summary>
+                                            <div className="mt-2 bg-black/20 rounded p-2 overflow-x-auto text-zinc-400 whitespace-pre-wrap max-h-48 overflow-y-auto">
+                                                {JSON.stringify(JSON.parse(msg.content).result, null, 2)}
+                                            </div>
+                                        </details>
+                                    </div>
+                                ) : (
+                                    <div className="markdown prose prose-invert prose-sm max-w-none">
+                                        <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                    </div>
+                                )}
+                                <div className={clsx("mt-1 text-[10px] opacity-50", msg.role === 'user' ? 'text-indigo-200' : 'text-zinc-500')}>
+                                    {typeof msg.timestamp === 'string' ? new Date(msg.timestamp).toLocaleTimeString() : ''}
                                 </div>
-                            ) : (
-                                <div className="markdown prose prose-invert prose-sm max-w-none">
-                                    <ReactMarkdown>{msg.content}</ReactMarkdown>
-                                </div>
-                            )}
-                            <div className={clsx("mt-1 text-[10px] opacity-50", msg.role === 'user' ? 'text-indigo-200' : 'text-zinc-500')}>
-                                {typeof msg.timestamp === 'string' ? new Date(msg.timestamp).toLocaleTimeString() : ''}
                             </div>
                         </div>
-                    </div>
-                ))}
+                    ))}
 
                 {/* Typing Indicator */}
                 {isWaiting && (

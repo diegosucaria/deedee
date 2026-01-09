@@ -62,7 +62,24 @@ class SchedulerExecutor extends BaseExecutor {
                             metadata: meta
                         }, async (reply) => {
                             if (this.services.interface) {
+                                // Default reply to origin
                                 await this.services.interface.send(reply);
+
+                                // Explicit Push Notification to Owner
+                                const agent = this.services.agent;
+                                const settings = agent?.settings || {};
+                                const ownerPhone = settings.owner_phone;
+                                const channel = settings.notification_channel || 'whatsapp';
+
+                                if (ownerPhone) {
+                                    console.log(`[Executor] Pushing reminder to owner (${ownerPhone}) via ${channel}`);
+                                    await this.services.interface.send({
+                                        ...reply,
+                                        to: ownerPhone,
+                                        platform: channel,
+                                        isNotification: true // Flag to possibly bypass certain checks or formatting
+                                    });
+                                }
                             }
                         });
 

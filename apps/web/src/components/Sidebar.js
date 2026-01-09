@@ -29,7 +29,7 @@ export function Sidebar() {
     return (
         <div className={clsx(
             "flex h-screen flex-col border-r border-zinc-800 bg-zinc-950 py-4 transition-all duration-300 ease-in-out shrink-0",
-            isCollapsed ? "w-16 items-center" : "w-16 md:w-64"
+            isCollapsed ? "w-16 items-center" : "w-16 md:w-52"
         )}>
             {/* Header */}
             <div className={clsx("flex items-center mb-8 px-4", isCollapsed ? "justify-center" : "justify-between")}>
