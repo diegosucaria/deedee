@@ -948,6 +948,20 @@ ${files.length > 0 ? files.join(", ") : "No files yet."}
         }
 
         // PARALLEL EXECUTION STRATEGY
+        // FIX: Deduplicate tool calls (Model might hallucinate duplicates)
+        const uniqueCalls = [];
+        const seenCalls = new Set();
+        for (const call of functionCalls) {
+          const signature = `${call.name}:${JSON.stringify(call.args)}`;
+          if (!seenCalls.has(signature)) {
+            seenCalls.add(signature);
+            uniqueCalls.push(call);
+          } else {
+            console.warn(`[Agent] Dropped duplicate tool call: ${call.name}`);
+          }
+        }
+        functionCalls = uniqueCalls;
+
         console.log(`[Agent] Processing ${functionCalls.length} tool calls in parallel.`);
         const toolNames = functionCalls.map(c => (c.name || '').replace('default_api:', '')).join(', ');
         await reportProgress(`Executing ${functionCalls.length} tools: ${toolNames}...`);
