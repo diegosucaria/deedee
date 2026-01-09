@@ -72,9 +72,11 @@ const createPeopleRouter = (agent) => {
             return serve();
         }
 
+        let person;
+
         // Lazy Load logic
         try {
-            const person = agent.db.getPerson(req.params.id);
+            person = agent.db.getPerson(req.params.id);
             if (person && person.phone) {
                 const cleanPhone = person.phone.replace(/\D/g, ''); // Ensure digits only
                 const jid = `${cleanPhone}@s.whatsapp.net`;
@@ -90,8 +92,10 @@ const createPeopleRouter = (agent) => {
             console.error(`[People] Lazy load failed for ${req.params.id}:`, e.message);
         }
 
-        // Fail
-        res.status(404).send('No avatar');
+        // Fail -> Return Default Avatar (ui-avatars.com) to avoid 404 in console
+        const name = person?.name || 'User';
+        const fallbackUrl = `https://ui-avatars.com/api/?name=${encodeURIComponent(name)}&background=random&color=fff&size=128`;
+        return res.redirect(fallbackUrl);
     });
 
     // Update Person

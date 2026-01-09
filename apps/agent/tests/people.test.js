@@ -127,4 +127,12 @@ describe('People Feature Integration', () => {
         expect(results.length).toBeGreaterThan(0);
         expect(results[0].name).toBe('Alice Wonderland');
     });
+
+    test('GET /internal/people/:id/avatar redirects to ui-avatars if missing', async () => {
+        const id = db.createPerson({ name: 'No Avatar' });
+        const res = await request(app).get(`/internal/people/${id}/avatar`);
+        expect(res.statusCode).toBe(302);
+        expect(res.headers.location).toContain('ui-avatars.com');
+        expect(res.headers.location).toContain('No%20Avatar');
+    });
 });
