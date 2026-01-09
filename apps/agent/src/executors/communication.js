@@ -194,7 +194,7 @@ class CommunicationExecutor extends BaseExecutor {
                     const messages = res.data;
                     if (!messages || messages.length === 0) return { info: "No history found." };
 
-                    const formatted = messages.map(m => `[${new Date(m.timestamp).toLocaleString()}] ${m.fromMe ? 'Me' : 'Them'}: ${m.message?.conversation || m.message?.extendedTextMessage?.text || '[Media]'}`).join('\n');
+                    const formatted = messages.map(m => `[${new Date(m.timestamp).toLocaleString()}] ${m.role === 'assistant' ? 'Me' : 'Them'}: ${m.content}`).join('\n');
 
                     return { success: true, info: `History with ${contact}:\n${formatted}` };
                 } catch (e) {
@@ -215,7 +215,7 @@ class CommunicationExecutor extends BaseExecutor {
                     const chats = res.data;
                     if (!chats || chats.length === 0) return { info: "No active conversations found." };
 
-                    const list = chats.map(c => `- ${c.name || c.jid} (Last: ${new Date(c.t * 1000).toLocaleString()})`).join('\n');
+                    const list = chats.map(c => `- ${c.name || c.jid} (Last: ${new Date(c.lastTimestamp).toLocaleString()}) [${c.msgCount} msgs]`).join('\n');
                     return { success: true, info: `Recent Conversations:\n${list}` };
                 } catch (e) {
                     console.error('[Communication] Failed to list conversations:', e.message);

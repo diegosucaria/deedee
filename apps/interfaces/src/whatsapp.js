@@ -546,9 +546,9 @@ class WhatsAppService {
                 const lastMsg = msgs[msgs.length - 1];
                 return {
                     jid,
-                    lastTimestamp: lastMsg ? (lastMsg.messageTimestamp || 0) : 0,
+                    lastTimestamp: lastMsg ? (Number(lastMsg.messageTimestamp) || 0) * 1000 : 0,
                     msgCount: msgs.length,
-                    snippets: msgs.slice(-3).map(m => m.message?.conversation || m.message?.extendedTextMessage?.text || '[Media]')
+                    snippets: msgs.slice(-3).map(m => m.message?.conversation || m.message?.extendedTextMessage?.text || (m.message?.audioMessage ? '[Audio]' : m.message?.imageMessage ? '[Image]' : '[Media]'))
                 };
             });
 
@@ -560,12 +560,22 @@ class WhatsAppService {
         if (!this.store || !this.store.messages || !this.store.messages[jid]) return [];
         return this.store.messages[jid].slice(-limit).map(m => {
             // Simplify for agent consumption
-            const content = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
+            let content = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
+            const msgType = Object.keys(m.message || {})[0];
+
+            if (!content) {
+                if (m.message?.audioMessage) content = '[Audio Message]';
+                else if (m.message?.imageMessage) content = `[Image: ${m.message.imageMessage.caption || ''}]`;
+                else if (m.message?.videoMessage) content = `[Video: ${m.message.videoMessage.caption || ''}]`;
+                else if (m.message?.stickerMessage) content = '[Sticker]';
+                else content = `[Media: ${msgType}]`;
+            }
+
             const fromMe = m.key.fromMe;
             return {
                 role: fromMe ? 'assistant' : 'user',
                 content,
-                timestamp: m.messageTimestamp
+                timestamp: (Number(m.messageTimestamp) || 0) * 1000
             };
         });
     }
