@@ -155,6 +155,18 @@ class Scheduler {
                 }
             }
 
+            // One-Off Past Check (Filter out old reminders that we missed)
+            const isOneOff = payload?.isOneOff || false; // Trust payload flag
+            if (isOneOff) {
+                const jobTime = new Date(cronExpression).getTime();
+                if (jobTime <= Date.now()) {
+                    console.log(`[Scheduler] Found past one-off job '${name}' during load (${cronExpression}). Filtering/Deleting.`);
+                    this.agent.db.deleteScheduledJob(name);
+                    this.agent.db.deleteJobState(name);
+                    continue;
+                }
+            }
+
             // Skip system jobs (let ensureSystemJobs recreate them with correct callbacks/logic)
             if (payload && payload.isSystem) {
                 console.log(`[Scheduler] Skipping system job '${name}' load (will be ensured later).`);
@@ -299,7 +311,13 @@ class Scheduler {
                 };
             }
 
-            this.scheduleJob(name, cronExpression, callback, { persist: false, taskType, payload, expiresAt });
+            this.scheduleJob(name, cronExpression, callback, {
+                persist: false,
+                taskType,
+                payload,
+                expiresAt,
+                oneOff: isOneOff // IMPORTANT: Pass this so scheduleJob handles it as Date object
+            });
         }
         console.log(`[Scheduler] Loaded ${Object.keys(this.jobs).length} jobs from DB.`);
     }

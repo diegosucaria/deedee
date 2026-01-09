@@ -755,18 +755,28 @@ class Agent {
         .join('\n            ');
 
       // Fetch Memory/Facts
-      const facts = this.db.getAllFacts()
-        .map(f => `- **${f.key}**: ${JSON.stringify(f.value)}`)
-        .join('\n            ');
+      const facts = this.db.getFactsFormatted();
+      const activeGoals = this.db.getPendingGoals().map(g => `- [${g.id}] ${g.description}`).join('\n');
 
-      // Enable Coding/Dev Instructions ONLY for Pro/Reasoning models
-      const isCodingMode = decision.model === 'PRO';
+      // Fetch Vault Context if active
+      let vaultContext = null;
+      const activeTopic = this.activeTopics.get(chatId);
+      if (activeTopic) {
+        try {
+          vaultContext = await this.vaults.readVaultPage(activeTopic, 'index.md');
+        } catch (e) {
+          console.warn(`[Agent] Failed to read vault context for ${activeTopic}:`, e);
+        }
+      }
 
-      let systemInstruction = getSystemInstruction(new Date().toString(), pendingGoals, facts, { codingMode: isCodingMode });
-
+      let systemInstruction = getSystemInstruction(
+        new Date().toLocaleString(),
+        activeGoals,
+        facts,
+        { codingMode: true, vaultContext } // Coding mode enabled by default for now, could be dynamic
+      );
       // --- TONE MATCHING (Impersonation Mode) ---
       // If we are acting on behalf of the user (whatsapp:user), we must sound like them.
-      // --- TONE MATCHING (Impersonation Mode) ---
       // We add this instruction globally so the Agent knows how to behave if asked to "act as me" or use the 'user' session.
       systemInstruction += `\n
 \n=== IMPERSONATION & TONE MATCHING ===
@@ -777,38 +787,6 @@ IF you are asked to draft a message for the user, or if you are replying via the
 ================================
 `;
 
-      // --- LIFE VAULTS CONTEXT INJECTION ---
-      const activeTopic = this.activeTopics.get(chatId);
-      if (activeTopic) {
-        try {
-          // Read Wiki
-          const wikiContent = await this.vaults.readVaultPage(activeTopic, 'index.md');
-          // List Files
-          const files = await this.vaults.listVaultFiles(activeTopic);
-
-          if (wikiContent) {
-            console.log(`[Agent] Injecting Vault Context: ${activeTopic}`);
-            systemInstruction += `\n
-\n=== 📂 ACTIVE VAULT: ${activeTopic.toUpperCase()} ===
-You are now accessing the user's ${activeTopic} knowledge base.
-
-## SUMMARY (from index.md):
-${wikiContent}
-
-## AVAILABLE FILES:
-${files.length > 0 ? files.join(", ") : "No files yet."}
-
-## INSTRUCTIONS:
-- Use this context to answer questions.
-- If you need to see a specific file's details, use 'readVaultFile'.
-- If you receive new information, use 'updateVaultPage' to keep the index fresh.
-================================
-`;
-          }
-        } catch (err) {
-          console.error(`[Agent] Failed to inject vault context for ${activeTopic}:`, err);
-        }
-      }
 
       // In-Context User Location
       if (message.metadata?.location) {

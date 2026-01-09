@@ -55,6 +55,20 @@ describe('VaultManager', () => {
         expect(todo).toBe('- Item 1');
     });
 
+    test('should append content to vault page', async () => {
+        await vaultManager.createVault('journal');
+        await vaultManager.updateVaultPage('journal', 'daily.md', '# Daily Log');
+
+        await vaultManager.appendVaultPage('journal', 'daily.md', '\n- woke up');
+        const content = await vaultManager.readVaultPage('journal', 'daily.md');
+        expect(content).toBe('# Daily Log\n- woke up');
+
+        // Append again
+        await vaultManager.appendVaultPage('journal', 'daily.md', '\n- worked');
+        const content2 = await vaultManager.readVaultPage('journal', 'daily.md');
+        expect(content2).toBe('# Daily Log\n- woke up\n- worked');
+    });
+
     test('should add file to vault', async () => {
         await vaultManager.createVault('docs');
 

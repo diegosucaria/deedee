@@ -6,8 +6,8 @@
  * @param {string} facts - Formatted string of user facts/preferences.
  * @returns {string} The system instruction.
  */
-function getSystemInstruction(dateString, activeGoals, facts, options = { codingMode: false }) {
-        const { codingMode } = options;
+function getSystemInstruction(dateString, activeGoals, facts, options = { codingMode: false, vaultContext: null }) {
+        const { codingMode, vaultContext } = options;
 
         const BASE_PROMPT = `
             You are Deedee, a helpful and capable AI assistant.
@@ -97,6 +97,10 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
 
         if (codingMode) {
                 instruction += CODING_PROMPT;
+        }
+
+        if (vaultContext) {
+                instruction += `\n\nACTIVE LIFE VAULT CONTEXT:\n${vaultContext}\n\nINSTRUCTION: The user is currently in a specialized "Life Vault" session. You MUST use the information above to answer questions. If the user provides new information appropriate for this vault, use the 'saveNoteToVault' tool to persist it.`;
         }
 
         return instruction;

@@ -26,6 +26,8 @@ class VaultExecutor extends BaseExecutor {
                 return this.deleteVault(args.topic);
             case 'setSessionTopic':
                 return this.setSessionTopic(args.topic, context);
+            case 'saveNoteToVault':
+                return this.saveNoteToVault(args.topic, args.content, context);
             default:
                 return null;
         }
@@ -60,6 +62,18 @@ class VaultExecutor extends BaseExecutor {
         await this.setSessionTopic(topic, context);
 
         return `File saved to ${targetPath}. Vault index updated. Context switched to '${topic}'.`;
+    }
+
+    async saveNoteToVault(topic, content, context) {
+        const date = new Date().toISOString().split('T')[0];
+        const noteEntry = `\n\n## Note - ${date}\n${content}`;
+
+        await this.services.vaults.appendVaultPage(topic, 'index.md', noteEntry);
+
+        // Ensure context is switched (if not already)
+        await this.setSessionTopic(topic, context);
+
+        return `Note saved to '${topic}' vault.`;
     }
 
     async readVaultPage(topic, page) {

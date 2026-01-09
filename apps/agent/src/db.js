@@ -670,6 +670,12 @@ class AgentDB {
     });
   }
 
+  getFactsFormatted() {
+    const facts = this.getAllFacts();
+    if (facts.length === 0) return '';
+    return facts.map(f => `- ${f.key}: ${JSON.stringify(f.value)}`).join('\n');
+  }
+
   getJobState(jobName) {
     const prefix = `job:${jobName}:%`;
     const stmt = this.db.prepare('SELECT key, value, updated_at FROM kv_store WHERE key LIKE ? ORDER BY updated_at DESC');

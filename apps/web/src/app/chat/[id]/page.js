@@ -338,6 +338,16 @@ export default function ChatSessionPage({ params }) {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
     }, [messages, isWaiting]);
 
+    // Auto-resize textarea
+    const textareaRef = useRef(null);
+    useEffect(() => {
+        if (textareaRef.current) {
+            textareaRef.current.style.height = '48px'; // Reset to min-height first
+            const scrollHeight = textareaRef.current.scrollHeight;
+            textareaRef.current.style.height = Math.min(scrollHeight, 150) + 'px'; // Cap at 150px
+        }
+    }, [inputValue]);
+
 
     // --- Multimodal Handlers ---
     const startRecording = async () => {
@@ -667,7 +677,7 @@ export default function ChatSessionPage({ params }) {
                                             <span>Tool Result: {JSON.parse(msg.content).name}</span>
                                         </div>
                                         <details className="cursor-pointer group">
-                                            <summary className="text-zinc-500 hover:text-zinc-300 transition-colors list-none">
+                                            <summary className="text-zinc-500 hover:text-zinc-300 transition-colors list-none p-2 -ml-2 cursor-pointer select-none">
                                                 <span className="group-open:hidden">View Output</span>
                                                 <span className="hidden group-open:inline">Hide Output</span>
                                             </summary>
@@ -811,8 +821,8 @@ export default function ChatSessionPage({ params }) {
                         </div>
 
                         {/* Text Input */}
-                        <input
-                            type="text"
+                        <textarea
+                            ref={textareaRef}
                             value={inputValue}
                             onChange={(e) => setInputValue(e.target.value)}
                             onKeyDown={(e) => {
@@ -822,7 +832,8 @@ export default function ChatSessionPage({ params }) {
                                 }
                             }}
                             placeholder={`Message...`}
-                            className="flex-1 rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 h-12 text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all"
+                            rows={1}
+                            className="flex-1 rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 min-h-[48px] max-h-[150px] text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all resize-none scrollbar-thin scrollbar-thumb-zinc-700 font-sans"
                         />
 
                         {/* Send Button */}

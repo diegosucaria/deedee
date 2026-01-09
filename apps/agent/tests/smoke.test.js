@@ -24,6 +24,7 @@ jest.mock('../src/db', () => ({
     getHistoryForChat: jest.fn().mockReturnValue([]),
     getScheduledJobs: jest.fn().mockReturnValue([]),
     getAllFacts: jest.fn().mockReturnValue([]),
+    getFactsFormatted: jest.fn().mockReturnValue(''), // Added
     saveSummary: jest.fn(),
     getLatestSummary: jest.fn().mockReturnValue(null),
     saveSummary: jest.fn(),

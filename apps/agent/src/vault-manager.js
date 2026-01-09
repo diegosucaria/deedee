@@ -133,6 +133,24 @@ class VaultManager {
         return true;
     }
 
+    async appendVaultPage(topic, pageName, content) {
+        const safeTopic = this.sanitizeTopic(topic);
+        const safePage = path.basename(pageName);
+        if (!safePage.endsWith('.md')) throw new Error("Only .md files allowed");
+
+        const filePath = path.join(this.vaultsDir, safeTopic, safePage);
+
+        // Check availability
+        try {
+            await fs.access(filePath);
+        } catch {
+            await fs.writeFile(filePath, `# ${safeTopic.charAt(0).toUpperCase() + safeTopic.slice(1)} Vault\n`);
+        }
+
+        await fs.appendFile(filePath, content, 'utf-8');
+        return true;
+    }
+
     async listVaultFiles(topic) {
         const safeTopic = this.sanitizeTopic(topic);
         const filesPath = path.join(this.vaultsDir, safeTopic, 'files');

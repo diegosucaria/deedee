@@ -569,6 +569,18 @@ const toolDefinitions = [
           properties: { topic: { type: "STRING" } },
           required: ["topic"]
         }
+      },
+      {
+        name: "saveNoteToVault",
+        description: "Save a text note or knowledge snippet to the active vault's wiki. Use this when the user says 'Save this to the vault' or 'Remember that...'.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            topic: { type: "STRING" },
+            content: { type: "STRING", description: "The content/knowledge to save." }
+          },
+          required: ["topic", "content"]
+        }
       }
     ]
   }

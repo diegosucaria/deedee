@@ -13,6 +13,7 @@ jest.mock('../src/db', () => ({
         logMetric: jest.fn(),
         logTokenUsage: jest.fn(),
         getAllFacts: jest.fn().mockReturnValue([]),
+        getFactsFormatted: jest.fn().mockReturnValue(''), // Added
         getKey: jest.fn(),
         close: jest.fn()
     }))

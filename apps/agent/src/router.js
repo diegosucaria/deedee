@@ -37,6 +37,7 @@ class Router {
         **TARGET: FLASH (Low Latency)**
         **toolMode: SEARCH**
         * **External Facts:** "Weather in Tokyo", "Who won the game?", "Stock price of AAPL", "Latest news on AI".
+        * **NOTE:** Do NOT use this for internal history or personal memory.
         
         **toolMode: STANDARD**
         * **Home Automation:** "Turn on lights", "What's the temperature?".
@@ -54,6 +55,7 @@ class Router {
         * **Coding & Architecture:** Terraform, GCP, Kubernetes.
         * **Complex Planning:** Travel itineraries.
         * **Analysis:** Summarizing long text.
+        * **Memory & History:** "Search my conversation with...", "What did I say yesterday?", "Find the message about..." (Requires internal tools, NOT Google).
         
         ### RECENT CONTEXT
         ${historyText}
