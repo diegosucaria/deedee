@@ -67,7 +67,16 @@ class WhatsAppService {
 
             // Simple In-Memory Store Polyfill (Expanded for History)
             function makeInMemoryStore(config) {
-                const LIMIT = config.limit || 50;
+                const LIMIT = config.limit || 500; // Increased default limit
+
+                const getTs = (m) => {
+                    const ts = m.messageTimestamp;
+                    if (typeof ts === 'number') return ts;
+                    if (ts && typeof ts.toNumber === 'function') return ts.toNumber();
+                    if (ts && typeof ts.low === 'number') return ts.low;
+                    return 0;
+                };
+
                 return {
                     contacts: {},
                     messages: {}, // chatId -> [msgs]
@@ -89,11 +98,10 @@ class WhatsAppService {
                                 const jid = msg.key.remoteJid;
                                 if (!jid) continue;
 
-                                // Filter: Text only (Ram optimization)
-                                const content = msg.message;
-                                if (!content) continue;
-                                const isText = content.conversation || content.extendedTextMessage;
-                                if (!isText) continue;
+                                // Filter: Ignore Protocol Messages
+                                if (msg.message?.protocolMessage || msg.message?.senderKeyDistributionMessage) continue;
+
+                                // Keep all other content types (Text, Image, Audio, Stickers, etc)
 
                                 if (!this.messages[jid]) this.messages[jid] = [];
 
@@ -104,7 +112,8 @@ class WhatsAppService {
                                 this.messages[jid].push(msg);
 
                                 // Sort and Limit
-                                this.messages[jid].sort((a, b) => (a.messageTimestamp || 0) - (b.messageTimestamp || 0));
+                                this.messages[jid].sort((a, b) => getTs(a) - getTs(b));
+
                                 if (this.messages[jid].length > LIMIT) {
                                     this.messages[jid] = this.messages[jid].slice(-LIMIT);
                                 }
@@ -533,6 +542,14 @@ class WhatsAppService {
         };
     }
 
+    // Helper for safe timestamp conversion (handles Number vs Long)
+    _getSafeTimestamp(ts) {
+        if (typeof ts === 'number') return ts;
+        if (ts && typeof ts.toNumber === 'function') return ts.toNumber();
+        if (ts && typeof ts.low === 'number') return ts.low;
+        return 0;
+    }
+
     // --- New Methods for Smart Learn ---
 
     getRecentChats(limit = 10) {
@@ -546,7 +563,7 @@ class WhatsAppService {
                 const lastMsg = msgs[msgs.length - 1];
                 return {
                     jid,
-                    lastTimestamp: lastMsg ? (Number(lastMsg.messageTimestamp) || 0) * 1000 : 0,
+                    lastTimestamp: lastMsg ? this._getSafeTimestamp(lastMsg.messageTimestamp) * 1000 : 0,
                     msgCount: msgs.length,
                     snippets: msgs.slice(-3).map(m => m.message?.conversation || m.message?.extendedTextMessage?.text || (m.message?.audioMessage ? '[Audio]' : m.message?.imageMessage ? '[Image]' : '[Media]'))
                 };
@@ -575,7 +592,7 @@ class WhatsAppService {
             return {
                 role: fromMe ? 'assistant' : 'user',
                 content,
-                timestamp: (Number(m.messageTimestamp) || 0) * 1000
+                timestamp: this._getSafeTimestamp(m.messageTimestamp) * 1000
             };
         });
     }
