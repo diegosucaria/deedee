@@ -511,9 +511,23 @@ class Agent {
 
         if (isUserSession && !triggeredWatcher) {
           // PASSIVE MODE: Save to DB but DO NOT REPLY.
-          // But wait, we must save it first!
-          this.db.saveMessage(message);
-          console.log(`[Agent] Passive Mode (whatsapp:user): Message from ${contactString} saved. No watcher triggered. Ignoring.`);
+          // OPTIMIZATION: Strip Media Data to save disk space
+          const safeMessage = { ...message };
+          if (safeMessage.parts) {
+            safeMessage.parts = safeMessage.parts.map(p => {
+              if (p.inlineData) {
+                return {
+                  ...p,
+                  inlineData: { ...p.inlineData, data: '[MEDIA_STRIPPED_PASSIVE]' }
+                };
+              }
+              return p;
+            });
+          }
+
+          this.db.saveMessage(safeMessage);
+          // Log suppressed per user request
+          // console.log(`[Agent] Passive Mode (whatsapp:user): Message from ${contactString} saved. No watcher triggered. Ignoring.`);
           return executionSummary; // Exit early
         }
 

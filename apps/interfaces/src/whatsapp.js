@@ -310,7 +310,9 @@ class WhatsAppService {
                 }
             }
 
-            console.log(`${this.logPrefix} Received from ${phoneNumber}`);
+            if (this.sessionId !== 'user') {
+                console.log(`${this.logPrefix} Received from ${phoneNumber}`);
+            }
 
             // Unwrapping Logic
             let messageContent = msg.message;
