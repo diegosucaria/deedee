@@ -187,7 +187,8 @@ class CommunicationExecutor extends BaseExecutor {
                 try {
                     const interfacesUrl = process.env.INTERFACES_URL || 'http://interfaces:5000';
                     const res = await axios.get(`${interfacesUrl}/whatsapp/history`, {
-                        params: { jid, limit: limit || 10, session: session || 'user' }
+                        params: { jid, limit: limit || 10, session: session || 'user' },
+                        headers: { Authorization: `Bearer ${process.env.DEEDEE_API_TOKEN}` }
                     });
 
                     const messages = res.data;
@@ -207,7 +208,8 @@ class CommunicationExecutor extends BaseExecutor {
                 try {
                     const interfacesUrl = process.env.INTERFACES_URL || 'http://interfaces:5000';
                     const res = await axios.get(`${interfacesUrl}/whatsapp/recent`, {
-                        params: { limit: limit || 10, session: session || 'user' }
+                        params: { limit: limit || 10, session: session || 'user' },
+                        headers: { Authorization: `Bearer ${process.env.DEEDEE_API_TOKEN}` }
                     });
 
                     const chats = res.data;
