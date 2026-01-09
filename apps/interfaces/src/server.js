@@ -83,6 +83,7 @@ io.on("connection", (socket) => {
         for (const reply of response.data.replies) {
           socket.emit('agent:message', {
             content: reply.content,
+            parts: reply.parts, // Forward parts (audio/images)
             type: reply.type || 'text',
             timestamp: reply.timestamp
           });

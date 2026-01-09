@@ -186,9 +186,13 @@ export default function ChatSessionPage({ params }) {
         const initSocket = () => {
             newSocket = io({
                 path: '/socket.io',
-                reconnectionAttempts: 5,
-                // Removed 'websocket' transport constraint to allow polling fallback via proxy
+                reconnectionAttempts: 10,
+                transports: ['polling'], // Force polling to avoid WS Upgrade issues behind proxy
                 query: { chatId } // Identify session
+            });
+
+            newSocket.on('connect_error', (err) => {
+                console.error('[Chat] Socket Connection Error:', err.message);
             });
 
             newSocket.on('connect', () => {

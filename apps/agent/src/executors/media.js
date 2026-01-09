@@ -42,6 +42,7 @@ class MediaExecutor extends BaseExecutor {
                 imgMsg.parts = [{ inlineData: { mimeType: 'image/png', data: b64JSON } }];
                 imgMsg.metadata = { chatId: message.metadata?.chatId };
                 imgMsg.source = message.source;
+                imgMsg.type = 'image';
 
                 await sendCallback(imgMsg);
 
@@ -119,6 +120,7 @@ class MediaExecutor extends BaseExecutor {
                 audioMsg.parts = [{ inlineData: { mimeType: 'audio/wav', data: wavBuffer.toString('base64') } }];
                 audioMsg.metadata = { chatId: message.metadata?.chatId };
                 audioMsg.source = message.source;
+                audioMsg.type = 'audio';
 
                 await sendCallback(audioMsg);
 

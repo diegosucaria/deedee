@@ -36,7 +36,8 @@ export default function WatchersTable() {
         // Socket.IO Live Updates
         const socket = io({
             path: '/socket.io',
-            reconnectionAttempts: 5
+            reconnectionAttempts: 5,
+            transports: ['polling']
         });
 
         socket.on('connect', () => {
