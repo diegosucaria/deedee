@@ -2,7 +2,7 @@
 
 import { useState } from 'react';
 import { MessageSquare, Send } from 'lucide-react';
-import WhatsAppSettings from '../../components/WhatsAppSettings';
+import WhatsAppSettings from './WhatsAppSettings';
 
 export default function InterfacesClient() {
     const [activeTab, setActiveTab] = useState('whatsapp');

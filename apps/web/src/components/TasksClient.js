@@ -9,7 +9,7 @@ import ActiveJobsTable from '@/components/ActiveJobsTable';
 
 export default function TasksClient() {
     const router = useRouter();
-    const [activeTab, setActiveTab] = useState('manage'); // manage | active
+    const [activeTab, setActiveTab] = useState('active'); // active | manage
 
     return (
         <div className="space-y-8">
@@ -21,18 +21,18 @@ export default function TasksClient() {
             {/* Tabs */}
             <div className="flex items-center gap-4 border-b border-zinc-800 pb-2 overflow-x-auto">
                 <button
-                    onClick={() => setActiveTab('manage')}
-                    className={`pb-2 px-1 text-sm font-medium transition-colors relative whitespace-nowrap flex items-center gap-2 ${activeTab === 'manage' ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
-                >
-                    Execution Logs
-                    {activeTab === 'manage' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-indigo-500" />}
-                </button>
-                <button
                     onClick={() => setActiveTab('active')}
                     className={`pb-2 px-1 text-sm font-medium transition-colors relative whitespace-nowrap flex items-center gap-2 ${activeTab === 'active' ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
                 >
                     Active Scheduled Jobs
                     {activeTab === 'active' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-indigo-500" />}
+                </button>
+                <button
+                    onClick={() => setActiveTab('manage')}
+                    className={`pb-2 px-1 text-sm font-medium transition-colors relative whitespace-nowrap flex items-center gap-2 ${activeTab === 'manage' ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                >
+                    Execution Logs
+                    {activeTab === 'manage' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-indigo-500" />}
                 </button>
 
                 <div className="ml-auto">

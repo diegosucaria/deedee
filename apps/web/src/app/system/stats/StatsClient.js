@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { LatencyChart, TokenEfficiencyChart, DailyCostChart } from '@/components/InteractiveCharts';
 import { RefreshCw, Activity, Cpu, DollarSign } from 'lucide-react';
-import { getStatsLatency, getStatsUsage, getStatsCostTrend, getDailyCostTrend } from '../actions';
+import { getStatsLatency, getStatsUsage, getStatsCostTrend, getDailyCostTrend } from '../../actions';
 
 export default function StatsClient({ startDate, endDate }) {
     const [latencyData, setLatencyData] = useState([]);

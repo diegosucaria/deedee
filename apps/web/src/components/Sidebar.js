@@ -15,11 +15,8 @@ const navItems = [
     { name: 'People', href: '/people', icon: Users },
     { name: 'Vaults', href: '/vaults', icon: Lock },
     { name: 'Brain', href: '/brain', icon: Activity },
-    { name: 'History', href: '/history', icon: Clock },
-    { name: 'Stats', href: '/stats', icon: PieChart },
-    { name: 'Logs', href: '/logs', icon: Terminal },
-    { name: 'Interfaces', href: '/interfaces', icon: Share2 },
     { name: 'Settings', href: '/settings', icon: Settings },
+    { name: 'System', href: '/system', icon: Terminal },
 ];
 
 

@@ -7,6 +7,8 @@ import BackupSettings from '@/components/BackupSettings';
 import EnvVariables from '@/components/EnvVariables';
 import VoiceSelector from '@/components/VoiceSelector';
 
+import InterfacesClient from '@/components/InterfacesClient';
+
 export default function SettingsPage() {
     const [config, setConfig] = useState(null);
     const [env, setEnv] = useState({});
@@ -69,6 +71,7 @@ export default function SettingsPage() {
 
     const tabs = [
         { id: 'general', label: 'General' },
+        { id: 'interfaces', label: 'Interfaces' },
         { id: 'backups', label: 'Backups' },
         { id: 'environment', label: 'Environment' },
     ];
@@ -83,7 +86,7 @@ export default function SettingsPage() {
                 <p className="text-zinc-400">Configure global behaviors and system preferences.</p>
 
                 {/* Tabs */}
-                <div className="flex space-x-1 mt-6 bg-zinc-900/50 p-1 rounded-lg border border-zinc-800/50 w-fit">
+                <div className="flex space-x-1 mt-6 bg-zinc-900/50 p-1 rounded-lg border border-zinc-800 w-fit">
                     {tabs.map(tab => (
                         <button
                             key={tab.id}
@@ -227,6 +230,18 @@ export default function SettingsPage() {
                                 <VoiceSelector selectedVoice={voice} onSelect={handleVoiceChange} />
                             </div>
                         </div>
+                    </div>
+                )}
+
+                {activeTab === 'interfaces' && (
+                    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        {/* Remove header from InterfacesClient if you want it cleaner, 
+                            but for now we just render it. It has its own layout which might look double-headed.
+                            Actually InterfacesClient has a big header "Interfaces". 
+                            SettingsPage has "Agent Settings".
+                            It's probably fine as a subsection.
+                        */}
+                        <InterfacesClient />
                     </div>
                 )}
 

@@ -24,7 +24,7 @@ export default async function StatsPage({ searchParams }) {
     const { messages, goals, jobs, journal, latency, efficiency } = stats;
 
     return (
-        <div className="p-8 max-w-6xl mx-auto space-y-8">
+        <div className="space-y-8">
             <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 mb-8">
                 <h1 className="text-3xl font-bold flex items-center gap-3">
                     <Activity className="h-8 w-8 text-indigo-400" />

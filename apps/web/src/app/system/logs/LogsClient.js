@@ -193,7 +193,7 @@ export default function LogsClient({ token }) {
     };
 
     return (
-        <div className="flex h-screen flex-col bg-zinc-950 text-green-500 font-mono overflow-hidden">
+        <div className="flex flex-col bg-zinc-950 text-green-500 font-mono overflow-hidden h-[80vh] border border-zinc-800 rounded-xl">
             {/* Header */}
             <header className="flex h-14 items-center justify-between border-b border-zinc-800 bg-zinc-900 px-4 shrink-0">
                 <div className="flex items-center gap-3">

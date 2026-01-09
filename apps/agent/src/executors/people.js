@@ -14,6 +14,7 @@ class PeopleExecutor extends BaseExecutor {
                 if (!person) return { error: `Person not found: ${args.idOrPhone}` };
                 return { person };
 
+            case 'searchContacts':
             case 'searchPeople':
                 const matches = db.searchPeople(args.query);
                 // Return simplified list if too many, but typically ok.

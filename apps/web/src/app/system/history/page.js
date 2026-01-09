@@ -2,7 +2,7 @@ import { fetchAPI } from '@/lib/api';
 import HistoryList from '@/components/HistoryList';
 import SummaryList from '@/components/SummaryList';
 import SessionFilter from '@/components/SessionFilter';
-import { getSessions } from '../actions';
+import { getSessions } from '../../actions';
 import Link from 'next/link';
 
 export const dynamic = 'force-dynamic';
@@ -40,8 +40,8 @@ export default async function HistoryPage({ searchParams }) {
     }
 
     return (
-        <main className="flex h-screen flex-col bg-zinc-950 text-zinc-200 p-6 md:p-12 overflow-y-auto w-full">
-            <header className="mb-8 max-w-5xl mx-auto w-full">
+        <div className="flex flex-col text-zinc-200 w-full">
+            <header className="mb-8 w-full">
                 <div className="flex items-center justify-between flex-wrap gap-4">
                     <div>
                         <h1 className="text-3xl font-bold tracking-tight text-white mb-2">Message History</h1>
@@ -71,13 +71,13 @@ export default async function HistoryPage({ searchParams }) {
                 </div>
             </header>
 
-            <section className="max-w-5xl mx-auto w-full pb-20">
+            <section className="w-full pb-20">
                 {view === 'messages' ? (
                     <HistoryList history={history} />
                 ) : (
                     <SummaryList summaries={summaries} />
                 )}
             </section>
-        </main>
+        </div>
     );
 }
