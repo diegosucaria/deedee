@@ -764,6 +764,19 @@ class Agent {
 
       let systemInstruction = getSystemInstruction(new Date().toString(), pendingGoals, facts, { codingMode: isCodingMode });
 
+      // --- TONE MATCHING (Impersonation Mode) ---
+      // If we are acting on behalf of the user (whatsapp:user), we must sound like them.
+      // --- TONE MATCHING (Impersonation Mode) ---
+      // We add this instruction globally so the Agent knows how to behave if asked to "act as me" or use the 'user' session.
+      systemInstruction += `\n
+\n=== 🎭 IMPERSONATION & TONE MATCHING ===
+IF you are asked to draft a message for the user, or if you are replying via the 'user' (whatsapp:user) session:
+1. **Analyze History**: Look at the user's previous messages in the chat history.
+2. **Match Tone**: Mimic their style, brevity, capitalization (lowercase?), and emoji usage.
+3. **Be Natural**: Do not sound like an AI. Use "I", not "Deedee".
+================================
+`;
+
       // --- LIFE VAULTS CONTEXT INJECTION ---
       const activeTopic = this.activeTopics.get(chatId);
       if (activeTopic) {

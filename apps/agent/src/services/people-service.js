@@ -72,7 +72,7 @@ class PeopleService {
             // Fetch History
             try {
                 const historyRes = await axios.get(`${this.interfacesUrl}/whatsapp/history`, {
-                    params: { session: 'user', jid: chat.jid, limit: 50 },
+                    params: { session: 'user', jid: chat.jid, limit: 100 },
                     headers: { 'Authorization': `Bearer ${process.env.DEEDEE_API_TOKEN}` }
                 });
                 const messages = historyRes.data || [];

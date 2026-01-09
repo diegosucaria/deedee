@@ -228,7 +228,7 @@ app.get('/whatsapp/history', (req, res) => {
   const service = whatsappSessions[targetSession];
   if (!service) return res.status(400).json({ error: 'Invalid session' });
 
-  const l = parseInt(limit) || 50;
+  const l = parseInt(limit) || 200;
   res.json(service.getChatHistory(jid, l));
 });
 

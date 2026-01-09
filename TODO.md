@@ -76,3 +76,6 @@
 - [x] **Contact Import**: Added Import CSV/WhatsApp feature to People page.
 - [x] **Validation**: Enhanced API validation for configuration keys.
 - [x] **Deduplication**: Fixed double tool execution bug in Agent.
+- [x] Smart Context: Increased WhatsApp History Limits (3x)
+- [x] Tone Matching: Impersonation Mode for 'User' Session
+- [x] **Avatar Fallback**: Implemented automatic redirect to `ui-avatars.com` for missing profile pictures.
