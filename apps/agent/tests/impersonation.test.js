@@ -84,7 +84,7 @@ describe('Impersonation & Tone Matching', () => {
         const systemPrompt = callArgs.config.systemInstruction;
 
         // Verify the injected string exists
-        expect(systemPrompt).toContain('=== 🎭 IMPERSONATION & TONE MATCHING ===');
+        expect(systemPrompt).toContain('=== IMPERSONATION & TONE MATCHING ===');
         expect(systemPrompt).toContain('IF you are asked to draft a message for the user');
     });
 

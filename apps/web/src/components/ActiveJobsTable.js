@@ -123,7 +123,7 @@ export default function ActiveJobsTable({ onViewHistory }) {
                     </h3>
                     <button
                         onClick={onViewHistory}
-                        className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors"
+                        className="text-xs text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 px-2 py-1 rounded transition-colors flex items-center gap-1"
                     >
                         <Clock className="w-3 h-3" />
                         View Past Tasks
