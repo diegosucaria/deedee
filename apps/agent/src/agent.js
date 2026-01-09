@@ -475,7 +475,7 @@ class Agent {
 
       // --- WATCHER LOGIC (Enhanced WhatsApp Intelligence) ---
       // Security: whatsapp:user is PASSIVE (ignored) unless it triggers a watcher.
-      if (message.source.startsWith('whatsapp')) {
+      if (message.source?.startsWith('whatsapp')) {
         const isUserSession = message.source === 'whatsapp:user'; // Messages from friends to ME
         const contactString = message.metadata?.phoneNumber;
         const groupName = message.metadata?.groupName;
@@ -567,7 +567,7 @@ class Agent {
       // Let's check `db.saveMessage` implementation using `view_file` if unsure.
       // Assuming it's safe to call execution path logic.
 
-      if (!message.source.startsWith('whatsapp:user')) {
+      if (!message.source?.startsWith('whatsapp:user')) {
         this.db.saveMessage(message);
       }
 
