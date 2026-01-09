@@ -282,7 +282,8 @@ class Agent {
 
       // EMERGENCY ROLLBACK: Disable streaming completely.
       // Use standard sendMessage for stability.
-      const result = await session.sendMessage(payload);
+      // FIX: Wrap payload in { message: ... } as required by SDK
+      const result = await session.sendMessage({ message: payload });
 
       let response = result.response;
       if (!response && result.candidates) {
@@ -971,7 +972,8 @@ ${files.length > 0 ? files.join(", ") : "No files yet."}
           const payload = functionResponseParts;
 
           // EMERGENCY ROLLBACK: Disable streaming completely.
-          const result = await session.sendMessage(payload);
+          // FIX: Wrap payload in { message: ... } as required by SDK
+          const result = await session.sendMessage({ message: payload });
 
           let resp = result.response;
           if (!resp && result.candidates) resp = result;
