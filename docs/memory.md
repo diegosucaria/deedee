@@ -88,8 +88,16 @@ CREATE TABLE people (
   relationship TEXT,
   source TEXT,
   notes TEXT,
+  identifiers TEXT, -- JSON (e.g. { "whatsapp": "123@s.whatsapp.net" })
   metadata TEXT, -- JSON
   created_at DATETIME,
   updated_at DATETIME
+);
+
+CREATE TABLE verified_contacts (
+  service TEXT,
+  contact_id TEXT,
+  verified_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+  PRIMARY KEY (service, contact_id)
 );
 ```

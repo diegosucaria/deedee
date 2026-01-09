@@ -359,7 +359,11 @@ const toolDefinitions = [
         description: "List all known people/contacts in the database.",
         parameters: {
           type: "OBJECT",
-          properties: {},
+          properties: {
+            limit: { type: "NUMBER", description: "Optional. Max results to return." },
+            offset: { type: "NUMBER", description: "Optional. Pagination offset." },
+            query: { type: "STRING", description: "Optional. Filter by name, relationship, or phone." }
+          },
           required: []
         }
       },
