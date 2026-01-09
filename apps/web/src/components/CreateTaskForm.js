@@ -33,11 +33,26 @@ export default function CreateTaskForm({ onTaskCreated, initialValues = null, on
     const [scheduleType, setScheduleType] = useState(getInitialScheduleType());
 
     // Fix: For one-off jobs, use nextInvocation as the time, properly formatted
+    const toLocalISOString = (dateStr) => {
+        if (!dateStr) return '';
+        const date = new Date(dateStr);
+        const offset = date.getTimezoneOffset() * 60000;
+        const localISOTime = (new Date(date - -offset)).toISOString().slice(0, 16); // Double negative to add
+        // Actually simpler: 
+        // return new Date(date.getTime() - (date.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
+        // Wait, getTimezoneOffset returns positive minutes for zones behind UTC (e.g. UTC-3 returns 180).
+        // So we need to SUBTRACT the offset to get "UTC" that looks like Local.
+        // Example: 10:00 Local (UTC-3) -> 13:00 UTC. Offset = 180.
+        // 13:00 UTC - 180min = 10:00 UTC. toISOString() -> 10:00. Correct.
+        const localDate = new Date(date.getTime() - (date.getTimezoneOffset() * 60000));
+        return localDate.toISOString().slice(0, 16);
+    };
+
     const getInitialCron = () => {
         if (!initialValues) return '';
         if (initialValues.isOneOff && initialValues.nextInvocation) {
             try {
-                return new Date(initialValues.nextInvocation).toISOString().slice(0, 16);
+                return toLocalISOString(initialValues.nextInvocation);
             } catch (e) {
                 return initialValues.cron || '';
             }
@@ -182,7 +197,7 @@ export default function CreateTaskForm({ onTaskCreated, initialValues = null, on
                     <input
                         type="datetime-local"
                         name="expiresAt"
-                        defaultValue={initialValues?.expiresAt ? new Date(initialValues.expiresAt).toISOString().slice(0, 16) : ''}
+                        defaultValue={initialValues?.expiresAt ? new Date(new Date(initialValues.expiresAt).getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16) : ''}
                         className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-mono text-sm"
                     />
                 </div>

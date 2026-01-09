@@ -71,6 +71,7 @@ export default function SettingsPage() {
 
     const tabs = [
         { id: 'general', label: 'General' },
+        { id: 'communication', label: 'Communication' },
         { id: 'interfaces', label: 'Interfaces' },
         { id: 'backups', label: 'Backups' },
         { id: 'environment', label: 'Environment' },
@@ -103,6 +104,7 @@ export default function SettingsPage() {
             </header>
 
             <section className="max-w-3xl mx-auto w-full space-y-8 pb-20">
+                {/* General Tab */}
                 {activeTab === 'general' && (
                     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
 
@@ -143,39 +145,6 @@ export default function SettingsPage() {
                             </div>
                         </div>
 
-                        {/* Communication Settings */}
-                        <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
-                            <h2 className="text-lg font-semibold text-white mb-4">Communication</h2>
-                            <div className="flex items-center justify-between">
-                                <div>
-                                    <h3 className="text-white font-medium">Dry Run Mode</h3>
-                                    <p className="text-sm text-zinc-400 mt-1 max-w-md">
-                                        Simulate sending messages without actually dispatching them to WhatsApp.
-                                        Useful for testing delayed notifications safely.
-                                    </p>
-                                </div>
-                                <div className="flex items-center">
-                                    <label className="relative inline-flex items-center cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={config?.communication_dry_run === true}
-                                            onChange={(e) => handleSave('communication_dry_run', e.target.checked)}
-                                            className="sr-only peer"
-                                        />
-                                        <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-500/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
-                                    </label>
-                                </div>
-                            </div>
-                            {config?.communication_dry_run && (
-                                <div className="mt-4 flex items-center gap-2 text-yellow-500/90 text-sm bg-yellow-500/10 p-3 rounded-lg border border-yellow-500/20">
-                                    <AlertTriangle className="w-4 h-4" />
-                                    <span>
-                                        <strong>Dry Run Active:</strong> The agent will LOG success but NO messages will be sent out.
-                                    </span>
-                                </div>
-                            )}
-                        </div>
-
                         {/* Search Strategy Card */}
                         <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
                             <div className="p-6 border-b border-zinc-800">
@@ -214,6 +183,66 @@ export default function SettingsPage() {
                             {error && (
                                 <div className="bg-red-500/10 text-red-400 p-4 text-sm border-t border-red-500/20">
                                     Error saving settings: {error}
+                                </div>
+                            )}
+                        </div>
+                    </div>
+                )}
+
+                {/* Communication Tab */}
+                {activeTab === 'communication' && (
+                    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        {/* Communication Settings */}
+                        <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
+                            <h2 className="text-lg font-semibold text-white mb-4">Notifications & Messaging</h2>
+
+                            <div className="space-y-6">
+                                {/* Notification Channel */}
+                                <div>
+                                    <label className="block text-sm font-medium text-zinc-400 mb-1">
+                                        Notification Channel
+                                    </label>
+                                    <select
+                                        value={config?.notification_channel || 'whatsapp'}
+                                        onChange={(e) => handleSave('notification_channel', e.target.value)}
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500/50 outline-none"
+                                    >
+                                        <option value="whatsapp">WhatsApp</option>
+                                        <option value="telegram">Telegram</option>
+                                    </select>
+                                    <p className="text-xs text-zinc-500 mt-1">
+                                        Where the agent sends "pushed" alerts and reminders.
+                                    </p>
+                                </div>
+
+                                <div className="border-t border-zinc-800/50 pt-6 flex items-center justify-between">
+                                    <div>
+                                        <h3 className="text-white font-medium">Dry Run Mode</h3>
+                                        <p className="text-sm text-zinc-400 mt-1 max-w-md">
+                                            Simulate sending messages without actually dispatching them.
+                                            Useful for testing delayed notifications safely.
+                                        </p>
+                                    </div>
+                                    <div className="flex items-center">
+                                        <label className="relative inline-flex items-center cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={config?.communication_dry_run === true}
+                                                onChange={(e) => handleSave('communication_dry_run', e.target.checked)}
+                                                className="sr-only peer"
+                                            />
+                                            <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-500/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {config?.communication_dry_run && (
+                                <div className="mt-4 flex items-center gap-2 text-yellow-500/90 text-sm bg-yellow-500/10 p-3 rounded-lg border border-yellow-500/20">
+                                    <AlertTriangle className="w-4 h-4" />
+                                    <span>
+                                        <strong>Dry Run Active:</strong> The agent will LOG success but NO messages will be sent out.
+                                    </span>
                                 </div>
                             )}
                         </div>

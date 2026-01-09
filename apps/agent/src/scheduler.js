@@ -231,6 +231,74 @@ class Scheduler {
             }
 
             // Schedule without re-persisting
+            // We need to wrap the callback to include smart notification logic if it's an agent instruction
+            if (taskType === 'agent_instruction' && payload.task) {
+                const originalCallback = callback;
+                callback = async () => {
+                    const result = await originalCallback();
+
+                    // --- SMART NOTIFICATION LOGIC ---
+                    try {
+                        if (this.agent.interface && this.agent.settings) {
+                            const settings = this.agent.settings;
+                            const ownerPhone = settings.owner_phone;
+                            const channel = settings.notification_channel || 'whatsapp';
+
+                            if (ownerPhone) {
+                                const taskLower = payload.task.toLowerCase();
+                                let shouldNotify = false;
+                                let notificationText = null;
+
+                                // 1. Check Explicit Instructions (High Priority)
+                                if (taskLower.startsWith('remind') || taskLower.startsWith('alert') || taskLower.startsWith('notify') || taskLower.startsWith('tell me')) {
+                                    shouldNotify = true;
+                                }
+
+                                // 2. Check Output Content (Medium Priority)
+                                if (result && result.text) {
+                                    const text = result.text;
+                                    const textLower = text.toLowerCase();
+
+                                    // Explicit address
+                                    if (textLower.includes('diego,') || textLower.includes('alert:') || textLower.includes('warning:')) {
+                                        shouldNotify = true;
+                                    }
+
+                                    // 3. Smart Silence Heuristic
+                                    // If we haven't decided to notify yet, check if we should effectively be silent
+                                    // If it's a pure action ("turn on", "backup") and success, we default to silent
+                                    const isAction = taskLower.startsWith('turn') || taskLower.startsWith('run') || taskLower.startsWith('backup');
+
+                                    // If it's NOT an action, and we have text, we generally notify (informational queries)
+                                    // e.g. "What is the Bitcoin price?" -> We want the answer.
+                                    if (!shouldNotify && !isAction) {
+                                        shouldNotify = true;
+                                    }
+
+                                    notificationText = text;
+                                }
+
+                                if (shouldNotify && notificationText) {
+                                    console.log(`[Scheduler] Smart Notification: Pushing to ${channel}...`);
+                                    await this.agent.interface.send({
+                                        to: ownerPhone,
+                                        platform: channel,
+                                        content: notificationText,
+                                        isNotification: true
+                                    });
+                                } else {
+                                    console.log(`[Scheduler] Smart Notification: Silent (Reason: Action=${!!payload.task.match(/^(turn|run|backup)/i)}, Explicit=${!!payload.task.match(/^(remind|alert|notify)/i)})`);
+                                }
+                            }
+                        }
+                    } catch (err) {
+                        console.error('[Scheduler] Smart Notification Failed:', err);
+                    }
+
+                    return result;
+                };
+            }
+
             this.scheduleJob(name, cronExpression, callback, { persist: false, taskType, payload, expiresAt });
         }
         console.log(`[Scheduler] Loaded ${Object.keys(this.jobs).length} jobs from DB.`);

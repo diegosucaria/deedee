@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Search, Loader2, X, User } from 'lucide-react';
-import { getWhatsAppContacts } from '../app/actions';
+import { Search, Loader2, X, User, Download, Check } from 'lucide-react';
+import { getWhatsAppContacts, createPerson } from '../app/actions';
 
 export default function ContactList({ session, onClose }) {
     const [contacts, setContacts] = useState([]);
@@ -72,19 +72,7 @@ export default function ContactList({ session, onClose }) {
                         </div>
                     ) : (
                         contacts.map((c) => (
-                            <div key={c.id} className="p-3 hover:bg-zinc-800/50 rounded-lg flex items-center gap-3 transition-colors group">
-                                <div className="w-10 h-10 bg-indigo-500/10 text-indigo-400 rounded-full flex items-center justify-center flex-shrink-0">
-                                    <User className="w-5 h-5" />
-                                </div>
-                                <div className="overflow-hidden">
-                                    <div className="font-medium text-zinc-200 truncate">
-                                        {c.name || c.notify || 'Unknown'}
-                                    </div>
-                                    <div className="text-xs text-zinc-500 font-mono truncate">
-                                        {c.phone} {c.notify && c.name && `• ${c.notify}`}
-                                    </div>
-                                </div>
-                            </div>
+                            <ContactRow key={c.id} contact={c} />
                         ))
                     )}
                 </div>
@@ -94,6 +82,64 @@ export default function ContactList({ session, onClose }) {
                     {contacts.length} contacts found
                 </div>
             </div>
+        </div>
+    );
+}
+
+function ContactRow({ contact }) {
+    const [status, setStatus] = useState('idle'); // idle, loading, success, error
+
+    const handleImport = async () => {
+        if (status !== 'idle') return;
+        setStatus('loading');
+
+        // Prepare FormData for the action
+        const formData = new FormData();
+        formData.append('name', contact.name || contact.notify || contact.phone);
+        formData.append('phone', contact.phone);
+        formData.append('notes', `Imported from WhatsApp (${contact.notify || ''})`);
+
+        const res = await createPerson(null, formData);
+
+        if (res.success) {
+            setStatus('success');
+        } else {
+            console.error(res.error);
+            setStatus('error');
+            setTimeout(() => setStatus('idle'), 3000);
+        }
+    };
+
+    return (
+        <div className="p-3 hover:bg-zinc-800/50 rounded-lg flex items-center justify-between gap-3 transition-colors group">
+            <div className="flex items-center gap-3 overflow-hidden">
+                <div className="w-10 h-10 bg-indigo-500/10 text-indigo-400 rounded-full flex items-center justify-center flex-shrink-0">
+                    <User className="w-5 h-5" />
+                </div>
+                <div className="overflow-hidden">
+                    <div className="font-medium text-zinc-200 truncate">
+                        {contact.name || contact.notify || 'Unknown'}
+                    </div>
+                    <div className="text-xs text-zinc-500 font-mono truncate">
+                        {contact.phone} {contact.notify && contact.name && `• ${contact.notify}`}
+                    </div>
+                </div>
+            </div>
+
+            <button
+                onClick={handleImport}
+                disabled={status !== 'idle'}
+                className={`p-2 rounded-lg transition-colors flex-shrink-0 
+                    ${status === 'success' ? 'bg-green-500/20 text-green-500' :
+                        status === 'error' ? 'bg-red-500/20 text-red-500' :
+                            'bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-white'
+                    }`}
+                title="Import to People"
+            >
+                {status === 'loading' ? <Loader2 className="w-4 h-4 animate-spin" /> :
+                    status === 'success' ? <Check className="w-4 h-4" /> :
+                        <Download className="w-4 h-4" />}
+            </button>
         </div>
     );
 }

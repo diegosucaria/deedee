@@ -143,8 +143,10 @@ class CommunicationExecutor extends BaseExecutor {
                 if (this.services.interface && this.services.interface.send) {
                     if (dryRun) {
                         console.log(`[CommunicationExecutor] Dry Run: Message would have been sent to ${cleanTo} (${svc})`);
-                        return { success: true, info: `Success (Dry Run): Message to ${cleanTo} skipped.` };
+                        console.log(`[CommunicationExecutor] Content: "${content}"`);
+                        return { success: true, info: `Success (Dry Run): Message to ${cleanTo} skipped. Content: "${content.substring(0, 50)}..."` };
                     }
+                    console.log(`[CommunicationExecutor] Sending to ${cleanTo} (${svc}): "${content}"`);
                     await this.services.interface.send(payload);
 
                     // Mark as verified if successful (implicit trust if we sent it successfully? No, keep explicit above)

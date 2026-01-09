@@ -12,6 +12,7 @@
 - [x] **Telegram**: Text and Native Voice (WAV) support.
 - [x] **API Gateway**: Synchronous `POST /v1/chat` for iOS Shortcuts & Dashboards.
 - [x] **Web Dashboard**: Next.js interface with Real-time Chat, Journal, and Memory views.
+- [x] **WhatsApp**: Integration via Baileys (Dual Session: User & Assistant).
 
 ### Capabilities & Tools
 - [x] **Plex Integration**: "Play Inception", "What's on deck?".
@@ -47,7 +48,7 @@
 ## 🚧 Future Roadmap / Ideas
 
 ### Interfaces
-- [x] **WhatsApp**: Integration via Baileys (Unofficial/Personal). See `docs/interfaces.md`.
+### Interfaces
 - [ ] **Automated Message Intros**: Add "I am DeeDee" introduction to automated/scheduler messages sent as User.
 - [ ] **Voice Interface**: Real-time Gemini Live API integration (Web).
 - [ ] **Chat Sessions**: Persistent history, threads, and management UI (ChatGPT-style).
@@ -65,3 +66,9 @@
 - [ ] **Knowledge Base ("Second Brain")**: Integration with Obsidian/Notion for long-term knowledge management.
 - [ ] **Long-term Persistence**: Dedicated storage for files (PDFs, Images) and structured data (Health, Financial) for longitudinal analysis.
 - [x] **Chat Streaming**: Re-enable streaming responses (Completed).
+
+### Recent Improvements (Jan 2026)
+- [x] **Smart Notifications**: Configurable channel (WhatsApp/Telegram) and heuristic silence for recurring tasks.
+- [x] **Settings UI**: Reorganized settings into tabs (General, Communication, Interfaces, Backups) and added UI for new features.
+- [x] **Contact Import**: Added Import CSV/WhatsApp feature to People page.
+- [x] **Validation**: Enhanced API validation for configuration keys.
