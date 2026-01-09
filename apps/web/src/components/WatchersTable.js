@@ -5,6 +5,9 @@ import { getWatchers, deleteWatcher } from '@/app/actions';
 import { Eye, Trash2, RefreshCw, Plus } from 'lucide-react';
 import CreateWatcherForm from './CreateWatcherForm';
 
+
+import { io } from 'socket.io-client';
+
 export default function WatchersTable() {
     const [watchers, setWatchers] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -12,7 +15,8 @@ export default function WatchersTable() {
     const [deletingId, setDeletingId] = useState(null);
 
     const loadWatchers = async () => {
-        setLoading(true);
+        // Silent loading if we have data already
+        if (watchers.length === 0) setLoading(true);
         try {
             const data = await getWatchers();
             setWatchers(data || []);
@@ -25,8 +29,29 @@ export default function WatchersTable() {
 
     useEffect(() => {
         loadWatchers();
-        const interval = setInterval(loadWatchers, 10000); // Poll every 10s
-        return () => clearInterval(interval);
+
+        // Polling Fallback (every 30s)
+        const interval = setInterval(loadWatchers, 30000);
+
+        // Socket.IO Live Updates
+        const socket = io({
+            path: '/socket.io',
+            reconnectionAttempts: 5
+        });
+
+        socket.on('connect', () => {
+            console.log('[WatchersTable] Socket connected');
+        });
+
+        socket.on('watcher:update', (data) => {
+            console.log('[WatchersTable] Received update:', data);
+            loadWatchers();
+        });
+
+        return () => {
+            clearInterval(interval);
+            socket.disconnect();
+        };
     }, []);
 
     const handleDelete = async (id) => {

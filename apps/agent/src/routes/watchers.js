@@ -30,6 +30,9 @@ function createWatchersRouter(agent) {
             const result = agent.db.createWatcher({
                 name, contactString, personId, condition, instruction, status: 'active'
             });
+            if (agent.interface?.broadcast) {
+                agent.interface.broadcast('watcher:update', { action: 'create', id: result.lastInsertRowid });
+            }
             res.json({ success: true, id: result.lastInsertRowid });
         } catch (error) {
             console.error('[API] Failed to create watcher:', error);
@@ -41,6 +44,9 @@ function createWatchersRouter(agent) {
     router.delete('/:id', (req, res) => {
         try {
             agent.db.deleteWatcher(req.params.id);
+            if (agent.interface?.broadcast) {
+                agent.interface.broadcast('watcher:update', { action: 'delete', id: req.params.id });
+            }
             res.json({ success: true });
         } catch (error) {
             console.error('[API] Failed to delete watcher:', error);

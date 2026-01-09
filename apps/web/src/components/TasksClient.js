@@ -39,7 +39,7 @@ export default function TasksClient() {
                     onClick={() => setActiveTab('manage')}
                     className={`pb-2 px-1 text-sm font-medium transition-colors relative whitespace-nowrap flex items-center gap-2 ${activeTab === 'manage' ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
                 >
-                    Execution Logs
+                    Job History
                     {activeTab === 'manage' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-indigo-500" />}
                 </button>
 
@@ -59,7 +59,7 @@ export default function TasksClient() {
 
             {activeTab === 'active' && (
                 <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
-                    <ActiveJobsTable />
+                    <ActiveJobsTable onViewHistory={() => setActiveTab('manage')} />
                 </div>
             )}
 

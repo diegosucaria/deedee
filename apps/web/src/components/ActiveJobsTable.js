@@ -5,11 +5,13 @@ import { getTasks, runTask, cancelTask } from '@/app/actions';
 import { Clock, Play, Trash2, RefreshCw, CalendarOff, Edit, Plus } from 'lucide-react';
 import CreateTaskForm from './CreateTaskForm';
 
-export default function ActiveJobsTable() {
+export default function ActiveJobsTable({ onViewHistory }) {
     const [jobs, setJobs] = useState([]);
     const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState(null);
     const [editingJob, setEditingJob] = useState(null);
+    const [selectedNames, setSelectedNames] = useState(new Set());
+    const [deleting, setDeleting] = useState(false);
 
     const loadJobs = async () => {
         setLoading(true);
@@ -29,11 +31,25 @@ export default function ActiveJobsTable() {
         return () => clearInterval(interval);
     }, []);
 
+    const toggleSelection = (name) => {
+        const next = new Set(selectedNames);
+        if (next.has(name)) next.delete(name);
+        else next.add(name);
+        setSelectedNames(next);
+    };
+
+    const toggleAll = () => {
+        if (selectedNames.size === jobs.length) {
+            setSelectedNames(new Set());
+        } else {
+            setSelectedNames(new Set(jobs.map(j => j.name)));
+        }
+    };
+
     const handleRun = async (name) => {
         setActionLoading(name);
         try {
             await runTask(name);
-            // Don't reload immediately, let the log table update eventually or just notify success
         } catch (err) {
             console.error('Failed to run job:', err);
         } finally {
@@ -54,15 +70,49 @@ export default function ActiveJobsTable() {
         }
     };
 
+    const handleBulkDelete = async () => {
+        if (!confirm(`Are you sure you want to cancel ${selectedNames.size} jobs?`)) return;
+        setDeleting(true);
+        try {
+            // Sequential for now, straightforward
+            for (const name of selectedNames) {
+                await cancelTask(name).catch(console.error);
+            }
+            setSelectedNames(new Set());
+            await loadJobs();
+        } finally {
+            setDeleting(false);
+        }
+    };
+
     return (
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
             <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
+                <div className="flex items-center gap-4">
+                    <h3 className="text-lg font-semibold text-zinc-300 flex items-center gap-2">
+                        <Clock className="w-5 h-5 text-sky-400" />
+                        Active Scheduled Jobs
+                    </h3>
+                    <button
+                        onClick={onViewHistory}
+                        className="text-xs text-indigo-400 hover:text-indigo-300 flex items-center gap-1 transition-colors"
+                    >
+                        <Clock className="w-3 h-3" />
+                        View Past Tasks
+                    </button>
+                </div>
 
-                <h3 className="text-lg font-semibold text-zinc-300 flex items-center gap-2">
-                    <Clock className="w-5 h-5 text-sky-400" />
-                    Active Scheduled Jobs
-                </h3>
                 <div className="flex gap-2">
+                    {selectedNames.size > 0 && (
+                        <button
+                            onClick={handleBulkDelete}
+                            disabled={deleting}
+                            className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-lg text-xs font-medium transition-colors flex items-center gap-2"
+                        >
+                            <Trash2 className="w-4 h-4" />
+                            Delete ({selectedNames.size})
+                        </button>
+                    )}
                     <button
                         onClick={() => setEditingJob({})}
                         className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-2"
@@ -98,6 +148,14 @@ export default function ActiveJobsTable() {
                 <table className="w-full text-sm text-left">
                     <thead className="bg-zinc-950 text-zinc-500 uppercase text-xs">
                         <tr>
+                            <th className="px-4 py-3 w-[40px]">
+                                <input
+                                    type="checkbox"
+                                    className="rounded border-zinc-700 bg-zinc-900"
+                                    checked={jobs.length > 0 && selectedNames.size === jobs.length}
+                                    onChange={toggleAll}
+                                />
+                            </th>
                             <th className="px-2 py-3">Job Name</th>
                             <th className="px-2 py-3">Schedule / Type</th>
                             <th className="px-2 py-3">Task</th>
@@ -109,13 +167,21 @@ export default function ActiveJobsTable() {
                     <tbody className="divide-y divide-zinc-800">
                         {jobs.length === 0 ? (
                             <tr>
-                                <td colSpan={6} className="px-4 py-8 text-center text-zinc-500">
+                                <td colSpan={7} className="px-4 py-8 text-center text-zinc-500">
                                     No active jobs found.
                                 </td>
                             </tr>
                         ) : (
                             jobs.map((job) => (
-                                <tr key={job.name} className="hover:bg-zinc-800/50 transition-colors">
+                                <tr key={job.name} className={`hover:bg-zinc-800/50 transition-colors group ${selectedNames.has(job.name) ? 'bg-indigo-500/5 hover:bg-indigo-500/10' : ''}`}>
+                                    <td className="px-4 py-4">
+                                        <input
+                                            type="checkbox"
+                                            className="rounded border-zinc-700 bg-zinc-900"
+                                            checked={selectedNames.has(job.name)}
+                                            onChange={() => toggleSelection(job.name)}
+                                        />
+                                    </td>
                                     <td className="px-4 py-4 font-mono text-zinc-300">
                                         {job.name}
                                         {job.isSystem && (

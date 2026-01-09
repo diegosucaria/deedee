@@ -73,7 +73,7 @@ export async function addGoal(prevState, formData) {
 
 export async function deleteGoal(id) {
     try {
-        await fetchAPI(`/v1/goals/${id}`, { method: 'DELETE' });
+        await fetchAPI(`/v1/goals/${encodeURIComponent(id)}`, { method: 'DELETE' });
         revalidatePath('/brain');
         return { success: true };
     } catch (e) { return { success: false, error: e.message }; }
@@ -81,7 +81,7 @@ export async function deleteGoal(id) {
 
 export async function updateGoal(id, status) {
     try {
-        await fetchAPI(`/v1/goals/${id}`, { method: 'PUT', body: JSON.stringify({ status }) });
+        await fetchAPI(`/v1/goals/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ status }) });
         revalidatePath('/brain');
         return { success: true };
     } catch (e) { return { success: false, error: e.message }; }
@@ -132,7 +132,7 @@ export async function deleteAlias(alias) {
 // --- History ---
 export async function deleteHistory(id) {
     try {
-        await fetchAPI(`/v1/history/${id}`, { method: 'DELETE' });
+        await fetchAPI(`/v1/history/${encodeURIComponent(id)}`, { method: 'DELETE' });
         revalidatePath('/history');
         return { success: true };
     } catch (e) { return { success: false, error: e.message }; }
@@ -141,7 +141,7 @@ export async function deleteHistory(id) {
 // --- Journal ---
 export async function deleteJournal(date) {
     try {
-        await fetchAPI(`/v1/journal/${date}`, { method: 'DELETE' });
+        await fetchAPI(`/v1/journal/${encodeURIComponent(date)}`, { method: 'DELETE' });
         revalidatePath('/journal');
         return { success: true };
     } catch (e) { return { success: false, error: e.message }; }
@@ -149,7 +149,7 @@ export async function deleteJournal(date) {
 
 export async function updateJournal(date, content) {
     try {
-        await fetchAPI(`/v1/journal/${date}`, {
+        await fetchAPI(`/v1/journal/${encodeURIComponent(date)}`, {
             method: 'PUT',
             body: JSON.stringify({ content })
         });
