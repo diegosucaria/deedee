@@ -238,4 +238,22 @@ describe('Agent with Tools', () => {
 
     consoleSpy.mockRestore();
   });
+
+  test('should handle null content in searchHistory gracefully', async () => {
+    // Override mock for this test
+    agent.db.searchMessages = jest.fn().mockReturnValue([
+      { timestamp: '2023-01-01T10:00:00.000Z', role: 'user', content: null },
+      { timestamp: '2023-01-01T10:01:00.000Z', role: 'assistant', content: 'Hello' }
+    ]);
+
+    // Call internal tool handler directly
+    // searchHistory is handled in agent.js _executeTool
+    const result = await agent._executeTool('searchHistory', { query: 'test' });
+
+    expect(result).toHaveProperty('matches');
+    expect(result.matches).toHaveLength(2);
+    // Verify it didn't crash and formatted correctly (empty string for null)
+    expect(result.matches[0]).toContain('user: ');
+    expect(result.matches[1]).toContain('assistant: Hello');
+  });
 });

@@ -1356,7 +1356,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
       // Use internal specific search or general DB search
       // Using existing searchMessages method
       const matches = this.db.searchMessages(args.query, args.limit || 5);
-      return { matches: matches.map(m => `[${m.timestamp}] ${m.role}: ${m.content.substring(0, 200)}`) };
+      return { matches: matches.map(m => `[${m.timestamp}] ${m.role}: ${(m.content || '').substring(0, 200)}`) };
     }
     if (executionName === 'addGoal') {
       const metadata = { chatId: message.metadata?.chatId };
