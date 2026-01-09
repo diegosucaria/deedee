@@ -525,7 +525,11 @@ class Agent {
             });
           }
 
-          this.db.saveMessage(safeMessage);
+          // By default, we DO NOT save passive messages to main DB to avoid clutter/bloat.
+          // The Agent can "pull" history on demand using readChatHistory tool.
+          if (this.settings.save_passive_messages) {
+            this.db.saveMessage(safeMessage);
+          }
           // Log suppressed per user request
           // console.log(`[Agent] Passive Mode (whatsapp:user): Message from ${contactString} saved. No watcher triggered. Ignoring.`);
           return executionSummary; // Exit early

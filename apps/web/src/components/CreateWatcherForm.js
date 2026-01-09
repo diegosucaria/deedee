@@ -1,104 +1,114 @@
 'use client';
 
-import { useState } from 'react';
-
+import { useFormState } from 'react-dom';
 import { createWatcher } from '@/app/actions';
+import { Plus, Save, X } from 'lucide-react';
+import { useRef, useEffect } from 'react';
 
-export default function CreateWatcherForm({ onSuccess, onCancel }) {
-    const [loading, setLoading] = useState(false);
-    const [error, setError] = useState(null);
+const initialState = { success: false, error: null };
 
-    const handleSubmit = async (e) => {
-        e.preventDefault();
-        setLoading(true);
-        setError(null);
+export default function CreateWatcherForm({ onWatcherCreated, initialValues = null, onCancel = null }) {
+    const [state, formAction] = useFormState(createWatcher, initialState);
+    const formRef = useRef(null);
 
-        const formData = new FormData(e.target);
-        const name = formData.get('name');
-        const contactString = formData.get('contactString');
-        const condition = formData.get('condition');
-        const instruction = formData.get('instruction');
-
-        try {
-            const res = await createWatcher(name, contactString, condition, instruction);
-            if (!res.success) throw new Error(res.error);
-
-            onSuccess();
-        } catch (err) {
-            setError(err.message);
-        } finally {
-            setLoading(false);
+    // Reset form on success
+    useEffect(() => {
+        if (state?.success) {
+            if (!initialValues) {
+                formRef.current?.reset();
+            }
+            if (onWatcherCreated) onWatcherCreated();
         }
-    };
+    }, [state, onWatcherCreated, initialValues]);
+
+    const isEditing = !!initialValues;
 
     return (
-        <form onSubmit={handleSubmit} className="space-y-4">
-            {error && (
-                <div className="p-3 bg-red-900/30 border border-red-800 text-red-200 text-sm rounded-lg">
-                    {error}
+        <div className="p-6 rounded-2xl border bg-zinc-900/50 border-zinc-800">
+            <h3 className="text-lg font-medium text-white flex items-center justify-between mb-4">
+                <div className="flex items-center gap-2">
+                    {isEditing ? <Save className="h-5 w-5 text-emerald-400" /> : <Plus className="h-5 w-5 text-emerald-400" />}
+                    {isEditing ? 'Edit Watcher' : 'New Watcher'}
                 </div>
-            )}
+                {onCancel && (
+                    <button
+                        onClick={onCancel}
+                        className="p-1 hover:bg-zinc-800 rounded text-zinc-400 hover:text-white transition-colors"
+                    >
+                        <X className="w-5 h-5" />
+                    </button>
+                )}
+            </h3>
 
-            <div>
-                <label className="block text-sm font-medium text-zinc-400 mb-1">Friendly Name</label>
-                <input
-                    name="name"
-                    required
-                    placeholder="e.g. Dinner Plans"
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
-            </div>
+            <form ref={formRef} action={formAction} className="grid md:grid-cols-2 gap-4">
+                {/* Watcher Name */}
+                <div className="md:col-span-1">
+                    <label className="block text-xs text-zinc-500 mb-1 ml-1">Watcher Name</label>
+                    <input
+                        type="text"
+                        name="name"
+                        placeholder="e.g. Dinner Plans"
+                        required
+                        defaultValue={initialValues?.name}
+                        className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
+                    />
+                </div>
 
-            <div>
-                <label className="block text-sm font-medium text-zinc-400 mb-1">Contact (Phone or Group Name)</label>
-                <input
-                    name="contactString"
-                    required
-                    placeholder="e.g. Mom or Football Group"
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
-                <p className="text-xs text-zinc-600 mt-1">Found in incoming message metadata.</p>
-            </div>
+                {/* Contact String */}
+                <div className="md:col-span-1">
+                    <label className="block text-xs text-zinc-500 mb-1 ml-1">Target Contact / Group</label>
+                    <input
+                        type="text"
+                        name="contactString"
+                        placeholder="Name or Phone (e.g. 'Diego' or 'Family Group')"
+                        required
+                        defaultValue={initialValues?.contactString}
+                        className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
+                    />
+                </div>
 
-            <div>
-                <label className="block text-sm font-medium text-zinc-400 mb-1">Trigger Condition</label>
-                <input
-                    name="condition"
-                    required
-                    defaultValue="contains"
-                    placeholder="e.g. contains 'dinner'"
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-emerald-500 outline-none font-mono text-sm"
-                />
-                <p className="text-xs text-zinc-600 mt-1">Simple string match. Use "contains 'text'".</p>
-            </div>
+                {/* Condition */}
+                <div className="md:col-span-2">
+                    <label className="block text-xs text-zinc-500 mb-1 ml-1">Trigger Condition</label>
+                    <input
+                        type="text"
+                        name="condition"
+                        placeholder="e.g. contains 'dinner' OR 'emergency'"
+                        required
+                        defaultValue={initialValues?.condition}
+                        className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all font-mono text-sm"
+                    />
+                    <p className="text-[10px] text-zinc-600 mt-1 ml-1">
+                        Simple text match. Use "contains 'text'" logic. The agent checks if the incoming message matches this.
+                    </p>
+                </div>
 
-            <div>
-                <label className="block text-sm font-medium text-zinc-400 mb-1">Instruction</label>
-                <textarea
-                    name="instruction"
-                    required
-                    rows={3}
-                    placeholder="What should I do? e.g. Reply '8pm' or Notify me."
-                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-emerald-500 outline-none"
-                />
-            </div>
+                {/* Instruction */}
+                <div className="md:col-span-2">
+                    <label className="block text-xs text-zinc-500 mb-1 ml-1">Instruction (What to do)</label>
+                    <textarea
+                        name="instruction"
+                        placeholder="e.g. Reply 'I usually eat at 8pm', or 'Log this to tasks'"
+                        required
+                        defaultValue={initialValues?.instruction}
+                        rows={4}
+                        className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all resize-y"
+                    />
+                </div>
 
-            <div className="flex justify-end gap-3 pt-2">
-                <button
-                    type="button"
-                    onClick={onCancel}
-                    className="px-4 py-2 text-sm text-zinc-400 hover:text-white transition-colors"
-                >
-                    Cancel
-                </button>
                 <button
                     type="submit"
-                    disabled={loading}
-                    className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white text-sm font-medium rounded-lg disabled:opacity-50 transition-colors"
+                    className="md:col-span-2 flex items-center justify-center gap-2 rounded-lg bg-emerald-600 px-4 py-2.5 font-medium text-white hover:bg-emerald-500 active:bg-emerald-700 transition-colors shadow-lg shadow-emerald-500/20"
                 >
-                    {loading ? 'Saving...' : 'Create Watcher'}
+                    {isEditing ? <Save className="h-4 w-4" /> : <Plus className="h-4 w-4" />}
+                    {isEditing ? 'Save Watcher' : 'Create Watcher'}
                 </button>
-            </div>
-        </form>
+            </form>
+            {state?.error && (
+                <p className="mt-4 text-sm text-red-400 bg-red-400/10 p-2 rounded border border-red-400/20 animate-pulse">
+                    {state.error}
+                </p>
+            )}
+        </div>
     );
 }

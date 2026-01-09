@@ -17,7 +17,9 @@ class CommandHandler {
 
         const chatId = message.metadata?.chatId;
 
-        if (content === '/stop') {
+        const [cmd, ...args] = content.split(' ');
+
+        if (cmd === '/stop') {
             if (this.stopFlags) {
                 this.stopFlags.add(chatId);
                 this.stopFlags.add('GLOBAL_STOP');
@@ -27,17 +29,29 @@ class CommandHandler {
             return true;
         }
 
-        if (content === '/clear') {
-            this.db.clearHistory(chatId);
-            // Also message to user...
-            const reply = createAssistantMessage('Chat history cleared.');
-            reply.metadata = { chatId, systemAction: 'CLEAR_HISTORY' };
-            reply.source = message.source;
-            await this.interface.send(reply);
+        if (cmd === '/clear') {
+            const target = args[0]?.toLowerCase();
+
+            if (target) {
+                if (target === 'all') {
+                    this.db.clearAllHistory();
+                    await this.sendReply(chatId, message.source, 'WARNING: All history and sessions have been wiped.');
+                } else {
+                    const count = this.db.clearHistoryBySource(target);
+                    await this.sendReply(chatId, message.source, `Deleted ${count} messages from source "${target}".`);
+                }
+            } else {
+                // Default: Clear current chat
+                this.db.clearHistory(chatId);
+                const reply = createAssistantMessage('Current chat history cleared.');
+                reply.metadata = { chatId, systemAction: 'CLEAR_HISTORY' };
+                reply.source = message.source;
+                await this.interface.send(reply);
+            }
             return true;
         }
 
-        if (content === '/clear_all' || content === '/delete_all_sessions') {
+        if (cmd === '/clear_all' || cmd === '/delete_all_sessions') {
             this.db.clearAllHistory();
             const reply = createAssistantMessage('All chat sessions and history deleted from database.');
             reply.metadata = { chatId, systemAction: 'CLEAR_HISTORY' };
@@ -46,7 +60,7 @@ class CommandHandler {
             return true;
         }
 
-        if (content === '/reset_goals') {
+        if (cmd === '/reset_goals') {
             this.db.clearGoals(chatId);
             const reply = createAssistantMessage('Pending goals reset (marked as failed).');
             reply.metadata = { chatId };
@@ -55,7 +69,7 @@ class CommandHandler {
             return true;
         }
 
-        if (content === '/confirm') {
+        if (cmd === '/confirm') {
             if (!this.confirmationManager) {
                 await this.sendReply(chatId, message.source, 'Confirmation manager not initialized.');
                 return true;

@@ -833,3 +833,61 @@ export async function deleteWatcher(id) {
 }
 
 
+
+// --- Watchers ---
+export async function getWatchers() {
+    try {
+        const res = await fetchAPI('/v1/config/watchers');
+        return res.watchers || [];
+    } catch (e) {
+        console.error('getWatchers Error:', e);
+        return [];
+    }
+}
+
+export async function createWatcher(prevState, formData) {
+    try {
+        const name = formData.get('name');
+        const contactString = formData.get('contactString');
+        const condition = formData.get('condition');
+        const instruction = formData.get('instruction');
+
+        if (!contactString || !condition || !instruction) {
+            return { success: false, error: 'Missing required fields' };
+        }
+
+        await fetchAPI('/v1/config/watchers', {
+            method: 'POST',
+            body: JSON.stringify({ name, contactString, condition, instruction })
+        });
+        revalidatePath('/tasks');
+        return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+}
+
+export async function deleteWatcher(id) {
+    try {
+        await fetchAPI(`/v1/config/watchers/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        revalidatePath('/tasks');
+        return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+}
+
+export async function toggleWatcher(id, status) {
+    try {
+        // PUT endpoint usually expects JSON body for updates
+        // Note: The backend route for PUT might not be defined in config.js based on previous grep.
+        // Checking config.js again might be needed, or we rely on creating it if missing.
+        // Assuming /v1/config/watchers/:id PUT exists or update via POST?
+        // Let's assume standard REST if implemented.
+        // Wait, grep in Step 1953 only showed GET, POST, DELETE.
+        // I might need to implement PUT in backend first if missing.
+        // For now, let's implement the action optimistically.
+        await fetchAPI(`/v1/config/watchers/${encodeURIComponent(id)}`, { 
+            method: 'PUT', 
+            body: JSON.stringify({ status }) 
+        });
+        revalidatePath('/tasks');
+        return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+}

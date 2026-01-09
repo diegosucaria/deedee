@@ -1,22 +1,18 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getWatchers, deleteWatcher } from '@/app/actions';
-import { Eye, Trash2, RefreshCw, Plus } from 'lucide-react';
+import { getWatchers, deleteWatcher, toggleWatcher } from '@/app/actions';
+import { Eye, Trash2, RefreshCw, Edit, Plus, Power, Activity } from 'lucide-react';
 import CreateWatcherForm from './CreateWatcherForm';
-
-
-import { io } from 'socket.io-client';
 
 export default function WatchersTable() {
     const [watchers, setWatchers] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [isCreating, setIsCreating] = useState(false);
-    const [deletingId, setDeletingId] = useState(null);
+    const [actionLoading, setActionLoading] = useState(null);
+    const [editingWatcher, setEditingWatcher] = useState(null);
 
     const loadWatchers = async () => {
-        // Silent loading if we have data already
-        if (watchers.length === 0) setLoading(true);
+        setLoading(true);
         try {
             const data = await getWatchers();
             setWatchers(data || []);
@@ -29,57 +25,53 @@ export default function WatchersTable() {
 
     useEffect(() => {
         loadWatchers();
-
-        // Polling Fallback (every 30s)
+        // Poll less frequently than tasks
         const interval = setInterval(loadWatchers, 30000);
-
-        // Socket.IO Live Updates
-        const socket = io({
-            path: '/socket.io',
-            reconnectionAttempts: 5,
-            transports: ['polling']
-        });
-
-        socket.on('connect', () => {
-            console.log('[WatchersTable] Socket connected');
-        });
-
-        socket.on('watcher:update', (data) => {
-            console.log('[WatchersTable] Received update:', data);
-            loadWatchers();
-        });
-
-        return () => {
-            clearInterval(interval);
-            socket.disconnect();
-        };
+        return () => clearInterval(interval);
     }, []);
 
-    const handleDelete = async (id) => {
-        if (!confirm('Delete this watcher?')) return;
-        setDeletingId(id);
+    const handleDelete = async (id, name) => {
+        if (!confirm(`Are you sure you want to delete watcher '${name}'?`)) return;
+        setActionLoading(id);
         try {
-            const res = await deleteWatcher(id);
-            if (!res.success) throw new Error(res.error);
+            await deleteWatcher(id);
             await loadWatchers();
         } catch (err) {
             console.error('Failed to delete watcher:', err);
-            alert('Failed to delete: ' + err.message);
         } finally {
-            setDeletingId(null);
+            setActionLoading(null);
+        }
+    };
+
+    const handleToggle = async (watcher) => {
+        const newStatus = watcher.status === 'active' ? 'paused' : 'active';
+        setActionLoading(watcher.id);
+        try {
+            await toggleWatcher(watcher.id, newStatus);
+            await loadWatchers();
+        } catch (err) {
+            console.error('Failed to toggle watcher:', err);
+        } finally {
+            setActionLoading(null);
         }
     };
 
     return (
-        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden mt-8">
             <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-zinc-300 flex items-center gap-2">
-                    <Eye className="w-5 h-5 text-emerald-400" />
-                    Message Watchers
-                </h3>
+                <div className="flex items-center gap-4">
+                    <h3 className="text-lg font-semibold text-zinc-300 flex items-center gap-2">
+                        <Eye className="w-5 h-5 text-emerald-400" />
+                        Message Watchers
+                    </h3>
+                    <span className="text-xs text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded-full">
+                        Enhanced WhatsApp Intelligence
+                    </span>
+                </div>
+
                 <div className="flex gap-2">
                     <button
-                        onClick={() => setIsCreating(true)}
+                        onClick={() => setEditingWatcher({})}
                         className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-2"
                     >
                         <Plus className="w-4 h-4" />
@@ -88,23 +80,22 @@ export default function WatchersTable() {
                     <button
                         onClick={loadWatchers}
                         className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors"
-                        title="Refresh"
                     >
                         <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
                     </button>
                 </div>
             </div>
 
-            {isCreating && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setIsCreating(false)}>
-                    <div className="w-full max-w-lg bg-zinc-900 border border-zinc-700 rounded-xl p-6" onClick={e => e.stopPropagation()}>
-                        <h2 className="text-xl font-bold text-white mb-4">Create Message Watcher</h2>
+            {editingWatcher && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setEditingWatcher(null)}>
+                    <div className="w-full max-w-2xl" onClick={e => e.stopPropagation()}>
                         <CreateWatcherForm
-                            onSuccess={() => {
-                                setIsCreating(false);
+                            initialValues={editingWatcher.name ? editingWatcher : null}
+                            onWatcherCreated={() => {
+                                setEditingWatcher(null);
                                 loadWatchers();
                             }}
-                            onCancel={() => setIsCreating(false)}
+                            onCancel={() => setEditingWatcher(null)}
                         />
                     </div>
                 </div>
@@ -114,46 +105,75 @@ export default function WatchersTable() {
                 <table className="w-full text-sm text-left">
                     <thead className="bg-zinc-950 text-zinc-500 uppercase text-xs">
                         <tr>
+                            <th className="px-4 py-3">Status</th>
                             <th className="px-4 py-3">Name</th>
-                            <th className="px-4 py-3">Matches Contact</th>
+                            <th className="px-4 py-3">Target</th>
                             <th className="px-4 py-3">Condition</th>
-                            <th className="px-4 py-3">Instructions</th>
+                            <th className="px-4 py-3">Last Triggered</th>
                             <th className="px-4 py-3 text-right">Actions</th>
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-800">
                         {watchers.length === 0 ? (
                             <tr>
-                                <td colSpan={5} className="px-4 py-8 text-center text-zinc-500">
-                                    No active watchers.
+                                <td colSpan={6} className="px-4 py-8 text-center text-zinc-500">
+                                    No active watchers found. Create one to monitor generic WhatsApp messages.
                                 </td>
                             </tr>
                         ) : (
-                            watchers.map((w) => (
-                                <tr key={w.id} className="hover:bg-zinc-800/50 transition-colors">
+                            watchers.map((watcher) => (
+                                <tr key={watcher.id} className="hover:bg-zinc-800/50 transition-colors">
+                                    <td className="px-4 py-4">
+                                        <button
+                                            onClick={() => handleToggle(watcher)}
+                                            disabled={actionLoading === watcher.id}
+                                            className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] uppercase font-bold transition-all ${watcher.status === 'active'
+                                                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20'
+                                                    : 'bg-zinc-700/20 text-zinc-500 border border-zinc-700/30 hover:bg-zinc-700/30'
+                                                }`}
+                                        >
+                                            <Power className="w-3 h-3" />
+                                            {watcher.status}
+                                        </button>
+                                    </td>
                                     <td className="px-4 py-4 font-medium text-zinc-300">
-                                        {w.name}
+                                        {watcher.name}
                                     </td>
                                     <td className="px-4 py-4 text-zinc-400 font-mono text-xs">
-                                        {w.contact_string}
+                                        {watcher.contact_string}
                                     </td>
-                                    <td className="px-4 py-4 text-zinc-400">
-                                        <span className="px-2 py-1 bg-zinc-800 rounded text-xs">
-                                            {w.condition}
-                                        </span>
+                                    <td className="px-4 py-4 max-w-xs">
+                                        <code className="text-xs bg-black px-1.5 py-0.5 rounded text-amber-500/90 border border-zinc-800">
+                                            {watcher.condition}
+                                        </code>
                                     </td>
-                                    <td className="px-4 py-4 text-zinc-400 max-w-xs truncate">
-                                        {w.instruction}
+                                    <td className="px-4 py-4 text-zinc-500 text-xs">
+                                        {watcher.last_triggered_at ? (
+                                            <span className="flex items-center gap-1.5 text-indigo-400">
+                                                <Activity className="w-3 h-3" />
+                                                {new Date(watcher.last_triggered_at).toLocaleString()}
+                                            </span>
+                                        ) : '-'}
                                     </td>
                                     <td className="px-4 py-4 text-right">
-                                        <button
-                                            onClick={() => handleDelete(w.id)}
-                                            disabled={deletingId === w.id}
-                                            className="p-2 hover:bg-zinc-700/50 rounded text-red-400 transition-colors disabled:opacity-50"
-                                            title="Delete Watcher"
-                                        >
-                                            <Trash2 className="w-4 h-4" />
-                                        </button>
+                                        <div className="flex items-center justify-end gap-2">
+                                            <button
+                                                onClick={() => setEditingWatcher(watcher)}
+                                                disabled={actionLoading === watcher.id}
+                                                className="p-1.5 hover:bg-zinc-700/50 rounded text-indigo-400 transition-colors disabled:opacity-50"
+                                                title="Edit Watcher"
+                                            >
+                                                <Edit className="w-4 h-4" />
+                                            </button>
+                                            <button
+                                                onClick={() => handleDelete(watcher.id, watcher.name)}
+                                                disabled={actionLoading === watcher.id}
+                                                className="p-1.5 hover:bg-zinc-700/50 rounded text-red-400 transition-colors disabled:opacity-50"
+                                                title="Delete Watcher"
+                                            >
+                                                <Trash2 className="w-4 h-4" />
+                                            </button>
+                                        </div>
                                     </td>
                                 </tr>
                             ))

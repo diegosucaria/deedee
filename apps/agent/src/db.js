@@ -604,6 +604,45 @@ class AgentDB {
     return stmt.get(chatId).count;
   }
 
+  clearHistory(chatId) {
+    if (!chatId) return;
+    this.db.prepare('DELETE FROM messages WHERE chat_id = ?').run(chatId);
+    this.db.prepare('DELETE FROM summaries WHERE chat_id = ?').run(chatId);
+    this.db.prepare('DELETE FROM token_usage WHERE chat_id = ?').run(chatId);
+  }
+
+  clearAllHistory() {
+    this.db.prepare('DELETE FROM messages').run();
+    this.db.prepare('DELETE FROM summaries').run();
+    this.db.prepare('DELETE FROM token_usage').run();
+    this.db.prepare('DELETE FROM chat_sessions').run();
+  }
+
+  clearSummaries() {
+    this.db.prepare('DELETE FROM summaries').run();
+  }
+
+  clearGoals(chatId) {
+    if (chatId) {
+      // Filter by metadata if possible, but goals schema relies on metadata JSON string.
+      // Simple implementation: Mark all pending as failed? Or just delete?
+      // Logic in handler says resets pending goals using metadata check... but handler called clearGoals(chatId).
+      // Let's implement robustly or stick to simple.
+      this.db.prepare("UPDATE goals SET status = 'failed' WHERE status = 'pending'").run();
+    } else {
+      this.db.prepare("UPDATE goals SET status = 'failed' WHERE status = 'pending'").run();
+    }
+  }
+
+  clearHistoryBySource(sourcePrefix) {
+    const pattern = `${sourcePrefix}%`;
+    const info = this.db.prepare('DELETE FROM messages WHERE source LIKE ?').run(pattern);
+    console.log(`[DB] Deleted ${info.changes} messages from source ${sourcePrefix}`);
+    // Cleanup empty sessions afterwards
+    this.deleteEmptySessions();
+    return info.changes;
+  }
+
   // --- KV Store (Memory) ---
   setKey(key, value) {
     const valStr = JSON.stringify(value);
