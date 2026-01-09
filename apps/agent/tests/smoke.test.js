@@ -30,6 +30,10 @@ jest.mock('../src/db', () => ({
     saveSummary: jest.fn(),
     getLatestSummary: jest.fn().mockReturnValue(null),
     searchMessages: jest.fn().mockReturnValue([]), // Added for searchHistory tool
+    countMessages: jest.fn().mockReturnValue(0), // Added for Passive Mode test
+    ensureSession: jest.fn(),
+    getWatchers: jest.fn().mockReturnValue([]),
+    updateWatcher: jest.fn(),
     close: jest.fn().mockResolvedValue()
   }))
 }));
@@ -255,5 +259,30 @@ describe('Agent with Tools', () => {
     // Verify it didn't crash and formatted correctly (empty string for null)
     expect(result.matches[0]).toContain('user: ');
     expect(result.matches[1]).toContain('assistant: Hello');
+  });
+
+  test('should suppress Auto-Title for passive mode (whatsapp:user)', async () => {
+    // Spy on _autoTitleSession
+    const autoTitleSpy = jest.spyOn(agent, '_autoTitleSession').mockResolvedValue();
+
+    // 1. Passive Message
+    const passiveMsg = createUserMessage('Hello from Mom', 'whatsapp:user', '5551234');
+    passiveMsg.metadata = { chatId: '5551234@s.whatsapp.net' };
+    agent.db.countMessages.mockReturnValue(0); // Simulate new session
+
+    await agent.onMessage(passiveMsg);
+
+    expect(autoTitleSpy).not.toHaveBeenCalled();
+
+    // 2. Active Message
+    const activeMsg = createUserMessage('Hello Agent', 'whatsapp:assistant', '5559999');
+    activeMsg.metadata = { chatId: '5559999@s.whatsapp.net' };
+    agent.db.countMessages.mockReturnValue(0); // Simulate new session
+
+    await agent.onMessage(activeMsg);
+
+    expect(autoTitleSpy).toHaveBeenCalledWith('5559999@s.whatsapp.net', 'Hello Agent');
+
+    autoTitleSpy.mockRestore();
   });
 });

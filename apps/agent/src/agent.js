@@ -351,13 +351,17 @@ class Agent {
       // Ensure Session Exists (Multi-Threaded Chat Support)
       if (chatId) {
         const msgCount = this.db.countMessages(chatId);
+
+        // PASSIVE MODE: Messages from 'whatsapp:user' (my text history) should not trigger active agent behaviors
+        const isPassiveMode = message.source === 'whatsapp:user';
+
         this.db.ensureSession(chatId, message.source);
 
         // Log Location on New Session
         // DEBUG: Log all metadata to see what's happening
         // console.log(`[Agent] Metadata for ${chatId}:`, JSON.stringify(message.metadata));
 
-        if (msgCount === 0) {
+        if (msgCount === 0 && !isPassiveMode) {
           if (message.metadata?.location) {
             console.log(`[Agent] New Session ${chatId} started from location: ${message.metadata.location}`);
           } else {
@@ -379,7 +383,7 @@ class Agent {
         // Auto-Title Trigger (Background)
         const hasContent = message.content || (message.parts && message.parts.length > 0);
 
-        if (msgCount === 0 && hasContent && message.role === 'user') {
+        if (msgCount === 0 && hasContent && message.role === 'user' && !isPassiveMode) {
           console.log(`[Agent] Triggering Auto-Title for ${chatId}. MsgCount: ${msgCount}`);
 
           let titleContext = message.content;
@@ -393,7 +397,7 @@ class Agent {
             console.error(`[Agent] Auto-Title CRASHED for ${chatId}:`, err);
           });
         } else {
-          if (msgCount === 0) console.log(`[Agent] Skipped Auto-Title. HasContent: ${!!hasContent}, Role: ${message.role}`);
+          // if (msgCount === 0) console.log(`[Agent] Skipped Auto-Title. HasContent: ${!!hasContent}, Role: ${message.role}`);
         }
 
         // --- SMART FILE ANALYSIS ---
@@ -403,12 +407,8 @@ class Agent {
         // 3. It's a relatively new session (msgCount < 5) to avoid re-analyzing old stuff? Or always?
         // Let's do it for any NEW user message that has attachments.
 
-        // We need to detect "attachments". The frontend sends them as `parts` with inlineData or fileData.
-        // OR as separate messages. The frontend logic sends mixed content now.
-        // Let's look for parts with mimeType that are NOT audio/image (or usually documents).
-        // Actually PDF is application/pdf.
-
-        if (message.parts && message.role === 'user') {
+        // Suppress for Passive Mode
+        if (message.parts && message.role === 'user' && !isPassiveMode) {
           const attachment = message.parts.find(p => p.inlineData && !p.inlineData.mimeType.startsWith('audio/') && !p.inlineData.mimeType.startsWith('image/'));
           // Or maybe we treat images as potentially vault-worthy too (receipts, medical scans)?
           // Let's broaden to "any non-audio" for now, or specific PDF focus?
