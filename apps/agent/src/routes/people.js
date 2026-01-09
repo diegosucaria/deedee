@@ -10,7 +10,12 @@ const createPeopleRouter = (agent) => {
     // List People
     router.get('/', (req, res) => {
         try {
-            const people = agent.db.listPeople();
+            const { limit, offset, search } = req.query;
+            const people = agent.db.listPeople({
+                limit: limit ? parseInt(limit) : undefined,
+                offset: offset ? parseInt(offset) : undefined,
+                query: search
+            });
             res.json(people);
         } catch (error) {
             console.error('[People] List Error:', error);
@@ -56,14 +61,37 @@ const createPeopleRouter = (agent) => {
     });
 
     // Get Avatar
-    router.get('/:id/avatar', (req, res) => {
+    // Get Avatar
+    router.get('/:id/avatar', async (req, res) => {
         const avatarPath = path.join(process.cwd(), 'data', 'avatars', `${req.params.id}.jpg`);
+
+        // Helper to serve file
+        const serve = () => res.sendFile(avatarPath);
+
         if (fs.existsSync(avatarPath)) {
-            res.sendFile(avatarPath);
-        } else {
-            // Send default or 404
-            res.status(404).send('No avatar');
+            return serve();
         }
+
+        // Lazy Load logic
+        try {
+            const person = agent.db.getPerson(req.params.id);
+            if (person && person.phone) {
+                const cleanPhone = person.phone.replace(/\D/g, ''); // Ensure digits only
+                const jid = `${cleanPhone}@s.whatsapp.net`;
+
+                // Attempt fetch
+                const webPath = await peopleService.cacheAvatar(req.params.id, jid);
+                if (webPath) {
+                    console.log(`[People] Lazy-loaded avatar for ${req.params.id}`);
+                    return serve();
+                }
+            }
+        } catch (e) {
+            console.error(`[People] Lazy load failed for ${req.params.id}:`, e.message);
+        }
+
+        // Fail
+        res.status(404).send('No avatar');
     });
 
     // Update Person

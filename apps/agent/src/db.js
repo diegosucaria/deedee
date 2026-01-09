@@ -336,8 +336,34 @@ class AgentDB {
     this.db.prepare('DELETE FROM people WHERE id = ?').run(id);
   }
 
-  listPeople() {
-    return this.db.prepare('SELECT * FROM people ORDER BY name ASC').all().map(row => ({
+  listPeople({ limit, offset, query } = {}) {
+    let sql = 'SELECT * FROM people';
+    const args = [];
+    const conditions = [];
+
+    if (query) {
+      const wildcard = `%${query}%`;
+      conditions.push(`(name LIKE ? OR relationship LIKE ? OR notes LIKE ? OR phone LIKE ? OR ? LIKE ('%' || name || '%'))`);
+      args.push(wildcard, wildcard, wildcard, wildcard, query);
+    }
+
+    if (conditions.length > 0) {
+      sql += ' WHERE ' + conditions.join(' AND ');
+    }
+
+    sql += ' ORDER BY name ASC';
+
+    if (limit) {
+      sql += ' LIMIT ?';
+      args.push(limit);
+    }
+
+    if (offset) {
+      sql += ' OFFSET ?';
+      args.push(offset);
+    }
+
+    return this.db.prepare(sql).all(...args).map(row => ({
       ...row,
       metadata: row.metadata ? JSON.parse(row.metadata) : {},
       identifiers: row.identifiers ? JSON.parse(row.identifiers) : {}

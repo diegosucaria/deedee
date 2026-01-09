@@ -709,9 +709,14 @@ export async function uploadChatFile(chatId, formData) {
 }
 
 // --- People ---
-export async function getPeople() {
+export async function getPeople({ limit, offset, search } = {}) {
     try {
-        return await fetchAPI('/v1/people');
+        const params = new URLSearchParams();
+        if (limit) params.set('limit', limit);
+        if (offset) params.set('offset', offset);
+        if (search) params.set('search', search);
+
+        return await fetchAPI(`/v1/people?${params.toString()}`);
     } catch (error) {
         console.error('getPeople Error:', error);
         return [];

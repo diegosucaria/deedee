@@ -5,7 +5,8 @@ import { User, Phone, Edit, Trash2 } from 'lucide-react';
 import Image from 'next/image';
 
 export function PersonCard({ person, onEdit, onDelete }) {
-    const avatarUrl = `/api/v1/people/${encodeURIComponent(person.id)}/avatar`;
+    // Use Secure Next.js Proxy
+    const avatarUrl = `/api/people/${encodeURIComponent(person.id)}/avatar`;
 
     return (
         <motion.div

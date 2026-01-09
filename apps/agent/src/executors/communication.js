@@ -38,6 +38,13 @@ class CommunicationExecutor extends BaseExecutor {
                     }
                 } catch (e) { console.warn('[Communication] Failed to fetch settings:', e); }
 
+                // ALIAS RESOLUTION
+                // target is already defined above at line 16
+                let foundPerson = null;
+                let originalSearch = null;
+
+
+
                 const ALIASES = {
                     'me': ownerPhone,
                     'myself': ownerPhone,
@@ -49,10 +56,12 @@ class CommunicationExecutor extends BaseExecutor {
                     target = ALIASES[target.toLowerCase()];
                     console.log(`[CommunicationExecutor] Resolved alias '${to}' to '${target}'`);
                 } else if (target.match(/[a-zA-Z]/) && !target.includes('@')) {
-                    // If target has letters and isn't a JID or alias, try searching People DB
+                    // Search DB
                     if (this.services.db && this.services.db.searchPeople) {
+                        originalSearch = target;
                         const matches = this.services.db.searchPeople(target);
                         if (matches.length === 1 && matches[0].phone) {
+                            foundPerson = matches[0];
                             target = matches[0].phone;
                             console.log(`[CommunicationExecutor] Resolved contact '${to}' to '${target}' (${matches[0].name})`);
                         } else if (matches.length > 1) {
@@ -62,6 +71,8 @@ class CommunicationExecutor extends BaseExecutor {
                                 info: `Found multiple contacts matching "${to}". Please clarify:\n${candidates}`
                             };
                         } else {
+                            // ...
+
                             // No matches found
                             return {
                                 success: false,
@@ -82,24 +93,35 @@ class CommunicationExecutor extends BaseExecutor {
                 }
 
                 // Check "First Time Contact" Safeguard
-                // Only for WhatsApp for now as email isn't critical
                 if (svc === 'whatsapp') {
                     const isVerified = this.services.db.isVerifiedContact(svc, cleanTo);
+                    const contactName = foundPerson ? foundPerson.name : to;
 
                     if (!isVerified && !force) {
-                        // We interpret this as a "Soft Failure" that prompts the agent to ask the user.
-                        // We return a string explaining the situation.
                         console.log(`[CommunicationExecutor] Blocked first-time message to ${cleanTo}`);
+                        // Enriched Error Message
                         return {
                             success: false,
-                            info: `SAFETY BLOCKED: You are trying to message ${cleanTo} for the first time. Please confirm with the user. If confirmed, retry with 'force: true'.`
+                            info: `SAFETY BLOCKED: First-time message verification required.\n\n` +
+                                `Contact: ${contactName}\n` +
+                                `Phone: ${cleanTo}\n\n` +
+                                `Please confirm you want to send this message. If confirmed, retry with 'force: true'.`
                         };
                     }
 
-                    // If we are here, we either are verified or forced.
-                    // If forced, we verify now.
                     if (!isVerified && force) {
                         this.services.db.verifyContact(svc, cleanTo);
+
+                        // Auto-Save Alias if we found a person via search
+                        if (foundPerson && originalSearch) {
+                            const newNote = `\nAlias: ${originalSearch}`;
+                            // Avoid duplicates
+                            if (!foundPerson.notes || !foundPerson.notes.toLowerCase().includes(originalSearch.toLowerCase())) {
+                                const updatedNotes = (foundPerson.notes || '') + newNote;
+                                this.services.db.updatePerson(foundPerson.id, { notes: updatedNotes });
+                                console.log(`[Communication] Added alias '${originalSearch}' to ${foundPerson.name}`);
+                            }
+                        }
                     }
                 }
 

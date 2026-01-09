@@ -11,21 +11,37 @@ export default function PeoplePage() {
     const [people, setPeople] = useState([]);
     const [loading, setLoading] = useState(true);
     const [query, setQuery] = useState('');
+    const [debouncedQuery, setDebouncedQuery] = useState('');
+    const [page, setPage] = useState(0);
+    const LIMIT = 24;
+
     const [isSmartLearnOpen, setSmartLearnOpen] = useState(false);
     const [syncing, setSyncing] = useState(false);
 
-    // Edit/Create Modal State (Simplified inline or separate?)
-    // Let's use a simple state for now.
-    const [editingPerson, setEditingPerson] = useState(null); // null = none, {} = new, {id...} = edit
+    // Edit/Create Modal State
+    const [editingPerson, setEditingPerson] = useState(null);
     const [isEditOpen, setEditOpen] = useState(false);
+
+    // Debounce Query
+    useEffect(() => {
+        const timer = setTimeout(() => {
+            setDebouncedQuery(query);
+            setPage(0); // Reset page on new search
+        }, 500);
+        return () => clearTimeout(timer);
+    }, [query]);
 
     useEffect(() => {
         loadPeople();
-    }, []);
+    }, [debouncedQuery, page]);
 
     const loadPeople = async () => {
         setLoading(true);
-        const res = await getPeople();
+        const res = await getPeople({
+            limit: LIMIT,
+            offset: page * LIMIT,
+            search: debouncedQuery
+        });
         setPeople(res || []);
         setLoading(false);
     };
@@ -42,11 +58,8 @@ export default function PeoplePage() {
         }
     };
 
-    const filteredPeople = people.filter(p =>
-        p.name.toLowerCase().includes(query.toLowerCase()) ||
-        (p.relationship && p.relationship.toLowerCase().includes(query.toLowerCase())) ||
-        (p.phone && p.phone.includes(query))
-    );
+    // Client-side filtering REMOVED in favor of Server-side
+    // const filteredPeople = ... 
 
     const handleSave = async (e) => {
         e.preventDefault();
@@ -61,7 +74,7 @@ export default function PeoplePage() {
         if (editingPerson.id) {
             await updatePerson(editingPerson.id, data);
         } else {
-            await createPerson(null, formData); // createPerson expects formData
+            await createPerson(null, formData);
         }
         setEditOpen(false);
         setEditingPerson(null);
@@ -124,7 +137,7 @@ export default function PeoplePage() {
             {/* Grid */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 xl:grid-cols-4 gap-4">
                 <AnimatePresence>
-                    {filteredPeople.map(person => (
+                    {people.map(person => (
                         <PersonCard
                             key={person.id}
                             person={person}
@@ -141,12 +154,33 @@ export default function PeoplePage() {
                 </div>
             )}
 
-            {!loading && filteredPeople.length === 0 && (
+            {!loading && people.length === 0 && (
                 <div className="text-center py-20 opacity-50">
                     <UserPlus className="mx-auto w-12 h-12 mb-4" />
-                    <p>No people found.</p>
+                    <p>{debouncedQuery ? "No matches found." : "No people found."}</p>
                 </div>
             )}
+
+            {/* Pagination Controls */}
+            <div className="flex justify-center gap-4 mt-8">
+                <button
+                    disabled={page === 0 || loading}
+                    onClick={() => setPage(p => Math.max(0, p - 1))}
+                    className="px-4 py-2 rounded-lg bg-secondary/50 hover:bg-secondary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                >
+                    Previous
+                </button>
+                <span className="flex items-center text-sm font-mono text-zinc-500">
+                    Page {page + 1}
+                </span>
+                <button
+                    disabled={people.length < LIMIT || loading}
+                    onClick={() => setPage(p => p + 1)}
+                    className="px-4 py-2 rounded-lg bg-secondary/50 hover:bg-secondary disabled:opacity-30 disabled:cursor-not-allowed transition-colors"
+                >
+                    Next
+                </button>
+            </div>
 
             {/* Create/Edit Modal */}
             <AnimatePresence>
