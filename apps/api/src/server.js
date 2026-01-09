@@ -15,9 +15,19 @@ const port = process.env.PORT || 3001;
 app.use(express.json({ limit: '50mb' }));
 app.use(cors());
 
-// Health Check (Public)
+// Public Routes (No Auth)
 app.get('/health', (req, res) => {
     res.json({ status: 'ok', service: 'api' });
+});
+
+// [FIX] Public Avatar Access (Bypass Auth)
+// We use the same People Router but mount it specifically for this path to ensure it matches first
+const peopleRouter = require('./routes/people');
+app.use('/v1/people', (req, res, next) => {
+    if (req.path.endsWith('/avatar') && req.method === 'GET') {
+        return peopleRouter(req, res, next);
+    }
+    next();
 });
 
 // Protected V1 Routes

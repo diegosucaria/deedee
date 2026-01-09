@@ -286,7 +286,7 @@ function createInternalRouter(agent) {
             const session = agent.db.getSession(req.params.id);
             if (!session) return res.status(404).json({ error: 'Session not found' });
             const history = agent.db.getHistory({ chatId: req.params.id, limit: 100 });
-            session.messages = history;
+            session.messages = history.reverse(); // Standard chat order: Oldest -> Newest
             res.json(session);
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
