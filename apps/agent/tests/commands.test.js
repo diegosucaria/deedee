@@ -29,7 +29,8 @@ jest.mock('../src/db', () => ({
         searchMessages: jest.fn().mockReturnValue([]),
         deleteMessagesSince: jest.fn(), // Added
         ensureSession: jest.fn(), // Added
-        countMessages: jest.fn().mockReturnValue(10) // Should be > 0 to avoid auto-title trigger in tests
+        countMessages: jest.fn().mockReturnValue(10), // Should be > 0 to avoid auto-title trigger in tests
+        close: jest.fn()
     }))
 }));
 
@@ -44,7 +45,8 @@ jest.mock('../src/router', () => ({
 jest.mock('../src/mcp-manager', () => ({
     MCPManager: jest.fn().mockImplementation(() => ({
         init: jest.fn(),
-        getTools: jest.fn().mockResolvedValue([])
+        getTools: jest.fn().mockResolvedValue([]),
+        close: jest.fn().mockResolvedValue()
     }))
 }));
 
@@ -64,9 +66,16 @@ describe('Slash Commands', () => {
             interface: mockInterface
         });
         // We mock _loadClientLibrary to avoid real import
-        agent._loadClientLibrary = jest.fn().mockResolvedValue({
-            GoogleGenAI: jest.fn().mockImplementation(() => ({}))
-        });
+        agent.router._loadClientLibrary = jest.fn().mockResolvedValue({ GoogleGenAI: class { } });
+
+        // Force fix for mcp.close
+        if (agent.mcp) {
+            agent.mcp.close = jest.fn().mockResolvedValue();
+        }
+    });
+
+    afterEach(async () => {
+        if (agent) await agent.stop();
     });
 
     test('/clear should call db.clearHistory', async () => {

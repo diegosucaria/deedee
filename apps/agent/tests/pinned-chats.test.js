@@ -21,16 +21,38 @@ describe('Pinned Chats Feature', () => {
         // So we just override it after creation? No, it opens in constructor.
         // constructor(dataDir) uses dataDir/agent.db
         // Let's make a subdir for test
-        const testDir = path.join(__dirname, 'test_db_dir');
+        testDir = path.join(__dirname, 'test_db_dir');
         if (fs.existsSync(testDir)) fs.rmSync(testDir, { recursive: true, force: true });
 
         db = new AgentDB(testDir);
     });
 
     afterEach(() => {
-        const testDir = path.join(__dirname, 'test_db_dir');
+        // Close the database connection after each test
+        if (db) {
+            db.close();
+        }
+        // Remove the test directory after each test
+        if (fs.existsSync(testDir)) {
+            fs.rmSync(testDir, { recursive: true, force: true });
+        }
+    });
+
+    // afterAll is not strictly needed if afterEach cleans up,
+    // but it's good practice for final cleanup or if afterEach fails.
+    // However, since db is re-instantiated in beforeEach and closed in afterEach,
+    // an afterAll for db.close() is redundant here.
+    // The original instruction implied adding an afterAll to close db,
+    // but given the beforeEach/afterEach structure, closing in afterEach is more appropriate.
+    // If we were to add an afterAll, it would look like this:
+    /*
+    afterAll(() => {
+        // Ensure any lingering DB connections are closed, though afterEach should handle it.
+        // And ensure the directory is removed one last time.
+        if (db) db.close(); // This 'db' might be the last one from the last test.
         if (fs.existsSync(testDir)) fs.rmSync(testDir, { recursive: true, force: true });
     });
+    */
 
     test('should assist updateSession with isPinned', () => {
         const id = 'chat-1';

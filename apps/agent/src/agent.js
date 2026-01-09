@@ -228,6 +228,19 @@ class Agent {
     return import('@google/genai');
   }
 
+  async stop() {
+    console.log('[Agent] Stopping...');
+    if (this.scheduler) {
+      await this.scheduler.stop();
+    }
+    if (this.mcp) {
+      await this.mcp.close().catch(err => console.error('[Agent] Error closing MCP:', err));
+    }
+    if (this.db) {
+      this.db.close();
+    }
+  }
+
   async start() {
     console.log('Agent starting...');
 
@@ -595,8 +608,9 @@ class Agent {
 
       let useNativeSearch = false; // Default baseline
 
-      // Load Configuration
-      const searchConfig = this.db.getKey('config:search_strategy') || { mode: 'HYBRID' };
+      // Load Configuration from Unified Settings (agent_settings)
+      // Fallback to KV store (legacy) if not present in settings
+      const searchConfig = this.settings.search_strategy || this.db.getKey('config:search_strategy') || { mode: 'HYBRID' };
       const strategyMode = searchConfig.mode || 'HYBRID';
 
       if (decision.toolMode === 'SEARCH') {
@@ -1199,26 +1213,7 @@ ${files.length > 0 ? files.join(", ") : "No files yet."}
     }
   }
 
-  async stop() {
-    console.log('[Agent] Stopping...');
 
-    // Stop MCP
-    if (this.mcp) {
-      await this.mcp.close();
-    }
-
-    // Close DB
-    if (this.db && this.db.db) {
-      this.db.db.close();
-    }
-
-    // Stop Interface (if applicable)
-    if (this.interface && typeof this.interface.stop === 'function') {
-      this.interface.stop();
-    }
-
-    console.log('[Agent] Stopped.');
-  }
 
   async _executeTool(executionName, args, message, sendCallback, usageCallback = null) {
     // --- INTERNAL DB TOOLS ---

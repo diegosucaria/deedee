@@ -19,24 +19,26 @@ jest.mock('../src/db', () => ({
     checkLimit: jest.fn().mockReturnValue(0),
     logUsage: jest.fn(),
     logMetric: jest.fn(),
+    deleteJobState: jest.fn(), // Added
     logTokenUsage: jest.fn(),
     getHistoryForChat: jest.fn().mockReturnValue([]),
     getScheduledJobs: jest.fn().mockReturnValue([]),
     getAllFacts: jest.fn().mockReturnValue([]),
     saveSummary: jest.fn(),
     getLatestSummary: jest.fn().mockReturnValue(null),
-    searchMessages: jest.fn().mockReturnValue([]) // Added for searchHistory tool
+    saveSummary: jest.fn(),
+    getLatestSummary: jest.fn().mockReturnValue(null),
+    searchMessages: jest.fn().mockReturnValue([]), // Added for searchHistory tool
+    close: jest.fn().mockResolvedValue()
   }))
 }));
 
-// Set Env Vars for Test
-process.env.HA_URL = 'http://localhost';
-process.env.HA_TOKEN = 'fake-token';
-
-GSuiteTools: jest.fn().mockImplementation(() => ({
-  listEvents: jest.fn().mockResolvedValue([{ summary: 'Mock Event' }]),
-  sendEmail: jest.fn()
-}))
+jest.mock('@deedee/mcp-servers/src/gsuite/index', () => ({
+  GSuiteTools: jest.fn().mockImplementation(() => ({
+    listEvents: jest.fn().mockResolvedValue([{ summary: 'Mock Event' }]),
+    sendEmail: jest.fn()
+  }))
+}));
 
 jest.mock('../src/mcp-manager', () => ({
   MCPManager: jest.fn().mockImplementation(() => ({
@@ -194,9 +196,12 @@ describe('Agent with Tools', () => {
     agent._loadClientLibrary = jest.fn().mockResolvedValue(mockModule);
     // Router is created in constructor, so we access it via agent.router
     agent.router._loadClientLibrary = jest.fn().mockResolvedValue(mockModule);
+
+    if (agent.mcp) agent.mcp.close = jest.fn().mockResolvedValue(); // Force fix
   });
 
-  afterEach(() => {
+  afterEach(async () => {
+    if (agent) await agent.stop();
     jest.useRealTimers();
   });
 

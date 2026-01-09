@@ -18,7 +18,9 @@ jest.mock('../src/db', () => ({
         saveSummary: jest.fn(),
         getLatestSummary: jest.fn().mockReturnValue(null),
         searchMessages: jest.fn().mockReturnValue([]),
-        getKey: jest.fn()
+        deleteJobState: jest.fn(),
+        getKey: jest.fn(),
+        close: jest.fn()
     }))
 }));
 
@@ -26,7 +28,8 @@ jest.mock('../src/mcp-manager', () => ({
     MCPManager: jest.fn().mockImplementation(() => ({
         init: jest.fn(),
         getTools: jest.fn().mockResolvedValue([]),
-        callTool: jest.fn()
+        callTool: jest.fn(),
+        close: jest.fn().mockResolvedValue()
     }))
 }));
 
@@ -74,6 +77,17 @@ describe('Date Awareness', () => {
         });
         // Bypass router execution
         agent.router.route = jest.fn().mockResolvedValue({ model: 'FLASH', reason: 'Test' });
+
+        // Force fix for missing mocks
+        if (agent.mcp) agent.mcp.close = jest.fn().mockResolvedValue();
+        if (agent.db) {
+            agent.db.deleteJobState = jest.fn();
+            agent.db.deleteScheduledJob = jest.fn();
+        }
+    });
+
+    afterEach(async () => {
+        if (agent) await agent.stop();
     });
 
     test('should inject CURRENT_TIME into system instruction', async () => {

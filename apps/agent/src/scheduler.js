@@ -348,6 +348,18 @@ class Scheduler {
         job.invoke();
         return { success: true };
     }
+
+    /**
+     * Stops all scheduled jobs.
+     */
+    async stop() {
+        console.log('[Scheduler] Stopping all jobs...');
+        for (const name in this.jobs) {
+            this.cancelJob(name);
+        }
+        // node-schedule graceful shutdown
+        await schedule.gracefulShutdown();
+    }
 }
 
 module.exports = { Scheduler };

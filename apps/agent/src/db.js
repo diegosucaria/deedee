@@ -40,6 +40,10 @@ class AgentDB {
     // Enable WAL mode for better concurrency
     this.db.pragma('journal_mode = WAL');
 
+    // Handle graceful shutdown
+    process.on('SIGINT', () => this.close());
+    process.on('SIGTERM', () => this.close());
+
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS messages (
         id TEXT PRIMARY KEY,
@@ -798,6 +802,17 @@ class AgentDB {
     stmt.run(alias.toLowerCase(), entityId);
   }
 
+  close() {
+    if (this.db) {
+      console.log('[DB] Closing database connection...');
+      try {
+        this.db.close();
+        this.db = null;
+      } catch (err) {
+        console.error('[DB] Error closing database:', err);
+      }
+    }
+  }
   getDeviceAlias(alias) {
     const stmt = this.db.prepare('SELECT entity_id FROM entity_aliases WHERE alias = ?');
     const row = stmt.get(alias.toLowerCase());

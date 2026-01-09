@@ -1,7 +1,10 @@
 
 const { BackupManager } = require('../src/backup');
+const { Agent } = require('../src/agent');
+const { AgentDB } = require('../src/db');
 const fs = require('fs');
 const path = require('path');
+const os = require('os');
 
 // Mock Dependencies
 jest.mock('@google-cloud/storage', () => {
@@ -43,10 +46,19 @@ jest.mock('fs', () => ({
 describe('BackupManager', () => {
     let backupManager;
     let mockAgent;
+    let db;
+    let tmpDir;
 
     beforeEach(() => {
-        process.env.GCS_BACKUP_BUCKET = 'test-bucket';
-        mockAgent = {};
+        // Cleanup old run
+        tmpDir = path.join(os.tmpdir(), 'deedee-test-' + Math.random().toString(36).substring(7));
+        if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+        fs.mkdirSync(tmpDir, { recursive: true });
+        db = new AgentDB(tmpDir);
+        mockAgent = {
+            db: db,
+            interface: { broadcast: jest.fn().mockResolvedValue() }
+        };
         backupManager = new BackupManager(mockAgent);
     });
 

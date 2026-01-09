@@ -2,27 +2,41 @@
 const { Agent } = require('../src/agent');
 const { createUserMessage } = require('@deedee/shared/src/types');
 
+// Mock AgentDB globally as suggested by the comment
+jest.mock('../src/db', () => ({
+    AgentDB: jest.fn().mockImplementation(() => ({
+        getPendingGoals: jest.fn().mockReturnValue([]),
+        getScheduledJobs: jest.fn().mockReturnValue([]),
+        saveMessage: jest.fn(),
+        getLatestSummary: jest.fn().mockReturnValue(null),
+        getHistoryForChat: jest.fn().mockReturnValue([]),
+        logMetric: jest.fn(),
+        logTokenUsage: jest.fn(),
+        getAllFacts: jest.fn().mockReturnValue([]),
+        getKey: jest.fn(),
+        close: jest.fn()
+    }))
+}));
+
 describe('Audio Response Suppression', () => {
     let agent;
 
     beforeEach(() => {
+        // The AgentDB mock is now handled by jest.mock above.
+        // We can create a new instance of Agent, and its db property will be the mocked instance.
         agent = new Agent({ interface: { send: jest.fn(), on: jest.fn(), broadcast: jest.fn().mockResolvedValue(true), emit: jest.fn() }, googleApiKey: 'fake' });
-        agent.db = {
-            saveMessage: jest.fn(),
-            getHistoryForChat: jest.fn(),
-            logMetric: jest.fn(),
-            logMetric: jest.fn(),
-            logTokenUsage: jest.fn(),
-            logTokenUsage: jest.fn(),
-            getPendingGoals: jest.fn().mockReturnValue([]),
-            getAllFacts: jest.fn().mockReturnValue([]),
-            getKey: jest.fn()
-        };
+        // Reset mocks for each test if needed, or ensure the mock implementation handles it.
+        // For simplicity, we'll assume the jest.mock setup is sufficient for the db property.
+        // If specific calls need to be tracked per test, individual mocks on agent.db methods would be needed here.
         agent.rateLimiter = { check: jest.fn().mockResolvedValue(true) };
         agent.commandHandler = { handle: jest.fn().mockResolvedValue(false) };
 
         // Mock ToolExecutor to simulate audio tool execution
         agent.toolExecutor.execute = jest.fn();
+    });
+
+    afterEach(async () => {
+        if (agent) await agent.stop();
     });
 
     test('should suppress text response if replyWithAudio was sent', async () => {

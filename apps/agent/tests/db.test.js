@@ -9,7 +9,7 @@ const tmpDir = path.join(__dirname, 'tmp_db');
 describe('AgentDB', () => {
   let db;
 
-  beforeAll(() => {
+  beforeEach(() => {
     // Cleanup old run
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
     db = new AgentDB(tmpDir);
@@ -17,6 +17,11 @@ describe('AgentDB', () => {
 
   afterAll(() => {
     if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+  });
+
+  afterEach(() => {
+    if (db) db.close();
+    fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   test('should save and retrieve messages', () => {

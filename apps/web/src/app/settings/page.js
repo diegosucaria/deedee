@@ -51,7 +51,7 @@ export default function SettingsPage() {
         setConfig(prev => ({
             ...prev,
             [key]: value, // Support top-level keys like owner_phone
-            searchStrategy: key === 'search_strategy' ? { ...prev?.searchStrategy, mode: value } : prev?.searchStrategy
+            search_strategy: key === 'search_strategy' ? { ...prev?.search_strategy, mode: value } : prev?.search_strategy
         }));
 
         const payload = key === 'search_strategy' ? { mode: value } : value;
@@ -65,7 +65,7 @@ export default function SettingsPage() {
         }
     };
 
-    const currentMode = config?.searchStrategy?.mode || 'HYBRID';
+    const currentMode = config?.search_strategy?.mode || 'HYBRID';
 
     const tabs = [
         { id: 'general', label: 'General' },

@@ -8,12 +8,13 @@ describe('Job Logs Persistence', () => {
     let tmpDir;
 
     beforeEach(() => {
+        if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
         tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deedee-test-'));
         db = new AgentDB(tmpDir);
     });
 
     afterEach(() => {
-        if (db.db && db.db.open) db.db.close();
+        if (db) db.close();
         fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 

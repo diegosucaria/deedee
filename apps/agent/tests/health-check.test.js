@@ -8,20 +8,30 @@ describe('Agent Health Check', () => {
     beforeEach(() => {
         // Mock config
         agent = new Agent({ interface: { send: jest.fn(), on: jest.fn(), broadcast: jest.fn().mockResolvedValue(true) }, googleApiKey: 'fake' });
-        // Mock DB to avoid errors, though health check should skip it
+        // DB is now mocked globally via jest.mock('../src/db')
+        // agent.db = { ... } // This block is removed as per instruction
+        agent.rateLimiter = { check: jest.fn().mockResolvedValue(true) };
+        // Explicitly mock agent.db for these tests, overriding global mock if necessary
         agent.db = {
+            getPendingGoals: jest.fn().mockReturnValue([]),
+            getScheduledJobs: jest.fn().mockReturnValue([]),
             saveMessage: jest.fn(),
             logMetric: jest.fn(),
             logTokenUsage: jest.fn(),
-            getHistoryForChat: jest.fn(),
-            getPendingGoals: jest.fn().mockReturnValue([]),
+            getHistoryForChat: jest.fn().mockReturnValue([]),
             getAllFacts: jest.fn().mockReturnValue([]),
             ensureSession: jest.fn(),
             countMessages: jest.fn().mockReturnValue(0),
-            getKey: jest.fn()
+            getKey: jest.fn(),
+            close: jest.fn()
         };
-        agent.rateLimiter = { check: jest.fn().mockResolvedValue(true) };
         agent.commandHandler = { handle: jest.fn().mockResolvedValue(false) };
+        // Force fully valid MCP mock
+        agent.mcp = { close: jest.fn().mockResolvedValue(), getTools: jest.fn().mockResolvedValue([]) };
+    });
+
+    afterEach(async () => {
+        if (agent) await agent.stop();
     });
 
     test('should respond PONG to internal health check and skip DB', async () => {
@@ -61,7 +71,7 @@ describe('Agent Health Check', () => {
                 })
             }
         };
-        agent.mcp = { getTools: jest.fn().mockResolvedValue([]) };
+        agent.mcp = { ...agent.mcp, getTools: jest.fn().mockResolvedValue([]) };
 
         const sendCallback = jest.fn();
         await agent.processMessage(msg, sendCallback);

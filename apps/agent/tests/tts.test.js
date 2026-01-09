@@ -8,7 +8,13 @@ jest.mock('@deedee/mcp-servers/src/gsuite/index', () => ({ GSuiteTools: jest.fn(
 jest.mock('@deedee/mcp-servers/src/local/index', () => ({ LocalTools: jest.fn() }));
 jest.mock('../src/db');
 jest.mock('../src/router');
-jest.mock('../src/mcp-manager');
+jest.mock('../src/mcp-manager', () => ({
+  MCPManager: jest.fn().mockImplementation(() => ({
+    init: jest.fn(),
+    getTools: jest.fn().mockResolvedValue([]),
+    close: jest.fn().mockResolvedValue()
+  }))
+}));
 jest.mock('../src/rate-limiter', () => ({ RateLimiter: jest.fn() }));
 jest.mock('../src/confirmation-manager', () => ({ ConfirmationManager: jest.fn() }));
 
@@ -33,7 +39,9 @@ describe('Agent TTS', () => {
           get: jest.fn().mockReturnValue({ value: JSON.stringify('Kore') }),
           all: jest.fn().mockReturnValue([])
         })
-      }
+      },
+      close: jest.fn(),
+      deleteJobState: jest.fn() // Added
     };
 
     // Force _loadClientLibrary to return our mock
@@ -58,6 +66,12 @@ describe('Agent TTS', () => {
     // Trigger internal init to mock client
     await agent.start();
   });
+
+  afterEach(async () => {
+    if (agent) await agent.stop();
+  });
+
+
 
   test('replyWithAudio calls Gemini API and sends audio', async () => {
     // Manually inject client and sync DB for direct tool execution test

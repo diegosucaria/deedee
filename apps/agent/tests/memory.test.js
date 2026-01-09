@@ -32,6 +32,16 @@ describe('Memory Tools', () => {
         });
     });
 
+    afterAll(() => {
+        if (db) db.close();
+        // Cleanup
+        try {
+            if (fs.existsSync('data/agent.db')) {
+                fs.unlinkSync('data/agent.db');
+            }
+        } catch (e) { }
+    });
+
     test('searchMemory should query DB', async () => {
         db.searchMessages = jest.fn().mockReturnValue([{ content: 'found it' }]);
 

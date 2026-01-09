@@ -14,7 +14,7 @@ describe('Smart Home Features', () => {
     });
 
     afterAll(() => {
-        if (db && db.db) db.db.close();
+        if (db) db.close();
         fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
