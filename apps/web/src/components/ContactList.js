@@ -115,7 +115,7 @@ function ContactRow({ contact, session }) {
             <div className="flex items-center gap-3 overflow-hidden">
                 <div className="w-10 h-10 bg-indigo-500/10 text-indigo-400 rounded-full flex items-center justify-center flex-shrink-0 relative overflow-hidden">
                     <img
-                        src={`/api/whatsapp/avatar?jid=${encodeURIComponent(contact.id)}&session=${'user'}`}
+                        src={`/api/whatsapp/avatar?jid=${encodeURIComponent(contact.id)}&session=${encodeURIComponent(session)}`}
                         alt={contact.name}
                         className="w-full h-full object-cover"
                         onError={(e) => {
