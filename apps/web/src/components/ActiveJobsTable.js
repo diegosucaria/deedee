@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { getTasks, runTask, cancelTask } from '@/app/actions';
 import { Clock, Play, Trash2, RefreshCw, CalendarOff, Edit, Plus } from 'lucide-react';
 import CreateTaskForm from './CreateTaskForm';
+import cronstrue from 'cronstrue';
 
 export default function ActiveJobsTable({ onViewHistory }) {
     const [jobs, setJobs] = useState([]);
@@ -82,6 +83,33 @@ export default function ActiveJobsTable({ onViewHistory }) {
             await loadJobs();
         } finally {
             setDeleting(false);
+        }
+    };
+
+    // Helper for relative time
+    const getRelativeTime = (dateStr) => {
+        if (!dateStr) return '';
+        const date = new Date(dateStr);
+        const now = new Date();
+        const diff = date - now;
+        const diffSeconds = Math.round(diff / 1000);
+        const diffMinutes = Math.round(diffSeconds / 60);
+        const diffHours = Math.round(diffMinutes / 60);
+        const diffDays = Math.round(diffHours / 24);
+
+        const rtf = new Intl.RelativeTimeFormat('en', { numeric: 'auto', style: 'narrow' });
+
+        if (Math.abs(diffSeconds) < 60) return rtf.format(diffSeconds, 'second');
+        if (Math.abs(diffMinutes) < 60) return rtf.format(diffMinutes, 'minute');
+        if (Math.abs(diffHours) < 24) return rtf.format(diffHours, 'hour');
+        return rtf.format(diffDays, 'day');
+    };
+
+    const getCronDescription = (cron) => {
+        try {
+            return cronstrue.toString(cron);
+        } catch (e) {
+            return '';
         }
     };
 
@@ -198,6 +226,11 @@ export default function ActiveJobsTable({ onViewHistory }) {
                                                 <span className="text-indigo-400 text-xs font-bold uppercase">Recurring</span>
                                             )}
                                             <span className="font-mono text-xs mt-1">{job.cron}</span>
+                                            {!job.isOneOff && (
+                                                <span className="text-[10px] text-zinc-500 mt-0.5 max-w-[150px] leading-tight opacity-70">
+                                                    {getCronDescription(job.cron)}
+                                                </span>
+                                            )}
                                         </div>
                                     </td>
                                     <td className="px-4 py-4 max-w-xs">
@@ -206,14 +239,26 @@ export default function ActiveJobsTable({ onViewHistory }) {
                                         </div>
                                     </td>
                                     <td className="px-2 py-4 text-zinc-400 whitespace-nowrap">
-                                        {job.nextInvocation ? new Date(job.nextInvocation).toLocaleString() : '-'}
+                                        <div className="flex flex-col">
+                                            <span>{job.nextInvocation ? new Date(job.nextInvocation).toLocaleString() : '-'}</span>
+                                            {job.nextInvocation && (
+                                                <span className="text-[10px] text-zinc-500 opacity-70">
+                                                    {getRelativeTime(job.nextInvocation)}
+                                                </span>
+                                            )}
+                                        </div>
                                     </td>
                                     <td className="px-4 py-4 text-zinc-400 whitespace-nowrap">
                                         {job.expiresAt ? (
-                                            <span className="text-orange-400 flex items-center gap-1">
-                                                <CalendarOff className="w-3 h-3" />
-                                                {new Date(job.expiresAt).toLocaleString()}
-                                            </span>
+                                            <div className="flex flex-col">
+                                                <span className="text-orange-400 flex items-center gap-1">
+                                                    <CalendarOff className="w-3 h-3" />
+                                                    {new Date(job.expiresAt).toLocaleString()}
+                                                </span>
+                                                <span className="text-[10px] text-zinc-600 pl-4 opacity-70">
+                                                    {getRelativeTime(job.expiresAt)}
+                                                </span>
+                                            </div>
                                         ) : (
                                             <span className="text-zinc-600">-</span>
                                         )}
