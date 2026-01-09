@@ -261,16 +261,16 @@ export async function triggerBackup() {
 
 export async function getAgentConfig() {
     try {
-        return await fetchAPI('/v1/config');
+        return await fetchAPI('/v1/settings');
     } catch (error) {
         console.error('getAgentConfig Error:', error);
-        return { searchStrategy: { mode: 'HYBRID' } };
+        return { search_strategy: { mode: 'HYBRID' } };
     }
 }
 
 export async function updateAgentConfig(key, value) {
     try {
-        await fetchAPI('/v1/config', {
+        await fetchAPI('/v1/settings', {
             method: 'POST',
             body: JSON.stringify({ key, value })
         });

@@ -18,6 +18,7 @@ class CommunicationExecutor extends BaseExecutor {
                 // Fetch owner phone from DB or Env
                 let ownerPhone = process.env.MY_PHONE;
                 let ownerName = 'diego'; // Default fallback
+                let dryRun = false;
 
                 try {
                     // Check if method exists (it should now)
@@ -30,6 +31,10 @@ class CommunicationExecutor extends BaseExecutor {
                         if (nameSetting && nameSetting.value) {
                             ownerName = nameSetting.value.toLowerCase();
                         }
+                        const dryRunSetting = this.services.db.getAgentSetting('communication_dry_run');
+                        if (dryRunSetting && dryRunSetting.value === true) {
+                            dryRun = true;
+                        }
                     }
                 } catch (e) { console.warn('[Communication] Failed to fetch settings:', e); }
 
@@ -41,11 +46,32 @@ class CommunicationExecutor extends BaseExecutor {
                 };
 
                 if (ALIASES[target.toLowerCase()]) {
-                    if (!ALIASES[target.toLowerCase()]) {
-                        throw new Error(`Alias '${target}' used but 'owner_phone' is not configured in Settings or Env (MY_PHONE).`);
-                    }
                     target = ALIASES[target.toLowerCase()];
                     console.log(`[CommunicationExecutor] Resolved alias '${to}' to '${target}'`);
+                } else if (target.match(/[a-zA-Z]/) && !target.includes('@')) {
+                    // If target has letters and isn't a JID or alias, try searching People DB
+                    if (this.services.db && this.services.db.searchPeople) {
+                        const matches = this.services.db.searchPeople(target);
+                        if (matches.length === 1 && matches[0].phone) {
+                            target = matches[0].phone;
+                            console.log(`[CommunicationExecutor] Resolved contact '${to}' to '${target}' (${matches[0].name})`);
+                        } else if (matches.length > 1) {
+                            const candidates = matches.map(m => `- ${m.name} (${m.phone})`).join('\n');
+                            return {
+                                success: false,
+                                info: `Found multiple contacts matching "${to}". Please clarify:\n${candidates}`
+                            };
+                        } else {
+                            // No matches found
+                            return {
+                                success: false,
+                                info: `Could not find contact matching "${to}". Please provide a phone number or check the name.`
+                            };
+                        }
+                    } else {
+                        // DB not available or searchPeople missing
+                        console.warn('[CommunicationExecutor] People DB search unavailable for name resolution.');
+                    }
                 }
 
                 // Sanitize 'to' (Allow + for international, remove spaces/dashes)
@@ -93,6 +119,10 @@ class CommunicationExecutor extends BaseExecutor {
 
                 // Use the interface service if available to send
                 if (this.services.interface && this.services.interface.send) {
+                    if (dryRun) {
+                        console.log(`[CommunicationExecutor] Dry Run: Message would have been sent to ${cleanTo} (${svc})`);
+                        return { success: true, info: `Success (Dry Run): Message to ${cleanTo} skipped.` };
+                    }
                     await this.services.interface.send(payload);
 
                     // Mark as verified if successful (implicit trust if we sent it successfully? No, keep explicit above)

@@ -140,6 +140,39 @@ export default function SettingsPage() {
                             </div>
                         </div>
 
+                        {/* Communication Settings */}
+                        <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
+                            <h2 className="text-lg font-semibold text-white mb-4">Communication</h2>
+                            <div className="flex items-center justify-between">
+                                <div>
+                                    <h3 className="text-white font-medium">Dry Run Mode</h3>
+                                    <p className="text-sm text-zinc-400 mt-1 max-w-md">
+                                        Simulate sending messages without actually dispatching them to WhatsApp.
+                                        Useful for testing delayed notifications safely.
+                                    </p>
+                                </div>
+                                <div className="flex items-center">
+                                    <label className="relative inline-flex items-center cursor-pointer">
+                                        <input
+                                            type="checkbox"
+                                            checked={config?.communication_dry_run === true}
+                                            onChange={(e) => handleSave('communication_dry_run', e.target.checked)}
+                                            className="sr-only peer"
+                                        />
+                                        <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-500/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                                    </label>
+                                </div>
+                            </div>
+                            {config?.communication_dry_run && (
+                                <div className="mt-4 flex items-center gap-2 text-yellow-500/90 text-sm bg-yellow-500/10 p-3 rounded-lg border border-yellow-500/20">
+                                    <AlertTriangle className="w-4 h-4" />
+                                    <span>
+                                        <strong>Dry Run Active:</strong> The agent will LOG success but NO messages will be sent out.
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+
                         {/* Search Strategy Card */}
                         <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
                             <div className="p-6 border-b border-zinc-800">
