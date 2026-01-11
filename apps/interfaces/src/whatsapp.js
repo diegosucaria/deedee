@@ -172,7 +172,8 @@ class WhatsAppService {
                 connectTimeoutMs: 60000, // Increased timeout
                 keepAliveIntervalMs: 30000,
                 syncFullHistory: true, // Request full history
-                markOnlineOnConnect: false // Do not show "Online" status automatically,
+                markOnlineOnConnect: false, // Do not show "Online" status automatically
+                browser: ['DeeDee', 'Chrome', '1.0.0'], // Fixes notification loss on phone
                 // getMessage: async (key) => { ... } // Optional: support history reading for bots
             });
 
@@ -574,8 +575,45 @@ class WhatsAppService {
     }
 
     getChatHistory(jid, limit = 50) {
-        if (!this.store || !this.store.messages || !this.store.messages[jid]) return [];
-        return this.store.messages[jid].slice(-limit).map(m => {
+        if (!this.store || !this.store.messages) {
+            console.warn(`${this.logPrefix} Store or messages empty.`);
+            return [];
+        }
+
+        const normalizedJid = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
+
+        // Helper to resolve JID (LID -> Phone)
+        const resolveJid = (inputJid) => {
+            const norm = inputJid.includes('@') ? inputJid : `${inputJid}@s.whatsapp.net`;
+            if (this.store.messages[inputJid]) return inputJid;
+            if (this.store.messages[norm]) return norm;
+
+            // LID/Contact Check
+            try {
+                const contacts = Object.values(this.store.contacts);
+                for (const c of contacts) {
+                    if (c.lid === inputJid || c.lid === norm) return c.id;
+                }
+            } catch (e) { }
+
+            // Fuzzy match
+            const digits = inputJid.replace(/[^0-9]/g, '');
+            if (digits.length > 7) {
+                const fuzzyKey = Object.keys(this.store.messages).find(k => k.startsWith(digits));
+                if (fuzzyKey) return fuzzyKey;
+            }
+            return norm;
+        };
+
+        const targetJid = resolveJid(jid);
+        const exists = !!this.store.messages[targetJid];
+
+        if (!exists) {
+            console.warn(`${this.logPrefix} History not found for ${jid} (Resolved: ${targetJid}).`);
+            return [];
+        }
+
+        return this.store.messages[targetJid].slice(-limit).map(m => {
             // Simplify for agent consumption
             let content = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
             const msgType = Object.keys(m.message || {})[0];
