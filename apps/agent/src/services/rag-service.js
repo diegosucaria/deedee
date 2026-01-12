@@ -11,6 +11,10 @@ class RagService {
         this.agent = agent;
         this.config = new ConfigService();
         this.dbPath = path.join(process.cwd(), 'data', 'rag.db');
+        const dbDir = path.dirname(this.dbPath);
+        if (!fs.existsSync(dbDir)) {
+            fs.mkdirSync(dbDir, { recursive: true });
+        }
         this.db = new Database(this.dbPath);
         this._initDB();
     }
