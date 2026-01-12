@@ -1,4 +1,5 @@
 const { createAssistantMessage } = require('@deedee/shared/src/types');
+const { ConfigService } = require('./services/config-service');
 
 class SmartContextManager {
     constructor(db, client) {
@@ -6,7 +7,8 @@ class SmartContextManager {
         this.client = client;
         // Configuration
         this.TOKEN_THRESHOLD = parseInt(process.env.CONTEXT_TOKEN_THRESHOLD || '50000');
-        this.SUMMARY_MODEL = process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
+        this.config = new ConfigService();
+        this.SUMMARY_MODEL = this.config.getModel('FLASH');
     }
 
     /**

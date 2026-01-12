@@ -2,10 +2,12 @@ const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
 const https = require('https');
+const { ConfigService } = require('./config-service');
 
 class PeopleService {
     constructor(agent) {
         this.agent = agent;
+        this.config = new ConfigService();
         this.interfacesUrl = process.env.INTERFACES_URL || 'http://localhost:5000';
     }
 
@@ -195,7 +197,7 @@ Return a JSON array of objects with this schema:
 Output pure JSON only.`;
 
         try {
-            const modelName = process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
+            const modelName = this.config.getModel('FLASH');
             const response = await this.agent.client.models.generateContent({
                 model: modelName,
                 contents: prompt

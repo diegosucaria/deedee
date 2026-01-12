@@ -75,9 +75,7 @@ if (googleApiKey) {
   console.warn('[Agent] GOOGLE_API_KEY missing. Agent not started.');
 }
 
-app.get('/health', (req, res) => {
-  res.json({ status: 'ok', initialized: !!agent });
-});
+
 
 app.post('/webhook', (req, res) => {
   const message = req.body;
@@ -111,6 +109,8 @@ const { createPeopleRouter } = require('./routes/people');
 
 // Mount Live Router (works without Agent instance for Config/Token)
 app.use('/live', createLiveRouter(agent));
+const { createHealthRouter } = require('./routes/health');
+app.use('/health', createHealthRouter(agent));
 
 if (agent) {
   // Mount Modular Routers

@@ -581,6 +581,29 @@ const toolDefinitions = [
           },
           required: ["topic", "content"]
         }
+      },
+      // Local RAG
+      {
+        name: "searchDocuments",
+        description: "Search indexed documents (PDFs, text) for relevant information using semantic search.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            query: { type: "STRING", description: "The search query." }
+          },
+          required: ["query"]
+        }
+      },
+      {
+        name: "ingestDocument",
+        description: "Ingest a file (PDF or Text) into the semantic search index.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            path: { type: "STRING", description: "Absolute path to the file." }
+          },
+          required: ["path"]
+        }
       }
     ]
   }

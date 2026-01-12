@@ -20,7 +20,8 @@ class MemoryExecutor extends BaseExecutor {
                 }
 
                 // Summarize using Gemini Flash
-                const modelName = process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
+                const { agent } = this.services;
+                const modelName = agent.configService.getModel('FLASH');
                 const logText = messages.map(m => `[${m.timestamp}] ${m.role}: ${m.content}`).join('\n');
                 const summaryReq = `Summarize the following chat logs from ${date} into a concise bullet-point journal entry. Focus on what was achieved, facts learned, or tasks completed. Ignore trivial chatter.\n\nLogs:\n${logText}`;
 

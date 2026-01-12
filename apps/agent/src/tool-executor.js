@@ -8,6 +8,7 @@ const { MediaExecutor } = require('./executors/media');
 const { CommunicationExecutor } = require('./executors/communication');
 const { VaultExecutor } = require('./executors/vault');
 const { PeopleExecutor } = require('./executors/people');
+const { RagExecutor } = require('./executors/rag');
 
 class ToolExecutor {
     /**
@@ -25,7 +26,9 @@ class ToolExecutor {
             new GSuiteExecutor(services),
             new MediaExecutor(services),
             new CommunicationExecutor(services),
-            new PeopleExecutor(services)
+            new CommunicationExecutor(services),
+            new PeopleExecutor(services),
+            new RagExecutor(services)
         ];
     }
 

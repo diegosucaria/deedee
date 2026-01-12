@@ -9,7 +9,8 @@ class MediaExecutor extends BaseExecutor {
 
         switch (name) {
             case 'generateImage': {
-                const imagenModel = process.env.GEMINI_IMAGE_MODEL || 'gemini-3-pro-image-preview';
+                const { client, agent } = this.services;
+                const imagenModel = agent.configService.getModel('IMAGE');
                 console.log(`[MediaExecutor] Generating image with ${imagenModel} for prompt: "${args.prompt}"`);
 
                 const response = await client.models.generateContent({
@@ -82,7 +83,7 @@ class MediaExecutor extends BaseExecutor {
 
                 console.log(`[MediaExecutor] Generating audio for: "${text.substring(0, 30)}..." (Voice: ${voiceName}, Lang: ${language})`);
 
-                const modelName = process.env.GEMINI_TTS_MODEL || process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
+                const modelName = agent.configService.getModel('TTS');
                 const audioResponse = await client.models.generateContent({
                     model: modelName,
                     contents: [{

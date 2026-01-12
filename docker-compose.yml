@@ -101,6 +101,18 @@ services:
     restart: always
     tty: true
 
+  sqlite-viewer:
+    image: ghcr.io/coleifer/sqlite-web:latest
+    ports:
+      - "8080:8080"
+    networks:
+      - deedee-net
+    restart: always
+    volumes:
+      - agent-data:/data/agent
+      - interfaces-data:/data/interfaces
+    tty: true
+
 networks:
   deedee-net:
     driver: bridge

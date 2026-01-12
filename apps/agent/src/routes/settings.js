@@ -1,4 +1,5 @@
 const express = require('express');
+const { ConfigService } = require('../services/config-service');
 
 function createSettingsRouter(agent) {
     const router = express.Router();
@@ -84,6 +85,8 @@ function createSettingsRouter(agent) {
                 return res.status(400).json({ error: 'Missing text or voice' });
             }
 
+            const config = new ConfigService();
+
             console.log(`[Settings] Generating TTS preview for ${voice}: "${text}"`);
 
             // Ensure client is ready
@@ -92,7 +95,7 @@ function createSettingsRouter(agent) {
                 agent.client = new GoogleGenAI({ apiKey: agent.config.googleApiKey });
             }
 
-            const modelName = process.env.GEMINI_TTS_MODEL || process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
+            const modelName = config.getModel('TTS');
 
             const audioResponse = await agent.client.models.generateContent({
                 model: modelName,

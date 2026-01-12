@@ -3,6 +3,198 @@ const axios = require('axios');
 const path = require('path');
 const fs = require('fs');
 const QRCode = require('qrcode');
+const Database = require('better-sqlite3');
+
+class SQLiteStore {
+    constructor(filePath) {
+        this.db = new Database(filePath);
+        this.init();
+    }
+
+    init() {
+        this.db.pragma('journal_mode = WAL');
+        this.db.exec(`
+            CREATE TABLE IF NOT EXISTS contacts (
+                id TEXT PRIMARY KEY,
+                name TEXT,
+                notify TEXT,
+                lid TEXT,
+                data TEXT
+            );
+            CREATE TABLE IF NOT EXISTS messages (
+                key_id TEXT,
+                remote_jid TEXT,
+                from_me INTEGER,
+                timestamp INTEGER,
+                content TEXT,
+                data TEXT,
+                PRIMARY KEY (key_id, remote_jid)
+            );
+            CREATE INDEX IF NOT EXISTS idx_messages_jid_ts ON messages(remote_jid, timestamp DESC);
+            CREATE INDEX IF NOT EXISTS idx_contacts_lid ON contacts(lid);
+        `);
+    }
+
+    bind(ev) {
+        ev.on('contacts.upsert', (contacts) => {
+            const stmt = this.db.prepare(`
+                INSERT INTO contacts (id, name, notify, lid, data)
+                VALUES (?, ?, ?, ?, ?)
+                ON CONFLICT(id) DO UPDATE SET
+                name=coalesce(excluded.name, name),
+                notify=coalesce(excluded.notify, notify),
+                lid=coalesce(excluded.lid, lid),
+                data=excluded.data
+            `);
+            const updateStmt = this.db.prepare(`
+                 UPDATE contacts SET name=?, notify=?, lid=?, data=? WHERE id=?
+            `);
+
+            const transaction = this.db.transaction((contacts) => {
+                for (const c of contacts) {
+                    // Try to get existing to merge? Baileys sends partial updates sometimes.
+                    // INSERT OR REPLACE might overwrite with nulls if we aren't careful.
+                    // But 'ON CONFLICT DO UPDATE' with coalesce handles it partially.
+                    // For simplicity, we just store what we get, serialization is key.
+                    // Ideally we fetch, merge, save. But for perf, we rely on UPSERT.
+                    stmt.run(c.id, c.name, c.notify, c.lid, JSON.stringify(c));
+                }
+            });
+            transaction(contacts);
+        });
+
+        ev.on('contacts.update', (updates) => {
+            const stmt = this.db.prepare(`
+                UPDATE contacts SET 
+                name=coalesce(?, name),
+                notify=coalesce(?, notify),
+                lid=coalesce(?, lid),
+                data=?
+                WHERE id=?
+            `);
+            const transaction = this.db.transaction((updates) => {
+                for (const u of updates) {
+                    // We need to merge with existing data json... tedious in SQL.
+                    // Fetch first.
+                    const existing = this.db.prepare('SELECT data FROM contacts WHERE id = ?').get(u.id);
+                    if (existing) {
+                        const data = JSON.parse(existing.data);
+                        const merged = { ...data, ...u };
+                        stmt.run(u.name || null, u.notify || null, u.lid || null, JSON.stringify(merged), u.id);
+                    }
+                }
+            });
+            transaction(updates);
+        });
+
+        ev.on('messages.upsert', ({ messages, type }) => {
+            if (type !== 'notify' && type !== 'append') return; // 'append' is for history sync
+
+            const stmt = this.db.prepare(`
+                INSERT INTO messages (key_id, remote_jid, from_me, timestamp, content, data)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(key_id, remote_jid) DO NOTHING
+            `);
+
+            const transaction = this.db.transaction((msgs) => {
+                for (const msg of msgs) {
+                    const jid = msg.key.remoteJid;
+                    if (!jid) continue;
+                    // Ignore protocol messages
+                    if (msg.message?.protocolMessage || msg.message?.senderKeyDistributionMessage) continue;
+
+                    const ts = (typeof msg.messageTimestamp === 'number')
+                        ? msg.messageTimestamp
+                        : (msg.messageTimestamp?.low || Date.now() / 1000);
+
+                    // Content Snippet
+                    let content = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+                    if (!content) {
+                        if (msg.message?.audioMessage) content = '[Audio]';
+                        else if (msg.message?.imageMessage) content = '[Image]';
+                        else if (msg.message?.stickerMessage) content = '[Sticker]';
+                        else content = '[Media]';
+                    }
+
+                    stmt.run(
+                        msg.key.id,
+                        jid,
+                        msg.key.fromMe ? 1 : 0,
+                        ts,
+                        content,
+                        JSON.stringify(msg)
+                    );
+                }
+            });
+            transaction(messages);
+        });
+    }
+
+    // --- Access Methods ---
+
+    getContacts() {
+        return this.db.prepare('SELECT * FROM contacts').all().map(r => ({ ...JSON.parse(r.data), ...r }));
+    }
+
+    getContact(jid) {
+        const row = this.db.prepare('SELECT * FROM contacts WHERE id = ?').get(jid);
+        return row ? { ...JSON.parse(row.data), ...row } : null;
+    }
+
+    getAllContactsRaw() {
+        // For searchContacts compatibility which expects array of objects
+        return this.getContacts();
+    }
+
+    getChatHistory(jid, limit = 50) {
+        const rows = this.db.prepare(`
+            SELECT data FROM messages 
+            WHERE remote_jid = ? 
+            ORDER BY timestamp DESC 
+            LIMIT ?
+        `).all(jid, limit);
+
+        return rows.reverse().map(r => JSON.parse(r.data));
+    }
+
+    getRecentChats(limit = 10) {
+        const rows = this.db.prepare(`
+            SELECT remote_jid, MAX(timestamp) as last_ts, COUNT(*) as count 
+            FROM messages 
+            WHERE remote_jid NOT LIKE '%@g.us' 
+            GROUP BY remote_jid 
+            ORDER BY last_ts DESC 
+            LIMIT ?
+        `).all(limit);
+
+        return rows.map(r => {
+            // Get snippets
+            const msgs = this.db.prepare('SELECT content FROM messages WHERE remote_jid = ? ORDER BY timestamp DESC LIMIT 3').all(r.remote_jid);
+            return {
+                jid: r.remote_jid,
+                lastTimestamp: r.last_ts * 1000,
+                msgCount: r.count,
+                snippets: msgs.map(m => m.content).reverse()
+            };
+        });
+    }
+
+    // Check if a JID exists in messages (normalization helper)
+    hasOutputForJid(jid) {
+        const row = this.db.prepare('SELECT 1 FROM messages WHERE remote_jid = ? LIMIT 1').get(jid);
+        return !!row;
+    }
+
+    getContactByLid(lid) {
+        const row = this.db.prepare('SELECT id FROM contacts WHERE lid = ?').get(lid);
+        return row ? row.id : null;
+    }
+
+    findFuzzyJid(digits) {
+        const row = this.db.prepare('SELECT remote_jid FROM messages WHERE remote_jid LIKE ? LIMIT 1').get(digits + '%');
+        return row ? row.remote_jid : null;
+    }
+}
 
 class WhatsAppService {
     constructor(agentUrl, sessionId = 'default') {
@@ -65,104 +257,22 @@ class WhatsAppService {
             console.log(`${this.logPrefix} Connecting...`);
             this.status = 'connecting';
 
-            // Simple In-Memory Store Polyfill (Expanded for History)
-            function makeInMemoryStore(config) {
-                const LIMIT = config.limit || 500; // Increased default limit
+            // Using SQLiteStore
+            // makeInMemoryStore removed.
 
-                const getTs = (m) => {
-                    const ts = m.messageTimestamp;
-                    if (typeof ts === 'number') return ts;
-                    if (ts && typeof ts.toNumber === 'function') return ts.toNumber();
-                    if (ts && typeof ts.low === 'number') return ts.low;
-                    return 0;
-                };
+            // ... inside connect ...
+            const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay, downloadMediaMessage } = await this._importBaileys();
+            this.downloadMediaMessage = downloadMediaMessage;
 
-                return {
-                    contacts: {},
-                    messages: {}, // chatId -> [msgs]
-                    bind(ev) {
-                        ev.on('contacts.upsert', (contacts) => {
-                            for (const c of contacts) {
-                                this.contacts[c.id] = { ...this.contacts[c.id], ...c };
-                            }
-                        });
-                        ev.on('contacts.update', (updates) => {
-                            for (const u of updates) {
-                                if (this.contacts[u.id]) {
-                                    Object.assign(this.contacts[u.id], u);
-                                }
-                            }
-                        });
-                        ev.on('messages.upsert', ({ messages, type }) => {
-                            for (const msg of messages) {
-                                const jid = msg.key.remoteJid;
-                                if (!jid) continue;
-
-                                // Filter: Ignore Protocol Messages
-                                if (msg.message?.protocolMessage || msg.message?.senderKeyDistributionMessage) continue;
-
-                                // Keep all other content types (Text, Image, Audio, Stickers, etc)
-
-                                if (!this.messages[jid]) this.messages[jid] = [];
-
-                                // Check for duplicates
-                                const exists = this.messages[jid].find(m => m.key.id === msg.key.id);
-                                if (exists) continue;
-
-                                this.messages[jid].push(msg);
-
-                                // Sort and Limit
-                                this.messages[jid].sort((a, b) => getTs(a) - getTs(b));
-
-                                if (this.messages[jid].length > LIMIT) {
-                                    this.messages[jid] = this.messages[jid].slice(-LIMIT);
-                                }
-                            }
-                        });
-                    },
-                    readFromFile(path) {
-                        if (fs.existsSync(path)) {
-                            try {
-                                const data = JSON.parse(fs.readFileSync(path, 'utf-8'));
-                                this.contacts = data.contacts || {};
-                                this.messages = data.messages || {};
-                            } catch (e) {
-                                console.error('Failed to read store file:', e);
-                            }
-                        }
-                    },
-                    writeToFile(path) {
-                        fs.writeFileSync(path, JSON.stringify({ contacts: this.contacts, messages: this.messages }, null, 2));
-                    }
-                };
+            // Initialize Store
+            if (!this.store) {
+                const storePath = path.join(process.env.DATA_DIR || path.join(process.cwd(), 'data'), `messages_${this.sessionId}.db`);
+                console.log(`${this.logPrefix} Initializing SQLite Store at ${storePath}`);
+                this.store = new SQLiteStore(storePath);
             }
 
             // ... inside connect ...
-            // Dynamic Import via helper
-            const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay, downloadMediaMessage } = await this._importBaileys();
-            this.downloadMediaMessage = downloadMediaMessage; // Save for later use
-
-            // Initialize Store if not already done
-            if (!this.store) {
-                // Configurable Limit
-                const STORE_LIMIT = process.env.WHATSAPP_STORE_LIMIT ? parseInt(process.env.WHATSAPP_STORE_LIMIT) : 50;
-                this.store = makeInMemoryStore({ limit: STORE_LIMIT });
-
-                const storePath = path.join(process.env.DATA_DIR || path.join(process.cwd(), 'data'), `baileys_store_${this.sessionId}.json`);
-                try {
-                    this.store.readFromFile(storePath);
-                    console.log(`${this.logPrefix} Store loaded from ${storePath}`);
-                } catch (e) {
-                    console.log(`${this.logPrefix} No store found at ${storePath}, creating new.`);
-                }
-
-                // Save store periodically
-                setInterval(() => {
-                    try {
-                        this.store.writeToFile(storePath);
-                    } catch (e) { console.error(`${this.logPrefix} Store save failed`, e); }
-                }, 10_000);
-            }
+            // (Previous code removed)
 
             const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
 
@@ -191,10 +301,10 @@ class WhatsAppService {
                 // Handle synced messages
                 if (messages) {
                     console.log(`${this.logPrefix} History Sync: Received ${messages.length} messages.`);
-                    // Manually upsert to trigger polyfill logic
+                    // Manually upsert to trigger DB bindings
                     this.store.bind({
                         on: (event, cb) => {
-                            if (event === 'messages.upsert') cb({ messages, type: 'notify' });
+                            if (event === 'messages.upsert') cb({ messages, type: 'append' }); // Use 'append' type
                         }
                     });
                 }
@@ -258,7 +368,7 @@ class WhatsAppService {
                     this.reconnectAttempts = 0; // Reset on success
 
                     // Log contacts count
-                    const contactCount = Object.keys(this.store.contacts).length;
+                    const contactCount = this.store.getContacts().length;
                     console.log(`${this.logPrefix} Store has ${contactCount} contacts.`);
                 }
             });
@@ -496,12 +606,9 @@ class WhatsAppService {
         if (!query || !this.store) return [];
         const q = query.toLowerCase();
 
-        // this.store.contacts is an object { id: { ... } }
-        const contacts = Object.values(this.store.contacts);
+        // Use store method
+        const contacts = this.store.getAllContactsRaw();
         console.log(`${this.logPrefix} Searching ${contacts.length} contacts for: "${q}"...`);
-        if (contacts.length > 0) {
-            console.log(`${this.logPrefix} Sample contact:`, JSON.stringify(contacts[0]));
-        }
 
         const results = [];
 
@@ -524,7 +631,7 @@ class WhatsAppService {
 
     getContacts() {
         if (!this.store) return [];
-        return Object.values(this.store.contacts).map(c => ({
+        return this.store.getContacts().map(c => ({
             id: c.id,
             name: c.name,
             notify: c.notify,
@@ -533,8 +640,9 @@ class WhatsAppService {
     }
 
     getContact(jid) {
-        if (!this.store || !this.store.contacts[jid]) return null;
-        const c = this.store.contacts[jid];
+        if (!this.store) return null;
+        const c = this.store.getContact(jid);
+        if (!c) return null;
         return {
             id: c.id,
             name: c.name,
@@ -554,66 +662,44 @@ class WhatsAppService {
     // --- New Methods for Smart Learn ---
 
     getRecentChats(limit = 10) {
-        if (!this.store || !this.store.messages) return [];
-
-        // Sort JIDs by latest message timestamp
-        const chats = Object.keys(this.store.messages)
-            .filter(jid => !jid.includes('@g.us')) // Filter out Groups
-            .map(jid => {
-                const msgs = this.store.messages[jid];
-                const lastMsg = msgs[msgs.length - 1];
-                return {
-                    jid,
-                    lastTimestamp: lastMsg ? this._getSafeTimestamp(lastMsg.messageTimestamp) * 1000 : 0,
-                    msgCount: msgs.length,
-                    snippets: msgs.slice(-3).map(m => m.message?.conversation || m.message?.extendedTextMessage?.text || (m.message?.audioMessage ? '[Audio]' : m.message?.imageMessage ? '[Image]' : '[Media]'))
-                };
-            });
-
-        chats.sort((a, b) => b.lastTimestamp - a.lastTimestamp);
-        return chats.slice(0, limit);
+        if (!this.store) return [];
+        return this.store.getRecentChats(limit);
     }
 
     getChatHistory(jid, limit = 50) {
-        if (!this.store || !this.store.messages) {
-            console.warn(`${this.logPrefix} Store or messages empty.`);
+        if (!this.store) {
+            console.warn(`${this.logPrefix} Store empty.`);
             return [];
         }
 
-        const normalizedJid = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
-
-        // Helper to resolve JID (LID -> Phone)
+        // Resolution Logic
         const resolveJid = (inputJid) => {
             const norm = inputJid.includes('@') ? inputJid : `${inputJid}@s.whatsapp.net`;
-            if (this.store.messages[inputJid]) return inputJid;
-            if (this.store.messages[norm]) return norm;
+            if (this.store.hasOutputForJid(inputJid)) return inputJid;
+            if (this.store.hasOutputForJid(norm)) return norm;
 
-            // LID/Contact Check
-            try {
-                const contacts = Object.values(this.store.contacts);
-                for (const c of contacts) {
-                    if (c.lid === inputJid || c.lid === norm) return c.id;
-                }
-            } catch (e) { }
+            // Check LID
+            const fromLid = this.store.getContactByLid(inputJid) || this.store.getContactByLid(norm);
+            if (fromLid) return fromLid;
 
-            // Fuzzy match
+            // Fuzzy
             const digits = inputJid.replace(/[^0-9]/g, '');
             if (digits.length > 7) {
-                const fuzzyKey = Object.keys(this.store.messages).find(k => k.startsWith(digits));
-                if (fuzzyKey) return fuzzyKey;
+                const fuzzy = this.store.findFuzzyJid(digits);
+                if (fuzzy) return fuzzy;
             }
             return norm;
         };
 
         const targetJid = resolveJid(jid);
-        const exists = !!this.store.messages[targetJid];
+        const msgs = this.store.getChatHistory(targetJid, limit);
 
-        if (!exists) {
+        if (msgs.length === 0) {
             console.warn(`${this.logPrefix} History not found for ${jid} (Resolved: ${targetJid}).`);
             return [];
         }
 
-        return this.store.messages[targetJid].slice(-limit).map(m => {
+        return msgs.map(m => {
             // Simplify for agent consumption
             let content = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
             const msgType = Object.keys(m.message || {})[0];
@@ -646,4 +732,4 @@ class WhatsAppService {
     }
 }
 
-module.exports = { WhatsAppService };
+module.exports = { WhatsAppService, SQLiteStore };

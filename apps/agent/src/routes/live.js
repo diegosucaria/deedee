@@ -1,5 +1,6 @@
 const express = require('express');
 const { GoogleAuth } = require('google-auth-library');
+const { ConfigService } = require('../services/config-service');
 
 function createLiveRouter(agent) {
     const router = express.Router();
@@ -23,7 +24,13 @@ function createLiveRouter(agent) {
 
     // 2. Get Live Config
     router.get('/config', (req, res) => {
-        const model = process.env.WORKER_LIVE || 'models/gemini-2.0-flash-exp';
+        const config = new ConfigService();
+        // Live usually expects "models/" prefix? Or just the name? 
+        // Checking doc: "models/gemini-2.0-flash-exp"
+        // Our config service returns "gemini-2.0-flash-exp".
+        // Let's prepend it for safety if the frontend expects it.
+        const modelName = config.getModel('LIVE');
+        const model = `models/${modelName}`;
         res.json({ model });
     });
 

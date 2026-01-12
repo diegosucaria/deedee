@@ -10,6 +10,7 @@
     "@deedee/shared": "*",
     "@whiskeysockets/baileys": "^7.0.0-rc.9",
     "axios": "^1.6.0",
+    "better-sqlite3": "^11.10.0",
     "dotenv": "^16.0.0",
     "express": "^4.18.0",
     "qrcode": "^1.5.4",

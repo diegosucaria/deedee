@@ -20,7 +20,8 @@
     "fs-extra": "^11.3.3",
     "google-auth-library": "^9.15.1",
     "multer": "^2.0.2",
-    "node-schedule": "^2.1.1"
+    "node-schedule": "^2.1.1",
+    "pdf-parse": "^2.4.5"
   },
   "devDependencies": {
     "supertest": "^6.3.0"

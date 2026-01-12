@@ -16,9 +16,7 @@ app.use(express.json({ limit: '50mb' }));
 app.use(cors());
 
 // Public Routes (No Auth)
-app.get('/health', (req, res) => {
-    res.json({ status: 'ok', service: 'api' });
-});
+app.use('/health', require('./routes/health'));
 
 // Protected V1 Routes
 app.use('/v1', (req, res, next) => {

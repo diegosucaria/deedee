@@ -262,8 +262,8 @@ describe('Agent with Tools', () => {
   });
 
   test('should suppress Auto-Title for passive mode (whatsapp:user)', async () => {
-    // Spy on _autoTitleSession
-    const autoTitleSpy = jest.spyOn(agent, '_autoTitleSession').mockResolvedValue();
+    // Spy on TitleService.autoTitleSession
+    const autoTitleSpy = jest.spyOn(agent.titleService, 'autoTitleSession').mockResolvedValue();
 
     // 1. Passive Message
     const passiveMsg = createUserMessage('Hello from Mom', 'whatsapp:user', '5551234');

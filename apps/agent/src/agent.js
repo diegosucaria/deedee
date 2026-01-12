@@ -22,6 +22,10 @@ const axios = require('axios');
 const { getSystemInstruction } = require('./prompts/system');
 const { getFunctionCalls, getThinkingMessage } = require('./utils/helpers');
 const { PeopleService } = require('./services/people-service');
+const { AnalysisService } = require('./services/analysis-service');
+const { TitleService } = require('./services/title-service');
+const { ConfigService } = require('./services/config-service');
+const { RagService } = require('./services/rag-service');
 
 
 
@@ -62,6 +66,10 @@ class Agent {
 
     // Services
     this.peopleService = new PeopleService(this);
+    this.analysisService = new AnalysisService(this);
+    this.titleService = new TitleService(this);
+    this.configService = new ConfigService();
+    this.ragService = new RagService(this);
 
     // In-Memory Settings Cache
     this.settings = {};
@@ -84,126 +92,6 @@ class Agent {
     this.loadSettings = this.loadSettings.bind(this);
   }
 
-  async _analyzeAttachment(chatId, part, currentVaultId) {
-    console.log(`[Agent] Analyzing attachment for ${chatId}...`);
-    try {
-      const { mimeType, data } = part.inlineData;
-
-      // Fetch available vaults
-      const vaults = await this.vaults.listVaults();
-      const vaultList = vaults.map(v => `- **${v.id}**: ${v.id === 'health' ? 'Medical records, prescriptions, workout plans, diet' : v.id === 'finance' ? 'Invoices, receipts, tax docs, bank statements' : 'Items related to ' + v.id}`).join('\n        ');
-
-      // Construct prompt
-      const prompt = `
-        Analyze this document/file.
-        Your goal is to determine if this file belongs to one of our specific Life Vaults:
-        ${vaultList}
-        
-        If it belongs to one of these, you MUST output the vault ID.
-        If it is generic or unclear, output "none".
-
-        Also generate a short, descriptive title for this file/chat (max 6 words).
-        Extract the likely "document date" (YYYY-MM-DD) if found, otherwise use today.
-
-        Output JSON ONLY:
-        {
-            "vaultId": "Vault ID (e.g. health, finance) or 'none'",
-            "title": "String",
-            "date": "YYYY-MM-DD",
-            "summary": "One sentence summary of content"
-        }
-        `;
-
-      const schema = {
-        type: "object",
-        properties: {
-          vaultId: { type: "string" },
-          title: { type: "string" },
-          date: { type: "string" },
-          summary: { type: "string" }
-        },
-        required: ["vaultId", "title", "date", "summary"]
-      };
-
-      // We use a separate model call (Flash is fine)
-      const model = process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
-      const result = await this.client.models.generateContent({
-        model: model,
-        contents: [{
-          role: 'user',
-          parts: [
-            { inlineData: { mimeType, data } },
-            { text: prompt }
-          ]
-        }],
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: schema
-        }
-      });
-
-      const text = (result.response && typeof result.response.text === 'function') ? result.response.text() : '';
-      if (!text) return;
-
-      const analysis = JSON.parse(text);
-      console.log(`[Agent] File Analysis:`, analysis);
-
-      // ALWAYS update title if it's a new chat (heuristic)
-      // Or if the current title is "New Chat"
-      const session = this.db.getSession(chatId);
-      if (session && (session.title === 'New Chat' || session.title === 'User sent media')) {
-        this.db.updateSession(chatId, { title: analysis.title });
-        // Emit update
-        this.interface.emit('session:update', { id: chatId, title: analysis.title });
-      }
-
-      // Logic: Move to Vault if detected AND not already there
-      if (analysis.vaultId !== 'none' && analysis.vaultId !== currentVaultId) {
-        // We need to "move" the file.
-        // Problem: We only have the base64 data here, user uploaded it to generic storage?
-        // Actually, the frontend uploads via POST /files, THEN sends the message.
-        // But the message contains the base64 data (inlineData) because we mirror it for the LLM.
-        // Ideally we'd know the file path on disk.
-        // Metadata should carry the path? 
-        // The frontend should pass the `path` in the message metadata if it uploaded it.
-        // Let's assume for now we might need to re-save it if we don't have the path, 
-        // OR we fix frontend to send path in metadata.
-        // Saving from base64 is reliable enough here since we have the data.
-
-        // 1. Save to Vault
-        const filename = `${analysis.title.replace(/[^a-z0-9]/gi, '_')}.${mimeType.split('/')[1]}`; // approximate ext
-        // Better: use unique ID
-        const safeFilename = `${Date.now()}_${analysis.title.substring(0, 20).replace(/[^a-z0-9]/gi, '_')}.${mimeType.split('/')[1]}`;
-
-        // Write to temp, then addToVault? Or direct?
-        // VaultManager.addToVault takes a source path.
-        const tempPath = path.join('/tmp', safeFilename);
-        await fs.promises.writeFile(tempPath, Buffer.from(data, 'base64'));
-
-        // Add to Vault
-        await this.vaults.addToVault(analysis.vaultId, tempPath, safeFilename);
-
-        // Cleanup temp
-        await fs.promises.unlink(tempPath);
-
-        // 2. Update Vault Wiki
-        const wikiEntry = `\n\n## Added on ${analysis.date}\n- **File**: ${safeFilename}\n- **Title**: ${analysis.title}\n- **Summary**: ${analysis.summary}`;
-        const currentWiki = await this.vaults.readVaultPage(analysis.vaultId, 'index.md') || `# ${analysis.vaultId} Vault`;
-        await this.vaults.updateVaultPage(analysis.vaultId, 'index.md', currentWiki + wikiEntry);
-
-        // 3. Switch Context
-        this.activeTopics.set(chatId, analysis.vaultId);
-
-        // 4. Notify User
-        const notification = createAssistantMessage(`📂 I've detected this is a **${analysis.vaultId}** document.\n\nI've filed it in your **${analysis.vaultId}** vault and updated the context.`);
-        notification.metadata = { chatId, vaultId: analysis.vaultId }; // Update frontend state
-        await this.interface.send(notification);
-      }
-
-    } catch (e) {
-      console.error('[Agent] Attachment analysis failed:', e);
-    }
-  }
 
   async loadSettings() {
     try {
@@ -295,21 +183,54 @@ class Agent {
   async _generateStream(session, payload, chatId, source) {
     try {
       // DEBUG: Log payload
-      console.log(`[Agent] _generateStream payload (${source}):`, typeof payload === 'object' ? JSON.stringify(payload).substring(0, 200) : payload);
+      // console.log(`[Agent] _generateStream payload (${source}):`, typeof payload === 'object' ? JSON.stringify(payload).substring(0, 200) : payload);
 
-      // EMERGENCY ROLLBACK: Disable streaming completely.
-      // Use standard sendMessage for stability.
-      // FIX: Wrap payload in { message: ... } as required by SDK
-      const result = await session.sendMessage({ message: payload });
+      // Web/Live: Enable Streaming
+      if (source === 'web' || source === 'live') {
+        // SDK REQUIREMENT (v0.21.0+): Wrap content in { message: ... } to be safe 
+        // with newer Google GenAI SDK signatures, especially if tool calls are involved.
+        // This matches the fix applied for standard sendMessage in the rollback.
+        const request = { message: payload };
 
-      let response = result.response;
-      if (!response && result.candidates) {
-        response = result;
+        const result = await session.sendMessageStream(request);
+
+        let fullText = '';
+        for await (const chunk of result.stream) {
+          let text = '';
+          try {
+            // chunk.text() throws if the chunk has no text (e.g. only function call)
+            text = chunk.text();
+          } catch (e) { /* ignore */ }
+
+          if (text) {
+            fullText += text;
+            this.interface.emit('agent:token', {
+              chatId,
+              content: text,
+              timestamp: Date.now()
+            });
+          }
+        }
+
+        // After stream finishes, we await the full response to get function calls etc.
+        const response = await result.response;
+        return response;
+      } else {
+        // Standard (WhatsApp/Telegram) - No stream
+        const result = await session.sendMessage(payload);
+        let response = result.response;
+        if (!response && result.candidates) response = result;
+        return response;
       }
-
-      return response;
     } catch (e) {
       console.error(`[Agent] sendMessage failed: ${e.message}`);
+      // Fallback to standard if stream fails?
+      if (source === 'web' && !e.message.includes('sendMessage')) {
+        try {
+          const result = await session.sendMessage(payload);
+          return result.response;
+        } catch (ex) { throw ex; }
+      }
       throw e;
     }
   }
@@ -393,7 +314,7 @@ class Agent {
           }
 
           // Don't await - run in background
-          this._autoTitleSession(chatId, titleContext).catch(err => {
+          this.titleService.autoTitleSession(chatId, titleContext).catch(err => {
             console.error(`[Agent] Auto-Title CRASHED for ${chatId}:`, err);
           });
         } else {
@@ -422,7 +343,7 @@ class Agent {
 
           if (candidatePart) {
             // Run in background to not block chat latency
-            this._analyzeAttachment(chatId, candidatePart, message.metadata?.vaultId || 'none').catch(console.error);
+            this.analysisService.analyzeAttachment(chatId, candidatePart, message.metadata?.vaultId || 'none').catch(console.error);
           }
         }
       }
@@ -668,8 +589,8 @@ class Agent {
       }
 
       const selectedModel = decision.model === 'FLASH'
-        ? (process.env.WORKER_FLASH || 'gemini-2.0-flash-exp')
-        : (process.env.WORKER_PRO || 'gemini-3-pro-preview');
+        ? this.configService.getModel('FLASH')
+        : this.configService.getModel('PRO');
 
       console.log(`[Agent] Routing to Model: ${selectedModel}`);
       await reportProgress(`Thinking (${selectedModel})...`);
@@ -1257,75 +1178,6 @@ IF you are asked to draft a message for the user, or if you are replying via the
 
 
 
-  async _autoTitleSession(chatId, firstMessageContent) {
-    try {
-      console.log(`[Agent] Auto-titling session ${chatId}...`);
-      // Use Flash for speed/cost
-      const model = process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
-      const prompt = `
-        Generate a short, concise title (3-5 words max) for a chat session that starts with this user message:
-        "${firstMessageContent}"
-        
-        Do not use quotes. Just the title.
-      `;
-
-      const schema = {
-        type: "object",
-        properties: {
-          title: { type: "string" }
-        },
-        required: ["title"]
-      };
-
-      // Use a separate stateless call
-      const { GoogleGenAI } = await this._loadClientLibrary();
-      const client = new GoogleGenAI({ apiKey: this.config.googleApiKey });
-
-      const response = await client.models.generateContent({
-        model: model,
-        contents: [
-          {
-            role: 'user',
-            parts: [{ text: prompt }]
-          }
-        ],
-        config: {
-          responseMimeType: 'application/json',
-          responseSchema: schema,
-          temperature: 0.5
-        }
-      });
-
-      let title = '';
-      const text = (response && response.text) ? (typeof response.text === 'function' ? response.text() : response.text) : '';
-
-      if (text) {
-        try {
-          const json = JSON.parse(text);
-          title = json.title;
-        } catch (e) {
-          console.warn('[Agent] Failed to parse title JSON:', e);
-        }
-      }
-
-      title = title ? title.trim() : '';
-
-      if (title) {
-        this.db.updateSession(chatId, { title });
-        console.log(`[Agent] Session ${chatId} titled: "${title}"`);
-
-        // Notify client to update UI
-        await this.interface.send({
-          source: 'web',
-          type: 'session_update',
-          content: JSON.stringify({ id: chatId, title }),
-          metadata: { chatId }
-        });
-      }
-    } catch (err) {
-      console.error('[Agent] Auto-titling failed:', err.message);
-    }
-  }
 
 
 
@@ -1378,7 +1230,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
         // Create a dedicated session just for this search
         // We use a separate model instance to ensure isolation and access to native search
         const searchSession = this.client.chats.create({
-          model: process.env.WORKER_FLASH || 'gemini-2.0-flash-exp', // Use Flash for speed
+          model: this.configService.getModel('SEARCH'), // Use dedicated search model
           config: {
             tools: [{ googleSearch: {} }], // Enable Native Search here
             systemInstruction: 'You are a search engine. Return the answer to the user query based on the search results. Be concise. IMPORTANT: You MUST answer in the SAME language as the user query. Do not switch languages.'
@@ -1396,7 +1248,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
         if (result.usageMetadata && usageCallback) {
           const u = result.usageMetadata;
           usageCallback(
-            process.env.WORKER_FLASH || 'gemini-2.0-flash-exp',
+            this.configService.getModel('SEARCH'),
             u.promptTokenCount,
             u.candidatesTokenCount
           );
@@ -1486,74 +1338,9 @@ IF you are asked to draft a message for the user, or if you are replying via the
 
 // Pricing per 1 Million Tokens (Input / Output)
 // Source: https://ai.google.dev/gemini-api/docs/pricing
-const PRICING = {
-  // Direct Model Definitions
-  'gemini-2.5-flash': {
-    threshold: 128000,
-    tier1: { input: 0.30, output: 0.60 }, // <= 128k
-    tier2: { input: 1.0, output: 2.5 }  // > 128k (Est: 2x)
-  },
-  'gemini-2.0-flash-exp': {
-    threshold: 128000,
-    tier1: { input: 0.15, output: 0.60 },
-    tier2: { input: 0.30, output: 1.20 }
-  },
-  'gemini-3-pro-preview': {
-    threshold: 200000, // Pro Preview usually has 200k tier
-    tier1: { input: 2.00, output: 12.00 }, // <= 200k
-    tier2: { input: 4.00, output: 18.00 }  // > 200k
-  },
-  'gemini-2.5-pro': {
-    threshold: 200000,
-    tier1: { input: 2.00, output: 12.00 },
-    tier2: { input: 4.00, output: 18.00 }
-  },
-  // TTS & Image Models
-  'gemini-2.5-flash-preview-tts': {
-    threshold: 128000,
-    tier1: { input: 0.50, output: 10 },
-    tier2: { input: 0.50, output: 10 }
-  },
-  'gemini-3-pro-image-preview': {
-    threshold: 200000,
-    tier1: { input: 2.00, output: 120.00 },
-    tier2: { input: 2.00, output: 120.00 }
-  },
-
-  // Default/Fallback keys
-  'FLASH_DEFAULT': {
-    threshold: 128000,
-    tier1: { input: 0.15, output: 0.60 },
-    tier2: { input: 0.30, output: 1.20 }
-  },
-  'PRO_DEFAULT': {
-    threshold: 200000,
-    tier1: { input: 2.00, output: 12.00 },
-    tier2: { input: 4.00, output: 18.00 }
-  }
-};
-
 function calculateCost(model, inputTokens, outputTokens) {
-  let pricing = null;
-
-  if (PRICING[model]) {
-    pricing = PRICING[model];
-  } else {
-    const lower = model.toLowerCase();
-    if (lower.includes('pro')) pricing = PRICING['PRO_DEFAULT'];
-    else pricing = PRICING['FLASH_DEFAULT'];
-
-    console.warn(`[Cost] Model "${model}" not found in PRICING table. Falling back to default (${lower.includes('pro') ? 'PRO' : 'FLASH'}).`);
-  }
-
-  // Determine tier based on input tokens and specific model threshold
-  const limit = pricing.threshold || 128000;
-  const tier = inputTokens <= limit ? pricing.tier1 : pricing.tier2;
-
-  const inputCost = (inputTokens / 1_000_000) * tier.input;
-  const outputCost = (outputTokens / 1_000_000) * tier.output;
-
-  return inputCost + outputCost;
+  const config = new ConfigService();
+  return config.calculateCost(model, inputTokens, outputTokens);
 }
 
 module.exports = { Agent };

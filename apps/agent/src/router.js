@@ -1,9 +1,13 @@
+
+const { ConfigService } = require('./services/config-service');
+
 class Router {
     constructor(apiKey) {
         this.apiKey = apiKey;
         this.client = null;
+        this.config = new ConfigService();
         // Use a fast model for routing
-        this.model = process.env.ROUTER_MODEL || 'gemini-2.0-flash-exp';
+        this.model = this.config.getModel('ROUTER');
     }
 
     async _loadClientLibrary() {

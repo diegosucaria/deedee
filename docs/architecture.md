@@ -37,17 +37,25 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
         - **Filesystem Backed**: Stores vaults as directories in `/app/data/vaults/{topic}`.
         - **Sanitization**: Ensures safe filenames and prevents traversal.
         - **Auto-Context**: Injects active vault index and file lists into the prompt when a topic is selected.
+    - **Local RAG Service**:
+        - **Vector Store**: Uses `better-sqlite3` (`rag.db`) to store document chunks and embeddings.
+        - **Embeddings**: Uses Gemini Embeddings via `ConfigService` model selection.
+        - **Search**: Semantic search via `searchDocuments` tool + `RagExecutor`.
 
 ### 2. Supervisor (`apps/supervisor`)
 - **Role**: The Immune System.
 - **Capabilities**:
     - **Privileged Access**: Has full filesystem/git access.
     - **Self-Healing**: Monitors the Agent. If tests fail or the agent crashes, it performs a "Hard Reset" (re-clones code).
-    - **Updater**: Applies code changes requested by the Agent (Self-Improvement loop).
+    - **Update Manager**: Applies code changes requested by the Agent (Self-Improvement loop).
+    - **Health Monitor**:
+        - **Proactive Polling**: Checks status of Agent (DB, Config), API (Reachability), and Interfaces every 30s.
+        - **Aggregated Report**: Exposes `/health` endpoint with full system status for dashboards.
 
 ### 3. API Gateway (`apps/api`)
 - **Type**: Express Service (Port 3001)
 - **Routes**:
+    - `GET /health`: Public endpoint checking/proxying system health.
     - `POST /v1/chat`: Synchronous chat interface.
     - `GET /v1/sessions`: Chat session management (CRUD).
     - `GET /v1/history`: Retrieve full chat history & summaries.
@@ -62,13 +70,13 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - `POST /v1/whatsapp`: Control WhatsApp sessions (connect/disconnect).
     - `GET /v1/whatsapp/contacts`: Search synced WhatsApp contacts.
     - `POST /v1/live/token`: Proxy for Gemini Live ephemeral tokens.
-    - `POST /v1/live/token`: Proxy for Gemini Live ephemeral tokens.
     - `POST /v1/live/tools/execute`: Proxy for Gemini Live client-side tool execution.
     - `GET /v1/vaults`: List and manage Life Vaults.
     - `POST /v1/vaults/:id/files`: Secure file upload to vaults. [Proxy -> Agent]
     - `GET /v1/vaults/:id/files/:filename`: Secure file download. [Proxy -> Agent]
-- **Auth**: Bearer Token (`DEEDEE_API_TOKEN`). All routes protected.
+- **Auth**: Bearer Token (`DEEDEE_API_TOKEN`). All routes protected (except `/health`).
 - **Flow**: Client -> API -> Agent (Waits for full processing) -> API -> Client JSON Response.
+
 
 ### 4. Interfaces (`apps/interfaces`)
 - **Role**: The Ears and Mouth.

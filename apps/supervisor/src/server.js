@@ -2,6 +2,7 @@ const express = require('express');
 const { GitOps } = require('./git-ops');
 const { Verifier } = require('./verifier');
 const { Monitor } = require('./monitor');
+const { HealthMonitor } = require('./health-monitor');
 const { Writable } = require('stream');
 const Docker = require('dockerode');
 
@@ -34,6 +35,8 @@ const port = process.env.PORT || 4000;
 const git = new GitOps();
 const verifier = new Verifier();
 const monitor = new Monitor(git);
+const healthMonitor = new HealthMonitor();
+healthMonitor.start();
 
 app.use(express.json());
 
@@ -78,7 +81,11 @@ git.configure(gitName, gitEmail, gitRemote).then(() => {
 }).catch(console.error);
 
 app.get('/health', (req, res) => {
-  res.json({ status: 'ok', service: 'supervisor' });
+  res.json({
+    service: 'supervisor',
+    status: 'ok',
+    monitor: healthMonitor.getStatus()
+  });
 });
 
 app.post('/cmd/commit', async (req, res) => {
