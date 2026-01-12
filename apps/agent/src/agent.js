@@ -203,12 +203,23 @@ class Agent {
         const stream = result.stream || result;
 
         let fullText = '';
+        const aggregatedParts = [];
+
         for await (const chunk of stream) {
           let text = '';
           try {
             // chunk.text() throws if the chunk has no text (e.g. only function call)
             text = chunk.text();
           } catch (e) { /* ignore */ }
+
+          // Aggregate parts for final response (Function Calls etc.)
+          if (chunk.candidates?.[0]?.content?.parts) {
+            chunk.candidates[0].content.parts.forEach(p => {
+              // Deduplicate text parts if possible, or just push.
+              // For function calls, we MUST preserve them.
+              if (p.functionCall) aggregatedParts.push(p);
+            });
+          }
 
           if (text) {
             fullText += text;
@@ -220,8 +231,22 @@ class Agent {
           }
         }
 
-        // After stream finishes, we await the full response to get function calls etc.
-        const response = await result.response;
+        // Construct synthetic response for processMessage
+        // If we have function calls, aggregatedParts has them.
+        // If we have text, we should ensure it's in the parts.
+        if (fullText) {
+          aggregatedParts.push({ text: fullText });
+        }
+
+        const response = {
+          candidates: [{
+            content: {
+              role: 'model',
+              parts: aggregatedParts
+            }
+          }]
+        };
+
         return response;
       } else {
         // Standard (WhatsApp/Telegram) - No stream
