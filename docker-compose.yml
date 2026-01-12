@@ -101,29 +101,16 @@ services:
     restart: always
     tty: true
 
-  sqlite-viewer-1:
-    image: ghcr.io/coleifer/sqlite-web:latest
+  cloudbeaver:
+    image: dbeaver/cloudbeaver:latest
     ports:
-      - "8080:8080"
+      - "8080:8978"
+    volumes:
+      - agent-data:/mnt/agent-data
+      - interfaces-data:/mnt/interfaces-data
     networks:
       - deedee-net
     restart: always
-    volumes:
-      - agent-data:/data/agent
-    tty: true
-    command: /data/agent/agent.db
-
-  sqlite-viewer-2:
-    image: ghcr.io/coleifer/sqlite-web:latest
-    ports:
-      - "8081:8080"
-    networks:
-      - deedee-net
-    restart: always
-    volumes:
-      - interfaces-data:/data/interfaces
-    tty: true
-    command: /data/interfaces/messages_user.db
 
 networks:
   deedee-net:
