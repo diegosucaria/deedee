@@ -270,9 +270,9 @@ function createInternalRouter(agent) {
             const { id, title, reuseEmpty } = req.body;
             if (reuseEmpty) {
                 const existing = agent.db.getLatestEmptySession();
-                // Only reuse if it's NOT a WhatsApp session (no @ symbol)
+                // Only reuse if it's NOT a WhatsApp session (no @ symbol or encoded %40)
                 // This ensures we get a clean UUID session for the web
-                if (existing && !existing.id.includes('@')) {
+                if (existing && !existing.id.includes('@') && !existing.id.includes('%40')) {
                     console.log(`[Agent] Reusing empty session ${existing.id}`);
                     return res.json(existing);
                 }

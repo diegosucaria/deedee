@@ -48,6 +48,18 @@ describe('Internal Router - Session Reuse', () => {
         expect(mockAgent.db.createSession).toHaveBeenCalled();
     });
 
+    test('should NOT reuse empty session if it IS an encoded WhatsApp ID', async () => {
+        const waSession = { id: '12345678%40s.whatsapp.net', title: 'New Chat' };
+        mockAgent.db.getLatestEmptySession.mockReturnValue(waSession);
+
+        const res = await request(app)
+            .post('/internal/sessions')
+            .send({ reuseEmpty: true });
+
+        expect(res.body.id).toBe('new-uuid');
+        expect(mockAgent.db.createSession).toHaveBeenCalled();
+    });
+
     test('should create new session if no empty session exists', async () => {
         mockAgent.db.getLatestEmptySession.mockReturnValue(null);
 

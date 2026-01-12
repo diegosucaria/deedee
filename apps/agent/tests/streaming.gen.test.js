@@ -57,11 +57,11 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
 
                 const streamGenerator = async function* () {
                     yield {
-                        text: () => 'Streamed ',
+                        text: () => { throw new Error('No text'); },
                         candidates: [{ content: { parts: [{ text: 'Streamed ' }] } }]
                     };
                     yield {
-                        text: () => 'Response',
+                        text: () => { throw new Error('No text'); },
                         candidates: [{ content: { parts: [{ text: 'Response' }] } }]
                     };
                 };

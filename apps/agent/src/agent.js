@@ -209,8 +209,16 @@ class Agent {
           let text = '';
           try {
             // chunk.text() throws if the chunk has no text (e.g. only function call)
-            text = chunk.text();
+            if (typeof chunk.text === 'function') {
+              text = chunk.text();
+            }
           } catch (e) { /* ignore */ }
+
+          // Fallback extraction if text() failed or wasn't available
+          if (!text && chunk.candidates?.[0]?.content?.parts) {
+            const part = chunk.candidates[0].content.parts.find(p => p.text);
+            if (part) text = part.text;
+          }
 
           // Aggregate parts for final response (Function Calls etc.)
           if (chunk.candidates?.[0]?.content?.parts) {
