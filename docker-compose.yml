@@ -101,7 +101,7 @@ services:
     restart: always
     tty: true
 
-  sqlite-viewer:
+  sqlite-viewer-1:
     image: ghcr.io/coleifer/sqlite-web:latest
     ports:
       - "8080:8080"
@@ -112,6 +112,7 @@ services:
       - agent-data:/data/agent
       - interfaces-data:/data/interfaces
     tty: true
+    args: 
 
 networks:
   deedee-net:
