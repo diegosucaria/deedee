@@ -27,8 +27,14 @@ describe('Memory Tools', () => {
             scheduler: {},
             gsuite: {},
             mcp: {},
+            mcp: {},
             client,
-            db // Inject mocked DB
+            db, // Inject mocked DB
+            agent: { // Mock Agent Structure for ConfigService
+                configService: {
+                    getModel: jest.fn().mockReturnValue('gemini-mock')
+                }
+            }
         });
     });
 

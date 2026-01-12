@@ -45,6 +45,14 @@ describe('Impersonation & Tone Matching', () => {
                         response: {
                             candidates: [{ content: { parts: [{ text: "I'm pretending to be Diego." }] } }]
                         }
+                    }),
+                    sendMessageStream: jest.fn().mockResolvedValue({
+                        stream: (async function* () {
+                            yield { text: () => "I'm pretending to be Diego." };
+                        })(),
+                        response: Promise.resolve({
+                            candidates: [{ content: { parts: [{ text: "I'm pretending to be Diego." }] } }]
+                        })
                     })
                 })
             }

@@ -79,8 +79,8 @@ describe('Security & Privacy Enforcement', () => {
         agent.router._loadClientLibrary = jest.fn().mockResolvedValue(mockModule);
 
         // Spy on critical internal methods
-        jest.spyOn(agent, '_autoTitleSession').mockResolvedValue();
-        jest.spyOn(agent, '_analyzeAttachment').mockResolvedValue();
+        jest.spyOn(agent.titleService, 'autoTitleSession').mockResolvedValue();
+        jest.spyOn(agent.analysisService, 'analyzeAttachment').mockResolvedValue();
     });
 
     afterEach(async () => {
@@ -105,10 +105,10 @@ describe('Security & Privacy Enforcement', () => {
         expect(executionSummary.toolOutputs).toHaveLength(0);
 
         // B. Should NOT trigger Auto-Title (Security/Cost)
-        expect(agent._autoTitleSession).not.toHaveBeenCalled();
+        expect(agent.titleService.autoTitleSession).not.toHaveBeenCalled();
 
         // C. Should NOT trigger Smart Analysis
-        expect(agent._analyzeAttachment).not.toHaveBeenCalled();
+        expect(agent.analysisService.analyzeAttachment).not.toHaveBeenCalled();
 
         // D. Should NOT verify rate limits (optimization/noise)
         // (Optional, implementation detail, but good to know)
@@ -144,6 +144,6 @@ describe('Security & Privacy Enforcement', () => {
         await agent.processMessage(activeMsg, async () => { });
 
         // Verify Auto-Title IS called for new session
-        expect(agent._autoTitleSession).toHaveBeenCalled();
+        expect(agent.titleService.autoTitleSession).toHaveBeenCalled();
     });
 });

@@ -320,12 +320,12 @@ describe('WhatsAppService Unit Tests', () => {
     });
 
     test('should search contacts correctly', async () => {
-        await whatsapp.connect(); // Initialize store
-
-        // Populate store manually
-        whatsapp.store.contacts = {
-            '123@s.whatsapp.net': { id: '123@s.whatsapp.net', name: 'Diego', notify: 'Diego S' },
-            '456@s.whatsapp.net': { id: '456@s.whatsapp.net', name: 'Mom', notify: 'Mami' }
+        // Mock SQLite Store (this.store)
+        whatsapp.store = {
+            getAllContactsRaw: jest.fn(() => [
+                { id: '123@s.whatsapp.net', name: 'Diego', notify: 'Diego S' },
+                { id: '456@s.whatsapp.net', name: 'Mom', notify: 'Mami' }
+            ])
         };
 
         // Search by name
