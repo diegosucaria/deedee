@@ -96,5 +96,13 @@ describe('AgentDB', () => {
       const countAfter = db.countMessages('del-test');
       expect(countAfter).toBe(0);
     });
+
+    it('should retrieve history with session title', () => {
+      db.createSession({ id: 'title-test', title: 'My Cool Chat' });
+      db.saveMessage({ role: 'user', content: 'hi', metadata: { chatId: 'title-test' }, timestamp: new Date().toISOString() });
+
+      const history = db.getHistory({ chatId: 'title-test' });
+      expect(history[0].session_title).toBe('My Cool Chat');
+    });
   });
 });

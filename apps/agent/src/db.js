@@ -568,20 +568,24 @@ class AgentDB {
   getHistory(options = {}) {
     const { limit = 50, since, until, chatId, order = 'DESC' } = options;
 
-    let query = 'SELECT * FROM messages';
+    let query = `
+      SELECT m.*, cs.title as session_title 
+      FROM messages m
+      LEFT JOIN chat_sessions cs ON m.chat_id = cs.id
+    `;
     const params = [];
     const conditions = [];
 
     if (chatId) {
-      conditions.push('chat_id = ?');
+      conditions.push('m.chat_id = ?');
       params.push(chatId);
     }
     if (since) {
-      conditions.push('timestamp >= ?');
+      conditions.push('m.timestamp >= ?');
       params.push(since);
     }
     if (until) {
-      conditions.push('timestamp <= ?');
+      conditions.push('m.timestamp <= ?');
       params.push(until);
     }
 
@@ -589,7 +593,7 @@ class AgentDB {
       query += ' WHERE ' + conditions.join(' AND ');
     }
 
-    query += ` ORDER BY timestamp ${order === 'ASC' ? 'ASC' : 'DESC'} LIMIT ?`;
+    query += ` ORDER BY m.timestamp ${order === 'ASC' ? 'ASC' : 'DESC'} LIMIT ?`;
     params.push(limit);
 
     const stmt = this.db.prepare(query);

@@ -151,6 +151,13 @@ export default function HistoryList({ history }) {
                                                         {msg.token_count}t {msg.cost ? `($${msg.cost.toFixed(4)})` : ''}
                                                     </span>
                                                 )}
+                                                {/* Web Chat Link */}
+                                                {(msg.source === 'web' || msg.source === 'http' || msg.session_title) && msg.chat_id && (
+                                                    <a href={`/chat/${msg.chat_id}`} className="text-[10px] text-zinc-500 hover:text-indigo-400 ml-2 flex items-center gap-1 transition-colors" title={`Go to chat: ${msg.session_title || msg.chat_id}`}>
+                                                        <span>•</span>
+                                                        <span className='truncate max-w-[150px]'>{msg.session_title || msg.chat_id}</span>
+                                                    </a>
+                                                )}
                                             </div>
 
                                             <div className="prose prose-invert prose-sm max-w-none text-zinc-400 bg-zinc-900/40 p-4 rounded-xl border border-zinc-800/50">
