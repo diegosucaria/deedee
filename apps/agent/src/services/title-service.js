@@ -22,7 +22,18 @@ class TitleService {
                 contents: [{ role: 'user', parts: [{ text: prompt }] }]
             });
 
-            const title = result.text()?.trim();
+            let title = '';
+            // SDK 0.2.x+ check
+            if (result.response && typeof result.response.text === 'function') {
+                title = result.response.text();
+            } else if (result.text && typeof result.text === 'function') {
+                title = result.text(); // Some SDKs
+            } else if (result.response && result.response.candidates && result.response.candidates[0]) {
+                const parts = result.response.candidates[0].content?.parts || [];
+                title = parts.map(p => p.text).join('').trim();
+            }
+
+            title = title?.trim();
             if (title) {
                 this.agent.db.updateSessionTitle(chatId, title);
                 console.log(`[TitleService] Set title for ${chatId}: "${title}"`);

@@ -49,10 +49,11 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
                 response: { candidates: [{ content: { parts: [{ text: 'Fallback response' }] } }] }
             }),
             sendMessageStream: jest.fn().mockImplementation(async (payload) => {
-                // Verify payload wrapper
-                if (!payload.message) throw new Error('SDK Requirement: Payload must be wrapped in { message: ... }');
+                // Verify payload
+                if (!payload) throw new Error('Payload cannot be empty.');
 
-                const content = payload.message;
+                // Handle both direct content and wrapped content (legacy)
+                const content = payload.message || payload;
                 const textContext = typeof content === 'string' ? content : content.parts?.[0]?.text;
 
                 const streamGenerator = async function* () {

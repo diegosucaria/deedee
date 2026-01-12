@@ -187,10 +187,14 @@ class Agent {
 
       // Web/Live: Enable Streaming
       if (source === 'web' || source === 'live') {
-        // SDK REQUIREMENT (v0.21.0+): Wrap content in { message: ... } to be safe 
-        // with newer Google GenAI SDK signatures, especially if tool calls are involved.
-        // This matches the fix applied for standard sendMessage in the rollback.
-        const request = { message: payload };
+        // SDK REQUIREMENT Check: Input Validation
+        if (!payload) throw new Error('Payload cannot be empty.');
+
+        let request = payload;
+        // If payload is object with parts, use it directly. If string, it works as is.
+        // Wrapping in { message: ... } is only for specific SDK calls not typical sendMessageStream
+
+        console.log(`[Agent] Streaming request content type: ${typeof payload}`);
 
         const result = await session.sendMessageStream(request);
 
