@@ -196,10 +196,14 @@ class Agent {
 
         console.log(`[Agent] Streaming request content type: ${typeof payload}`);
 
-        const result = await session.sendMessageStream(request);
+        // SDK Expects { message: ... } for sendMessageStream
+        const result = await session.sendMessageStream({ message: request });
+
+        // Handle both iterable result (new SDK) and result.stream (legacy/mock)
+        const stream = result.stream || result;
 
         let fullText = '';
-        for await (const chunk of result.stream) {
+        for await (const chunk of stream) {
           let text = '';
           try {
             // chunk.text() throws if the chunk has no text (e.g. only function call)

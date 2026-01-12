@@ -111,7 +111,7 @@ services:
     volumes:
       - agent-data:/data/agent
     tty: true
-    command: ["sqlite_web", "-H", "0.0.0.0", "-x", "/data/agent/agent.db"]
+    command: /data/agent/agent.db
 
   sqlite-viewer-2:
     image: ghcr.io/coleifer/sqlite-web:latest
@@ -123,7 +123,7 @@ services:
     volumes:
       - interfaces-data:/data/interfaces
     tty: true
-    command: ["sqlite_web", "-H", "0.0.0.0", "-x", "/data/interfaces/messages_user.db"]
+    command: /data/interfaces/messages_user.db
 
 networks:
   deedee-net:
