@@ -110,9 +110,20 @@ services:
     restart: always
     volumes:
       - agent-data:/data/agent
+    tty: true
+    command: ["sqlite_web", "-H", "0.0.0.0", "-x", "/data/agent/agent.db"]
+
+  sqlite-viewer-2:
+    image: ghcr.io/coleifer/sqlite-web:latest
+    ports:
+      - "8081:8080"
+    networks:
+      - deedee-net
+    restart: always
+    volumes:
       - interfaces-data:/data/interfaces
     tty: true
-    args: 
+    command: ["sqlite_web", "-H", "0.0.0.0", "-x", "/data/interfaces/messages_user.db"]
 
 networks:
   deedee-net:
