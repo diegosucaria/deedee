@@ -174,6 +174,19 @@ class Agent {
   async onMessage(message) {
     // Default handler: Send to Interface
     await this.processMessage(message, async (reply) => {
+      // HANDLE SIMULATION REDIRECT
+      if (message.metadata?.simulationRedirect) {
+        console.log(`[Agent] Redirecting simulation reply to ${message.metadata.simulationRedirect.chatId}`);
+        reply.metadata = { ...reply.metadata, chatId: message.metadata.simulationRedirect.chatId };
+        reply.source = message.metadata.simulationRedirect.source;
+
+        // Add visual cue it's a simulation result
+        if (reply.parts) {
+          reply.parts.unshift({ text: "📝 **[SIMULATION RESULT]**\n" });
+        } else if (reply.content) {
+          reply.content = "📝 **[SIMULATION RESULT]**\n" + reply.content;
+        }
+      }
       await this.interface.send(reply);
     });
   }

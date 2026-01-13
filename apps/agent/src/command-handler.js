@@ -122,12 +122,17 @@ class CommandHandler {
 
             const simulatedMsg = {
                 content: text,
+                role: 'user', // FIX: Required for DB
                 source: 'whatsapp:user',
                 metadata: {
                     chatId: `${phone}@s.whatsapp.net`,
                     phoneNumber: phone,
                     session: 'user',
-                    isGroup: false
+                    isGroup: false,
+                    simulationRedirect: {
+                        chatId, // Redirect replies to Admin
+                        source: message.source
+                    }
                 }
             };
 
