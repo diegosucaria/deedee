@@ -672,34 +672,52 @@ class WhatsAppService {
             return [];
         }
 
-        // Resolution Logic
-        const resolveJid = (inputJid) => {
-            const norm = inputJid.includes('@') ? inputJid : `${inputJid}@s.whatsapp.net`;
-            if (this.store.hasOutputForJid(inputJid)) return inputJid;
-            if (this.store.hasOutputForJid(norm)) return norm;
+        // Logic to handle Split JIDs (e.g. Argentina 549 vs 54)
+        // We strip non-numeric, take the last N digits, and search for ANY JID ending with that.
+        // This effectively merges "outgoing" (sent to 549...) and "incoming" (received from 54...) if they differ.
 
-            // Check LID
-            const fromLid = this.store.getContactByLid(inputJid) || this.store.getContactByLid(norm);
-            if (fromLid) return fromLid;
+        const digits = jid.replace(/[^0-9]/g, '');
+        let targetJids = [];
 
-            // Fuzzy
-            const digits = inputJid.replace(/[^0-9]/g, '');
-            if (digits.length > 7) {
-                const fuzzy = this.store.findFuzzyJid(digits);
-                if (fuzzy) return fuzzy;
-            }
-            return norm;
-        };
+        // If it looks like a full number (e.g. > 7 digits), try fuzzy match
+        if (digits.length > 7) {
+            // Take last 7 digits as minimum safe identifier? 
+            // Better: Take last 9 or 10 if available? 
+            // Argentina example: 54 9 351 551 7678. 
+            // 3515517678 is the subscriber number.
+            // Let's use last 7 to be safe, or just use the digits provided by user if they provided strict number.
 
-        const targetJid = resolveJid(jid);
-        const msgs = this.store.getChatHistory(targetJid, limit);
-
-        if (msgs.length === 0) {
-            console.warn(`${this.logPrefix} History not found for ${jid} (Resolved: ${targetJid}).`);
-            return [];
+            // Heuristic: If we can find the JID string in the DB, use it.
+            // But we know splitting happens. 
+            // Search DB for all JIDs containing the last 7 digits.
+            const suffix = digits.slice(-7);
+            const candidates = this.store.db.prepare('SELECT DISTINCT remote_jid FROM messages WHERE remote_jid LIKE ?').all(`%${suffix}%`);
+            targetJids = candidates.map(c => c.remote_jid);
+        } else {
+            // Fallback for short codes or text JIDs
+            const norm = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
+            targetJids = [norm];
         }
 
-        return msgs.map(m => {
+        if (targetJids.length === 0) {
+            // Fallback to strict normalized
+            targetJids = [jid.includes('@') ? jid : `${jid}@s.whatsapp.net`];
+        }
+
+        console.log(`${this.logPrefix} Fetching history for ${jid} (Merged JIDs: ${targetJids.join(', ')})`);
+
+        // Query IN (...)
+        const placeholders = targetJids.map(() => '?').join(',');
+        const rows = this.store.db.prepare(`
+            SELECT data FROM messages 
+            WHERE remote_jid IN (${placeholders})
+            ORDER BY timestamp DESC 
+            LIMIT ?
+        `).all(...targetJids, limit);
+
+        return rows.reverse().map(r => {
+            const m = JSON.parse(r.data);
+
             // Simplify for agent consumption
             let content = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
             const msgType = Object.keys(m.message || {})[0];
