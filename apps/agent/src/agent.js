@@ -492,7 +492,10 @@ class Agent {
           if (isContactMatch) {
             // Check Condition
             // Simple 'contains' logic for now
-            if (w.condition.startsWith('contains')) {
+            if (w.condition === '*' || w.condition.toLowerCase() === 'any') {
+              triggeredWatcher = w;
+              break;
+            } else if (w.condition.startsWith('contains')) {
               // "contains 'dinner'" -> extract "dinner"
               const keyword = w.condition.match(/['"](.*?)['"]/)?.[1];
               if (keyword && msgContent.includes(keyword.toLowerCase())) {
