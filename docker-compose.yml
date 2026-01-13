@@ -101,16 +101,16 @@ services:
     restart: always
     tty: true
 
-  cloudbeaver:
-    image: dbeaver/cloudbeaver:latest
-    ports:
-      - "8080:8978"
-    volumes:
-      - agent-data:/mnt/agent-data
-      - interfaces-data:/mnt/interfaces-data
-    networks:
-      - deedee-net
-    restart: always
+  # cloudbeaver:
+  #   image: dbeaver/cloudbeaver:latest
+  #   ports:
+  #     - "8080:8978"
+  #   volumes:
+  #     - agent-data:/mnt/agent-data
+  #     - interfaces-data:/mnt/interfaces-data
+  #   networks:
+  #     - deedee-net
+  #   restart: always
 
 networks:
   deedee-net:
