@@ -253,7 +253,7 @@ export default function ChatSessionPage({ params }) {
 
                 setIsWaiting(false);
 
-                // Extract content for media types if 'content' is empty but 'parts' exist
+                // Extract content
                 let msgContent = data.content;
                 if (data.parts && (data.type === 'audio' || data.type === 'image')) {
                     const mediaPart = data.parts.find(p => p.inlineData);
@@ -262,13 +262,32 @@ export default function ChatSessionPage({ params }) {
                     }
                 }
 
-                addMessage({
-                    role: 'assistant',
-                    content: msgContent,
-                    type: data.type,
-                    timestamp: data.timestamp,
-                    isFinal: true // Mark as final to stop appending stream
+                setMessages((prev) => {
+                    const lastMsg = prev[prev.length - 1];
+                    // If last message was a streaming assistant message, replace/finalize it
+                    if (lastMsg && lastMsg.role === 'assistant' && lastMsg.type === 'text' && !lastMsg.isFinal) {
+                        return [
+                            ...prev.slice(0, -1),
+                            {
+                                role: 'assistant',
+                                content: msgContent,
+                                type: data.type,
+                                timestamp: data.timestamp,
+                                isFinal: true
+                            }
+                        ];
+                    }
+
+                    // Otherwise append as new
+                    return [...prev, {
+                        role: 'assistant',
+                        content: msgContent,
+                        type: data.type,
+                        timestamp: data.timestamp,
+                        isFinal: true
+                    }];
                 });
+
 
                 if (data.type === 'audio') {
                     try {

@@ -520,6 +520,10 @@ class AgentDB {
     this.db.prepare(`UPDATE chat_sessions SET ${updates.join(', ')} WHERE id = ?`).run(...args);
   }
 
+  updateSessionTitle(id, title) {
+    return this.updateSession(id, { title });
+  }
+
   deleteSession(id) {
     // Transactional delete?
     const deleteSession = this.db.transaction(() => {
