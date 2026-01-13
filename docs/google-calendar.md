@@ -1,4 +1,7 @@
-# Google Calendar Integration (OAuth)
+# Google Calendar Setup
+> **Note**: This guide uses **OAuth 2.0** for Calendar access.
+> Unlike Backups (which need a Service Account via `GOOGLE_APPLICATION_CREDENTIALS`), Calendar actions use User OAuth via `GOOGLE_CLIENT_ID` and `GOOGLE_CLIENT_SECRET`.
+> You can have **BOTH** configured simultaneously without conflict.egration (OAuth)
 
 Deedee uses Google OAuth 2.0 to manage your calendar events. Because Deedee runs as a personal agent, it supports a "Multi-Tenant Personal" mode where you can link multiple Google Accounts (Personal, Work, etc.) and it will merge them into a single view.
 
