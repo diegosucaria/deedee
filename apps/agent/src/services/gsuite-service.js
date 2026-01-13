@@ -67,6 +67,7 @@ class GSuiteService {
         const auth = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
         const url = auth.generateAuthUrl({
             access_type: 'offline',
+            prompt: 'consent', // Force refresh token generation
             scope: ['https://www.googleapis.com/auth/calendar', 'https://www.googleapis.com/auth/userinfo.email']
         });
         return url;
