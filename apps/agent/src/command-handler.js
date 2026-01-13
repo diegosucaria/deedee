@@ -112,16 +112,22 @@ class CommandHandler {
 
         if (cmd === '/migrate_chat_id') {
             const oldId = args[0];
-            const newId = args[1];
+            let newId = args[1];
 
-            if (!oldId || !newId) {
-                await this.sendReply(chatId, message.source, 'Usage: /migrate_chat_id <old_id> <new_id>');
+            if (!oldId) {
+                await this.sendReply(chatId, message.source, 'Usage: /migrate_chat_id <old_id> [new_id]');
                 return true;
+            }
+
+            if (!newId) {
+                newId = require('crypto').randomUUID();
             }
 
             try {
                 const stats = this.db.migrateSessionId(oldId, newId);
                 const report = `Migration Successful:\n` +
+                    `- Old ID: ${oldId}\n` +
+                    `- New ID: ${newId}\n` +
                     `- Session: ${stats.session}\n` +
                     `- Messages: ${stats.messages}\n` +
                     `- Summaries: ${stats.summaries}\n` +

@@ -114,6 +114,21 @@ describe('Slash Commands', () => {
         expect(mockInterface.getLastMessage().content).toContain('Migration Successful');
     });
 
+    test('/migrate_chat_id should auto-generate newId if missing', async () => {
+        const msg = createUserMessage('/migrate_chat_id old_encoded_id', 'telegram', 'user1');
+        msg.metadata = { chatId: 'chat123' };
+
+        await agent.onMessage(msg);
+
+        // Verify it was called with oldId and SOME new UUID
+        expect(agent.db.migrateSessionId).toHaveBeenCalledWith(
+            'old_encoded_id',
+            expect.stringMatching(/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i)
+        );
+        expect(mockInterface.getLastMessage().content).toContain('Migration Successful');
+        expect(mockInterface.getLastMessage().content).toContain('New ID:');
+    });
+
     test('Regular message should save to DB', async () => {
         const msg = createUserMessage('Hello', 'telegram', 'user1');
         msg.metadata = { chatId: 'chat123' };
