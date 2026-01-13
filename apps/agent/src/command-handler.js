@@ -209,6 +209,24 @@ class CommandHandler {
             return true;
         }
 
+        if (cmd === '/list_calendars') {
+            const list = await this.agent.gsuite.listAccounts();
+            await this.sendReply(chatId, message.source, `**Connected Calendars**:\n${list}`);
+            return true;
+        }
+
+        if (cmd === '/label_calendar') {
+            const target = args[0];
+            const label = args[1];
+            if (!target || !label) {
+                await this.sendReply(chatId, message.source, 'Usage: /label_calendar <index|email> <label>\nExample: /label_calendar 1 personal');
+                return true;
+            }
+            const res = await this.agent.gsuite.setAccountLabel(target, label);
+            await this.sendReply(chatId, message.source, res);
+            return true;
+        }
+
         // Unknown command
         await this.sendReply(chatId, message.source, `Unknown command: ${content}`);
         return true;

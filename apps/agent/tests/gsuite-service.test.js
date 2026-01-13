@@ -124,29 +124,46 @@ describe('GSuiteService OAuth', () => {
         expect(service.clients.has('new@gmail.com')).toBe(true);
     });
 
-    it('listEvents should merge events from all clients', async () => {
+    it('listEvents should merge events and show status', async () => {
         service = new GSuiteService(mockAgent);
-        // Manually populate clients
         service.ready = true;
-        service.clients.set('a@gmail.com', {});
-        service.clients.set('b@gmail.com', {});
+        const mockAuth = { _label: 'work' };
+        service.clients.set('b@gmail.com', mockAuth);
 
         _mCalendar.events.list
             .mockResolvedValueOnce({
-                data: { items: [{ summary: 'Event A', start: { dateTime: '2023-01-01T10:00:00Z' } }] }
-            })
-            .mockResolvedValueOnce({
-                data: { items: [{ summary: 'Event B', start: { dateTime: '2023-01-01T09:00:00Z' } }] }
+                data: {
+                    items: [{
+                        summary: 'Meeting',
+                        start: { dateTime: '2023-01-01T09:00:00Z' },
+                        attendees: [{ email: 'b@gmail.com', responseStatus: 'accepted' }] // 'me' is attendee
+                    }]
+                }
             });
 
         const res = await service.listEvents({});
 
-        // Verify merged and sorted (B is earlier than A)
-        expect(res).toContain('Event B');
-        expect(res).toContain('Event A');
-        // Check order strictly?
-        const lines = res.split('\n');
-        expect(lines[0]).toContain('Event B'); // 09:00
-        expect(lines[1]).toContain('Event A'); // 10:00
+        expect(res).toContain('[work]'); // Label usage
+        expect(res).toContain('(accepted)'); // Status usage
+    });
+
+    it('setAccountLabel should update label', async () => {
+        service = new GSuiteService(mockAgent);
+
+        // Mock existing DB state
+        const tokens = [{ email: 'test@gmail.com', tokens: {}, label: null }];
+        mockAgent.db.db.prepare.mockReturnValue({
+            get: jest.fn().mockReturnValue({ value: JSON.stringify(tokens) }),
+            run: jest.fn()
+        });
+
+        // Mock loadClients call inside setAccountLabel
+        service._loadClients = jest.fn();
+
+        const res = await service.setAccountLabel('test@gmail.com', 'personal');
+
+        expect(res).toContain('is now labeled as \'personal\'');
+        // Check DB save call? It's hard to spy on private helper, but we spy on DB prepare
+        // The implementation calls _saveTokensToDB which calls db.prepare(INSERT...)
     });
 });

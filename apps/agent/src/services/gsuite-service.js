@@ -50,8 +50,9 @@ class GSuiteService {
             if (account.email && account.tokens) {
                 const auth = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
                 auth.setCredentials(account.tokens);
+                auth._label = account.label; // Assign label to instance
                 this.clients.set(account.email, auth);
-                console.log(`[GSuite] Loaded client for ${account.email}`);
+                console.log(`[GSuite] Loaded client for ${account.email} ${account.label ? `(${account.label})` : ''}`);
             }
         }
         this.ready = true;
@@ -88,29 +89,27 @@ class GSuiteService {
             const userInfo = await oauth2.userinfo.get();
             const email = userInfo.data.email;
 
-            // Save to DB
-            let currentTokens = [];
-            try {
-                const row = this.agent.db.db.prepare("SELECT value FROM agent_settings WHERE key = ?").get('google_tokens');
-                if (row) currentTokens = JSON.parse(row.value);
-            } catch (e) { /* ignore */ }
-
-            if (!Array.isArray(currentTokens)) currentTokens = [];
+            // Save to DB (Preserve existing label if updating)
+            let currentTokens = this._getTokensFromDB();
 
             // Update or Append
             const existingIndex = currentTokens.findIndex(t => t.email === email);
+            let label = null;
+
             if (existingIndex >= 0) {
-                currentTokens[existingIndex] = { email, tokens };
+                label = currentTokens[existingIndex].label; // Preserve label
+                currentTokens[existingIndex] = { email, tokens, label };
             } else {
-                currentTokens.push({ email, tokens });
+                currentTokens.push({ email, tokens, label: null });
             }
 
-            // Save back to DB
-            const stmt = this.agent.db.db.prepare("INSERT OR REPLACE INTO agent_settings (key, value) VALUES (?, ?)");
-            stmt.run('google_tokens', JSON.stringify(currentTokens));
+            this._saveTokensToDB(currentTokens);
 
             // Reload memory
-            this.clients.set(email, auth);
+            const authWithLabel = auth;
+            authWithLabel._label = label;
+            this.clients.set(email, authWithLabel);
+
             this.ready = true;
 
             return `Authentication successful for ${email}. Calendar is ready.`;
@@ -119,6 +118,45 @@ class GSuiteService {
             console.error('[GSuite] Auth failed:', e);
             return `Authentication failed: ${e.message}`;
         }
+    }
+
+    async setAccountLabel(emailOrIndex, label) {
+        let tokens = this._getTokensFromDB();
+        let targetIndex = -1;
+
+        // Try index
+        const idx = parseInt(emailOrIndex) - 1; // 1-based index from user
+        if (!isNaN(idx) && idx >= 0 && idx < tokens.length) {
+            targetIndex = idx;
+        } else {
+            // Try email
+            targetIndex = tokens.findIndex(t => t.email === emailOrIndex);
+        }
+
+        if (targetIndex === -1) return `Account '${emailOrIndex}' not found.`;
+
+        tokens[targetIndex].label = label;
+        this._saveTokensToDB(tokens);
+        await this._loadClients(); // Reload to update memory
+        return `Account ${tokens[targetIndex].email} is now labeled as '${label}'.`;
+    }
+
+    async listAccounts() {
+        const tokens = this._getTokensFromDB();
+        if (tokens.length === 0) return "No accounts connected.";
+        return tokens.map((t, i) => `${i + 1}. ${t.email} ${t.label ? `(${t.label})` : ''}`).join('\n');
+    }
+
+    _getTokensFromDB() {
+        try {
+            const row = this.agent.db.db.prepare("SELECT value FROM agent_settings WHERE key = ?").get('google_tokens');
+            return row ? JSON.parse(row.value) || [] : [];
+        } catch (e) { return []; }
+    }
+
+    _saveTokensToDB(data) {
+        const stmt = this.agent.db.db.prepare("INSERT OR REPLACE INTO agent_settings (key, value) VALUES (?, ?)");
+        stmt.run('google_tokens', JSON.stringify(data));
     }
 
     async listEvents({ timeMin, timeMax, maxResults = 10 }) {
@@ -140,9 +178,11 @@ class GSuiteService {
                 });
 
                 const items = res.data.items || [];
-                // Tag with email
+                // Tag with email/label
+                const accountLabel = auth._label || email;
                 items.forEach(item => {
-                    item._account = email;
+                    item._account = accountLabel;
+                    item._me = email; // For status check
                 });
                 allEvents = allEvents.concat(items);
             } catch (e) {
@@ -163,43 +203,63 @@ class GSuiteService {
             return dateA - dateB;
         });
 
-        // Limit total results (heuristic: maxResults * number of accounts? or global max?)
-        // Let's return reasonable amount
+        // Limit results
         allEvents = allEvents.slice(0, maxResults * 2);
 
         return allEvents.map((event, i) => {
             const start = event.start.dateTime || event.start.date;
-            return `${i + 1}. [${event._account}] [${start}] ${event.summary} (${event.status})`;
+
+            // Determine Status
+            let status = '';
+            if (event.organizer?.self) {
+                status = 'Organizer';
+            } else if (event.attendees) {
+                const me = event.attendees.find(a => a.self || a.email === event._me);
+                if (me) {
+                    status = me.responseStatus; // accepted, tentative, needsAction, declined
+                }
+            }
+            if (!status) status = 'Event';
+
+            return `${i + 1}. [${event._account}] [${start}] ${event.summary} (${status})`;
         }).join('\n');
     }
 
     async createEvent({ summary, startTime, endTime, description }) {
-        if (!this.ready || this.clients.size === 0) return 'No Google accounts connected. Use /google_auth to login.';
+        if (!this.ready || this.clients.size === 0) return 'No Google accounts connected.';
 
-        // Default to first account
-        const email = this.clients.keys().next().value;
-        const auth = this.clients.get(email);
+        // Select Account: Prefer 'personal', then first one
+        let targetEmail = null;
+        let targetAuth = null;
 
-        if (!auth) return 'Internal Error: Client not found.';
+        for (const [email, auth] of this.clients.entries()) {
+            if (auth._label === 'personal') {
+                targetEmail = email;
+                targetAuth = auth;
+                break;
+            }
+        }
+
+        // Fallback to first
+        if (!targetAuth) {
+            targetEmail = this.clients.keys().next().value;
+            targetAuth = this.clients.get(targetEmail);
+        }
+
+        if (!targetAuth) return 'Internal Error: Client not found.';
 
         try {
             if (!summary || !startTime || !endTime) {
                 return { error: 'Missing required fields: summary, startTime, endTime' };
             }
 
-            const calendar = google.calendar({ version: 'v3', auth });
+            const calendar = google.calendar({ version: 'v3', auth: targetAuth });
 
             const event = {
                 summary,
                 description,
-                start: {
-                    dateTime: startTime,
-                    timeZone: 'UTC', // Best effort
-                },
-                end: {
-                    dateTime: endTime,
-                    timeZone: 'UTC',
-                },
+                start: { dateTime: startTime, timeZone: 'UTC' },
+                end: { dateTime: endTime, timeZone: 'UTC' },
             };
 
             const res = await calendar.events.insert({
@@ -207,7 +267,7 @@ class GSuiteService {
                 resource: event,
             });
 
-            return `Event created on ${email} (primary): ${res.data.htmlLink}`;
+            return `Event created on ${targetEmail} (${targetAuth._label || 'Primary'}): ${res.data.htmlLink}`;
 
         } catch (error) {
             console.error('[GSuite] createEvent Error:', error);
