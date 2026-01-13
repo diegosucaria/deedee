@@ -62,7 +62,7 @@ export default function CreateWatcherForm({ onWatcherCreated, initialValues = nu
                         name="contactString"
                         placeholder="Name or Phone (e.g. 'Diego' or 'Family Group')"
                         required
-                        defaultValue={initialValues?.contactString}
+                        defaultValue={initialValues?.contactString || initialValues?.contact_string}
                         className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-emerald-500 transition-all"
                     />
                 </div>
