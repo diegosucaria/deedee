@@ -136,6 +136,23 @@ function SessionCard({ sessionKey, title, description, data, refresh, onShowCont
                                 <div className="text-xs text-zinc-500 font-mono truncate">{data.me?.id || 'Unknown ID'}</div>
                             </div>
                         </div>
+
+                        {data.stats && (
+                            <div className="text-[10px] text-zinc-500 font-mono space-y-1 bg-zinc-950/30 p-2 rounded border border-zinc-800/50">
+                                <div className="flex justify-between">
+                                    <span>Contacts</span>
+                                    <span className="text-zinc-400">{data.stats.contacts?.toLocaleString()}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span>Messages</span>
+                                    <span className="text-zinc-400">{data.stats.messages?.toLocaleString()}</span>
+                                </div>
+                                <div className="flex justify-between">
+                                    <span>DB Size</span>
+                                    <span className="text-zinc-400">{(data.stats.sizeBytes / 1024 / 1024).toFixed(2)} MB</span>
+                                </div>
+                            </div>
+                        )}
                         <div className="flex gap-2">
                             <button
                                 onClick={onShowContacts}

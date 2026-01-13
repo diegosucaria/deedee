@@ -194,6 +194,33 @@ class SQLiteStore {
         const row = this.db.prepare('SELECT remote_jid FROM messages WHERE remote_jid LIKE ? LIMIT 1').get(digits + '%');
         return row ? row.remote_jid : null;
     }
+
+    // --- Stats ---
+    getStats() {
+        try {
+            const contacts = this.db.prepare('SELECT COUNT(*) as count FROM contacts').get()?.count || 0;
+            const messages = this.db.prepare('SELECT COUNT(*) as count FROM messages').get()?.count || 0;
+
+            // DB Size
+            const fs = require('fs');
+            let size = 0;
+            try {
+                const stats = fs.statSync(this.path);
+                size = stats.size;
+            } catch (e) {
+                // Ignore
+            }
+
+            return {
+                contacts,
+                messages,
+                sizeBytes: size
+            };
+        } catch (e) {
+            console.error('Failed to get stats:', e);
+            return { error: e.message };
+        }
+    }
 }
 
 class WhatsAppService {
@@ -591,7 +618,8 @@ class WhatsAppService {
             qr: this.qr,
             allowedNumbers: Array.from(this.allowedNumbers),
             me: formattedMe,
-            session: this.sessionId
+            session: this.sessionId,
+            stats: this.store ? this.store.getStats() : null
         };
     }
 
