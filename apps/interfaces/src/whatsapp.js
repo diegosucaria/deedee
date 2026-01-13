@@ -39,7 +39,7 @@ class SQLiteStore {
 
     async upsertContacts(contacts) {
         if (!contacts || contacts.length === 0) return;
-        const BATCH_SIZE = 200;
+        const BATCH_SIZE = 500;
 
         const stmt = this.db.prepare(`
             INSERT INTO contacts (id, name, notify, lid, data)
@@ -72,7 +72,7 @@ class SQLiteStore {
         // 'append' is for history sync
         if (type !== 'notify' && type !== 'append') return;
 
-        const BATCH_SIZE = 200;
+        const BATCH_SIZE = 5000;
 
         const stmt = this.db.prepare(`
             INSERT INTO messages (key_id, remote_jid, from_me, timestamp, content, data)
