@@ -46,10 +46,23 @@ class HttpInterface extends EventEmitter {
         }
       }
 
+      let finalSource = message.source;
+      const metadata = { ...message.metadata };
+
+      // Handle Dual Session Source format (e.g. 'whatsapp:assistant')
+      if (typeof finalSource === 'string' && finalSource.includes(':')) {
+        const parts = finalSource.split(':');
+        // If it's one of our known dual-session services
+        if (parts[0] === 'whatsapp') {
+          finalSource = parts[0];
+          metadata.session = parts[1];
+        }
+      }
+
       await axios.post(`${this.interfacesUrl}/send`, {
-        source: message.source,
+        source: finalSource,
         content: content,
-        metadata: message.metadata,
+        metadata: metadata,
         type: type
       }, {
         headers: {
