@@ -737,7 +737,7 @@ class WhatsAppService {
                 // Fuzzy Search for Phone JIDs (handles 549 vs 54)
                 // Using 7 to be safe and inclusive
                 const suffix = inputDigits.slice(-7); // Last 7 digits
-                const rows = this.store.db.prepare('SELECT DISTINCT remote_jid FROM messages WHERE remote_jid LIKE ? AND remote_jid NOT LIKE "%@lid"').all(`%${suffix}%`);
+                const rows = this.store.db.prepare("SELECT DISTINCT remote_jid FROM messages WHERE remote_jid LIKE ? AND remote_jid NOT LIKE '%@lid'").all(`%${suffix}%`);
                 rows.forEach(r => candidateJids.add(r.remote_jid));
             } else {
                 // Short number or exact
