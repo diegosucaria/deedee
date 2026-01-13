@@ -466,7 +466,10 @@ app.post('/progress', async (req, res) => {
 app.post('/broadcast', (req, res) => {
   try {
     const { event, data } = req.body;
-    console.log(`[Interfaces] Broadcasting event: ${event}`);
+    // Suppress noisy token logs
+    if (event !== 'agent:token') {
+      console.log(`[Interfaces] Broadcasting event: ${event}`);
+    }
 
     if (event) {
       io.emit(event, data);
