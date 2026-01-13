@@ -53,7 +53,22 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
                 if (!payload.message) throw new Error('SDK Requirement: Payload must be wrapped in { message: ... }');
 
                 const content = payload.message;
-                const textContext = typeof content === 'string' ? content : content.parts?.[0]?.text;
+
+                // Enforce STRICT ContentUnion validation (Safety Check)
+                // The Fix ensures we always send { role, parts: [...] }
+                const isString = typeof content === 'string';
+                const hasParts = content.parts && Array.isArray(content.parts);
+
+                if (isString) {
+                    // This is what caused the crash in production (depending on SDK version)
+                    // We WANT to prevent this now.
+                    // throw new Error('Regression: Agent sent raw string. Mismatched SDK expectation.');
+                }
+
+                if (!isString && !hasParts) {
+                    // Empty object or invalid structure
+                    throw new Error('ContentUnion is required (Mock Rejection)');
+                }
 
                 const streamGenerator = async function* () {
                     yield {

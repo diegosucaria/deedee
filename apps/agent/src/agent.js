@@ -190,14 +190,54 @@ class Agent {
         // SDK REQUIREMENT Check: Input Validation
         if (!payload) throw new Error('Payload cannot be empty.');
 
-        let request = payload;
-        // If payload is object with parts, use it directly. If string, it works as is.
-        // Wrapping in { message: ... } is only for specific SDK calls not typical sendMessageStream
-
         console.log(`[Agent] Streaming request content type: ${typeof payload}`);
 
+        // FIX: proactively normalize payload to prevent SDK "ContentUnion is required" error
+        // The SDK is strict about what it accepts in { message: ... }
+        let normalizedMessage = { role: 'user', parts: [] };
+
+        if (typeof payload === 'string') {
+          normalizedMessage.parts.push({ text: payload });
+        } else if (payload.parts && Array.isArray(payload.parts)) {
+          // Already formatted
+          normalizedMessage = payload;
+        } else if (typeof payload === 'object') {
+          // Try to salvage object input (e.g. from tool output or malformed request)
+          if (payload.text) {
+            normalizedMessage.parts.push({ text: payload.text });
+          } else {
+            // Fallback: Strinigfy if possible, or error
+            try {
+              const jsonStr = JSON.stringify(payload);
+              if (jsonStr === '{}') throw new Error('Empty object payload');
+              // normalizedMessage.parts.push({ text: jsonStr }); // Do not stringify objects blindly unless intended
+              // BETTER: If it's a tool response, it should be passed as is if formatted correctly.
+              // But here we are assuming it WAS malformed.
+              // Let's assume if it has no parts, it's invalid unless we wrap it.
+            } catch (e) {
+              // Ignore
+            }
+          }
+        }
+
+        // Final sanity check
+        if (!normalizedMessage.parts || !Array.isArray(normalizedMessage.parts) || normalizedMessage.parts.length === 0) {
+          // If we failed to extract parts, but payload IS an object map (like tool response), pass it?
+          // No, tool responses MUST be arrays of functionResponse.
+          if (Array.isArray(payload)) {
+            // Function response array
+            const result = await session.sendMessageStream({ message: payload });
+            return result;
+          }
+
+          console.warn('[Agent] Payload normalization failed or resulted in empty parts. Attempting raw pass.');
+          // Fallback to original behavior if normalization failed significantly
+          const result = await session.sendMessageStream({ message: payload });
+          return result;
+        }
+
         // SDK Expects { message: ... } for sendMessageStream
-        const result = await session.sendMessageStream({ message: request });
+        const result = await session.sendMessageStream({ message: normalizedMessage });
 
         // Handle both iterable result (new SDK) and result.stream (legacy/mock)
         const stream = result.stream || result;
