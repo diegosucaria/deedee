@@ -28,25 +28,19 @@ router.use('/settings', (req, res) => {
     // ... logic ...
 });
 
-router.get('/watchers', async (req, res) => {
-    try {
-        const response = await axios.get(`${agentUrl}/internal/watchers`, { params: req.query });
-        res.json(response.data);
-    } catch (e) { res.status(502).json({ error: 'Agent unavailable' }); }
-});
-
-router.post('/watchers', async (req, res) => {
-    try {
-        const response = await axios.post(`${agentUrl}/internal/watchers`, req.body);
-        res.json(response.data);
-    } catch (e) { res.status(502).json({ error: 'Agent unavailable' }); }
-});
+// Route /watchers to internal Agent endpoints
+router.get('/watchers', (req, res) => proxyToAgent(req, res, 'GET', '/internal/watchers', null));
+router.post('/watchers', (req, res) => proxyToAgent(req, res, 'POST', '/internal/watchers', req.body));
 
 router.delete('/watchers/:id', async (req, res) => {
     try {
-        await axios.delete(`${agentUrl}/internal/watchers/${req.params.id}`);
+        await axios.delete(`${AGENT_URL}/internal/watchers/${req.params.id}`);
         res.json({ success: true });
-    } catch (e) { res.status(502).json({ error: 'Agent unavailable' }); }
+    } catch (e) {
+        console.error('[API] Watcher DELETE Error:', e.message);
+        if (e.response) res.status(e.response.status).json(e.response.data);
+        else res.status(502).json({ error: 'Agent unavailable' });
+    }
 });
 
 module.exports = router;
