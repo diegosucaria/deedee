@@ -92,7 +92,14 @@ ${summary.content}
             // Use independent session
             const model = this.client.getGenerativeModel({ model: this.SUMMARY_MODEL });
             const result = await model.generateContent(prompt);
-            const summaryText = result.response.text();
+            let summaryText = '';
+            try {
+                if (typeof result.response.text === 'function') summaryText = result.response.text();
+            } catch (e) { /* ignore */ }
+
+            if (!summaryText && result.response?.candidates?.[0]?.content?.parts) {
+                summaryText = result.response.candidates[0].content.parts.map(p => p.text).join(' ');
+            }
 
             if (summaryText) {
                 // Save Summary with real token usage

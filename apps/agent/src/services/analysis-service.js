@@ -82,7 +82,23 @@ class AnalysisService {
             // Let's stick to parsing text.
             let analysis;
             try {
-                analysis = typeof result.text === 'function' ? JSON.parse(result.text()) : null;
+                let text = '';
+                try {
+                    if (typeof result.text === 'function') text = result.text();
+                    else if (result.response && typeof result.response.text === 'function') text = result.response.text();
+                } catch (e) { /* ignore */ }
+
+                if (!text && result.response?.candidates?.[0]?.content?.parts) {
+                    text = result.response.candidates[0].content.parts.map(p => p.text).join('');
+                } else if (!text && result.candidates?.[0]?.content?.parts) {
+                    text = result.candidates[0].content.parts.map(p => p.text).join('');
+                }
+
+                if (text) {
+                    // Clean markdown if present
+                    text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+                    analysis = JSON.parse(text);
+                }
             } catch (e) {
                 console.warn('[AnalysisService] Failed to parse JSON response', e);
             }

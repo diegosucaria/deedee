@@ -91,12 +91,18 @@ class Router {
                 throw new Error('Received undefined response from LLM');
             }
 
-            if (typeof response.text === 'function') {
-                text = response.text();
-            } else if (response.text) {
-                text = response.text;
-            } else if (response.candidates && response.candidates[0] && response.candidates[0].content) {
-                text = response.candidates[0].content.parts[0].text;
+            try {
+                if (typeof response.text === 'function') {
+                    text = response.text();
+                } else if (response.text) {
+                    text = response.text;
+                }
+            } catch (e) { /* ignore */ }
+
+            if (!text || text === '{}') {
+                if (response.candidates && response.candidates[0] && response.candidates[0].content) {
+                    text = response.candidates[0].content.parts[0].text;
+                }
             }
 
             console.log('[Router] Raw Text:', text);
