@@ -35,33 +35,74 @@ class SQLiteStore {
         `);
     }
 
-    bind(ev) {
-        ev.on('contacts.upsert', (contacts) => {
-            const stmt = this.db.prepare(`
-                INSERT INTO contacts (id, name, notify, lid, data)
-                VALUES (?, ?, ?, ?, ?)
-                ON CONFLICT(id) DO UPDATE SET
-                name=coalesce(excluded.name, name),
-                notify=coalesce(excluded.notify, notify),
-                lid=coalesce(excluded.lid, lid),
-                data=excluded.data
-            `);
-            const updateStmt = this.db.prepare(`
-                 UPDATE contacts SET name=?, notify=?, lid=?, data=? WHERE id=?
-            `);
+    // --- Helper Methods ---
 
-            const transaction = this.db.transaction((contacts) => {
-                for (const c of contacts) {
-                    // Try to get existing to merge? Baileys sends partial updates sometimes.
-                    // INSERT OR REPLACE might overwrite with nulls if we aren't careful.
-                    // But 'ON CONFLICT DO UPDATE' with coalesce handles it partially.
-                    // For simplicity, we just store what we get, serialization is key.
-                    // Ideally we fetch, merge, save. But for perf, we rely on UPSERT.
-                    stmt.run(c.id, c.name, c.notify, c.lid, JSON.stringify(c));
-                }
-            });
-            transaction(contacts);
+    upsertContacts(contacts) {
+        if (!contacts || contacts.length === 0) return;
+        const stmt = this.db.prepare(`
+            INSERT INTO contacts (id, name, notify, lid, data)
+            VALUES (?, ?, ?, ?, ?)
+            ON CONFLICT(id) DO UPDATE SET
+            name=coalesce(excluded.name, name),
+            notify=coalesce(excluded.notify, notify),
+            lid=coalesce(excluded.lid, lid),
+            data=excluded.data
+        `);
+
+        const transaction = this.db.transaction((items) => {
+            for (const c of items) {
+                stmt.run(c.id, c.name, c.notify, c.lid, JSON.stringify(c));
+            }
         });
+        transaction(contacts);
+    }
+
+    upsertMessages(messages, type) {
+        // 'append' is for history sync
+        if (type !== 'notify' && type !== 'append') return;
+
+        const stmt = this.db.prepare(`
+            INSERT INTO messages (key_id, remote_jid, from_me, timestamp, content, data)
+            VALUES (?, ?, ?, ?, ?, ?)
+            ON CONFLICT(key_id, remote_jid) DO NOTHING
+        `);
+
+        const transaction = this.db.transaction((msgs) => {
+            for (const msg of msgs) {
+                const jid = msg.key.remoteJid;
+                if (!jid) continue;
+                // Ignore protocol messages
+                if (msg.message?.protocolMessage || msg.message?.senderKeyDistributionMessage) continue;
+
+                const ts = (typeof msg.messageTimestamp === 'number')
+                    ? msg.messageTimestamp
+                    : (msg.messageTimestamp?.low || Date.now() / 1000);
+
+                // Content Snippet
+                let content = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+                if (!content) {
+                    if (msg.message?.audioMessage) content = '[Audio]';
+                    else if (msg.message?.imageMessage) content = '[Image]';
+                    else if (msg.message?.stickerMessage) content = '[Sticker]';
+                    else if (msg.message?.videoMessage) content = '[Video]';
+                    else content = '[Media]';
+                }
+
+                stmt.run(
+                    msg.key.id,
+                    jid,
+                    msg.key.fromMe ? 1 : 0,
+                    ts,
+                    content,
+                    JSON.stringify(msg)
+                );
+            }
+        });
+        transaction(messages);
+    }
+
+    bind(ev) {
+        ev.on('contacts.upsert', (contacts) => this.upsertContacts(contacts));
 
         ev.on('contacts.update', (updates) => {
             const stmt = this.db.prepare(`
@@ -74,8 +115,7 @@ class SQLiteStore {
             `);
             const transaction = this.db.transaction((updates) => {
                 for (const u of updates) {
-                    // We need to merge with existing data json... tedious in SQL.
-                    // Fetch first.
+                    // We need to merge with existing data json... 
                     const existing = this.db.prepare('SELECT data FROM contacts WHERE id = ?').get(u.id);
                     if (existing) {
                         const data = JSON.parse(existing.data);
@@ -87,47 +127,7 @@ class SQLiteStore {
             transaction(updates);
         });
 
-        ev.on('messages.upsert', ({ messages, type }) => {
-            if (type !== 'notify' && type !== 'append') return; // 'append' is for history sync
-
-            const stmt = this.db.prepare(`
-                INSERT INTO messages (key_id, remote_jid, from_me, timestamp, content, data)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(key_id, remote_jid) DO NOTHING
-            `);
-
-            const transaction = this.db.transaction((msgs) => {
-                for (const msg of msgs) {
-                    const jid = msg.key.remoteJid;
-                    if (!jid) continue;
-                    // Ignore protocol messages
-                    if (msg.message?.protocolMessage || msg.message?.senderKeyDistributionMessage) continue;
-
-                    const ts = (typeof msg.messageTimestamp === 'number')
-                        ? msg.messageTimestamp
-                        : (msg.messageTimestamp?.low || Date.now() / 1000);
-
-                    // Content Snippet
-                    let content = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
-                    if (!content) {
-                        if (msg.message?.audioMessage) content = '[Audio]';
-                        else if (msg.message?.imageMessage) content = '[Image]';
-                        else if (msg.message?.stickerMessage) content = '[Sticker]';
-                        else content = '[Media]';
-                    }
-
-                    stmt.run(
-                        msg.key.id,
-                        jid,
-                        msg.key.fromMe ? 1 : 0,
-                        ts,
-                        content,
-                        JSON.stringify(msg)
-                    );
-                }
-            });
-            transaction(messages);
-        });
+        ev.on('messages.upsert', ({ messages, type }) => this.upsertMessages(messages, type));
     }
 
     // --- Access Methods ---
@@ -292,21 +292,14 @@ class WhatsAppService {
 
             // History Sync - Critical for initial contacts
             this.sock.ev.on('messaging-history.set', ({ contacts, messages }) => {
-                if (contacts) {
+                if (contacts && contacts.length > 0) {
                     console.log(`${this.logPrefix} History Sync: Received ${contacts.length} contacts.`);
-                    for (const c of contacts) {
-                        this.store.contacts[c.id] = { ...this.store.contacts[c.id], ...c };
-                    }
+                    this.store.upsertContacts(contacts);
                 }
                 // Handle synced messages
-                if (messages) {
+                if (messages && messages.length > 0) {
                     console.log(`${this.logPrefix} History Sync: Received ${messages.length} messages.`);
-                    // Manually upsert to trigger DB bindings
-                    this.store.bind({
-                        on: (event, cb) => {
-                            if (event === 'messages.upsert') cb({ messages, type: 'append' }); // Use 'append' type
-                        }
-                    });
+                    this.store.upsertMessages(messages, 'append');
                 }
             });
 
