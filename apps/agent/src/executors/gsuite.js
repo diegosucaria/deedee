@@ -6,6 +6,7 @@ class GSuiteExecutor extends BaseExecutor {
 
         switch (name) {
             case 'listEvents': return await gsuite.listEvents(args);
+            case 'createCalendarEvent': return await gsuite.createEvent(args);
             case 'sendEmail': return await gsuite.sendEmail(args);
             default: return null;
         }

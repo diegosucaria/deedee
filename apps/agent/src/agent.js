@@ -1,7 +1,7 @@
 
 const { createAssistantMessage } = require('@deedee/shared/src/types');
 const crypto = require('crypto');
-const { GSuiteTools } = require('@deedee/mcp-servers/src/gsuite/index');
+// const { GSuiteTools } = require('@deedee/mcp-servers/src/gsuite/index');
 const { LocalTools } = require('@deedee/mcp-servers/src/local/index');
 
 const { AgentDB } = require('./db');
@@ -26,6 +26,7 @@ const { AnalysisService } = require('./services/analysis-service');
 const { TitleService } = require('./services/title-service');
 const { ConfigService } = require('./services/config-service');
 const { RagService } = require('./services/rag-service');
+const { GSuiteService } = require('./services/gsuite-service');
 
 
 
@@ -48,7 +49,7 @@ class Agent {
     this.mcp = new MCPManager();
 
     // Tools Setup
-    this.gsuite = new GSuiteTools();
+    this.gsuite = new GSuiteService(this);
     this.local = new LocalTools('/app/source');
     this.journal = new JournalManager();
     this.vaults = new VaultManager(dataDir); // Initialize Vaults with dynamic path

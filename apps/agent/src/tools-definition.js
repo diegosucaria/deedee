@@ -113,6 +113,20 @@ const toolDefinitions = [
         }
       },
       {
+        name: "createCalendarEvent",
+        description: "Create a new event in the Google Calendar. Use this when the user asks to schedule something.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            summary: { type: "STRING", description: "Title of the event" },
+            startTime: { type: "STRING", description: "Start time in ISO 8601 format (e.g. '2025-10-22T09:00:00-03:00')" },
+            endTime: { type: "STRING", description: "End time in ISO 8601 format" },
+            description: { type: "STRING", description: "Optional description or notes for the event" }
+          },
+          required: ["summary", "startTime", "endTime"]
+        }
+      },
+      {
         name: "sendEmail",
         description: "Send an email",
         parameters: {
