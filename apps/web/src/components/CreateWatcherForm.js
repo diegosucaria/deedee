@@ -41,6 +41,7 @@ export default function CreateWatcherForm({ onWatcherCreated, initialValues = nu
             </h3>
 
             <form ref={formRef} action={formAction} className="grid md:grid-cols-2 gap-4">
+                {initialValues?.id && <input type="hidden" name="id" value={initialValues.id} />}
                 {/* Watcher Name */}
                 <div className="md:col-span-1">
                     <label className="block text-xs text-zinc-500 mb-1 ml-1">Watcher Name</label>

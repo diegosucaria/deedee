@@ -40,6 +40,21 @@ function createWatchersRouter(agent) {
         }
     });
 
+    // PUT /:id - Update watcher
+    router.put('/:id', (req, res) => {
+        try {
+            const updates = req.body;
+            agent.db.updateWatcher(req.params.id, updates);
+            if (agent.interface?.broadcast) {
+                agent.interface.broadcast('watcher:update', { action: 'update', id: req.params.id });
+            }
+            res.json({ success: true });
+        } catch (error) {
+            console.error('[API] Failed to update watcher:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
     // DELETE /:id - Delete watcher
     router.delete('/:id', (req, res) => {
         try {

@@ -1,8 +1,8 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useCallback } from 'react';
 import { RefreshCw, ClipboardList, Clock } from 'lucide-react';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import CreateTaskForm from '@/components/CreateTaskForm';
 import JobLogsTable from '@/components/JobLogsTable';
 import ActiveJobsTable from '@/components/ActiveJobsTable';
@@ -10,7 +10,16 @@ import WatchersTable from '@/components/WatchersTable';
 
 export default function TasksClient() {
     const router = useRouter();
-    const [activeTab, setActiveTab] = useState('active'); // active | manage
+    const searchParams = useSearchParams();
+    const pathname = usePathname();
+
+    const activeTab = searchParams.get('tab') || 'active';
+
+    const setActiveTab = useCallback((tab) => {
+        const params = new URLSearchParams(searchParams.toString());
+        params.set('tab', tab);
+        router.push(pathname + '?' + params.toString());
+    }, [searchParams, pathname, router]);
 
     return (
         <div className="space-y-8">

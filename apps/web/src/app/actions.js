@@ -815,6 +815,7 @@ export async function getWatchers() {
 
 export async function createWatcher(prevState, formData) {
     try {
+        const id = formData.get('id');
         const name = formData.get('name');
         const contactString = formData.get('contactString');
         const condition = formData.get('condition');
@@ -824,10 +825,19 @@ export async function createWatcher(prevState, formData) {
             return { success: false, error: 'Missing required fields' };
         }
 
-        await fetchAPI('/v1/config/watchers', {
-            method: 'POST',
-            body: JSON.stringify({ name, contactString, condition, instruction })
-        });
+        if (id) {
+            // Update
+            await fetchAPI(`/v1/config/watchers/${encodeURIComponent(id)}`, {
+                method: 'PUT',
+                body: JSON.stringify({ name, contactString, condition, instruction })
+            });
+        } else {
+            // Create
+            await fetchAPI('/v1/config/watchers', {
+                method: 'POST',
+                body: JSON.stringify({ name, contactString, condition, instruction })
+            });
+        }
         revalidatePath('/tasks');
         return { success: true };
     } catch (e) { return { success: false, error: e.message }; }

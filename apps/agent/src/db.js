@@ -759,6 +759,11 @@ class AgentDB {
     const fields = [];
     const args = [];
 
+    // Support all fields
+    if (updates.name) { fields.push('name = ?'); args.push(updates.name); }
+    if (updates.contactString) { fields.push('contact_string = ?'); args.push(updates.contactString); }
+    if (updates.condition) { fields.push('condition = ?'); args.push(updates.condition); }
+    if (updates.instruction) { fields.push('instruction = ?'); args.push(updates.instruction); }
     if (updates.status) { fields.push('status = ?'); args.push(updates.status); }
     if (updates.lastTriggeredAt) { fields.push('last_triggered_at = ?'); args.push(updates.lastTriggeredAt); }
 
