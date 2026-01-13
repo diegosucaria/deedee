@@ -500,8 +500,31 @@ class Agent {
 
         for (const w of watchers) {
           // Check Contact Match (Phone or Group Name)
-          const isContactMatch = (contactString && w.contact_string.includes(contactString)) ||
-            (groupName && w.contact_string.toLowerCase().includes(groupName.toLowerCase())); // loose match
+          // Improved Logic: Handle fuzzy number matching (e.g. 549 vs 54) and cleanup
+          let isContactMatch = false;
+
+          if (contactString) { // Message has a phone/sender ID
+            // 1. Try Numeric Suffix Match
+            const wClean = w.contact_string.replace(/[^0-9]/g, '');
+            const msgClean = contactString.replace(/[^0-9]/g, '');
+
+            if (wClean.length >= 7 && msgClean.length >= 7) {
+              // Match last 7 digits (safe threshold)
+              if (wClean.slice(-7) === msgClean.slice(-7)) {
+                isContactMatch = true;
+              }
+            }
+
+            // 2. Fallback to direct string inclusion (handles names or shorter numbers)
+            if (!isContactMatch) {
+              isContactMatch = w.contact_string.includes(contactString);
+            }
+          }
+
+          if (!isContactMatch && groupName) {
+            // 3. Group Name Match
+            isContactMatch = w.contact_string.toLowerCase().includes(groupName.toLowerCase());
+          }
 
           if (isContactMatch) {
             // Check Condition

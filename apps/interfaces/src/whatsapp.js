@@ -679,18 +679,12 @@ class WhatsAppService {
         const digits = jid.replace(/[^0-9]/g, '');
         let targetJids = [];
 
-        // If it looks like a full number (e.g. > 7 digits), try fuzzy match
-        if (digits.length > 7) {
-            // Take last 7 digits as minimum safe identifier? 
-            // Better: Take last 9 or 10 if available? 
-            // Argentina example: 54 9 351 551 7678. 
-            // 3515517678 is the subscriber number.
-            // Let's use last 7 to be safe, or just use the digits provided by user if they provided strict number.
-
-            // Heuristic: If we can find the JID string in the DB, use it.
-            // But we know splitting happens. 
-            // Search DB for all JIDs containing the last 7 digits.
-            const suffix = digits.slice(-7);
+        // If it looks like a full number (e.g. > 10 digits), try fuzzy match
+        if (digits.length >= 10) {
+            // User requested last 10 digits.
+            // Argentina example: 54 9 351 551 7678. Last 10: 3515517678.
+            // This safely spans the area code + number, ignoring the country code prefix/mobile token.
+            const suffix = digits.slice(-10);
             const candidates = this.store.db.prepare('SELECT DISTINCT remote_jid FROM messages WHERE remote_jid LIKE ?').all(`%${suffix}%`);
             targetJids = candidates.map(c => c.remote_jid);
         } else {
