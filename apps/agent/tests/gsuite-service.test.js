@@ -1,33 +1,65 @@
+
 const { GSuiteService } = require('../src/services/gsuite-service');
 
 // Mock googleapis
 jest.mock('googleapis', () => {
+    const mOAuth2Client = {
+        generateAuthUrl: jest.fn(),
+        getToken: jest.fn(),
+        setCredentials: jest.fn(),
+    };
+
+    // Mock class constructor
+    const OAuth2 = jest.fn(() => mOAuth2Client);
+
     const mCalendar = {
         events: {
             list: jest.fn(),
             insert: jest.fn(),
         },
     };
+
+    const mUserinfo = {
+        get: jest.fn()
+    };
+
     return {
         google: {
-            calendar: jest.fn(() => mCalendar),
             auth: {
-                GoogleAuth: jest.fn(),
+                OAuth2: OAuth2
             },
+            calendar: jest.fn(() => mCalendar),
+            oauth2: jest.fn(() => ({ userinfo: mUserinfo }))
         },
+        _mOAuth2Client: mOAuth2Client,
+        _mCalendar: mCalendar,
+        _mUserinfo: mUserinfo
     };
 });
 
-describe('GSuiteService', () => {
+describe('GSuiteService OAuth', () => {
     let service;
     let mockAgent;
     let processEnvBackup;
-    const { google } = require('googleapis');
+    const { google, _mOAuth2Client, _mCalendar, _mUserinfo } = require('googleapis');
 
     beforeEach(() => {
-        mockAgent = {};
+        // Mock DB
+        mockAgent = {
+            db: {
+                db: {
+                    prepare: jest.fn(() => ({
+                        get: jest.fn(),
+                        run: jest.fn()
+                    }))
+                }
+            }
+        };
+
         processEnvBackup = { ...process.env };
-        process.env.GOOGLE_CALENDAR_ID = 'test-calendar-id';
+        process.env.GOOGLE_CLIENT_ID = 'cid';
+        process.env.GOOGLE_CLIENT_SECRET = 'csec';
+
         jest.clearAllMocks();
     });
 
@@ -35,95 +67,86 @@ describe('GSuiteService', () => {
         process.env = processEnvBackup;
     });
 
-    it('should initialize with file path credentials', () => {
-        process.env.GOOGLE_APPLICATION_CREDENTIALS = './credentials.json';
-        service = new GSuiteService(mockAgent);
+    it('should initialize and load clients from DB', async () => {
+        // Setup DB mock to return tokens
+        const tokens = [
+            { email: 'test@gmail.com', tokens: { access_token: 'at' } }
+        ];
 
-        expect(google.auth.GoogleAuth).toHaveBeenCalledWith(expect.objectContaining({
-            keyFile: './credentials.json'
-        }));
-        expect(service.calendar).toBeTruthy();
-    });
-
-    it('should initialize with base64 credentials', () => {
-        const fakeCreds = JSON.stringify({ project_id: 'p', client_email: 'e' });
-        const base64Creds = Buffer.from(fakeCreds).toString('base64');
-        process.env.GOOGLE_APPLICATION_CREDENTIALS = base64Creds;
+        const mGet = jest.fn().mockReturnValue({ value: JSON.stringify(tokens) });
+        mockAgent.db.db.prepare.mockReturnValue({ get: mGet });
 
         service = new GSuiteService(mockAgent);
 
-        expect(google.auth.GoogleAuth).toHaveBeenCalledWith(expect.objectContaining({
-            credentials: expect.objectContaining({ project_id: 'p' })
-        }));
+        // Wait for async init (it's fire and forget in constructor, but we can await it via _loadClients if we access it, 
+        // or just wait for next tick)
+        await service._loadClients();
+
+        expect(google.auth.OAuth2).toHaveBeenCalledWith('cid', 'csec', expect.anything());
+        expect(_mOAuth2Client.setCredentials).toHaveBeenCalledWith(tokens[0].tokens);
+        expect(service.clients.size).toBe(1);
     });
 
-    it('should return error if not initialized', async () => {
-        delete process.env.GOOGLE_APPLICATION_CREDENTIALS;
-        service = new GSuiteService(mockAgent); // fails init silently but logs error
+    it('getAuthUrl should return URL', async () => {
+        service = new GSuiteService(mockAgent);
+        _mOAuth2Client.generateAuthUrl.mockReturnValue('http://auth-url');
+
+        const url = await service.getAuthUrl();
+        expect(url).toBe('http://auth-url');
+        expect(google.auth.OAuth2).toHaveBeenCalled();
+    });
+
+    it('authenticate should exchange code and save tokens', async () => {
+        service = new GSuiteService(mockAgent);
+
+        // Mock getToken response
+        _mOAuth2Client.getToken.mockResolvedValue({ tokens: { access_token: 'new_at' } });
+        // Mock userinfo response
+        _mUserinfo.get.mockResolvedValue({ data: { email: 'new@gmail.com' } });
+
+        // Mock DB Save
+        const mRun = jest.fn();
+        const mGet = jest.fn().mockReturnValue(undefined); // No existing tokens
+        mockAgent.db.db.prepare.mockImplementation((sql) => {
+            if (sql.includes('SELECT')) return { get: mGet };
+            if (sql.includes('INSERT')) return { run: mRun };
+            return {};
+        });
+
+        const res = await service.authenticate('code123');
+
+        expect(res).toContain('Authentication successful');
+        expect(_mOAuth2Client.getToken).toHaveBeenCalledWith('code123');
+        expect(_mUserinfo.get).toHaveBeenCalled();
+
+        // Verify DB save
+        expect(mRun).toHaveBeenCalledWith('google_tokens', expect.stringContaining('new@gmail.com'));
+        expect(service.clients.has('new@gmail.com')).toBe(true);
+    });
+
+    it('listEvents should merge events from all clients', async () => {
+        service = new GSuiteService(mockAgent);
+        // Manually populate clients
+        service.ready = true;
+        service.clients.set('a@gmail.com', {});
+        service.clients.set('b@gmail.com', {});
+
+        _mCalendar.events.list
+            .mockResolvedValueOnce({
+                data: { items: [{ summary: 'Event A', start: { dateTime: '2023-01-01T10:00:00Z' } }] }
+            })
+            .mockResolvedValueOnce({
+                data: { items: [{ summary: 'Event B', start: { dateTime: '2023-01-01T09:00:00Z' } }] }
+            });
 
         const res = await service.listEvents({});
-        expect(res).toEqual({ error: 'GSuite credentials not configured.' });
-    });
 
-    describe('listEvents', () => {
-        beforeEach(() => {
-            process.env.GOOGLE_APPLICATION_CREDENTIALS = './credentials.json';
-            service = new GSuiteService(mockAgent);
-        });
-
-        it('should return list of events', async () => {
-            const mockEvents = [
-                { summary: 'Meeting 1', start: { dateTime: '2023-01-01T10:00:00Z' }, status: 'confirmed' }
-            ];
-            // Access the mock instance returned by google.calendar()
-            const mCalendar = google.calendar();
-            mCalendar.events.list.mockResolvedValue({ data: { items: mockEvents } });
-
-            const result = await service.listEvents({ timeMin: '2023-01-01T00:00:00Z' });
-            expect(result).toContain('1. [2023-01-01T10:00:00Z] Meeting 1 (confirmed)');
-        });
-
-        it('should handle empty list', async () => {
-            const mCalendar = google.calendar();
-            mCalendar.events.list.mockResolvedValue({ data: { items: [] } });
-
-            const result = await service.listEvents({});
-            expect(result).toBe('No upcoming events found.');
-        });
-    });
-
-    describe('createEvent', () => {
-        beforeEach(() => {
-            process.env.GOOGLE_APPLICATION_CREDENTIALS = './credentials.json';
-            service = new GSuiteService(mockAgent);
-        });
-
-        it('should require summary, startTime, endTime', async () => {
-            const res = await service.createEvent({ summary: 'Test' });
-            expect(res.error).toContain('Missing required fields');
-        });
-
-        it('should call insert and return link', async () => {
-            const mCalendar = google.calendar();
-            mCalendar.events.insert.mockResolvedValue({ data: { htmlLink: 'http://event-link' } });
-
-            const args = {
-                summary: 'Test Event',
-                description: 'Desc',
-                startTime: '2023-01-01T10:00:00Z',
-                endTime: '2023-01-01T11:00:00Z'
-            };
-
-            const result = await service.createEvent(args);
-            expect(result).toBe('Event created: http://event-link');
-
-            expect(mCalendar.events.insert).toHaveBeenCalledWith({
-                calendarId: 'test-calendar-id',
-                resource: expect.objectContaining({
-                    summary: 'Test Event',
-                    start: { dateTime: args.startTime, timeZone: 'UTC' }
-                })
-            });
-        });
+        // Verify merged and sorted (B is earlier than A)
+        expect(res).toContain('Event B');
+        expect(res).toContain('Event A');
+        // Check order strictly?
+        const lines = res.split('\n');
+        expect(lines[0]).toContain('Event B'); // 09:00
+        expect(lines[1]).toContain('Event A'); // 10:00
     });
 });

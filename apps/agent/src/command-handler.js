@@ -182,6 +182,33 @@ class CommandHandler {
             return true;
         }
 
+        if (cmd === '/google_auth') {
+            const code = args[0];
+            if (code) {
+                // Exchange code
+                await this.sendReply(chatId, message.source, 'Authenticating...');
+                try {
+                    const result = await this.agent.gsuite.authenticate(code);
+                    await this.sendReply(chatId, message.source, result);
+                } catch (e) {
+                    await this.sendReply(chatId, message.source, `Auth Error: ${e.message}`);
+                }
+            } else {
+                // Get URL
+                try {
+                    const url = await this.agent.gsuite.getAuthUrl();
+                    if (url.startsWith('Error')) {
+                        await this.sendReply(chatId, message.source, url);
+                    } else {
+                        await this.sendReply(chatId, message.source, `Please visit this URL to authorize access:\n\n${url}\n\nAfter authorizing, copy the code and reply: \`/google_auth <code_here>\``);
+                    }
+                } catch (e) {
+                    await this.sendReply(chatId, message.source, `Error generating URL: ${e.message}`);
+                }
+            }
+            return true;
+        }
+
         // Unknown command
         await this.sendReply(chatId, message.source, `Unknown command: ${content}`);
         return true;
