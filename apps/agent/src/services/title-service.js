@@ -23,14 +23,25 @@ class TitleService {
             });
 
             let title = '';
-            // SDK 0.2.x+ check
-            if (result.response && typeof result.response.text === 'function') {
-                title = result.response.text();
-            } else if (result.text && typeof result.text === 'function') {
-                title = result.text(); // Some SDKs
-            } else if (result.response && result.response.candidates && result.response.candidates[0]) {
-                const parts = result.response.candidates[0].content?.parts || [];
-                title = parts.map(p => p.text).join('').trim();
+
+            // Console Debug for Structure
+            // console.log('[TitleService] Raw Result:', JSON.stringify(result, null, 2));
+
+            // Robust Extraction
+            try {
+                if (typeof result.text === 'function') {
+                    title = result.text();
+                } else if (result.response && typeof result.response.text === 'function') {
+                    title = result.response.text();
+                }
+            } catch (e) { /* ignore */ }
+
+            if (!title) {
+                // Fallback to parts
+                const candidate = result.candidates?.[0] || result.response?.candidates?.[0];
+                if (candidate?.content?.parts) {
+                    title = candidate.content.parts.map(p => p.text).join('').trim();
+                }
             }
 
             title = title?.trim();

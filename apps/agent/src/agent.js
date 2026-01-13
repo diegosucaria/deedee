@@ -231,11 +231,20 @@ class Agent {
 
           if (text) {
             fullText += text;
-            this.interface.emit('agent:token', {
-              chatId,
-              content: text,
-              timestamp: Date.now()
-            });
+            if (this.interface.broadcast) {
+              this.interface.broadcast('agent:token', {
+                chatId,
+                content: text,
+                timestamp: Date.now()
+              });
+            } else {
+              // Fallback for tests/mocks
+              this.interface.emit('agent:token', {
+                chatId,
+                content: text,
+                timestamp: Date.now()
+              });
+            }
           }
         }
 
