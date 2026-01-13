@@ -17,9 +17,9 @@ To use this feature, you must create your own OAuth Client ID.
     -   Add yourself as a **Test User** (Important! This avoids verification requirements).
 6.  Go to **APIs & Services** > **Credentials**.
 7.  Click **Create Credentials** > **OAuth client ID**.
-    -   Application Type: **Desktop App** (Preferred for CLI/Chat auth) or **Web Application**.
-    -   If "Desktop App", default Name is fine.
-    -   If "Web Application", add `http://localhost` (or dummy) to Redirect URIs, but we generally use the "Copy/Paste Code" flow (`urn:ietf:wg:oauth:2.0:oob`) for simplicity across headless devices like Raspberry Pi.
+    -   **CRITICAL**: Select Application Type: **Desktop App**.
+    -   *Do NOT* select "Web Application". Web Apps do not support the secure copy-paste flow (`urn:ietf:wg:oauth:2.0:oob`) used by this agent.
+    -   Name: "Deedee Agent".
 8.  Copy the **Client ID** and **Client Secret**.
 
 ## 2. Configuration
