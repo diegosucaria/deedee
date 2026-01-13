@@ -1211,6 +1211,53 @@ class AgentDB {
       return { key, value: row.value };
     }
   }
+
+  // --- Migration Utilities ---
+
+  /**
+   * Migrates a session from one ID to another.
+   * Useful for fixing encoded IDs or merging sessions.
+   * @param {string} oldId 
+   * @param {string} newId 
+   * @returns {object} Stats of migrated records
+   */
+  migrateSessionId(oldId, newId) {
+    console.log(`[DB] Migrating session ${oldId} -> ${newId}`);
+
+    // Check if new ID already exists (Collision check)
+    const existing = this.getSession(newId);
+    if (existing) {
+      throw new Error(`Target session ID ${newId} already exists. Cannot migrate.`);
+    }
+
+    const stats = { messages: 0, summaries: 0, token_usage: 0, session: 0 };
+
+    const transaction = this.db.transaction(() => {
+      // 1. Chat Sessions
+      const sessRes = this.db.prepare('UPDATE chat_sessions SET id = ? WHERE id = ?').run(newId, oldId);
+      stats.session = sessRes.changes;
+
+      if (stats.session === 0) {
+        throw new Error(`Session ${oldId} not found.`);
+      }
+
+      // 2. Messages
+      const msgRes = this.db.prepare('UPDATE messages SET chat_id = ? WHERE chat_id = ?').run(newId, oldId);
+      stats.messages = msgRes.changes;
+
+      // 3. Summaries
+      const sumRes = this.db.prepare('UPDATE summaries SET chat_id = ? WHERE chat_id = ?').run(newId, oldId);
+      stats.summaries = sumRes.changes;
+
+      // 4. Token Usage
+      const tokRes = this.db.prepare('UPDATE token_usage SET chat_id = ? WHERE chat_id = ?').run(newId, oldId);
+      stats.token_usage = tokRes.changes;
+    });
+
+    transaction();
+    console.log(`[DB] Migration complete:`, stats);
+    return stats;
+  }
 }
 
 module.exports = { AgentDB };

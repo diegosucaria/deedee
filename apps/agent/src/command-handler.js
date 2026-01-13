@@ -110,6 +110,29 @@ class CommandHandler {
             return true;
         }
 
+        if (cmd === '/migrate_chat_id') {
+            const oldId = args[0];
+            const newId = args[1];
+
+            if (!oldId || !newId) {
+                await this.sendReply(chatId, message.source, 'Usage: /migrate_chat_id <old_id> <new_id>');
+                return true;
+            }
+
+            try {
+                const stats = this.db.migrateSessionId(oldId, newId);
+                const report = `Migration Successful:\n` +
+                    `- Session: ${stats.session}\n` +
+                    `- Messages: ${stats.messages}\n` +
+                    `- Summaries: ${stats.summaries}\n` +
+                    `- Tokens: ${stats.token_usage}`;
+                await this.sendReply(chatId, message.source, report);
+            } catch (e) {
+                await this.sendReply(chatId, message.source, `Migration Failed: ${e.message}`);
+            }
+            return true;
+        }
+
         // Unknown command
         await this.sendReply(chatId, message.source, `Unknown command: ${content}`);
         return true;

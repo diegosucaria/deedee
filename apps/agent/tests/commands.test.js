@@ -12,6 +12,7 @@ jest.mock('../src/db', () => ({
         clearHistory: mockClearHistory,
         clearGoals: mockClearGoals,
         saveMessage: mockSaveMessage,
+        migrateSessionId: jest.fn().mockReturnValue({ session: 1, messages: 10, summaries: 0, token_usage: 0 }),
         // Add other methods called in constructor or start() if needed
         // But since we only test onMessage logic for commands, mostly fine.
         // Agent constructor inits Router/MCP, we need to mock them too or handle them.
@@ -98,6 +99,19 @@ describe('Slash Commands', () => {
 
         expect(mockClearGoals).toHaveBeenCalledWith('chat123');
         expect(mockInterface.getLastMessage().content).toContain('goals reset');
+    });
+
+    test('/migrate_chat_id should call db.migrateSessionId', async () => {
+        const msg = createUserMessage('/migrate_chat_id old_id new_id', 'telegram', 'user1');
+        msg.metadata = { chatId: 'chat123' };
+
+        await agent.onMessage(msg);
+
+        // We access the mock instance via usage in db factory
+        // But mock is returned by factory.
+        // We can access via agent.db which is standard assignment in Agent
+        expect(agent.db.migrateSessionId).toHaveBeenCalledWith('old_id', 'new_id');
+        expect(mockInterface.getLastMessage().content).toContain('Migration Successful');
     });
 
     test('Regular message should save to DB', async () => {
