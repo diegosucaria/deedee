@@ -37,8 +37,10 @@ class SQLiteStore {
 
     // --- Helper Methods ---
 
-    upsertContacts(contacts) {
+    async upsertContacts(contacts) {
         if (!contacts || contacts.length === 0) return;
+        const BATCH_SIZE = 200;
+
         const stmt = this.db.prepare(`
             INSERT INTO contacts (id, name, notify, lid, data)
             VALUES (?, ?, ?, ?, ?)
@@ -49,17 +51,28 @@ class SQLiteStore {
             data=excluded.data
         `);
 
-        const transaction = this.db.transaction((items) => {
+        const insertBatch = this.db.transaction((items) => {
             for (const c of items) {
                 stmt.run(c.id, c.name, c.notify, c.lid, JSON.stringify(c));
             }
         });
-        transaction(contacts);
+
+        // Async Batching
+        const total = contacts.length;
+        console.log(`[SQLiteStore] Upserting ${total} contacts...`);
+        for (let i = 0; i < total; i += BATCH_SIZE) {
+            const batch = contacts.slice(i, i + BATCH_SIZE);
+            insertBatch(batch);
+            await new Promise(resolve => setTimeout(resolve, 5));
+        }
+        console.log(`[SQLiteStore] Finished upserting ${total} contacts.`);
     }
 
-    upsertMessages(messages, type) {
+    async upsertMessages(messages, type) {
         // 'append' is for history sync
         if (type !== 'notify' && type !== 'append') return;
+
+        const BATCH_SIZE = 200;
 
         const stmt = this.db.prepare(`
             INSERT INTO messages (key_id, remote_jid, from_me, timestamp, content, data)
@@ -67,7 +80,7 @@ class SQLiteStore {
             ON CONFLICT(key_id, remote_jid) DO NOTHING
         `);
 
-        const transaction = this.db.transaction((msgs) => {
+        const insertBatch = this.db.transaction((msgs) => {
             for (const msg of msgs) {
                 const jid = msg.key.remoteJid;
                 if (!jid) continue;
@@ -98,7 +111,19 @@ class SQLiteStore {
                 );
             }
         });
-        transaction(messages);
+
+        const total = messages.length;
+        // Log only if significant batch (avoids spam on live chat)
+        if (total > 50) console.log(`[SQLiteStore] Upserting ${total} messages...`);
+
+        // Async Chunking
+        for (let i = 0; i < total; i += BATCH_SIZE) {
+            const batch = messages.slice(i, i + BATCH_SIZE);
+            insertBatch(batch);
+            if (total > BATCH_SIZE) await new Promise(resolve => setTimeout(resolve, 5));
+        }
+
+        if (total > 50) console.log(`[SQLiteStore] Finished upserting ${total} messages.`);
     }
 
     bind(ev) {
