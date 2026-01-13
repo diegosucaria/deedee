@@ -182,59 +182,45 @@ class Agent {
    */
   async _generateStream(session, payload, chatId, source) {
     try {
-      // DEBUG: Log payload
-      // console.log(`[Agent] _generateStream payload (${source}):`, typeof payload === 'object' ? JSON.stringify(payload).substring(0, 200) : payload);
+      // SDK REQUIREMENT Check: Input Validation
+      if (!payload) throw new Error('Payload cannot be empty.');
+
+      // FIX: proactively normalize payload to prevent SDK "ContentUnion is required" error
+      // The SDK is strict about what it accepts in { message: ... }
+      let normalizedMessage = { role: 'user', parts: [] };
+      let shouldUseRaw = false;
+
+      if (typeof payload === 'string') {
+        normalizedMessage.parts.push({ text: payload });
+      } else if (payload.parts && Array.isArray(payload.parts)) {
+        // Already formatted
+        normalizedMessage = payload;
+      } else if (Array.isArray(payload)) {
+        // Function response array - DO NOT WRAP in parts, pass as message directly
+        shouldUseRaw = true;
+        normalizedMessage = payload;
+      } else if (typeof payload === 'object') {
+        // Try to salvage object input (e.g. from tool output or malformed request)
+        if (payload.text) {
+          normalizedMessage.parts.push({ text: payload.text });
+        } else {
+          // Fallback or ignore
+          try {
+            const jsonStr = JSON.stringify(payload);
+            if (jsonStr === '{}') throw new Error('Empty object payload');
+          } catch (e) { /* ignore */ }
+        }
+      }
+
+      // Safety Check
+      if (!shouldUseRaw && (!normalizedMessage.parts || !Array.isArray(normalizedMessage.parts) || normalizedMessage.parts.length === 0)) {
+        console.warn('[Agent] Payload normalization failed. Attempting raw pass.');
+        normalizedMessage = payload;
+      }
 
       // Web/Live: Enable Streaming
       if (source === 'web' || source === 'live') {
-        // SDK REQUIREMENT Check: Input Validation
-        if (!payload) throw new Error('Payload cannot be empty.');
-
         console.log(`[Agent] Streaming request content type: ${typeof payload}`);
-
-        // FIX: proactively normalize payload to prevent SDK "ContentUnion is required" error
-        // The SDK is strict about what it accepts in { message: ... }
-        let normalizedMessage = { role: 'user', parts: [] };
-
-        if (typeof payload === 'string') {
-          normalizedMessage.parts.push({ text: payload });
-        } else if (payload.parts && Array.isArray(payload.parts)) {
-          // Already formatted
-          normalizedMessage = payload;
-        } else if (typeof payload === 'object') {
-          // Try to salvage object input (e.g. from tool output or malformed request)
-          if (payload.text) {
-            normalizedMessage.parts.push({ text: payload.text });
-          } else {
-            // Fallback: Strinigfy if possible, or error
-            try {
-              const jsonStr = JSON.stringify(payload);
-              if (jsonStr === '{}') throw new Error('Empty object payload');
-              // normalizedMessage.parts.push({ text: jsonStr }); // Do not stringify objects blindly unless intended
-              // BETTER: If it's a tool response, it should be passed as is if formatted correctly.
-              // But here we are assuming it WAS malformed.
-              // Let's assume if it has no parts, it's invalid unless we wrap it.
-            } catch (e) {
-              // Ignore
-            }
-          }
-        }
-
-        // Final sanity check
-        if (!normalizedMessage.parts || !Array.isArray(normalizedMessage.parts) || normalizedMessage.parts.length === 0) {
-          // If we failed to extract parts, but payload IS an object map (like tool response), pass it?
-          // No, tool responses MUST be arrays of functionResponse.
-          if (Array.isArray(payload)) {
-            // Function response array
-            const result = await session.sendMessageStream({ message: payload });
-            return result;
-          }
-
-          console.warn('[Agent] Payload normalization failed or resulted in empty parts. Attempting raw pass.');
-          // Fallback to original behavior if normalization failed significantly
-          const result = await session.sendMessageStream({ message: payload });
-          return result;
-        }
 
         // SDK Expects { message: ... } for sendMessageStream
         const result = await session.sendMessageStream({ message: normalizedMessage });
@@ -307,7 +293,9 @@ class Agent {
         return response;
       } else {
         // Standard (WhatsApp/Telegram) - No stream
-        const result = await session.sendMessage(payload);
+        // FIX: Use normalizedMessage here too!
+        // SDK Expects { message: ... } for sendMessage in new SDK versions too, or strict types
+        const result = await session.sendMessage({ message: normalizedMessage });
         let response = result.response;
         if (!response && result.candidates) response = result;
         return response;
