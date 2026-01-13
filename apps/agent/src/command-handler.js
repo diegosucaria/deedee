@@ -1,11 +1,12 @@
 const { createAssistantMessage } = require('@deedee/shared/src/types');
 
 class CommandHandler {
-    constructor(db, interfaceObj, confirmationManager, stopFlags) {
+    constructor(db, interfaceObj, confirmationManager, stopFlags, agent) {
         this.db = db;
         this.interface = interfaceObj;
         this.confirmationManager = confirmationManager;
         this.stopFlags = stopFlags;
+        this.agent = agent;
     }
 
     /**
@@ -107,6 +108,43 @@ class CommandHandler {
         if (content === '/clear_summaries') {
             this.db.clearSummaries();
             await this.sendReply(chatId, message.source, 'All context summaries deleted. Memory reset.');
+            return true;
+        }
+
+        if (cmd === '/simulate_watcher') {
+            const phone = args[0];
+            const text = args.slice(1).join(' ');
+
+            if (!phone || !text) {
+                await this.sendReply(chatId, message.source, 'Usage: /simulate_watcher <phone> <message>');
+                return true;
+            }
+
+            const simulatedMsg = {
+                content: text,
+                source: 'whatsapp:user',
+                metadata: {
+                    chatId: `${phone}@s.whatsapp.net`,
+                    phoneNumber: phone,
+                    session: 'user',
+                    isGroup: false
+                }
+            };
+
+            await this.sendReply(chatId, message.source, `Simulating message from ${phone}: "${text}"...`);
+
+            // Async call to Agent.onMessage to trigger watcher logic
+            // We use setImmediate to break the stack and not await it here fully
+            setImmediate(() => {
+                if (this.agent && this.agent.onMessage) {
+                    this.agent.onMessage(simulatedMsg).catch(err => {
+                        console.error('[CommandHandler] Simulation failed:', err);
+                    });
+                } else {
+                    console.error('[CommandHandler] Agent instance not available for simulation.');
+                }
+            });
+
             return true;
         }
 

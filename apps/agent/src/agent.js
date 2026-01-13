@@ -58,8 +58,8 @@ class Agent {
     // Shared state for stopping execution
     this.stopFlags = new Set();
     this.activeTopics = new Map(); // Store active vault topics per chatId
-
-    this.commandHandler = new CommandHandler(this.db, this.interface, this.confirmationManager, this.stopFlags);
+    // Initialize Command Handler
+    this.commandHandler = new CommandHandler(this.db, this.interface, this.confirmationManager, this.stopFlags, this);
     this.rateLimiter = new RateLimiter(this.db);
 
     this.scheduler = new Scheduler(this);
