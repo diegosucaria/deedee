@@ -55,3 +55,23 @@ Repeat the process above for a **different** Google Account. Deedee stores token
 
 -   **"Refresh Token Missing"**: If you re-authenticate, Deedee essentially forces a "Consent Prompt" to ensure we get a refresh token. This allows Deedee to stay connected indefinitely.
 -   **"Error: invalid_grant"**: The code might have expired or been used. Generate a new URL via `/google_auth` and try again.
+
+## 4. Features & Commands
+
+### Managing Calendars
+Deedee supports multiple calendars (e.g. Personal, Work).
+
+-   `/list_calendars`: Lists all connected accounts with their index.
+-   `/label_calendar <index|email> <label>`: Assigns a label to a calendar.
+    -   Labels are useful for organization.
+    -   **Priority**: When creating an event, Deedee prefers the calendar labeled `personal`. If not found, it uses the first one.
+    -   *Example*: `/label_calendar 1 personal`
+
+### Event Details
+When listing events (`listEvents`), Deedee provides extra context:
+-   **Merged View**: Events from all accounts are shown in a single chronological list.
+-   **Labels**: Shows `[personal]` or `[work]` tags instead of long emails.
+-   **Status**: Indicates your attendance status:
+    -   `(Organizer)`: You created the event.
+    -   `(accepted)`: You are attending.
+    -   `(declined)` / `(tentative)` / `(needsAction)`.
