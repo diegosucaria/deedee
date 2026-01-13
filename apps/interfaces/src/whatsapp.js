@@ -672,37 +672,63 @@ class WhatsAppService {
             return [];
         }
 
-        // Logic to handle Split JIDs (e.g. Argentina 549 vs 54)
-        // We strip non-numeric, take the last N digits, and search for ANY JID ending with that.
-        // This effectively merges "outgoing" (sent to 549...) and "incoming" (received from 54...) if they differ.
+        // Logic to handle Split JIDs (ID vs LID, and Country Code Prefix issues)
+        // 1. Sanitize Input
+        const inputDigits = jid.replace(/[^0-9]/g, '');
+        const isLid = jid.includes('@lid');
 
-        const digits = jid.replace(/[^0-9]/g, '');
-        let targetJids = [];
+        let candidateJids = new Set();
 
-        // If it looks like a full number (e.g. > 9 digits), try fuzzy match
-        if (digits.length >= 9) {
-            // User requested last 9 digits to handle BA prefixes (11) and country codes safely.
-            const suffix = digits.slice(-9);
-            const candidates = this.store.db.prepare('SELECT DISTINCT remote_jid FROM messages WHERE remote_jid LIKE ?').all(`%${suffix}%`);
-            targetJids = candidates.map(c => c.remote_jid);
+        // 2. Identify Primary Candidates (Phone JIDs)
+        if (isLid) {
+            candidateJids.add(jid);
+            // Try to find the Phone JID for this LID
+            const row = this.store.db.prepare('SELECT id FROM contacts WHERE lid = ?').get(jid);
+            if (row && row.id) candidateJids.add(row.id);
         } else {
-            // Fallback for short codes or text JIDs
+            // It is a phone number (or partial)
+            if (inputDigits.length >= 7) {
+                // Fuzzy Search for Phone JIDs (handles 549 vs 54)
+                // Using 7 to be safe and inclusive
+                const suffix = inputDigits.slice(-7); // Last 7 digits
+                const rows = this.store.db.prepare('SELECT DISTINCT remote_jid FROM messages WHERE remote_jid LIKE ? AND remote_jid NOT LIKE "%@lid"').all(`%${suffix}%`);
+                rows.forEach(r => candidateJids.add(r.remote_jid));
+            } else {
+                // Short number or exact
+                const norm = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
+                candidateJids.add(norm);
+            }
+        }
+
+        // 3. Expand to include linked LIDs/IDs
+        // For every Candidate JID found so far, find its partner (Phone <-> LID)
+        const currentList = Array.from(candidateJids);
+        if (currentList.length > 0) {
+            const placeholders = currentList.map(() => '?').join(',');
+
+            // Find LIDs for these Phone IDs
+            const lids = this.store.db.prepare(`SELECT lid FROM contacts WHERE id IN (${placeholders})`).all(...currentList);
+            lids.forEach(r => { if (r.lid) candidateJids.add(r.lid); });
+
+            // Find IDs for these LIDs (bidirectional check)
+            const ids = this.store.db.prepare(`SELECT id FROM contacts WHERE lid IN (${placeholders})`).all(...currentList);
+            ids.forEach(r => { if (r.id) candidateJids.add(r.id); });
+        }
+
+        // 4. Fallback (if still empty)
+        if (candidateJids.size === 0) {
             const norm = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
-            targetJids = [norm];
+            candidateJids.add(norm);
         }
 
-        if (targetJids.length === 0) {
-            // Fallback to strict normalized
-            targetJids = [jid.includes('@') ? jid : `${jid}@s.whatsapp.net`];
-        }
-
-        console.log(`${this.logPrefix} Fetching history for ${jid} (Merged JIDs: ${targetJids.join(', ')})`);
+        const targetJids = Array.from(candidateJids);
+        console.log(`${this.logPrefix} Fetching history for ${jid}. Resolved targets: ${targetJids.join(', ')}`);
 
         // Query IN (...)
-        const placeholders = targetJids.map(() => '?').join(',');
+        const queryPlaceholders = targetJids.map(() => '?').join(',');
         const rows = this.store.db.prepare(`
             SELECT data FROM messages 
-            WHERE remote_jid IN (${placeholders})
+            WHERE remote_jid IN (${queryPlaceholders})
             ORDER BY timestamp DESC 
             LIMIT ?
         `).all(...targetJids, limit);
