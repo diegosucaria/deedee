@@ -508,9 +508,9 @@ class Agent {
             const wClean = w.contact_string.replace(/[^0-9]/g, '');
             const msgClean = contactString.replace(/[^0-9]/g, '');
 
-            if (wClean.length >= 7 && msgClean.length >= 7) {
-              // Match last 7 digits (safe threshold)
-              if (wClean.slice(-7) === msgClean.slice(-7)) {
+            if (wClean.length >= 9 && msgClean.length >= 9) {
+              // Match last 9 digits (safe threshold covering Argentina Area Codes + Number)
+              if (wClean.slice(-9) === msgClean.slice(-9)) {
                 isContactMatch = true;
               }
             }

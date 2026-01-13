@@ -679,12 +679,10 @@ class WhatsAppService {
         const digits = jid.replace(/[^0-9]/g, '');
         let targetJids = [];
 
-        // If it looks like a full number (e.g. > 10 digits), try fuzzy match
-        if (digits.length >= 10) {
-            // User requested last 10 digits.
-            // Argentina example: 54 9 351 551 7678. Last 10: 3515517678.
-            // This safely spans the area code + number, ignoring the country code prefix/mobile token.
-            const suffix = digits.slice(-10);
+        // If it looks like a full number (e.g. > 9 digits), try fuzzy match
+        if (digits.length >= 9) {
+            // User requested last 9 digits to handle BA prefixes (11) and country codes safely.
+            const suffix = digits.slice(-9);
             const candidates = this.store.db.prepare('SELECT DISTINCT remote_jid FROM messages WHERE remote_jid LIKE ?').all(`%${suffix}%`);
             targetJids = candidates.map(c => c.remote_jid);
         } else {
