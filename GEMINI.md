@@ -57,10 +57,37 @@ You are working on **Deedee**, a personal, self-improving AI agent designed to r
 46: - **Context Updates**: Update `GEMINI.md` if new architectural decisions or secrets are introduced.
 47: - **Offer to Commit**: After finishing a requested feature or significant task, you **MUST** offer to commit the changes to git with a descriptive message. Do not wait for the user to ask.
 
-## 📂 Navigation
+## 📂 Navigation & Codebase Map
+
+### Core Logic (Where the brain lives)
+- **`apps/agent/src/`**: The Core Agent.
+  - `agent.js`: Main entry point (Gemini Client, Router, MCP).
+  - `tools-definition.js`: All tool schemas (read this to understand capabilities).
+  - `executors/`: Logic for each tool (e.g., `gsuite.js`, `scheduler.js`).
+  - `services/`: Specialized modules (`date-awareness`, `people-service`).
+  - `prompts/`: System instructions.
+
+### Integration (Where we talk to the world)
+- **`apps/interfaces/src/`**: Connectors & API.
+  - `server.js`: Webhook/API/Socket.io server.
+  - `whatsapp.js`: Baileys/WhatsApp implementation.
+  - `telegram.js`: Telegram bot logic.
+
+### Frontend (User Interface)
+- **`apps/web/src/`**: Next.js Dashboard.
+  - `app/`: Next.js App Router pages (e.g., `chat/[id]/page.js`, `settings/page.js`).
+  - `components/`: UI components (e.g., `WhatsAppSettings.js`, `InteractiveCharts.js`).
+  - `app/actions.js`: Server Actions for API calls (Security boundary).
+
+### System & Maintenance
+- **`apps/supervisor/src/`**: System Health, Updater, & Git Logic.
+- **`packages/mcp-servers/`**: Encapsulated Tool Servers.
+
+### Documentation & Planning
 - **`TODO.md`**: The source of truth for current progress. Check this first.
 - **`specs/`**: The detailed requirements for the current task.
-- **`docs/architecture.md`**: The system map.
+- **`docs/`**: Feature documentation.
+- **`docs/architecture.md`**: High-level system map.
 
 ## 🚀 How to Resume Work
 1. Read `TODO.md` to identify the current active task.

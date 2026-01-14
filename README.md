@@ -260,6 +260,15 @@ See the full documentation for details:
 3.  **API**: Express Gateway.
 4.  **Interfaces**: Telegram Polling Bot.
 
+## 📂 Project Structure
+
+- **`apps/agent`**: The core AI logic, tool executors, and prompts.
+- **`apps/interfaces`**: Connectors for WhatsApp, Telegram, and the external API.
+- **`apps/web`**: The Next.js dashboard and frontend UI.
+- **`apps/supervisor`**: System health monitoring and self-updater.
+- **`packages/mcp-servers`**: MCP-compliant servers for external integrations.
+- **`packages/shared`**: Shared utilities and types.
+
 ## 📄 License
 
 MIT License. See [LICENSE](LICENSE) file.
