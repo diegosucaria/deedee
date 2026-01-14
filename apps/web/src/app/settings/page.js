@@ -1,6 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
 import { getAgentConfig, updateAgentConfig, getEnvConfig, getBackups, getVoiceSettings, saveVoiceSettings } from '../actions';
 import { Settings, Check, AlertTriangle } from 'lucide-react';
 import BackupSettings from '@/components/BackupSettings';
@@ -10,13 +11,16 @@ import VoiceSelector from '@/components/VoiceSelector';
 import InterfacesClient from '@/components/InterfacesClient';
 
 export default function SettingsPage() {
+    const router = useRouter();
+    const searchParams = useSearchParams();
+    const activeTab = searchParams.get('tab') || 'general';
+
     const [config, setConfig] = useState(null);
     const [env, setEnv] = useState({});
     const [backups, setBackups] = useState([]);
     const [voice, setVoice] = useState('Kore');
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState(null);
-    const [activeTab, setActiveTab] = useState('general');
 
     useEffect(() => {
         Promise.all([
@@ -31,6 +35,10 @@ export default function SettingsPage() {
             setVoice(voiceData);
         });
     }, []);
+
+    const handleTabChange = (tabId) => {
+        router.replace(`/settings?tab=${tabId}`);
+    };
 
     const handleVoiceChange = async (newVoice) => {
         setSaving(true);
@@ -91,7 +99,7 @@ export default function SettingsPage() {
                     {tabs.map(tab => (
                         <button
                             key={tab.id}
-                            onClick={() => setActiveTab(tab.id)}
+                            onClick={() => handleTabChange(tab.id)}
                             className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === tab.id
                                 ? 'bg-zinc-800 text-white shadow-sm'
                                 : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'
