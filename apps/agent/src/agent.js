@@ -808,8 +808,12 @@ class Agent {
         }
       }
 
+      // Formatter for System Time
+      const timeZone = process.env.TZ || 'America/Argentina/Buenos_Aires';
+      const timeString = new Date().toLocaleString('en-US', { timeZone, timeZoneName: 'short' }) + ` (${timeZone})`;
+
       let systemInstruction = getSystemInstruction(
-        new Date().toLocaleString(),
+        timeString,
         activeGoals,
         facts,
         { codingMode: true, vaultContext } // Coding mode enabled by default for now, could be dynamic
