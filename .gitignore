@@ -10,3 +10,5 @@ data
 node_modules.nosync
 *.db
 apps/agent/tests/test_people.db
+.skills
+.agent
