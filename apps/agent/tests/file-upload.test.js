@@ -36,22 +36,26 @@ describe('File Upload API', () => {
         const dummyPath = path.join(__dirname, 'test.txt');
         fs.writeFileSync(dummyPath, 'This is a test file.');
 
-        const res = await request(app)
-            .post(`/v1/chat/${chatId}/files`)
-            .attach('file', dummyPath);
+        try {
+            const res = await request(app)
+                .post(`/v1/chat/${chatId}/files`)
+                .attach('file', dummyPath);
 
-        expect(res.status).toBe(200);
-        expect(res.body.success).toBe(true);
-        expect(res.body.originalName).toBe('test.txt');
+            expect(res.status).toBe(200);
+            expect(res.body.success).toBe(true);
+            expect(res.body.originalName).toBe('test.txt');
 
-        // Verify it exists in correct path
-        const uploadedPath = res.body.path;
-        expect(fs.existsSync(uploadedPath)).toBe(true);
-        // Should be in data/uploads/test-chat/...
-        expect(uploadedPath).toContain(`data/uploads/${chatId}`);
-
-        // Clean dummy
-        fs.unlinkSync(dummyPath);
+            // Verify it exists in correct path
+            const uploadedPath = res.body.path;
+            expect(fs.existsSync(uploadedPath)).toBe(true);
+            // Should be in data/uploads/test-chat/...
+            expect(uploadedPath).toContain(`data/uploads/${chatId}`);
+        } finally {
+            // Clean dummy
+            if (fs.existsSync(dummyPath)) {
+                fs.unlinkSync(dummyPath);
+            }
+        }
     });
 
     test('POST /v1/chat/:id/files fails without file', async () => {
