@@ -41,7 +41,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
         tools: [
             {
                 name: "node_red_list_flows",
-                description: "List all active Node-RED flows (tabs). Returns ID, label, and status.",
+                description: "List all active Node-RED flows (tabs). STRICTLY FOR HOME ASSISTANT AUTOMATION ONLY. Do not use for general purpose computing.",
                 inputSchema: {
                     type: "object",
                     properties: {},
@@ -50,7 +50,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "node_red_get_flow",
-                description: "Get the full JSON definition of a specific flow (tab) and its nodes.",
+                description: "Get the full JSON definition of a specific flow (tab). STRICTLY FOR HOME ASSISTANT AUTOMATION ONLY.",
                 inputSchema: {
                     type: "object",
                     properties: {
@@ -61,7 +61,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "node_red_update_flow",
-                description: "Update the configuration of a specific flow. WARNING: This replaces the flow content.",
+                description: "Update a flow configuration. WARNING: Replaces content. STRICTLY FOR HOME ASSISTANT AUTOMATION ONLY. Do not use for external scraping or general API tasks.",
                 inputSchema: {
                     type: "object",
                     properties: {
