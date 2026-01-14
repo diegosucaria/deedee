@@ -85,6 +85,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         case "node_red_list_flows": {
             try {
                 const flows = await client.listFlows();
+                const totalCount = Array.isArray(flows) ? flows.length : 0;
+                console.error(`[NodeRED] Found ${totalCount} items in /flows response.`);
+
+                // Debug: Log first item to check structure
+                if (totalCount > 0) {
+                    console.error('[NodeRED] Sample item:', JSON.stringify(flows[0]));
+                }
+
                 // We only want the tabs usually? Or the full dump?
                 // The API /flows returns everything (nodes + tabs).
                 // Let's filter to just type: 'tab' for the list
@@ -92,6 +100,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 // If the user wants to see everything, they can.
                 // But for "list flows", let's return tabs.
                 const tabs = Array.isArray(flows) ? flows.filter(n => n.type === 'tab') : [];
+                console.error(`[NodeRED] Returning ${tabs.length} tabs.`);
                 return {
                     content: [{
                         type: "text",

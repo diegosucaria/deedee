@@ -107,8 +107,14 @@ class Router {
 
             console.log('[Router] Raw Text:', text);
 
-            // Cleanup potential markdown blocks if the model wrapped JSON
-            text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+            // Advanced JSON extraction
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            if (jsonMatch) {
+                text = jsonMatch[0];
+            } else {
+                // Remove markdown and trim as fallback
+                text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+            }
 
             const decision = JSON.parse(text);
 
