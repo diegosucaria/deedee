@@ -508,11 +508,26 @@ class Agent {
             const wClean = w.contact_string.replace(/[^0-9]/g, '');
             const msgClean = contactString.replace(/[^0-9]/g, '');
 
-            if (wClean.length >= 9 && msgClean.length >= 9) {
-              // Match last 9 digits (safe threshold covering Argentina Area Codes + Number)
-              if (wClean.slice(-9) === msgClean.slice(-9)) {
+            // DEBUG WATCHER
+            // console.log(`[Watcher Debug] Checking ${w.name} (${wClean}) against Incoming (${msgClean})`);
+
+            if (wClean.length >= 8 && msgClean.length >= 8) {
+              // Match last 8 digits (reduced from 9 to be safer for varying area codes)
+              // 8 digits usually covers the number without area code in many places, or at least substantial overlap.
+              // For Argentina: 9 + 351 + 6/7 digits. 
+              // 5517678 is 7 digits.
+              // 3515517678 is 10 digits.
+              // 93515517678 is 11 digits.
+              // If we compare last 8: 515517678 vs ...
+              // Actually, simply using endsWith might be safer if we assume one is a suffix of the other?
+
+              if (msgClean.endsWith(wClean) || wClean.endsWith(msgClean)) {
+                isContactMatch = true;
+              } else if (wClean.length >= 9 && msgClean.length >= 9 && wClean.slice(-9) === msgClean.slice(-9)) {
                 isContactMatch = true;
               }
+
+              // console.log(`[Watcher Debug] Match Result: ${isContactMatch}`);
             }
 
             // 2. Fallback to direct string inclusion (handles names or shorter numbers)
