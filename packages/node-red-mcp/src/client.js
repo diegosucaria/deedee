@@ -62,27 +62,9 @@ class NodeREDClient {
     async listFlows() {
         // GET /flows returns the active flow configuration
         const headers = await this._getHeaders();
-        console.error(`[NodeRED Debug] requesting ${this.client.defaults.baseURL}/flows`);
-        console.error(`[NodeRED Debug] Headers:`, JSON.stringify(headers));
 
         try {
             const response = await this.client.get('/flows', { headers });
-            console.error(`[NodeRED Debug] Status: ${response.status}`);
-            console.error(`[NodeRED Debug] Content-Type: ${response.headers['content-type']}`);
-
-            // Check if we got HTML instead of JSON (common with auth proxies)
-            if (response.headers['content-type'] && response.headers['content-type'].includes('text/html')) {
-                console.error('[NodeRED Debug] Received HTML response! Likely hitting a login page or wrong URL.');
-                console.error('[NodeRED Debug] Preview:', typeof response.data === 'string' ? response.data.substring(0, 200) : 'Not string');
-            } else {
-                console.error('[NodeRED Debug] Data Type:', typeof response.data);
-                console.error('[NodeRED Debug] Is Array?', Array.isArray(response.data));
-                if (Array.isArray(response.data)) {
-                    console.error(`[NodeRED Debug] Array Length: ${response.data.length}`);
-                } else {
-                    console.error('[NodeRED Debug] Data Preview:', JSON.stringify(response.data).substring(0, 200));
-                }
-            }
 
             if (response.status !== 200) throw new Error(`Failed to list flows: ${response.status} ${response.statusText}`);
 
@@ -90,11 +72,9 @@ class NodeREDClient {
 
             // Handle v1 (array) vs v2 ({ rev, flows: [] }) structure
             if (data && typeof data === 'object' && !Array.isArray(data) && Array.isArray(data.flows)) {
-                console.error(`[NodeRED Debug] Detected v2 API response with revision ${data.rev}`);
                 data = data.flows;
             } else if (!Array.isArray(data)) {
-                console.error('[NodeRED Debug] Response is not an array and not v2 object, wrapping single object.');
-                // Helper: if data is empty/null, return empty array
+                // Helper: if data is empty/null, return empty array. If single object, wrap it.
                 if (!data) {
                     data = [];
                 } else {
@@ -103,11 +83,7 @@ class NodeREDClient {
             }
             return data;
         } catch (error) {
-            console.error('[NodeRED Debug] Request Failed:', error.message);
-            if (error.response) {
-                console.error('[NodeRED Debug] Response Status:', error.response.status);
-                console.error('[NodeRED Debug] Response Data:', error.response.data);
-            }
+            console.error('[NodeRED] Request Failed:', error.message);
             throw error;
         }
     }
