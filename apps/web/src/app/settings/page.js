@@ -10,7 +10,9 @@ import VoiceSelector from '@/components/VoiceSelector';
 
 import InterfacesClient from '@/components/InterfacesClient';
 
-export default function SettingsPage() {
+import { Suspense } from 'react';
+
+function SettingsContent() {
     const router = useRouter();
     const searchParams = useSearchParams();
     const activeTab = searchParams.get('tab') || 'general';
@@ -295,6 +297,14 @@ export default function SettingsPage() {
                 )}
             </section>
         </div>
+    );
+}
+
+export default function SettingsPage() {
+    return (
+        <Suspense fallback={<div className="flex h-screen items-center justify-center bg-zinc-950 text-zinc-500">Loading settings...</div>}>
+            <SettingsContent />
+        </Suspense>
     );
 }
 
