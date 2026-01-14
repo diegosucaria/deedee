@@ -85,7 +85,18 @@ class NodeREDClient {
             }
 
             if (response.status !== 200) throw new Error(`Failed to list flows: ${response.status} ${response.statusText}`);
-            return response.data;
+
+            let data = response.data;
+            if (!Array.isArray(data)) {
+                console.error('[NodeRED Debug] Response is not an array, wrapping single object.');
+                // Helper: if data is empty/null, return empty array
+                if (!data) {
+                    data = [];
+                } else {
+                    data = [data];
+                }
+            }
+            return data;
         } catch (error) {
             console.error('[NodeRED Debug] Request Failed:', error.message);
             if (error.response) {
