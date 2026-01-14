@@ -36,6 +36,7 @@ describe('NodeREDClient', () => {
     test('listFlows should call /flows', async () => {
         mockAxiosInstance.get.mockResolvedValue({
             status: 200,
+            headers: { 'content-type': 'application/json' },
             data: [{ id: 'flow1', type: 'tab' }]
         });
         client.token = 'fake-token';
