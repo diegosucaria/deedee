@@ -15,24 +15,8 @@ class NodeREDClient {
     async authenticate() {
         if (!this.username || !this.password) return;
 
+        // Try Node-RED specific Token Auth first
         try {
-            // Node-RED Admin Auth: POST /auth/token
-            // Only if "admin_auth" is enabled in settings.js
-            // However, Basic Auth might also be used at Nginx level?
-            // User said "Basic Auth".
-            // If it's pure Basic Auth (HTTP header), we set it on the client.
-            // If it's Node-RED internal auth (login page), we need the token flow.
-            // Let's support both: Basic Auth via defaults, Token via specific flow.
-
-            // Strategy: Assume standard HTTP Basic Auth first if provided?
-            // Actually, Node-RED often uses a custom auth scheme that returns an access_token.
-            // But "http://homeassistant.local:1880/" usually implies direct access.
-            // If HA Addon has "credential_secret", it uses Node-RED auth.
-            // If user said "username and password", let's try to set Basic Auth header first.
-            // Wait, standard node-red auth endpoint is: POST /auth/token
-            // { "client_id": "node-red-editor", "grant_type": "password", "username": "...", "password": "..." }
-
-            // Let's try the Token flow first as it's standard for secure installs.
             const response = await this.client.post('/auth/token', {
                 client_id: 'node-red-editor',
                 grant_type: 'password',
@@ -43,20 +27,18 @@ class NodeREDClient {
 
             if (response.status === 200 && response.data.access_token) {
                 this.token = response.data.access_token;
-                console.error('[NodeRED] Authenticated via /auth/token');
-            } else {
-                // Fallback: Maybe it's HTTP Basic Auth?
-                // Configure axios to use Basic Auth for future requests
-                // But axios config is static.
-                // Let's try to set it if token flow failed or wasn't needed?
-                // Actually, if /auth/token 404s, maybe no auth is needed or it IS basic auth.
-                // Let's assume Token flow. If it fails, we throw or warn.
-                console.warn('[NodeRED] /auth/token failed or returned no token. Trying without or relying on Basic Auth if configured globally.');
+                console.error('[NodeRED] Authenticated via /auth/token (Bearer)');
+                return;
             }
-
         } catch (e) {
-            console.error('[NodeRED] Auth error:', e.message);
+            // Ignore auth endpoint failure, fall through to Basic Auth
+            console.error('[NodeRED] /auth/token failed, trying Basic Auth fallback:', e.message);
         }
+
+        // Fallback: Assume HTTP Basic Auth
+        // We set a flag so _getHeaders knows to use it.
+        this.useBasicAuth = true;
+        console.error('[NodeRED] Using HTTP Basic Auth');
     }
 
     async _getHeaders() {
@@ -64,9 +46,14 @@ class NodeREDClient {
             'Content-Type': 'application/json',
             'Node-RED-API-Version': 'v2'
         };
+
         if (this.token) {
             headers['Authorization'] = `Bearer ${this.token}`;
+        } else if (this.useBasicAuth && this.username && this.password) {
+            const encoded = Buffer.from(`${this.username}:${this.password}`).toString('base64');
+            headers['Authorization'] = `Basic ${encoded}`;
         }
+
         return headers;
     }
 
