@@ -225,7 +225,7 @@ class GSuiteService {
         }).join('\n');
     }
 
-    async createEvent({ summary, startTime, endTime, description }) {
+    async createEvent({ summary, startTime, endTime, description, timeZone }) {
         if (!this.ready || this.clients.size === 0) return 'No Google accounts connected.';
 
         // Select Account: Prefer 'personal', then first one
@@ -258,9 +258,14 @@ class GSuiteService {
             const event = {
                 summary,
                 description,
-                start: { dateTime: startTime, timeZone: 'UTC' },
-                end: { dateTime: endTime, timeZone: 'UTC' },
+                start: { dateTime: startTime },
+                end: { dateTime: endTime },
             };
+
+            if (timeZone) {
+                event.start.timeZone = timeZone;
+                event.end.timeZone = timeZone;
+            }
 
             const res = await calendar.events.insert({
                 calendarId: 'primary',

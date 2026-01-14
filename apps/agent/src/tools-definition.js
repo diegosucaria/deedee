@@ -119,8 +119,9 @@ const toolDefinitions = [
           type: "OBJECT",
           properties: {
             summary: { type: "STRING", description: "Title of the event" },
-            startTime: { type: "STRING", description: "Start time in ISO 8601 format (e.g. '2025-10-22T09:00:00-03:00')" },
+            startTime: { type: "STRING", description: "Start time in ISO 8601 format (e.g. '2025-10-22T09:00:00-03:00'). PREFER including offset." },
             endTime: { type: "STRING", description: "End time in ISO 8601 format" },
+            timeZone: { type: "STRING", description: "Optional. IANA Timezone (e.g. 'America/Argentina/Buenos_Aires'). Defaults to user's local timezone (America/Argentina/Buenos_Aires) if not provided." },
             description: { type: "STRING", description: "Optional description or notes for the event" }
           },
           required: ["summary", "startTime", "endTime"]
