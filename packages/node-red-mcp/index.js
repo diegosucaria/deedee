@@ -147,12 +147,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 }
 
                 // API expects the flow object.
-                // We might need to wrap it?
-                // PUT /flow/:id expects the flow configuration.
-                const result = await client.updateFlow(flowId, {
-                    id: flowId,
+                // fetch existing flow to preserve metadata (label, disabled, etc.)
+                const existingFlow = await client.getFlow(flowId);
+
+                // Merge existing flow with updates
+                // We mainly want to update the 'nodes' but keep the 'label' (name) and others.
+                const updatedFlow = {
+                    ...existingFlow,
                     nodes: parsedNodes
-                });
+                };
+
+                const result = await client.updateFlow(flowId, updatedFlow);
 
                 return {
                     content: [{
