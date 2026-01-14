@@ -33,7 +33,7 @@ describe('File Upload API', () => {
     test('POST /v1/chat/:id/files uploads a file', async () => {
         const chatId = 'test-chat';
         // Create dummy file
-        const dummyPath = path.join(__dirname, 'dummy.txt');
+        const dummyPath = path.join(__dirname, 'test.txt');
         fs.writeFileSync(dummyPath, 'This is a test file.');
 
         const res = await request(app)
@@ -42,7 +42,7 @@ describe('File Upload API', () => {
 
         expect(res.status).toBe(200);
         expect(res.body.success).toBe(true);
-        expect(res.body.originalName).toBe('dummy.txt');
+        expect(res.body.originalName).toBe('test.txt');
 
         // Verify it exists in correct path
         const uploadedPath = res.body.path;
