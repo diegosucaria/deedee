@@ -298,8 +298,10 @@ describe('WhatsAppService Unit Tests', () => {
         // For now, let's skip the LID Map test part or assume I'll fix it.
         // Actually, let's keep the test as is, if it fails I know I broke LID map.
 
-        // Manual population for test sake since event listener might be gone
-        whatsapp.lidMap.set(lidJid, realNumber);
+        // Mock Store resolution
+        whatsapp.store = {
+            getContactByLid: jest.fn().mockReturnValue(realNumber + '@s.whatsapp.net')
+        };
 
         // 2. Handle Message (Missing Participant)
         await whatsapp.handleMessage({

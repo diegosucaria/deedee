@@ -257,7 +257,7 @@ class WhatsAppService {
         this.qr = null;
         this.status = 'disconnected';
         this.reconnectAttempts = 0;
-        this.lidMap = new Map(); // Store LID -> Phone Number mapping
+        // this.lidMap removed in favor of direct DB lookup via this.store
         // this.contacts removed in favor of this.store
         this.store = null;
 
@@ -450,10 +450,13 @@ class WhatsAppService {
                         console.log(`${this.logPrefix} Resolving LID (via participant) ${phoneNumber} to ${participantNumber}`);
                         phoneNumber = participantNumber;
                     }
-                } else if (this.lidMap.has(remoteJid)) {
-                    const resolvedMapNumber = this.lidMap.get(remoteJid);
-                    console.log(`${this.logPrefix} Resolving LID (via map) ${phoneNumber} to ${resolvedMapNumber}`);
-                    phoneNumber = resolvedMapNumber;
+                } else if (this.store) {
+                    const resolvedJid = this.store.getContactByLid(remoteJid);
+                    if (resolvedJid) {
+                        const resolvedPhone = resolvedJid.split('@')[0];
+                        console.log(`${this.logPrefix} Resolving LID (via DB) ${phoneNumber} to ${resolvedPhone}`);
+                        phoneNumber = resolvedPhone;
+                    }
                 }
             }
 
