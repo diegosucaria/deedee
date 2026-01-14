@@ -15,6 +15,7 @@ COPY apps/api/package.json apps/api/package.json
 COPY apps/supervisor/package.json apps/supervisor/package.json
 COPY packages/shared/package.json packages/shared/package.json
 COPY packages/mcp-servers/package.json packages/mcp-servers/package.json
+COPY packages/node-red-mcp/package.json packages/node-red-mcp/package.json
 
 # Copy all package.json files from inside mcp-servers too if they exist, 
 # or we can rely on workspace definitions. 
