@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { Target, Database, Tags, Wrench } from 'lucide-react';
 import { clsx } from 'clsx';
 import GoalList from '@/components/GoalList';
@@ -10,7 +11,13 @@ import ToolsList from '@/components/ToolsList';
 import MCPServerList from '@/components/MCPServerList';
 
 export default function BrainTabs({ goals, facts, aliases, tools, servers }) {
-    const [activeTab, setActiveTab] = useState('goals');
+    const router = useRouter();
+    const pathname = usePathname();
+    const activeTab = useSearchParams().get('tab') || 'goals';
+
+    const handleTabChange = (tabId) => {
+        router.replace(`${pathname}?tab=${tabId}`);
+    };
 
     const tabs = [
         { id: 'goals', label: 'Goals', icon: Target },
@@ -28,7 +35,7 @@ export default function BrainTabs({ goals, facts, aliases, tools, servers }) {
                     return (
                         <button
                             key={tab.id}
-                            onClick={() => setActiveTab(tab.id)}
+                            onClick={() => handleTabChange(tab.id)}
                             className={clsx(
                                 "flex items-center gap-2 px-4 py-3 text-sm font-medium transition-all rounded-t-lg relative bottom-[-1px]",
                                 isActive

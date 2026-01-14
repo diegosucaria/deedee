@@ -737,7 +737,7 @@ export default function ChatSessionPage({ params }) {
             </div>
 
             {/* Input */}
-            <div className="border-t border-zinc-800 bg-zinc-950 p-4">
+            <div className="border-t border-zinc-800 bg-zinc-950 p-2 md:p-4">
                 <form onSubmit={handleSendMessage} className="mx-auto max-w-4xl">
 
                     {/* Attachments Preview */}
@@ -777,13 +777,13 @@ export default function ChatSessionPage({ params }) {
                         </div>
                     )}
 
-                    <div className="flex gap-3 items-end">
+                    <div className="flex gap-2 md:gap-3 items-end">
                         {/* Audio / Recording Controls */}
                         {isRecording ? (
                             <button
                                 type="button"
                                 onClick={stopRecording}
-                                className="flex items-center justify-center h-12 w-12 rounded-xl bg-red-600/20 text-red-500 animate-pulse border border-red-500/50 hover:bg-red-600/30 transition-all"
+                                className="flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-red-600/20 text-red-500 animate-pulse border border-red-500/50 hover:bg-red-600/30 transition-all"
                             >
                                 <StopCircle className="h-6 w-6" />
                             </button>
@@ -792,7 +792,7 @@ export default function ChatSessionPage({ params }) {
                                 type="button"
                                 onClick={startRecording}
                                 disabled={!!audioBlob} // Disable if already has audio
-                                className="flex items-center justify-center h-12 w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 hover:text-indigo-400 hover:border-indigo-500/50 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                                className="flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 hover:text-indigo-400 hover:border-indigo-500/50 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
                             >
                                 <Mic className="h-5 w-5" />
                             </button>
@@ -811,7 +811,7 @@ export default function ChatSessionPage({ params }) {
                             <label
                                 htmlFor="image-upload"
                                 className={clsx(
-                                    "flex items-center justify-center h-12 w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 transition-all cursor-pointer",
+                                    "flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 transition-all cursor-pointer",
                                     selectedImage ? "opacity-30 cursor-not-allowed" : "hover:text-pink-400 hover:border-pink-500/50"
                                 )}
                             >
@@ -831,7 +831,7 @@ export default function ChatSessionPage({ params }) {
                             <label
                                 htmlFor="file-upload"
                                 className={clsx(
-                                    "flex items-center justify-center h-12 w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 transition-all cursor-pointer",
+                                    "flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 transition-all cursor-pointer",
                                     selectedFile ? "opacity-30 cursor-not-allowed" : "hover:text-emerald-400 hover:border-emerald-500/50"
                                 )}
                             >
@@ -852,14 +852,14 @@ export default function ChatSessionPage({ params }) {
                             }}
                             placeholder={`Message...`}
                             rows={1}
-                            className="flex-1 rounded-xl border border-zinc-700 bg-zinc-900 px-4 py-3 min-h-[48px] max-h-[150px] text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all resize-none scrollbar-thin scrollbar-thumb-zinc-700 font-sans"
+                            className="flex-1 rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 md:px-4 md:py-3 min-h-[40px] md:min-h-[48px] max-h-[150px] text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all resize-none scrollbar-thin scrollbar-thumb-zinc-700 font-sans"
                         />
 
                         {/* Send Button */}
                         <button
                             type="submit"
                             disabled={!isConnected || (!inputValue.trim() && !audioBlob && !selectedImage && !selectedFile)}
-                            className="flex items-center justify-center h-12 w-12 rounded-xl bg-indigo-600 text-white transition-colors hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                            className="flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-indigo-600 text-white transition-colors hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
                             <Send className="h-5 w-5" />
                         </button>

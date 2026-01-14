@@ -401,7 +401,7 @@ export default function GeminiLivePage() {
             {/* Background Orb */}
             <div
                 className={clsx(
-                    "absolute w-96 h-96 rounded-full blur-[100px] transition-all duration-300",
+                    "absolute w-72 h-72 md:w-96 md:h-96 rounded-full blur-[100px] transition-all duration-300",
                     status === 'active' ? "bg-indigo-600/50 scale-110" : "bg-zinc-800/30 scale-100",
                     status === 'error' && "bg-red-600/40"
                 )}
@@ -452,7 +452,7 @@ export default function GeminiLivePage() {
                         onClick={connect}
                         disabled={status === 'connecting'}
                         className={clsx(
-                            "group relative flex items-center justify-center w-20 h-20 rounded-full transition-all duration-300",
+                            "group relative flex items-center justify-center w-16 h-16 md:w-20 md:h-20 rounded-full transition-all duration-300",
                             status === 'connecting'
                                 ? "bg-zinc-800 cursor-wait opacity-80"
                                 : "bg-white text-black hover:scale-105 active:scale-95 shadow-[0_0_40px_-10px_rgba(255,255,255,0.3)] hover:shadow-[0_0_60px_-15px_rgba(255,255,255,0.4)]"
@@ -469,7 +469,7 @@ export default function GeminiLivePage() {
                         <button
                             onClick={() => setIsMuted(!isMuted)}
                             className={clsx(
-                                "flex items-center justify-center w-16 h-16 rounded-full transition-all duration-200 border",
+                                "flex items-center justify-center w-14 h-14 md:w-16 md:h-16 rounded-full transition-all duration-200 border",
                                 isMuted
                                     ? "bg-red-500/10 border-red-500/50 text-red-500 hover:bg-red-500/20"
                                     : "bg-white/5 border-white/5 text-white hover:bg-white/10"
@@ -480,7 +480,7 @@ export default function GeminiLivePage() {
 
                         <button
                             onClick={disconnect}
-                            className="flex items-center justify-center w-16 h-16 rounded-full bg-red-500 text-white hover:bg-red-600 transition-all duration-200 hover:rotate-90 hover:scale-105 active:scale-95 shadow-lg shadow-red-500/20"
+                            className="flex items-center justify-center w-14 h-14 md:w-16 md:h-16 rounded-full bg-red-500 text-white hover:bg-red-600 transition-all duration-200 hover:rotate-90 hover:scale-105 active:scale-95 shadow-lg shadow-red-500/20"
                         >
                             <PhoneOff className="w-7 h-7" />
                         </button>
