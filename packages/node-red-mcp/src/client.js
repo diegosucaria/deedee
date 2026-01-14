@@ -87,8 +87,13 @@ class NodeREDClient {
             if (response.status !== 200) throw new Error(`Failed to list flows: ${response.status} ${response.statusText}`);
 
             let data = response.data;
-            if (!Array.isArray(data)) {
-                console.error('[NodeRED Debug] Response is not an array, wrapping single object.');
+
+            // Handle v1 (array) vs v2 ({ rev, flows: [] }) structure
+            if (data && typeof data === 'object' && !Array.isArray(data) && Array.isArray(data.flows)) {
+                console.error(`[NodeRED Debug] Detected v2 API response with revision ${data.rev}`);
+                data = data.flows;
+            } else if (!Array.isArray(data)) {
+                console.error('[NodeRED Debug] Response is not an array and not v2 object, wrapping single object.');
                 // Helper: if data is empty/null, return empty array
                 if (!data) {
                     data = [];
