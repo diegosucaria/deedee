@@ -7,6 +7,7 @@ const Database = require('better-sqlite3');
 
 class SQLiteStore {
     constructor(filePath) {
+        this.path = filePath;
         this.db = new Database(filePath);
         this.init();
     }

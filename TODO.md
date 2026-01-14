@@ -79,3 +79,6 @@
 - [x] Smart Context: Increased WhatsApp History Limits (3x)
 - [x] Tone Matching: Impersonation Mode for 'User' Session
 - [x] **Avatar Fallback**: Implemented automatic redirect to `ui-avatars.com` for missing profile pictures.
+- [x] **Database Stats**: Added Agent Database statistics card in System page (Size, Counts).
+- [x] **Mobile UX**: Optimized mobile layout for Chat and Live pages.
+- [x] **UI Persistence**: Settings and Brain tabs now persist state in URL parameters.

@@ -2,14 +2,15 @@
 
 import { useState, useEffect } from 'react';
 import { LatencyChart, TokenEfficiencyChart, DailyCostChart } from '@/components/InteractiveCharts';
-import { RefreshCw, Activity, Cpu, DollarSign } from 'lucide-react';
-import { getStatsLatency, getStatsUsage, getStatsCostTrend, getDailyCostTrend } from '../../actions';
+import { RefreshCw, Activity, Cpu, DollarSign, Database } from 'lucide-react';
+import { getStatsLatency, getStatsUsage, getStatsCostTrend, getDailyCostTrend, getSystemStats } from '../../actions';
 
 export default function StatsClient({ startDate, endDate }) {
     const [latencyData, setLatencyData] = useState([]);
     const [tokenTrendData, setTokenTrendData] = useState([]);
     const [dailyCostData, setDailyCostData] = useState([]);
     const [usageData, setUsageData] = useState(null);
+    const [dbStats, setDbStats] = useState(null);
     const [loading, setLoading] = useState(true);
 
     const fetchData = async () => {
@@ -87,6 +88,10 @@ export default function StatsClient({ startDate, endDate }) {
             const usageJson = await getStatsUsage(qs);
             setUsageData(usageJson);
 
+            // Fetch System/DB Stats
+            const sysStats = await getSystemStats(qs);
+            setDbStats(sysStats);
+
         } catch (e) {
             console.error('[StatsClient] Fetch Error:', e);
         } finally {
@@ -127,6 +132,55 @@ export default function StatsClient({ startDate, endDate }) {
                 </div>
                 <div className="w-full h-[300px]">
                     <TokenEfficiencyChart data={tokenTrendData} />
+                </div>
+            </div>
+
+            {/* Database Stats */}
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[300px] flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold flex items-center gap-2 text-zinc-300">
+                        <Database className="w-5 h-5 text-purple-400" />
+                        Agent Database
+                    </h2>
+                </div>
+                <div className="space-y-4 flex-1">
+                    <div className="p-4 rounded-lg bg-zinc-950 border border-zinc-800 flex items-center justify-between">
+                        <div>
+                            <p className="text-sm text-zinc-500 mb-1">Storage Size</p>
+                            <p className="text-2xl font-bold text-zinc-200">
+                                {(dbStats?.sizeBytes ? (dbStats.sizeBytes / 1024 / 1024).toFixed(2) : '0.00')} MB
+                            </p>
+                        </div>
+                        <div className="h-10 w-10 rounded-full bg-purple-500/10 flex items-center justify-center">
+                            <Database className="h-5 w-5 text-purple-400" />
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
+                            <p className="text-xs text-zinc-500">Messages</p>
+                            <p className="text-lg font-mono text-zinc-300">{dbStats?.counts?.messages?.toLocaleString() || 0}</p>
+                        </div>
+                        <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
+                            <p className="text-xs text-zinc-500">Sessions</p>
+                            <p className="text-lg font-mono text-zinc-300">{dbStats?.counts?.chat_sessions?.toLocaleString() || 0}</p>
+                        </div>
+                        <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
+                            <p className="text-xs text-zinc-500">People</p>
+                            <p className="text-lg font-mono text-zinc-300">{dbStats?.counts?.people?.toLocaleString() || 0}</p>
+                        </div>
+                        <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
+                            <p className="text-xs text-zinc-500">Goals</p>
+                            <p className="text-lg font-mono text-zinc-300">{dbStats?.counts?.goals?.toLocaleString() || 0}</p>
+                        </div>
+                        <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
+                            <p className="text-xs text-zinc-500">Scheduled Jobs</p>
+                            <p className="text-lg font-mono text-zinc-300">{dbStats?.counts?.scheduled_jobs?.toLocaleString() || 0}</p>
+                        </div>
+                        <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
+                            <p className="text-xs text-zinc-500">Memories (KV)</p>
+                            <p className="text-lg font-mono text-zinc-300">{dbStats?.counts?.kv_store?.toLocaleString() || 0}</p>
+                        </div>
+                    </div>
                 </div>
             </div>
 

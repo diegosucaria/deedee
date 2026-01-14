@@ -159,6 +159,15 @@ export async function updateJournal(date, content) {
     } catch (e) { return { success: false, error: e.message }; }
 }
 // --- Stats ---
+export async function getSystemStats(query = '') {
+    try {
+        return await fetchAPI(`/v1/stats${query}`);
+    } catch (error) {
+        console.error('getSystemStats Error:', error);
+        return {};
+    }
+}
+
 export async function getStatsLatency() {
     try {
         return await fetchAPI('/v1/stats/latency');

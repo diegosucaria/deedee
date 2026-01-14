@@ -1069,7 +1069,18 @@ class AgentDB {
   }
 
   getStats() {
-    const totalMessages = this.db.prepare('SELECT COUNT(*) as count FROM messages').get().count;
+    let sizeBytes = 0;
+    try { sizeBytes = fs.statSync(this.dbPath).size; } catch (e) { }
+
+    const tables = ['messages', 'chat_sessions', 'goals', 'kv_store', 'people', 'scheduled_jobs', 'watchers', 'usage_logs', 'token_usage', 'summaries', 'metrics', 'job_logs'];
+    const tableCounts = {};
+    for (const t of tables) {
+      try {
+        tableCounts[t] = this.db.prepare(`SELECT COUNT(*) as count FROM ${t}`).get().count;
+      } catch (e) { tableCounts[t] = 0; }
+    }
+
+    const totalMessages = tableCounts.messages;
 
     // Last 24h
     const messages24h = this.db.prepare("SELECT COUNT(*) as count FROM messages WHERE timestamp > datetime('now', '-24 hours')").get().count;
@@ -1110,6 +1121,8 @@ class AgentDB {
     `).get().avg_tokens || 0;
 
     return {
+      sizeBytes,
+      counts: tableCounts,
       messages: {
         total: totalMessages,
         last24h: messages24h,
