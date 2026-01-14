@@ -50,7 +50,24 @@ To enable Home Assistant integration:
     ```
     *Note*: The `ha-mcp` server acts as a standard API client and does not require server-side integration in Home Assistant. Ensure `HA_URL` and `HA_TOKEN` are set in your environment.
 
-### 2. PostgreSQL
+### 2. Node-RED
+```json
+{
+  "node-red": {
+    "command": "node",
+    "args": ["index.js"],
+    "cwd": "../../packages/node-red-mcp",
+    "env": {
+      "NODE_RED_URL": "${NODE_RED_URL}",
+      "NODE_RED_USERNAME": "${NODE_RED_USERNAME}",
+      "NODE_RED_PASSWORD": "${NODE_RED_PASSWORD}"
+    },
+    "disabled": false
+  }
+}
+```
+
+### 3. PostgreSQL
 ```json
 {
   "postgres": {

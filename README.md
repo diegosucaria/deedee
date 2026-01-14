@@ -87,6 +87,8 @@ Everything is customizable via environment variables. Like which models to use.
 - **🔌 MCP Integration**: Supports Model Context Protocol.
     - **Home Assistant**: "Turn on the living room light" or "Set the temperature to 22°C". Active and integrated.
     - **Plex**: "Play the movie Inception" or "Recommend me a movie I haven't seen"/
+    - **Home Assistant**: "Turn on the living room light" or "Set the temperature to 22°C". Active and integrated.
+    - **Node-RED**: Control automation flows directly.
     - **GSuite**: "Calendar", "Gmail".
     - **Local**: Shell, Filesystem.
 - **📱 API Gateway**: Synchronous API (`POST /v1/chat`) for iOS Shortcuts and Dashboards. Includes **Dictation Safeguards** for voice input.

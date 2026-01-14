@@ -22,5 +22,18 @@
             "PLEX_TOKEN": "${PLEX_TOKEN}"
         },
         "disabled": false
+    },
+    "node-red": {
+        "command": "node",
+        "args": [
+            "index.js"
+        ],
+        "cwd": "../../packages/node-red-mcp",
+        "env": {
+            "NODE_RED_URL": "${NODE_RED_URL}",
+            "NODE_RED_USERNAME": "${NODE_RED_USERNAME}",
+            "NODE_RED_PASSWORD": "${NODE_RED_PASSWORD}"
+        },
+        "disabled": false
     }
 }

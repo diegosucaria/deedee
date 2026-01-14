@@ -1,0 +1,16 @@
+{
+    "name": "@deedee/node-red-mcp",
+    "version": "0.0.1",
+    "main": "index.js",
+    "scripts": {
+        "test": "jest"
+    },
+    "dependencies": {
+        "@modelcontextprotocol/sdk": "^1.0.0",
+        "axios": "^1.6.0",
+        "dotenv": "^16.0.0"
+    },
+    "devDependencies": {
+        "jest": "^29.7.0"
+    }
+}
