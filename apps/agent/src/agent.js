@@ -654,8 +654,12 @@ class Agent {
       // Get brief history for context (last 3 messages)
       const routingHistory = this.db.getHistoryForChat(chatId, 3);
 
+      // STICKY ROUTING: Check if we were using PRO recently
+      const lastModelMsg = routingHistory.find(m => m.role === 'model');
+      const lastModel = lastModelMsg?.metadata?.model;
+
       // Pass the primary content or parts to router
-      const decision = await this.router.route(message.parts || message.content, routingHistory);
+      const decision = await this.router.route(message.parts || message.content, routingHistory, lastModel);
       const routerDuration = Date.now() - routerStart;
       console.timeEnd('[Agent] Router Duration');
 
@@ -1224,7 +1228,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
           console.log('[Agent] Final Response (to console):', text);
         } else {
           const reply = createAssistantMessage(text);
-          reply.metadata = { chatId: message.metadata?.chatId };
+          reply.metadata = { chatId: message.metadata?.chatId, model: decision.model };
           reply.source = message.source; // Ensure reply source matches incoming message source
           reply.cost = e2eCost;
           reply.tokenCount = e2eTokens;

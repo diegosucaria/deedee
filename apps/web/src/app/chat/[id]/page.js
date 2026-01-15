@@ -94,6 +94,15 @@ export default function ChatSessionPage({ params }) {
                 }
             }
 
+            // Handle metadata parsing
+            let metadata = m.metadata;
+            if (typeof metadata === 'string') {
+                try { metadata = JSON.parse(metadata); } catch (e) {
+                    // console.warn('[Chat] Failed to parse metadata JSON:', e);
+                    metadata = {};
+                }
+            }
+
             const hasParts = parts && Array.isArray(parts);
 
             // 1. Function Call
@@ -158,7 +167,7 @@ export default function ChatSessionPage({ params }) {
             if (!content && typeof m.content === 'string') content = m.content;
             if (!content) content = '';
 
-            return { role, content, type, timestamp: m.timestamp };
+            return { role, content, type, timestamp: m.timestamp, metadata };
 
         } catch (error) {
             console.error('[Chat] Message Normalization Failed:', error, m);
@@ -273,6 +282,7 @@ export default function ChatSessionPage({ params }) {
                                 content: msgContent,
                                 type: data.type,
                                 timestamp: data.timestamp,
+                                metadata: data.metadata,
                                 isFinal: true
                             }
                         ];
@@ -284,6 +294,7 @@ export default function ChatSessionPage({ params }) {
                         content: msgContent,
                         type: data.type,
                         timestamp: data.timestamp,
+                        metadata: data.metadata,
                         isFinal: true
                     }];
                 });
@@ -710,8 +721,16 @@ export default function ChatSessionPage({ params }) {
                                         <ReactMarkdown>{msg.content}</ReactMarkdown>
                                     </div>
                                 )}
-                                <div className={clsx("mt-1 text-[10px] opacity-50", msg.role === 'user' ? 'text-indigo-200' : 'text-zinc-500')}>
-                                    {typeof msg.timestamp === 'string' ? new Date(msg.timestamp).toLocaleTimeString() : ''}
+                                <div className={clsx("mt-1 text-[10px] opacity-50 flex items-center gap-2", msg.role === 'user' ? 'text-indigo-200' : 'text-zinc-500')}>
+                                    <span>{typeof msg.timestamp === 'string' ? new Date(msg.timestamp).toLocaleTimeString() : ''}</span>
+                                    {msg.metadata?.model && (
+                                        <span className={clsx(
+                                            "px-1.5 py-0.5 rounded text-[9px] font-medium border",
+                                            msg.role === 'user' ? "border-indigo-400/30 bg-indigo-500/10" : "border-zinc-600 bg-zinc-700/50"
+                                        )}>
+                                            {msg.metadata.model}
+                                        </span>
+                                    )}
                                 </div>
                             </div>
                         </div>

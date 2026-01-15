@@ -7,6 +7,7 @@
 - [x] **Dual-Brain Logic**: Routing to `Gemini 2.5 Flash` (Speed) and `Gemini 3 Pro` (Intelligence).
 - [x] **Self-Healing**: Supervisor service monitors Agent health and performs Git rollbacks on failure.
 - [x] **Self-Improvement**: Agent can commit code, install dependencies (`npm`/`pip`), and restart itself.
+- [x] **Sticky Routing**: Pro-active context retention for complex tasks (prevents switching to Flash on short replies).
 
 ### Interfaces
 - [x] **Telegram**: Text and Native Voice (WAV) support.

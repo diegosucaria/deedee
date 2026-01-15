@@ -21,7 +21,7 @@ class Router {
         }
     }
 
-    async route(userMessage, history = []) {
+    async route(userMessage, history = [], lastModel = null) {
         await this._ensureClient();
         try {
             // Format recent history for context
@@ -61,6 +61,11 @@ class Router {
         * **Analysis:** Summarizing long text.
         * **Memory & History:** "Search my conversation with...", "What did I say yesterday?", "Find the message about..." (Requires internal tools, NOT Google).
         
+        ### STICKY ROUTING (CRITICAL)
+        * **Last Used Model:** ${lastModel || 'NONE'}
+        * **Rule:** If the Last Used Model was **PRO**, and the current user input is a **continuation**, **confirmation** ("Yes", "Proceed", "Ok"), or **short follow-up** related to the previous PRO context, **YOU MUST STAY ON PRO**.
+        * **Exception:** Only switch back to FLASH if the user clearly changes the topic to a simple task (Home Automation, Weather, Greeting).
+
         ### RECENT CONTEXT
         ${historyText}
       `;

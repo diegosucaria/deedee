@@ -215,6 +215,11 @@ class AgentDB {
       this.db.exec("ALTER TABLE scheduled_jobs ADD COLUMN expires_at DATETIME");
     } catch (err) { }
 
+    // Migration: Add metadata to messages
+    try {
+      this.db.exec("ALTER TABLE messages ADD COLUMN metadata TEXT");
+    } catch (err) { }
+
     // Migration: Add is_pinned to chat_sessions
     try {
       this.db.exec("ALTER TABLE chat_sessions ADD COLUMN is_pinned INTEGER DEFAULT 0");
@@ -560,13 +565,14 @@ class AgentDB {
 
   saveMessage(msg) {
     const stmt = this.db.prepare(`
-      INSERT INTO messages (id, role, content, parts, source, chat_id, cost, token_count, timestamp)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO messages (id, role, content, parts, source, chat_id, cost, token_count, timestamp, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
     // Fallback if msg.id is missing or generated elsewhere
     const id = msg.id || crypto.randomUUID();
     const partsStr = msg.parts ? JSON.stringify(msg.parts) : null;
-    stmt.run(id, msg.role, msg.content, partsStr, msg.source, msg.metadata?.chatId, msg.cost || 0, msg.tokenCount || 0, msg.timestamp);
+    const metaStr = msg.metadata ? JSON.stringify(msg.metadata) : null;
+    stmt.run(id, msg.role, msg.content, partsStr, msg.source, msg.metadata?.chatId, msg.cost || 0, msg.tokenCount || 0, msg.timestamp, metaStr);
   }
 
   getHistory(options = {}) {
@@ -868,7 +874,7 @@ class AgentDB {
 
     // Get last N messages for this chat
     const stmt = this.db.prepare(`
-      SELECT role, content FROM messages 
+      SELECT role, content, metadata FROM messages 
       WHERE chat_id = ? 
       ORDER BY timestamp DESC 
       LIMIT ?
@@ -878,7 +884,11 @@ class AgentDB {
 
     // Map to Gemini SDK format
     return rows.map(row => {
+      let meta = {};
+      try { meta = row.metadata ? JSON.parse(row.metadata) : {}; } catch (e) { }
+
       // Map 'assistant' role to 'model' for Gemini
+
       // Map 'function' role to 'user' for Gemini (function results are considered user input in the chat loop)
       let role = row.role;
       if (role === 'assistant') role = 'model';
@@ -886,7 +896,7 @@ class AgentDB {
 
       if (row.parts) {
         try {
-          return { role, parts: JSON.parse(row.parts) };
+          return { role, parts: JSON.parse(row.parts), metadata: meta };
         } catch (e) {
           console.error('[DB] Failed to parse message parts:', e);
         }
@@ -895,7 +905,8 @@ class AgentDB {
       // Fallback to content
       return {
         role: role,
-        parts: [{ text: row.content || '' }]
+        parts: [{ text: row.content || '' }],
+        metadata: meta
       };
     });
   }
