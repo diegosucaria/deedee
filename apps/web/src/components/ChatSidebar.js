@@ -258,7 +258,7 @@ export default function ChatSidebar({ sessions = [] }) {
                 )}
 
                 {/* Always show pinned icon if collapsed and pinned */}
-                {isCollapsed && session.is_pinned && (
+                {isCollapsed && !!session.is_pinned && (
                     <div className="absolute top-0 right-0 h-1.5 w-1.5 bg-amber-500 rounded-full animate-pulse" />
                 )}
             </Link>
