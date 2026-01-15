@@ -257,8 +257,6 @@ class WhatsAppService {
         this.qr = null;
         this.status = 'disconnected';
         this.reconnectAttempts = 0;
-        // this.lidMap removed in favor of direct DB lookup via this.store
-        // this.contacts removed in favor of this.store
         this.store = null;
 
         const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
