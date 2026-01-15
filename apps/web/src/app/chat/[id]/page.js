@@ -361,7 +361,7 @@ export default function ChatSessionPage({ params }) {
     const textareaRef = useRef(null);
     useEffect(() => {
         if (textareaRef.current) {
-            textareaRef.current.style.height = '48px'; // Reset to min-height first
+            textareaRef.current.style.height = 'auto'; // Reset to auto to allow shrinking
             const scrollHeight = textareaRef.current.scrollHeight;
             textareaRef.current.style.height = Math.min(scrollHeight, 150) + 'px'; // Cap at 150px
         }
