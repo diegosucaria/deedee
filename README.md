@@ -146,6 +146,14 @@ Deedee comes equipped with a suite of tools, both internal and via MCP.
 -   **Productivity**: `listEvents` (Calendar).
 -   **Life Vaults**: `createVault`, `addToVault` (Ingest files), `readVaultPage`, `listVaultFiles` (Local RAG enabled).
 
+### Multi-Model Support (Beta)
+-   **Supports**: Google Gemini (Auto/Flash/Pro) and **xAI Grok**.
+-   **Configuration**: Set API Keys in `Settings > Models`.
+-   **Selection**: Choose model per-chat via the dropdown in the Web Interface.
+
+### Web Interface
+-   **Dashboard**: `/` - Daily briefing and shortcuts.
+
 ### MCP Servers (Model Context Protocol)
 -   **Plex**: Media library search and status (`plex_mcp_server`).
 -   **Home Assistant**: Control smart home devices (`ha-mcp`).

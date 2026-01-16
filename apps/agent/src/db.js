@@ -1245,6 +1245,29 @@ class AgentDB {
     }
   }
 
+  setAgentSetting(key, value, category = 'general') {
+    const valStr = JSON.stringify(value);
+    const stmt = this.db.prepare(`
+      INSERT INTO agent_settings (key, value, category) VALUES (?, ?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, category = excluded.category, updated_at = CURRENT_TIMESTAMP
+    `);
+    stmt.run(key, valStr, category);
+  }
+
+  getAllAgentSettings() {
+    const stmt = this.db.prepare('SELECT key, value, category FROM agent_settings');
+    const rows = stmt.all();
+    const settings = {};
+    for (const row of rows) {
+      try {
+        settings[row.key] = JSON.parse(row.value);
+      } catch (e) {
+        settings[row.key] = row.value;
+      }
+    }
+    return settings;
+  }
+
   // --- Migration Utilities ---
 
   /**

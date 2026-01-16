@@ -21,6 +21,7 @@ const { Scheduler } = require('./scheduler');
 const axios = require('axios');
 const { getSystemInstruction } = require('./prompts/system');
 const { getFunctionCalls, getThinkingMessage } = require('./utils/helpers');
+const { geminiToOpenAIHistory, openAIToGeminiChunk } = require('./utils/mapper');
 const { PeopleService } = require('./services/people-service');
 const { AnalysisService } = require('./services/analysis-service');
 const { TitleService } = require('./services/title-service');
@@ -90,28 +91,8 @@ class Agent {
 
     this.processMessage = this.processMessage.bind(this);
     this.onMessage = this.onMessage.bind(this);
-    this.loadSettings = this.loadSettings.bind(this);
   }
 
-
-  async loadSettings() {
-    try {
-      const stmt = this.db.db.prepare('SELECT key, value FROM agent_settings');
-      const rows = stmt.all();
-
-      this.settings = rows.reduce((acc, row) => {
-        try {
-          acc[row.key] = JSON.parse(row.value);
-        } catch (e) {
-          acc[row.key] = row.value;
-        }
-        return acc;
-      }, {});
-      console.log(`[Agent] Loaded ${Object.keys(this.settings).length} settings from DB.`);
-    } catch (err) {
-      console.error('[Agent] Failed to load settings:', err);
-    }
-  }
 
   async _loadClientLibrary() {
     return import('@google/genai');
@@ -140,8 +121,25 @@ class Agent {
     // Initialize MCP
     await this.mcp.init();
 
-    // Load Runtime Settings
-    await this.loadSettings();
+    // Load Settings (API Keys, etc)
+    const settings = this.db.getAllAgentSettings();
+    this.settings = settings; // Update this.settings for consistency
+
+    // Check for xAI config
+    if (settings['provider:xai']?.apiKey) {
+      // ... switch to xai ...
+      const apiKey = settings['provider:xai'].apiKey;
+      try {
+        const OpenAI = require('openai');
+        this.xaiClient = new OpenAI({
+          apiKey: apiKey,
+          baseURL: 'https://api.x.ai/v1'
+        });
+        console.log('[Agent] xAI Client Initialized (Grok)');
+      } catch (e) {
+        console.error('[Agent] Failed to init xAI client:', e);
+      }
+    }
 
     // Load Scheduled Jobs
     await this.scheduler.loadJobs();
@@ -323,6 +321,55 @@ class Agent {
           return result.response;
         } catch (ex) { throw ex; }
       }
+      throw e;
+    }
+  }
+
+  /**
+   * Generates stream from Grok/OpenAI client and broadcasts tokens.
+   */
+  async _generateStreamGrok(client, model, userContent, history, chatId) {
+    try {
+      // 1. Map History
+      const messages = geminiToOpenAIHistory(history);
+
+      // 2. Add current user message
+      messages.push({ role: 'user', content: userContent });
+
+      // 3. Create Stream
+      const stream = await client.chat.completions.create({
+        model: model,
+        messages: messages,
+        stream: true
+      });
+
+      let fullText = '';
+
+      for await (const chunk of stream) {
+        const content = chunk.choices[0]?.delta?.content || '';
+        if (content) {
+          fullText += content;
+          // Broadcast
+          if (this.interface.broadcast) {
+            this.interface.broadcast('agent:token', {
+              chatId,
+              content: content,
+              timestamp: Date.now()
+            });
+          } else {
+            this.interface.emit('agent:token', {
+              chatId,
+              content: content,
+              timestamp: Date.now()
+            });
+          }
+        }
+      }
+
+      return fullText;
+
+    } catch (e) {
+      console.error('[Agent] Grok generation failed:', e);
       throw e;
     }
   }
@@ -664,8 +711,46 @@ class Agent {
       console.timeEnd('[Agent] Router Duration');
 
       this.db.logMetric('latency_router', routerDuration, { model: decision.model, chatId, runId });
-
       console.log(`[Agent] Routing to: ${decision.model}`);
+
+      // --- GROK / EXTERNAL MODEL OVERRIDE ---
+      if (message.metadata?.model && message.metadata.model.startsWith('grok')) {
+        const targetModel = message.metadata.model;
+        console.log(`[Agent] Routing Override: Using ${targetModel}`);
+
+        if (!this.xaiClient) {
+          const errReply = createAssistantMessage('System: Grok is not configured. Please set API Key in Settings.');
+          await sendCallback(errReply);
+          return executionSummary;
+        }
+
+        await reportProgress(`Thinking (${targetModel})...`);
+        const history = this.db.getHistoryForChat(chatId, 20); // Static window for now
+
+        const stream = await this._generateStreamGrok(this.xaiClient, targetModel, message.content, history, chatId);
+
+        // Handle stream and callback similar to _generateStream but adapted
+        // Actually _generateStreamGrok should probably return a standard response object or stream?
+        // Let's make _generateStreamGrok handle the stream and broadcasting directly, 
+        // OR return a generator compat with processMessage?
+        // processMessage expects `candidates` object.
+
+        // _generateStreamGrok will handle broadcasting internally and return full text for saving db.
+
+        const fullContent = await stream; // Await the promise which resolves to final text
+
+        const reply = createAssistantMessage(fullContent);
+        reply.source = message.source;
+        reply.metadata = { model: targetModel, chatId };
+
+        await sendCallback(reply);
+        executionSummary.replies.push(reply);
+
+        // Save to DB
+        this.db.saveMessage(reply);
+
+        return executionSummary;
+      }
 
       // --- BYPASS: DIRECT IMAGE GENERATION ---
       if (decision.model === 'IMAGE') {

@@ -29,6 +29,15 @@ export default function ChatSessionPage({ params }) {
     const [vaults, setVaults] = useState([]);
     const [selectedVault, setSelectedVault] = useState('none');
 
+    // Model State
+    const [selectedModel, setSelectedModel] = useState('auto');
+
+    // Load Model Pref
+    useEffect(() => {
+        const saved = localStorage.getItem('deedee_model_pref');
+        if (saved) setSelectedModel(saved);
+    }, []);
+
     // Multimodal State
     const [isRecording, setIsRecording] = useState(false);
     const [audioBlob, setAudioBlob] = useState(null);
@@ -593,7 +602,8 @@ export default function ChatSessionPage({ params }) {
             chatId: chatId,
             metadata: {
                 location: userLocation,
-                vaultId: selectedVault !== 'none' ? selectedVault : undefined
+                vaultId: selectedVault !== 'none' ? selectedVault : undefined,
+                model: selectedModel !== 'auto' ? selectedModel : undefined
             }
         });
     };
@@ -606,6 +616,27 @@ export default function ChatSessionPage({ params }) {
                     <h1 className="text-xl font-semibold text-white truncate max-w-sm">{sessionTitle || 'Chat'}</h1>
                 </div>
                 <div className="flex items-center gap-4">
+                    {/* Model Selector */}
+                    <div className="relative group flex items-center bg-zinc-900 border border-zinc-700 rounded-lg focus-within:ring-1 focus-within:ring-indigo-500 focus-within:border-indigo-500 transition-all hover:border-zinc-600">
+                        <div className="pl-2.5 flex items-center pointer-events-none">
+                            <Code2 className="h-4 w-4 text-zinc-500" />
+                        </div>
+                        <select
+                            value={selectedModel}
+                            onChange={(e) => {
+                                const m = e.target.value;
+                                setSelectedModel(m);
+                                localStorage.setItem('deedee_model_pref', m);
+                            }}
+                            className="appearance-none bg-transparent text-zinc-300 text-sm pl-2 pr-8 py-1.5 cursor-pointer outline-none border-none w-24 md:w-32"
+                        >
+                            <option value="auto">Auto (Gemini)</option>
+                            <option value="grok-beta">Grok Beta</option>
+                            <option value="grok-2-vision-1212">Grok 2 Vision</option>
+                        </select>
+                        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-zinc-500 pointer-events-none" />
+                    </div>
+
                     {/* Vault Selector */}
                     <div className="relative group flex items-center bg-zinc-900 border border-zinc-700 rounded-lg focus-within:ring-1 focus-within:ring-indigo-500 focus-within:border-indigo-500 transition-all hover:border-zinc-600">
                         <div className="pl-2.5 flex items-center pointer-events-none">

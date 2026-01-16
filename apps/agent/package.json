@@ -23,6 +23,7 @@
     "googleapis": "^128.0.0",
     "multer": "^2.0.2",
     "node-schedule": "^2.1.1",
+    "openai": "^6.16.0",
     "pdf-parse": "^2.4.5"
   },
   "devDependencies": {

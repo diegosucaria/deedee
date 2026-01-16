@@ -475,6 +475,29 @@ function createInternalRouter(agent) {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
+    // --- Agent Settings (Private/Secrets) ---
+    router.get('/settings', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const settings = agent.db.getAllAgentSettings();
+            // Mask sensitive keys if needed? 
+            // For now, this is internal Admin API, so returning as is is acceptable
+            // provided the UI handles masking (which it does with password fields)
+            res.json(settings);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.post('/settings', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const { key, value, category } = req.body;
+            if (!key || value === undefined) return res.status(400).json({ error: 'Key and Value required' });
+
+            agent.db.setAgentSetting(key, value, category);
+            res.json({ success: true });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
     // --- Logs ---
     router.get('/logs/jobs', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
