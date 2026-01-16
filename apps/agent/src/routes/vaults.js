@@ -127,6 +127,7 @@ module.exports = (agent) => {
     // GET /v1/vaults/:id/files/:filename - Download file
     router.get('/:id/files/:filename', async (req, res) => {
         const { id, filename } = req.params;
+        const { inline } = req.query;
 
         // Security: Validate ID and Filename are safe (alphanumericish)
         // VaultManager handles path construction safely, but here we construct the path to sendFile.
@@ -145,7 +146,11 @@ module.exports = (agent) => {
             return res.status(404).json({ error: 'File not found' });
         }
 
-        res.download(filePath);
+        if (inline === 'true') {
+            res.sendFile(filePath);
+        } else {
+            res.download(filePath);
+        }
     });
 
     // POST /v1/vaults/:id/wiki - Update Wiki Page

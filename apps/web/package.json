@@ -12,6 +12,7 @@
   },
   "dependencies": {
     "@tailwindcss/typography": "^0.5.19",
+    "@uiw/react-md-editor": "^4.0.11",
     "client-only": "^0.0.1",
     "clsx": "^2.1.1",
     "cronstrue": "^3.9.0",
@@ -30,7 +31,7 @@
     "@tailwindcss/postcss": "^4",
     "babel-plugin-react-compiler": "1.0.0",
     "eslint": "^9.39.2",
-    "eslint-config-next": "^16.1.1",
+    "eslint-config-next": "16.1.2",
     "tailwindcss": "^4"
   }
 }

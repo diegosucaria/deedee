@@ -16,8 +16,12 @@ Deedee now has a Local RAG system integrated with **Life Vaults**. This allows t
 ## Monitoring
 You can view the status of the RAG index in **System > Stats**:
 *   **Total Documents**: Number of files indexed.
-*   **Index Size**: Size of the vector database.
-*   **Vault Distribution**: How many docs per vault.
+
+## 💬 Vault Chat (Contextual RAG)
+You can speak directly to a Vault's context using the sidebar in the **Vault Detail Page** (`/vaults/[id]`). This chat session is:
+*   **Context-Aware**: The agent knows it is chatting about *this specific vault* and will prioritize using RAG to answer questions.
+*   **Conversation History**: History is preserved for that vault session.
+*   **Inline Viewing**: Any files referenced or available in the vault can be viewed inline by clicking the "View" icon.
 
 ## FAQ
 

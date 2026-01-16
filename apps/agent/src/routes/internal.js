@@ -198,12 +198,14 @@ function createInternalRouter(agent) {
             const journalStats = agent.journal.getStats(start, end);
             const latencyStats = agent.db.getLatencyStats(start, end);
             const contextStats = agent.smartContext.getStats();
+            const ragStats = agent.ragService ? agent.ragService.getStats() : {};
 
             res.json({
                 ...dbStats,
                 journal: journalStats,
                 latency: latencyStats,
-                smartContext: contextStats
+                smartContext: contextStats,
+                rag: ragStats
             });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });

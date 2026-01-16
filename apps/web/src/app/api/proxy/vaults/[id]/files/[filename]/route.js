@@ -11,11 +11,14 @@ export async function GET(request, { params }) {
     }
 
     // Fetch from Agent API
-    // Note: Agent API returns the file stream.
-    const apiUrl = `${API_URL}/v1/vaults/${id}/files/${filename}`;
+    const url = new URL(`${API_URL}/v1/vaults/${id}/files/${encodeURIComponent(filename)}`);
+    const inline = request.nextUrl.searchParams.get('inline');
+    if (inline === 'true') {
+        url.searchParams.set('inline', 'true');
+    }
 
     try {
-        const res = await fetch(apiUrl, {
+        const res = await fetch(url.toString(), {
             headers: {
                 'Authorization': `Bearer ${DEEDEE_API_TOKEN}`
             }
@@ -27,11 +30,15 @@ export async function GET(request, { params }) {
         }
 
         // Pipe the body
-        // Next.js (App Router) allows returning the response directly if it's a stream
-
         const headers = new Headers();
-        headers.set('Content-Type', res.headers.get('Content-Type') || 'application/octet-stream');
-        headers.set('Content-Disposition', `attachment; filename="${filename}"`);
+        const contentType = res.headers.get('Content-Type') || 'application/octet-stream';
+        headers.set('Content-Type', contentType);
+
+        if (inline === 'true') {
+            headers.set('Content-Disposition', 'inline');
+        } else {
+            headers.set('Content-Disposition', `attachment; filename="${filename}"`);
+        }
 
         return new NextResponse(res.body, {
             status: 200,

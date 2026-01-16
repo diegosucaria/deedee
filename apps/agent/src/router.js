@@ -113,15 +113,27 @@ class Router {
             console.log('[Router] Raw Text:', text);
 
             // Advanced JSON extraction
-            const jsonMatch = text.match(/\{[\s\S]*\}/);
-            if (jsonMatch) {
-                text = jsonMatch[0];
-            } else {
-                // Remove markdown and trim as fallback
-                text = text.replace(/```json/g, '').replace(/```/g, '').trim();
+            let jsonText = text;
+            const firstBrace = text.indexOf('{');
+
+            if (firstBrace !== -1) {
+                let lastBrace = text.lastIndexOf('}');
+                while (lastBrace > firstBrace) {
+                    try {
+                        const candidate = text.substring(firstBrace, lastBrace + 1);
+                        // Try to parse - if successful, we found the object
+                        JSON.parse(candidate);
+                        jsonText = candidate;
+                        break;
+                    } catch (e) {
+                        // If parsing failed, maybe we captured garbage at the end?
+                        // Try finding the previous '}'
+                        lastBrace = text.lastIndexOf('}', lastBrace - 1);
+                    }
+                }
             }
 
-            const decision = JSON.parse(text);
+            const decision = JSON.parse(jsonText);
 
             if (decision.transcription) {
                 console.log(`[Router] Transcription: "${decision.transcription}"`);

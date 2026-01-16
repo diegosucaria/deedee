@@ -2,7 +2,7 @@ import CleanupButton from '@/components/CleanupButton';
 import DateIntervalSelector from '@/components/DateIntervalSelector';
 import StatsClient from './StatsClient';
 import { fetchAPI } from '@/lib/api';
-import { Activity, MessageSquare, Zap, Brain, CheckCircle, BarChart3, Clock } from 'lucide-react';
+import { Activity, MessageSquare, Zap, Brain, CheckCircle, BarChart3, Clock, Database } from 'lucide-react';
 
 // Re-alias CleanupButton if it was named CleanMetricsButton in usage, or import correct one.
 // Based on usage <CleanMetricsButton />, but import is CleanupButton.
@@ -65,6 +65,13 @@ export default async function StatsPage({ searchParams }) {
                     icon={CheckCircle}
                     color="text-emerald-400"
                     bg="bg-emerald-400/10 border-emerald-400/20"
+                />
+                <StatCard
+                    title="Knowledge Base"
+                    value={stats.rag?.totalDocuments ? `${stats.rag.totalDocuments} Docs` : '0 Docs'}
+                    icon={Database}
+                    color="text-pink-400"
+                    bg="bg-pink-400/10 border-pink-400/20"
                 />
             </div>
 

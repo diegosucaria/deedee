@@ -3,6 +3,7 @@ import Link from 'next/link';
 import WikiEditor from '@/components/WikiEditor';
 import FileExplorer from '@/components/FileExplorer';
 import VaultUploader from '@/components/VaultUploader';
+import VaultChat from '@/components/VaultChat';
 import { notFound } from 'next/navigation';
 
 export const dynamic = 'force-dynamic';
@@ -57,6 +58,16 @@ export default async function VaultDetailPage({ params }) {
                         initialContent={vault.wiki}
                         pageName="index.md"
                     />
+                </div>
+
+                {/* Far Right: Contextual Chat */}
+                <div className="w-[400px] flex flex-col bg-zinc-900 border-l border-zinc-800">
+                    <div className="p-4 border-b border-zinc-800 font-semibold text-zinc-300">
+                        Vault Assistant
+                    </div>
+                    <div className="flex-1 overflow-hidden">
+                        <VaultChat vaultId={vault.id} />
+                    </div>
                 </div>
             </div>
         </div>

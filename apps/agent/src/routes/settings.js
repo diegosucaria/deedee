@@ -33,7 +33,11 @@ function createSettingsRouter(agent) {
         try {
             const { key, value, category = 'general' } = req.body;
 
-            const ALLOWED_KEYS = ['owner_phone', 'owner_name', 'search_strategy', 'voice_settings', 'communication_dry_run', 'notification_channel'];
+            const ALLOWED_KEYS = [
+                'owner_phone', 'owner_name', 'search_strategy', 'voice_settings',
+                'communication_dry_run', 'notification_channel',
+                'provider:xai', 'chatModel', 'visionModel'
+            ];
             if (!ALLOWED_KEYS.includes(key)) {
                 return res.status(400).json({ error: 'Invalid config key' });
             }

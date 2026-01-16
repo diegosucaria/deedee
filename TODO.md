@@ -60,8 +60,13 @@
 
 ### Intelligence
 - [ ] **Vector Memory**: Migrate from SQLite Regex search to Embeddings/Vector Store (pgvector/Chroma).
-- [ ] **Local RAG**: Ability to ingest and index local PDFs/Docs.
+- [x] **Local RAG**: Ability to ingest and index local PDFs/Docs for Life Vaults.
 - [ ] **Multi-Agent**: Spawning specialized sub-agents for research tasks.
+
+### Features
+- [x] **Vaults UI**: Integrated Markdown Editor, Inline File Viewer, and Vault-Context Chat Sidebar.
+- [x] **Settings**: Dedicated Models (Grok) configuration tab.
+- [x] **Observability**: RAG Index Statistics in System Dashboard.
 
 ### Infrastructure
 - [ ] **Kubernetes**: Migrate from Docker Compose (maybe overkill for Pi?).

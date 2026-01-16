@@ -93,10 +93,14 @@ router.get('/:id/files/:filename', async (req, res) => {
         const response = await axios({
             method: 'GET',
             url: url,
+            params: req.query, // Forward query params (inline=true)
             responseType: 'stream'
         });
 
         res.setHeader('Content-Type', response.headers['content-type'] || 'application/octet-stream');
+        if (response.headers['content-disposition']) {
+            res.setHeader('Content-Disposition', response.headers['content-disposition']);
+        }
         response.data.pipe(res);
     } catch (error) {
         console.error('[API] Vault Download Proxy Error:', error.message);
