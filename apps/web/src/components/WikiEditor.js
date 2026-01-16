@@ -7,6 +7,7 @@ export default function WikiEditor({ vaultId, initialContent, pageName }) {
     const [content, setContent] = useState(initialContent || '');
     const [isSaving, setIsSaving] = useState(false);
     const [isDirty, setIsDirty] = useState(false);
+    const [mode, setMode] = useState('edit');
 
     // Auto-save logic or Manual save? 
     // Manual save button for safety + Cmd+S
@@ -46,6 +47,21 @@ export default function WikiEditor({ vaultId, initialContent, pageName }) {
                 </div>
 
                 <div className="flex items-center gap-2">
+                    <div className="flex bg-zinc-950 rounded-md p-0.5 border border-zinc-800 mr-2">
+                        <button
+                            onClick={() => setMode('edit')}
+                            className={`px-3 py-1 text-xs font-medium rounded-sm transition-colors ${mode === 'edit' ? 'bg-zinc-800 text-zinc-200 shadow-sm' : 'text-zinc-500 hover:text-zinc-400'}`}
+                        >
+                            Edit
+                        </button>
+                        <button
+                            onClick={() => setMode('preview')}
+                            className={`px-3 py-1 text-xs font-medium rounded-sm transition-colors ${mode === 'preview' ? 'bg-zinc-800 text-zinc-200 shadow-sm' : 'text-zinc-500 hover:text-zinc-400'}`}
+                        >
+                            Preview
+                        </button>
+                    </div>
+
                     <button
                         onClick={handleSave}
                         disabled={isSaving || !isDirty}
@@ -65,7 +81,7 @@ export default function WikiEditor({ vaultId, initialContent, pageName }) {
                     onChange={(val) => { setContent(val || ''); setIsDirty(true); }}
                     height="100%"
                     visibleDragbar={false}
-                    preview="live"
+                    preview={mode}
                     hideToolbar={false}
                     className="h-full w-full border-none"
                     style={{ backgroundColor: 'transparent' }}
