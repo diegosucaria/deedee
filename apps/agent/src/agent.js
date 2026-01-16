@@ -333,26 +333,6 @@ class Agent {
       // 1. Map History
       const messages = geminiToOpenAIHistory(history);
 
-      // 1.5 Inject System Prompt
-      // Get System Prompt
-      const today = new Date().toLocaleString('en-US', { timeZone: 'America/Argentina/Cordoba' }); // Or get from config
-      // We need a simplified system prompt for Grok or use the full one? 
-      // Using the full one is better for consistency.
-      // We need to access getSystemInstruction.
-      const { getSystemInstruction } = require('./prompts/system');
-      // We can't easily get 'activeGoals' or 'facts' here without async calls or passing them in.
-      // For now, let's pass a basic version or try to fetch them if possible?
-      // Actually `processMessage` calls `this.db.getSystemPromptData`.
-      // But `_generateStreamGrok` is a helper.
-      // Let's pass `systemInstruction` as an argument to `_generateStreamGrok`?
-      // Or just constructing it here with minimal data.
-      // Let's try to pass it in `agent.js` where `_generateStreamGrok` is called.
-
-      // Let's modify the caller instead! 
-      // But first, let's prepare this method to accept an optional `systemInstruction` param.
-
-      // WAIT, I should modify the signature to accept `systemPrompt`.
-
       // 2. Add current user message
       messages.push({ role: 'user', content: userContent });
 
