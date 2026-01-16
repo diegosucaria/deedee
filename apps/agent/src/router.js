@@ -78,7 +78,7 @@ class Router {
         * **Rule:** If the Last Used Model was **PRO**, and the current user input is a **continuation**, **confirmation** ("Yes", "Proceed", "Ok"), or **short follow-up** related to the previous PRO context, **YOU MUST STAY ON PRO**.
         ${timeDecayRule}
         * **EXCEPTION (Voice/Audio):** If the input is a short/casual VOICE message (e.g. "Okay", "Cool", "Continue", "Y?") and the task allows for it, **SWITCH TO FLASH** to minimize latency. Speed is critical for voice chat.
-        * **Exception:** Switch back to FLASH if the user clearly changes the topic to a simple task (Home Automation, Weather, Greeting).
+        * **OVERRIDE (Simple Tasks):** If the user asks for **Weather**, **Home Automation**, **Time**, or **External Facts**, you **MUST SWITCH TO FLASH**, even if it feels like a continuation of the previous conversation. Do not waste PRO on simple queries.
 
         ### RECENT CONTEXT
         ${historyText}
