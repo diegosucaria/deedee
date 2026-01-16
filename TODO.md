@@ -83,3 +83,4 @@
 - [x] **Database Stats**: Added Agent Database statistics card in System page (Size, Counts).
 - [x] **Mobile UX**: Optimized mobile layout for Chat and Live pages.
 - [x] **UI Persistence**: Settings and Brain tabs now persist state in URL parameters.
+- [x] **Multi-Model Support**: Integrated xAI Grok (Beta/Vision) with Model Selector in Chat and Settings.
