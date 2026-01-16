@@ -338,6 +338,12 @@ class Scheduler {
                 cron: '0 2 * * *', // 2 AM
                 task: 'Perform nightly backup of data to GCS.',
                 silent: true
+            },
+            {
+                name: 'nightly_rag_scan',
+                cron: '0 3 * * *', // 3 AM
+                task: 'Scan vaults and ingest missing files into RAG.',
+                silent: true
             }
         ];
 
@@ -368,6 +374,22 @@ class Scheduler {
                         throw err;
                     }
                     return result; // Return for logging
+                }
+
+                // Nightly RAG Scan
+                if (sysJob.name === 'nightly_rag_scan') {
+                    if (this.agent.ragService && this.agent.vaults) {
+                        try {
+                            console.log('[Scheduler] Starting Nightly RAG Scan...');
+                            await this.agent.ragService.scanAndIngest(this.agent.vaults.vaultsDir);
+                            return { success: true };
+                        } catch (e) {
+                            console.error('[Scheduler] RAG Scan Failed:', e);
+                            throw e;
+                        }
+                    } else {
+                        return { error: 'RAG Service or Vaults not available' };
+                    }
                 }
 
                 // Nightly Consolidation + Maintenance

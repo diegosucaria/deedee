@@ -111,6 +111,19 @@ class CommandHandler {
             return true;
         }
 
+        if (cmd === '/rescan') {
+            if (this.agent && this.agent.ragService && this.agent.vaults) {
+                await this.sendReply(chatId, message.source, 'Started RAG Vault Scan (Background)...');
+                // Trigger async without awaiting
+                this.agent.ragService.scanAndIngest(this.agent.vaults.vaultsDir)
+                    .then(() => this.sendReply(chatId, message.source, 'RAG Scan Completed.'))
+                    .catch(e => this.sendReply(chatId, message.source, `RAG Scan Failed: ${e.message}`));
+            } else {
+                await this.sendReply(chatId, message.source, 'RAG Service not available.');
+            }
+            return true;
+        }
+
         if (cmd === '/simulate_watcher') {
             const phone = args[0];
             const text = args.slice(1).join(' ');

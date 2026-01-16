@@ -26,6 +26,7 @@ class RagService {
                 filepath TEXT UNIQUE,
                 filename TEXT,
                 hash TEXT,
+                vault_id TEXT,
                 indexed_at TEXT
             );
             CREATE TABLE IF NOT EXISTS chunks (
@@ -37,9 +38,16 @@ class RagService {
                 FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
             );
         `);
+
+        // Migration: Add vault_id if missing
+        try {
+            this.db.prepare('ALTER TABLE documents ADD COLUMN vault_id TEXT').run();
+        } catch (e) {
+            // Ignore if column exists
+        }
     }
 
-    async ingestDocument(filepath) {
+    async ingestDocument(filepath, vaultId = null) {
         if (!fs.existsSync(filepath)) throw new Error('File not found');
 
         const buffer = fs.readFileSync(filepath);
@@ -48,7 +56,7 @@ class RagService {
 
         // Check deduplication
         const existing = this.db.prepare('SELECT * FROM documents WHERE filepath = ?').get(filepath);
-        if (existing && existing.hash === hash) {
+        if (existing && existing.hash === hash && existing.vault_id === vaultId) {
             console.log(`[RAG] Document ${filename} already indexed (unchanged).`);
             return;
         }
@@ -56,8 +64,8 @@ class RagService {
         if (existing) {
             // Re-index: delete old chunks
             this.db.prepare('DELETE FROM chunks WHERE document_id = ?').run(existing.id);
-            this.db.prepare('UPDATE documents SET hash = ?, indexed_at = ? WHERE id = ?')
-                .run(hash, new Date().toISOString(), existing.id);
+            this.db.prepare('UPDATE documents SET hash = ?, vault_id = ?, indexed_at = ? WHERE id = ?')
+                .run(hash, vaultId, new Date().toISOString(), existing.id);
             console.log(`[RAG] Re-indexing ${filename}...`);
         }
 
@@ -78,8 +86,8 @@ class RagService {
         // Insert Document if new
         let docId = existing ? existing.id : null;
         if (!docId) {
-            const info = this.db.prepare('INSERT INTO documents (filepath, filename, hash, indexed_at) VALUES (?, ?, ?, ?)')
-                .run(filepath, filename, hash, new Date().toISOString());
+            const info = this.db.prepare('INSERT INTO documents (filepath, filename, hash, vault_id, indexed_at) VALUES (?, ?, ?, ?, ?)')
+                .run(filepath, filename, hash, vaultId, new Date().toISOString());
             docId = info.lastInsertRowid;
         }
 
@@ -109,14 +117,72 @@ class RagService {
         console.log(`[RAG] Ingestion complete for ${filename}.`);
     }
 
-    async search(query, limit = 5) {
-        console.log(`[RAG] Searching for: "${query}"`);
+    async scanAndIngest(vaultsDir) {
+        if (this.isScanning) {
+            console.log('[RAG] Scan already in progress. Skipping.');
+            return;
+        }
+        this.isScanning = true;
+        let processed = 0;
+        let added = 0;
+        let updated = 0;
+
+        try {
+            if (!fs.existsSync(vaultsDir)) {
+                console.log(`[RAG] Vaults directory not found: ${vaultsDir}`);
+                return;
+            }
+
+            console.log('[RAG] Starting Nightly Scan...');
+            const vaults = fs.readdirSync(vaultsDir).filter(f => fs.statSync(path.join(vaultsDir, f)).isDirectory());
+
+            for (const vault of vaults) {
+                const filesDir = path.join(vaultsDir, vault, 'files');
+                if (fs.existsSync(filesDir)) {
+                    const files = fs.readdirSync(filesDir);
+                    for (const file of files) {
+                        const filePath = path.join(filesDir, file);
+                        try {
+                            const result = await this.ingestDocument(filePath, vault);
+                            processed++;
+                            // ingestDocument currently returns nothing if unchanged, or undefined if success?
+                            // I need to check ingestDocument return value.
+                            // But for now let's just count processed.
+                        } catch (e) {
+                            console.error(`[RAG] Failed to ingest ${file} in vault ${vault}:`, e.message);
+                        }
+                    }
+                }
+            }
+            console.log(`[RAG] Scan complete. ${processed} files checked.`);
+
+            // Broadcast update
+            if (this.agent && this.agent.interface && this.agent.interface.broadcast) {
+                const stats = this.getStats();
+                this.agent.interface.broadcast('rag:stats', stats).catch(e => console.error('[RAG] Broadcast failed:', e.message));
+            }
+
+        } catch (e) {
+            console.error('[RAG] Scan failed:', e);
+        } finally {
+            this.isScanning = false;
+        }
+    }
+
+    async search(query, vaultId = null, limit = 5) {
+        console.log(`[RAG] Searching for: "${query}" (Vault: ${vaultId || 'Global'})`);
         const queryEmbedding = await this._getEmbedding(query);
 
         // Fetch all chunks (Brute force for now)
-        // Optimization: In standard prod, use pgvector or similar. 
-        // For local SQLite < 100k chunks, JS brute force is surprisingly fast (ms).
-        const allChunks = this.db.prepare('SELECT chunks.id, chunks.content, chunks.embedding, documents.filename FROM chunks JOIN documents ON chunks.document_id = documents.id').all();
+        let sql = 'SELECT chunks.id, chunks.content, chunks.embedding, documents.filename, documents.vault_id FROM chunks JOIN documents ON chunks.document_id = documents.id';
+        const params = [];
+
+        if (vaultId) {
+            sql += ' WHERE documents.vault_id = ?';
+            params.push(vaultId);
+        }
+
+        const allChunks = this.db.prepare(sql).all(...params);
 
         const results = allChunks.map(chunk => {
             const vector = new Float32Array(chunk.embedding.buffer, chunk.embedding.byteOffset, chunk.embedding.byteLength / 4);
@@ -162,6 +228,39 @@ class RagService {
             magB += b[i] * b[i];
         }
         return dot / (Math.sqrt(magA) * Math.sqrt(magB));
+    }
+    getStats() {
+        try {
+            const docCount = this.db.prepare('SELECT COUNT(*) as count FROM documents').get().count;
+            const chunkCount = this.db.prepare('SELECT COUNT(*) as count FROM chunks').get().count;
+
+            // Vault distribution
+            const vaults = this.db.prepare('SELECT vault_id, COUNT(*) as count FROM documents GROUP BY vault_id').all();
+            const vaultStats = {};
+            vaults.forEach(v => {
+                vaultStats[v.vault_id || 'Global'] = v.count;
+            });
+
+            // DB Size
+            let sizeBytes = 0;
+            try {
+                const stat = fs.statSync(this.db.name);
+                sizeBytes = stat.size;
+            } catch (e) {
+                // If in-memory or error
+                sizeBytes = 0;
+            }
+
+            return {
+                documents: docCount,
+                chunks: chunkCount,
+                vaults: vaultStats,
+                sizeBytes
+            };
+        } catch (e) {
+            console.error('[RAG] Error getting stats:', e);
+            return { error: e.message };
+        }
     }
 }
 

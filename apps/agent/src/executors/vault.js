@@ -61,6 +61,15 @@ class VaultExecutor extends BaseExecutor {
         // 3. Switch Context (Magical Part)
         await this.setSessionTopic(topic, context);
 
+        // 4. Trigger RAG Ingestion (Auto-Index)
+        try {
+            if (this.services.agent.ragService) {
+                await this.services.agent.ragService.ingestDocument(targetPath, topic);
+            }
+        } catch (e) {
+            console.error(`[Vault] RAG Ingestion failed: ${e.message}`);
+        }
+
         return `File saved to ${targetPath}. Vault index updated. Context switched to '${topic}'.`;
     }
 

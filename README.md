@@ -144,7 +144,7 @@ Deedee comes equipped with a suite of tools, both internal and via MCP.
 -   **Scheduling**: `scheduleJob` (Cron), `setReminder` (One-off).
 -   **Communication**: `replyWithAudio` (Native TTS), `sendEmail`.
 -   **Productivity**: `listEvents` (Calendar).
--   **Life Vaults**: `createVault`, `addToVault` (Ingest files), `readVaultPage`, `listVaultFiles` (RAG-lite).
+-   **Life Vaults**: `createVault`, `addToVault` (Ingest files), `readVaultPage`, `listVaultFiles` (Local RAG enabled).
 
 ### MCP Servers (Model Context Protocol)
 -   **Plex**: Media library search and status (`plex_mcp_server`).

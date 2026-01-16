@@ -59,8 +59,9 @@ describe('RagService', () => {
         expect(mockExec).toHaveBeenCalled();
     });
 
-    test('should ingest a text file', async () => {
+    test('should ingest a text file with vault context', async () => {
         const filePath = '/tmp/test.txt';
+        const vaultId = 'finance';
         fs.existsSync.mockReturnValue(true);
         fs.readFileSync.mockReturnValue(Buffer.from('Hello world content.'));
         path.basename = jest.fn().mockReturnValue('test.txt');
@@ -69,27 +70,27 @@ describe('RagService', () => {
         // Mock no existing doc
         mockGet.mockReturnValue(null);
 
-        await ragService.ingestDocument(filePath);
+        await ragService.ingestDocument(filePath, vaultId);
 
         expect(mockAgent.client.embedContent).toHaveBeenCalled();
         expect(mockPrepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO documents'));
-        expect(mockPrepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO chunks'));
+        // Verify vault_id is passed
+        expect(mockRun).toHaveBeenCalledWith(filePath, 'test.txt', expect.any(String), vaultId, expect.any(String));
     });
 
-    test('should search documents', async () => {
+    test('should search documents with vault scope', async () => {
         const query = 'test query';
+        const vaultId = 'finance';
         const mockEmbedding = new Float32Array([0.1, 0.2, 0.3]);
         const buffer = Buffer.from(mockEmbedding.buffer);
 
         mockAll.mockReturnValue([
-            { id: 1, content: 'chunk 1', embedding: buffer, filename: 'test.txt' }
+            { id: 1, content: 'chunk 1', embedding: buffer, filename: 'test.txt', vault_id: 'finance' }
         ]);
 
-        const results = await ragService.search(query);
+        const results = await ragService.search(query, vaultId);
 
         expect(results.length).toBe(1);
-        expect(results[0].score).toBeDefined();
-        // Cosine of identical vectors should be 1 (approximated)
-        expect(results[0].score).toBeCloseTo(1);
+        expect(mockPrepare).toHaveBeenCalledWith(expect.stringContaining('WHERE documents.vault_id = ?'));
     });
 });

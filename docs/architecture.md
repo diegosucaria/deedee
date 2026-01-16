@@ -40,8 +40,9 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
         - **Auto-Context**: Injects active vault index and file lists into the prompt when a topic is selected.
     - **Local RAG Service**:
         - **Vector Store**: Uses `better-sqlite3` (`rag.db`) to store document chunks and embeddings.
-        - **Embeddings**: Uses Gemini Embeddings via `ConfigService` model selection.
-        - **Search**: Semantic search via `searchDocuments` tool + `RagExecutor`.
+        - **Vault Integration**: Scoped to "Life Vaults". Files added to vaults are auto-indexed (`vault_id` aware).
+        - **Embeddings**: Uses Gemini Embeddings via `ConfigService`.
+        - **Search**: Semantic search via `searchDocuments` tool + `RagExecutor`, filtered by active vault context.
 
 ### 2. Supervisor (`apps/supervisor`)
 - **Role**: The Immune System.

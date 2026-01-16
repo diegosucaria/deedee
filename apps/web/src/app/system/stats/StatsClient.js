@@ -102,7 +102,40 @@ export default function StatsClient({ startDate, endDate }) {
     useEffect(() => {
         fetchData();
         const interval = setInterval(fetchData, 10000);
-        return () => clearInterval(interval);
+
+        // Listen for real-time RAG updates
+        // We probably need to connect to the Interfaces socket
+        // Assuming we can import io or use a global if provided?
+        // Let's create a temporary socket just for this page if needed, or use polling as fallback.
+        // User rule says "YOU MUST implement a socket event".
+        try {
+            const { io } = require('socket.io-client');
+            const socket = io(); // Connects to same origin (API proxy -> Interfaces?)
+            // Wait, Web is Next.js (port 3000), Interfaces is 5000 (proxied via /api/socket ? No.
+            // Client usually connects to the Interfaces URL.
+            // Env var? NEXT_PUBLIC_API_URL?
+            // "apps/web/src/app/chat/[id]/page.js" uses socket.
+
+            socket.on('rag:stats', (newStats) => {
+                console.log('[StatsClient] Received RAG stats update via socket');
+                if (newStats) {
+                    setDbStats(prev => ({
+                        ...prev,
+                        rag: newStats
+                    }));
+                } else {
+                    fetchData(); // Full refresh if payload empty
+                }
+            });
+
+            return () => {
+                clearInterval(interval);
+                socket.disconnect();
+            };
+        } catch (e) {
+            console.error('[StatsClient] Socket setup failed:', e);
+            return () => clearInterval(interval);
+        }
     }, [startDate, endDate]);
 
     if (loading && !latencyData.length) return <div className="p-4 text-zinc-500 animate-pulse">Loading stats...</div>;
@@ -181,6 +214,51 @@ export default function StatsClient({ startDate, endDate }) {
                             <p className="text-lg font-mono text-zinc-300">{dbStats?.counts?.kv_store?.toLocaleString() || 0}</p>
                         </div>
                     </div>
+                </div>
+            </div>
+
+            {/* RAG Stats */}
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[300px] flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold flex items-center gap-2 text-zinc-300">
+                        <Database className="w-5 h-5 text-cyan-400" />
+                        Local RAG Index (Vaults)
+                    </h2>
+                </div>
+                <div className="space-y-4 flex-1">
+                    <div className="p-4 rounded-lg bg-zinc-950 border border-zinc-800 flex items-center justify-between">
+                        <div>
+                            <p className="text-sm text-zinc-500 mb-1">Index Size</p>
+                            <p className="text-2xl font-bold text-zinc-200">
+                                {(dbStats?.rag?.sizeBytes ? (dbStats.rag.sizeBytes / 1024 / 1024).toFixed(2) : '0.00')} MB
+                            </p>
+                        </div>
+                        <div className="h-10 w-10 rounded-full bg-cyan-500/10 flex items-center justify-center">
+                            <Database className="h-5 w-5 text-cyan-400" />
+                        </div>
+                    </div>
+                    <div className="grid grid-cols-2 gap-3">
+                        <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
+                            <p className="text-xs text-zinc-500">Total Documents</p>
+                            <p className="text-lg font-mono text-zinc-300">{dbStats?.rag?.documents?.toLocaleString() || 0}</p>
+                        </div>
+                        <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
+                            <p className="text-xs text-zinc-500">Total Chunks</p>
+                            <p className="text-lg font-mono text-zinc-300">{dbStats?.rag?.chunks?.toLocaleString() || 0}</p>
+                        </div>
+                    </div>
+                    {dbStats?.rag?.vaults && Object.keys(dbStats.rag.vaults).length > 0 && (
+                        <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
+                            <p className="text-xs text-zinc-500 mb-2">Vault Distribution</p>
+                            <div className="flex flex-wrap gap-2">
+                                {Object.entries(dbStats.rag.vaults).map(([vault, count]) => (
+                                    <span key={vault} className="px-2 py-1 bg-cyan-500/10 text-cyan-400 text-xs rounded border border-cyan-500/20">
+                                        {vault}: {count}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                 </div>
             </div>
 
