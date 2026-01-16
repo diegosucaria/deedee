@@ -17,7 +17,8 @@ describe('Memory Tools', () => {
             models: {
                 generateContent: jest.fn().mockResolvedValue({
                     candidates: [{ content: { parts: [{ text: 'Summary of the day.' }] } }]
-                })
+                }),
+                getAllAgentSettings: jest.fn().mockReturnValue({})
             }
         };
 

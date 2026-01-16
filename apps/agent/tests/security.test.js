@@ -28,6 +28,7 @@ jest.mock('../src/db', () => ({
         deleteMessagesSince: jest.fn(), // Added
         getLatestSummary: jest.fn().mockReturnValue(null), // Added
         getFactsFormatted: jest.fn().mockReturnValue(""), // Added
+        getAllAgentSettings: jest.fn().mockReturnValue({}),
         close: jest.fn().mockResolvedValue()
     }))
 }));

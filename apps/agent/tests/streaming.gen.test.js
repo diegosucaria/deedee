@@ -8,7 +8,7 @@ jest.mock('../src/db', () => ({
     AgentDB: jest.fn().mockImplementation(() => ({
         db: { prepare: jest.fn().mockReturnValue({ all: jest.fn().mockReturnValue([]) }) },
         saveMessage: jest.fn(), countMessages: jest.fn().mockReturnValue(0), ensureSession: jest.fn(),
-        checkLimit: jest.fn().mockReturnValue(0), logMetric: jest.fn(), logTokenUsage: jest.fn(),
+        checkLimit: jest.fn().mockReturnValue(0), logMetric: jest.fn(), getAllAgentSettings: jest.fn().mockReturnValue({}), logTokenUsage: jest.fn(),
         close: jest.fn().mockResolvedValue(),
         getSession: jest.fn().mockReturnValue({ title: 'Test Chat' }),
         updateSession: jest.fn(),

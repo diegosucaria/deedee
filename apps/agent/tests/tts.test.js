@@ -41,7 +41,8 @@ describe('Agent TTS', () => {
         })
       },
       close: jest.fn(),
-      deleteJobState: jest.fn() // Added
+      deleteJobState: jest.fn(),
+      getAllAgentSettings: jest.fn().mockReturnValue({})
     };
 
     // Force _loadClientLibrary to return our mock

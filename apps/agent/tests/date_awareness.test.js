@@ -21,6 +21,7 @@ jest.mock('../src/db', () => ({
         searchMessages: jest.fn().mockReturnValue([]),
         deleteJobState: jest.fn(),
         getKey: jest.fn(),
+        getAllAgentSettings: jest.fn().mockReturnValue({}),
         close: jest.fn()
     }))
 }));
@@ -30,6 +31,7 @@ jest.mock('../src/mcp-manager', () => ({
         init: jest.fn(),
         getTools: jest.fn().mockResolvedValue([]),
         callTool: jest.fn(),
+        getAllAgentSettings: jest.fn().mockReturnValue({}),
         close: jest.fn().mockResolvedValue()
     }))
 }));

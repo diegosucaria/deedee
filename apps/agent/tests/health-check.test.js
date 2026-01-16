@@ -15,6 +15,7 @@ describe('Agent Health Check', () => {
         agent.db = {
             getPendingGoals: jest.fn().mockReturnValue([]),
             getScheduledJobs: jest.fn().mockReturnValue([]),
+            deleteJobState: jest.fn(),
             saveMessage: jest.fn(),
             logMetric: jest.fn(),
             logTokenUsage: jest.fn(),

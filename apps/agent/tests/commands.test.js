@@ -18,6 +18,9 @@ jest.mock('../src/db', () => ({
         // Agent constructor inits Router/MCP, we need to mock them too or handle them.
         getKey: jest.fn(),
         addGoal: jest.fn(),
+        updateGoal: jest.fn(),
+        deleteGoal: jest.fn(),
+        getAllAgentSettings: jest.fn().mockReturnValue({}),
         checkLimit: jest.fn().mockReturnValue(true),
         getPendingGoals: jest.fn().mockReturnValue([]), // Added
         logUsage: jest.fn(),

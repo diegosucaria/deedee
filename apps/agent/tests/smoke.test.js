@@ -34,6 +34,7 @@ jest.mock('../src/db', () => ({
     ensureSession: jest.fn(),
     getWatchers: jest.fn().mockReturnValue([]),
     updateWatcher: jest.fn(),
+    getAllAgentSettings: jest.fn().mockReturnValue({}),
     close: jest.fn().mockResolvedValue()
   }))
 }));
