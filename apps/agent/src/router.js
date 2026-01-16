@@ -36,7 +36,12 @@ class Router {
                 timeDecayRule = `* **EXCEPTION (Time Decay):** If Last Used Model was > 24 hours ago, **IGNORE** the sticky rule and route based on the current input complexity (Default to FLASH), UNLESS the user explicitly refers to the previous conversation. (Current Gap: ${hoursSince} hours)`;
             }
 
-            // ... (existing history formatting) ...
+            // Format recent history for context
+            const historyText = history.slice(-3).map(msg => {
+                const role = msg.role === 'model' ? 'Assistant' : 'User';
+                const content = msg.parts.map(p => p.text).join(' ');
+                return `${role}: ${content}`;
+            }).join('\n');
 
             const instructionText = `
         You are the Router for a personal assistant bot. Your only job is to analyze the user's input and select the best model to handle the request.
