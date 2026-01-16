@@ -1,3 +1,4 @@
+'use client';
 import { useState, useRef, useEffect } from 'react';
 import { updateVaultPage } from '@/app/actions';
 import MDEditor from '@uiw/react-md-editor';
