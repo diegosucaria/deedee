@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const EventEmitter = require('events');
 
-const TEST_DB = path.join(__dirname, 'test_whatsapp.db');
+const TEST_DB = path.join(__dirname, `test_whatsapp_${Date.now()}_${Math.random()}.db`);
 
 describe('WhatsApp SQLiteStore', () => {
     let store;
