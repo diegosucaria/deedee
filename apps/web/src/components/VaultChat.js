@@ -23,8 +23,9 @@ export default function VaultChat({ vaultId, isOpen, onClose }) {
 
         // Connect Socket
         const socket = io({
-            path: '/api/socket',
-            addTrailingSlash: false,
+            path: '/socket.io',
+            transports: ['polling'],
+            query: { chatId } // optional, identifying as vault chat
         });
 
         socket.on('connect', () => {
