@@ -264,86 +264,100 @@ export default function ChatSidebar({ sessions = [] }) {
 
                 {/* Always show pinned icon if collapsed and pinned */}
                 {isCollapsed && !!session.is_pinned && (
-                    <div className="absolute top-0 right-0 h-1.5 w-1.5 bg-amber-500 rounded-full animate-pulse" />
+                    <div className="absolute top-0.5 right-0.5 h-1.5 w-1.5 bg-amber-500 rounded-full" />
                 )}
             </Link>
         );
     };
 
     return (
-        <div
-            onClick={() => isCollapsed && toggleSidebar()}
-            className={clsx(
-                "flex h-full flex-col border-r border-zinc-800 bg-zinc-900/50 hidden md:flex transition-all duration-300 relative",
-                isCollapsed ? "w-16 cursor-pointer" : "w-64"
+        <>
+            {/* Mobile Overlay Backdrop */}
+            {!isCollapsed && (
+                <div
+                    className="fixed inset-0 z-30 bg-black/50 md:hidden left-16"
+                    onClick={toggleSidebar}
+                />
             )}
-        >
-            <div className="p-4 flex items-center justify-center">
-                <button
-                    onClick={(e) => {
-                        e.stopPropagation(); // Prevent double-toggle from container
-                        handleNewChat();
-                    }}
-                    disabled={isCreating}
-                    className={clsx(
-                        "flex items-center justify-center rounded-lg bg-indigo-600 font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50",
-                        isCollapsed ? "h-10 w-10 p-0" : "w-full gap-2 px-4 py-2.5 text-sm"
-                    )}
-                    title="New Chat"
-                >
-                    <Plus className="h-4 w-4" />
-                    {!isCollapsed && (isCreating ? 'Creating...' : 'New Chat')}
-                </button>
 
-                {!isCollapsed && (
-                    <div className="mt-3 relative">
-                        <input
-                            type="text"
-                            placeholder="Search chats..."
-                            value={searchTerm}
-                            onChange={(e) => setSearchTerm(e.target.value)}
-                            className="w-full bg-zinc-800 text-zinc-200 text-xs rounded-md px-8 py-2 outline-none focus:ring-1 focus:ring-indigo-500/50 border border-transparent focus:border-indigo-500/30 transition-all placeholder:text-zinc-600"
-                        />
-                        <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3 w-3 text-zinc-500" />
-                        {searchTerm && (
-                            <button
-                                onClick={() => setSearchTerm('')}
-                                className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
-                            >
-                                <X className="h-3 w-3" />
-                            </button>
+            <div
+                onClick={() => isCollapsed && toggleSidebar()}
+                className={clsx(
+                    "flex h-full flex-col border-r border-zinc-800 bg-zinc-900 transition-all duration-300",
+                    // Mobile: Fixed position, slide-out logic
+                    "fixed inset-y-0 left-16 z-40 md:static",
+                    isCollapsed
+                        ? "-translate-x-full w-0 md:translate-x-0 md:w-16 md:cursor-pointer" // Hidden on mobile, Rail on Desktop
+                        : "translate-x-0 w-64" // Visible on both
+                )}
+            >
+                <div className={clsx("p-4 flex flex-col gap-3", isCollapsed ? "items-center" : "")}>
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation(); // Prevent double-toggle from container
+                            handleNewChat();
+                        }}
+                        disabled={isCreating}
+                        className={clsx(
+                            "flex items-center justify-center rounded-lg bg-indigo-600 font-medium text-white transition-colors hover:bg-indigo-500 disabled:opacity-50",
+                            isCollapsed ? "h-10 w-10 p-0" : "w-full gap-2 px-4 py-2.5 text-sm"
                         )}
-                    </div>
-                )}
-            </div>
+                        title="New Chat"
+                    >
+                        <Plus className="h-4 w-4" />
+                        {!isCollapsed && (isCreating ? 'Creating...' : 'New Chat')}
+                    </button>
 
-            <div className="flex-1 overflow-y-auto px-0 scrollbar-thin scrollbar-thumb-zinc-800">
-                {renderGroup('Pinned', groupedSessions['Pinned'])}
-                {renderGroup('Today', groupedSessions['Today'])}
-                {renderGroup('Yesterday', groupedSessions['Yesterday'])}
-                {renderGroup('Last Week', groupedSessions['Last Week'])}
-                {renderGroup('Older', groupedSessions['Older'])}
+                    {!isCollapsed && (
+                        <div className="relative w-full">
+                            <input
+                                type="text"
+                                placeholder="Search..."
+                                value={searchTerm}
+                                onChange={(e) => setSearchTerm(e.target.value)}
+                                className="w-full bg-zinc-800 text-zinc-200 text-xs rounded-md pl-8 pr-7 py-2 outline-none focus:ring-1 focus:ring-indigo-500/50 border border-transparent focus:border-indigo-500/30 transition-all placeholder:text-zinc-600"
+                            />
+                            <Search className="absolute left-2.5 top-1/2 -translate-y-1/2 h-3.5 w-3.5 text-zinc-500" />
+                            {searchTerm && (
+                                <button
+                                    onClick={() => setSearchTerm('')}
+                                    className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-zinc-300"
+                                >
+                                    <X className="h-3 w-3" />
+                                </button>
+                            )}
+                        </div>
+                    )}
+                </div>
 
-                {/* Fallback if no sessions */}
-                {sessions.length === 0 && (
-                    <div className="p-4 text-center text-xs text-zinc-500">
-                        {!isCollapsed && "No chats yet."}
-                    </div>
-                )}
-            </div>
+                <div className="flex-1 overflow-y-auto px-0 scrollbar-thin scrollbar-thumb-zinc-800">
+                    {renderGroup('Pinned', groupedSessions['Pinned'])}
+                    {renderGroup('Today', groupedSessions['Today'])}
+                    {renderGroup('Yesterday', groupedSessions['Yesterday'])}
+                    {renderGroup('Last Week', groupedSessions['Last Week'])}
+                    {renderGroup('Older', groupedSessions['Older'])}
 
-            {/* Toggle Button */}
-            <div className="p-2 border-t border-zinc-800 flex justify-end">
-                <button
-                    onClick={(e) => {
-                        e.stopPropagation(); // Independent toggle
-                        toggleSidebar();
-                    }}
-                    className="p-2 text-zinc-500 hover:text-white transition-colors rounded-lg hover:bg-zinc-800"
-                >
-                    {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
-                </button>
+                    {/* Fallback if no sessions */}
+                    {sessions.length === 0 && (
+                        <div className="p-4 text-center text-xs text-zinc-500">
+                            {!isCollapsed && "No chats yet."}
+                        </div>
+                    )}
+                </div>
+
+                {/* Toggle Button */}
+                <div className="p-2 border-t border-zinc-800 flex justify-end">
+                    <button
+                        onClick={(e) => {
+                            e.stopPropagation(); // Independent toggle
+                            toggleSidebar();
+                        }}
+                        className="p-2 text-zinc-500 hover:text-white transition-colors rounded-lg hover:bg-zinc-800"
+                    >
+                        {isCollapsed ? <ChevronRight className="h-4 w-4" /> : <ChevronLeft className="h-4 w-4" />}
+                    </button>
+                </div>
             </div>
-        </div>
+        </>
     );
 }

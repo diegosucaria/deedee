@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
 import ReactMarkdown from 'react-markdown';
-import { Send, Play, Wifi, WifiOff, Mic, Image as ImageIcon, X, Loader2, StopCircle, Box, ChevronDown, Activity, DollarSign, Wallet, Code2, CheckCircle2, Paperclip, FileIcon } from 'lucide-react';
+import { Send, Play, Wifi, WifiOff, Mic, Image as ImageIcon, X, Loader2, StopCircle, Box, ChevronDown, Activity, DollarSign, Wallet, Code2, CheckCircle2, Paperclip, FileIcon, Menu } from 'lucide-react';
 import clsx from 'clsx';
 import { getSession, getUserLocation, getVaults, updateSession, uploadChatFile, getAgentConfig } from '../../actions';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
@@ -16,7 +16,7 @@ export default function ChatSessionPage({ params }) {
     const router = useRouter(); // For refreshing sidebar on title update
     const [socket, setSocket] = useState(null);
     const [isConnected, setIsConnected] = useState(false);
-    const { setCollapsed } = useChatSidebar();
+    const { setCollapsed, toggleSidebar } = useChatSidebar();
     const [messages, setMessages] = useState([]);
     const [inputValue, setInputValue] = useState('');
     const [isWaiting, setIsWaiting] = useState(false);
@@ -618,8 +618,16 @@ export default function ChatSessionPage({ params }) {
         <div className="flex h-full flex-col">
             {/* Header */}
             <header className="flex h-16 items-center justify-between border-b border-zinc-800 bg-zinc-950 px-6">
-                <div className="flex flex-col">
-                    <h1 className="text-xl font-semibold text-white truncate max-w-sm">{sessionTitle || 'Chat'}</h1>
+                <div className="flex items-center gap-3">
+                    <button
+                        onClick={toggleSidebar}
+                        className="md:hidden text-zinc-400 hover:text-white"
+                    >
+                        <Menu className="h-5 w-5" />
+                    </button>
+                    <div className="flex flex-col">
+                        <h1 className="text-xl font-semibold text-white truncate max-w-sm">{sessionTitle || 'Chat'}</h1>
+                    </div>
                 </div>
                 <div className="flex items-center gap-4">
                     {/* Model Selector */}
