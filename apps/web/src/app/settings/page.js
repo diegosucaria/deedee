@@ -25,6 +25,7 @@ function SettingsContent() {
     const [error, setError] = useState(null);
     const [xaiKey, setXaiKey] = useState('');
     const [showKey, setShowKey] = useState(false);
+    const [newModel, setNewModel] = useState('');
 
     useEffect(() => {
         Promise.all([
@@ -228,7 +229,7 @@ function SettingsContent() {
                                         onChange={(e) => setXaiKey(e.target.value)}
                                         onBlur={(e) => handleSave('provider:xai', {
                                             apiKey: e.target.value,
-                                            models: ['grok-beta', 'grok-2-vision-1212']
+                                            models: config?.['provider:xai']?.models || ['grok-beta', 'grok-2-vision-1212']
                                         })}
                                         placeholder="xai-..."
                                         className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-white focus:border-transparent outline-none transition-all"
@@ -244,6 +245,70 @@ function SettingsContent() {
                                 <p className="text-xs text-zinc-500">
                                     Get your API key from <a href="https://console.x.ai/" target="_blank" className="text-indigo-400 hover:underline">console.x.ai</a>
                                 </p>
+                            </div>
+
+                            <div className="space-y-4 pt-4 border-t border-zinc-800">
+                                <label className="block text-sm font-medium text-zinc-300">Available Models</label>
+                                <div className="flex flex-wrap gap-2">
+                                    {(config?.['provider:xai']?.models || ['grok-beta', 'grok-2-vision-1212']).map((model) => (
+                                        <div key={model} className="flex items-center gap-2 bg-zinc-800 px-3 py-1.5 rounded-full text-sm text-zinc-300 border border-zinc-700">
+                                            <span>{model}</span>
+                                            <button
+                                                onClick={() => {
+                                                    const currentModels = config?.['provider:xai']?.models || ['grok-beta', 'grok-2-vision-1212'];
+                                                    const newModels = currentModels.filter(m => m !== model);
+                                                    handleSave('provider:xai', {
+                                                        apiKey: xaiKey,
+                                                        models: newModels
+                                                    });
+                                                }}
+                                                className="hover:text-red-400 transition-colors"
+                                            >
+                                                ×
+                                            </button>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        value={newModel}
+                                        onChange={(e) => setNewModel(e.target.value)}
+                                        onKeyDown={(e) => {
+                                            if (e.key === 'Enter') {
+                                                e.preventDefault();
+                                                if (!newModel.trim()) return;
+                                                const currentModels = config?.['provider:xai']?.models || ['grok-beta', 'grok-2-vision-1212'];
+                                                if (!currentModels.includes(newModel.trim())) {
+                                                    handleSave('provider:xai', {
+                                                        apiKey: xaiKey,
+                                                        models: [...currentModels, newModel.trim()]
+                                                    });
+                                                }
+                                                setNewModel('');
+                                            }
+                                        }}
+                                        placeholder="Add model ID (e.g. grok-4-1...)"
+                                        className="flex-1 bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500/50 outline-none text-sm"
+                                    />
+                                    <button
+                                        onClick={() => {
+                                            if (!newModel.trim()) return;
+                                            const currentModels = config?.['provider:xai']?.models || ['grok-beta', 'grok-2-vision-1212'];
+                                            if (!currentModels.includes(newModel.trim())) {
+                                                handleSave('provider:xai', {
+                                                    apiKey: xaiKey,
+                                                    models: [...currentModels, newModel.trim()]
+                                                });
+                                            }
+                                            setNewModel('');
+                                        }}
+                                        className="bg-indigo-600 hover:bg-indigo-500 text-white px-4 py-2 rounded-lg text-sm font-medium transition-colors"
+                                    >
+                                        Add
+                                    </button>
+                                </div>
                             </div>
                         </div>
                     </div>
