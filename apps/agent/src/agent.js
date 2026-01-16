@@ -718,6 +718,21 @@ class Agent {
         const targetModel = message.metadata.model;
         console.log(`[Agent] Routing Override: Using ${targetModel}`);
 
+        // JIT Init for xAI if key exists but client doesn't
+        if (!this.xaiClient && this.settings['provider:xai']?.apiKey) {
+          const apiKey = this.settings['provider:xai'].apiKey;
+          try {
+            const OpenAI = require('openai');
+            this.xaiClient = new OpenAI({
+              apiKey: apiKey,
+              baseURL: 'https://api.x.ai/v1'
+            });
+            console.log('[Agent] xAI Client Initialized JIT (Grok)');
+          } catch (e) {
+            console.error('[Agent] Failed to init xAI client JIT:', e);
+          }
+        }
+
         if (!this.xaiClient) {
           const errReply = createAssistantMessage('System: Grok is not configured. Please set API Key in Settings.');
           await sendCallback(errReply);
