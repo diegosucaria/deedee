@@ -21,15 +21,22 @@ class Router {
         }
     }
 
-    async route(userMessage, history = [], lastModel = null) {
+    async route(userMessage, history = [], lastModel = null, timeSinceLastModel = 0, source = 'web') {
         await this._ensureClient();
         try {
-            // Format recent history for context
-            const historyText = history.slice(-3).map(msg => {
-                const role = msg.role === 'model' ? 'Assistant' : 'User';
-                const content = msg.parts.map(p => p.text).join(' ');
-                return `${role}: ${content}`;
-            }).join('\n');
+            // Check time decay (24 hours = 86400000 ms)
+            // Logic: Time Decay only applies to "Messaging Apps" (WhatsApp/Telegram) where context is transient.
+            // For "Web" (Sessions), we assume the user might return days later to continue a specific thread.
+            const hoursSince = Math.floor(timeSinceLastModel / (1000 * 60 * 60));
+
+            const isMessagingApp = source && (source.startsWith('whatsapp') || source.startsWith('telegram'));
+            let timeDecayRule = '';
+
+            if (isMessagingApp) {
+                timeDecayRule = `* **EXCEPTION (Time Decay):** If Last Used Model was > 24 hours ago, **IGNORE** the sticky rule and route based on the current input complexity (Default to FLASH), UNLESS the user explicitly refers to the previous conversation. (Current Gap: ${hoursSince} hours)`;
+            }
+
+            // ... (existing history formatting) ...
 
             const instructionText = `
         You are the Router for a personal assistant bot. Your only job is to analyze the user's input and select the best model to handle the request.
@@ -62,9 +69,11 @@ class Router {
         * **Memory & History:** "Search my conversation with...", "What did I say yesterday?", "Find the message about..." (Requires internal tools, NOT Google).
         
         ### STICKY ROUTING (CRITICAL)
-        * **Last Used Model:** ${lastModel || 'NONE'}
+        * **Last Used Model:** ${lastModel || 'NONE'} (${hoursSince} hours ago)
         * **Rule:** If the Last Used Model was **PRO**, and the current user input is a **continuation**, **confirmation** ("Yes", "Proceed", "Ok"), or **short follow-up** related to the previous PRO context, **YOU MUST STAY ON PRO**.
-        * **Exception:** Only switch back to FLASH if the user clearly changes the topic to a simple task (Home Automation, Weather, Greeting).
+        ${timeDecayRule}
+        * **EXCEPTION (Voice/Audio):** If the input is a short/casual VOICE message (e.g. "Okay", "Cool", "Continue", "Y?") and the task allows for it, **SWITCH TO FLASH** to minimize latency. Speed is critical for voice chat.
+        * **Exception:** Switch back to FLASH if the user clearly changes the topic to a simple task (Home Automation, Weather, Greeting).
 
         ### RECENT CONTEXT
         ${historyText}

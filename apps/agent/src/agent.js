@@ -704,9 +704,14 @@ class Agent {
       // STICKY ROUTING: Check if we were using PRO recently
       const lastModelMsg = routingHistory.find(m => m.role === 'model');
       const lastModel = lastModelMsg?.metadata?.model;
+      const lastModelTimestamp = lastModelMsg?.timestamp; // Assumes timestamp is in ms or convertible
+      let timeSinceLastModel = 0;
+      if (lastModelTimestamp) {
+        timeSinceLastModel = Date.now() - new Date(lastModelTimestamp).getTime();
+      }
 
       // Pass the primary content or parts to router
-      const decision = await this.router.route(message.parts || message.content, routingHistory, lastModel);
+      const decision = await this.router.route(message.parts || message.content, routingHistory, lastModel, timeSinceLastModel, message.source);
       const routerDuration = Date.now() - routerStart;
       console.timeEnd('[Agent] Router Duration');
 
