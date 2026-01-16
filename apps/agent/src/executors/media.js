@@ -81,9 +81,10 @@ class MediaExecutor extends BaseExecutor {
                     }
                 }
 
-                console.log(`[MediaExecutor] Generating audio for: "${text.substring(0, 30)}..." (Voice: ${voiceName}, Lang: ${language})`);
-
                 const modelName = agent.configService.getModel('TTS');
+                console.log(`[MediaExecutor] Generating audio with Model: ${modelName} for: "${text.substring(0, 30)}..." (Voice: ${voiceName}, Lang: ${language})`);
+
+                const ttsStart = Date.now();
                 const audioResponse = await client.models.generateContent({
                     model: modelName,
                     contents: [{
@@ -100,6 +101,8 @@ class MediaExecutor extends BaseExecutor {
                         }
                     }
                 });
+                const ttsDuration = Date.now() - ttsStart;
+                console.log(`[MediaExecutor] TTS Generation took ${ttsDuration}ms`);
 
                 let audioData = null;
                 if (audioResponse.candidates && audioResponse.candidates[0].content && audioResponse.candidates[0].content.parts) {

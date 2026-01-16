@@ -333,13 +333,36 @@ class Agent {
       // 1. Map History
       const messages = geminiToOpenAIHistory(history);
 
+      // 1.5 Inject System Prompt
+      // Get System Prompt
+      const today = new Date().toLocaleString('en-US', { timeZone: 'America/Argentina/Cordoba' }); // Or get from config
+      // We need a simplified system prompt for Grok or use the full one? 
+      // Using the full one is better for consistency.
+      // We need to access getSystemInstruction.
+      const { getSystemInstruction } = require('./prompts/system');
+      // We can't easily get 'activeGoals' or 'facts' here without async calls or passing them in.
+      // For now, let's pass a basic version or try to fetch them if possible?
+      // Actually `processMessage` calls `this.db.getSystemPromptData`.
+      // But `_generateStreamGrok` is a helper.
+      // Let's pass `systemInstruction` as an argument to `_generateStreamGrok`?
+      // Or just constructing it here with minimal data.
+      // Let's try to pass it in `agent.js` where `_generateStreamGrok` is called.
+
+      // Let's modify the caller instead! 
+      // But first, let's prepare this method to accept an optional `systemInstruction` param.
+
+      // WAIT, I should modify the signature to accept `systemPrompt`.
+
       // 2. Add current user message
       messages.push({ role: 'user', content: userContent });
 
       // 3. Create Stream
       const stream = await client.chat.completions.create({
         model: model,
-        messages: messages,
+        messages: [
+          { role: 'system', content: this.currentSystemPrompt || 'You are DeeDee, a helpful AI assistant.' }, // Fallback if not set
+          ...messages
+        ],
         stream: true
       });
 
@@ -746,6 +769,31 @@ class Agent {
 
         await reportProgress(`Thinking (${targetModel})...`);
         const history = this.db.getHistoryForChat(chatId, 20); // Static window for now
+
+        // --- PREPARE SYSTEM PROMPT FOR GROK ---
+        const facts = this.db.getFactsFormatted();
+        const activeGoals = this.db.getPendingGoals().map(g => `- [${g.id}] ${g.description}`).join('\n');
+
+        let vaultContext = null;
+        const activeTopic = this.activeTopics.get(chatId);
+        if (activeTopic) {
+          try { vaultContext = await this.vaults.readVaultPage(activeTopic, 'index.md'); } catch (e) { }
+        }
+
+        const timeZone = process.env.TZ || 'America/Argentina/Buenos_Aires';
+        const timeString = new Date().toLocaleString('en-US', { timeZone, timeZoneName: 'short' }) + ` (${timeZone})`;
+
+        let grokSystemPrompt = getSystemInstruction(timeString, activeGoals, facts, { codingMode: true, vaultContext });
+
+        // Add Tool Manifest since Grok can't see definitions natively yet
+        grokSystemPrompt += `\n\n**AVAILABLE TOOLS (You cannot execute them directly, but you know they exist):**\n` +
+          `- googleSearch: Search the web.\n` +
+          `- replyWithAudio: Speak to the user.\n` +
+          `- rememberFact/getFact: Memory.\n` +
+          `- addGoal/completeGoal: Task tracking.\n` +
+          `- Smart Home: Control lights, vacuum, etc.\n`;
+
+        this.currentSystemPrompt = grokSystemPrompt;
 
         const stream = await this._generateStreamGrok(this.xaiClient, targetModel, message.content, history, chatId);
 
