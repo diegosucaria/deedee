@@ -7,7 +7,7 @@ export default function WikiEditor({ vaultId, initialContent, pageName }) {
     const [content, setContent] = useState(initialContent || '');
     const [isSaving, setIsSaving] = useState(false);
     const [isDirty, setIsDirty] = useState(false);
-    const [mode, setMode] = useState('edit');
+    const [mode, setMode] = useState('preview');
 
     // Auto-save logic or Manual save? 
     // Manual save button for safety + Cmd+S
