@@ -5,7 +5,7 @@ import { io } from 'socket.io-client';
 import ReactMarkdown from 'react-markdown';
 import { Send, Play, Wifi, WifiOff, Mic, Image as ImageIcon, X, Loader2, StopCircle, Box, ChevronDown, Activity, DollarSign, Wallet, Code2, CheckCircle2, Paperclip, FileIcon } from 'lucide-react';
 import clsx from 'clsx';
-import { getSession, getUserLocation, getVaults, updateSession, uploadChatFile } from '../../actions';
+import { getSession, getUserLocation, getVaults, updateSession, uploadChatFile, getAgentConfig } from '../../actions';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
 
 
@@ -31,6 +31,7 @@ export default function ChatSessionPage({ params }) {
 
     // Model State
     const [selectedModel, setSelectedModel] = useState('auto');
+    const [configuredModels, setConfiguredModels] = useState(['grok-beta', 'grok-2-vision-1212']); // Fallback defaults
 
     // Load Model Pref
     useEffect(() => {
@@ -46,9 +47,14 @@ export default function ChatSessionPage({ params }) {
     const audioChunksRef = useRef([]);
     const [selectedFile, setSelectedFile] = useState(null); // { file, name, size }
 
-    // Fetch Vaults
+    // Fetch Vaults & Config
     useEffect(() => {
         getVaults().then(setVaults).catch(console.error);
+        getAgentConfig().then(config => {
+            if (config && config['provider:xai']?.models) {
+                setConfiguredModels(config['provider:xai'].models);
+            }
+        }).catch(console.error);
     }, []);
 
     // Fetch Location (Option 2: IP-based)
@@ -631,8 +637,9 @@ export default function ChatSessionPage({ params }) {
                             className="appearance-none bg-transparent text-zinc-300 text-sm pl-2 pr-8 py-1.5 cursor-pointer outline-none border-none w-24 md:w-32"
                         >
                             <option value="auto">Auto (Gemini)</option>
-                            <option value="grok-beta">Grok Beta</option>
-                            <option value="grok-2-vision-1212">Grok 2 Vision</option>
+                            {configuredModels.map(m => (
+                                <option key={m} value={m}>{m}</option>
+                            ))}
                         </select>
                         <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-zinc-500 pointer-events-none" />
                     </div>
