@@ -24,7 +24,7 @@ export default function FileExplorer({ files, vaultId, className }) {
                     <div className="flex items-center gap-1 opacity-100 sm:opacity-0 sm:group-hover:opacity-100 transition-opacity">
                         {/* View Link */}
                         <a
-                            href={`/api/proxy/vaults/${vaultId}/files/${encodeURIComponent(file)}?inline=true`}
+                            href={`/files/vaults/${vaultId}/files/${encodeURIComponent(file)}?inline=true`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="p-1.5 text-zinc-400 hover:text-indigo-400 hover:bg-zinc-700 rounded transition-colors"
@@ -35,7 +35,7 @@ export default function FileExplorer({ files, vaultId, className }) {
 
                         {/* Download Link */}
                         <a
-                            href={`/api/proxy/vaults/${vaultId}/files/${encodeURIComponent(file)}`}
+                            href={`/files/vaults/${vaultId}/files/${encodeURIComponent(file)}`}
                             target="_blank"
                             rel="noopener noreferrer"
                             className="p-1.5 text-zinc-400 hover:text-indigo-400 hover:bg-zinc-700 rounded transition-colors"
