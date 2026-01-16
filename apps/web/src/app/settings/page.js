@@ -32,322 +32,322 @@ function SettingsContent() {
             getEnvConfig(),
             getBackups(),
             getVoiceSettings()
-        }).then(([configData, envData, backupsData, voiceData]) => {
-                setConfig(configData);
-                if (configData['provider:xai']?.apiKey) {
-                    setXaiKey(configData['provider:xai'].apiKey);
-                }
-                setEnv(envData);
-                setBackups(backupsData);
-                setVoice(voiceData);
-            });
-}, []);
+        ]).then(([configData, envData, backupsData, voiceData]) => {
+            setConfig(configData);
+            if (configData['provider:xai']?.apiKey) {
+                setXaiKey(configData['provider:xai'].apiKey);
+            }
+            setEnv(envData);
+            setBackups(backupsData);
+            setVoice(voiceData);
+        });
+    }, []);
 
-const handleTabChange = (tabId) => {
-    router.replace(`/settings?tab=${tabId}`);
-};
+    const handleTabChange = (tabId) => {
+        router.replace(`/settings?tab=${tabId}`);
+    };
 
-const handleVoiceChange = async (newVoice) => {
-    setSaving(true);
-    // Optimistic
-    setVoice(newVoice);
-    const res = await saveVoiceSettings(newVoice);
-    setSaving(false);
-    if (!res.success) {
-        setError(res.error);
-        // Revert
-        getVoiceSettings().then(setVoice);
-    }
-};
+    const handleVoiceChange = async (newVoice) => {
+        setSaving(true);
+        // Optimistic
+        setVoice(newVoice);
+        const res = await saveVoiceSettings(newVoice);
+        setSaving(false);
+        if (!res.success) {
+            setError(res.error);
+            // Revert
+            getVoiceSettings().then(setVoice);
+        }
+    };
 
-const handleSave = async (key, value) => {
-    setSaving(true);
-    setError(null);
+    const handleSave = async (key, value) => {
+        setSaving(true);
+        setError(null);
 
-    // Optimistic update
-    setConfig(prev => ({
-        ...prev,
-        [key]: value, // Support top-level keys like owner_phone
-        search_strategy: key === 'search_strategy' ? { ...prev?.search_strategy, mode: value } : prev?.search_strategy
-    }));
+        // Optimistic update
+        setConfig(prev => ({
+            ...prev,
+            [key]: value, // Support top-level keys like owner_phone
+            search_strategy: key === 'search_strategy' ? { ...prev?.search_strategy, mode: value } : prev?.search_strategy
+        }));
 
-    const payload = key === 'search_strategy' ? { mode: value } : value;
-    const res = await updateAgentConfig(key, payload);
+        const payload = key === 'search_strategy' ? { mode: value } : value;
+        const res = await updateAgentConfig(key, payload);
 
-    setSaving(false);
-    if (!res.success) {
-        setError(res.error);
-        // Revert (simplified: re-fetch)
-        getAgentConfig().then(setConfig);
-    }
-};
+        setSaving(false);
+        if (!res.success) {
+            setError(res.error);
+            // Revert (simplified: re-fetch)
+            getAgentConfig().then(setConfig);
+        }
+    };
 
-const currentMode = config?.search_strategy?.mode || 'HYBRID';
+    const currentMode = config?.search_strategy?.mode || 'HYBRID';
 
-const tabs = [
-    { id: 'general', label: 'General' },
-    { id: 'models', label: 'Models' },
-    { id: 'communication', label: 'Communication' },
-    { id: 'interfaces', label: 'Interfaces' },
-    { id: 'backups', label: 'Backups' },
-    { id: 'environment', label: 'Environment' },
-];
+    const tabs = [
+        { id: 'general', label: 'General' },
+        { id: 'models', label: 'Models' },
+        { id: 'communication', label: 'Communication' },
+        { id: 'interfaces', label: 'Interfaces' },
+        { id: 'backups', label: 'Backups' },
+        { id: 'environment', label: 'Environment' },
+    ];
 
-return (
-    <div className="flex h-screen flex-col bg-zinc-950 text-zinc-200 p-6 md:p-12 overflow-y-auto w-full">
-        <header className="mb-8 max-w-3xl mx-auto w-full">
-            <h1 className="text-3xl font-bold tracking-tight text-white mb-2 flex items-center gap-3">
-                <Settings className="w-8 h-8 text-zinc-400" />
-                Agent Settings
-            </h1>
-            <p className="text-zinc-400">Configure global behaviors and system preferences.</p>
+    return (
+        <div className="flex h-screen flex-col bg-zinc-950 text-zinc-200 p-6 md:p-12 overflow-y-auto w-full">
+            <header className="mb-8 max-w-3xl mx-auto w-full">
+                <h1 className="text-3xl font-bold tracking-tight text-white mb-2 flex items-center gap-3">
+                    <Settings className="w-8 h-8 text-zinc-400" />
+                    Agent Settings
+                </h1>
+                <p className="text-zinc-400">Configure global behaviors and system preferences.</p>
 
-            {/* Tabs */}
-            <div className="flex space-x-1 mt-6 bg-zinc-900/50 p-1 rounded-lg border border-zinc-800 w-fit">
-                {tabs.map(tab => (
-                    <button
-                        key={tab.id}
-                        onClick={() => handleTabChange(tab.id)}
-                        className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === tab.id
-                            ? 'bg-zinc-800 text-white shadow-sm'
-                            : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'
-                            }`}
-                    >
-                        {tab.label}
-                    </button>
-                ))}
-            </div>
-        </header>
-
-        <section className="max-w-3xl mx-auto w-full space-y-8 pb-20">
-            {/* General Tab */}
-            {activeTab === 'general' && (
-                <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-
-                    {/* Owner Phone */}
-                    <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
-                        <h2 className="text-lg font-semibold text-white mb-4">Owner Contact</h2>
-                        <div className="space-y-4">
-                            <div>
-                                <label className="block text-sm font-medium text-zinc-400 mb-1">
-                                    Your Name
-                                </label>
-                                <input
-                                    type="text"
-                                    defaultValue={config?.owner_name || ''}
-                                    onBlur={(e) => handleSave('owner_name', e.target.value)}
-                                    placeholder="e.g. Diego"
-                                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500/50 outline-none"
-                                />
-                                <p className="text-xs text-zinc-500 mt-1">
-                                    How the agent should address you.
-                                </p>
-                            </div>
-                            <div>
-                                <label className="block text-sm font-medium text-zinc-400 mb-1">
-                                    Your Phone Number (WhatsApp)
-                                </label>
-                                <input
-                                    type="text"
-                                    defaultValue={config?.owner_phone || ''}
-                                    onBlur={(e) => handleSave('owner_phone', e.target.value)}
-                                    placeholder="e.g. 549351..."
-                                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500/50 outline-none"
-                                />
-                                <p className="text-xs text-zinc-500 mt-1">
-                                    Used to resolve "me", "diego", "owner" in messages.
-                                </p>
-                            </div>
-                        </div>
-                    </div>
-
-                    {/* Search Strategy Card */}
-                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-                        <div className="p-6 border-b border-zinc-800">
-                            <h2 className="text-lg font-semibold text-white">Hybrid Search Strategy</h2>
-                            <p className="text-sm text-zinc-400 mt-1">
-                                Controls how the agent deploys search tools.
-                            </p>
-                        </div>
-
-                        <div className="p-6 space-y-4">
-                            <StrategyOption
-                                id="HYBRID"
-                                title="Hybrid (Auto)"
-                                description="Automatically switches between Native Google Search (for text) and Polyfill Search (for audio context) to balance speed and features."
-                                isSelected={currentMode === 'HYBRID'}
-                                onSelect={() => handleSave('search_strategy', 'HYBRID')}
-                            />
-
-                            <StrategyOption
-                                id="NATIVE_ONLY"
-                                title="Native Only (Performance)"
-                                description="Forces Google Grounding. Faster and cheaper, but CANNOT output Audio/TTS or mix with other tools."
-                                isSelected={currentMode === 'NATIVE_ONLY'}
-                                onSelect={() => handleSave('search_strategy', 'NATIVE_ONLY')}
-                                warning="Audio responses will fail in this mode."
-                            />
-
-                            <StrategyOption
-                                id="STANDARD_ONLY"
-                                title="Standard Only (Compatibility)"
-                                description="Forces Polyfill Search (Tool Use). Slower, but allows text-to-speech mixing and multi-tool chains."
-                                isSelected={currentMode === 'STANDARD_ONLY'}
-                                onSelect={() => handleSave('search_strategy', 'STANDARD_ONLY')}
-                            />
-                        </div>
-                        {error && (
-                            <div className="bg-red-500/10 text-red-400 p-4 text-sm border-t border-red-500/20">
-                                Error saving settings: {error}
-                            </div>
-                        )}
-                    </div>
+                {/* Tabs */}
+                <div className="flex space-x-1 mt-6 bg-zinc-900/50 p-1 rounded-lg border border-zinc-800 w-fit">
+                    {tabs.map(tab => (
+                        <button
+                            key={tab.id}
+                            onClick={() => handleTabChange(tab.id)}
+                            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === tab.id
+                                ? 'bg-zinc-800 text-white shadow-sm'
+                                : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'
+                                }`}
+                        >
+                            {tab.label}
+                        </button>
+                    ))}
                 </div>
-            )}
+            </header>
 
-            {/* Models Tab */}
-            {activeTab === 'models' && (
-                <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-6">
-                        <div className="flex items-center gap-3 border-b border-zinc-800 pb-4">
-                            <div className="h-10 w-10 bg-white text-black rounded-lg flex items-center justify-center font-bold text-xl">
-                                X
-                            </div>
-                            <div>
-                                <h3 className="text-lg font-medium text-white">xAI (Grok)</h3>
-                                <p className="text-sm text-zinc-400">Enable access to Grok models.</p>
-                            </div>
-                        </div>
+            <section className="max-w-3xl mx-auto w-full space-y-8 pb-20">
+                {/* General Tab */}
+                {activeTab === 'general' && (
+                    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
 
-                        <div className="space-y-4">
-                            <label className="block text-sm font-medium text-zinc-300">API Key</label>
-                            <div className="relative">
-                                <input
-                                    type={showKey ? "text" : "password"}
-                                    value={xaiKey}
-                                    onChange={(e) => setXaiKey(e.target.value)}
-                                    onBlur={(e) => handleSave('provider:xai', {
-                                        apiKey: e.target.value,
-                                        models: ['grok-beta', 'grok-2-vision-1212']
-                                    })}
-                                    placeholder="xai-..."
-                                    className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-white focus:border-transparent outline-none transition-all"
-                                />
-                                <button
-                                    type="button"
-                                    onClick={() => setShowKey(!showKey)}
-                                    className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white"
-                                >
-                                    {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
-                                </button>
-                            </div>
-                            <p className="text-xs text-zinc-500">
-                                Get your API key from <a href="https://console.x.ai/" target="_blank" className="text-indigo-400 hover:underline">console.x.ai</a>
-                            </p>
-                        </div>
-                    </div>
-                </div>
-            )}
-
-            {/* Communication Tab */}
-            {activeTab === 'communication' && (
-                <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    {/* Communication Settings */}
-                    <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
-                        <h2 className="text-lg font-semibold text-white mb-4">Notifications & Messaging</h2>
-
-                        <div className="space-y-6">
-                            {/* Notification Channel */}
-                            <div>
-                                <label className="block text-sm font-medium text-zinc-400 mb-1">
-                                    Notification Channel
-                                </label>
-                                <select
-                                    value={config?.notification_channel || 'whatsapp'}
-                                    onChange={(e) => handleSave('notification_channel', e.target.value)}
-                                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500/50 outline-none"
-                                >
-                                    <option value="whatsapp">WhatsApp</option>
-                                    <option value="telegram">Telegram</option>
-                                </select>
-                                <p className="text-xs text-zinc-500 mt-1">
-                                    Where the agent sends "pushed" alerts and reminders.
-                                </p>
-                            </div>
-
-                            <div className="border-t border-zinc-800/50 pt-6 flex items-center justify-between">
+                        {/* Owner Phone */}
+                        <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
+                            <h2 className="text-lg font-semibold text-white mb-4">Owner Contact</h2>
+                            <div className="space-y-4">
                                 <div>
-                                    <h3 className="text-white font-medium">Dry Run Mode</h3>
-                                    <p className="text-sm text-zinc-400 mt-1 max-w-md">
-                                        Simulate sending messages without actually dispatching them.
-                                        Useful for testing delayed notifications safely.
+                                    <label className="block text-sm font-medium text-zinc-400 mb-1">
+                                        Your Name
+                                    </label>
+                                    <input
+                                        type="text"
+                                        defaultValue={config?.owner_name || ''}
+                                        onBlur={(e) => handleSave('owner_name', e.target.value)}
+                                        placeholder="e.g. Diego"
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500/50 outline-none"
+                                    />
+                                    <p className="text-xs text-zinc-500 mt-1">
+                                        How the agent should address you.
                                     </p>
                                 </div>
-                                <div className="flex items-center">
-                                    <label className="relative inline-flex items-center cursor-pointer">
-                                        <input
-                                            type="checkbox"
-                                            checked={config?.communication_dry_run === true}
-                                            onChange={(e) => handleSave('communication_dry_run', e.target.checked)}
-                                            className="sr-only peer"
-                                        />
-                                        <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-500/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                                <div>
+                                    <label className="block text-sm font-medium text-zinc-400 mb-1">
+                                        Your Phone Number (WhatsApp)
                                     </label>
+                                    <input
+                                        type="text"
+                                        defaultValue={config?.owner_phone || ''}
+                                        onBlur={(e) => handleSave('owner_phone', e.target.value)}
+                                        placeholder="e.g. 549351..."
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500/50 outline-none"
+                                    />
+                                    <p className="text-xs text-zinc-500 mt-1">
+                                        Used to resolve "me", "diego", "owner" in messages.
+                                    </p>
                                 </div>
                             </div>
                         </div>
 
-                        {config?.communication_dry_run && (
-                            <div className="mt-4 flex items-center gap-2 text-yellow-500/90 text-sm bg-yellow-500/10 p-3 rounded-lg border border-yellow-500/20">
-                                <AlertTriangle className="w-4 h-4" />
-                                <span>
-                                    <strong>Dry Run Active:</strong> The agent will LOG success but NO messages will be sent out.
-                                </span>
+                        {/* Search Strategy Card */}
+                        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+                            <div className="p-6 border-b border-zinc-800">
+                                <h2 className="text-lg font-semibold text-white">Hybrid Search Strategy</h2>
+                                <p className="text-sm text-zinc-400 mt-1">
+                                    Controls how the agent deploys search tools.
+                                </p>
                             </div>
-                        )}
-                    </div>
 
-                    {/* Voice Settings Card */}
-                    <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-                        <div className="p-6 border-b border-zinc-800">
-                            <h2 className="text-lg font-semibold text-white">Live Agent Voice</h2>
-                            <p className="text-sm text-zinc-400 mt-1">
-                                Choose the voice persona for Gemini Live sessions.
-                            </p>
-                        </div>
-                        <div className="p-6">
-                            <VoiceSelector selectedVoice={voice} onSelect={handleVoiceChange} />
+                            <div className="p-6 space-y-4">
+                                <StrategyOption
+                                    id="HYBRID"
+                                    title="Hybrid (Auto)"
+                                    description="Automatically switches between Native Google Search (for text) and Polyfill Search (for audio context) to balance speed and features."
+                                    isSelected={currentMode === 'HYBRID'}
+                                    onSelect={() => handleSave('search_strategy', 'HYBRID')}
+                                />
+
+                                <StrategyOption
+                                    id="NATIVE_ONLY"
+                                    title="Native Only (Performance)"
+                                    description="Forces Google Grounding. Faster and cheaper, but CANNOT output Audio/TTS or mix with other tools."
+                                    isSelected={currentMode === 'NATIVE_ONLY'}
+                                    onSelect={() => handleSave('search_strategy', 'NATIVE_ONLY')}
+                                    warning="Audio responses will fail in this mode."
+                                />
+
+                                <StrategyOption
+                                    id="STANDARD_ONLY"
+                                    title="Standard Only (Compatibility)"
+                                    description="Forces Polyfill Search (Tool Use). Slower, but allows text-to-speech mixing and multi-tool chains."
+                                    isSelected={currentMode === 'STANDARD_ONLY'}
+                                    onSelect={() => handleSave('search_strategy', 'STANDARD_ONLY')}
+                                />
+                            </div>
+                            {error && (
+                                <div className="bg-red-500/10 text-red-400 p-4 text-sm border-t border-red-500/20">
+                                    Error saving settings: {error}
+                                </div>
+                            )}
                         </div>
                     </div>
-                </div>
-            )}
+                )}
 
-            {activeTab === 'interfaces' && (
-                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    {/* Remove header from InterfacesClient if you want it cleaner, 
+                {/* Models Tab */}
+                {activeTab === 'models' && (
+                    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 space-y-6">
+                            <div className="flex items-center gap-3 border-b border-zinc-800 pb-4">
+                                <div className="h-10 w-10 bg-white text-black rounded-lg flex items-center justify-center font-bold text-xl">
+                                    X
+                                </div>
+                                <div>
+                                    <h3 className="text-lg font-medium text-white">xAI (Grok)</h3>
+                                    <p className="text-sm text-zinc-400">Enable access to Grok models.</p>
+                                </div>
+                            </div>
+
+                            <div className="space-y-4">
+                                <label className="block text-sm font-medium text-zinc-300">API Key</label>
+                                <div className="relative">
+                                    <input
+                                        type={showKey ? "text" : "password"}
+                                        value={xaiKey}
+                                        onChange={(e) => setXaiKey(e.target.value)}
+                                        onBlur={(e) => handleSave('provider:xai', {
+                                            apiKey: e.target.value,
+                                            models: ['grok-beta', 'grok-2-vision-1212']
+                                        })}
+                                        placeholder="xai-..."
+                                        className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-white focus:border-transparent outline-none transition-all"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={() => setShowKey(!showKey)}
+                                        className="absolute right-3 top-1/2 -translate-y-1/2 text-zinc-500 hover:text-white"
+                                    >
+                                        {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
+                                    </button>
+                                </div>
+                                <p className="text-xs text-zinc-500">
+                                    Get your API key from <a href="https://console.x.ai/" target="_blank" className="text-indigo-400 hover:underline">console.x.ai</a>
+                                </p>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Communication Tab */}
+                {activeTab === 'communication' && (
+                    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        {/* Communication Settings */}
+                        <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
+                            <h2 className="text-lg font-semibold text-white mb-4">Notifications & Messaging</h2>
+
+                            <div className="space-y-6">
+                                {/* Notification Channel */}
+                                <div>
+                                    <label className="block text-sm font-medium text-zinc-400 mb-1">
+                                        Notification Channel
+                                    </label>
+                                    <select
+                                        value={config?.notification_channel || 'whatsapp'}
+                                        onChange={(e) => handleSave('notification_channel', e.target.value)}
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500/50 outline-none"
+                                    >
+                                        <option value="whatsapp">WhatsApp</option>
+                                        <option value="telegram">Telegram</option>
+                                    </select>
+                                    <p className="text-xs text-zinc-500 mt-1">
+                                        Where the agent sends "pushed" alerts and reminders.
+                                    </p>
+                                </div>
+
+                                <div className="border-t border-zinc-800/50 pt-6 flex items-center justify-between">
+                                    <div>
+                                        <h3 className="text-white font-medium">Dry Run Mode</h3>
+                                        <p className="text-sm text-zinc-400 mt-1 max-w-md">
+                                            Simulate sending messages without actually dispatching them.
+                                            Useful for testing delayed notifications safely.
+                                        </p>
+                                    </div>
+                                    <div className="flex items-center">
+                                        <label className="relative inline-flex items-center cursor-pointer">
+                                            <input
+                                                type="checkbox"
+                                                checked={config?.communication_dry_run === true}
+                                                onChange={(e) => handleSave('communication_dry_run', e.target.checked)}
+                                                className="sr-only peer"
+                                            />
+                                            <div className="w-11 h-6 bg-zinc-700 peer-focus:outline-none peer-focus:ring-2 peer-focus:ring-indigo-500/50 rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-gray-300 after:border after:rounded-full after:h-5 after:w-5 after:transition-all peer-checked:bg-indigo-600"></div>
+                                        </label>
+                                    </div>
+                                </div>
+                            </div>
+
+                            {config?.communication_dry_run && (
+                                <div className="mt-4 flex items-center gap-2 text-yellow-500/90 text-sm bg-yellow-500/10 p-3 rounded-lg border border-yellow-500/20">
+                                    <AlertTriangle className="w-4 h-4" />
+                                    <span>
+                                        <strong>Dry Run Active:</strong> The agent will LOG success but NO messages will be sent out.
+                                    </span>
+                                </div>
+                            )}
+                        </div>
+
+                        {/* Voice Settings Card */}
+                        <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
+                            <div className="p-6 border-b border-zinc-800">
+                                <h2 className="text-lg font-semibold text-white">Live Agent Voice</h2>
+                                <p className="text-sm text-zinc-400 mt-1">
+                                    Choose the voice persona for Gemini Live sessions.
+                                </p>
+                            </div>
+                            <div className="p-6">
+                                <VoiceSelector selectedVoice={voice} onSelect={handleVoiceChange} />
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {activeTab === 'interfaces' && (
+                    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        {/* Remove header from InterfacesClient if you want it cleaner, 
                             but for now we just render it. It has its own layout which might look double-headed.
                             Actually InterfacesClient has a big header "Interfaces". 
                             SettingsPage has "Agent Settings".
                             It's probably fine as a subsection.
                         */}
-                    <InterfacesClient />
-                </div>
-            )}
+                        <InterfacesClient />
+                    </div>
+                )}
 
-            {activeTab === 'backups' && (
-                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    <BackupSettings backups={backups} />
-                </div>
-            )}
+                {activeTab === 'backups' && (
+                    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <BackupSettings backups={backups} />
+                    </div>
+                )}
 
-            {activeTab === 'environment' && (
-                <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
-                    <EnvVariables env={env} />
-                </div>
-            )}
-        </section>
-    </div>
-);
+                {activeTab === 'environment' && (
+                    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <EnvVariables env={env} />
+                    </div>
+                )}
+            </section>
+        </div>
+    );
 }
 
 export default function SettingsPage() {
