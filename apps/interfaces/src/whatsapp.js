@@ -411,6 +411,17 @@ class WhatsAppService {
                     this.qr = null;
                     this.reconnectAttempts = 0; // Reset on success
 
+                    // FORCE PASSIVE STATE to restore Phone Notifications
+                    // Explicitly tell WhatsApp we are "unavailable" so it doesn't think this session is currently active.
+                    try {
+                        const { delay } = await this._importBaileys();
+                        await delay(1000); // Wait a beat
+                        await this.sock.sendPresenceUpdate('unavailable');
+                        console.log(`${this.logPrefix} Forced presence to 'unavailable' to unblock phone notifications.`);
+                    } catch (e) {
+                        console.warn(`${this.logPrefix} Failed to set initial presence:`, e);
+                    }
+
                     // Log contacts count
                     const contactCount = this.store.getContacts().length;
                     console.log(`${this.logPrefix} Store has ${contactCount} contacts.`);
