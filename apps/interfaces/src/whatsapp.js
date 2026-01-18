@@ -367,6 +367,12 @@ class WhatsAppService {
                 }
 
                 if (connection === 'close') {
+                    // Clear presence interval
+                    if (this.presenceInterval) {
+                        clearInterval(this.presenceInterval);
+                        this.presenceInterval = null;
+                    }
+
                     // baileys-specific error codes
                     const statusCode = (lastDisconnect?.error)?.output?.statusCode;
                     const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
@@ -412,15 +418,24 @@ class WhatsAppService {
                     this.reconnectAttempts = 0; // Reset on success
 
                     // FORCE PASSIVE STATE to restore Phone Notifications
-                    // Explicitly tell WhatsApp we are "unavailable" so it doesn't think this session is currently active.
-                    try {
-                        const { delay } = await this._importBaileys();
-                        await delay(1000); // Wait a beat
-                        await this.sock.sendPresenceUpdate('unavailable');
-                        console.log(`${this.logPrefix} Forced presence to 'unavailable' to unblock phone notifications.`);
-                    } catch (e) {
-                        console.warn(`${this.logPrefix} Failed to set initial presence:`, e);
-                    }
+                    const setPassive = async () => {
+                        try {
+                            await this.sock.sendPresenceUpdate('unavailable');
+                            console.log(`${this.logPrefix} Asserted 'unavailable' presence.`);
+                        } catch (e) {
+                            console.warn(`${this.logPrefix} Failed to set presence:`, e);
+                        }
+                    };
+
+                    // 1. Immediate (delayed)
+                    const { delay } = await this._importBaileys();
+                    await delay(2000);
+                    await setPassive();
+
+                    // 2. Periodic Re-assertion (Every 10 mins)
+                    // This counters any implicit "Active" status drift
+                    if (this.presenceInterval) clearInterval(this.presenceInterval);
+                    this.presenceInterval = setInterval(setPassive, 10 * 60 * 1000);
 
                     // Log contacts count
                     const contactCount = this.store.getContacts().length;
