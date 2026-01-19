@@ -390,15 +390,38 @@ export async function getMCPStatus() {
 }
 
 export async function getVinylCrate(limit = 50, offset = 0) {
-    try {
-        const response = await fetchAPI(`/v1/dj/vinyls?limit=${limit}&offset=${offset}`, {
-            method: "GET",
-        });
-        return response;
-    } catch (error) {
-        console.error("Error fetching vinyl crate:", error);
-        return [];
-    }
+    // Uses the new Proxy setup in API Gateway
+    const response = await fetchAPI(`/v1/dj/vinyls?limit=${limit}&offset=${offset}`, { method: "GET" });
+    if (!response.ok) return { success: false, error: await response.text() };
+    return { success: true, data: await response.json() };
+}
+
+export async function rewindChat(chatId, messageId) {
+    const response = await fetchAPI(`/v1/chat/rewind`, {
+        method: "POST",
+        body: JSON.stringify({ chatId, messageId })
+    });
+    if (!response.ok) return { success: false, error: "Failed to rewind" };
+    return { success: true, data: await response.json() };
+}
+
+export async function forkChat(chatId, messageId) {
+    const response = await fetchAPI(`/v1/chat/fork`, {
+        method: "POST",
+        body: JSON.stringify({ chatId, messageId })
+    });
+    if (!response.ok) return { success: false, error: "Failed to fork" };
+    return { success: true, data: await response.json() };
+}
+
+export async function stopChat(chatId) {
+    const response = await fetchAPI(`/v1/chat/stop`, {
+        method: "POST",
+        body: JSON.stringify({ chatId })
+    });
+    // Fire and forget usually, but returning status is good
+    if (!response.ok) return { success: false, error: "Failed to stop" };
+    return { success: true };
 }
 
 export async function getTools() {

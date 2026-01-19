@@ -78,4 +78,43 @@ router.post('/:id/files', (req, res) => {
     req.pipe(proxyReq, { end: true });
 });
 
+// POST /rewind - Rewind Chat History
+router.post('/rewind', async (req, res) => {
+    try {
+        const { chatId, messageId } = req.body;
+        // Forward to Agent Internal API
+        const response = await axios.post(`${AGENT_URL}/internal/history/rewind`, { chatId, messageId });
+        res.json(response.data);
+    } catch (error) {
+        console.error('[API] Rewind failed:', error.message);
+        res.status(502).json({ error: 'Failed to rewind chat' });
+    }
+});
+
+// POST /fork - Fork Chat History
+router.post('/fork', async (req, res) => {
+    try {
+        const { chatId, messageId } = req.body;
+        // Forward to Agent Internal API
+        const response = await axios.post(`${AGENT_URL}/internal/history/fork`, { chatId, messageId });
+        res.json(response.data);
+    } catch (error) {
+        console.error('[API] Fork failed:', error.message);
+        res.status(502).json({ error: 'Failed to fork chat' });
+    }
+});
+
+// POST /stop - Stop Generation
+router.post('/stop', async (req, res) => {
+    try {
+        const { chatId } = req.body;
+        // Forward to Agent Internal API
+        const response = await axios.post(`${AGENT_URL}/internal/chat/stop`, { chatId });
+        res.json(response.data);
+    } catch (error) {
+        console.error('[API] Stop failed:', error.message);
+        res.status(502).json({ error: 'Failed to stop chat' });
+    }
+});
+
 module.exports = router;

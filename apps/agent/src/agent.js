@@ -60,6 +60,7 @@ class Agent {
     this.confirmationManager = new ConfirmationManager(this.db);
     // Shared state for stopping execution
     this.stopFlags = new Set();
+    this.cancellationFlags = new Set(); // For stopping chat generation
     this.activeTopics = new Map(); // Store active vault topics per chatId
     // Initialize Command Handler
     this.commandHandler = new CommandHandler(this.db, this.interface, this.confirmationManager, this.stopFlags, this);
@@ -99,6 +100,12 @@ class Agent {
 
   async _loadClientLibrary() {
     return import('@google/genai');
+  }
+
+  // FORCE STOP a specific chat generation
+  async stopGeneration(chatId) {
+    console.log(`[Agent] Stop requested for chat ${chatId}`);
+    this.cancellationFlags.add(chatId);
   }
 
   async stop() {
@@ -248,6 +255,18 @@ class Agent {
         const aggregatedParts = [];
 
         for await (const chunk of stream) {
+          // CHECK CANCELLATION
+          if (this.cancellationFlags.has(chatId)) {
+            console.log(`[Agent] Generation cancelled for ${chatId}`);
+            this.cancellationFlags.delete(chatId);
+            fullText += "\n\n*[Stopped by User]*";
+            // Broadcast stop
+            if (this.interface.broadcast) {
+              this.interface.broadcast('agent:token', { chatId, content: "\n\n*[Stopped by User]*", timestamp: Date.now() });
+            }
+            break; // Exit loop
+          }
+
           let text = '';
           try {
             // chunk.text() throws if the chunk has no text (e.g. only function call)

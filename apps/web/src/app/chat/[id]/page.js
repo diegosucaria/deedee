@@ -5,721 +5,831 @@ import { io } from 'socket.io-client';
 import ReactMarkdown from 'react-markdown';
 import { Send, Play, Wifi, WifiOff, Mic, Image as ImageIcon, X, Loader2, StopCircle, Box, ChevronDown, Activity, DollarSign, Wallet, Code2, CheckCircle2, Paperclip, FileIcon, Menu } from 'lucide-react';
 import clsx from 'clsx';
-import { getSession, getUserLocation, getVaults, updateSession, uploadChatFile, getAgentConfig } from '../../actions';
+import { getSession, getUserLocation, getVaults, updateSession, uploadChatFile, getAgentConfig, rewindChat, forkChat, stopChat } from '../../actions'; // Added stopChat
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
 
 
 import { useRouter } from 'next/navigation';
+import { Pencil, GitFork, Trash2, Square } from 'lucide-react'; // Added Square
 
-export default function ChatSessionPage({ params }) {
-    const { id: chatId } = params;
-    const router = useRouter(); // For refreshing sidebar on title update
-    const [socket, setSocket] = useState(null);
-    const [isConnected, setIsConnected] = useState(false);
-    const { setCollapsed, toggleSidebar } = useChatSidebar();
-    const [messages, setMessages] = useState([]);
-    const [inputValue, setInputValue] = useState('');
-    const [isWaiting, setIsWaiting] = useState(false);
-    const [thinkingStatus, setThinkingStatus] = useState('');
-    const [sessionTitle, setSessionTitle] = useState('');
-    const [userLocation, setUserLocation] = useState(null);
-    const messagesEndRef = useRef(null);
+const { id: chatId } = params;
+const router = useRouter(); // For refreshing sidebar on title update
+// ... existing state ...
+const [socket, setSocket] = useState(null);
+const [isConnected, setIsConnected] = useState(false);
+const { setCollapsed, toggleSidebar } = useChatSidebar();
+const [messages, setMessages] = useState([]);
+const [inputValue, setInputValue] = useState('');
+const [isWaiting, setIsWaiting] = useState(false);
 
-    // Vault State
-    const [vaults, setVaults] = useState([]);
-    const [selectedVault, setSelectedVault] = useState('none');
+// ... skipping unchanged state ...
 
-    // Model State
-    const [selectedModel, setSelectedModel] = useState('auto');
-    const [configuredModels, setConfiguredModels] = useState(['grok-beta', 'grok-2-vision-1212']); // Fallback defaults
+// Rewind / Edit Handler
+const handleRewind = async (msg) => {
+    if (!confirm('Edit this message? This will delete all subsequent history in this chat.')) return;
 
-    // Load Model Pref
-    useEffect(() => {
-        const saved = localStorage.getItem('deedee_model_pref');
-        if (saved) setSelectedModel(saved);
-    }, []);
+    // 1. Set Input
+    setInputValue(msg.content);
 
-    // Multimodal State
-    const [isRecording, setIsRecording] = useState(false);
-    const [audioBlob, setAudioBlob] = useState(null);
-    const [selectedImage, setSelectedImage] = useState(null); // { file, preview }
-    const mediaRecorderRef = useRef(null);
-    const audioChunksRef = useRef([]);
-    const [selectedFile, setSelectedFile] = useState(null); // { file, name, size }
-
-    // Fetch Vaults & Config
-    useEffect(() => {
-        getVaults().then(setVaults).catch(console.error);
-        getAgentConfig().then(config => {
-            if (config && config['provider:xai']?.models) {
-                setConfiguredModels(config['provider:xai'].models);
+    // 2. Call API
+    try {
+        const res = await rewindChat(chatId, msg.id);
+        if (res.success) {
+            // 3. Optimistically update UI: Remove messages from this one onwards
+            const msgIndex = messages.findIndex(m => m.id === msg.id);
+            if (msgIndex !== -1) {
+                setMessages(prev => prev.slice(0, msgIndex));
             }
-        }).catch(console.error);
-    }, []);
-
-    // Fetch Location (Option 2: IP-based)
-    useEffect(() => {
-        const CACHE_KEY = 'deedee_user_location';
-        const TIME_KEY = 'deedee_location_timestamp';
-        const TTL = 2 * 60 * 60 * 1000; // 2 hours
-
-        const cachedLoc = localStorage.getItem(CACHE_KEY);
-        const cachedTime = localStorage.getItem(TIME_KEY);
-        const now = Date.now();
-
-        // Check if cache is valid
-        if (cachedLoc && cachedTime && (now - parseInt(cachedTime) < TTL)) {
-            setUserLocation(cachedLoc);
-            console.log('[Chat] Using valid cached location:', cachedLoc);
-            return; // Skip fetch
+            // Focus input?
+        } else {
+            alert('Failed to rewind: ' + res.error);
         }
+    } catch (e) {
+        console.error('Rewind error:', e);
+    }
+};
 
-        // If stale or missing, fetch in background
-        if (cachedLoc) setUserLocation(cachedLoc); // Use stale while revalidating
+// Fork Handler
+const handleFork = async (msg) => {
+    const confirmFork = confirm('Fork chat from here? This will create a NEW chat with history up to this message.');
+    if (!confirmFork) return;
 
-        // Use Server Action to avoid CORS
-        getUserLocation()
-            .then(res => {
-                if (res.success && res.data.city && res.data.country_name) {
-                    const loc = `${res.data.city}, ${res.data.country_name}`;
-                    setUserLocation(loc);
-                    localStorage.setItem(CACHE_KEY, loc);
-                    localStorage.setItem(TIME_KEY, now.toString());
-                    console.log('[Chat] Fetched & Updated Location:', loc);
-                }
-            })
-            .catch(err => {
-                console.warn('Location fetch failed:', err);
-            });
-    }, []);
-
-    // Safe Message Normalizer
-    const normalizeMessage = (m) => {
-        try {
-            const role = m.role === 'model' ? 'assistant' : m.role;
-            let type = m.type || 'text';
-            let content = m.content || '';
-
-            // Handle DB raw rows where parts is a JSON string
-            let parts = m.parts;
-            if (typeof parts === 'string') {
-                try { parts = JSON.parse(parts); } catch (e) {
-                    console.warn('[Chat] Failed to parse parts JSON:', e);
-                    parts = null;
-                }
-            }
-
-            // Handle metadata parsing
-            let metadata = m.metadata;
-            if (typeof metadata === 'string') {
-                try { metadata = JSON.parse(metadata); } catch (e) {
-                    // console.warn('[Chat] Failed to parse metadata JSON:', e);
-                    metadata = {};
-                }
-            }
-
-            const hasParts = parts && Array.isArray(parts);
-
-            // 1. Function Call
-            if (hasParts && parts.some(p => p.functionCall)) {
-                const fc = parts.find(p => p.functionCall)?.functionCall;
-                if (fc) {
-                    type = 'function_call';
-                    content = JSON.stringify({
-                        type: 'function_call',
-                        name: fc.name,
-                        args: fc.args
-                    });
-                    return { role, content, type, timestamp: m.timestamp };
-                }
-            }
-
-            // 2. Function Response
-            if (m.role === 'function' || (hasParts && parts.some(p => p.functionResponse))) {
-                // Safe extraction
-                const part = hasParts ? parts.find(p => p.functionResponse) : null;
-                // Fallback if role is function but no parts (unlikely in Gemini but possible in DB)
-                const fr = part?.functionResponse || m.functionResponse;
-
-                if (fr) {
-                    type = 'function_response';
-                    content = JSON.stringify({
-                        type: 'function_response',
-                        name: fr.name,
-                        result: fr.response
-                    });
-                    return { role, content, type, timestamp: m.timestamp };
-                }
-            }
-
-            // 3. User Multimodal
-            if (m.role === 'user' && hasParts) {
-                // Join text parts
-                content = parts.filter(p => p.text).map(p => p.text).join(' ');
-                // If content is empty/missing, it might be purely attachment.
-                // The current UI handles separate messages for attachments usually, 
-                // but this history comes from DB/Gemini which groups them.
-                // For now, let's ensure we return string content.
-                if (!content && m.content) content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
-            } else if (m.role === 'assistant' && hasParts) {
-                // Check for Media (Audio/Image) in parts
-                const audioPart = parts.find(p => p.inlineData && p.inlineData.mimeType.startsWith('audio/'));
-                const imagePart = parts.find(p => p.inlineData && p.inlineData.mimeType.startsWith('image/'));
-
-                if (audioPart) {
-                    type = 'audio';
-                    content = audioPart.inlineData.data;
-                } else if (imagePart) {
-                    type = 'image';
-                    content = imagePart.inlineData.data;
-                } else {
-                    // Text
-                    content = parts.map(p => p.text).join('');
-                }
-            }
-
-            // Final fallback for content
-            if (!content && typeof m.content === 'string') content = m.content;
-            if (!content) content = '';
-
-            return { role, content, type, timestamp: m.timestamp, metadata };
-
-        } catch (error) {
-            console.error('[Chat] Message Normalization Failed:', error, m);
-            return {
-                role: 'system',
-                content: 'Error loading message.',
-                type: 'text',
-                timestamp: m.timestamp
-            };
+    try {
+        const res = await forkChat(chatId, msg.id);
+        if (res.success && res.data.newSessionId) { // Data wrapper from actions.js
+            // Redirect
+            router.push(`/chat/${res.data.newSessionId}`);
+        } else {
+            alert('Failed to fork: ' + (res.error || 'Unknown error'));
         }
-    };
+    } catch (e) {
+        console.error('Fork error:', e);
+    }
+};
 
-    useEffect(() => {
-        const loadSession = async () => {
-            try {
-                const data = await getSession(chatId);
-                if (data) {
-                    setSessionTitle(data.title);
-                    const history = (data.messages || []).map(normalizeMessage);
-                    setMessages(history);
-                }
-            } catch (err) {
-                console.error('Failed to load session:', err);
+const [thinkingStatus, setThinkingStatus] = useState('');
+const [sessionTitle, setSessionTitle] = useState('');
+const [userLocation, setUserLocation] = useState(null);
+const messagesEndRef = useRef(null);
+
+// Vault State
+const [vaults, setVaults] = useState([]);
+const [selectedVault, setSelectedVault] = useState('none');
+
+// Model State
+const [selectedModel, setSelectedModel] = useState('auto');
+const [configuredModels, setConfiguredModels] = useState(['grok-beta', 'grok-2-vision-1212']); // Fallback defaults
+
+// Load Model Pref
+useEffect(() => {
+    const saved = localStorage.getItem('deedee_model_pref');
+    if (saved) setSelectedModel(saved);
+}, []);
+
+// Multimodal State
+const [isRecording, setIsRecording] = useState(false);
+const [audioBlob, setAudioBlob] = useState(null);
+const [selectedImage, setSelectedImage] = useState(null); // { file, preview }
+const mediaRecorderRef = useRef(null);
+const audioChunksRef = useRef([]);
+const [selectedFile, setSelectedFile] = useState(null); // { file, name, size }
+
+// Fetch Vaults & Config
+useEffect(() => {
+    getVaults().then(setVaults).catch(console.error);
+    getAgentConfig().then(config => {
+        if (config && config['provider:xai']?.models) {
+            setConfiguredModels(config['provider:xai'].models);
+        }
+    }).catch(console.error);
+}, []);
+
+// Fetch Location (Option 2: IP-based)
+useEffect(() => {
+    const CACHE_KEY = 'deedee_user_location';
+    const TIME_KEY = 'deedee_location_timestamp';
+    const TTL = 2 * 60 * 60 * 1000; // 2 hours
+
+    const cachedLoc = localStorage.getItem(CACHE_KEY);
+    const cachedTime = localStorage.getItem(TIME_KEY);
+    const now = Date.now();
+
+    // Check if cache is valid
+    if (cachedLoc && cachedTime && (now - parseInt(cachedTime) < TTL)) {
+        setUserLocation(cachedLoc);
+        console.log('[Chat] Using valid cached location:', cachedLoc);
+        return; // Skip fetch
+    }
+
+    // If stale or missing, fetch in background
+    if (cachedLoc) setUserLocation(cachedLoc); // Use stale while revalidating
+
+    // Use Server Action to avoid CORS
+    getUserLocation()
+        .then(res => {
+            if (res.success && res.data.city && res.data.country_name) {
+                const loc = `${res.data.city}, ${res.data.country_name}`;
+                setUserLocation(loc);
+                localStorage.setItem(CACHE_KEY, loc);
+                localStorage.setItem(TIME_KEY, now.toString());
+                console.log('[Chat] Fetched & Updated Location:', loc);
             }
-        };
-        loadSession();
-    }, [chatId]);
-
-    const addMessage = (msg) => {
-        setMessages((prev) => [...prev, msg]);
-    };
-
-    // Initialize Socket
-    useEffect(() => {
-        let newSocket;
-        let isMounted = true;
-
-        const initSocket = () => {
-            newSocket = io({
-                path: '/socket.io',
-                reconnectionAttempts: 10,
-                transports: ['polling'], // Force polling to avoid WS Upgrade issues behind proxy
-                query: { chatId } // Identify session
-            });
-
-            newSocket.on('connect_error', (err) => {
-                console.error('[Chat] Socket Connection Error:', err.message);
-            });
-
-            newSocket.on('connect', () => {
-                if (isMounted) {
-                    console.log('Socket connected:', newSocket.id);
-                    setIsConnected(true);
-                }
-            });
-
-            newSocket.on('disconnect', (reason) => {
-                if (isMounted) {
-                    console.log('Socket disconnected:', reason);
-                    setIsConnected(false);
-                }
-            });
-
-            // Handle Session Updates (Auto-Titling)
-            newSocket.on('session:update', (data) => {
-                if (!isMounted) return;
-
-                // Parse content if it's a string (Agent sends JSON string)
-                let update = data;
-                if (typeof data.content === 'string') {
-                    try { update = JSON.parse(data.content); } catch (e) { }
-                }
-
-                if (update.id === chatId) {
-                    if (update.title) {
-                        setSessionTitle(update.title);
-                        router.refresh();
-                    }
-                }
-            });
-
-
-            newSocket.on('agent:message', (data) => {
-                if (!isMounted) return;
-                if (data.metadata?.chatId && data.metadata.chatId !== chatId) return; // Filter by chatID
-
-                // Check for "Thinking..." messages
-                if (data.content && (data.content.startsWith('Thinking...') || data.content.startsWith('Still working...'))) {
-                    setIsWaiting(true);
-                    return;
-                }
-
-                setIsWaiting(false);
-
-                // Extract content
-                let msgContent = data.content;
-                if (data.parts && (data.type === 'audio' || data.type === 'image')) {
-                    const mediaPart = data.parts.find(p => p.inlineData);
-                    if (mediaPart) {
-                        msgContent = mediaPart.inlineData.data;
-                    }
-                }
-
-                setMessages((prev) => {
-                    const lastMsg = prev[prev.length - 1];
-                    // If last message was a streaming assistant message, replace/finalize it
-                    if (lastMsg && lastMsg.role === 'assistant' && lastMsg.type === 'text' && !lastMsg.isFinal) {
-                        return [
-                            ...prev.slice(0, -1),
-                            {
-                                role: 'assistant',
-                                content: msgContent,
-                                type: data.type,
-                                timestamp: data.timestamp,
-                                metadata: data.metadata,
-                                isFinal: true
-                            }
-                        ];
-                    }
-
-                    // Otherwise append as new
-                    return [...prev, {
-                        role: 'assistant',
-                        content: msgContent,
-                        type: data.type,
-                        timestamp: data.timestamp,
-                        metadata: data.metadata,
-                        isFinal: true
-                    }];
-                });
-
-
-                if (data.type === 'audio') {
-                    try {
-                        const audioSrc = msgContent.startsWith('data:') ? msgContent : `data:audio/wav;base64,${msgContent}`;
-                        const audio = new Audio(audioSrc);
-                        audio.play().catch(e => console.warn('Auto-play blocked:', e));
-                    } catch (e) {
-                        console.error('Audio decode error', e);
-                    }
-                }
-            });
-
-            newSocket.on('agent:thinking', (data) => {
-                if (!isMounted) return;
-                if (data.metadata?.chatId && data.metadata.chatId !== chatId) return;
-                setIsWaiting(true);
-                setThinkingStatus(data.status);
-            });
-
-            // STREAMING HANDLER
-            newSocket.on('agent:token', (data) => {
-                if (!isMounted) return;
-                if (data.chatId !== chatId) return;
-
-                setIsWaiting(false); // Stop waiting indicator
-
-                setMessages((prev) => {
-                    const lastMsg = prev[prev.length - 1];
-                    // If last message is assistant text, append.
-                    // If not, creates new assistant message.
-                    if (lastMsg && lastMsg.role === 'assistant' && lastMsg.type === 'text' && !lastMsg.isFinal) {
-                        return [
-                            ...prev.slice(0, -1),
-                            { ...lastMsg, content: lastMsg.content + data.content }
-                        ];
-                    } else {
-                        // Start new message
-                        return [
-                            ...prev,
-                            {
-                                role: 'assistant',
-                                content: data.content,
-                                type: 'text',
-                                timestamp: data.timestamp
-                            }
-                        ];
-                    }
-                });
-            });
-
-            if (isMounted) setSocket(newSocket);
-        };
-
-        initSocket();
-
-        return () => {
-            isMounted = false;
-            if (newSocket) {
-                newSocket.disconnect();
-                newSocket.close(); // Ensure explicit close
-            }
-        };
-    }, [chatId, router]);
-
-    // Auto-scroll
-    useEffect(() => {
-        messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages, isWaiting]);
-
-    // Auto-resize textarea
-    const textareaRef = useRef(null);
-    useEffect(() => {
-        if (textareaRef.current) {
-            textareaRef.current.style.height = 'auto'; // Reset to auto to allow shrinking
-            const scrollHeight = textareaRef.current.scrollHeight;
-            textareaRef.current.style.height = Math.min(scrollHeight, 150) + 'px'; // Cap at 150px
-        }
-    }, [inputValue]);
-
-
-    // --- Multimodal Handlers ---
-    const startRecording = async () => {
-        try {
-            const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-            const mediaRecorder = new MediaRecorder(stream);
-            mediaRecorderRef.current = mediaRecorder;
-            audioChunksRef.current = [];
-
-            mediaRecorder.ondataavailable = (event) => {
-                if (event.data.size > 0) {
-                    audioChunksRef.current.push(event.data);
-                }
-            };
-
-            mediaRecorder.onstop = () => {
-                const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-                setAudioBlob(blob);
-                stream.getTracks().forEach(track => track.stop()); // Stop mic
-            };
-
-            mediaRecorder.start();
-            setIsRecording(true);
-        } catch (err) {
-            console.error('Mic Error:', err);
-            alert('Could not access microphone.');
-        }
-    };
-
-    const stopRecording = () => {
-        if (mediaRecorderRef.current && isRecording) {
-            mediaRecorderRef.current.stop();
-            setIsRecording(false);
-        }
-    };
-
-    const cancelRecording = () => {
-        stopRecording();
-        setAudioBlob(null);
-        audioChunksRef.current = [];
-    };
-
-    const handleImageSelect = (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                setSelectedImage({
-                    file,
-                    preview: reader.result
-                });
-            };
-            reader.readAsDataURL(file);
-        }
-    };
-
-    const handleFileSelect = (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            setSelectedFile({
-                file,
-                name: file.name,
-                size: (file.size / 1024 / 1024).toFixed(2) + ' MB'
-            });
-        }
-    };
-
-    const clearAttachments = () => {
-        setSelectedImage(null);
-        setAudioBlob(null);
-        setSelectedFile(null);
-    };
-
-    const blobToBase64 = (blob) => {
-        return new Promise((resolve, reject) => {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                const base64String = reader.result;
-                // Remove data:audio/webm;base64, prefix
-                const base64Data = base64String.split(',')[1];
-                resolve(base64Data);
-            };
-            reader.onerror = reject;
-            reader.readAsDataURL(blob);
+        })
+        .catch(err => {
+            console.warn('Location fetch failed:', err);
         });
+}, []);
+
+// Stop Handler
+const handleStop = async () => {
+    try {
+        await stopChat(chatId);
+        setIsWaiting(false); // Optimistic stop
+        setThinkingStatus('Stopped.');
+    } catch (e) {
+        console.error('Stop error:', e);
+    }
+};
+
+// Paste Handler
+useEffect(() => {
+    const handlePaste = (e) => {
+        // Only handle paste if user is not focused on an input that handles paste itself (optional, but good for UX)
+        // But here we want to capture images anywhere
+        const items = e.clipboardData.items;
+        for (let i = 0; i < items.length; i++) {
+            if (items[i].type.indexOf('image') !== -1) {
+                const blob = items[i].getAsFile();
+                const reader = new FileReader();
+                reader.onload = (event) => {
+                    const base64Info = event.target.result;
+                    setSelectedImage({
+                        file: blob,
+                        preview: base64Info
+                    });
+                };
+                reader.readAsDataURL(blob);
+                e.preventDefault();
+            }
+        }
     };
 
-    const handleSendMessage = async (e) => {
-        e.preventDefault();
-        e.preventDefault();
-        if ((!inputValue.trim() && !audioBlob && !selectedImage && !selectedFile) || !socket) return;
+    window.addEventListener('paste', handlePaste);
+    return () => window.removeEventListener('paste', handlePaste);
+}, []);
 
-        const content = inputValue;
-        const files = [];
+// safe message normalizer
+const normalizeMessage = (m) => {
+    try {
+        const role = m.role === 'model' ? 'assistant' : m.role;
+        let type = m.type || 'text';
+        let content = m.content || '';
 
-        // UI Optimistic Updates
-        const optimisticMsg = {
-            role: 'user',
-            content: content,
+        // Handle DB raw rows where parts is a JSON string
+        let parts = m.parts;
+        if (typeof parts === 'string') {
+            try { parts = JSON.parse(parts); } catch (e) {
+                console.warn('[Chat] Failed to parse parts JSON:', e);
+                parts = null;
+            }
+        }
+
+        // Handle metadata parsing
+        let metadata = m.metadata;
+        if (typeof metadata === 'string') {
+            try { metadata = JSON.parse(metadata); } catch (e) {
+                // console.warn('[Chat] Failed to parse metadata JSON:', e);
+                metadata = {};
+            }
+        }
+
+        const hasParts = parts && Array.isArray(parts);
+
+        // 1. Function Call
+        if (hasParts && parts.some(p => p.functionCall)) {
+            const fc = parts.find(p => p.functionCall)?.functionCall;
+            if (fc) {
+                type = 'function_call';
+                content = JSON.stringify({
+                    type: 'function_call',
+                    name: fc.name,
+                    args: fc.args
+                });
+                return { role, content, type, timestamp: m.timestamp };
+            }
+        }
+
+        // 2. Function Response
+        if (m.role === 'function' || (hasParts && parts.some(p => p.functionResponse))) {
+            // Safe extraction
+            const part = hasParts ? parts.find(p => p.functionResponse) : null;
+            // Fallback if role is function but no parts (unlikely in Gemini but possible in DB)
+            const fr = part?.functionResponse || m.functionResponse;
+
+            if (fr) {
+                type = 'function_response';
+                content = JSON.stringify({
+                    type: 'function_response',
+                    name: fr.name,
+                    result: fr.response
+                });
+                return { role, content, type, timestamp: m.timestamp };
+            }
+        }
+
+        // 3. User Multimodal
+        if (m.role === 'user' && hasParts) {
+            // Join text parts
+            content = parts.filter(p => p.text).map(p => p.text).join(' ');
+            // If content is empty/missing, it might be purely attachment.
+            // The current UI handles separate messages for attachments usually, 
+            // but this history comes from DB/Gemini which groups them.
+            // For now, let's ensure we return string content.
+            if (!content && m.content) content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
+        } else if (m.role === 'assistant' && hasParts) {
+            // Check for Media (Audio/Image) in parts
+            const audioPart = parts.find(p => p.inlineData && p.inlineData.mimeType.startsWith('audio/'));
+            const imagePart = parts.find(p => p.inlineData && p.inlineData.mimeType.startsWith('image/'));
+
+            if (audioPart) {
+                type = 'audio';
+                content = audioPart.inlineData.data;
+            } else if (imagePart) {
+                type = 'image';
+                content = imagePart.inlineData.data;
+            } else {
+                // Text
+                content = parts.map(p => p.text).join('');
+            }
+        }
+
+        // Final fallback for content
+        if (!content && typeof m.content === 'string') content = m.content;
+        if (!content) content = '';
+
+        return { id: m.id, role, content, type, timestamp: m.timestamp, metadata };
+
+    } catch (error) {
+        console.error('[Chat] Message Normalization Failed:', error, m);
+        return {
+            role: 'system',
+            content: 'Error loading message.',
             type: 'text',
-            timestamp: new Date().toISOString()
+            timestamp: m.timestamp
         };
+    }
+};
 
-        // Process Audio
-        if (audioBlob) {
-            const base64Audio = await blobToBase64(audioBlob);
-            files.push({
-                mimeType: audioBlob.type || 'audio/webm',
-                data: base64Audio
-            });
-            // Add optimistic audio msg (separate or combined? existing UI handles separate msgs better)
-            // Let's attach to the main message or create a separate one? 
-            // The current UI renderer handles single type. Let's start with pushing separate messages for UI if mixed, 
-            // OR we just assume the main message is the type.
-            // Actually, for simplicity, if we have audio, we push an audio message. 
-            // If we have text, we push text.
-
-            addMessage({
-                role: 'user',
-                content: `data:${audioBlob.type};base64,${base64Audio}`,
-                type: 'audio',
-                timestamp: new Date().toISOString()
-            });
+useEffect(() => {
+    const loadSession = async () => {
+        try {
+            const data = await getSession(chatId);
+            if (data) {
+                setSessionTitle(data.title);
+                const history = (data.messages || []).map(normalizeMessage);
+                setMessages(history);
+            }
+        } catch (err) {
+            console.error('Failed to load session:', err);
         }
+    };
+    loadSession();
+}, [chatId]);
 
-        // Process Image
-        if (selectedImage) {
-            const base64Image = selectedImage.preview.split(',')[1]; // remove prefix
-            files.push({
-                mimeType: selectedImage.file.type,
-                data: base64Image
-            });
+const addMessage = (msg) => {
+    setMessages((prev) => [...prev, msg]);
+};
 
-            addMessage({
-                role: 'user',
-                content: selectedImage.preview,
-                type: 'image',
-                timestamp: new Date().toISOString()
-            });
-        }
+// Initialize Socket
+useEffect(() => {
+    let newSocket;
+    let isMounted = true;
 
-        // Process Generic File
-        if (selectedFile) {
-            // 1. Upload File first to get "path" if needed, OR send inlineData.
-            // Plan: Upload via Action -> Get Path/Metadata -> Send Msg with Metadata + InlineData (for immediate Analysis).
-            // Actually, we need to send inlineData for Gemini to analyze it immediately without re-reading from disk if possible?
-            // BUT: Large files? 
-            // Agent._analyzeAttachment relies on `part.inlineData`. 
-            // So we MUST send inlineData.
-            // AND we should probably upload it for persistence.
+    const initSocket = () => {
+        newSocket = io({
+            path: '/socket.io',
+            reconnectionAttempts: 10,
+            transports: ['polling'], // Force polling to avoid WS Upgrade issues behind proxy
+            query: { chatId } // Identify session
+        });
 
-            try {
-                // Upload in background or await? Await to ensure success?
-                const formData = new FormData();
-                formData.append('file', selectedFile.file);
+        newSocket.on('connect_error', (err) => {
+            console.error('[Chat] Socket Connection Error:', err.message);
+        });
 
-                // Optimistic UI for file?
-                addMessage({
-                    role: 'user',
-                    content: `📎 Uploading: ${selectedFile.name}...`,
-                    type: 'text',
-                    timestamp: new Date().toISOString()
-                });
+        newSocket.on('connect', () => {
+            if (isMounted) {
+                console.log('Socket connected:', newSocket.id);
+                setIsConnected(true);
+            }
+        });
 
-                const uploadRes = await uploadChatFile(chatId, formData);
-                if (!uploadRes.success) throw new Error(uploadRes.error);
+        newSocket.on('disconnect', (reason) => {
+            if (isMounted) {
+                console.log('Socket disconnected:', reason);
+                setIsConnected(false);
+            }
+        });
 
-                // Convert to Base64 for analysis
-                const base64File = await new Promise((resolve) => {
-                    const reader = new FileReader();
-                    reader.onloadend = () => resolve(reader.result.split(',')[1]);
-                    reader.readAsDataURL(selectedFile.file);
-                });
+        // Handle Session Updates (Auto-Titling)
+        newSocket.on('session:update', (data) => {
+            if (!isMounted) return;
 
-                files.push({
-                    mimeType: selectedFile.file.type || 'application/octet-stream',
-                    data: base64File
-                });
+            // Parse content if it's a string (Agent sends JSON string)
+            let update = data;
+            if (typeof data.content === 'string') {
+                try { update = JSON.parse(data.content); } catch (e) { }
+            }
 
-                // Update optimistic message? Or just let the main flow proceed.
-                // We'll let the main flow send the actual message with attachment data.
+            if (update.id === chatId) {
+                if (update.title) {
+                    setSessionTitle(update.title);
+                    router.refresh();
+                }
+            }
+        });
 
-                addMessage({
-                    role: 'user',
-                    content: `📄 Sent file: ${selectedFile.name}`,
-                    type: 'text', // Simple representation for now
-                    timestamp: new Date().toISOString()
-                });
 
-            } catch (err) {
-                console.error('File Upload Error:', err);
-                alert('Failed to upload file');
+        newSocket.on('agent:message', (data) => {
+            if (!isMounted) return;
+            if (data.metadata?.chatId && data.metadata.chatId !== chatId) return; // Filter by chatID
+
+            // Check for "Thinking..." messages
+            if (data.content && (data.content.startsWith('Thinking...') || data.content.startsWith('Still working...'))) {
+                setIsWaiting(true);
                 return;
             }
-        }
 
-        // If text exists and we haven't just sent attachments solely...
-        // Actually, if we have text, we show it. 
-        if (content.trim()) {
-            addMessage(optimisticMsg);
-        }
+            setIsWaiting(false);
 
-        setInputValue('');
-        clearAttachments();
-        setIsWaiting(true);
+            // Extract content
+            let msgContent = data.content;
+            if (data.parts && (data.type === 'audio' || data.type === 'image')) {
+                const mediaPart = data.parts.find(p => p.inlineData);
+                if (mediaPart) {
+                    msgContent = mediaPart.inlineData.data;
+                }
+            }
 
-        // Auto-collapse sidebar on first message
-        if (messages.length === 0) setCollapsed(true);
+            setMessages((prev) => {
+                const lastMsg = prev[prev.length - 1];
+                // If last message was a streaming assistant message, replace/finalize it
+                if (lastMsg && lastMsg.role === 'assistant' && lastMsg.type === 'text' && !lastMsg.isFinal) {
+                    return [
+                        ...prev.slice(0, -1),
+                        {
+                            role: 'assistant',
+                            content: msgContent,
+                            type: data.type,
+                            timestamp: data.timestamp,
+                            metadata: data.metadata,
+                            isFinal: true
+                        }
+                    ];
+                }
 
-        socket.emit('chat:message', {
-            content: content,
-            files: files,
-            chatId: chatId,
-            metadata: {
-                location: userLocation,
-                vaultId: selectedVault !== 'none' ? selectedVault : undefined,
-                model: selectedModel !== 'auto' ? selectedModel : undefined
+                // Otherwise append as new
+                return [...prev, {
+                    role: 'assistant',
+                    content: msgContent,
+                    type: data.type,
+                    timestamp: data.timestamp,
+                    metadata: data.metadata,
+                    isFinal: true
+                }];
+            });
+
+
+            if (data.type === 'audio') {
+                try {
+                    const audioSrc = msgContent.startsWith('data:') ? msgContent : `data:audio/wav;base64,${msgContent}`;
+                    const audio = new Audio(audioSrc);
+                    audio.play().catch(e => console.warn('Auto-play blocked:', e));
+                } catch (e) {
+                    console.error('Audio decode error', e);
+                }
             }
         });
+
+        newSocket.on('agent:thinking', (data) => {
+            if (!isMounted) return;
+            if (data.metadata?.chatId && data.metadata.chatId !== chatId) return;
+            setIsWaiting(true);
+            setThinkingStatus(data.status);
+        });
+
+        // STREAMING HANDLER
+        newSocket.on('agent:token', (data) => {
+            if (!isMounted) return;
+            if (data.chatId !== chatId) return;
+
+            setIsWaiting(false); // Stop waiting indicator
+
+            setMessages((prev) => {
+                const lastMsg = prev[prev.length - 1];
+                // If last message is assistant text, append.
+                // If not, creates new assistant message.
+                if (lastMsg && lastMsg.role === 'assistant' && lastMsg.type === 'text' && !lastMsg.isFinal) {
+                    return [
+                        ...prev.slice(0, -1),
+                        { ...lastMsg, content: lastMsg.content + data.content }
+                    ];
+                } else {
+                    // Start new message
+                    return [
+                        ...prev,
+                        {
+                            role: 'assistant',
+                            content: data.content,
+                            type: 'text',
+                            timestamp: data.timestamp
+                        }
+                    ];
+                }
+            });
+        });
+
+        if (isMounted) setSocket(newSocket);
     };
 
-    return (
-        <div className="flex h-full flex-col">
-            {/* Header */}
-            <header className="flex h-16 items-center justify-between border-b border-zinc-800 bg-zinc-950 px-6">
-                <div className="flex items-center gap-3">
-                    <button
-                        onClick={toggleSidebar}
-                        className="md:hidden text-zinc-400 hover:text-white"
+    initSocket();
+
+    return () => {
+        isMounted = false;
+        if (newSocket) {
+            newSocket.disconnect();
+            newSocket.close(); // Ensure explicit close
+        }
+    };
+}, [chatId, router]);
+
+// Auto-scroll
+useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
+}, [messages, isWaiting]);
+
+// Auto-resize textarea
+const textareaRef = useRef(null);
+useEffect(() => {
+    if (textareaRef.current) {
+        textareaRef.current.style.height = 'auto'; // Reset to auto to allow shrinking
+        const scrollHeight = textareaRef.current.scrollHeight;
+        textareaRef.current.style.height = Math.min(scrollHeight, 150) + 'px'; // Cap at 150px
+    }
+}, [inputValue]);
+
+
+// --- Multimodal Handlers ---
+const startRecording = async () => {
+    try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mediaRecorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = mediaRecorder;
+        audioChunksRef.current = [];
+
+        mediaRecorder.ondataavailable = (event) => {
+            if (event.data.size > 0) {
+                audioChunksRef.current.push(event.data);
+            }
+        };
+
+        mediaRecorder.onstop = () => {
+            const blob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+            setAudioBlob(blob);
+            stream.getTracks().forEach(track => track.stop()); // Stop mic
+        };
+
+        mediaRecorder.start();
+        setIsRecording(true);
+    } catch (err) {
+        console.error('Mic Error:', err);
+        alert('Could not access microphone.');
+    }
+};
+
+const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+        mediaRecorderRef.current.stop();
+        setIsRecording(false);
+    }
+};
+
+const cancelRecording = () => {
+    stopRecording();
+    setAudioBlob(null);
+    audioChunksRef.current = [];
+};
+
+const handleImageSelect = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            setSelectedImage({
+                file,
+                preview: reader.result
+            });
+        };
+        reader.readAsDataURL(file);
+    }
+};
+
+const handleFileSelect = (e) => {
+    const file = e.target.files[0];
+    if (file) {
+        setSelectedFile({
+            file,
+            name: file.name,
+            size: (file.size / 1024 / 1024).toFixed(2) + ' MB'
+        });
+    }
+};
+
+const clearAttachments = () => {
+    setSelectedImage(null);
+    setAudioBlob(null);
+    setSelectedFile(null);
+};
+
+const blobToBase64 = (blob) => {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onloadend = () => {
+            const base64String = reader.result;
+            // Remove data:audio/webm;base64, prefix
+            const base64Data = base64String.split(',')[1];
+            resolve(base64Data);
+        };
+        reader.onerror = reject;
+        reader.readAsDataURL(blob);
+    });
+};
+
+const handleSendMessage = async (e) => {
+    e.preventDefault();
+    e.preventDefault();
+    if ((!inputValue.trim() && !audioBlob && !selectedImage && !selectedFile) || !socket) return;
+
+    const content = inputValue;
+    const files = [];
+
+    // UI Optimistic Updates
+    const optimisticMsg = {
+        role: 'user',
+        content: content,
+        type: 'text',
+        timestamp: new Date().toISOString()
+    };
+
+    // Process Audio
+    if (audioBlob) {
+        const base64Audio = await blobToBase64(audioBlob);
+        files.push({
+            mimeType: audioBlob.type || 'audio/webm',
+            data: base64Audio
+        });
+        // Add optimistic audio msg (separate or combined? existing UI handles separate msgs better)
+        // Let's attach to the main message or create a separate one? 
+        // The current UI renderer handles single type. Let's start with pushing separate messages for UI if mixed, 
+        // OR we just assume the main message is the type.
+        // Actually, for simplicity, if we have audio, we push an audio message. 
+        // If we have text, we push text.
+
+        addMessage({
+            role: 'user',
+            content: `data:${audioBlob.type};base64,${base64Audio}`,
+            type: 'audio',
+            timestamp: new Date().toISOString()
+        });
+    }
+
+    // Process Image
+    if (selectedImage) {
+        const base64Image = selectedImage.preview.split(',')[1]; // remove prefix
+        files.push({
+            mimeType: selectedImage.file.type,
+            data: base64Image
+        });
+
+        addMessage({
+            role: 'user',
+            content: selectedImage.preview,
+            type: 'image',
+            timestamp: new Date().toISOString()
+        });
+    }
+
+    // Process Generic File
+    if (selectedFile) {
+        // 1. Upload File first to get "path" if needed, OR send inlineData.
+        // Plan: Upload via Action -> Get Path/Metadata -> Send Msg with Metadata + InlineData (for immediate Analysis).
+        // Actually, we need to send inlineData for Gemini to analyze it immediately without re-reading from disk if possible?
+        // BUT: Large files? 
+        // Agent._analyzeAttachment relies on `part.inlineData`. 
+        // So we MUST send inlineData.
+        // AND we should probably upload it for persistence.
+
+        try {
+            // Upload in background or await? Await to ensure success?
+            const formData = new FormData();
+            formData.append('file', selectedFile.file);
+
+            // Optimistic UI for file?
+            addMessage({
+                role: 'user',
+                content: `📎 Uploading: ${selectedFile.name}...`,
+                type: 'text',
+                timestamp: new Date().toISOString()
+            });
+
+            const uploadRes = await uploadChatFile(chatId, formData);
+            if (!uploadRes.success) throw new Error(uploadRes.error);
+
+            // Convert to Base64 for analysis
+            const base64File = await new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                reader.readAsDataURL(selectedFile.file);
+            });
+
+            files.push({
+                mimeType: selectedFile.file.type || 'application/octet-stream',
+                data: base64File
+            });
+
+            // Update optimistic message? Or just let the main flow proceed.
+            // We'll let the main flow send the actual message with attachment data.
+
+            addMessage({
+                role: 'user',
+                content: `📄 Sent file: ${selectedFile.name}`,
+                type: 'text', // Simple representation for now
+                timestamp: new Date().toISOString()
+            });
+
+        } catch (err) {
+            console.error('File Upload Error:', err);
+            alert('Failed to upload file');
+            return;
+        }
+    }
+
+    // If text exists and we haven't just sent attachments solely...
+    // Actually, if we have text, we show it. 
+    if (content.trim()) {
+        addMessage(optimisticMsg);
+    }
+
+    setInputValue('');
+    clearAttachments();
+    setIsWaiting(true);
+
+    // Auto-collapse sidebar on first message
+    if (messages.length === 0) setCollapsed(true);
+
+    socket.emit('chat:message', {
+        content: content,
+        files: files,
+        chatId: chatId,
+        metadata: {
+            location: userLocation,
+            vaultId: selectedVault !== 'none' ? selectedVault : undefined,
+            model: selectedModel !== 'auto' ? selectedModel : undefined
+        }
+    });
+};
+
+return (
+    <div className="flex h-full flex-col">
+        {/* Header */}
+        <header className="flex h-16 items-center justify-between border-b border-zinc-800 bg-zinc-950 px-6">
+            <div className="flex items-center gap-3">
+                <button
+                    onClick={toggleSidebar}
+                    className="md:hidden text-zinc-400 hover:text-white"
+                >
+                    <Menu className="h-5 w-5" />
+                </button>
+                <div className="flex flex-col">
+                    <h1 className="text-xl font-semibold text-white truncate max-w-sm">{sessionTitle || 'Chat'}</h1>
+                </div>
+            </div>
+            <div className="flex items-center gap-4">
+                {/* Model Selector */}
+                <div className="relative group flex items-center bg-zinc-900 border border-zinc-700 rounded-lg focus-within:ring-1 focus-within:ring-indigo-500 focus-within:border-indigo-500 transition-all hover:border-zinc-600">
+                    <div className="pl-2.5 flex items-center pointer-events-none">
+                        <Code2 className="h-4 w-4 text-zinc-500" />
+                    </div>
+                    <select
+                        value={selectedModel}
+                        onChange={(e) => {
+                            const m = e.target.value;
+                            setSelectedModel(m);
+                            localStorage.setItem('deedee_model_pref', m);
+                        }}
+                        className="appearance-none bg-transparent text-zinc-300 text-sm pl-2 pr-8 py-1.5 cursor-pointer outline-none border-none w-24 md:w-32"
                     >
-                        <Menu className="h-5 w-5" />
-                    </button>
-                    <div className="flex flex-col">
-                        <h1 className="text-xl font-semibold text-white truncate max-w-sm">{sessionTitle || 'Chat'}</h1>
-                    </div>
+                        <option value="auto">Auto (Gemini)</option>
+                        {configuredModels.map(m => (
+                            <option key={m} value={m}>{m}</option>
+                        ))}
+                    </select>
+                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-zinc-500 pointer-events-none" />
                 </div>
-                <div className="flex items-center gap-4">
-                    {/* Model Selector */}
-                    <div className="relative group flex items-center bg-zinc-900 border border-zinc-700 rounded-lg focus-within:ring-1 focus-within:ring-indigo-500 focus-within:border-indigo-500 transition-all hover:border-zinc-600">
-                        <div className="pl-2.5 flex items-center pointer-events-none">
-                            <Code2 className="h-4 w-4 text-zinc-500" />
-                        </div>
-                        <select
-                            value={selectedModel}
-                            onChange={(e) => {
-                                const m = e.target.value;
-                                setSelectedModel(m);
-                                localStorage.setItem('deedee_model_pref', m);
-                            }}
-                            className="appearance-none bg-transparent text-zinc-300 text-sm pl-2 pr-8 py-1.5 cursor-pointer outline-none border-none w-24 md:w-32"
-                        >
-                            <option value="auto">Auto (Gemini)</option>
-                            {configuredModels.map(m => (
-                                <option key={m} value={m}>{m}</option>
-                            ))}
-                        </select>
-                        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-zinc-500 pointer-events-none" />
-                    </div>
 
-                    {/* Vault Selector */}
-                    <div className="relative group flex items-center bg-zinc-900 border border-zinc-700 rounded-lg focus-within:ring-1 focus-within:ring-indigo-500 focus-within:border-indigo-500 transition-all hover:border-zinc-600">
-                        <div className="pl-2.5 flex items-center pointer-events-none">
-                            {selectedVault === 'health' ? <Activity className="h-4 w-4 text-rose-400" /> :
-                                selectedVault === 'finance' ? <DollarSign className="h-4 w-4 text-emerald-400" /> :
-                                    selectedVault !== 'none' ? <Box className="h-4 w-4 text-indigo-400" /> :
-                                        <Box className="h-4 w-4 text-zinc-500" />}
-                        </div>
-                        <select
-                            value={selectedVault}
-                            onChange={(e) => {
-                                const newVault = e.target.value;
-                                setSelectedVault(newVault);
-                                // Persist context
-                                updateSession(chatId, {
-                                    metadata: {
-                                        vaultId: newVault,
-                                        location: userLocation // Preserve location if exists
-                                    }
-                                }).catch(console.error);
-                            }}
-                            className="appearance-none bg-transparent text-zinc-300 text-sm pl-2 pr-8 py-1.5 cursor-pointer outline-none border-none w-full"
-                        >
-                            <option value="none">General Context</option>
-                            {vaults.map(v => (
-                                <option key={v.id} value={v.id}>{v.name}</option>
-                            ))}
-                        </select>
-                        <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-zinc-500 pointer-events-none" />
+                {/* Vault Selector */}
+                <div className="relative group flex items-center bg-zinc-900 border border-zinc-700 rounded-lg focus-within:ring-1 focus-within:ring-indigo-500 focus-within:border-indigo-500 transition-all hover:border-zinc-600">
+                    <div className="pl-2.5 flex items-center pointer-events-none">
+                        {selectedVault === 'health' ? <Activity className="h-4 w-4 text-rose-400" /> :
+                            selectedVault === 'finance' ? <DollarSign className="h-4 w-4 text-emerald-400" /> :
+                                selectedVault !== 'none' ? <Box className="h-4 w-4 text-indigo-400" /> :
+                                    <Box className="h-4 w-4 text-zinc-500" />}
                     </div>
-
-                    {isConnected ? (
-                        <span className="flex items-center gap-2 text-xs text-emerald-500 bg-emerald-500/10 px-2 py-1 rounded-full">
-                            <Wifi className="h-3 w-3" /> Online
-                        </span>
-                    ) : (
-                        <span className="flex items-center gap-2 text-xs text-rose-500 bg-rose-500/10 px-2 py-1 rounded-full">
-                            <WifiOff className="h-3 w-3" /> Offline
-                        </span>
-                    )}
+                    <select
+                        value={selectedVault}
+                        onChange={(e) => {
+                            const newVault = e.target.value;
+                            setSelectedVault(newVault);
+                            // Persist context
+                            updateSession(chatId, {
+                                metadata: {
+                                    vaultId: newVault,
+                                    location: userLocation // Preserve location if exists
+                                }
+                            }).catch(console.error);
+                        }}
+                        className="appearance-none bg-transparent text-zinc-300 text-sm pl-2 pr-8 py-1.5 cursor-pointer outline-none border-none w-full"
+                    >
+                        <option value="none">General Context</option>
+                        {vaults.map(v => (
+                            <option key={v.id} value={v.id}>{v.name}</option>
+                        ))}
+                    </select>
+                    <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-zinc-500 pointer-events-none" />
                 </div>
-            </header>
 
-            {/* Messages */}
-            <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
-                {messages
-                    .filter(msg => {
-                        // Hide tool calls/responses by default as requested
-                        if (msg.type === 'function_call' || msg.type === 'function_response') return false;
-                        if (msg.role === 'tool') return false; // Gemini tool responses
-                        return true;
-                    })
-                    .map((msg, idx) => (
-                        <div
-                            key={idx}
-                            className={clsx(
-                                'flex w-full',
-                                msg.role === 'user' ? 'justify-end' : 'justify-start'
-                            )}
-                        >
-                            <div
-                                className={clsx(
-                                    'max-w-[85%] rounded-2xl px-5 py-3 shadow-sm md:max-w-[70%]',
-                                    msg.role === 'user'
-                                        ? 'bg-indigo-600 text-white rounded-tr-none'
-                                        : 'bg-zinc-800 text-zinc-200 rounded-tl-none border border-zinc-700'
-                                )}
-                            >
+                {isConnected ? (
+                    <span className="flex items-center gap-2 text-xs text-emerald-500 bg-emerald-500/10 px-2 py-1 rounded-full">
+                        <Wifi className="h-3 w-3" /> Online
+                    </span>
+                ) : (
+                    <span className="flex items-center gap-2 text-xs text-rose-500 bg-rose-500/10 px-2 py-1 rounded-full">
+                        <WifiOff className="h-3 w-3" /> Offline
+                    </span>
+                )}
+            </div>
+        </header>
+
+        {/* Messages */}
+        <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
+            {messages
+                .filter(msg => {
+                    // Hide tool calls/responses by default as requested
+                    if (msg.type === 'function_call' || msg.type === 'function_response') return false;
+                    if (msg.role === 'tool') return false; // Gemini tool responses
+                    return true;
+                })
+                .map((msg, idx) => (
+                    <div
+                        key={idx}
+                        className={clsx(
+                            'flex w-full',
+                            msg.role === 'user' ? 'justify-end' : 'justify-start'
+                        )}
+                    >
+                        {msg.role === 'user' ? (
+                            <div className="flex flex-col gap-1 items-end relative group">
+                                <div className="bg-indigo-600 text-white rounded-2xl rounded-tr-none px-5 py-3 shadow-sm md:max-w-[70%] relative">
+                                    {/* Actions on Hover */}
+                                    <div className="absolute -top-3 left-0 opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-800 rounded-lg shadow-lg border border-zinc-700 flex items-center p-1 gap-1 z-10">
+                                        <button onClick={() => handleRewind(msg)} className="p-1 hover:bg-zinc-700 rounded text-zinc-400 hover:text-white" title="Edit (Rewind)">
+                                            <Pencil className="h-3 w-3" />
+                                        </button>
+                                        <button onClick={() => handleFork(msg)} className="p-1 hover:bg-zinc-700 rounded text-zinc-400 hover:text-white" title="Fork Chat">
+                                            <GitFork className="h-3 w-3" />
+                                        </button>
+                                    </div>
+
+                                    {msg.type === 'audio' ? (
+                                        <div className="flex items-center gap-3">
+                                            <div className="h-10 w-10 bg-indigo-500/20 rounded-full flex items-center justify-center">
+                                                <Play className="h-5 w-5 text-indigo-400" />
+                                            </div>
+                                            <span className="text-sm italic text-indigo-200">Audio Message</span>
+                                        </div>
+                                    ) : (
+                                        <div className="markdown prose prose-invert prose-sm max-w-none">
+                                            <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                        </div>
+                                    )}
+                                    <div className="mt-1 text-[10px] opacity-50 flex items-center gap-2 text-indigo-200">
+                                        <span>{typeof msg.timestamp === 'string' ? new Date(msg.timestamp).toLocaleTimeString() : ''}</span>
+                                    </div>
+                                </div>
+                            </div>
+                        ) : (
+                            // Assistant Message
+                            <div className="bg-zinc-800 text-zinc-200 rounded-2xl rounded-tl-none border border-zinc-700 px-5 py-3 shadow-sm md:max-w-[70%]">
                                 {msg.type === 'audio' ? (
                                     <div className="flex items-center gap-3">
                                         <div className="h-10 w-10 bg-indigo-500/20 rounded-full flex items-center justify-center">
@@ -767,170 +877,177 @@ export default function ChatSessionPage({ params }) {
                                         <ReactMarkdown>{msg.content}</ReactMarkdown>
                                     </div>
                                 )}
-                                <div className={clsx("mt-1 text-[10px] opacity-50 flex items-center gap-2", msg.role === 'user' ? 'text-indigo-200' : 'text-zinc-500')}>
+                                <div className="mt-1 text-[10px] opacity-50 flex items-center gap-2 text-zinc-500">
                                     <span>{typeof msg.timestamp === 'string' ? new Date(msg.timestamp).toLocaleTimeString() : ''}</span>
                                     {msg.metadata?.model && (
-                                        <span className={clsx(
-                                            "px-1.5 py-0.5 rounded text-[9px] font-medium border",
-                                            msg.role === 'user' ? "border-indigo-400/30 bg-indigo-500/10" : "border-zinc-600 bg-zinc-700/50"
-                                        )}>
+                                        <span className="px-1.5 py-0.5 rounded text-[9px] font-medium border border-zinc-600 bg-zinc-700/50">
                                             {msg.metadata.model}
                                         </span>
                                     )}
                                 </div>
                             </div>
-                        </div>
-                    ))}
+                        )}
+                    </div>
+                ))}
 
-                {/* Typing Indicator */}
-                {isWaiting && (
-                    <div className="flex w-full justify-start">
-                        <div className="max-w-[85%] rounded-2xl px-5 py-4 shadow-sm md:max-w-[70%] bg-zinc-800 rounded-tl-none border border-zinc-700">
-                            <div className="flex space-x-2 items-center h-4">
-                                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce"></div>
-                                {thinkingStatus && (
-                                    <span className="ml-3 text-xs text-zinc-400 font-mono animate-pulse">{thinkingStatus}</span>
-                                )}
+            {/* Typing Indicator */}
+            {isWaiting && (
+                <div className="flex w-full justify-start items-center gap-2">
+                    <div className="max-w-[85%] rounded-2xl px-5 py-4 shadow-sm md:max-w-[70%] bg-zinc-800 rounded-tl-none border border-zinc-700">
+                        <div className="flex space-x-2 items-center h-4">
+                            <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                            <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                            <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce"></div>
+                            {thinkingStatus && (
+                                <span className="ml-3 text-xs text-zinc-400 font-mono animate-pulse">{thinkingStatus}</span>
+                            )}
+                        </div>
+                    </div>
+                    {/* Stop Button */}
+                    <button
+                        onClick={handleStop}
+                        className="p-2 bg-zinc-800 hover:bg-rose-500/20 hover:text-rose-500 text-zinc-400 rounded-full border border-zinc-700 transition-colors"
+                        title="Stop Generating"
+                        type="button"
+                    >
+                        <Square className="h-4 w-4 fill-current" />
+                    </button>
+                </div>
+            )}
+
+            <div ref={messagesEndRef} />
+        </div>
+
+        {/* Input */}
+        <div className="border-t border-zinc-800 bg-zinc-950 p-2 md:p-4">
+            <form onSubmit={handleSendMessage} className="mx-auto max-w-4xl">
+
+                {/* Attachments Preview */}
+                {(selectedImage || audioBlob) && (
+                    <div className="flex gap-4 mb-3 px-2">
+                        {selectedImage && (
+                            <div className="relative group">
+                                <img src={selectedImage.preview} alt="Selected" className="h-20 w-20 object-cover rounded-lg border border-zinc-700" />
+                                <button onClick={() => setSelectedImage(null)} type="button" className="absolute -top-2 -right-2 bg-zinc-800 rounded-full p-1 border border-zinc-600 hover:bg-zinc-700">
+                                    <X className="w-3 h-3 text-white" />
+                                </button>
                             </div>
+                        )}
+                        {audioBlob && (
+                            <div className="relative flex items-center justify-center h-20 w-20 bg-zinc-900 border border-zinc-700 rounded-lg">
+                                <div className="text-xs text-indigo-400 font-semibold">Voice Note</div>
+                                <button onClick={() => setAudioBlob(null)} type="button" className="absolute -top-2 -right-2 bg-zinc-800 rounded-full p-1 border border-zinc-600 hover:bg-zinc-700">
+                                    <X className="w-3 h-3 text-white" />
+                                </button>
+                            </div>
+                        )}
+                    </div>
+                )}
+
+                {selectedFile && (
+                    <div className="flex gap-4 mb-3 px-2">
+                        <div className="relative flex items-center justify-center p-3 bg-zinc-900 border border-zinc-700 rounded-lg gap-3">
+                            <FileIcon className="h-8 w-8 text-indigo-400" />
+                            <div className="flex flex-col">
+                                <span className="text-sm text-zinc-200 font-medium truncate max-w-[150px]">{selectedFile.name}</span>
+                                <span className="text-xs text-zinc-500">{selectedFile.size}</span>
+                            </div>
+                            <button onClick={() => setSelectedFile(null)} type="button" className="absolute -top-2 -right-2 bg-zinc-800 rounded-full p-1 border border-zinc-600 hover:bg-zinc-700">
+                                <X className="w-3 h-3 text-white" />
+                            </button>
                         </div>
                     </div>
                 )}
 
-                <div ref={messagesEndRef} />
-            </div>
-
-            {/* Input */}
-            <div className="border-t border-zinc-800 bg-zinc-950 p-2 md:p-4">
-                <form onSubmit={handleSendMessage} className="mx-auto max-w-4xl">
-
-                    {/* Attachments Preview */}
-                    {(selectedImage || audioBlob) && (
-                        <div className="flex gap-4 mb-3 px-2">
-                            {selectedImage && (
-                                <div className="relative group">
-                                    <img src={selectedImage.preview} alt="Selected" className="h-20 w-20 object-cover rounded-lg border border-zinc-700" />
-                                    <button onClick={() => setSelectedImage(null)} type="button" className="absolute -top-2 -right-2 bg-zinc-800 rounded-full p-1 border border-zinc-600 hover:bg-zinc-700">
-                                        <X className="w-3 h-3 text-white" />
-                                    </button>
-                                </div>
-                            )}
-                            {audioBlob && (
-                                <div className="relative flex items-center justify-center h-20 w-20 bg-zinc-900 border border-zinc-700 rounded-lg">
-                                    <div className="text-xs text-indigo-400 font-semibold">Voice Note</div>
-                                    <button onClick={() => setAudioBlob(null)} type="button" className="absolute -top-2 -right-2 bg-zinc-800 rounded-full p-1 border border-zinc-600 hover:bg-zinc-700">
-                                        <X className="w-3 h-3 text-white" />
-                                    </button>
-                                </div>
-                            )}
-                        </div>
-                    )}
-
-                    {selectedFile && (
-                        <div className="flex gap-4 mb-3 px-2">
-                            <div className="relative flex items-center justify-center p-3 bg-zinc-900 border border-zinc-700 rounded-lg gap-3">
-                                <FileIcon className="h-8 w-8 text-indigo-400" />
-                                <div className="flex flex-col">
-                                    <span className="text-sm text-zinc-200 font-medium truncate max-w-[150px]">{selectedFile.name}</span>
-                                    <span className="text-xs text-zinc-500">{selectedFile.size}</span>
-                                </div>
-                                <button onClick={() => setSelectedFile(null)} type="button" className="absolute -top-2 -right-2 bg-zinc-800 rounded-full p-1 border border-zinc-600 hover:bg-zinc-700">
-                                    <X className="w-3 h-3 text-white" />
-                                </button>
-                            </div>
-                        </div>
-                    )}
-
-                    <div className="flex gap-2 md:gap-3 items-end">
-                        {/* Audio / Recording Controls */}
-                        {isRecording ? (
-                            <button
-                                type="button"
-                                onClick={stopRecording}
-                                className="flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-red-600/20 text-red-500 animate-pulse border border-red-500/50 hover:bg-red-600/30 transition-all"
-                            >
-                                <StopCircle className="h-6 w-6" />
-                            </button>
-                        ) : (
-                            <button
-                                type="button"
-                                onClick={startRecording}
-                                disabled={!!audioBlob} // Disable if already has audio
-                                className="flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 hover:text-indigo-400 hover:border-indigo-500/50 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                            >
-                                <Mic className="h-5 w-5" />
-                            </button>
-                        )}
-
-                        {/* Image Picker */}
-                        <div className="relative">
-                            <input
-                                type="file"
-                                accept="image/*"
-                                onChange={handleImageSelect}
-                                className="hidden"
-                                id="image-upload"
-                                disabled={!!selectedImage}
-                            />
-                            <label
-                                htmlFor="image-upload"
-                                className={clsx(
-                                    "flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 transition-all cursor-pointer",
-                                    selectedImage ? "opacity-30 cursor-not-allowed" : "hover:text-pink-400 hover:border-pink-500/50"
-                                )}
-                            >
-                                <ImageIcon className="h-5 w-5" />
-                            </label>
-                        </div>
-
-                        {/* File Picker */}
-                        <div className="relative">
-                            <input
-                                type="file"
-                                onChange={handleFileSelect}
-                                className="hidden"
-                                id="file-upload"
-                                disabled={!!selectedFile}
-                            />
-                            <label
-                                htmlFor="file-upload"
-                                className={clsx(
-                                    "flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 transition-all cursor-pointer",
-                                    selectedFile ? "opacity-30 cursor-not-allowed" : "hover:text-emerald-400 hover:border-emerald-500/50"
-                                )}
-                            >
-                                <Paperclip className="h-5 w-5" />
-                            </label>
-                        </div>
-
-                        {/* Text Input */}
-                        <textarea
-                            ref={textareaRef}
-                            value={inputValue}
-                            onChange={(e) => setInputValue(e.target.value)}
-                            onKeyDown={(e) => {
-                                if (e.key === 'Enter' && !e.shiftKey) {
-                                    e.preventDefault();
-                                    handleSendMessage(e);
-                                }
-                            }}
-                            placeholder={`Message...`}
-                            rows={1}
-                            className="flex-1 rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 md:px-4 md:py-3 min-h-[40px] md:min-h-[48px] max-h-[150px] text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all resize-none scrollbar-thin scrollbar-thumb-zinc-700 font-sans"
-                        />
-
-                        {/* Send Button */}
+                <div className="flex gap-2 md:gap-3 items-end">
+                    {/* Audio / Recording Controls */}
+                    {isRecording ? (
                         <button
-                            type="submit"
-                            disabled={!isConnected || (!inputValue.trim() && !audioBlob && !selectedImage && !selectedFile)}
-                            className="flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-indigo-600 text-white transition-colors hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                            type="button"
+                            onClick={stopRecording}
+                            className="flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-red-600/20 text-red-500 animate-pulse border border-red-500/50 hover:bg-red-600/30 transition-all"
                         >
-                            <Send className="h-5 w-5" />
+                            <StopCircle className="h-6 w-6" />
                         </button>
+                    ) : (
+                        <button
+                            type="button"
+                            onClick={startRecording}
+                            disabled={!!audioBlob} // Disable if already has audio
+                            className="flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 hover:text-indigo-400 hover:border-indigo-500/50 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                        >
+                            <Mic className="h-5 w-5" />
+                        </button>
+                    )}
+
+                    {/* Image Picker */}
+                    <div className="relative">
+                        <input
+                            type="file"
+                            accept="image/*"
+                            onChange={handleImageSelect}
+                            className="hidden"
+                            id="image-upload"
+                            disabled={!!selectedImage}
+                        />
+                        <label
+                            htmlFor="image-upload"
+                            className={clsx(
+                                "flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 transition-all cursor-pointer",
+                                selectedImage ? "opacity-30 cursor-not-allowed" : "hover:text-pink-400 hover:border-pink-500/50"
+                            )}
+                        >
+                            <ImageIcon className="h-5 w-5" />
+                        </label>
                     </div>
-                </form>
-            </div>
-        </div >
-    );
+
+                    {/* File Picker */}
+                    <div className="relative">
+                        <input
+                            type="file"
+                            onChange={handleFileSelect}
+                            className="hidden"
+                            id="file-upload"
+                            disabled={!!selectedFile}
+                        />
+                        <label
+                            htmlFor="file-upload"
+                            className={clsx(
+                                "flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 transition-all cursor-pointer",
+                                selectedFile ? "opacity-30 cursor-not-allowed" : "hover:text-emerald-400 hover:border-emerald-500/50"
+                            )}
+                        >
+                            <Paperclip className="h-5 w-5" />
+                        </label>
+                    </div>
+
+                    {/* Text Input */}
+                    <textarea
+                        ref={textareaRef}
+                        value={inputValue}
+                        onChange={(e) => setInputValue(e.target.value)}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' && !e.shiftKey) {
+                                e.preventDefault();
+                                handleSendMessage(e);
+                            }
+                        }}
+                        placeholder={`Message...`}
+                        rows={1}
+                        className="flex-1 rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 md:px-4 md:py-3 min-h-[40px] md:min-h-[48px] max-h-[150px] text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all resize-none scrollbar-thin scrollbar-thumb-zinc-700 font-sans"
+                    />
+
+                    {/* Send Button */}
+                    <button
+                        type="submit"
+                        disabled={!isConnected || (!inputValue.trim() && !audioBlob && !selectedImage && !selectedFile)}
+                        className="flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-indigo-600 text-white transition-colors hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                    >
+                        <Send className="h-5 w-5" />
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div >
+);
 }

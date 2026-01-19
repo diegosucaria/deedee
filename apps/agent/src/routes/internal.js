@@ -335,6 +335,28 @@ function createInternalRouter(agent) {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
+    router.post('/history/rewind', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const { chatId, messageId } = req.body;
+            if (!chatId || !messageId) return res.status(400).json({ error: 'Missing chatId or messageId' });
+
+            const count = agent.db.deleteMessagesFrom(chatId, messageId);
+            res.json({ success: true, count });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.post('/history/fork', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const { chatId, messageId } = req.body;
+            if (!chatId || !messageId) return res.status(400).json({ error: 'Missing chatId or messageId' });
+
+            const newSessionId = agent.db.forkSession(chatId, messageId);
+            res.json({ success: true, newSessionId });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
     // --- Summaries ---
     router.get('/summaries', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });

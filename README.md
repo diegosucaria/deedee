@@ -111,6 +111,12 @@ Everything is customizable via environment variables. Like which models to use.
     -   **Interruptible**: Natural conversations.
     -   **Tool-Enabled**: Can use all agent tools (e.g. "Send a WhatsApp to Alice").
     -   **Configurable Voice**: Choose from multiple personas (Puck, Kore, Charon) via Settings.
+    -   **Configurable Voice**: Choose from multiple personas (Puck, Kore, Charon) via Settings.
+    -   **Chat Enhancements**:
+        -   **Edit (Rewind)**: Fix mistakes by editing previous messages (deletes subsequent history).
+        -   **Fork**: Branch conversations to explore different paths without losing context.
+        -   **Stop**: Instantly interrupt the agent's generation.
+        -   **Image Paste**: Ctrl+V to paste images directly into chat.
 -   **⚙️ Runtime Settings Manager**:
     -   **Dynamic Configuration**: Change voice, search strategy, and system behaviors on-the-fly without restarting.
     -   **In-Memory Caching**: Ultra-low latency access for core tools.

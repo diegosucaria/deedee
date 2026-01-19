@@ -582,6 +582,67 @@ class AgentDB {
 
   // --- Messages ---
 
+  deleteMessagesFrom(chatId, messageId) {
+    // 1. Get timestamp of the target message
+    const target = this.db.prepare('SELECT timestamp FROM messages WHERE id = ? AND chat_id = ?').get(messageId, chatId);
+
+    if (!target) {
+      console.warn(`[DB] Rewind failed: Message ${messageId} not found in chat ${chatId}`);
+      return 0;
+    }
+
+    // 2. Delete that message and everything after it
+    const info = this.db.prepare(`
+        DELETE FROM messages 
+        WHERE chat_id = ? 
+        AND timestamp >= ?
+    `).run(chatId, target.timestamp);
+
+    console.log(`[DB] Rewinded chat ${chatId} from message ${messageId} (${target.timestamp}). Deleted ${info.changes} messages.`);
+    return info.changes;
+  }
+
+  forkSession(sourceChatId, messageId) {
+    const targetMsg = this.db.prepare('SELECT timestamp FROM messages WHERE id = ? AND chat_id = ?').get(messageId, sourceChatId);
+    if (!targetMsg) throw new Error('Target message not found');
+
+    const sourceSession = this.getSession(sourceChatId);
+    if (!sourceSession) throw new Error('Source session not found');
+
+    // 1. Create New Session
+    const newSessionId = crypto.randomUUID();
+    const newTitle = `${sourceSession.title} (Fork)`;
+    this.createSession({ id: newSessionId, title: newTitle });
+
+    // 2. Copy Messages (Role: User/Assistant/System) up to targetMsg
+    // Sort ASC to insertion order
+    const messagesToCopy = this.db.prepare(`
+        SELECT * FROM messages 
+        WHERE chat_id = ? 
+        AND timestamp <= ?
+        ORDER BY timestamp ASC
+    `).all(sourceChatId, targetMsg.timestamp);
+
+    const insertStmt = this.db.prepare(`
+        INSERT INTO messages (id, role, content, parts, source, chat_id, cost, token_count, timestamp, metadata)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+
+    // Transaction
+    const forkTx = this.db.transaction(() => {
+      for (const msg of messagesToCopy) {
+        // New Message ID to avoid PK conflict if we ever merge? 
+        // Actually keeping same ID is bad practice if copying. New ID is safer.
+        const newMsgId = crypto.randomUUID();
+        insertStmt.run(newMsgId, msg.role, msg.content, msg.parts, msg.source, newSessionId, msg.cost, msg.token_count, msg.timestamp, msg.metadata);
+      }
+    });
+
+    forkTx();
+    console.log(`[DB] Forked session ${sourceChatId} to ${newSessionId} (${messagesToCopy.length} messages)`);
+    return newSessionId;
+  }
+
   saveMessage(msg) {
     const stmt = this.db.prepare(`
       INSERT INTO messages (id, role, content, parts, source, chat_id, cost, token_count, timestamp, metadata)
@@ -591,7 +652,8 @@ class AgentDB {
     const id = msg.id || crypto.randomUUID();
     const partsStr = msg.parts ? JSON.stringify(msg.parts) : null;
     const metaStr = msg.metadata ? JSON.stringify(msg.metadata) : null;
-    stmt.run(id, msg.role, msg.content, partsStr, msg.source, msg.metadata?.chatId, msg.cost || 0, msg.tokenCount || 0, msg.timestamp, metaStr);
+    const targetChatId = msg.chatId || msg.chat_id || msg.metadata?.chatId;
+    stmt.run(id, msg.role, msg.content, partsStr, msg.source, targetChatId, msg.cost || 0, msg.tokenCount || 0, msg.timestamp, metaStr);
   }
 
   getHistory(options = {}) {
