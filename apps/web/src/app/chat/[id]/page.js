@@ -820,11 +820,20 @@ export default function ChatSessionPage({ params }) {
                                                 </div>
                                                 <span className="text-sm italic text-indigo-200">Audio Message</span>
                                             </div>
+                                        ) : (msg.type === 'image' || (typeof msg.content === 'string' && msg.content.startsWith('data:image'))) ? (
+                                            <div className="rounded-lg overflow-hidden border border-indigo-500/30">
+                                                <img
+                                                    src={msg.content}
+                                                    alt="User Upload"
+                                                    className="max-h-64 sticky w-auto object-contain bg-black/20"
+                                                />
+                                            </div>
                                         ) : (
                                             <div className="markdown prose prose-invert prose-sm max-w-none">
                                                 <ReactMarkdown>{msg.content}</ReactMarkdown>
                                             </div>
                                         )}
+
                                         <div className="mt-1 text-[10px] opacity-50 flex items-center gap-2 text-indigo-200">
                                             <span>{typeof msg.timestamp === 'string' ? new Date(msg.timestamp).toLocaleTimeString() : ''}</span>
                                         </div>

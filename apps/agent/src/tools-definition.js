@@ -291,7 +291,7 @@ const toolDefinitions = [
       // Image Generation
       {
         name: "generateImage",
-        description: "Generate an image using Gemini 3 Pro. Returns a base64 string.",
+        description: "Create/Draw/Render a NEW image using Gemini 3 Pro. Returns a base64 string. Do NOT use this to analyze images.",
         parameters: {
           type: "OBJECT",
           properties: {

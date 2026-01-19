@@ -56,6 +56,10 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
             
             ACTIVE GOALS:
             ${activeGoals ? activeGoals : "None."}
+            
+            VISION PROTOCOL:
+            1. **Direct Analysis**: You have NATIVE vision capabilities. If the user attaches an image and asks "What is this?", simply analyze the image directly.
+            2. **Do NOT Generate**: Do NOT use the 'generateImage' tool to analyze or describe an existing image. Only use it when the user explicitly asks you to CREATE, DRAW, or RENDER a NEW image.
     `;
 
         const THINKING_PROTOCOL = `
