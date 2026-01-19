@@ -9,6 +9,7 @@ const { CommunicationExecutor } = require('./executors/communication');
 const { VaultExecutor } = require('./executors/vault');
 const { PeopleExecutor } = require('./executors/people');
 const { RagExecutor } = require('./executors/rag');
+const { DJExecutor } = require('./executors/dj');
 
 class ToolExecutor {
     /**
@@ -19,16 +20,16 @@ class ToolExecutor {
         this.executors = [
             new FileSystemExecutor(services),
             new MemoryExecutor(services),
-            new VaultExecutor(services), // Add Vault Executor
+            new VaultExecutor(services),
             new ProductivityExecutor(services),
             new SmartHomeExecutor(services),
             new SchedulerExecutor(services),
             new GSuiteExecutor(services),
             new MediaExecutor(services),
             new CommunicationExecutor(services),
-            new CommunicationExecutor(services),
             new PeopleExecutor(services),
-            new RagExecutor(services)
+            new RagExecutor(services),
+            new DJExecutor(services)
         ];
     }
 

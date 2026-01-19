@@ -389,6 +389,18 @@ export async function getMCPStatus() {
     }
 }
 
+export async function getVinylCrate(limit = 50, offset = 0) {
+    try {
+        const response = await fetchAPI(`/api/dj/vinyls?limit=${limit}&offset=${offset}`, {
+            method: "GET",
+        });
+        return response;
+    } catch (error) {
+        console.error("Error fetching vinyl crate:", error);
+        return [];
+    }
+}
+
 export async function getTools() {
     try {
         const res = await fetchAPI('/v1/live/tools'); // Reuse live endpoint or create new /v1/tools?

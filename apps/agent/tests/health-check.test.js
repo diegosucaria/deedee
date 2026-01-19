@@ -23,6 +23,7 @@ describe('Agent Health Check', () => {
             getAllFacts: jest.fn().mockReturnValue([]),
             ensureSession: jest.fn(),
             countMessages: jest.fn().mockReturnValue(0),
+            getFactsFormatted: jest.fn().mockReturnValue(''),
             getKey: jest.fn(),
             close: jest.fn()
         };

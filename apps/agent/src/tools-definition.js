@@ -619,6 +619,55 @@ const toolDefinitions = [
           },
           required: ["path"]
         }
+      },
+      // DJ Assistant
+      {
+        name: "add_vinyl",
+        description: "Add a vinyl record to the DJ Crate. Accepts an image (cover/label/receipt) or text.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            image_path: { type: "STRING", description: "Optional. Absolute path to local image file." }
+          },
+          required: []
+        }
+      },
+      {
+        name: "recommend_vinyl",
+        description: "Get track recommendations strictly from the user's Vinyl Crate. Use this when the user is playing vinyls.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            current_track: { type: "STRING", description: "Name of the track currently playing." }
+          },
+          required: ["current_track"]
+        }
+      },
+      {
+        name: "ingest_dj_history",
+        description: "Ingest a playlist history file into the DJ History Vault with context metadata.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            content: { type: "STRING", description: "The content of the history file (tracklist)." },
+            venue: { type: "STRING", description: "Where the set was played." },
+            date: { type: "STRING", description: "When the set was played (YYYY-MM-DD)." },
+            party: { type: "STRING", description: "Name of the event/party." }
+          },
+          required: ["content", "venue", "date", "party"]
+        }
+      },
+      {
+        name: "recommend_digital",
+        description: "Get track recommendations from Global Knowledge + History Vault. Use this for digital sets.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            current_track: { type: "STRING", description: "Name of the track currently playing." },
+            context: { type: "STRING", description: "Optional. Extra context (e.g. 'late night', 'warm up')." }
+          },
+          required: ["current_track"]
+        }
       }
     ]
   }

@@ -175,6 +175,20 @@ class AgentDB {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         last_triggered_at DATETIME
       );
+
+      CREATE TABLE IF NOT EXISTS dj_vinyls (
+        id TEXT PRIMARY KEY,
+        artist TEXT,
+        title TEXT,
+        label TEXT,
+        catalog_number TEXT,
+        cover_image_url TEXT,
+        bpm REAL,
+        key TEXT,
+        tracks TEXT, -- JSON array of track names
+        meta TEXT,   -- JSON (Year, Genre, Discogs Link)
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
     `);
 
     // Migration: Add watchers table if missing (idempotent via create table if not exists, but for updates just in case)
@@ -228,6 +242,11 @@ class AgentDB {
     // Migration: Add identifiers to people
     try {
       this.db.exec("ALTER TABLE people ADD COLUMN identifiers TEXT");
+    } catch (err) { }
+
+    // Migration: Add tag to token_usage
+    try {
+      this.db.exec("ALTER TABLE token_usage ADD COLUMN tag TEXT");
     } catch (err) { }
   }
 
@@ -790,12 +809,67 @@ class AgentDB {
   }
 
   checkLimit(windowHours) {
-    const stmt = this.db.prepare(`
-      SELECT COUNT(*) as count FROM usage_logs 
-      WHERE timestamp > datetime('now', '-' || ? || ' hours')
-    `);
     const result = stmt.get(windowHours);
     return result ? result.count : 0;
+  }
+
+  logTokenUsage({ model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost, tag }) {
+    const stmt = this.db.prepare(`
+      INSERT INTO token_usage (model, prompt_tokens, candidate_tokens, total_tokens, chat_id, estimated_cost, tag)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost, tag || null);
+  }
+
+  // --- DJ Vinyls ---
+  addVinyl(vinyl) {
+    const id = vinyl.id || crypto.randomUUID();
+    const tracksStr = vinyl.tracks ? JSON.stringify(vinyl.tracks) : '[]';
+    const metaStr = vinyl.meta ? JSON.stringify(vinyl.meta) : '{}';
+
+    const stmt = this.db.prepare(`
+      INSERT INTO dj_vinyls (id, artist, title, label, catalog_number, cover_image_url, bpm, key, tracks, meta)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(id, vinyl.artist, vinyl.title, vinyl.label, vinyl.catalogNumber, vinyl.coverImageUrl, vinyl.bpm, vinyl.key, tracksStr, metaStr);
+    return id;
+  }
+
+  getVinyl(id) {
+    const stmt = this.db.prepare('SELECT * FROM dj_vinyls WHERE id = ?');
+    const row = stmt.get(id);
+    if (row) {
+      row.tracks = JSON.parse(row.tracks);
+      row.meta = JSON.parse(row.meta);
+    }
+    return row;
+  }
+
+  getVinyls({ limit = 50, offset = 0 } = {}) {
+    const stmt = this.db.prepare('SELECT * FROM dj_vinyls ORDER BY created_at DESC LIMIT ? OFFSET ?');
+    return stmt.all(limit, offset).map(row => ({
+      ...row,
+      tracks: JSON.parse(row.tracks),
+      meta: JSON.parse(row.meta)
+    }));
+  }
+
+  searchVinyls(query) {
+    if (!query) return [];
+    const wildcard = `%${query}%`;
+    const stmt = this.db.prepare(`
+      SELECT * FROM dj_vinyls 
+      WHERE artist LIKE ? 
+      OR title LIKE ? 
+      OR label LIKE ? 
+      OR catalog_number LIKE ?
+      ORDER BY created_at DESC
+    `);
+    return stmt.all(wildcard, wildcard, wildcard, wildcard).map(row => ({
+      ...row,
+      tracks: JSON.parse(row.tracks),
+      meta: JSON.parse(row.meta)
+    }));
   }
 
   // --- Search & Consolidation ---

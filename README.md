@@ -128,6 +128,12 @@ Everything is customizable via environment variables. Like which models to use.
     -   **Context Switching**: Agent automatically switches context when discussing a vault topic.
     -   **File Management**: Upload invoices, medical reports, or manuals. The Agent can find and read them.
     -   **Wiki**: Auto-updating `index.md` for each vault acting as a high-level summary.
+    -   **[Read the Guide](docs/dj-assistant.md)**: Full details on the DJ Module.
+
+-   **🎧 DJ Assistant**:
+    -   **Crate Digger**: Digitize your vinyl collection by taking photos of covers or receipts.
+    -   **Booth Buddy**: Get real-time mixing recommendations based on Key, BPM, and Vibe.
+    -   **Visual Crate**: Browse your collection at `/dj`.
 
 ---
 

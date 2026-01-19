@@ -443,6 +443,18 @@ app.delete('/sessions/:id', async (req, res) => {
   }
 });
 
+// --- DJ API ---
+app.get('/api/dj/vinyls', async (req, res) => {
+  try {
+    const { limit, offset } = req.query;
+    const response = await axios.get(`${agentUrl}/internal/dj/vinyls`, { params: { limit, offset } });
+    res.json(response.data);
+  } catch (err) {
+    console.error('[Interfaces] Failed to get vinyls:', err.message);
+    res.status(502).json({ error: 'Backend unavailable' });
+  }
+});
+
 // Endpoint for Agent to report progress (e.g. "Routing...", "Thinking...")
 app.post('/progress', async (req, res) => {
   try {

@@ -28,6 +28,7 @@ const { TitleService } = require('./services/title-service');
 const { ConfigService } = require('./services/config-service');
 const { RagService } = require('./services/rag-service');
 const { GSuiteService } = require('./services/gsuite-service');
+const { DJService } = require('./services/dj-service');
 
 
 
@@ -72,6 +73,7 @@ class Agent {
     this.titleService = new TitleService(this);
     this.configService = new ConfigService();
     this.ragService = new RagService(this);
+    this.djService = new DJService(this);
 
     // In-Memory Settings Cache
     this.settings = {};
@@ -83,6 +85,7 @@ class Agent {
       scheduler: this.scheduler,
       gsuite: this.gsuite,
       mcp: this.mcp,
+      dj: this.djService,
       client: null, // Will be populated in processMessage
       interface: this.interface,
       db: this.db,
@@ -146,6 +149,7 @@ class Agent {
 
     // Initialize Vaults
     await this.vaults.initialize();
+    await this.djService.initialize();
 
     // Ensure System Maintenance Jobs
     this.scheduler.ensureSystemJobs();

@@ -1,0 +1,8 @@
+{
+  "type": "receipt",
+  "items": [
+    { "artist": "Daft Punk", "title": "Homework", "label": "Virgin", "confidence": 0.95 },
+    { "artist": "Stardust", "title": "Music Sounds Better With You", "label": "Roule", "confidence": 0.98 },
+    { "artist": "Unknown Artist", "title": "White Label 001", "label": "Unknown", "confidence": 0.4 }
+  ]
+}
