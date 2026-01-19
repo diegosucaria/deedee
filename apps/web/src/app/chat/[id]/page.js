@@ -848,6 +848,7 @@ export default function ChatSessionPage({ params }) {
                                         </div>
                                     </div>
                                 </div>
+                            ) : (
                                 // Assistant Message
                                 <div className="flex flex-col gap-1 items-start relative group">
                                     <div className="bg-zinc-800 text-zinc-200 rounded-2xl rounded-tl-none border border-zinc-700 px-5 py-3 shadow-sm md:max-w-[70%] relative">
@@ -857,64 +858,64 @@ export default function ChatSessionPage({ params }) {
                                                 <GitFork className="h-3 w-3" />
                                             </button>
                                         </div>
-                                    {msg.type === 'audio' ? (
-                                        <div className="flex items-center gap-3">
-                                            <div className="h-10 w-10 bg-indigo-500/20 rounded-full flex items-center justify-center">
-                                                <Play className="h-5 w-5 text-indigo-400" />
-                                            </div>
-                                            <span className="text-sm italic text-zinc-400">Audio Message</span>
-                                            <audio controls src={msg.content.startsWith('data:') ? msg.content : `data:audio/wav;base64,${msg.content}`} className="hidden" />
-                                        </div>
-                                    ) : msg.type === 'image' ? (
-                                        <div className="rounded-lg overflow-hidden">
-                                            <img
-                                                src={msg.content.startsWith('data:') ? msg.content : `data:image/png;base64,${msg.content}`}
-                                                alt="Generated Image"
-                                                className="w-full h-auto max-h-96 object-cover"
-                                            />
-                                        </div>
-                                    ) : msg.type === 'function_call' ? (
-                                        <div className="font-mono text-xs">
-                                            <div className="flex items-center gap-2 text-indigo-300 mb-1">
-                                                <Code2 className="h-3 w-3" />
-                                                <span>Using Tool: {JSON.parse(msg.content).name}</span>
-                                            </div>
-                                            <div className="bg-black/20 rounded p-2 overflow-x-auto text-zinc-400">
-                                                {JSON.stringify(JSON.parse(msg.content).args)}
-                                            </div>
-                                        </div>
-                                    ) : msg.type === 'function_response' ? (
-                                        <div className="font-mono text-xs">
-                                            <div className="flex items-center gap-2 text-emerald-400 mb-1">
-                                                <CheckCircle2 className="h-3 w-3" />
-                                                <span>Tool Result: {JSON.parse(msg.content).name}</span>
-                                            </div>
-                                            <details className="cursor-pointer group">
-                                                <summary className="text-zinc-500 hover:text-zinc-300 transition-colors list-none p-2 -ml-2 cursor-pointer select-none">
-                                                    <span className="group-open:hidden">View Output</span>
-                                                    <span className="hidden group-open:inline">Hide Output</span>
-                                                </summary>
-                                                <div className="mt-2 bg-black/20 rounded p-2 overflow-x-auto text-zinc-400 whitespace-pre-wrap max-h-48 overflow-y-auto">
-                                                    {JSON.stringify(JSON.parse(msg.content).result, null, 2)}
+                                        {msg.type === 'audio' ? (
+                                            <div className="flex items-center gap-3">
+                                                <div className="h-10 w-10 bg-indigo-500/20 rounded-full flex items-center justify-center">
+                                                    <Play className="h-5 w-5 text-indigo-400" />
                                                 </div>
-                                            </details>
-                                        </div>
-                                    ) : (
-                                        <div className="markdown prose prose-invert prose-sm max-w-none">
-                                            <ReactMarkdown>{msg.content}</ReactMarkdown>
-                                        </div>
-                                    )}
-                                    <div className="mt-1 text-[10px] opacity-50 flex items-center gap-2 text-zinc-500">
-                                        <span>{typeof msg.timestamp === 'string' ? new Date(msg.timestamp).toLocaleTimeString() : ''}</span>
-                                        {msg.metadata?.model && (
-                                            <span className="px-1.5 py-0.5 rounded text-[9px] font-medium border border-zinc-600 bg-zinc-700/50">
-                                                {msg.metadata.model}
-                                            </span>
+                                                <span className="text-sm italic text-zinc-400">Audio Message</span>
+                                                <audio controls src={msg.content.startsWith('data:') ? msg.content : `data:audio/wav;base64,${msg.content}`} className="hidden" />
+                                            </div>
+                                        ) : msg.type === 'image' ? (
+                                            <div className="rounded-lg overflow-hidden">
+                                                <img
+                                                    src={msg.content.startsWith('data:') ? msg.content : `data:image/png;base64,${msg.content}`}
+                                                    alt="Generated Image"
+                                                    className="w-full h-auto max-h-96 object-cover"
+                                                />
+                                            </div>
+                                        ) : msg.type === 'function_call' ? (
+                                            <div className="font-mono text-xs">
+                                                <div className="flex items-center gap-2 text-indigo-300 mb-1">
+                                                    <Code2 className="h-3 w-3" />
+                                                    <span>Using Tool: {JSON.parse(msg.content).name}</span>
+                                                </div>
+                                                <div className="bg-black/20 rounded p-2 overflow-x-auto text-zinc-400">
+                                                    {JSON.stringify(JSON.parse(msg.content).args)}
+                                                </div>
+                                            </div>
+                                        ) : msg.type === 'function_response' ? (
+                                            <div className="font-mono text-xs">
+                                                <div className="flex items-center gap-2 text-emerald-400 mb-1">
+                                                    <CheckCircle2 className="h-3 w-3" />
+                                                    <span>Tool Result: {JSON.parse(msg.content).name}</span>
+                                                </div>
+                                                <details className="cursor-pointer group">
+                                                    <summary className="text-zinc-500 hover:text-zinc-300 transition-colors list-none p-2 -ml-2 cursor-pointer select-none">
+                                                        <span className="group-open:hidden">View Output</span>
+                                                        <span className="hidden group-open:inline">Hide Output</span>
+                                                    </summary>
+                                                    <div className="mt-2 bg-black/20 rounded p-2 overflow-x-auto text-zinc-400 whitespace-pre-wrap max-h-48 overflow-y-auto">
+                                                        {JSON.stringify(JSON.parse(msg.content).result, null, 2)}
+                                                    </div>
+                                                </details>
+                                            </div>
+                                        ) : (
+                                            <div className="markdown prose prose-invert prose-sm max-w-none">
+                                                <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                            </div>
                                         )}
+                                        <div className="mt-1 text-[10px] opacity-50 flex items-center gap-2 text-zinc-500">
+                                            <span>{typeof msg.timestamp === 'string' ? new Date(msg.timestamp).toLocaleTimeString() : ''}</span>
+                                            {msg.metadata?.model && (
+                                                <span className="px-1.5 py-0.5 rounded text-[9px] font-medium border border-zinc-600 bg-zinc-700/50">
+                                                    {msg.metadata.model}
+                                                </span>
+                                            )}
+                                        </div>
                                     </div>
-                                </div>
                             )}
-                        </div>
+                                </div>
                             ))}
 
                             {/* Typing Indicator */}
