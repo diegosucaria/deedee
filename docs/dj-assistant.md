@@ -35,7 +35,10 @@ Deedee includes a specialized **DJ Module** that acts as your Crate Digger and B
 ## Technical Details
 
 -   **Database**: Stores text metadata in `dj_vinyls`.
--   **Images**: Stored in `apps/web/public/vinyl_covers` and served statically.
+-   **Images**: 
+    -   Stored in persistent volume: `data/vinyl_covers` (Docker Volume).
+    -   Served by **Agent** at `/internal/dj/covers`.
+    -   Proxied by **Web** at `/vinyl_covers/[filename]` for secure/consistent access.
 -   **Models**: 
     -   **Ingestion**: Uses `WORKER_PRO` (Gemini 1.5 Pro) for Vision analysis.
     -   **Recommendation**: Uses `WORKER_PRO` for musical reasoning.
