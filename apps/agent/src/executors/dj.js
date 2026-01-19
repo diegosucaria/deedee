@@ -6,6 +6,21 @@ class DJExecutor {
         this.djService = services.dj;
     }
 
+    async execute(name, args) {
+        switch (name) {
+            case 'add_vinyl':
+                return this.add_vinyl(args);
+            case 'recommend_vinyl':
+                return this.recommend_vinyl(args);
+            case 'ingest_dj_history':
+                return this.ingest_dj_history(args);
+            case 'recommend_digital':
+                return this.recommend_digital(args);
+            default:
+                return null;
+        }
+    }
+
     async add_vinyl({ image_path }) {
         if (!image_path) return "Please provide an image of the vinyl or receipt.";
 
