@@ -397,6 +397,7 @@ export async function getVinylCrate(limit = 50, offset = 0) {
 }
 
 export async function rewindChat(chatId, messageId) {
+    console.log('[DEBUG] rewindChat Action:', { chatId, messageId });
     const response = await fetchAPI(`/v1/chat/rewind`, {
         method: "POST",
         body: JSON.stringify({ chatId, messageId })

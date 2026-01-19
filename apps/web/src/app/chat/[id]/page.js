@@ -24,6 +24,7 @@ export default function ChatSessionPage({ params }) {
 
     // Rewind / Edit Handler
     const handleRewind = async (msg) => {
+        console.log('[DEBUG] handleRewind msg:', msg);
         if (!confirm('Edit this message? This will delete all subsequent history in this chat.')) return;
 
         // Force stop generation to prevent race conditions
