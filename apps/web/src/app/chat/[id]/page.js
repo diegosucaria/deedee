@@ -26,6 +26,9 @@ export default function ChatSessionPage({ params }) {
     const handleRewind = async (msg) => {
         if (!confirm('Edit this message? This will delete all subsequent history in this chat.')) return;
 
+        // Force stop generation to prevent race conditions
+        await stopChat(chatId).catch(console.error);
+
         // 1. Set Input
         setInputValue(msg.content);
 
