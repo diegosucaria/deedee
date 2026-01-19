@@ -34,7 +34,8 @@ router.post('/', async (req, res) => {
     } catch (error) {
         console.error('[API] Failed to forward to agent:', error.message);
         const status = error.response ? error.response.status : 502;
-        res.status(status).json({ error: 'Failed to communicate with Agent', details: error.message });
+        const details = error.response && error.response.data ? error.response.data.error : error.message;
+        res.status(status).json({ error: 'Failed to communicate with Agent', details });
     }
 });
 
@@ -87,7 +88,9 @@ router.post('/rewind', async (req, res) => {
         res.json(response.data);
     } catch (error) {
         console.error('[API] Rewind failed:', error.message);
-        res.status(502).json({ error: 'Failed to rewind chat' });
+        const status = error.response ? error.response.status : 502;
+        const details = error.response && error.response.data ? error.response.data.error : error.message;
+        res.status(status).json({ error: 'Failed to rewind chat', details });
     }
 });
 
@@ -100,7 +103,9 @@ router.post('/fork', async (req, res) => {
         res.json(response.data);
     } catch (error) {
         console.error('[API] Fork failed:', error.message);
-        res.status(502).json({ error: 'Failed to fork chat' });
+        const status = error.response ? error.response.status : 502;
+        const details = error.response && error.response.data ? error.response.data.error : error.message;
+        res.status(status).json({ error: 'Failed to fork chat', details });
     }
 });
 
@@ -113,7 +118,9 @@ router.post('/stop', async (req, res) => {
         res.json(response.data);
     } catch (error) {
         console.error('[API] Stop failed:', error.message);
-        res.status(502).json({ error: 'Failed to stop chat' });
+        const status = error.response ? error.response.status : 502;
+        const details = error.response && error.response.data ? error.response.data.error : error.message;
+        res.status(status).json({ error: 'Failed to stop chat', details });
     }
 });
 

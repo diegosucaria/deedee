@@ -40,6 +40,8 @@ class AgentDB {
     // Enable WAL mode for better concurrency
     this.db.pragma('journal_mode = WAL');
 
+    this.db.pragma('journal_mode = WAL');
+
     // Handle graceful shutdown
     process.on('SIGINT', () => this.close());
     process.on('SIGTERM', () => this.close());
