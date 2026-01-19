@@ -137,19 +137,18 @@ class DJService {
         // 2. Image Persistence
         let coverUrl = '/vinyl_covers/default.png';
         if (originalImage) {
-            // Save local copy
+            // Save local copy to persistent volume
             const filename = `${crypto.randomUUID()}.jpg`;
-            const webPublicDir = path.join(process.cwd(), 'apps/web/public/vinyl_covers');
-            if (!fs.existsSync(webPublicDir)) fs.mkdirSync(webPublicDir, { recursive: true });
+            // Uses 'data' dir which is mounted volume in Docker
+            const dataDir = path.join(process.cwd(), 'data/vinyl_covers');
+            if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
-            const filePath = path.join(webPublicDir, filename);
+            const filePath = path.join(dataDir, filename);
 
             // Write file
-            // If imageInput was base64...
-            // ... simplified for now.
-            // Assuming file path for now since `ingestVinyl` usually called with path?
             if (originalImage.startsWith('/')) {
                 fs.copyFileSync(originalImage, filePath);
+                // Frontend route handler will proxy this
                 coverUrl = `/vinyl_covers/${filename}`;
             }
         }

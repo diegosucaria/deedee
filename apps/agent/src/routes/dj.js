@@ -17,6 +17,12 @@ const createDjRouter = (agent) => {
         }
     });
 
+    // Serve Vinyl Covers (Internal)
+    // Uses 'data' dir (volume)
+    const dataDir = require('path').join(process.cwd(), 'data/vinyl_covers');
+    if (!require('fs').existsSync(dataDir)) require('fs').mkdirSync(dataDir, { recursive: true });
+    router.use('/covers', express.static(dataDir));
+
     return router;
 };
 
