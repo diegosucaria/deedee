@@ -11,6 +11,11 @@
 
 ### Interfaces
 - [x] **Telegram**: Text and Native Voice (WAV) support.
+- [x] **Chat Enhancements**:
+    - [x] **Stop**: Interrupt generation (Square button).
+    - [x] **Rewind**: Edit previous messages (Pencil).
+    - [x] **Fork**: Branch conversations (Branch icon).
+    - [x] **Paste**: Image pasting support.
 - [x] **API Gateway**: Synchronous `POST /v1/chat` for iOS Shortcuts & Dashboards.
 - [x] **Web Dashboard**: Next.js interface with Real-time Chat, Journal, and Memory views.
 - [x] **WhatsApp**: Integration via Baileys (Dual Session: User & Assistant).
