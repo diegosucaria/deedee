@@ -216,7 +216,8 @@ export default function ChatSessionPage({ params }) {
                         name: fc.name,
                         args: fc.args
                     });
-                    return { role, content, type, timestamp: m.timestamp };
+                    return { id: m.id, role, content, type, timestamp: m.timestamp };
+
                 }
             }
 
@@ -234,7 +235,8 @@ export default function ChatSessionPage({ params }) {
                         name: fr.name,
                         result: fr.response
                     });
-                    return { role, content, type, timestamp: m.timestamp };
+                    return { id: m.id, role, content, type, timestamp: m.timestamp };
+
                 }
             }
 

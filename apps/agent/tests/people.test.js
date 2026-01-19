@@ -16,7 +16,10 @@ jest.mock('../src/mcp-manager', () => ({
     }))
 }));
 
+// Ensure fresh server instance with our Env Var
+jest.resetModules();
 const { app, agent } = require('../src/server');
+
 
 const TEST_DB_PATH = path.join(__dirname, 'test_people.db');
 
