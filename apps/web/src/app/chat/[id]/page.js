@@ -914,167 +914,168 @@ export default function ChatSessionPage({ params }) {
                                             )}
                                         </div>
                                     </div>
-                            )}
-                                </div>
-                            ))}
-
-                            {/* Typing Indicator */}
-                            {isWaiting && (
-                                <div className="flex w-full justify-start items-center gap-2">
-                                    <div className="max-w-[85%] rounded-2xl px-5 py-4 shadow-sm md:max-w-[70%] bg-zinc-800 rounded-tl-none border border-zinc-700">
-                                        <div className="flex space-x-2 items-center h-4">
-                                            <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                                            <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                                            <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce"></div>
-                                            {thinkingStatus && (
-                                                <span className="ml-3 text-xs text-zinc-400 font-mono animate-pulse">{thinkingStatus}</span>
-                                            )}
-                                        </div>
-                                    </div>
-                                    {/* Stop Button */}
-                                    <button
-                                        onClick={handleStop}
-                                        className="p-2 bg-zinc-800 hover:bg-rose-500/20 hover:text-rose-500 text-zinc-400 rounded-full border border-zinc-700 transition-colors"
-                                        title="Stop Generating"
-                                        type="button"
-                                    >
-                                        <Square className="h-4 w-4 fill-current" />
-                                    </button>
                                 </div>
                             )}
-
-                            <div ref={messagesEndRef} />
                         </div>
+                    ))}
 
-            {/* Input */ }
-                        < div className = "border-t border-zinc-800 bg-zinc-950 p-2 md:p-4" >
-                        <form onSubmit={handleSendMessage} className="mx-auto max-w-4xl">
-
-                            {/* Attachments Preview */}
-                            {(selectedImage || audioBlob) && (
-                                <div className="flex gap-4 mb-3 px-2">
-                                    {selectedImage && (
-                                        <div className="relative group">
-                                            <img src={selectedImage.preview} alt="Selected" className="h-20 w-20 object-cover rounded-lg border border-zinc-700" />
-                                            <button onClick={() => setSelectedImage(null)} type="button" className="absolute -top-2 -right-2 bg-zinc-800 rounded-full p-1 border border-zinc-600 hover:bg-zinc-700">
-                                                <X className="w-3 h-3 text-white" />
-                                            </button>
-                                        </div>
-                                    )}
-                                    {audioBlob && (
-                                        <div className="relative flex items-center justify-center h-20 w-20 bg-zinc-900 border border-zinc-700 rounded-lg">
-                                            <div className="text-xs text-indigo-400 font-semibold">Voice Note</div>
-                                            <button onClick={() => setAudioBlob(null)} type="button" className="absolute -top-2 -right-2 bg-zinc-800 rounded-full p-1 border border-zinc-600 hover:bg-zinc-700">
-                                                <X className="w-3 h-3 text-white" />
-                                            </button>
-                                        </div>
-                                    )}
-                                </div>
-                            )}
-
-                            {selectedFile && (
-                                <div className="flex gap-4 mb-3 px-2">
-                                    <div className="relative flex items-center justify-center p-3 bg-zinc-900 border border-zinc-700 rounded-lg gap-3">
-                                        <FileIcon className="h-8 w-8 text-indigo-400" />
-                                        <div className="flex flex-col">
-                                            <span className="text-sm text-zinc-200 font-medium truncate max-w-[150px]">{selectedFile.name}</span>
-                                            <span className="text-xs text-zinc-500">{selectedFile.size}</span>
-                                        </div>
-                                        <button onClick={() => setSelectedFile(null)} type="button" className="absolute -top-2 -right-2 bg-zinc-800 rounded-full p-1 border border-zinc-600 hover:bg-zinc-700">
-                                            <X className="w-3 h-3 text-white" />
-                                        </button>
-                                    </div>
-                                </div>
-                            )}
-
-                            <div className="flex gap-2 md:gap-3 items-end">
-                                {/* Audio / Recording Controls */}
-                                {isRecording ? (
-                                    <button
-                                        type="button"
-                                        onClick={stopRecording}
-                                        className="flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-red-600/20 text-red-500 animate-pulse border border-red-500/50 hover:bg-red-600/30 transition-all"
-                                    >
-                                        <StopCircle className="h-6 w-6" />
-                                    </button>
-                                ) : (
-                                    <button
-                                        type="button"
-                                        onClick={startRecording}
-                                        disabled={!!audioBlob} // Disable if already has audio
-                                        className="flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 hover:text-indigo-400 hover:border-indigo-500/50 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
-                                    >
-                                        <Mic className="h-5 w-5" />
-                                    </button>
+                {/* Typing Indicator */}
+                {isWaiting && (
+                    <div className="flex w-full justify-start items-center gap-2">
+                        <div className="max-w-[85%] rounded-2xl px-5 py-4 shadow-sm md:max-w-[70%] bg-zinc-800 rounded-tl-none border border-zinc-700">
+                            <div className="flex space-x-2 items-center h-4">
+                                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
+                                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
+                                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce"></div>
+                                {thinkingStatus && (
+                                    <span className="ml-3 text-xs text-zinc-400 font-mono animate-pulse">{thinkingStatus}</span>
                                 )}
+                            </div>
+                        </div>
+                        {/* Stop Button */}
+                        <button
+                            onClick={handleStop}
+                            className="p-2 bg-zinc-800 hover:bg-rose-500/20 hover:text-rose-500 text-zinc-400 rounded-full border border-zinc-700 transition-colors"
+                            title="Stop Generating"
+                            type="button"
+                        >
+                            <Square className="h-4 w-4 fill-current" />
+                        </button>
+                    </div>
+                )}
 
-                                {/* Image Picker */}
-                                <div className="relative">
-                                    <input
-                                        type="file"
-                                        accept="image/*"
-                                        onChange={handleImageSelect}
-                                        className="hidden"
-                                        id="image-upload"
-                                        disabled={!!selectedImage}
-                                    />
-                                    <label
-                                        htmlFor="image-upload"
-                                        className={clsx(
-                                            "flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 transition-all cursor-pointer",
-                                            selectedImage ? "opacity-30 cursor-not-allowed" : "hover:text-pink-400 hover:border-pink-500/50"
-                                        )}
-                                    >
-                                        <ImageIcon className="h-5 w-5" />
-                                    </label>
+                <div ref={messagesEndRef} />
+            </div>
+
+            {/* Input */}
+            < div className="border-t border-zinc-800 bg-zinc-950 p-2 md:p-4" >
+                <form onSubmit={handleSendMessage} className="mx-auto max-w-4xl">
+
+                    {/* Attachments Preview */}
+                    {(selectedImage || audioBlob) && (
+                        <div className="flex gap-4 mb-3 px-2">
+                            {selectedImage && (
+                                <div className="relative group">
+                                    <img src={selectedImage.preview} alt="Selected" className="h-20 w-20 object-cover rounded-lg border border-zinc-700" />
+                                    <button onClick={() => setSelectedImage(null)} type="button" className="absolute -top-2 -right-2 bg-zinc-800 rounded-full p-1 border border-zinc-600 hover:bg-zinc-700">
+                                        <X className="w-3 h-3 text-white" />
+                                    </button>
                                 </div>
-
-                                {/* File Picker */}
-                                <div className="relative">
-                                    <input
-                                        type="file"
-                                        onChange={handleFileSelect}
-                                        className="hidden"
-                                        id="file-upload"
-                                        disabled={!!selectedFile}
-                                    />
-                                    <label
-                                        htmlFor="file-upload"
-                                        className={clsx(
-                                            "flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 transition-all cursor-pointer",
-                                            selectedFile ? "opacity-30 cursor-not-allowed" : "hover:text-emerald-400 hover:border-emerald-500/50"
-                                        )}
-                                    >
-                                        <Paperclip className="h-5 w-5" />
-                                    </label>
+                            )}
+                            {audioBlob && (
+                                <div className="relative flex items-center justify-center h-20 w-20 bg-zinc-900 border border-zinc-700 rounded-lg">
+                                    <div className="text-xs text-indigo-400 font-semibold">Voice Note</div>
+                                    <button onClick={() => setAudioBlob(null)} type="button" className="absolute -top-2 -right-2 bg-zinc-800 rounded-full p-1 border border-zinc-600 hover:bg-zinc-700">
+                                        <X className="w-3 h-3 text-white" />
+                                    </button>
                                 </div>
+                            )}
+                        </div>
+                    )}
 
-                                {/* Text Input */}
-                                <textarea
-                                    ref={textareaRef}
-                                    value={inputValue}
-                                    onChange={(e) => setInputValue(e.target.value)}
-                                    onKeyDown={(e) => {
-                                        if (e.key === 'Enter' && !e.shiftKey) {
-                                            e.preventDefault();
-                                            handleSendMessage(e);
-                                        }
-                                    }}
-                                    placeholder={`Message...`}
-                                    rows={1}
-                                    className="flex-1 rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 md:px-4 md:py-3 min-h-[40px] md:min-h-[48px] max-h-[150px] text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all resize-none scrollbar-thin scrollbar-thumb-zinc-700 font-sans"
-                                />
-
-                                {/* Send Button */}
-                                <button
-                                    type="submit"
-                                    disabled={!isConnected || (!inputValue.trim() && !audioBlob && !selectedImage && !selectedFile)}
-                                    className="flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-indigo-600 text-white transition-colors hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
-                                >
-                                    <Send className="h-5 w-5" />
+                    {selectedFile && (
+                        <div className="flex gap-4 mb-3 px-2">
+                            <div className="relative flex items-center justify-center p-3 bg-zinc-900 border border-zinc-700 rounded-lg gap-3">
+                                <FileIcon className="h-8 w-8 text-indigo-400" />
+                                <div className="flex flex-col">
+                                    <span className="text-sm text-zinc-200 font-medium truncate max-w-[150px]">{selectedFile.name}</span>
+                                    <span className="text-xs text-zinc-500">{selectedFile.size}</span>
+                                </div>
+                                <button onClick={() => setSelectedFile(null)} type="button" className="absolute -top-2 -right-2 bg-zinc-800 rounded-full p-1 border border-zinc-600 hover:bg-zinc-700">
+                                    <X className="w-3 h-3 text-white" />
                                 </button>
                             </div>
-                        </form>
+                        </div>
+                    )}
+
+                    <div className="flex gap-2 md:gap-3 items-end">
+                        {/* Audio / Recording Controls */}
+                        {isRecording ? (
+                            <button
+                                type="button"
+                                onClick={stopRecording}
+                                className="flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-red-600/20 text-red-500 animate-pulse border border-red-500/50 hover:bg-red-600/30 transition-all"
+                            >
+                                <StopCircle className="h-6 w-6" />
+                            </button>
+                        ) : (
+                            <button
+                                type="button"
+                                onClick={startRecording}
+                                disabled={!!audioBlob} // Disable if already has audio
+                                className="flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 hover:text-indigo-400 hover:border-indigo-500/50 transition-all disabled:opacity-30 disabled:cursor-not-allowed"
+                            >
+                                <Mic className="h-5 w-5" />
+                            </button>
+                        )}
+
+                        {/* Image Picker */}
+                        <div className="relative">
+                            <input
+                                type="file"
+                                accept="image/*"
+                                onChange={handleImageSelect}
+                                className="hidden"
+                                id="image-upload"
+                                disabled={!!selectedImage}
+                            />
+                            <label
+                                htmlFor="image-upload"
+                                className={clsx(
+                                    "flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 transition-all cursor-pointer",
+                                    selectedImage ? "opacity-30 cursor-not-allowed" : "hover:text-pink-400 hover:border-pink-500/50"
+                                )}
+                            >
+                                <ImageIcon className="h-5 w-5" />
+                            </label>
+                        </div>
+
+                        {/* File Picker */}
+                        <div className="relative">
+                            <input
+                                type="file"
+                                onChange={handleFileSelect}
+                                className="hidden"
+                                id="file-upload"
+                                disabled={!!selectedFile}
+                            />
+                            <label
+                                htmlFor="file-upload"
+                                className={clsx(
+                                    "flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 transition-all cursor-pointer",
+                                    selectedFile ? "opacity-30 cursor-not-allowed" : "hover:text-emerald-400 hover:border-emerald-500/50"
+                                )}
+                            >
+                                <Paperclip className="h-5 w-5" />
+                            </label>
+                        </div>
+
+                        {/* Text Input */}
+                        <textarea
+                            ref={textareaRef}
+                            value={inputValue}
+                            onChange={(e) => setInputValue(e.target.value)}
+                            onKeyDown={(e) => {
+                                if (e.key === 'Enter' && !e.shiftKey) {
+                                    e.preventDefault();
+                                    handleSendMessage(e);
+                                }
+                            }}
+                            placeholder={`Message...`}
+                            rows={1}
+                            className="flex-1 rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 md:px-4 md:py-3 min-h-[40px] md:min-h-[48px] max-h-[150px] text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all resize-none scrollbar-thin scrollbar-thumb-zinc-700 font-sans"
+                        />
+
+                        {/* Send Button */}
+                        <button
+                            type="submit"
+                            disabled={!isConnected || (!inputValue.trim() && !audioBlob && !selectedImage && !selectedFile)}
+                            className="flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-indigo-600 text-white transition-colors hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
+                        >
+                            <Send className="h-5 w-5" />
+                        </button>
+                    </div>
+                </form>
             </div>
         </div >
     );
