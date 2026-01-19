@@ -105,7 +105,7 @@ const { createToolRouter } = require('./routes/tools');
 const { createSettingsRouter } = require('./routes/settings');
 const createFilesRouter = require('./routes/files');
 const createVaultRouter = require('./routes/vaults');
-const createVaultRouter = require('./routes/vaults');
+
 const { createPeopleRouter } = require('./routes/people');
 const { createDjRouter } = require('./routes/dj');
 

@@ -809,6 +809,10 @@ class AgentDB {
   }
 
   checkLimit(windowHours) {
+    const stmt = this.db.prepare(`
+      SELECT COUNT(*) as count FROM usage_logs 
+      WHERE timestamp > datetime('now', '-' || ? || ' hours')
+    `);
     const result = stmt.get(windowHours);
     return result ? result.count : 0;
   }
