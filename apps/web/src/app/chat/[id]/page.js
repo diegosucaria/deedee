@@ -53,6 +53,7 @@ export default function ChatSessionPage({ params }) {
 
     // Fork Handler
     const handleFork = async (msg) => {
+        console.log('[DEBUG] handleFork msg:', msg);
         const confirmFork = confirm('Fork chat from here? This will create a NEW chat with history up to this message.');
         if (!confirmFork) return;
 
@@ -333,6 +334,13 @@ export default function ChatSessionPage({ params }) {
                     console.log('Socket disconnected:', reason);
                     setIsConnected(false);
                 }
+            });
+
+            // Handle Ack
+            newSocket.on('chat:ack', () => {
+                if (!isMounted) return;
+                console.log('[Chat] Message acknowledged. Refreshing history...');
+                loadSession();
             });
 
             // Handle Session Updates (Auto-Titling)
