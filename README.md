@@ -115,8 +115,8 @@ Everything is customizable via environment variables. Like which models to use.
     -   **Chat Enhancements**:
         -   **Edit (Rewind)**: Fix mistakes by editing previous messages (deletes subsequent history).
         -   **Fork**: Branch conversations to explore different paths without losing context.
-        -   **Stop**: Instantly interrupt the agent's generation.
-        -   **Image Paste**: Ctrl+V to paste images directly into chat.
+        -   **Stop**: Instantly interrupt the agent's generation using the Stop button or `/chat/stop` API.
+        -   **Image Paste**: Ctrl+V to paste images directly into chat for analysis.
 -   **⚙️ Runtime Settings Manager**:
     -   **Dynamic Configuration**: Change voice, search strategy, and system behaviors on-the-fly without restarting.
     -   **In-Memory Caching**: Ultra-low latency access for core tools.
