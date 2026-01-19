@@ -204,7 +204,7 @@ export default function LogsClient({ token }) {
             <header className="flex h-14 items-center justify-between border-b border-zinc-800 bg-zinc-900 px-4 shrink-0">
                 <div className="flex items-center gap-3">
                     <Terminal className="h-5 w-5 text-indigo-500" />
-                    <span className="font-bold text-zinc-100 tracking-wider hidden md:inline">SYSTEM_LOGS_V1</span>
+                    <span className="font-bold text-zinc-100 tracking-wider hidden md:inline">SYSTEM LOGS</span>
                 </div>
 
                 {/* Controls */}

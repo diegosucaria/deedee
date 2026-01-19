@@ -24,8 +24,8 @@ export default function ChatSessionPage({ params }) {
 
     // Rewind / Edit Handler
     const handleRewind = async (msg) => {
-        console.log('[DEBUG] handleRewind msg:', msg);
-        if (!confirm('Edit this message? This will delete all subsequent history in this chat.')) return;
+        // console.log('[DEBUG] handleRewind msg:', msg);
+        // if (!confirm('Edit this message? This will delete all subsequent history in this chat.')) return;
 
         // Force stop generation to prevent race conditions
         await stopChat(chatId).catch(console.error);
@@ -53,9 +53,9 @@ export default function ChatSessionPage({ params }) {
 
     // Fork Handler
     const handleFork = async (msg) => {
-        console.log('[DEBUG] handleFork msg:', msg);
-        const confirmFork = confirm('Fork chat from here? This will create a NEW chat with history up to this message.');
-        if (!confirmFork) return;
+        // console.log('[DEBUG] handleFork msg:', msg);
+        // const confirmFork = confirm('Fork chat from here? This will create a NEW chat with history up to this message.');
+        // if (!confirmFork) return;
 
         try {
             const res = await forkChat(chatId, msg.id);

@@ -411,11 +411,16 @@ export async function rewindChat(chatId, messageId) {
 }
 
 export async function forkChat(chatId, messageId) {
+    console.log('[DEBUG] forkChat Action:', { chatId, messageId });
     const response = await fetchAPI(`/v1/chat/fork`, {
         method: "POST",
         body: JSON.stringify({ chatId, messageId })
     });
-    if (!response.ok) return { success: false, error: "Failed to fork" };
+    if (!response.ok) {
+        let errorMsg = "Failed to fork";
+        try { const err = await response.json(); errorMsg = err.details || err.error || errorMsg; } catch (e) { }
+        return { success: false, error: errorMsg };
+    }
     return { success: true, data: await response.json() };
 }
 
