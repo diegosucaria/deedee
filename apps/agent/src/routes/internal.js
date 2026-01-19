@@ -357,6 +357,18 @@ function createInternalRouter(agent) {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
+    router.post('/chat/stop', (req, res) => {
+        try {
+            const { chatId } = req.body;
+            if (agent.stopGeneration) {
+                agent.stopGeneration(chatId);
+                res.json({ success: true });
+            } else {
+                res.status(501).json({ error: 'Stop functionality not implemented' });
+            }
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
     // --- Summaries ---
     router.get('/summaries', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
