@@ -391,7 +391,7 @@ export async function getMCPStatus() {
 
 export async function getVinylCrate(limit = 50, offset = 0) {
     try {
-        const response = await fetchAPI(`/api/dj/vinyls?limit=${limit}&offset=${offset}`, {
+        const response = await fetchAPI(`/v1/dj/vinyls?limit=${limit}&offset=${offset}`, {
             method: "GET",
         });
         return response;
