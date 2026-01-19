@@ -24,7 +24,7 @@ class DJService {
             console.log('[DJService] Creating dj_history vault...');
             await this.vaults.createVault('dj_history');
             // Initialize with a README
-            await this.vaults.updateVaultPage(vaultId, '# DJ History\n\nStore your playlist histories here with YAML frontmatter metadata.', 'index.md');
+            await this.vaults.updateVaultPage(vaultId, 'index.md', '# DJ History\n\nStore your playlist histories here with YAML frontmatter metadata.');
         }
     }
 
