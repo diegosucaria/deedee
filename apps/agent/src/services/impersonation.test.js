@@ -31,6 +31,7 @@ describe('ImpersonationService', () => {
             CREATE TABLE messages (id TEXT, chat_id TEXT, role TEXT, content TEXT, timestamp DATETIME);
             CREATE TABLE people (id TEXT, phone TEXT, autopilot_status TEXT);
             CREATE TABLE autopilot_drafts (id INTEGER PRIMARY KEY, chat_id TEXT, contact_id TEXT, content TEXT, status TEXT);
+            CREATE TABLE agent_settings (key TEXT PRIMARY KEY, value TEXT NOT NULL, category TEXT, updated_at DATETIME);
         `);
 
         service = new ImpersonationService(mockAgent);

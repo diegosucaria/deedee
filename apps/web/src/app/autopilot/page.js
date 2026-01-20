@@ -1,18 +1,23 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getAutopilotDrafts, approveDraft, rejectDraft, editDraft, getAutopilotSettings, updateAutopilotStatus } from '../actions';
-import { Loader2, Check, X, Edit2, Save, User, Settings, MessageSquare, ShieldAlert } from 'lucide-react';
+import { getAutopilotDrafts, approveDraft, rejectDraft, editDraft, getAutopilotSettings, updateAutopilotStatus, getStyleProfile, saveStyleProfile, analyzeStyle } from '../actions';
+import { Loader2, Check, X, Edit2, Save, User, Settings, MessageSquare, ShieldAlert, Sparkles, Brain } from 'lucide-react';
 import clsx from 'clsx';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
 
 export default function AutopilotPage() {
-    const [activeTab, setActiveTab] = useState('drafts'); // drafts | settings
+    const [activeTab, setActiveTab] = useState('drafts'); // drafts | settings | style
     const [drafts, setDrafts] = useState([]);
     const [settings, setSettings] = useState([]);
     const [loading, setLoading] = useState(true);
     const [editingDraftId, setEditingDraftId] = useState(null);
     const [editContent, setEditContent] = useState('');
+
+    // Style State
+    const [styleProfile, setStyleProfile] = useState('');
+    const [isAnalyzing, setIsAnalyzing] = useState(false);
+
     const { setCollapsed } = useChatSidebar();
 
     useEffect(() => {
@@ -26,9 +31,14 @@ export default function AutopilotPage() {
         if (activeTab === 'drafts') {
             const data = await getAutopilotDrafts();
             setDrafts(data);
-        } else {
+        } else if (activeTab === 'settings') {
             const data = await getAutopilotSettings();
             setSettings(data);
+        } else if (activeTab === 'style') {
+            // Only fetch once or when explicitly refreshed
+            // But for now we can just check if empty? Nah, good to refresh to ensure sync.
+            const profile = await getStyleProfile();
+            if (profile) setStyleProfile(profile);
         }
         setLoading(false);
     };
@@ -72,6 +82,24 @@ export default function AutopilotPage() {
         await updateAutopilotStatus(contactId, newStatus);
     };
 
+    const handleSaveStyle = async () => {
+        await saveStyleProfile(styleProfile);
+        alert('Style profile saved!');
+    };
+
+    const handleAnalyze = async () => {
+        if (confirm("This will analyze your last 500 messages to build a style profile. It may take a moment. Continue?")) {
+            setIsAnalyzing(true);
+            const res = await analyzeStyle();
+            setIsAnalyzing(false);
+            if (res.success) {
+                setStyleProfile(res.profile);
+            } else {
+                alert('Analysis failed: ' + res.error);
+            }
+        }
+    };
+
     return (
         <div className="flex flex-col h-screen bg-zinc-950 text-white p-6 overflow-hidden">
             <header className="flex items-center justify-between mb-8">
@@ -97,6 +125,13 @@ export default function AutopilotPage() {
                     >
                         <Settings className="w-4 h-4" />
                         Settings
+                    </button>
+                    <button
+                        onClick={() => setActiveTab('style')}
+                        className={clsx("px-4 py-2 rounded-md transition-colors flex items-center gap-2", activeTab === 'style' ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-zinc-300")}
+                    >
+                        <Brain className="w-4 h-4" />
+                        Style
                     </button>
                 </div>
             </header>
@@ -229,6 +264,49 @@ export default function AutopilotPage() {
                                 ))}
                             </tbody>
                         </table>
+                    </div>
+                )}
+
+                {activeTab === 'style' && (
+                    <div className="space-y-6">
+                        <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
+                            <div className="flex items-start justify-between mb-4">
+                                <div>
+                                    <h3 className="text-lg font-medium text-zinc-200 flex items-center gap-2">
+                                        <Sparkles className="w-5 h-5 text-purple-400" />
+                                        Your Style Profile
+                                    </h3>
+                                    <p className="text-zinc-500 text-sm mt-1">
+                                        DeeDee uses this profile to impersonate you better. You can edit it manually or generate it from your chat history.
+                                    </p>
+                                </div>
+                                <button
+                                    onClick={handleAnalyze}
+                                    disabled={isAnalyzing}
+                                    className="px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white rounded-lg flex items-center gap-2 text-sm font-medium transition-all disabled:opacity-50"
+                                >
+                                    {isAnalyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Brain className="w-4 h-4" />}
+                                    {isAnalyzing ? 'Analyzing...' : 'Analyze History'}
+                                </button>
+                            </div>
+
+                            <textarea
+                                value={styleProfile}
+                                onChange={e => setStyleProfile(e.target.value)}
+                                placeholder="Your style rules will appear here..."
+                                className="w-full h-96 bg-zinc-950 border border-zinc-800 rounded-lg p-4 font-mono text-sm text-zinc-300 outline-none focus:border-purple-500/50 transition-colors"
+                            />
+
+                            <div className="mt-4 flex justify-end">
+                                <button
+                                    onClick={handleSaveStyle}
+                                    className="px-6 py-2 bg-zinc-100 text-zinc-900 hover:bg-white rounded-lg font-medium flex items-center gap-2 transition-colors"
+                                >
+                                    <Save className="w-4 h-4" />
+                                    Save Profile
+                                </button>
+                            </div>
+                        </div>
                     </div>
                 )}
             </main>

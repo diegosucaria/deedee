@@ -6,31 +6,107 @@ class ImpersonationService {
         this.db = agent.db;
     }
 
+    /**
+     * Get the global style profile from settings
+     */
+    getStyleProfile() {
+        const row = this.db.db.prepare("SELECT value FROM agent_settings WHERE key = 'user_style_profile'").get();
+        if (!row) return null;
+        try {
+            return JSON.parse(row.value).profile;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /**
+     * Save the global style profile
+     */
+    saveStyleProfile(profileText) {
+        const value = JSON.stringify({ profile: profileText });
+        this.db.db.prepare(`
+            INSERT INTO agent_settings (key, value, category) VALUES ('user_style_profile', ?, 'autopilot')
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+        `).run(value);
+    }
+
+    /**
+     * Analyze global history to generate a style profile
+     */
+    async analyzeGlobalStyle() {
+        console.log('[Impersonation] Analyzing global style...');
+
+        // 1. Fetch last 500 user messages from ALL chats
+        const messages = this.db.db.prepare(`
+            SELECT content FROM messages 
+            WHERE role = 'user' AND content IS NOT NULL AND content != ''
+            ORDER BY timestamp DESC LIMIT 500
+        `).all().reverse();
+
+        if (messages.length < 10) {
+            return "Not enough history to analyze style.";
+        }
+
+        const corpus = messages.map(m => m.content).join('\n');
+
+        // 2. Prompt Gemini
+        const prompt = `
+You are an expert linguist and ghostwriter. Analyze the following sample of messages sent by the user "Diego".
+Create a "Style Profile" that describes EXACTLY how he writes.
+
+Focus on:
+- Tone (e.g., casual, dry, enthusiastic, direct)
+- Formatting (capitalization, punctuation usage)
+- Common slang or abbreviations
+- Sentence structure complexity
+- Language mixing (Does he mix English and Spanish?)
+
+Sample:
+"""
+${corpus.substring(0, 30000)} 
+"""
+(Truncated to avoid token limits if necessary)
+
+Output a concise, bulleted list of rules to follow to impersonate him perfectly. 
+Do not be vague. Be prescriptive.
+`;
+
+        try {
+            const response = await this.agent.client.models.generateContent({
+                model: 'gemini-1.5-flash', // Use flash for large context analysis
+                contents: [{ role: 'user', parts: [{ text: prompt }] }]
+            });
+
+            const profile = response.response.candidates[0].content.parts[0].text.trim();
+            this.saveStyleProfile(profile);
+            return profile;
+        } catch (e) {
+            console.error('[Impersonation] Analysis failed:', e);
+            throw e;
+        }
+    }
+
     async generateDraft(chatId, incomingMessage, contactName) {
         console.log(`[Impersonation] Generating draft for chat ${chatId} from ${contactName}`);
 
         // 1. Fetch Context: User's recent messages in this chat
-        // We want to mimic the user's style in THIS specific conversation if possible.
-        // If not enough history, maybe fallback to global? For now, stick to chat history.
         const history = this.db.db.prepare(`
             SELECT content FROM messages 
             WHERE chat_id = ? AND role = 'user' AND content IS NOT NULL AND content != ''
             ORDER BY timestamp DESC LIMIT 20
         `).all(chatId).reverse();
 
-        if (history.length < 3) {
-            console.log('[Impersonation] Not enough history to impersonate style.');
-            // Fallback: Just be helpful but warn? Or try generic?
-            // We'll proceed with few examples.
-        }
-
         const examples = history.map(m => `- ${m.content}`).join('\n');
 
-        // 2. Build Prompt
+        // 2. Fetch Global Style Profile
+        const globalStyle = this.getStyleProfile();
+
+        // 3. Build Prompt
         const prompt = `
 You are an AI acting as the user "Diego". Your goal is to draft a reply to the incoming message that sounds EXACTLY like Diego.
 Do not sound like a helpful AI. Sound like a human. 
-Match his tone, brevity, lowercase/uppercase usage, and slang.
+
+${globalStyle ? `### GLOBAL STYLE GUIDE (Rules to Follow):\n${globalStyle}\n` : ''}
 
 ### Context (Diego's Past Messages in this chat):
 ${examples}
@@ -46,8 +122,7 @@ ${examples}
 - CRITICAL: maintain the same language as the incoming message.
 `;
 
-        // 3. Call LLM
-        // Use the agent's configured model or a fast one.
+        // 4. Call LLM
         try {
             const response = await this.agent.client.models.generateContent({
                 model: 'gemini-2.0-flash-exp', // Use fast model for drafting

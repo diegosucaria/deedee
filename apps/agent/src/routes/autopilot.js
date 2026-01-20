@@ -152,6 +152,39 @@ function createAutopilotRouter(agent) {
         }
     });
 
+    // --- STYLE PROFILE ---
+
+    // GET /style
+    router.get('/style', (req, res) => {
+        try {
+            const profile = agent.impersonationService.getStyleProfile();
+            res.json({ profile });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // POST /style (Update manually)
+    router.post('/style', (req, res) => {
+        try {
+            const { profile } = req.body;
+            agent.impersonationService.saveStyleProfile(profile);
+            res.json({ success: true });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // POST /style/analyze (Trigger analysis)
+    router.post('/style/analyze', async (req, res) => {
+        try {
+            const profile = await agent.impersonationService.analyzeGlobalStyle();
+            res.json({ profile });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
     return router;
 }
 

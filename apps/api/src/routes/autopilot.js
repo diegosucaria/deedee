@@ -36,4 +36,9 @@ router.put('/drafts/:id', (req, res) => proxyToAgent(req, res, 'PUT', `/drafts/$
 router.get('/settings', (req, res) => proxyToAgent(req, res, 'GET', '/settings', null));
 router.post('/settings/:id', (req, res) => proxyToAgent(req, res, 'POST', `/settings/${req.params.id}`, req.body));
 
+// Style
+router.get('/style', (req, res) => proxyToAgent(req, res, 'GET', '/style', null));
+router.post('/style', (req, res) => proxyToAgent(req, res, 'POST', '/style', req.body));
+router.post('/style/analyze', (req, res) => proxyToAgent(req, res, 'POST', '/style/analyze', null));
+
 module.exports = router;

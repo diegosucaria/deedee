@@ -993,3 +993,36 @@ export async function updateAutopilotStatus(contactId, status) {
         return { success: false, error: error.message };
     }
 }
+
+export async function getStyleProfile() {
+    try {
+        const data = await fetchAPI('/v1/autopilot/style');
+        return data.profile;
+    } catch (error) {
+        console.error('getStyleProfile Error:', error);
+        return null;
+    }
+}
+
+export async function saveStyleProfile(profile) {
+    try {
+        await fetchAPI('/v1/autopilot/style', {
+            method: 'POST',
+            body: JSON.stringify({ profile })
+        });
+        revalidatePath('/autopilot');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function analyzeStyle() {
+    try {
+        const data = await fetchAPI('/v1/autopilot/style/analyze', { method: 'POST' });
+        revalidatePath('/autopilot');
+        return { success: true, profile: data.profile };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
