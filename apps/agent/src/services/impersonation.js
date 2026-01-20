@@ -447,7 +447,7 @@ ${examples}
 ### Instructions:
 - Draft a reply in ${ownerName}'s style.
 - Keep it relevant to the conversation.
-- If the incoming message is short, keep the reply short.
+- If the incoming message is short, keep the reply short, single line.
 - If the incoming message is a conversation closure (e.g. "ok", "thanks", "listo", "perfecto") and requires no response, output exactly: [NO_REPLY]
 - Return ONLY the drafted reply text. No quotes.
 - CRITICAL: maintain the same language as the incoming message.

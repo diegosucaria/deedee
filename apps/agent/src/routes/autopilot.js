@@ -52,7 +52,7 @@ function createAutopilotRouter(agent) {
             let source = 'whatsapp:user';
 
             // Check if it's actually WhatsApp first
-            const isWhatsApp = draft.chat_id.endsWith('@s.whatsapp.net') || draft.chat_id.endsWith('@g.us');
+            const isWhatsApp = draft.chat_id.endsWith('@s.whatsapp.net') || draft.chat_id.endsWith('@g.us') || draft.chat_id.endsWith('@lid');
             if (!isWhatsApp) {
                 // Fallback if we support other platforms later
                 source = 'web';
