@@ -814,7 +814,7 @@ export default function ChatSessionPage({ params }) {
                         >
                             {msg.role === 'user' ? (
                                 <div className="flex flex-col gap-1 items-end relative group">
-                                    <div className="bg-indigo-600 text-white rounded-2xl rounded-tr-none px-5 py-3 shadow-sm md:max-w-[70%] relative">
+                                    <div className="bg-indigo-600 text-white rounded-2xl rounded-tr-none px-5 py-3 shadow-sm max-w-[85%] md:max-w-[70%] relative break-words">
                                         {/* Actions on Hover */}
                                         {msg.id && (
                                             <div className="absolute -top-3 left-0 opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-800 rounded-lg shadow-lg border border-zinc-700 flex items-center p-1 gap-1 z-10">
@@ -843,7 +843,7 @@ export default function ChatSessionPage({ params }) {
                                                 />
                                             </div>
                                         ) : (
-                                            <div className="markdown prose prose-invert prose-sm max-w-none">
+                                            <div className="markdown prose prose-invert prose-sm max-w-none break-words">
                                                 <ReactMarkdown>{msg.content}</ReactMarkdown>
                                             </div>
                                         )}
@@ -856,7 +856,7 @@ export default function ChatSessionPage({ params }) {
                             ) : (
                                 // Assistant Message
                                 <div className="flex flex-col gap-1 items-start relative group">
-                                    <div className="bg-zinc-800 text-zinc-200 rounded-2xl rounded-tl-none border border-zinc-700 px-5 py-3 shadow-sm md:max-w-[70%] relative">
+                                    <div className="bg-zinc-800 text-zinc-200 rounded-2xl rounded-tl-none border border-zinc-700 px-5 py-3 shadow-sm max-w-[90%] md:max-w-[70%] relative break-words">
                                         {/* Actions on Hover */}
                                         {msg.id && (
                                             <div className="absolute -top-3 right-0 opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-800 rounded-lg shadow-lg border border-zinc-700 flex items-center p-1 gap-1 z-10">
@@ -908,7 +908,7 @@ export default function ChatSessionPage({ params }) {
                                                 </details>
                                             </div>
                                         ) : (
-                                            <div className="markdown prose prose-invert prose-sm max-w-none">
+                                            <div className="markdown prose prose-invert prose-sm max-w-none break-words">
                                                 <ReactMarkdown>{msg.content}</ReactMarkdown>
                                             </div>
                                         )}
