@@ -390,49 +390,51 @@ export async function getMCPStatus() {
 }
 
 export async function getVinylCrate(limit = 50, offset = 0) {
-    // Uses the new Proxy setup in API Gateway
-    const response = await fetchAPI(`/v1/dj/vinyls?limit=${limit}&offset=${offset}`, { method: "GET" });
-    if (!response.ok) return { success: false, error: await response.text() };
-    return { success: true, data: await response.json() };
+    try {
+        const data = await fetchAPI(`/v1/dj/vinyls?limit=${limit}&offset=${offset}`, { method: "GET" });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
 }
 
 export async function rewindChat(chatId, messageId) {
     console.log('[DEBUG] rewindChat Action:', { chatId, messageId });
-    const response = await fetchAPI(`/v1/chat/rewind`, {
-        method: "POST",
-        body: JSON.stringify({ chatId, messageId })
-    });
-    if (!response.ok) {
-        let errorMsg = "Failed to rewind";
-        try { const err = await response.json(); errorMsg = err.details || err.error || errorMsg; } catch (e) { }
-        return { success: false, error: errorMsg };
+    try {
+        const data = await fetchAPI(`/v1/chat/rewind`, {
+            method: "POST",
+            body: JSON.stringify({ chatId, messageId })
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
     }
-    return { success: true, data: await response.json() };
 }
 
 export async function forkChat(chatId, messageId) {
     console.log('[DEBUG] forkChat Action:', { chatId, messageId });
-    const response = await fetchAPI(`/v1/chat/fork`, {
-        method: "POST",
-        body: JSON.stringify({ chatId, messageId })
-    });
-    if (!response.ok) {
-        let errorMsg = "Failed to fork";
-        try { const err = await response.json(); errorMsg = err.details || err.error || errorMsg; } catch (e) { }
-        return { success: false, error: errorMsg };
+    try {
+        const data = await fetchAPI(`/v1/chat/fork`, {
+            method: "POST",
+            body: JSON.stringify({ chatId, messageId })
+        });
+        revalidatePath('/');
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
     }
-    revalidatePath('/');
-    return { success: true, data: await response.json() };
 }
 
 export async function stopChat(chatId) {
-    const response = await fetchAPI(`/v1/chat/stop`, {
-        method: "POST",
-        body: JSON.stringify({ chatId })
-    });
-    // Fire and forget usually, but returning status is good
-    if (!response.ok) return { success: false, error: "Failed to stop" };
-    return { success: true };
+    try {
+        await fetchAPI(`/v1/chat/stop`, {
+            method: "POST",
+            body: JSON.stringify({ chatId })
+        });
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
 }
 
 export async function getTools() {
