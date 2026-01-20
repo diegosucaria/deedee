@@ -320,6 +320,11 @@ Output a concise list of rules for this specific relationship.
 
         if (draft) {
             this.saveDraft(chatId, contactString, draft, fullContent);
+
+            // NOTIFY FRONTEND via Socket (Broadcast)
+            if (this.agent && this.agent.interface) {
+                this.agent.interface.broadcast('autopilot:update', { type: 'draft_created', chatId });
+            }
         }
     }
 

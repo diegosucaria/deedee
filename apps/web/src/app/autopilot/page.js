@@ -6,6 +6,7 @@ import { getAutopilotDrafts, approveDraft, rejectDraft, editDraft, getAutopilotS
 import { Loader2, Check, X, Edit2, Save, User, Settings, MessageSquare, ShieldAlert, Sparkles, Brain, Search, Trash, Clock, RefreshCw } from 'lucide-react';
 import clsx from 'clsx';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
+import { useSocket } from '../../hooks/useSocket';
 
 // Wrapper to handle Suspense boundary for useSearchParams
 export default function AutopilotPageWrapper() {
@@ -42,22 +43,25 @@ function AutopilotPage() {
     const [selectedContactStyleId, setSelectedContactStyleId] = useState('global'); // 'global' or contactId
 
     const { setCollapsed } = useChatSidebar();
+    const { socket } = useSocket();
 
     useEffect(() => {
         setCollapsed(false);
         loadData();
 
-        // Only poll for drafts to avoid active editing conflicts in Style/Settings
-        let interval;
-        if (activeTab === 'drafts') {
-            interval = setInterval(() => {
-                loadData(true); // isPolling = true
-            }, 5000);
+        // Socket Listener for Real-time Updates
+        if (activeTab === 'drafts' && socket) {
+            const handleUpdate = (data) => {
+                console.log('Received autopilot:update', data);
+                loadData();
+            };
+            socket.on('autopilot:update', handleUpdate);
+
+            return () => {
+                socket.off('autopilot:update', handleUpdate);
+            };
         }
-        return () => {
-            if (interval) clearInterval(interval);
-        };
-    }, [activeTab]);
+    }, [activeTab, socket]);
 
     const loadData = async (isPolling = false) => {
         if (activeTab === 'drafts') {
