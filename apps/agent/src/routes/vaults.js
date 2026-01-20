@@ -38,6 +38,15 @@ module.exports = (agent) => {
 
         try {
             const id = await agent.vaults.createVault(topic);
+
+            // RAG Ingestion for initial index.md
+            if (agent.ragService) {
+                const indexPath = path.join(agent.vaults.vaultsDir, id, 'index.md');
+                agent.ragService.ingestDocument(indexPath, id).catch(err =>
+                    console.error(`[Vaults] Failed to ingest initial index.md for ${id}:`, err.message)
+                );
+            }
+
             res.json({ id, message: 'Vault created' });
         } catch (error) {
             res.status(500).json({ error: error.message });
@@ -207,6 +216,19 @@ module.exports = (agent) => {
 
         try {
             await agent.vaults.updateVaultPage(id, pageName, content);
+
+            // RAG Ingestion
+            if (agent.ragService) {
+                // Construct path matching VaultManager logic
+                const safeTopic = agent.vaults.sanitizeTopic(id);
+                const safePage = path.basename(pageName);
+                const targetPath = path.join(agent.vaults.vaultsDir, safeTopic, safePage);
+
+                agent.ragService.ingestDocument(targetPath, id).catch(err =>
+                    console.error(`[Vaults] Failed to ingest ${safePage} for ${id}:`, err.message)
+                );
+            }
+
             res.json({ success: true });
         } catch (error) {
             res.status(500).json({ error: error.message });

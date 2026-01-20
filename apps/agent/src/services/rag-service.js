@@ -177,6 +177,17 @@ class RagService {
                         }
                     }
                 }
+
+                // Ingest the Wiki Page (index.md)
+                const indexFile = path.join(vaultsDir, vault, 'index.md');
+                if (fs.existsSync(indexFile)) {
+                    try {
+                        await this.ingestDocument(indexFile, vault);
+                        processed++;
+                    } catch (e) {
+                        console.error(`[RAG] Failed to ingest index.md in vault ${vault}:`, e.message);
+                    }
+                }
             }
             console.log(`[RAG] Scan complete. ${processed} files checked.`);
 
