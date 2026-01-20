@@ -76,6 +76,49 @@ describe('Impersonation Service Unit', () => {
         );
     });
 
+    test('should fetch history from remote for WhatsApp JID', async () => {
+        const chatId = '1234567890@s.whatsapp.net';
+        mockDb.getPerson.mockReturnValue({ name: 'Papi', id: 'uuid' });
+
+        // Mock Remote History
+        const remoteHistory = [
+            { role: 'assistant', content: 'Msg 1', timestamp: 100 },
+            { role: 'user', content: 'Msg 2', timestamp: 200 }
+        ];
+        // API returns [Newest, Oldest] usually? 
+        // Logic says `history = res.data.reverse()`.
+        // So if API returns [Msg 2, Msg 1], reverse makes it [Msg 1, Msg 2] (Chronological).
+        axios.get.mockResolvedValue({ data: [remoteHistory[1], remoteHistory[0]] });
+
+        // Mock Generative Model
+        mockAgent.client.models.generateContent.mockResolvedValue({
+            response: { candidates: [{ content: { parts: [{ text: 'Draft' }] } }] }
+        });
+
+        await service.generateDraft(chatId, { content: 'Hello' }, 'Papi');
+
+        // Verify Axios Call
+        expect(axios.get).toHaveBeenCalledWith(expect.stringContaining('/whatsapp/history'), expect.objectContaining({
+            params: expect.objectContaining({ jid: chatId })
+        }));
+
+        // Verify fallback DB was NOT called for history (or history was populated)
+        // Strictly speaking, if history is populated, fallback is skipped.
+        // We can verify the prompt contains the content
+        expect(mockAgent.client.models.generateContent).toHaveBeenCalledWith(
+            expect.objectContaining({
+                contents: expect.arrayContaining([
+                    expect.objectContaining({
+                        parts: expect.arrayContaining([
+                            expect.objectContaining({ text: expect.stringContaining('Msg 1') }),
+                            expect.objectContaining({ text: expect.stringContaining('Msg 2') })
+                        ])
+                    })
+                ])
+            })
+        );
+    });
+
     test('should generate draft with full conversation context', async () => {
         const chatId = '1234567890';
         mockDb.getPerson.mockReturnValue({ name: 'Papi', id: 'uuid' });
@@ -144,6 +187,9 @@ const config = {
 };
 
 // Mock Dependencies
+jest.mock('axios');
+const axios = require('axios');
+
 jest.mock('../src/mcp-manager', () => ({
     MCPManager: jest.fn().mockImplementation(() => ({
         init: jest.fn(),

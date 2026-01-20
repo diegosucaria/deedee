@@ -416,14 +416,37 @@ Output a concise list of rules for this specific relationship.
         console.log(`[Impersonation] Generating draft for chat ${chatId} from ${contactName}`);
 
         // 1. Fetch Context: Full conversation history (both sides)
-        const history = this.db.db.prepare(`
-            SELECT role, content FROM messages 
-            WHERE chat_id = ? AND content IS NOT NULL AND content != ''
-            ORDER BY timestamp DESC LIMIT 20
-        `).all(chatId).reverse();
+        let history = [];
+
+        // Strategy: Use WhatsApp Source of Truth if available (for full Context including manual replies)
+        if (chatId.includes('@s.whatsapp.net') || chatId.includes('@g.us')) {
+            try {
+                const interfacesUrl = process.env.INTERFACES_URL || 'http://interfaces:5000';
+                console.log(`[Impersonation] Fetching remote history for ${chatId}...`);
+                const res = await axios.get(`${interfacesUrl}/whatsapp/history`, {
+                    params: { jid: chatId, limit: 20, session: 'user' }, // session='user' (the Owner's session)
+                    headers: { Authorization: `Bearer ${process.env.DEEDEE_API_TOKEN}` },
+                    timeout: 2000 // Fast timeout
+                });
+                if (res.data && Array.isArray(res.data)) {
+                    history = res.data.reverse(); // Ensure [Oldest, ..., Newest] for transcript
+                }
+            } catch (e) {
+                console.warn(`[Impersonation] Failed to fetch remote history: ${e.message}. Falling back to DB.`);
+            }
+        }
+
+        // Fallback to Local DB if remote failed or not a WhatsApp chat
+        if (history.length === 0) {
+            history = this.db.db.prepare(`
+                SELECT role, content FROM messages 
+                WHERE chat_id = ? AND content IS NOT NULL AND content != ''
+                ORDER BY timestamp DESC LIMIT 20
+            `).all(chatId).reverse();
+        }
 
         console.log(`[Impersonation] Transcript Gen: ChatID=${chatId}, HistoryLen=${history.length}`);
-        if (history.length > 0) console.log('[Impersonation] Sample:', history[0]);
+        if (history.length > 0) console.log('[Impersonation] Sample:', history[0]); //temp delete this later
 
         // Format as transcript: "Name: Content"
         // In our mirroring logic: 
