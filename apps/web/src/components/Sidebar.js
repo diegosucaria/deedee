@@ -44,13 +44,11 @@ export function Sidebar() {
                             className="object-contain"
                         />
                     </div>
-                    <span className={clsx("ml-3 text-lg font-bold tracking-tight text-white overflow-hidden transition-all", isCollapsed ? "w-0 opacity-0 hidden" : "w-auto opacity-100 block")}>
+                    <span className={clsx("ml-3 text-lg font-bold tracking-tight text-white overflow-hidden transition-all hidden md:block", isCollapsed ? "w-0 opacity-0" : "w-auto opacity-100")}>
                         DeeDee
                     </span>
                 </div>
             </div>
-
-
 
             <nav className="flex flex-1 flex-col gap-2 px-2 w-full">
                 {navItems.map((item) => {
@@ -77,8 +75,8 @@ export function Sidebar() {
                                 )}
                             />
                             <span className={clsx(
-                                "ml-3 text-sm font-medium transition-all overflow-hidden",
-                                isCollapsed ? "w-0 opacity-0 hidden" : "w-auto opacity-100 block"
+                                "ml-3 text-sm font-medium transition-all overflow-hidden hidden md:block",
+                                isCollapsed ? "w-0 opacity-0" : "w-auto opacity-100"
                             )}>
                                 {item.name}
                             </span>
@@ -89,7 +87,7 @@ export function Sidebar() {
 
             <div className={clsx("mt-auto flex items-center gap-4 border-t border-zinc-800 pt-4 w-full", isCollapsed ? "flex-col px-0" : "flex-col px-4 items-start")}>
                 {!isCollapsed && (
-                    <div className="w-full space-y-2 mb-2">
+                    <div className="w-full space-y-2 mb-2 hidden md:block">
                         <div className="flex items-center justify-between text-[10px] text-zinc-500">
                             <span>Agent</span>
                             <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
@@ -106,7 +104,7 @@ export function Sidebar() {
                 )}
 
                 <div className="flex w-full items-center justify-between">
-                    <div className="text-[10px] text-zinc-600 text-center whitespace-nowrap overflow-hidden">
+                    <div className="text-[10px] text-zinc-600 text-center whitespace-nowrap overflow-hidden hidden md:block">
                         {isCollapsed ? 'v0.1' : 'v0.1.0-alpha'}
                     </div>
 
