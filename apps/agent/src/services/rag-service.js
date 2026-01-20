@@ -209,13 +209,19 @@ class RagService {
     }
 
     async _getEmbedding(text) {
-        // Use text-embedding-004 ? Or what's current?
-        const model = 'text-embedding-004';
-        const result = await this.agent.client.embedContent({
-            model: model,
-            content: { parts: [{ text }] }
-        });
-        return result.embedding.values;
+        // Use text-embedding-004
+        const modelName = 'text-embedding-004';
+        try {
+            // Get model instance from client
+            const model = this.agent.client.getGenerativeModel({ model: modelName });
+
+            // Call embedContent on the model
+            const result = await model.embedContent(text);
+            return result.embedding.values;
+        } catch (error) {
+            console.error('[RAG] Embedding error:', error.message);
+            throw error;
+        }
     }
 
     _cosineSimilarity(a, b) {
