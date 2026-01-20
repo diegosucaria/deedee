@@ -63,17 +63,35 @@ if (process.env.GOOGLE_APPLICATION_CREDENTIALS && !process.env.GOOGLE_APPLICATIO
 const httpInterface = new HttpInterface(interfacesUrl);
 
 // 2. Setup Agent
-// Note: We might want to persist the agent instance if it has state (it will have SQLite later)
 let agent;
-if (googleApiKey) {
-  agent = new Agent({
-    googleApiKey,
-    interface: httpInterface
-  });
-  agent.start().catch(console.error);
-} else {
-  console.warn('[Agent] GOOGLE_API_KEY missing. Agent not started.');
+try {
+  if (googleApiKey) {
+    console.log('[Server] Initializing Agent...');
+    agent = new Agent({
+      googleApiKey,
+      interface: httpInterface
+    });
+    console.log('[Server] Agent initialized. Starting...');
+    agent.start().catch(err => console.error('[Server] Agent start failed:', err));
+  } else {
+    console.warn('[Server] GOOGLE_API_KEY missing. Agent not started (Routes will not be mounted).');
+  }
+} catch (e) {
+  console.error('[Server] Agent construction failed:', e);
 }
+
+// Debug Endpoint
+app.get('/status', (req, res) => {
+  res.json({
+    status: 'online',
+    agentInitialized: !!agent,
+    routesMounted: !!agent,
+    env: {
+      hasKey: !!googleApiKey,
+      port
+    }
+  });
+});
 
 
 
