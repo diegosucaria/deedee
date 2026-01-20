@@ -126,7 +126,7 @@ ${examples}
         try {
             // PRO is better for deep analysis and nuance extraction
             const response = await this.agent.client.models.generateContent({
-                model: process.env.WORKER_PRO || 'gemini-1.5-pro-exp',
+                model: process.env.WORKER_FLASH || 'gemini-1.5-pro-exp',
                 contents: [{ role: 'user', parts: [{ text: prompt }] }]
             });
 
