@@ -18,7 +18,7 @@ function createAutopilotRouter(agent) {
             const status = req.query.status || 'pending';
             const drafts = agent.db.db.prepare(`
                 SELECT d.*, p.name as contact_name, p.phone as contact_phone,
-                (SELECT content FROM messages WHERE chat_id = d.chat_id AND role != 'assistant' ORDER BY timestamp DESC LIMIT 1) as context_message
+                CASE WHEN d.context_content IS NOT NULL THEN d.context_content ELSE (SELECT content FROM messages WHERE chat_id = d.chat_id AND role != 'assistant' ORDER BY timestamp DESC LIMIT 1) END as context_message
                 FROM autopilot_drafts d
                 LEFT JOIN people p ON d.contact_id = p.phone OR d.contact_id = p.id
                 WHERE d.status = ?

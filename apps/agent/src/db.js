@@ -170,6 +170,7 @@ class AgentDB {
         chat_id TEXT,
         contact_id TEXT,
         content TEXT,
+        context_content TEXT, -- NEW: content of the incoming message(s)
         options TEXT, -- JSON array
         status TEXT DEFAULT 'pending', -- pending, approved, rejected
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
@@ -270,6 +271,11 @@ class AgentDB {
     // Migration: Add tag to token_usage
     try {
       this.db.exec("ALTER TABLE token_usage ADD COLUMN tag TEXT");
+    } catch (err) { }
+
+    // Migration: Add context_content to autopilot_drafts
+    try {
+      this.db.exec("ALTER TABLE autopilot_drafts ADD COLUMN context_content TEXT");
     } catch (err) { }
   }
 

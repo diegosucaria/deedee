@@ -4,6 +4,7 @@ class ImpersonationService {
     constructor(agent) {
         this.agent = agent;
         this.db = agent.db;
+        this.messageBuffers = new Map(); // Store buffered messages by chatId
     }
 
     getOwnerName() {
@@ -197,10 +198,10 @@ Do not be vague. Be prescriptive.
             const interfacesUrl = process.env.INTERFACES_URL || 'http://localhost:5000';
             const headers = { 'Authorization': `Bearer ${process.env.DEEDEE_API_TOKEN}` };
 
-            const res = await axios.get(`${interfacesUrl}/whatsapp/history?jid=${encodeURIComponent(chatId)}&limit=100`, { headers });
+            const res = await axios.get(`${interfacesUrl}/whatsapp/history?jid=${encodeURIComponent(chatId)}&limit=500`, { headers });
             const messages = res.data.filter(m => m.role === 'assistant'); // Sent by me (fromMe=true maps to 'assistant' in getChatHistory)
 
-            if (messages.length < 5) return "Not enough history with this contact.";
+            if (messages.length < 3) return "Not enough history with this contact.";
             corpus = messages.map(m => m.content).join('\n');
 
         } catch (e) {
@@ -256,7 +257,73 @@ Output a concise list of rules for this specific relationship.
         }
     }
 
-    async generateDraft(chatId, incomingMessage, contactName) {
+    /**
+     * Handle incoming message with buffering (Debounce)
+     */
+    async handleMessage(chatId, message, contactString) {
+        // 1. Check Status
+        // Pass phone/username if available in metadata for better lookup
+        const autopilotStatus = this.getAutopilotStatus(contactString, message.metadata?.username);
+
+        if (autopilotStatus === 'off') return;
+
+        console.log(`[Impersonation] Buffering message for ${contactString} (Status: ${autopilotStatus})`);
+
+        // 2. Initialize Buffer if needed
+        if (!this.messageBuffers.has(chatId)) {
+            this.messageBuffers.set(chatId, {
+                content: [],
+                timer: null,
+                metadata: message.metadata,
+                source: message.source
+            });
+        }
+
+        const buffer = this.messageBuffers.get(chatId);
+
+        // Reset Timer
+        if (buffer.timer) clearTimeout(buffer.timer);
+
+        // Append Content
+        buffer.content.push(message.content || '[Media/Empty]');
+        buffer.metadata = { ...buffer.metadata, ...message.metadata }; // Update metadata with latest
+
+        // Set New Timer (15s)
+        buffer.timer = setTimeout(async () => {
+            await this.processBufferedMessage(chatId, contactString);
+        }, 15000);
+    }
+
+    /**
+     * Process the buffered messages and generate a draft
+     */
+    async processBufferedMessage(chatId, contactString) {
+        const buffer = this.messageBuffers.get(chatId);
+        if (!buffer) return;
+
+        // Clean up immediately to prevent race conditions
+        this.messageBuffers.delete(chatId);
+
+        const fullContent = buffer.content.join('\n\n');
+
+        console.log(`[Impersonation] Processing buffered messages for ${contactString}: ${buffer.content.length} messages.`);
+
+        // Call generateDraft with combined context
+        // We simulate a 'message' object structure for compatibility
+        const combinedMessage = {
+            content: fullContent,
+            metadata: buffer.metadata,
+            source: buffer.source
+        };
+
+        const draft = await this.generateDraft(chatId, combinedMessage, contactString, fullContent);
+
+        if (draft) {
+            this.saveDraft(chatId, contactString, draft, fullContent);
+        }
+    }
+
+    async generateDraft(chatId, incomingMessage, contactName, contextContent = '') {
         console.log(`[Impersonation] Generating draft for chat ${chatId} from ${contactName}`);
 
         // 1. Fetch Context: User's recent messages in this chat
@@ -275,7 +342,7 @@ Output a concise list of rules for this specific relationship.
         // 3. Build Prompt
         const ownerName = this.getOwnerName();
         const prompt = `
-You are an AI acting as the user "${ownerName}". Your goal is to draft a reply to the incoming message that sounds EXACTLY like ${ownerName}.
+You are an AI acting as the user "${ownerName}". Your goal is to draft a reply to the incoming message(s) that sounds EXACTLY like ${ownerName}.
 Do not sound like a helpful AI. Sound like a human. 
 
 ${globalStyle ? `### GLOBAL STYLE GUIDE (Baseline):\n${globalStyle}\n` : ''}
@@ -285,13 +352,14 @@ ${contactStyle ? `### CONTACT-SPECIFIC STYLE (Override/Nuance for this person):\
 ### Context (${ownerName}'s Past Messages in this chat):
 ${examples}
 
-### Incoming Message from ${contactName}:
+### Incoming Message(s) from ${contactName}:
 "${incomingMessage.content}"
 
 ### Instructions:
 - Draft a reply in ${ownerName}'s style.
 - Keep it relevant to the conversation.
 - If the incoming message is short, keep the reply short.
+- If the incoming message is a conversation closure (e.g. "ok", "thanks", "listo", "perfecto") and requires no response, output exactly: [NO_REPLY]
 - Return ONLY the drafted reply text. No quotes.
 - CRITICAL: maintain the same language as the incoming message.
 `;
@@ -311,6 +379,15 @@ ${examples}
             } else {
                 throw new Error("No candidates in GenAI response");
             }
+
+            // Check for NO_REPLY
+            if (draftText.includes('[NO_REPLY]')) {
+                console.log(`[Impersonation] Skipped draft (Conversation closure detected).`);
+                return null;
+            }
+
+            // Clean Quotes if present (User Feedback)
+            draftText = draftText.replace(/^"|"$/g, '').trim();
 
             return draftText;
         } catch (error) {
@@ -354,12 +431,12 @@ ${examples}
     /**
      * Save a generated draft
      */
-    saveDraft(chatId, contactId, content) {
+    saveDraft(chatId, contactId, content, contextContent = null) {
         const stmt = this.db.db.prepare(`
-            INSERT INTO autopilot_drafts(chat_id, contact_id, content, status)
-            VALUES(?, ?, ?, 'pending')
+            INSERT INTO autopilot_drafts(chat_id, contact_id, content, context_content, status)
+            VALUES(?, ?, ?, ?, 'pending')
         `);
-        return stmt.run(chatId, contactId, content);
+        return stmt.run(chatId, contactId, content, contextContent);
     }
 }
 

@@ -245,7 +245,7 @@ function AutopilotPage() {
                                             className="w-full bg-transparent text-zinc-200 outline-none resize-none h-24 font-mono text-sm"
                                         />
                                     ) : (
-                                        <p className="text-zinc-300 whitespace-pre-wrap font-mono text-sm">"{draft.content}"</p>
+                                        <p className="text-zinc-300 whitespace-pre-wrap font-mono text-sm">{draft.content}</p>
                                     )}
 
                                     {editingDraftId !== draft.id && (
