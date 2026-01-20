@@ -305,7 +305,7 @@ function AutopilotPage() {
                         {/* Duration Selector */}
                         <div className="flex items-center gap-2 mb-4 bg-zinc-900 p-2 rounded-lg w-fit border border-zinc-800">
                             <Clock className="w-4 h-4 text-zinc-500 ml-2" />
-                            <span className="text-sm text-zinc-400">Duration:</span>
+                            <span className="text-sm text-zinc-400">Apply Duration (on click):</span>
                             <div className="flex bg-zinc-950 rounded p-1">
                                 {[
                                     { label: 'Forever', value: 0 },
