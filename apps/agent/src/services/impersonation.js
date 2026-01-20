@@ -441,7 +441,14 @@ ${examples}
             INSERT INTO autopilot_drafts(chat_id, contact_id, content, context_content, status)
             VALUES(?, ?, ?, ?, 'pending')
         `);
-        return stmt.run(chatId, contactId, content, contextContent);
+        const result = stmt.run(chatId, contactId, content, contextContent);
+
+        // NOTIFY FRONTEND via Socket (Broadcast)
+        if (this.agent && this.agent.interface) {
+            this.agent.interface.broadcast('autopilot:update', { type: 'draft_created', chatId });
+        }
+
+        return result;
     }
 }
 

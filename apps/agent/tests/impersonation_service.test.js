@@ -119,4 +119,28 @@ describe('ImpersonationService', () => {
         // This confirms that getContactStyle successfully resolved the contact from the chatId
         expect(prompt).toContain('### CONTACT-SPECIFIC STYLE (Override/Nuance for this person):\nContact Style');
     });
+
+    test('should broadcast autopilot:update event when draft is generated', async () => {
+        const chatId = 'broadcast-test-chat';
+
+        // Setup Agent Interface Mock
+        agentMock.interface = { broadcast: jest.fn() };
+
+        // Create Service with updated mock
+        service = new ImpersonationService(agentMock);
+
+        // Mock DB and Styles (minimal setup)
+        service.saveStyleProfile("Style");
+        db.db.prepare("INSERT INTO people (id, name, phone) VALUES (?, ?, ?)").run('contact-broadcast', 'Broadcast User', '555-broadcast');
+
+        // Call saveDraft (which triggers broadcast)
+        // We use dummy content since we just want to verify the side effect
+        service.saveDraft(chatId, 'Broadcast User', 'Draft Content', 'Context');
+
+        // Verify broadcast called
+        expect(agentMock.interface.broadcast).toHaveBeenCalledWith(
+            'autopilot:update',
+            { type: 'draft_created', chatId }
+        );
+    });
 });
