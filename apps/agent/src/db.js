@@ -251,6 +251,12 @@ class AgentDB {
       this.db.exec("ALTER TABLE messages ADD COLUMN metadata TEXT");
     } catch (err) { }
 
+    // Migration: Add autopilot_expires_at to people
+    try {
+      this.db.exec("ALTER TABLE people ADD COLUMN autopilot_expires_at DATETIME");
+    } catch (err) { }
+
+
     // Migration: Add is_pinned to chat_sessions
     try {
       this.db.exec("ALTER TABLE chat_sessions ADD COLUMN is_pinned INTEGER DEFAULT 0");
@@ -378,6 +384,8 @@ class AgentDB {
     if (updates.notes !== undefined) { fields.push('notes = ?'); args.push(updates.notes); }
     if (updates.metadata !== undefined) { fields.push('metadata = ?'); args.push(JSON.stringify(updates.metadata)); }
     if (updates.identifiers !== undefined) { fields.push('identifiers = ?'); args.push(JSON.stringify(updates.identifiers)); }
+    if (updates.autopilot_status !== undefined) { fields.push('autopilot_status = ?'); args.push(updates.autopilot_status); }
+    if (updates.autopilot_expires_at !== undefined) { fields.push('autopilot_expires_at = ?'); args.push(updates.autopilot_expires_at); }
 
     if (fields.length === 0) return;
 

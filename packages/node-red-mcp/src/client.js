@@ -107,13 +107,27 @@ class NodeREDClient {
     }
 
     async deploy() {
-        // Trigger a reload?
-        // In Admin API, POST /flows with 'Node-RED-Deployment-Type' header triggers reload
-        // But simply updating a flow might not activate it?
-        // Usually PUT /flow/:id is immediate in recent versions?
-        // Let's assume standard behavior.
-        // There isn't a dedicated "deploy" endpoint unless replacing ALL flows via POST /flows.
-        return { success: true, message: "Flow updated. Deployment is usually automatic with API v2." };
+        // Trigger a full deployment
+        const headers = await this._getHeaders();
+        headers['Node-RED-Deployment-Type'] = 'full'; // 'full', 'nodes', 'flows', 'reload'
+
+        try {
+            // 1. Get current flows (to post back)
+            // We need the raw response usually, but listFlows normalizes it.
+            // Let's use the raw client to be safe or rely on listFlows output if it's just the array.
+            const currentFlows = await this.listFlows();
+
+            // 2. Post back to trigger deploy
+            const response = await this.client.post('/flows', currentFlows, { headers });
+
+            if (response.status !== 200 && response.status !== 204) {
+                throw new Error(`Deploy failed: ${response.status} ${response.statusText}`);
+            }
+            return { success: true, rev: response.data.rev };
+        } catch (e) {
+            console.error('[NodeRED] Deploy failed:', e.message);
+            throw e;
+        }
     }
 }
 

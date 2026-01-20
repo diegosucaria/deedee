@@ -3,7 +3,7 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { getAutopilotDrafts, approveDraft, rejectDraft, editDraft, getAutopilotSettings, updateAutopilotStatus, getStyleProfile, saveStyleProfile, analyzeStyle, getContactStyle, saveContactStyle, analyzeContactStyle } from '../actions';
-import { Loader2, Check, X, Edit2, Save, User, Settings, MessageSquare, ShieldAlert, Sparkles, Brain, Search } from 'lucide-react';
+import { Loader2, Check, X, Edit2, Save, User, Settings, MessageSquare, ShieldAlert, Sparkles, Brain, Search, Trash, Clock, RefreshCw } from 'lucide-react';
 import clsx from 'clsx';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
 
@@ -34,6 +34,7 @@ function AutopilotPage() {
     const [editingDraftId, setEditingDraftId] = useState(null);
     const [editContent, setEditContent] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
+    const [selectedDuration, setSelectedDuration] = useState(0); // 0 = Forever, 15, 60, 180
 
     // Style State
     const [styleProfile, setStyleProfile] = useState('');
@@ -45,26 +46,41 @@ function AutopilotPage() {
     useEffect(() => {
         setCollapsed(false);
         loadData();
-        const interval = setInterval(loadData, 5000); // Poll for new drafts
-        return () => clearInterval(interval);
+
+        // Only poll for drafts to avoid active editing conflicts in Style/Settings
+        let interval;
+        if (activeTab === 'drafts') {
+            interval = setInterval(() => {
+                loadData(true); // isPolling = true
+            }, 5000);
+        }
+        return () => {
+            if (interval) clearInterval(interval);
+        };
     }, [activeTab]);
 
-    const loadData = async () => {
+    const loadData = async (isPolling = false) => {
         if (activeTab === 'drafts') {
             const data = await getAutopilotDrafts();
             setDrafts(data);
         } else if (activeTab === 'settings') {
             const data = await getAutopilotSettings();
             setSettings(data);
-        } else if (activeTab === 'style') {
-            // Only fetch once or when explicitly refreshed
-            // But for now we can just check if empty? Nah, good to refresh to ensure sync.
-            const profile = await getStyleProfile();
-            if (profile) setStyleProfile(profile);
+        } else if (activeTab === 'style' && !isPolling) {
+            // Only fetch on initial load/tab switch, NOT during polling (prevents overwrite)
+
+            // Should we re-fetch if we change contact in selector? 
+            // handleContactSelect handles that manually.
+
+            // Initial load (global)
+            if (loading || selectedContactStyleId === 'global') {
+                const profile = await getStyleProfile();
+                if (profile !== null) setStyleProfile(profile || ''); // Only set if we got a response
+            }
+
             // Also load people for the selector
             const people = await getAutopilotSettings();
             setSettings(people);
-            setSelectedContactStyleId('global');
         }
         setLoading(false);
     };
@@ -105,7 +121,7 @@ function AutopilotPage() {
     const handleStatusChange = async (contactId, newStatus) => {
         // Optimistic update
         setSettings(prev => prev.map(p => p.id === contactId ? { ...p, autopilot_status: newStatus } : p));
-        await updateAutopilotStatus(contactId, newStatus);
+        await updateAutopilotStatus(contactId, newStatus, selectedDuration);
     };
 
     const handleContactSelect = async (e) => {
@@ -213,6 +229,14 @@ function AutopilotPage() {
                                     </span>
                                 </div>
 
+                                {/* Context Message */}
+                                {draft.context_message && (
+                                    <div className="mb-3 p-3 rounded-lg bg-zinc-800/50 border border-zinc-800/50 text-sm text-zinc-400 italic">
+                                        <span className="font-semibold text-zinc-500 not-italic text-xs block mb-1">Incoming:</span>
+                                        "{draft.context_message}"
+                                    </div>
+                                )}
+
                                 <div className="bg-zinc-950 p-4 rounded-lg border border-zinc-800 mb-4 relative">
                                     {editingDraftId === draft.id ? (
                                         <textarea
@@ -249,7 +273,7 @@ function AutopilotPage() {
                                                 onClick={() => handleReject(draft.id)}
                                                 className="px-4 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-500 border border-red-500/20 rounded-lg text-sm font-medium flex items-center gap-2 transition-colors"
                                             >
-                                                <X className="w-4 h-4" /> Reject
+                                                <Trash className="w-4 h-4" /> Delete
                                             </button>
                                             <button
                                                 onClick={() => handleApprove(draft.id)}
@@ -278,6 +302,31 @@ function AutopilotPage() {
                             />
                         </div>
 
+                        {/* Duration Selector */}
+                        <div className="flex items-center gap-2 mb-4 bg-zinc-900 p-2 rounded-lg w-fit border border-zinc-800">
+                            <Clock className="w-4 h-4 text-zinc-500 ml-2" />
+                            <span className="text-sm text-zinc-400">Duration:</span>
+                            <div className="flex bg-zinc-950 rounded p-1">
+                                {[
+                                    { label: 'Forever', value: 0 },
+                                    { label: '15m', value: 15 },
+                                    { label: '1h', value: 60 },
+                                    { label: '3h', value: 180 }
+                                ].map(opt => (
+                                    <button
+                                        key={opt.value}
+                                        onClick={() => setSelectedDuration(opt.value)}
+                                        className={clsx(
+                                            "px-3 py-1 rounded text-xs font-medium transition-colors",
+                                            selectedDuration === opt.value ? "bg-zinc-700 text-white" : "text-zinc-500 hover:text-zinc-300"
+                                        )}
+                                    >
+                                        {opt.label}
+                                    </button>
+                                ))}
+                            </div>
+                        </div>
+
                         <div className="bg-zinc-900 rounded-xl overflow-hidden border border-zinc-800">
                             <table className="w-full text-left border-collapse">
                                 <thead>
@@ -291,10 +340,18 @@ function AutopilotPage() {
                                     {settings
                                         .filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()) || (p.phone && p.phone.includes(searchQuery)))
                                         .sort((a, b) => {
+                                            // Primary Sort: Last Message (Newest First)
+                                            // Ensure we prioritize those with recent messages
+                                            const timeA = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+                                            const timeB = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+                                            if (timeA !== timeB) return timeB - timeA;
+
+                                            // Secondary Sort: Active Status
                                             const aActive = a.autopilot_status === 'assisted' || a.autopilot_status === 'full';
                                             const bActive = b.autopilot_status === 'assisted' || b.autopilot_status === 'full';
                                             if (aActive && !bActive) return -1;
                                             if (!aActive && bActive) return 1;
+
                                             return 0;
                                         })
                                         .map(person => (
@@ -310,6 +367,12 @@ function AutopilotPage() {
                                                 <td className="p-4 text-sm text-zinc-500">
                                                     <div>{person.phone || 'No phone'}</div>
                                                     <div className="text-xs opacity-50 capitalize">{person.source}</div>
+                                                    {person.autopilot_expires_at && new Date(person.autopilot_expires_at) > new Date() && (
+                                                        <div className="text-xs text-orange-400 mt-1 flex items-center gap-1">
+                                                            <Clock className="w-3 h-3" />
+                                                            Until {new Date(person.autopilot_expires_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                                        </div>
+                                                    )}
                                                 </td>
                                                 <td className="p-4">
                                                     <div className="flex items-center gap-1 bg-zinc-950 rounded-lg p-1 w-fit border border-zinc-800">

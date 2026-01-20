@@ -9,7 +9,6 @@ class ImpersonationService {
     getOwnerName() {
         try {
             const row = this.db.db.prepare("SELECT value FROM agent_settings WHERE key = 'owner_name'").get();
-            console.log(row); //TEMP DELETE THIS LOG
             if (row && row.value) return row.value;
             // Fallback
             const userRow = this.db.db.prepare("SELECT value FROM agent_settings WHERE key = 'user_name'").get();
@@ -117,6 +116,15 @@ Do not be vague. Be prescriptive.
             }
 
             this.saveStyleProfile(profile);
+
+            // Log analysis result JSON
+            console.log(JSON.stringify({
+                event: 'global_style_analyzed',
+                timestamp: new Date().toISOString(),
+                sample_size: messages.length,
+                generated_profile_length: profile.length
+            }));
+
             return profile;
         } catch (e) {
             console.error('[Impersonation] Analysis failed:', e);
@@ -332,12 +340,27 @@ ${examples}
         // 1. Try finding person by ID directly
         let person = this.db.db.prepare('SELECT autopilot_status FROM people WHERE id = ?').get(contactIdentifier);
 
-        // 2. If not found, try by phone/metadata match (simplistic for now, assuming contactIdentifier IS phone or ID)
+        // 2. If not found, try by phone/metadata match
         if (!person && contactIdentifier) {
-            person = this.db.db.prepare('SELECT autopilot_status FROM people WHERE phone = ? OR id = ?').get(contactIdentifier, contactIdentifier);
+            person = this.db.db.prepare('SELECT id, autopilot_status, autopilot_expires_at FROM people WHERE phone = ? OR id = ?').get(contactIdentifier, contactIdentifier);
         }
 
-        return person ? (person.autopilot_status || 'off') : 'off';
+        if (!person) return 'off';
+
+        let status = person.autopilot_status || 'off';
+
+        // Check expiration
+        if (person.autopilot_expires_at) {
+            const expiry = new Date(person.autopilot_expires_at);
+            if (expiry < new Date()) {
+                console.log(`[Impersonation] Autopilot expired for ${contactIdentifier}. Reverting to 'off'.`);
+                // Update DB to clear status and expiry
+                this.db.updatePerson(person.id, { autopilot_status: 'off', autopilot_expires_at: null });
+                status = 'off';
+            }
+        }
+
+        return status;
     }
 
     /**

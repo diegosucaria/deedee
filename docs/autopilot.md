@@ -19,9 +19,20 @@ Autopilot allows DeeDee to assist in personal messaging by drafting replies in y
 3. **Approve/Edit/Reject**: Use the UI to manage the draft.
 
 ## API Endpoints
-Endpoints are exposed via the API Gateway under `/v1/autopilot` (proxied to Agent Internal API).
-- `GET /v1/autopilot/drafts`
-- `POST /v1/autopilot/drafts/:id/approve`
-- `POST /v1/autopilot/drafts/:id/reject`
-- `PUT /v1/autopilot/drafts/:id` (Edit)
-- `POST /v1/autopilot/settings/:id` (Update Status)
+Endpoints are exposed via the API Gateway under `/v1/autopilot` (proxied to Agent).
+
+- **Drafts**
+  - `GET /v1/autopilot/drafts`
+  - `POST /v1/autopilot/drafts/:id/approve`
+  - `DELETE /v1/autopilot/drafts/:id` (Delete)
+  - `PUT /v1/autopilot/drafts/:id` (Edit)
+- **Settings**
+  - `GET /v1/autopilot/settings`
+  - `POST /v1/autopilot/settings/:id` (Update Status & Duration)
+- **Style**
+  - `GET /v1/autopilot/style` (Global)
+  - `POST /v1/autopilot/style` (Save Global)
+  - `POST /v1/autopilot/style/analyze` (Analyze Global)
+  - `GET /v1/autopilot/style/:id` (Contact)
+  - `POST /v1/autopilot/style/:id` (Save Contact)
+  - `POST /v1/autopilot/style/:id/analyze` (Analyze Contact)

@@ -16,7 +16,8 @@ function createAutopilotRouter(agent) {
         try {
             const status = req.query.status || 'pending';
             const drafts = agent.db.db.prepare(`
-                SELECT d.*, p.name as contact_name, p.phone as contact_phone
+                SELECT d.*, p.name as contact_name, p.phone as contact_phone,
+                (SELECT content FROM messages WHERE chat_id = d.chat_id AND role != 'assistant' ORDER BY timestamp DESC LIMIT 1) as context_message
                 FROM autopilot_drafts d
                 LEFT JOIN people p ON d.contact_id = p.phone OR d.contact_id = p.id
                 WHERE d.status = ?
@@ -95,11 +96,11 @@ function createAutopilotRouter(agent) {
         }
     });
 
-    // POST /drafts/:id/reject
-    router.post('/drafts/:id/reject', (req, res) => {
+    // DELETE /drafts/:id (Delete draft)
+    router.delete('/drafts/:id', (req, res) => {
         try {
             const { id } = req.params;
-            agent.db.db.prepare("UPDATE autopilot_drafts SET status = 'rejected' WHERE id = ?").run(id);
+            agent.db.db.prepare("DELETE FROM autopilot_drafts WHERE id = ?").run(id);
             res.json({ success: true });
         } catch (e) {
             res.status(500).json({ error: e.message });
@@ -124,9 +125,11 @@ function createAutopilotRouter(agent) {
     router.get('/settings', (req, res) => {
         try {
             const people = agent.db.db.prepare(`
-                SELECT id, name, phone, autopilot_status, source 
+                SELECT id, name, phone, autopilot_status, autopilot_expires_at, source, 
+                (SELECT MAX(timestamp) FROM messages WHERE chat_id = people.phone OR chat_id = people.id) as last_message_at
                 FROM people 
-                ORDER BY name ASC
+                WHERE (name IS NULL OR (name NOT LIKE 'sys_%' AND name NOT LIKE 'sch_%'))
+                ORDER BY last_message_at DESC NULLS LAST, name ASC
             `).all();
             res.json(people);
         } catch (e) {
@@ -138,10 +141,17 @@ function createAutopilotRouter(agent) {
     router.post('/settings/:id', (req, res) => {
         try {
             const { id } = req.params;
-            const { status } = req.body; // 'off', 'assisted', 'full'
+            const { status, duration } = req.body; // 'off', 'assisted', 'full', duration in minutes
+
+            let expiresAt = null;
+            if (duration && duration > 0) {
+                // Calculate expiry
+                const now = new Date();
+                expiresAt = new Date(now.getTime() + duration * 60000).toISOString();
+            }
 
             // Update by ID or Phone
-            const info = agent.db.db.prepare("UPDATE people SET autopilot_status = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? OR phone = ?").run(status, id, id);
+            const info = agent.db.db.prepare("UPDATE people SET autopilot_status = ?, autopilot_expires_at = ?, updated_at = CURRENT_TIMESTAMP WHERE id = ? OR phone = ?").run(status, expiresAt, id, id);
 
             if (info.changes === 0) {
                 return res.status(404).json({ error: 'Person not found' });

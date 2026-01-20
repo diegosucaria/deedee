@@ -73,6 +73,15 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     },
                     required: ["flowId", "nodes"]
                 }
+            },
+            {
+                name: "node_red_deploy",
+                description: "Trigger a full deployment of flows. Use this after making changes to nodes or flows to apply them.",
+                inputSchema: {
+                    type: "object",
+                    properties: {},
+                    required: []
+                }
             }
         ],
     };
@@ -163,6 +172,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     content: [{
                         type: "text",
                         text: JSON.stringify(result, null, 2)
+                    }]
+                };
+            } catch (err) {
+                return {
+                    content: [{ type: "text", text: `Error: ${err.message}` }],
+                    isError: true,
+                };
+            }
+        }
+
+        case "node_red_deploy": {
+            try {
+                await client.deploy();
+                return {
+                    content: [{
+                        type: "text",
+                        text: "Deployment successful."
                     }]
                 };
             } catch (err) {

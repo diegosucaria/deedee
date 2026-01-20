@@ -953,7 +953,7 @@ export async function approveDraft(id) {
 
 export async function rejectDraft(id) {
     try {
-        await fetchAPI(`/v1/autopilot/drafts/${id}/reject`, { method: 'POST' });
+        await fetchAPI(`/v1/autopilot/drafts/${id}`, { method: 'DELETE' });
         revalidatePath('/autopilot');
         return { success: true };
     } catch (error) {
@@ -983,11 +983,11 @@ export async function getAutopilotSettings() {
     }
 }
 
-export async function updateAutopilotStatus(contactId, status) {
+export async function updateAutopilotStatus(contactId, status, duration = 0) {
     try {
         await fetchAPI(`/v1/autopilot/settings/${contactId}`, {
             method: 'POST',
-            body: JSON.stringify({ status })
+            body: JSON.stringify({ status, duration })
         });
         revalidatePath('/autopilot');
         return { success: true };
