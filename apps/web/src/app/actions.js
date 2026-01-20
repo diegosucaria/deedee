@@ -1075,3 +1075,26 @@ export async function analyzeContactStyle(contactId) {
         return { success: false, error: error.message };
     }
 }
+
+// --- Vault Embeddings ---
+
+export async function getVaultEmbeddings(vaultId) {
+    try {
+        return await fetchAPI(`/v1/vaults/${encodeURIComponent(vaultId)}/embeddings`);
+    } catch (error) {
+        console.error(`getVaultEmbeddings(${vaultId}) Error:`, error);
+        return [];
+    }
+}
+
+export async function deleteVaultEmbedding(vaultId, filename) {
+    try {
+        await fetchAPI(`/v1/vaults/${encodeURIComponent(vaultId)}/embeddings/${encodeURIComponent(filename)}`, {
+            method: 'DELETE'
+        });
+        revalidatePath(`/vaults/${vaultId}`);
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}

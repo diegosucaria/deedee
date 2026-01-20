@@ -463,6 +463,7 @@ ${transcript}
 
         // 4. Call LLM
         try {
+            console.log('Prompt:', prompt); //temp delete this
             const result = await this.agent.client.models.generateContent({
                 model: process.env.WORKER_FLASH || 'gemini-2.0-flash-exp',
                 contents: [{ role: 'user', parts: [{ text: prompt }] }]

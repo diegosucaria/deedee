@@ -1,6 +1,6 @@
 'use client';
 import { useState, useEffect } from 'react';
-import { fetchAPI } from '@/lib/api';
+import { getVaultEmbeddings, deleteVaultEmbedding } from '@/app/actions';
 import { Trash2, RefreshCw, Database } from 'lucide-react';
 
 export default function VaultEmbeddings({ vaultId }) {
@@ -10,7 +10,7 @@ export default function VaultEmbeddings({ vaultId }) {
     const loadData = async () => {
         setLoading(true);
         try {
-            const data = await fetchAPI(`/v1/vaults/${vaultId}/embeddings`);
+            const data = await getVaultEmbeddings(vaultId);
             setDocs(data || []);
         } catch (e) {
             console.error(e);
@@ -26,11 +26,11 @@ export default function VaultEmbeddings({ vaultId }) {
     const handleDelete = async (filename) => {
         if (!confirm(`Remove "${filename}" from the search index? (File remains on disk)`)) return;
 
-        try {
-            await fetchAPI(`/v1/vaults/${vaultId}/embeddings/${encodeURIComponent(filename)}`, { method: 'DELETE' });
+        const res = await deleteVaultEmbedding(vaultId, filename);
+        if (res.success) {
             loadData();
-        } catch (e) {
-            alert('Failed to delete index: ' + e.message);
+        } else {
+            alert('Failed to delete index: ' + res.error);
         }
     };
 
