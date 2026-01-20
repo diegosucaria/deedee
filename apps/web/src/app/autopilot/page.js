@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from 'react';
 import { getAutopilotDrafts, approveDraft, rejectDraft, editDraft, getAutopilotSettings, updateAutopilotStatus, getStyleProfile, saveStyleProfile, analyzeStyle } from '../actions';
-import { Loader2, Check, X, Edit2, Save, User, Settings, MessageSquare, ShieldAlert, Sparkles, Brain } from 'lucide-react';
+import { Loader2, Check, X, Edit2, Save, User, Settings, MessageSquare, ShieldAlert, Sparkles, Brain, Search } from 'lucide-react';
 import clsx from 'clsx';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
 
@@ -13,6 +13,7 @@ export default function AutopilotPage() {
     const [loading, setLoading] = useState(true);
     const [editingDraftId, setEditingDraftId] = useState(null);
     const [editContent, setEditContent] = useState('');
+    const [searchQuery, setSearchQuery] = useState('');
 
     // Style State
     const [styleProfile, setStyleProfile] = useState('');
@@ -213,57 +214,79 @@ export default function AutopilotPage() {
                 )}
 
                 {activeTab === 'settings' && (
-                    <div className="bg-zinc-900 rounded-xl overflow-hidden border border-zinc-800">
-                        <table className="w-full text-left border-collapse">
-                            <thead>
-                                <tr className="bg-zinc-950 border-b border-zinc-800 text-zinc-400 text-sm">
-                                    <th className="p-4 font-medium">Contact</th>
-                                    <th className="p-4 font-medium">Details</th>
-                                    <th className="p-4 font-medium">Status</th>
-                                </tr>
-                            </thead>
-                            <tbody className="divide-y divide-zinc-800">
-                                {settings.map(person => (
-                                    <tr key={person.id} className="group hover:bg-zinc-800/50 transition-colors">
-                                        <td className="p-4">
-                                            <div className="flex items-center gap-3">
-                                                <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400">
-                                                    <User className="w-5 h-5" />
-                                                </div>
-                                                <span className="font-medium text-zinc-200">{person.name}</span>
-                                            </div>
-                                        </td>
-                                        <td className="p-4 text-sm text-zinc-500">
-                                            <div>{person.phone || 'No phone'}</div>
-                                            <div className="text-xs opacity-50 capitalize">{person.source}</div>
-                                        </td>
-                                        <td className="p-4">
-                                            <div className="flex items-center gap-1 bg-zinc-950 rounded-lg p-1 w-fit border border-zinc-800">
-                                                <button
-                                                    onClick={() => handleStatusChange(person.id, 'off')}
-                                                    className={clsx("px-3 py-1 rounded text-xs font-medium transition-colors", person.autopilot_status === 'off' ? "bg-zinc-800 text-zinc-300" : "text-zinc-600 hover:text-zinc-400")}
-                                                >
-                                                    Off
-                                                </button>
-                                                <button
-                                                    onClick={() => handleStatusChange(person.id, 'assisted')}
-                                                    className={clsx("px-3 py-1 rounded text-xs font-medium transition-colors", person.autopilot_status === 'assisted' ? "bg-blue-600 text-white shadow" : "text-zinc-600 hover:text-zinc-400")}
-                                                >
-                                                    Assisted
-                                                </button>
-                                                <button
-                                                    onClick={() => handleStatusChange(person.id, 'full')}
-                                                    className={clsx("px-3 py-1 rounded text-xs font-medium transition-colors", person.autopilot_status === 'full' ? "bg-purple-600 text-white shadow" : "text-zinc-600 hover:text-zinc-400")}
-                                                    title="Auto-reply without approval"
-                                                >
-                                                    Full
-                                                </button>
-                                            </div>
-                                        </td>
+                    <div className="space-y-4">
+                        <div className="relative">
+                            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-zinc-500" />
+                            <input
+                                type="text"
+                                placeholder="Search contacts..."
+                                value={searchQuery}
+                                onChange={e => setSearchQuery(e.target.value)}
+                                className="w-full bg-zinc-900 border border-zinc-800 rounded-lg pl-10 pr-4 py-2 text-sm text-zinc-200 focus:outline-none focus:border-zinc-700 transition-colors"
+                            />
+                        </div>
+
+                        <div className="bg-zinc-900 rounded-xl overflow-hidden border border-zinc-800">
+                            <table className="w-full text-left border-collapse">
+                                <thead>
+                                    <tr className="bg-zinc-950 border-b border-zinc-800 text-zinc-400 text-sm">
+                                        <th className="p-4 font-medium">Contact</th>
+                                        <th className="p-4 font-medium">Details</th>
+                                        <th className="p-4 font-medium">Status</th>
                                     </tr>
-                                ))}
-                            </tbody>
-                        </table>
+                                </thead>
+                                <tbody className="divide-y divide-zinc-800">
+                                    {settings
+                                        .filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()) || (p.phone && p.phone.includes(searchQuery)))
+                                        .sort((a, b) => {
+                                            const aActive = a.autopilot_status === 'assisted' || a.autopilot_status === 'full';
+                                            const bActive = b.autopilot_status === 'assisted' || b.autopilot_status === 'full';
+                                            if (aActive && !bActive) return -1;
+                                            if (!aActive && bActive) return 1;
+                                            return 0;
+                                        })
+                                        .map(person => (
+                                            <tr key={person.id} className="group hover:bg-zinc-800/50 transition-colors">
+                                                <td className="p-4">
+                                                    <div className="flex items-center gap-3">
+                                                        <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400">
+                                                            <User className="w-5 h-5" />
+                                                        </div>
+                                                        <span className="font-medium text-zinc-200">{person.name}</span>
+                                                    </div>
+                                                </td>
+                                                <td className="p-4 text-sm text-zinc-500">
+                                                    <div>{person.phone || 'No phone'}</div>
+                                                    <div className="text-xs opacity-50 capitalize">{person.source}</div>
+                                                </td>
+                                                <td className="p-4">
+                                                    <div className="flex items-center gap-1 bg-zinc-950 rounded-lg p-1 w-fit border border-zinc-800">
+                                                        <button
+                                                            onClick={() => handleStatusChange(person.id, 'off')}
+                                                            className={clsx("px-3 py-1 rounded text-xs font-medium transition-colors", person.autopilot_status === 'off' ? "bg-zinc-800 text-zinc-300" : "text-zinc-600 hover:text-zinc-400")}
+                                                        >
+                                                            Off
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleStatusChange(person.id, 'assisted')}
+                                                            className={clsx("px-3 py-1 rounded text-xs font-medium transition-colors", person.autopilot_status === 'assisted' ? "bg-blue-600 text-white shadow" : "text-zinc-600 hover:text-zinc-400")}
+                                                        >
+                                                            Assisted
+                                                        </button>
+                                                        <button
+                                                            onClick={() => handleStatusChange(person.id, 'full')}
+                                                            className={clsx("px-3 py-1 rounded text-xs font-medium transition-colors", person.autopilot_status === 'full' ? "bg-purple-600 text-white shadow" : "text-zinc-600 hover:text-zinc-400")}
+                                                            title="Auto-reply without approval"
+                                                        >
+                                                            Full
+                                                        </button>
+                                                    </div>
+                                                </td>
+                                            </tr>
+                                        ))}
+                                </tbody>
+                            </table>
+                        </div>
                     </div>
                 )}
 
