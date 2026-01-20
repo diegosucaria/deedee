@@ -261,6 +261,13 @@ function createInternalRouter(agent) {
         try {
             const limit = parseInt(req.query.limit) || 50;
             const offset = parseInt(req.query.offset) || 0;
+
+            // CLEANUP: Remove empty sessions if user is navigating around
+            // If preserveId is sent, we aggressively delete other empty sessions.
+            if (agent.db.deleteEmptySessions) {
+                agent.db.deleteEmptySessions(req.query.preserveId);
+            }
+
             const sessions = agent.db.getSessions({ limit, offset });
             res.json({ sessions });
         } catch (e) { res.status(500).json({ error: e.message }); }

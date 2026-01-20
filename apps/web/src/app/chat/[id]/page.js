@@ -285,19 +285,20 @@ export default function ChatSessionPage({ params }) {
         }
     };
 
-    useEffect(() => {
-        const loadSession = async () => {
-            try {
-                const data = await getSession(chatId);
-                if (data) {
-                    setSessionTitle(data.title);
-                    const history = (data.messages || []).map(normalizeMessage);
-                    setMessages(history);
-                }
-            } catch (err) {
-                console.error('Failed to load session:', err);
+    const loadSession = async () => {
+        try {
+            const data = await getSession(chatId);
+            if (data) {
+                setSessionTitle(data.title);
+                const history = (data.messages || []).map(normalizeMessage);
+                setMessages(history);
             }
-        };
+        } catch (err) {
+            console.error('Failed to load session:', err);
+        }
+    };
+
+    useEffect(() => {
         loadSession();
     }, [chatId]);
 

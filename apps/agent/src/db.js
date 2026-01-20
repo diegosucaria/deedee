@@ -562,21 +562,40 @@ class AgentDB {
     console.log(`[DB] Deleted session ${id} and all related data.`);
   }
 
-  deleteEmptySessions() {
-    // Delete sessions with no messages older than 10 minutes
-    // This cleans up abandoned "New Chats" fast enough to avoid clutter, but gives users time to think/type.
-    const stmt = this.db.prepare(`
+  deleteEmptySessions(preserveId = null) {
+    // Strategy:
+    // 1. If preserveId is provided (user is looking at a specific chat), we can be aggressive and delete ALL other empty sessions instantly.
+    // 2. If no preserveId, we fallback to the safety buffer (e.g. 10 mins or maybe 1 min?) to avoid deleting a just-created session 
+    //    that the user hasn't typed in yet (race condition where frontend created it but not yet focused or sending ID).
+
+    let sql = `
       DELETE FROM chat_sessions 
       WHERE id IN (
         SELECT cs.id FROM chat_sessions cs
         LEFT JOIN messages m ON cs.id = m.chat_id
         WHERE m.id IS NULL
-        AND cs.created_at < datetime('now', '-10 minutes')
-      )
-    `);
-    const info = stmt.run();
+    `;
+
+    const args = [];
+
+    if (preserveId) {
+      // Aggressive Mode: Delete ANY empty session that isn't the preserved one.
+      // We still give a Tiny buffer (e.g. 5 seconds) just in case of parallel requests/latency, 
+      // but effectively it cleans up "yesterday's empty chat" immediately.
+      sql += ` AND cs.id != ? AND cs.created_at < datetime('now', '-5 seconds')`;
+      args.push(preserveId);
+    } else {
+      // Passive Mode: Only delete very old abandoned sessions
+      sql += ` AND cs.created_at < datetime('now', '-10 minutes')`;
+    }
+
+    sql += ` )`;
+
+    const stmt = this.db.prepare(sql);
+    const info = stmt.run(...args);
+
     if (info.changes > 0) {
-      console.log(`[DB] Cleaned up ${info.changes} empty sessions older than 10m.`);
+      console.log(`[DB] Cleaned up ${info.changes} empty sessions. (Preserve: ${preserveId})`);
     }
   }
 
@@ -765,10 +784,43 @@ class AgentDB {
     });
   }
 
-  getFactsFormatted() {
+  getFactsFormatted(query = '') {
     const facts = this.getAllFacts();
     if (facts.length === 0) return '';
-    return facts.map(f => `- ${f.key}: ${JSON.stringify(f.value)}`).join('\n');
+
+    const q = (query || '').toLowerCase();
+    let hiddenCount = 0;
+    let nodeRedActive = false;
+
+    // HEURISTIC FILTERING
+    const relevantFacts = facts.filter(f => {
+      const key = f.key.toLowerCase();
+
+      // Filter 1: Node-RED / Home Assistant Context
+      if (key.includes('node_red') || key.includes('ha_nodes')) {
+        const keywords = ['node red', 'node-red', 'home assistant', 'automation', 'flow', 'script'];
+        const isMatch = keywords.some(k => q.includes(k));
+
+        if (isMatch) {
+          nodeRedActive = true;
+          return true;
+        } else {
+          hiddenCount++;
+          return false;
+        }
+      }
+
+      // Default: Include everything else
+      return true;
+    });
+
+    if (hiddenCount > 0) {
+      console.log(`[Memory] Suppressed ${hiddenCount} Node-RED facts. (Query: "${q.substring(0, 20)}...")`);
+    } else if (nodeRedActive) {
+      console.log(`[Memory] Node-RED Context ACTIVE. Input matched keywords.`);
+    }
+
+    return relevantFacts.map(f => `- ${f.key}: ${JSON.stringify(f.value)}`).join('\n');
   }
 
   getJobState(jobName) {

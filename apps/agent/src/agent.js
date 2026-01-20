@@ -774,7 +774,8 @@ class Agent {
         const history = this.db.getHistoryForChat(chatId, 20); // Static window for now
 
         // --- PREPARE SYSTEM PROMPT FOR GROK ---
-        const facts = this.db.getFactsFormatted();
+        const contextQuery = message.content || (message.parts ? message.parts.map(p => p.text).join(' ') : '');
+        const facts = this.db.getFactsFormatted(contextQuery);
         const activeGoals = this.db.getPendingGoals().map(g => `- [${g.id}] ${g.description}`).join('\n');
 
         let vaultContext = null;
@@ -969,7 +970,8 @@ class Agent {
         .join('\n            ');
 
       // Fetch Memory/Facts
-      const facts = this.db.getFactsFormatted();
+      const contextQuery = message.content || (message.parts ? message.parts.map(p => p.text).join(' ') : '');
+      const facts = this.db.getFactsFormatted(contextQuery);
       const activeGoals = this.db.getPendingGoals().map(g => `- [${g.id}] ${g.description}`).join('\n');
 
       // Fetch Vault Context if active

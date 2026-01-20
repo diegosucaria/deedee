@@ -379,8 +379,8 @@ app.post('/send', async (req, res) => {
 // --- SESSION MANAGEMENT ---
 app.get('/sessions', async (req, res) => {
   try {
-    const { limit, offset } = req.query;
-    const response = await axios.get(`${agentUrl}/internal/sessions`, { params: { limit, offset } });
+    const { limit, offset, preserveId } = req.query;
+    const response = await axios.get(`${agentUrl}/internal/sessions`, { params: { limit, offset, preserveId } });
     res.json(response.data.sessions);
   } catch (err) {
     console.error('[Interfaces] Failed to get sessions:', err.message);

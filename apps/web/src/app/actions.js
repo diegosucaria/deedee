@@ -421,6 +421,7 @@ export async function forkChat(chatId, messageId) {
         try { const err = await response.json(); errorMsg = err.details || err.error || errorMsg; } catch (e) { }
         return { success: false, error: errorMsg };
     }
+    revalidatePath('/');
     return { success: true, data: await response.json() };
 }
 
@@ -462,10 +463,12 @@ export async function createSession() {
     }
 }
 
-export async function getSessions(limit = 50, offset = 0) {
+export async function getSessions(limit = 50, offset = 0, preserveId = null) {
     try {
-        const res = await fetchAPI(`/v1/sessions?limit=${limit}&offset=${offset}`);
-        return res.sessions || [];
+        const query = new URLSearchParams({ limit, offset });
+        if (preserveId) query.append('preserveId', preserveId);
+
+        return await fetchAPI(`/v1/sessions?${query.toString()}`);
     } catch (error) {
         console.error('getSessions Error:', error);
         return [];

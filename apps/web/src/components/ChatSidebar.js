@@ -4,8 +4,8 @@ import Link from 'next/link';
 import { useParams, useRouter } from 'next/navigation';
 import { Plus, MessageSquare, Trash2, Pencil, Check, X, ChevronLeft, ChevronRight, ChevronDown, Sidebar as SidebarIcon, Heart, Banknote, Pin, PinOff, Search } from 'lucide-react';
 import { clsx } from 'clsx';
-import { createSession, deleteSession, updateSession } from '@/app/actions';
-import { useState, useMemo } from 'react';
+import { createSession, deleteSession, updateSession, getSessions } from '@/app/actions';
+import { useState, useMemo, useEffect } from 'react';
 import { useChatSidebar } from './ChatSidebarProvider';
 
 export default function ChatSidebar({ sessions = [] }) {
@@ -14,6 +14,18 @@ export default function ChatSidebar({ sessions = [] }) {
     const activeId = params.id;
     const { isCollapsed, toggleSidebar } = useChatSidebar();
     const [isCreating, setIsCreating] = useState(false);
+
+    // CLEANUP EMPTY SESSIONS on Navigation
+    useEffect(() => {
+        if (activeId) {
+            // Trigger backend cleanup: Keep activeId, delete other empty ones.
+            // We ignore the return value; we just want the side-effect.
+            // Then refresh the router to update the props `sessions`.
+            getSessions(1, 0, activeId).then(() => {
+                router.refresh();
+            }).catch(err => console.error('Cleanup failed:', err));
+        }
+    }, [activeId, router]);
     const [editingSessionId, setEditingSessionId] = useState(null);
     const [editTitle, setEditTitle] = useState('');
     const [searchTerm, setSearchTerm] = useState('');
