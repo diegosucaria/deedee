@@ -92,8 +92,9 @@ Everything is customizable via environment variables. Like which models to use.
     - **GSuite**: "Calendar", "Gmail".
     - **Local**: Shell, Filesystem.
 - **🤖 Autopilot (Assisted Mode)**:
-    - **Drafts Repliest**: Learns your style from chat history and drafts replies for your approval.
-    - **Dashboard**: dedicated UI (`/autopilot`) to manage assisted contacts and pending drafts.
+    - **Smart Drafts**: Learns your style from specific contacts (Style Profiles) and drafts replies for your approval.
+    - **Voice Aware**: Transcribes incoming voice notes to generate context-aware replies.
+    - **Dashboard**: Dedicated UI (`/autopilot`) to manage assisted contacts, pending drafts, and view Style Analysis.
     - [Read More](docs/autopilot.md)
 - **📱 API Gateway**: Synchronous API (`POST /v1/chat`) for iOS Shortcuts and Dashboards. Includes **Dictation Safeguards** for voice input.
 - **🏠 Smart Home Intelligence**:
