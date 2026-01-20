@@ -14,15 +14,13 @@ export function useSocket() {
             // In production (Balena), we might need to target the same host but port 5000 
             // OR use a relative path if proxied.
             // Given docker-compose exposes 5000, we try that.
-            const url = typeof window !== 'undefined'
-                ? `${window.location.protocol}//${window.location.hostname}:5000`
-                : 'http://localhost:5000';
-
-            socket = io(url, {
+            // We use a relative URL (undefined) so it connects to the current origin.
+            // Next.js rewrites /socket.io to the interfaces service via next.config.mjs
+            socket = io(undefined, {
                 reconnection: true,
                 reconnectionAttempts: 5,
                 reconnectionDelay: 1000,
-                transports: ['polling'], // Force polling first to avoid websocket issues initially
+                transports: ['polling'],
                 path: '/socket.io'
             });
         }
