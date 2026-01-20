@@ -145,6 +145,7 @@ describe('Impersonation Service Unit', () => {
 
         // Mock axios to fail/empty first, succeed second
         axios.get.mockImplementation(async (url, config) => {
+            console.log('MockAxios call:', config.params.jid);
             if (config.params.jid.includes('s.whatsapp.net')) {
                 return { data: [] }; // Phone JID empty
             }
@@ -160,8 +161,15 @@ describe('Impersonation Service Unit', () => {
 
         await service.generateDraft(lidChatId, { content: 'Hi' }, 'User', '', contactIdentifier);
 
-        // Verify Axios Calls
-        expect(axios.get).toHaveBeenCalledTimes(2);
+        const expectedPhoneJid = '5491122334455@s.whatsapp.net';
+        // Verify Phone JID was tried
+        expect(axios.get).toHaveBeenCalledWith(expect.stringContaining('/whatsapp/history'), expect.objectContaining({
+            params: expect.objectContaining({ jid: expectedPhoneJid })
+        }));
+        // Verify LID JID was tried (fallback)
+        expect(axios.get).toHaveBeenCalledWith(expect.stringContaining('/whatsapp/history'), expect.objectContaining({
+            params: expect.objectContaining({ jid: lidChatId })
+        }));
     });
 
     test('should generate draft with full conversation context', async () => {
