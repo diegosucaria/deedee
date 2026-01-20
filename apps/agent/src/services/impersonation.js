@@ -1,4 +1,4 @@
-
+const axios = require('axios');
 
 class ImpersonationService {
     constructor(agent) {
@@ -33,17 +33,28 @@ class ImpersonationService {
     /**
      * Analyze global history to generate a style profile
      */
+
     async analyzeGlobalStyle() {
         console.log('[Impersonation] Analyzing global style...');
 
-        // 1. Fetch last 500 user messages from ALL chats
-        const messages = this.db.db.prepare(`
-            SELECT content FROM messages 
-            WHERE role = 'user' AND content IS NOT NULL AND content != ''
-            ORDER BY timestamp DESC LIMIT 500
-        `).all().reverse();
+        // 1. Fetch from Interfaces (Real User History)
+        let messages = [];
+        try {
+            // Internal URL for Interfaces Service
+            const interfacesUrl = process.env.INTERFACES_URL || 'http://localhost:5000';
+            const res = await axios.get(`${interfacesUrl}/whatsapp/global-history?limit=500`);
+            messages = res.data;
+        } catch (e) {
+            console.error('[Impersonation] Failed to fetch history from Interfaces:', e.message);
+            // Fallback to Agent DB if Interfaces fails (legacy behavior)
+            messages = this.db.db.prepare(`
+                SELECT content FROM messages 
+                WHERE role = 'user' AND content IS NOT NULL AND content != ''
+                ORDER BY timestamp DESC LIMIT 500
+            `).all().reverse();
+        }
 
-        if (messages.length < 10) {
+        if (!messages || messages.length < 10) {
             return "Not enough history to analyze style.";
         }
 
@@ -72,12 +83,23 @@ Do not be vague. Be prescriptive.
 `;
 
         try {
-            const response = await this.agent.client.models.generateContent({
-                model: process.env.WORKER_PRO || 'gemini-2.0-flash-exp',
+            // PRO is better for deep analysis and nuance extraction
+            const result = await this.agent.client.models.generateContent({
+                model: process.env.WORKER_PRO || 'gemini-1.5-pro-exp',
                 contents: [{ role: 'user', parts: [{ text: prompt }] }]
             });
 
-            const profile = response.response.candidates[0].content.parts[0].text.trim();
+            // Handle Response safely
+            let profile = "";
+            if (result.response && result.response.candidates && result.response.candidates.length > 0) {
+                profile = result.response.candidates[0].content.parts[0].text.trim();
+            } else if (result.candidates && result.candidates.length > 0) {
+                // Fallback for different response structure
+                profile = result.candidates[0].content.parts[0].text.trim();
+            } else {
+                throw new Error("No candidates in GenAI response");
+            }
+
             this.saveStyleProfile(profile);
             return profile;
         } catch (e) {

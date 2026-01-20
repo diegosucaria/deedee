@@ -232,6 +232,19 @@ app.get('/whatsapp/history', (req, res) => {
   res.json(service.getChatHistory(jid, l));
 });
 
+app.get('/whatsapp/global-history', (req, res) => {
+  if (isWhatsAppDisabled) return res.json([]);
+  const { session, limit } = req.query;
+
+  // Default to 'user' because we want to learn from the user's sent messages
+  const targetSession = session || 'user';
+  const service = whatsappSessions[targetSession];
+  if (!service) return res.status(400).json({ error: 'Invalid session' });
+
+  const l = parseInt(limit) || 500;
+  res.json(service.getGlobalUserHistory(l));
+});
+
 app.get('/whatsapp/profile', async (req, res) => {
   if (isWhatsAppDisabled) return res.json({ url: null });
   const { session, jid } = req.query;

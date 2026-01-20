@@ -158,6 +158,27 @@ class SQLiteStore {
 
     // --- Access Methods ---
 
+    getGlobalUserHistory(limit) {
+        // from_me = 1 means sent by the user account owner
+        const rows = this.db.prepare(`
+            SELECT data FROM messages 
+            WHERE from_me = 1 
+            ORDER BY timestamp DESC 
+            LIMIT ?
+        `).all(limit);
+
+        return rows.reverse().map(r => {
+            const m = JSON.parse(r.data);
+            let content = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
+            // Only care about text for style analysis
+            return {
+                role: 'user', // "User" from the Agent's perspective (it's the user speaking)
+                content,
+                timestamp: (typeof m.messageTimestamp === 'number' ? m.messageTimestamp : m.messageTimestamp?.low) * 1000
+            };
+        }).filter(m => m.content && m.content.length > 5); // Filter noise
+    }
+
     getContacts() {
         return this.db.prepare('SELECT * FROM contacts').all().map(r => ({ ...JSON.parse(r.data), ...r }));
     }
@@ -846,6 +867,10 @@ class WhatsAppService {
             // 404/401 implies no picture
             return null;
         }
+    }
+    getGlobalUserHistory(limit = 500) {
+        if (!this.store) return [];
+        return this.store.getGlobalUserHistory(limit);
     }
 }
 
