@@ -258,6 +258,32 @@ Output a concise list of rules for this specific relationship.
     }
 
     /**
+     * Transcribe audio part using Gemini
+     */
+    async transcribeAudio(part) {
+        try {
+            const result = await this.agent.client.models.generateContent({
+                model: process.env.WORKER_FLASH || 'gemini-2.0-flash-exp',
+                contents: [{
+                    role: 'user',
+                    parts: [
+                        part, // The audio part
+                        { text: "Transcribe this audio EXACTLY. Return only the text. If it is empty or noise, return nothing." }
+                    ]
+                }]
+            });
+
+            if (result.response) {
+                return result.response.text().trim();
+            }
+            return null;
+        } catch (e) {
+            console.error('[Impersonation] Audio transcription failed:', e.message);
+            return null;
+        }
+    }
+
+    /**
      * Handle incoming message with buffering (Debounce)
      */
     async handleMessage(chatId, message, contactString) {
@@ -268,6 +294,19 @@ Output a concise list of rules for this specific relationship.
         if (autopilotStatus === 'off') return;
 
         console.log(`[Impersonation] Buffering message for ${contactString} (Status: ${autopilotStatus})`);
+
+        // 1.5 Transcribe Audio if present
+        if (message.parts && message.parts.length > 0) {
+            for (const part of message.parts) {
+                if (part.inlineData && part.inlineData.mimeType.startsWith('audio/')) {
+                    console.log(`[Impersonation] Transcribing audio message...`);
+                    const transcript = await this.transcribeAudio(part);
+                    if (transcript) {
+                        message.content = (message.content ? message.content + '\n' : '') + `[Voice Message]: "${transcript}"`;
+                    }
+                }
+            }
+        }
 
         // 2. Initialize Buffer if needed
         if (!this.messageBuffers.has(chatId)) {
