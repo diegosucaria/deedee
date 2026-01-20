@@ -6,6 +6,19 @@ class ImpersonationService {
         this.db = agent.db;
     }
 
+    getOwnerName() {
+        try {
+            const row = this.db.db.prepare("SELECT value FROM agent_settings WHERE key = 'owner_name'").get();
+            console.log(row); //TEMP DELETE THIS LOG
+            if (row && row.value) return row.value;
+            // Fallback
+            const userRow = this.db.db.prepare("SELECT value FROM agent_settings WHERE key = 'user_name'").get();
+            return userRow ? userRow.value : 'Diego';
+        } catch (e) {
+            return 'Diego';
+        }
+    }
+
     /**
      * Get the global style profile from settings
      */
@@ -62,16 +75,17 @@ class ImpersonationService {
         const corpus = messages.map(m => m.content).join('\n');
 
         // 2. Prompt Gemini
+        const ownerName = this.getOwnerName();
         const prompt = `
-You are an expert linguist and ghostwriter. Analyze the following sample of messages sent by the user "Diego".
-Create a "Style Profile" that describes EXACTLY how he writes.
+You are an expert linguist and ghostwriter. Analyze the following sample of messages sent by the user "${ownerName}".
+Create a "Style Profile" that describes EXACTLY how they write.
 
 Focus on:
 - Tone (e.g., casual, dry, enthusiastic, direct)
 - Formatting (capitalization, punctuation usage)
 - Common slang or abbreviations
 - Sentence structure complexity
-- Language mixing (Does he mix English and Spanish?)
+- Language mixing (Does he/she mix English and Spanish?)
 
 Sample:
 """
@@ -201,9 +215,10 @@ Do not be vague. Be prescriptive.
         if (!corpus || corpus.length < 50) return "Not enough history.";
 
         // 2. Prompt Gemini
+        const ownerName = this.getOwnerName();
         const prompt = `
-You are an expert linguist. Analyze the following messages sent by "Diego" TO a specific contact.
-Create a "Relationship Style Profile". How does Diego talk to THIS person specifically?
+You are an expert linguist. Analyze the following messages sent by "${ownerName}" TO a specific contact.
+Create a "Relationship Style Profile". How does ${ownerName} talk to THIS person specifically?
 
 Focus on:
 - Level of formality/intimacy
@@ -262,22 +277,23 @@ Output a concise list of rules for this specific relationship.
         const contactStyle = this.getContactStyle(chatId);
 
         // 3. Build Prompt
+        const ownerName = this.getOwnerName();
         const prompt = `
-You are an AI acting as the user "Diego". Your goal is to draft a reply to the incoming message that sounds EXACTLY like Diego.
+You are an AI acting as the user "${ownerName}". Your goal is to draft a reply to the incoming message that sounds EXACTLY like ${ownerName}.
 Do not sound like a helpful AI. Sound like a human. 
 
 ${globalStyle ? `### GLOBAL STYLE GUIDE (Baseline):\n${globalStyle}\n` : ''}
 
 ${contactStyle ? `### CONTACT-SPECIFIC STYLE (Override/Nuance for this person):\n${contactStyle}\n` : ''}
 
-### Context (Diego's Past Messages in this chat):
+### Context (${ownerName}'s Past Messages in this chat):
 ${examples}
 
 ### Incoming Message from ${contactName}:
 "${incomingMessage.content}"
 
 ### Instructions:
-- Draft a reply in Diego's style.
+- Draft a reply in ${ownerName}'s style.
 - Keep it relevant to the conversation.
 - If the incoming message is short, keep the reply short.
 - Return ONLY the drafted reply text. No quotes.

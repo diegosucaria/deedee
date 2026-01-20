@@ -1,13 +1,24 @@
 'use client';
 
 import { useState, useEffect } from 'react';
+import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { getAutopilotDrafts, approveDraft, rejectDraft, editDraft, getAutopilotSettings, updateAutopilotStatus, getStyleProfile, saveStyleProfile, analyzeStyle, getContactStyle, saveContactStyle, analyzeContactStyle } from '../actions';
 import { Loader2, Check, X, Edit2, Save, User, Settings, MessageSquare, ShieldAlert, Sparkles, Brain, Search } from 'lucide-react';
 import clsx from 'clsx';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
 
 export default function AutopilotPage() {
-    const [activeTab, setActiveTab] = useState('drafts'); // drafts | settings | style
+    const router = useRouter();
+    const pathname = usePathname();
+    const searchParams = useSearchParams();
+
+    // Default to 'drafts' if no param
+    const activeTab = searchParams.get('tab') || 'drafts';
+
+    const setActiveTab = (tab) => {
+        router.push(`${pathname}?tab=${tab}`);
+    };
+
     const [drafts, setDrafts] = useState([]);
     const [settings, setSettings] = useState([]);
     const [loading, setLoading] = useState(true);

@@ -94,6 +94,14 @@ module.exports = (agent) => {
 
             const targetPath = await agent.vaults.addToVault(id, file.path, file.originalname);
 
+            // Trigger RAG Ingestion asynchronously
+            if (agent.ragService) {
+                // We don't await this to keep response fast, but log errors
+                agent.ragService.ingestDocument(targetPath, id)
+                    .then(() => console.log(`[Vaults] Auto-ingested ${file.originalname} into RAG (Vault: ${id})`))
+                    .catch(e => console.error(`[Vaults] Failed to auto-ingest ${file.originalname}:`, e.message));
+            }
+
             // Clean up temp file (addToVault usually copies, so we delete source)
             fs.unlink(file.path, (err) => { if (err) console.error("Failed to delete temp upload:", err); });
 

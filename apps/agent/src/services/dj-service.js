@@ -247,16 +247,30 @@ class DJService {
         const proModelName = process.env.WORKER_PRO || 'gemini-1.5-pro-latest';
         const model = this.agent.client.getGenerativeModel({ model: proModelName });
 
-        // Context from Vault?
-        // TODO: Implement actual RAG lookup. For V1, we rely on General Knowledge.
+        // Context from RAG
+        let learnedContext = "";
+        if (this.agent.ragService) {
+            try {
+                // Search for mixing advice, history, or context related to the current track or venue
+                const query = `mixing advice ${currentTrack} ${metadata.venue || ''} ${metadata.party || ''}`;
+                const results = await this.agent.ragService.search(query, null, 5);
+                if (results.length > 0) {
+                    learnedContext = "Relevant Knowledge from History:\n" + results.map(r => `- ${r.content} (Source: ${r.filename})`).join('\n');
+                }
+            } catch (e) {
+                console.warn('[DJService] RAG Search failed:', e.message);
+            }
+        }
 
         const prompt = `
         You are an expert Digital DJ.
         Current Track: "${currentTrack}"
         Context: ${JSON.stringify(metadata)}
         
+        ${learnedContext}
+        
         Suggest 3 mixing paths (Smooth, Lift, Pivot).
-        You can recommend ANY track in the world, but prioritize tracks that fit the context.
+        You can recommend ANY track in the world, but prioritize tracks that fit the context and learned knowledge.
       `;
 
         const result = await model.generateContent(prompt);

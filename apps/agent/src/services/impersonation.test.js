@@ -8,6 +8,8 @@ const Database = require('better-sqlite3');
 const mockAgent = {
     db: {
         db: null, // Set in beforeEach
+        getPerson: jest.fn().mockReturnValue(null), // Mock for getContactStyle
+        updatePerson: jest.fn(), // Mock for saveContactStyle
     },
     client: {
         models: {
