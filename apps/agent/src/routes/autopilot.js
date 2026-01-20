@@ -69,38 +69,7 @@ function createAutopilotRouter(agent) {
                 }
             };
 
-            // Wait, does send() handle WhatsApp logic?
-            // Agent.processMessage usually handles incoming. Outgoing is sent by agent.interface.send().
-            // But we need to ensure the `source` is correct (e.g. 'whatsapp').
-            // We don't have 'source' in draft table explicitly, but we have chat_id.
-            // Actually, we usually echo the source of the incoming message.
-            // We can infer source from chat_id or contact?
-            // If chat_id is phone number (WhatsApp), source is 'whatsapp'.
-
-            // Ideally, we should use `agent.interface.send`.
-            // Let's assume 'whatsapp' for now if chat_id looks like one, or try to lookup session.
-            // BUT: Agent.js `_generateStream` or similar?
-
-            // Let's use `agent.interface.send(reply)`.
-            // But we need to set `reply.source`.
-            // Let's assume the frontend provides it or we default to 'whatsapp' if phone-like.
-
-            // Let's fetch session metadata if possible.
-            const session = agent.db.db.prepare('SELECT * FROM chat_sessions WHERE id = ?').get(draft.chat_id);
-            if (session) {
-                // Determine source? usually stored in session metadata? 
-                // Or just try sending. Interface usually handles it.
-                // For WhatsApp, we need to send to the right number.
-            }
-
-            // Simplest way: The "Agent" usually replies to a "message". 
-            // Here we are initiating.
-            // Let's try to just send.
-
-            // If we use `sendMessage` tool logic, it handles routing.
-            // agent.interface.send expects { content, metadata: { chatId } }.
-            // The http-interface or whatsapp-interface should handle routing based on chatId.
-
+            // Send the message using the Agent's interface
             await agent.interface.send(reply);
 
             // Update Status

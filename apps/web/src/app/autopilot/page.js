@@ -433,9 +433,15 @@ function AutopilotPage() {
                                     >
                                         <option value="global">GLOBAL (Baseline)</option>
                                         <optgroup label="Contacts">
-                                            {settings.map(p => (
+                                            {[...settings].sort((a, b) => {
+                                                // Priority: Has Style
+                                                if (a.has_style && !b.has_style) return -1;
+                                                if (!a.has_style && b.has_style) return 1;
+                                                // Name Sort
+                                                return (a.name || '').localeCompare(b.name || '');
+                                            }).map(p => (
                                                 <option key={p.id} value={p.id}>
-                                                    {p.name}{p.has_style ? ' ★' : ''}
+                                                    {p.has_style ? '★ ' : ''}{p.name}
                                                 </option>
                                             ))}
                                         </optgroup>
