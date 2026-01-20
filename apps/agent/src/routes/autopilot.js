@@ -46,10 +46,21 @@ function createAutopilotRouter(agent) {
             // We use agent.interface.send() or agent.sendMessage tool logic?
             // Better to use `agent.interface.send()` directly if we know the structure.
 
+            // Resolve Source
+            let source = 'whatsapp'; // Default
+            const person = agent.db.db.prepare('SELECT source FROM people WHERE id = ? OR phone = ?').get(draft.contact_id, draft.contact_id);
+            if (person && person.source) {
+                source = person.source;
+            } else if (draft.chat_id.includes('@')) {
+                // Fallback inference
+                if (draft.chat_id.endsWith('@s.whatsapp.net') || draft.chat_id.endsWith('@g.us')) source = 'whatsapp';
+            }
+
             // Construct message object
             const reply = {
                 role: 'assistant',
                 content: draft.content,
+                source: source,
                 metadata: { chatId: draft.chat_id }
             };
 
