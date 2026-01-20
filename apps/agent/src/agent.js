@@ -1318,14 +1318,9 @@ IF you are asked to draft a message for the user, or if you are replying via the
           // FIX: Pass parts directly
           const payload = functionResponseParts;
 
-          // EMERGENCY ROLLBACK: Disable streaming completely.
-          // FIX: Wrap payload in { message: ... } as required by SDK
-          const result = await session.sendMessage({ message: payload });
-
-          let resp = result.response;
-          if (!resp && result.candidates) resp = result;
-
-          response = resp;
+          // ENABLE STREAMING for Tool Responses
+          // This allows "Thinking..." or large function arguments (JSON) to be visible to the user
+          response = await this._generateStream(session, payload, chatId, message.source);
 
         } catch (e) {
           console.error('[Agent] Tool response failed:', e);

@@ -258,6 +258,7 @@ class WhatsAppService {
         this.status = 'disconnected';
         this.reconnectAttempts = 0;
         this.store = null;
+        this.reconnectTimeout = null;
 
         const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
         this.authFolder = path.join(dataDir, `baileys_auth_${sessionId}`);
@@ -387,7 +388,8 @@ class WhatsAppService {
                             console.error(`${this.logPrefix} Too many 515 errors. Corruption likely. Wiping session.`);
                             await this.disconnect(true); // Explicit wipe
                             // Restart to generate NEW QR
-                            setTimeout(() => this.start(), 1000);
+                            if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+                            this.reconnectTimeout = setTimeout(() => this.start(), 1000);
                             return;
                         }
                     }
@@ -406,7 +408,8 @@ class WhatsAppService {
                     if (shouldReconnect) {
                         console.log(`${this.logPrefix} Reconnecting in 5s...`);
                         // Backoff
-                        setTimeout(() => this.connect(), 5000);
+                        if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+                        this.reconnectTimeout = setTimeout(() => this.connect(), 5000);
                     } else {
                         console.log(`${this.logPrefix} Logged out by Server. Clearing session.`);
                         await this.disconnect(true); // Wipe if server says logged out
@@ -653,6 +656,10 @@ class WhatsAppService {
             // CRITICAL: Always reset status to allow reconnect
             this.status = 'disconnected';
             this.qr = null;
+            if (this.reconnectTimeout) {
+                clearTimeout(this.reconnectTimeout);
+                this.reconnectTimeout = null;
+            }
         }
     }
 
