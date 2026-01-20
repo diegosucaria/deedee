@@ -382,10 +382,10 @@ function AutopilotPage() {
                                                     <div className="flex items-center gap-3">
                                                         <button
                                                             onClick={() => handlePin(person.id, person.is_pinned)}
-                                                            className={clsx("p-1.5 rounded-full transition-colors", person.is_pinned ? "bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500/20" : "text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800")}
+                                                            className={clsx("p-2.5 rounded-full transition-colors", person.is_pinned ? "bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500/20" : "text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800")}
                                                             title={person.is_pinned ? "Unpin Contact" : "Pin to Top"}
                                                         >
-                                                            <Pin className={clsx("w-4 h-4", person.is_pinned && "fill-current")} />
+                                                            <Pin className={clsx("w-5 h-5", person.is_pinned && "fill-current")} />
                                                         </button>
                                                         <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400">
                                                             <User className="w-5 h-5" />

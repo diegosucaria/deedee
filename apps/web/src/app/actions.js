@@ -985,7 +985,7 @@ export async function getAutopilotSettings() {
 
 export async function updateAutopilotStatus(contactId, status, duration = 0) {
     try {
-        await fetchAPI(`/v1/autopilot/settings/${contactId}`, {
+        await fetchAPI(`/v1/autopilot/settings/${encodeURIComponent(contactId)}`, {
             method: 'POST',
             body: JSON.stringify({ status, duration })
         });
@@ -998,7 +998,7 @@ export async function updateAutopilotStatus(contactId, status, duration = 0) {
 
 export async function toggleAutopilotPin(contactId, isPinned) {
     try {
-        await fetchAPI(`/v1/autopilot/settings/${contactId}/pin`, {
+        await fetchAPI(`/v1/autopilot/settings/${encodeURIComponent(contactId)}/pin`, {
             method: 'POST',
             body: JSON.stringify({ isPinned })
         });

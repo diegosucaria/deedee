@@ -34,7 +34,8 @@ router.put('/drafts/:id', (req, res) => proxyToAgent(req, res, 'PUT', `/drafts/$
 
 // Settings
 router.get('/settings', (req, res) => proxyToAgent(req, res, 'GET', '/settings', null));
-router.post('/settings/:id', (req, res) => proxyToAgent(req, res, 'POST', `/settings/${req.params.id}`, req.body));
+router.post('/settings/:id', (req, res) => proxyToAgent(req, res, 'POST', `/settings/${encodeURIComponent(req.params.id)}`, req.body));
+router.post('/settings/:id/pin', (req, res) => proxyToAgent(req, res, 'POST', `/settings/${encodeURIComponent(req.params.id)}/pin`, req.body));
 
 // Style
 router.get('/style', (req, res) => proxyToAgent(req, res, 'GET', '/style', null));
