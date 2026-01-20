@@ -397,7 +397,7 @@ Output a concise list of rules for this specific relationship.
             source: buffer.source
         };
 
-        const draft = await this.generateDraft(chatId, combinedMessage, contactName, fullContent);
+        const draft = await this.generateDraft(chatId, combinedMessage, contactName, fullContent, contactString);
 
         if (draft) {
             const saved = this.saveDraft(chatId, contactString, draft, fullContent);
@@ -424,19 +424,30 @@ Output a concise list of rules for this specific relationship.
         }
     }
 
-    async generateDraft(chatId, incomingMessage, contactName, contextContent = '') {
+    async generateDraft(chatId, incomingMessage, contactName, contextContent = '', contactIdentifier = null) {
         console.log(`[Impersonation] Generating draft for chat ${chatId} from ${contactName}`);
 
         // 1. Fetch Context: Full conversation history (both sides)
         let history = [];
+        let historyJid = chatId;
+
+        // LID Resolution for History
+        if (chatId.includes('@lid') && contactIdentifier) {
+            // Clean identifier (phone)
+            const phone = contactIdentifier.replace(/[^0-9]/g, '');
+            if (phone.length > 5) {
+                historyJid = `${phone}@s.whatsapp.net`;
+                console.log(`[Impersonation] Resolved LID ${chatId} to ${historyJid} for history fetch.`);
+            }
+        }
 
         // Strategy: Use WhatsApp Source of Truth if available (for full Context including manual replies)
-        if (chatId.includes('@s.whatsapp.net') || chatId.includes('@g.us')) {
+        if (historyJid.includes('@s.whatsapp.net') || historyJid.includes('@g.us')) {
             try {
                 const interfacesUrl = process.env.INTERFACES_URL || 'http://interfaces:5000';
-                console.log(`[Impersonation] Fetching remote history for ${chatId}...`);
+                console.log(`[Impersonation] Fetching remote history for ${historyJid}...`);
                 const res = await axios.get(`${interfacesUrl}/whatsapp/history`, {
-                    params: { jid: chatId, limit: 20, session: 'user' }, // session='user' (the Owner's session)
+                    params: { jid: historyJid, limit: 20, session: 'user' }, // session='user' (the Owner's session)
                     headers: { Authorization: `Bearer ${process.env.DEEDEE_API_TOKEN}` },
                     timeout: 2000 // Fast timeout
                 });
@@ -501,7 +512,7 @@ ${transcript}
 
         // 4. Call LLM
         try {
-            console.log('Prompt:', prompt); //temp delete this
+            console.log('Prompt:', { prompt: prompt });
             const result = await this.agent.client.models.generateContent({
                 model: process.env.WORKER_FLASH || 'gemini-2.0-flash-exp',
                 contents: [{ role: 'user', parts: [{ text: prompt }] }]

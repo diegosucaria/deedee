@@ -76,6 +76,26 @@ describe('Impersonation Service Unit', () => {
         );
     });
 
+    test('should resolve LID to Phone JID for history fetch', async () => {
+        const lidChatId = '1234567890@lid';
+        const contactIdentifier = '5491122334455';
+        const expectedHistoryJid = '5491122334455@s.whatsapp.net';
+
+        // Mock Remote History
+        axios.get.mockResolvedValue({ data: [] });
+
+        mockAgent.client.models.generateContent.mockResolvedValue({
+            response: { candidates: [{ content: { parts: [{ text: 'Draft' }] } }] }
+        });
+
+        await service.generateDraft(lidChatId, { content: 'Hi' }, 'User', '', contactIdentifier);
+
+        // Verify Axios Call uses resolved JID
+        expect(axios.get).toHaveBeenCalledWith(expect.stringContaining('/whatsapp/history'), expect.objectContaining({
+            params: expect.objectContaining({ jid: expectedHistoryJid })
+        }));
+    });
+
     test('should fetch history from remote for WhatsApp JID', async () => {
         const chatId = '1234567890@s.whatsapp.net';
         mockDb.getPerson.mockReturnValue({ name: 'Papi', id: 'uuid' });
