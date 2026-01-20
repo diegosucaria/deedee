@@ -415,21 +415,29 @@ Output a concise list of rules for this specific relationship.
     async generateDraft(chatId, incomingMessage, contactName, contextContent = '') {
         console.log(`[Impersonation] Generating draft for chat ${chatId} from ${contactName}`);
 
-        // 1. Fetch Context: User's recent messages in this chat
+        // 1. Fetch Context: Full conversation history (both sides)
         const history = this.db.db.prepare(`
-            SELECT content FROM messages 
-            WHERE chat_id = ? AND role = 'user' AND content IS NOT NULL AND content != ''
+            SELECT role, content FROM messages 
+            WHERE chat_id = ? AND content IS NOT NULL AND content != ''
             ORDER BY timestamp DESC LIMIT 20
         `).all(chatId).reverse();
 
-        const examples = history.map(m => `- ${m.content}`).join('\n');
+        // Format as transcript: "Name: Content"
+        // In our mirroring logic: 
+        // role='assistant' -> The Agent (acting as Owner/Me)
+        // role='user' -> The Contact (Them)
+        const ownerName = this.getOwnerName();
+
+        const transcript = history.map(m => {
+            const sender = m.role === 'assistant' ? ownerName : contactName;
+            return `${sender}: ${m.content}`;
+        }).join('\n');
 
         // 2. Fetch Styles
         const globalStyle = this.getStyleProfile();
         const contactStyle = this.getContactStyle(chatId);
 
         // 3. Build Prompt
-        const ownerName = this.getOwnerName();
         const prompt = `
 You are an AI acting as the user "${ownerName}". Your goal is to draft a reply to the incoming message(s) that sounds EXACTLY like ${ownerName}.
 Do not sound like a helpful AI. Sound like a human. 
@@ -438,8 +446,8 @@ ${globalStyle ? `### GLOBAL STYLE GUIDE (Baseline):\n${globalStyle}\n` : ''}
 
 ${contactStyle ? `### CONTACT-SPECIFIC STYLE (Override/Nuance for this person):\n${contactStyle}\n` : ''}
 
-### Context (${ownerName}'s Past Messages in this chat):
-${examples}
+### Conversation History (Context):
+${transcript}
 
 ### Incoming Message(s) from ${contactName}:
 "${incomingMessage.content}"

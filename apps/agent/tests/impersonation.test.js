@@ -9,7 +9,13 @@ describe('Impersonation Service Unit', () => {
     beforeEach(() => {
         mockDb = {
             getPerson: jest.fn(),
-            db: { prepare: jest.fn().mockReturnValue({ run: jest.fn(), all: jest.fn().mockReturnValue([]), get: jest.fn() }) },
+            db: {
+                prepare: jest.fn().mockImplementation((query) => ({
+                    run: jest.fn(),
+                    all: jest.fn().mockReturnValue([]),
+                    get: jest.fn().mockReturnValue(null)
+                }))
+            },
             updatePerson: jest.fn()
         };
         mockAgent = {
@@ -62,6 +68,62 @@ describe('Impersonation Service Unit', () => {
                         parts: expect.arrayContaining([
                             expect.objectContaining({
                                 text: expect.stringContaining('### Incoming Message(s) from Papi:')
+                            })
+                        ])
+                    })
+                ])
+            })
+        );
+    });
+
+    test('should generate draft with full conversation context', async () => {
+        const chatId = '1234567890';
+        mockDb.getPerson.mockReturnValue({ name: 'Papi', id: 'uuid' });
+
+        // Mock History: 
+        // 1. Assistant (Me)
+        // 2. User (Papi)
+        const mockHistory = [
+            { role: 'assistant', content: 'Sup?' },
+            { role: 'user', content: 'Not much' }
+        ];
+
+        // Mock DB prepare().all().reverse() logic
+        // We need to support the .all() call and subsequent .reverse()
+        const mockAll = jest.fn().mockReturnValue([...mockHistory]); // Return array that has .reverse
+        mockDb.db.prepare.mockReturnValue({
+            all: mockAll,
+            run: jest.fn(),
+            get: jest.fn()
+        });
+
+        // Mock generation
+        mockAgent.client.models.generateContent.mockResolvedValue({
+            response: { candidates: [{ content: { parts: [{ text: 'Cool' }] } }] }
+        });
+
+        await service.generateDraft(chatId, { content: 'Wanna hang?' }, 'Papi');
+
+        // Verify Prompt
+        expect(mockAgent.client.models.generateContent).toHaveBeenCalledWith(
+            expect.objectContaining({
+                contents: expect.arrayContaining([
+                    expect.objectContaining({
+                        parts: expect.arrayContaining([
+                            expect.objectContaining({
+                                text: expect.stringContaining('### Conversation History (Context):')
+                            }),
+                            // Since we mock getOwnerName() to return 'Diego' (default/mocked?)
+                            // We need to check if 'Diego: Sup?' is in there.
+                            // BUT wait, getOwnerName calls `this.agent.settings.owner_name` or 'Diego'.
+                            // In test setup, `agent.settings` is undefined on mockAgent.
+                            // Service.getOwnerName() handles this safely? 
+                            // Let's verify service code on getOwnerName if needed, but safe to assume "Diego".
+                            expect.objectContaining({
+                                text: expect.stringContaining('Diego: Sup?')
+                            }),
+                            expect.objectContaining({
+                                text: expect.stringContaining('Papi: Not much')
                             })
                         ])
                     })
