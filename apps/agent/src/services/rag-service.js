@@ -212,12 +212,29 @@ class RagService {
         // Use text-embedding-004
         const modelName = 'text-embedding-004';
         try {
-            // Get model instance from client
-            const model = this.agent.client.getGenerativeModel({ model: modelName });
+            // New SDK @google/genai uses client.models.embedContent
+            // Note: signature is (config: { model, content })
+            // content expects { parts: [{ text }] } or just plain string/array if helper used, but we stick to robust object
+            const result = await this.agent.client.models.embedContent({
+                model: modelName,
+                contents: [
+                    {
+                        parts: [
+                            { text: text }
+                        ]
+                    }
+                ]
+            });
 
-            // Call embedContent on the model
-            const result = await model.embedContent(text);
-            return result.embedding.values;
+            // Result structure for @google/genai: result.embeddings[0].values
+            if (result.embeddings && result.embeddings.length > 0) {
+                return result.embeddings[0].values;
+            }
+            // Fallback just in case
+            if (result.embedding) {
+                return result.embedding.values;
+            }
+            throw new Error('No embedding returned');
         } catch (error) {
             console.error('[RAG] Embedding error:', error.message);
             throw error;

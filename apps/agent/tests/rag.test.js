@@ -42,15 +42,13 @@ describe('RagService', () => {
     beforeEach(() => {
         jest.clearAllMocks();
 
-        mockModel = {
-            embedContent: jest.fn().mockResolvedValue({
-                embedding: { values: [0.1, 0.2, 0.3] }
-            })
-        };
-
         mockAgent = {
             client: {
-                getGenerativeModel: jest.fn().mockReturnValue(mockModel)
+                models: {
+                    embedContent: jest.fn().mockResolvedValue({
+                        embeddings: [{ values: [0.1, 0.2, 0.3] }]
+                    })
+                }
             }
         };
 
@@ -75,8 +73,7 @@ describe('RagService', () => {
 
         await ragService.ingestDocument(filePath, vaultId);
 
-        expect(mockAgent.client.getGenerativeModel).toHaveBeenCalled();
-        expect(mockModel.embedContent).toHaveBeenCalled();
+        expect(mockAgent.client.models.embedContent).toHaveBeenCalled();
         expect(mockPrepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO documents'));
         // Verify vault_id is passed
         expect(mockRun).toHaveBeenCalledWith(filePath, 'test.txt', expect.any(String), vaultId, expect.any(String));
