@@ -1321,6 +1321,12 @@ IF you are asked to draft a message for the user, or if you are replying via the
             apiResponse = { result: dbToolResult };
           }
 
+          // FIX: Ensure response is not empty to avoid SDK errors (ContentUnion is required)
+          if (apiResponse && typeof apiResponse === 'object' && Object.keys(apiResponse).length === 0) {
+            console.warn(`[Agent] Tool ${call.name} returned empty object. Injecting fallback.`);
+            apiResponse = { info: "Tool executed successfully but returned no output." };
+          }
+
           functionResponseParts.push({
             functionResponse: {
               name: call.name,
