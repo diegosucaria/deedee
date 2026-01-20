@@ -47,21 +47,26 @@ function createAutopilotRouter(agent) {
             // Better to use `agent.interface.send()` directly if we know the structure.
 
             // Resolve Source
-            let source = 'whatsapp'; // Default
-            const person = agent.db.db.prepare('SELECT source FROM people WHERE id = ? OR phone = ?').get(draft.contact_id, draft.contact_id);
-            if (person && person.source) {
-                source = person.source;
-            } else if (draft.chat_id.includes('@')) {
-                // Fallback inference
-                if (draft.chat_id.endsWith('@s.whatsapp.net') || draft.chat_id.endsWith('@g.us')) source = 'whatsapp';
+            // Per user request: "messages should be send 'from me'"
+            // So we FORCE the 'user' session if the target is WhatsApp.
+            let source = 'whatsapp:user';
+
+            // Check if it's actually WhatsApp first
+            const isWhatsApp = draft.chat_id.endsWith('@s.whatsapp.net') || draft.chat_id.endsWith('@g.us');
+            if (!isWhatsApp) {
+                // Fallback if we support other platforms later
+                source = 'web';
             }
 
             // Construct message object
             const reply = {
-                role: 'assistant',
+                role: 'assistant', // This is still 'assistant' role internally (Agent acting), but delivered via User Session
                 content: draft.content,
-                source: source,
-                metadata: { chatId: draft.chat_id }
+                source: source, // 'whatsapp:user' signals server.js to use that sock
+                metadata: {
+                    chatId: draft.chat_id,
+                    session: 'user' // Explicitly target user session
+                }
             };
 
             // Wait, does send() handle WhatsApp logic?
