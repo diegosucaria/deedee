@@ -1,4 +1,5 @@
 const express = require('express');
+const axios = require('axios');
 
 function createAutopilotRouter(agent) {
     const router = express.Router();
@@ -122,39 +123,75 @@ function createAutopilotRouter(agent) {
     // --- SETTINGS ---
 
     // GET /settings
-    router.get('/settings', (req, res) => {
+    // GET /settings (List all people + status, sorted by Style > Recency)
+    router.get('/settings', async (req, res) => {
         try {
+            // 1. Get People from Agent DB
+            // Preserve existing filters (sys_, sch_)
             const people = agent.db.db.prepare(`
-                SELECT id, name, phone, autopilot_status, autopilot_expires_at, source, metadata,
-                (SELECT MAX(timestamp) FROM messages WHERE chat_id = people.phone OR chat_id = people.id) as last_message_at
+                SELECT id, name, phone, autopilot_status, autopilot_expires_at, source, metadata 
                 FROM people 
                 WHERE (name IS NULL OR (name NOT LIKE 'sys_%' AND name NOT LIKE 'sch_%'))
             `).all();
 
-            // Enrich and Sort (Style Profile Priority)
+            // 2. Fetch Recent Chats from Interfaces (Source of Truth for Recency)
+            // Local Agent DB history is sparse/incomplete for incoming messages
+            let recentMap = {};
+            try {
+                const interfacesUrl = process.env.INTERFACES_URL || 'http://localhost:5000';
+                const headers = { 'Authorization': `Bearer ${process.env.DEEDEE_API_TOKEN}` };
+                // Fetch ample history to cover most contacts
+                const recents = await axios.get(`${interfacesUrl}/whatsapp/recent?limit=200`, { headers });
+
+                if (recents.data && Array.isArray(recents.data)) {
+                    recents.data.forEach(chat => {
+                        if (chat.remote_jid && chat.lastTimestamp) {
+                            recentMap[chat.remote_jid] = chat.lastTimestamp;
+                        }
+                    });
+                }
+            } catch (err) {
+                console.warn('[Autopilot] Failed to fetch recent chats from Interfaces for sorting:', err.message);
+            }
+
+            // 3. Enrich & Calculate Properties
             const enriched = people.map(p => {
                 let has_style = false;
                 try {
                     const meta = JSON.parse(p.metadata || '{}');
-                    // Check if style profile exists and is not trivial
                     if (meta.style_profile && meta.style_profile.length > 10) has_style = true;
                 } catch (e) { }
-                return { ...p, has_style };
+
+                // Resolve Timestamp
+                let ts = 0;
+                if (p.phone) {
+                    const phone = p.phone.replace(/\D/g, '');
+                    const jid = `${phone}@s.whatsapp.net`;
+                    if (recentMap[jid]) {
+                        ts = recentMap[jid];
+                    }
+                }
+
+                return {
+                    ...p,
+                    has_style: has_style,
+                    last_message_at: ts * 1000 // Convert Seconds to MS
+                };
             });
 
+            // 4. Sort: Style First, Then Recency
             enriched.sort((a, b) => {
                 // Priority 1: Has Style Learned
                 if (a.has_style && !b.has_style) return -1;
                 if (!a.has_style && b.has_style) return 1;
 
-                // Priority 2: Recency
-                const tsA = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
-                const tsB = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
-                return tsB - tsA;
+                // Priority 2: Recency (Newest First)
+                return b.last_message_at - a.last_message_at;
             });
 
             res.json(enriched);
         } catch (e) {
+            console.error('[Autopilot] Settings error:', e);
             res.status(500).json({ error: e.message });
         }
     });
