@@ -422,6 +422,9 @@ Output a concise list of rules for this specific relationship.
             ORDER BY timestamp DESC LIMIT 20
         `).all(chatId).reverse();
 
+        console.log(`[Impersonation] Transcript Gen: ChatID=${chatId}, HistoryLen=${history.length}`);
+        if (history.length > 0) console.log('[Impersonation] Sample:', history[0]);
+
         // Format as transcript: "Name: Content"
         // In our mirroring logic: 
         // role='assistant' -> The Agent (acting as Owner/Me)
@@ -463,6 +466,7 @@ ${transcript}
 
         // 4. Call LLM
         try {
+            console.log('Prompt:', prompt); //temp delete this
             const result = await this.agent.client.models.generateContent({
                 model: process.env.WORKER_FLASH || 'gemini-2.0-flash-exp',
                 contents: [{ role: 'user', parts: [{ text: prompt }] }]
