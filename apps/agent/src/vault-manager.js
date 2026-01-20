@@ -50,7 +50,7 @@ class VaultManager {
             // Ignore if files dir doesn't exist
         }
 
-        return { fileCount, lastModified };
+        return { filesCount: fileCount, lastModified };
     }
 
     async createVault(topic) {

@@ -29,6 +29,9 @@ describe('VaultManager', () => {
         const ids = vaults.map(v => v.id);
         expect(ids).toContain('health');
         expect(ids).toContain('finance');
+        // Verify stats property
+        expect(vaults[0]).toHaveProperty('filesCount');
+        expect(typeof vaults[0].filesCount).toBe('number');
     });
 
     test('should create a new vault', async () => {

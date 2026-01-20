@@ -22,9 +22,13 @@ export default function VaultChat({ vaultId, isOpen, onClose }) {
         if (!isOpen) return;
 
         // Connect Socket
-        const socket = io({
-            path: '/socket.io',
-            transports: ['polling'],
+        // Use logic similar to useSocket to target the Interfaces service
+        const url = typeof window !== 'undefined'
+            ? `${window.location.protocol}//${window.location.hostname}:5000`
+            : 'http://localhost:5000';
+
+        const socket = io(url, {
+            transports: ['websocket', 'polling'], // Prefer websocket
             query: { chatId } // optional, identifying as vault chat
         });
 
