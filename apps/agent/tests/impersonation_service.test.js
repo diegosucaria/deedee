@@ -71,11 +71,11 @@ describe('ImpersonationService', () => {
         // Mock Axios response
         axios.get.mockResolvedValue({
             data: [
-                { role: 'user', content: 'Hi there' },
-                { role: 'user', content: 'How are you?' },
-                { role: 'user', content: 'Long time no see' },
-                { role: 'user', content: 'Lets hang out' },
-                { role: 'user', content: 'See ya' }
+                { role: 'assistant', content: 'Hi there' },
+                { role: 'assistant', content: 'How are you?' },
+                { role: 'assistant', content: 'Long time no see' },
+                { role: 'assistant', content: 'Lets hang out' },
+                { role: 'assistant', content: 'See ya' }
             ]
         });
 
