@@ -379,7 +379,10 @@ Output a concise list of rules for this specific relationship.
 
             // NOTIFY FRONTEND via Socket (Broadcast)
             if (this.agent && this.agent.interface) {
+                console.log(`[Impersonation] Broadcasting 'autopilot:update' for ${contactString}...`);
                 this.agent.interface.broadcast('autopilot:update', { type: 'draft_created', chatId });
+            } else {
+                console.warn('[Impersonation] Agent interface not available, cannot broadcast update.');
             }
         }
     }

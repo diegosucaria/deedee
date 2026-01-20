@@ -190,12 +190,35 @@ function AutopilotPage() {
     return (
         <div className="flex flex-col h-screen bg-zinc-950 text-white p-6 overflow-hidden">
             <header className="flex items-center justify-between mb-8">
-                <div>
-                    <h1 className="text-2xl font-bold flex items-center gap-2">
-                        <ShieldAlert className="w-8 h-8 text-blue-500" />
-                        Autopilot Control
-                    </h1>
-                    <p className="text-zinc-400">Assisted conversation management</p>
+                <div className="flex items-center gap-4">
+                    <div>
+                        <h1 className="text-2xl font-bold flex items-center gap-2">
+                            <ShieldAlert className="w-8 h-8 text-blue-500" />
+                            Autopilot Control
+                        </h1>
+                        <div className="flex items-center gap-3 mt-1">
+                            <p className="text-zinc-400">Assisted conversation management</p>
+
+                            {/* Socket Status */}
+                            {socket && (
+                                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-zinc-900 border border-zinc-800" title={socket.connected ? "Real-time updates active" : "Disconnected"}>
+                                    <div className={clsx("w-1.5 h-1.5 rounded-full transition-colors", socket.connected ? "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.4)]" : "bg-red-500")} />
+                                    <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">
+                                        {socket.connected ? 'Live' : 'Offline'}
+                                    </span>
+                                </div>
+                            )}
+
+                            <button
+                                onClick={() => loadData(false)}
+                                disabled={loading}
+                                className="p-1 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded transition-colors disabled:opacity-50"
+                                title="Refresh Data"
+                            >
+                                <RefreshCw className={clsx("w-4 h-4", loading && "animate-spin")} />
+                            </button>
+                        </div>
+                    </div>
                 </div>
 
                 <div className="flex bg-zinc-900 p-1 rounded-lg">
