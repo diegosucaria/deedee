@@ -45,15 +45,20 @@ describe('RagService', () => {
         mockAgent = {
             client: {
                 models: {
-                    embedContent: jest.fn().mockResolvedValue({
-                        embeddings: [{ values: [0.1, 0.2, 0.3] }]
+                    embedContent: jest.fn().mockImplementation((opts) => {
+                        // Mock return structure
+                        return Promise.resolve({
+                            embeddings: [{ values: [0.1, 0.2, 0.3] }]
+                        });
                     })
                 }
             }
         };
 
         // Initialize Service
+        // Mock ConfigService to return test-embedding-004
         ragService = new RagService(mockAgent);
+        ragService.config = { getModel: jest.fn().mockReturnValue('text-embedding-004') };
     });
 
     test('should initialize database', () => {
@@ -73,7 +78,10 @@ describe('RagService', () => {
 
         await ragService.ingestDocument(filePath, vaultId);
 
-        expect(mockAgent.client.models.embedContent).toHaveBeenCalled();
+        expect(mockAgent.client.models.embedContent).toHaveBeenCalledWith(expect.objectContaining({
+            model: 'text-embedding-004',
+            config: { taskType: 'RETRIEVAL_DOCUMENT' }
+        }));
         expect(mockPrepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO documents'));
         // Verify vault_id is passed
         expect(mockRun).toHaveBeenCalledWith(filePath, 'test.txt', expect.any(String), vaultId, expect.any(String));

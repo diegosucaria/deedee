@@ -8,6 +8,7 @@ const CONSTANTS = {
         ROUTER: process.env.ROUTER_MODEL || 'gemini-2.5-flash-lite',
         SEARCH: process.env.WORKER_GOOGLE_SEARCH || 'gemini-2.5-pro',
         LIVE: process.env.WORKER_LIVE || 'gemini-2.5-flash-native-audio-preview-12-2025',
+        EMBEDDING: process.env.GEMINI_EMBEDDING_MODEL || 'text-embedding-004',
     },
     PRICING: {
         'gemini-2.5-flash': { threshold: 128000, tier1: { input: 0.30, output: 0.60 }, tier2: { input: 1.0, output: 2.5 } },

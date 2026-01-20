@@ -102,7 +102,7 @@ class RagService {
             await Promise.all(batch.map(async (chunk, idx) => {
                 const globalIdx = i + idx;
                 try {
-                    const embedding = await this._getEmbedding(chunk);
+                    const embedding = await this._getEmbedding(chunk, 'RETRIEVAL_DOCUMENT');
                     // Store as Buffer (Float32Array)
                     const vectorApi = Buffer.from(new Float32Array(embedding).buffer);
 
@@ -171,7 +171,7 @@ class RagService {
 
     async search(query, vaultId = null, limit = 5) {
         console.log(`[RAG] Searching for: "${query}" (Vault: ${vaultId || 'Global'})`);
-        const queryEmbedding = await this._getEmbedding(query);
+        const queryEmbedding = await this._getEmbedding(query, 'RETRIEVAL_QUERY');
 
         // Fetch all chunks (Brute force for now)
         let sql = 'SELECT chunks.id, chunks.content, chunks.embedding, documents.filename, documents.vault_id FROM chunks JOIN documents ON chunks.document_id = documents.id';
@@ -208,13 +208,31 @@ class RagService {
         return chunks;
     }
 
-    async _getEmbedding(text) {
-        // Use text-embedding-004
-        const modelName = 'text-embedding-004';
+    async _getEmbedding(text, taskType = 'RETRIEVAL_DOCUMENT') {
+        // Use configured embedding model
+        const modelName = this.config.getModel('EMBEDDING');
         try {
             // New SDK @google/genai uses client.models.embedContent
-            // Note: signature is (config: { model, content })
-            // content expects { parts: [{ text }] } or just plain string/array if helper used, but we stick to robust object
+            // Note: signature is (config: { model, content, config: { taskType, title? } })
+            // Wait, for taskType it is often inside 'config' or top level depending on method.
+            // In @google/genai, it is:
+            // client.models.embedContent({
+            //   model: ...,
+            //   contents: ...,
+            //   config: { taskType: ... } 
+            // })
+            // Or properties directly. Checking docs logic. usually it is inside 'config' object or direct. 
+            // In REST: "taskType": "..."
+            // In SDK: usually top level options or config.
+            // Let's assume top level `config` object inside the params.
+            // Correct usage for @google/genai v0.2+:
+            // client.models.embedContent({
+            //   model: ...,
+            //   contents: ...,
+            //   config: { task_type: ... } // snake_case likely for API mapping
+            // })
+            // Actually recent SDKs map camelCase to snake_case.
+
             const result = await this.agent.client.models.embedContent({
                 model: modelName,
                 contents: [
@@ -223,7 +241,10 @@ class RagService {
                             { text: text }
                         ]
                     }
-                ]
+                ],
+                config: {
+                    taskType: taskType
+                }
             });
 
             // Result structure for @google/genai: result.embeddings[0].values
