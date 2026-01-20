@@ -33,7 +33,6 @@ class ImpersonationService {
     /**
      * Analyze global history to generate a style profile
      */
-
     async analyzeGlobalStyle() {
         console.log('[Impersonation] Analyzing global style...');
 
@@ -42,7 +41,9 @@ class ImpersonationService {
         try {
             // Internal URL for Interfaces Service
             const interfacesUrl = process.env.INTERFACES_URL || 'http://localhost:5000';
-            const res = await axios.get(`${interfacesUrl}/whatsapp/global-history?limit=500`);
+            const headers = { 'Authorization': `Bearer ${process.env.DEEDEE_API_TOKEN}` };
+
+            const res = await axios.get(`${interfacesUrl}/whatsapp/global-history?limit=500`, { headers });
             messages = res.data;
         } catch (e) {
             console.error('[Impersonation] Failed to fetch history from Interfaces:', e.message);
@@ -95,6 +96,7 @@ Do not be vague. Be prescriptive.
                 profile = result.response.candidates[0].content.parts[0].text.trim();
             } else if (result.candidates && result.candidates.length > 0) {
                 // Fallback for different response structure
+                // SDK might return candidates directly if not using EnhancedResponse
                 profile = result.candidates[0].content.parts[0].text.trim();
             } else {
                 throw new Error("No candidates in GenAI response");
@@ -104,6 +106,141 @@ Do not be vague. Be prescriptive.
             return profile;
         } catch (e) {
             console.error('[Impersonation] Analysis failed:', e);
+            throw e;
+        }
+    }
+
+    /**
+     * Get style profile for a specific contact
+     */
+    getContactStyle(contactIdOrPhone) {
+        // Try strict ID first, then phone match
+        let person = this.db.getPerson(contactIdOrPhone);
+        if (!person && contactIdOrPhone.includes('@')) {
+            // It's a JID, try to find by phone (remove suffix)
+            const phone = contactIdOrPhone.split('@')[0];
+            // Fuzzy verify? or just try getPerson again if getPerson handles phone numbers (it does)
+            person = this.db.getPerson(phone);
+        }
+
+        if (!person || !person.metadata) return null;
+        try {
+            const meta = JSON.parse(person.metadata);
+            // Check for specific override or fallback
+            return meta.style_profile || null;
+        } catch (e) {
+            return null;
+        }
+    }
+
+    /**
+     * Save style profile for a specific contact
+     */
+    saveContactStyle(contactIdOrPhone, profileText) {
+        let person = this.db.getPerson(contactIdOrPhone);
+
+        // If searching by JID failed, try stripped phone
+        if (!person && contactIdOrPhone.includes('@')) {
+            person = this.db.getPerson(contactIdOrPhone.split('@')[0]);
+        }
+
+        if (!person) throw new Error("Person not found");
+
+        let meta = {};
+        try { meta = JSON.parse(person.metadata || '{}'); } catch (e) { }
+
+        meta.style_profile = profileText;
+
+        this.db.updatePerson(person.id, { metadata: JSON.stringify(meta) });
+    }
+
+    /**
+     * Analyze style for a specific contact chat
+     */
+    async analyzeContactStyle(contactIdentifier) {
+        console.log(`[Impersonation] Analyzing style for contact ${contactIdentifier}...`);
+
+        // Resolve JID/Phone from Identifier (which could be UUID)
+        let chatId = contactIdentifier;
+        // Simple check if it's a UUID (no @, no spaces, length > 20)
+        if (!chatId.includes('@') && chatId.length > 20) {
+            const person = this.db.getPerson(contactIdentifier);
+            if (person && person.phone) {
+                chatId = person.phone;
+                // Ensure JID format if it looks like a clean number (digits only, length 10-15)
+                if (/^\d{10,15}$/.test(chatId)) {
+                    chatId = `${chatId}@s.whatsapp.net`;
+                }
+            }
+        }
+
+        let corpus = "";
+        try {
+            // Internal URL for Interfaces Service
+            const interfacesUrl = process.env.INTERFACES_URL || 'http://localhost:5000';
+            const headers = { 'Authorization': `Bearer ${process.env.DEEDEE_API_TOKEN}` };
+
+            const res = await axios.get(`${interfacesUrl}/whatsapp/history?jid=${encodeURIComponent(chatId)}&limit=100`, { headers });
+            const messages = res.data.filter(m => m.role === 'user'); // Sent by me
+
+            if (messages.length < 5) return "Not enough history with this contact.";
+            corpus = messages.map(m => m.content).join('\n');
+
+        } catch (e) {
+            console.warn(`[Impersonation] Failed to fetch contact history for ${chatId} from Interfaces, falling back to local DB`, e.message);
+            // Fallback: try searching by chatId or related people
+            // Use contactIdentifier which might be the actual UUID in the DB
+            const history = this.db.db.prepare(`
+                SELECT content FROM messages 
+                WHERE (chat_id = ? OR contact_id = ?) AND role = 'user' AND content IS NOT NULL AND content != ''
+                ORDER BY timestamp DESC LIMIT 50
+            `).all(chatId, contactIdentifier).reverse();
+            corpus = history.map(m => m.content).join('\n');
+        }
+
+        if (!corpus || corpus.length < 50) return "Not enough history.";
+
+        // 2. Prompt Gemini
+        const prompt = `
+You are an expert linguist. Analyze the following messages sent by "Diego" TO a specific contact.
+Create a "Relationship Style Profile". How does Diego talk to THIS person specifically?
+
+Focus on:
+- Level of formality/intimacy
+- Specific jargon or inside jokes (generalize patterns)
+- Sentence length and enthusiasm compared to normal
+- Language used (English/Spanish?)
+
+Sample:
+"""
+${corpus}
+"""
+
+Output a concise list of rules for this specific relationship.
+`;
+        try {
+            const result = await this.agent.client.models.generateContent({
+                model: process.env.WORKER_PRO || 'gemini-1.5-pro-exp',
+                contents: [{ role: 'user', parts: [{ text: prompt }] }]
+            });
+
+            let profile = "";
+            if (result.response && result.response.candidates && result.response.candidates.length > 0) {
+                profile = result.response.candidates[0].content.parts[0].text.trim();
+            } else if (result.candidates && result.candidates.length > 0) {
+                profile = result.candidates[0].content.parts[0].text.trim();
+            } else {
+                throw new Error("No candidates in GenAI response");
+            }
+
+            try {
+                this.saveContactStyle(contactIdentifier, profile);
+            } catch (saveErr) {
+                console.warn("Could not save contact style (contact might not exist in people DB yet):", saveErr.message);
+            }
+            return profile;
+        } catch (e) {
+            console.error('[Impersonation] Contact Analysis failed:', e);
             throw e;
         }
     }
@@ -120,15 +257,18 @@ Do not be vague. Be prescriptive.
 
         const examples = history.map(m => `- ${m.content}`).join('\n');
 
-        // 2. Fetch Global Style Profile
+        // 2. Fetch Styles
         const globalStyle = this.getStyleProfile();
+        const contactStyle = this.getContactStyle(chatId);
 
         // 3. Build Prompt
         const prompt = `
 You are an AI acting as the user "Diego". Your goal is to draft a reply to the incoming message that sounds EXACTLY like Diego.
 Do not sound like a helpful AI. Sound like a human. 
 
-${globalStyle ? `### GLOBAL STYLE GUIDE (Rules to Follow):\n${globalStyle}\n` : ''}
+${globalStyle ? `### GLOBAL STYLE GUIDE (Baseline):\n${globalStyle}\n` : ''}
+
+${contactStyle ? `### CONTACT-SPECIFIC STYLE (Override/Nuance for this person):\n${contactStyle}\n` : ''}
 
 ### Context (Diego's Past Messages in this chat):
 ${examples}
@@ -146,19 +286,27 @@ ${examples}
 
         // 4. Call LLM
         try {
-            // PRO is better for deep analysis and nuance extraction
-            const response = await this.agent.client.models.generateContent({
-                model: process.env.WORKER_FLASH || 'gemini-1.5-pro-exp',
+            const result = await this.agent.client.models.generateContent({
+                model: process.env.WORKER_FLASH || 'gemini-2.0-flash-exp',
                 contents: [{ role: 'user', parts: [{ text: prompt }] }]
             });
 
-            const draftText = response.response.candidates[0].content.parts[0].text.trim();
+            let draftText = "";
+            if (result.response && result.response.candidates && result.response.candidates.length > 0) {
+                draftText = result.response.candidates[0].content.parts[0].text.trim();
+            } else if (result.candidates && result.candidates.length > 0) {
+                draftText = result.candidates[0].content.parts[0].text.trim();
+            } else {
+                throw new Error("No candidates in GenAI response");
+            }
+
             return draftText;
         } catch (error) {
             console.error('[Impersonation] Generation failed:', error);
             return null;
         }
     }
+
     /**
      * Get Autopilot status for a contact (by ID or Phone)
      */
@@ -173,8 +321,6 @@ ${examples}
             person = this.db.db.prepare('SELECT autopilot_status FROM people WHERE phone = ? OR id = ?').get(contactIdentifier, contactIdentifier);
         }
 
-        // 3. Fallback: try fuzzier match if needed (not implemented yet)
-
         return person ? (person.autopilot_status || 'off') : 'off';
     }
 
@@ -183,8 +329,8 @@ ${examples}
      */
     saveDraft(chatId, contactId, content) {
         const stmt = this.db.db.prepare(`
-            INSERT INTO autopilot_drafts (chat_id, contact_id, content, status)
-            VALUES (?, ?, ?, 'pending')
+            INSERT INTO autopilot_drafts(chat_id, contact_id, content, status)
+            VALUES(?, ?, ?, 'pending')
         `);
         return stmt.run(chatId, contactId, content);
     }

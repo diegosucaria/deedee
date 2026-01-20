@@ -94,3 +94,6 @@
 - [x] **Mobile UX**: Optimized mobile layout for Chat and Live pages.
 - [x] **UI Persistence**: Settings and Brain tabs now persist state in URL parameters.
 - [x] **Multi-Model Support**: Integrated xAI Grok (Beta/Vision) with Model Selector in Chat and Settings.
+- [x] **Autopilot Enhancements**:
+    - [x] **Per-Contact Styles**: Analyze and override communication style for specific contacts (Boss vs Partner).
+    - [x] **Autopilot Control UI**: Web Interface to manage Drafts, Settings, and Style Profiles.

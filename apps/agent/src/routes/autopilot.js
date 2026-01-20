@@ -175,12 +175,56 @@ function createAutopilotRouter(agent) {
         }
     });
 
-    // POST /style/analyze (Trigger analysis)
+    // POST /style/analyze (Trigger global analysis)
     router.post('/style/analyze', async (req, res) => {
         try {
             const profile = await agent.impersonationService.analyzeGlobalStyle();
             res.json({ profile });
         } catch (e) {
+            console.error('Error analyzing global style:', e);
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // --- CONTACT STYLE ---
+
+    // GET /style/:contactId
+    router.get('/style/:contactId', (req, res) => {
+        try {
+            const { contactId } = req.params;
+            // Decode potential JID
+            const id = decodeURIComponent(contactId);
+            const profile = agent.impersonationService.getContactStyle(id);
+            res.json({ profile });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // POST /style/:contactId
+    router.post('/style/:contactId', (req, res) => {
+        try {
+            const { contactId } = req.params;
+            const { profile } = req.body;
+            const id = decodeURIComponent(contactId);
+
+            agent.impersonationService.saveContactStyle(id, profile);
+            res.json({ success: true });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // POST /style/:contactId/analyze
+    router.post('/style/:contactId/analyze', async (req, res) => {
+        try {
+            const { contactId } = req.params;
+            const id = decodeURIComponent(contactId);
+
+            const profile = await agent.impersonationService.analyzeContactStyle(id);
+            res.json({ profile });
+        } catch (e) {
+            console.error('Error analyzing contact style:', e);
             res.status(500).json({ error: e.message });
         }
     });

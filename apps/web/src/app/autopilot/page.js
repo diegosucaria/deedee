@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getAutopilotDrafts, approveDraft, rejectDraft, editDraft, getAutopilotSettings, updateAutopilotStatus, getStyleProfile, saveStyleProfile, analyzeStyle } from '../actions';
+import { getAutopilotDrafts, approveDraft, rejectDraft, editDraft, getAutopilotSettings, updateAutopilotStatus, getStyleProfile, saveStyleProfile, analyzeStyle, getContactStyle, saveContactStyle, analyzeContactStyle } from '../actions';
 import { Loader2, Check, X, Edit2, Save, User, Settings, MessageSquare, ShieldAlert, Sparkles, Brain, Search } from 'lucide-react';
 import clsx from 'clsx';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
@@ -18,6 +18,7 @@ export default function AutopilotPage() {
     // Style State
     const [styleProfile, setStyleProfile] = useState('');
     const [isAnalyzing, setIsAnalyzing] = useState(false);
+    const [selectedContactStyleId, setSelectedContactStyleId] = useState('global'); // 'global' or contactId
 
     const { setCollapsed } = useChatSidebar();
 
@@ -40,6 +41,10 @@ export default function AutopilotPage() {
             // But for now we can just check if empty? Nah, good to refresh to ensure sync.
             const profile = await getStyleProfile();
             if (profile) setStyleProfile(profile);
+            // Also load people for the selector
+            const people = await getAutopilotSettings();
+            setSettings(people);
+            setSelectedContactStyleId('global');
         }
         setLoading(false);
     };
@@ -83,15 +88,42 @@ export default function AutopilotPage() {
         await updateAutopilotStatus(contactId, newStatus);
     };
 
+    const handleContactSelect = async (e) => {
+        const id = e.target.value;
+        setSelectedContactStyleId(id);
+        setLoading(true);
+
+        let profile = '';
+        if (id === 'global') {
+            profile = await getStyleProfile();
+        } else {
+            profile = await getContactStyle(id);
+        }
+
+        setStyleProfile(profile || '');
+        setLoading(false);
+    };
+
     const handleSaveStyle = async () => {
-        await saveStyleProfile(styleProfile);
+        if (selectedContactStyleId === 'global') {
+            await saveStyleProfile(styleProfile);
+        } else {
+            await saveContactStyle(selectedContactStyleId, styleProfile);
+        }
         alert('Style profile saved!');
     };
 
     const handleAnalyze = async () => {
-        if (confirm("This will analyze your last 500 messages to build a style profile. It may take a moment. Continue?")) {
+        const targetName = selectedContactStyleId === 'global' ? "Global History" : "Contact History";
+        if (confirm(`This will analyze ${targetName} to build a style profile. It may take a moment. Continue?`)) {
             setIsAnalyzing(true);
-            const res = await analyzeStyle();
+            let res;
+            if (selectedContactStyleId === 'global') {
+                res = await analyzeStyle();
+            } else {
+                res = await analyzeContactStyle(selectedContactStyleId);
+            }
+
             setIsAnalyzing(false);
             if (res.success) {
                 setStyleProfile(res.profile);
@@ -297,20 +329,40 @@ export default function AutopilotPage() {
                                 <div>
                                     <h3 className="text-lg font-medium text-zinc-200 flex items-center gap-2">
                                         <Sparkles className="w-5 h-5 text-purple-400" />
-                                        Your Style Profile
+                                        {selectedContactStyleId === 'global' ? 'Global Style Profile' : 'Contact-Specific Style'}
                                     </h3>
                                     <p className="text-zinc-500 text-sm mt-1">
-                                        DeeDee uses this profile to impersonate you better. You can edit it manually or generate it from your chat history.
+                                        {selectedContactStyleId === 'global'
+                                            ? "DeeDee uses this profile as a baseline for all communications."
+                                            : "This profile overrides the global style when talking to this specific contact."}
                                     </p>
                                 </div>
-                                <button
-                                    onClick={handleAnalyze}
-                                    disabled={isAnalyzing}
-                                    className="px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white rounded-lg flex items-center gap-2 text-sm font-medium transition-all disabled:opacity-50"
-                                >
-                                    {isAnalyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Brain className="w-4 h-4" />}
-                                    {isAnalyzing ? 'Analyzing...' : 'Analyze History'}
-                                </button>
+
+                                <div className="flex items-center gap-3">
+                                    <select
+                                        value={selectedContactStyleId}
+                                        onChange={handleContactSelect}
+                                        className="bg-zinc-950 border border-zinc-700 text-zinc-300 text-sm rounded-lg focus:ring-purple-500 focus:border-purple-500 block p-2.5"
+                                    >
+                                        <option value="global">GLOBAL (Baseline)</option>
+                                        <optgroup label="Contacts">
+                                            {settings.map(p => (
+                                                <option key={p.id} value={p.id}>
+                                                    {p.name}
+                                                </option>
+                                            ))}
+                                        </optgroup>
+                                    </select>
+
+                                    <button
+                                        onClick={handleAnalyze}
+                                        disabled={isAnalyzing}
+                                        className="px-4 py-2 bg-gradient-to-r from-purple-600 to-blue-600 hover:from-purple-500 hover:to-blue-500 text-white rounded-lg flex items-center gap-2 text-sm font-medium transition-all disabled:opacity-50"
+                                    >
+                                        {isAnalyzing ? <Loader2 className="w-4 h-4 animate-spin" /> : <Brain className="w-4 h-4" />}
+                                        {isAnalyzing ? 'Analyzing...' : 'Analyze History'}
+                                    </button>
+                                </div>
                             </div>
 
                             <textarea

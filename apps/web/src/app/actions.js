@@ -1028,3 +1028,37 @@ export async function analyzeStyle() {
         return { success: false, error: error.message };
     }
 }
+
+export async function getContactStyle(contactId) {
+    try {
+        const data = await fetchAPI(`/v1/autopilot/style/${encodeURIComponent(contactId)}`);
+        return data.profile;
+    } catch (error) {
+        console.error(`getContactStyle(${contactId}) Error:`, error);
+        return null;
+    }
+}
+
+export async function saveContactStyle(contactId, profile) {
+    try {
+        await fetchAPI(`/v1/autopilot/style/${encodeURIComponent(contactId)}`, {
+            method: 'POST',
+            body: JSON.stringify({ profile })
+        });
+        revalidatePath('/autopilot');
+        // also revalidate profile page if we had one
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function analyzeContactStyle(contactId) {
+    try {
+        const data = await fetchAPI(`/v1/autopilot/style/${encodeURIComponent(contactId)}/analyze`, { method: 'POST' });
+        revalidatePath('/autopilot');
+        return { success: true, profile: data.profile };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
