@@ -15,8 +15,13 @@ export default function DJCratePage() {
 
     async function loadCrate() {
         setLoading(true);
-        const data = await getVinylCrate(100);
-        setVinyls(data || []);
+        const res = await getVinylCrate(100);
+        if (res.success) {
+            setVinyls(res.data || []);
+        } else {
+            console.error('Failed to load crate:', res.error);
+            setVinyls([]);
+        }
         setLoading(false);
     }
 
