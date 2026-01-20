@@ -4,6 +4,7 @@ import WikiEditor from '@/components/WikiEditor';
 import FileExplorer from '@/components/FileExplorer';
 import VaultUploader from '@/components/VaultUploader';
 import VaultChat from '@/components/VaultChat';
+import VaultSidebar from '@/components/VaultSidebar';
 import { notFound } from 'next/navigation';
 
 export const dynamic = 'force-dynamic';
@@ -36,20 +37,7 @@ export default async function VaultDetailPage({ params }) {
             {/* Main Content - Split View */}
             <div className="flex-1 flex overflow-hidden">
                 {/* Left: Files & Meta */}
-                <div className="w-1/3 min-w-[300px] max-w-md border-r border-zinc-800 bg-zinc-900 flex flex-col">
-                    <div className="p-4 border-b border-zinc-800 flex justify-between items-center bg-zinc-900">
-                        <h2 className="font-semibold text-zinc-300">Files</h2>
-                        <VaultUploader vaultId={vault.id} />
-                    </div>
-
-                    <div className="flex-1 overflow-y-auto p-4">
-                        <FileExplorer files={vault.files} vaultId={vault.id} />
-                    </div>
-
-                    <div className="p-4 border-t border-zinc-800 bg-zinc-900 text-xs text-zinc-500">
-                        <p>Upload files to add context. The Agent will read 'index.md' to understand this topic.</p>
-                    </div>
-                </div>
+                <VaultSidebar vault={vault} />
 
                 {/* Right: Wiki Editor */}
                 <div className="flex-1 flex flex-col bg-zinc-950 p-4">

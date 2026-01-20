@@ -122,6 +122,12 @@ module.exports = (agent) => {
 
         try {
             await agent.vaults.deleteVaultFile(id, filename);
+
+            // RAG Cleanup
+            if (agent.ragService) {
+                await agent.ragService.deleteDocument(filename, id);
+            }
+
             res.json({ success: true, message: 'File deleted' });
         } catch (error) {
             if (error.message.includes('not found')) {
@@ -129,6 +135,35 @@ module.exports = (agent) => {
             } else {
                 res.status(500).json({ error: error.message });
             }
+        }
+    });
+
+    // GET /v1/vaults/:id/embeddings - List indexed documents
+    router.get('/:id/embeddings', async (req, res) => {
+        const { id } = req.params;
+        try {
+            if (!agent.ragService) return res.json([]);
+            const docs = agent.ragService.listDocuments(id);
+            res.json(docs);
+        } catch (error) {
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    // DELETE /v1/vaults/:id/embeddings/:filename - Delete index only (cleanup)
+    router.delete('/:id/embeddings/:filename', async (req, res) => {
+        const { id, filename } = req.params;
+        try {
+            if (!agent.ragService) return res.status(400).json({ error: 'RAG Service not active' });
+
+            const deleted = await agent.ragService.deleteDocument(filename, id);
+            if (deleted) {
+                res.json({ success: true });
+            } else {
+                res.status(404).json({ error: 'Document not found in index' });
+            }
+        } catch (error) {
+            res.status(500).json({ error: error.message });
         }
     });
 

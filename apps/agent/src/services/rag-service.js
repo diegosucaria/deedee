@@ -117,6 +117,30 @@ class RagService {
         console.log(`[RAG] Ingestion complete for ${filename}.`);
     }
 
+    async deleteDocument(filename, vaultId) {
+        // Find document
+        const doc = this.db.prepare('SELECT id FROM documents WHERE filename = ? AND vault_id = ?').get(filename, vaultId);
+        if (doc) {
+            console.log(`[RAG] Deleting document ${filename} (Vault: ${vaultId})`);
+            // Cascade delete chunks
+            this.db.prepare('DELETE FROM chunks WHERE document_id = ?').run(doc.id);
+            this.db.prepare('DELETE FROM documents WHERE id = ?').run(doc.id);
+            return true;
+        }
+        return false;
+    }
+
+    listDocuments(vaultId) {
+        let sql = 'SELECT d.id, d.filename, d.indexed_at, COUNT(c.id) as chunk_count FROM documents d LEFT JOIN chunks c ON d.id = c.document_id';
+        const params = [];
+        if (vaultId && vaultId !== 'all') {
+            sql += ' WHERE d.vault_id = ?';
+            params.push(vaultId);
+        }
+        sql += ' GROUP BY d.id ORDER BY d.indexed_at DESC';
+        return this.db.prepare(sql).all(...params);
+    }
+
     async scanAndIngest(vaultsDir) {
         if (this.isScanning) {
             console.log('[RAG] Scan already in progress. Skipping.');

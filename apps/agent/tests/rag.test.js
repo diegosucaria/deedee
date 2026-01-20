@@ -102,4 +102,31 @@ describe('RagService', () => {
         expect(results.length).toBe(1);
         expect(mockPrepare).toHaveBeenCalledWith(expect.stringContaining('WHERE documents.vault_id = ?'));
     });
+
+    test('should delete document and chunks', async () => {
+        const docId = 123;
+        const filename = 'delete_me.txt';
+        const vaultId = 'trash';
+
+        // Mock finding the doc
+        mockGet.mockReturnValue({ id: docId });
+
+        const result = await ragService.deleteDocument(filename, vaultId);
+
+        expect(mockGet).toHaveBeenCalledWith(filename, vaultId);
+        expect(mockRun).toHaveBeenCalledWith(docId); // Deleting chunks and doc
+        expect(result).toBe(true);
+    });
+
+    test('should list documents for a vault', () => {
+        const vaultId = 'finance';
+        mockAll.mockReturnValue([{ id: 1, filename: 'doc.txt', chunk_count: 5 }]);
+
+        const docs = ragService.listDocuments(vaultId);
+
+        expect(mockPrepare).toHaveBeenCalledWith(expect.stringContaining('SELECT'));
+        expect(mockPrepare).toHaveBeenCalledWith(expect.stringContaining('WHERE d.vault_id = ?'));
+        expect(mockAll).toHaveBeenCalledWith(vaultId);
+        expect(docs[0].filename).toBe('doc.txt');
+    });
 });
