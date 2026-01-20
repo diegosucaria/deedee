@@ -73,7 +73,7 @@ Do not be vague. Be prescriptive.
 
         try {
             const response = await this.agent.client.models.generateContent({
-                model: 'gemini-1.5-flash', // Use flash for large context analysis
+                model: 'gemini-2.0-flash-exp', // Use fast model for analysis
                 contents: [{ role: 'user', parts: [{ text: prompt }] }]
             });
 

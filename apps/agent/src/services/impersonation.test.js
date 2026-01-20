@@ -38,7 +38,9 @@ describe('ImpersonationService', () => {
     });
 
     afterEach(() => {
-        db.close();
+        if (db && db.open) {
+            db.close();
+        }
     });
 
     test('getAutopilotStatus returns correct status', () => {
