@@ -59,12 +59,7 @@ class ImpersonationService {
             messages = res.data;
         } catch (e) {
             console.error('[Impersonation] Failed to fetch history from Interfaces:', e.message);
-            // Fallback to Agent DB if Interfaces fails (legacy behavior)
-            messages = this.db.db.prepare(`
-                SELECT content FROM messages 
-                WHERE role = 'user' AND content IS NOT NULL AND content != ''
-                ORDER BY timestamp DESC LIMIT 500
-            `).all().reverse();
+            throw new Error(`Unable to fetch global history from WhatsApp. Ensure the interface is running. Error: ${e.message}`);
         }
 
         if (!messages || messages.length < 10) {
@@ -209,15 +204,8 @@ Do not be vague. Be prescriptive.
             corpus = messages.map(m => m.content).join('\n');
 
         } catch (e) {
-            console.warn(`[Impersonation] Failed to fetch contact history for ${chatId} from Interfaces, falling back to local DB`, e.message);
-            // Fallback: try searching by chatId or related people
-            // Use contactIdentifier which might be the actual UUID in the DB
-            const history = this.db.db.prepare(`
-                SELECT content FROM messages 
-                WHERE (chat_id = ? OR contact_id = ?) AND role = 'assistant' AND content IS NOT NULL AND content != ''
-                ORDER BY timestamp DESC LIMIT 50
-            `).all(chatId, contactIdentifier).reverse();
-            corpus = history.map(m => m.content).join('\n');
+            console.error(`[Impersonation] Failed to fetch contact history for ${chatId} from Interfaces:`, e.message);
+            throw new Error(`Unable to fetch chat history for ${chatId}. Ensure WhatsApp is connected. Error: ${e.message}`);
         }
 
         if (!corpus || corpus.length < 50) return "Not enough history.";
