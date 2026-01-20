@@ -160,8 +160,19 @@ class AgentDB {
         source TEXT DEFAULT 'manual',
         notes TEXT,
         metadata TEXT,
+        autopilot_status TEXT DEFAULT 'off', -- off, assisted, full
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS autopilot_drafts (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        chat_id TEXT,
+        contact_id TEXT,
+        content TEXT,
+        options TEXT, -- JSON array
+        status TEXT DEFAULT 'pending', -- pending, approved, rejected
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
       CREATE TABLE IF NOT EXISTS watchers (
@@ -196,6 +207,12 @@ class AgentDB {
 
     // Migration: Backfill sessions for existing messages
     this.migrateSessions();
+
+    try {
+      this.db.exec("ALTER TABLE people ADD COLUMN autopilot_status TEXT DEFAULT 'off'");
+    } catch (e) {
+      // Ignore if column exists
+    }
 
     // Migration: Add metadata column if it doesn't exist (for existing DBs)
     try {

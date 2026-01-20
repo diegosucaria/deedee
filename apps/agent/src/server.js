@@ -108,6 +108,7 @@ const createVaultRouter = require('./routes/vaults');
 
 const { createPeopleRouter } = require('./routes/people');
 const { createDjRouter } = require('./routes/dj');
+const { createAutopilotRouter } = require('./routes/autopilot');
 
 // Mount Live Router (works without Agent instance for Config/Token)
 app.use('/live', createLiveRouter(agent));
@@ -123,6 +124,7 @@ if (agent) {
   app.use('/internal', createInternalRouter(agent)); // Internal Router (Protected)
   app.use('/v1/vaults', createVaultRouter(agent));
   app.use('/internal/dj', createDjRouter(agent));
+  app.use('/internal/autopilot', createAutopilotRouter(agent)); // Mount Autopilot Router
   app.use('/', createToolRouter(agent)); // Mounts at root because it handles /tools/execute AND /internal/tools
 }
 

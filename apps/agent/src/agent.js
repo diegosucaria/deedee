@@ -12,6 +12,7 @@ const { MCPManager } = require('./mcp-manager');
 const { CommandHandler } = require('./command-handler');
 const { RateLimiter } = require('./rate-limiter');
 const { ConfirmationManager } = require('./confirmation-manager');
+const { ImpersonationService } = require('./services/impersonation');
 const { ToolExecutor } = require('./tool-executor');
 const path = require('path');
 const { JournalManager } = require('./journal');
@@ -75,6 +76,7 @@ class Agent {
     this.configService = new ConfigService();
     this.ragService = new RagService(this);
     this.djService = new DJService(this);
+    this.impersonationService = new ImpersonationService(this);
 
     // In-Memory Settings Cache
     this.settings = {};
@@ -659,6 +661,38 @@ class Agent {
           }
           // Log suppressed per user request
           // console.log(`[Agent] Passive Mode (whatsapp:user): Message from ${contactString} saved. No watcher triggered. Ignoring.`);
+
+          // --- AUTOPILOT LOGIC ---
+          const autopilotStatus = this.impersonationService.getAutopilotStatus(contactString, message.metadata?.username || 'contact');
+
+          if (autopilotStatus === 'assisted' || autopilotStatus === 'full') {
+            console.log(`[Agent] Autopilot Triggered (${autopilotStatus}) for ${contactString}. Generating Draft...`);
+
+            // Generate Draft in background (don't block return? No, we might want to notify immediately)
+            // But usually we don't want to block the main loop too long.
+            // However, for now we await to ensure it works.
+            try {
+              const draft = await this.impersonationService.generateDraft(chatId, message, contactString);
+
+              if (draft) {
+                this.impersonationService.saveDraft(chatId, contactString, draft);
+
+                // Notify User (System Message)
+                // If we have a connected frontend for this chat?
+                // We can send a system message to the chat interface generally?
+                // Or specifically to the user's dashboard?
+                // For now, let's log it and maybe rely on the UI polling the drafts.
+                // BUT user asked for "notification".
+                // A system message with source='system' usually shows up in the chat if the user is looking at it?
+                // If the user is looking at the dashboard, they'll see the draft count.
+                // Let's print a log for now.
+                console.log(`[Agent] Draft saved for ${contactString}: "${draft.substring(0, 30)}..."`);
+              }
+            } catch (e) {
+              console.error('[Agent] Autopilot failed:', e);
+            }
+          }
+
           return executionSummary; // Exit early
         }
 

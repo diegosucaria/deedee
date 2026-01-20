@@ -1,0 +1,23 @@
+# Autopilot (Assisted Mode)
+
+## Overview
+Autopilot allows DeeDee to assist in personal messaging by drafting replies in your style. It is designed to be a "Human-in-the-loop" system, prioritizing safety and user control.
+
+## Architecture
+- **Interception**: Messages from "Assisted" contacts are intercepted in `apps/agent/src/agent.js` *after* Watchers but *before* standard routing.
+- **Impersonation**: `ImpersonationService` uses the last 20 messages of chat history to match tone/style via LLM.
+- **Storage**: Drafts are stored in the `autopilot_drafts` table.
+- **Safety**: Function calling is disabled for drafts to prevent accidental command execution.
+
+## Usage
+1. **Enable**: Go to `/autopilot` -> Settings Tab -> Select Contact -> "Assisted".
+2. **Review**: When a message arrives, check the Drafts Tab.
+3. **Approve/Edit/Reject**: Use the UI to manage the draft.
+
+## API Endpoints
+Endpoints are exposed via the API Gateway under `/v1/autopilot` (proxied to Agent Internal API).
+- `GET /v1/autopilot/drafts`
+- `POST /v1/autopilot/drafts/:id/approve`
+- `POST /v1/autopilot/drafts/:id/reject`
+- `PUT /v1/autopilot/drafts/:id` (Edit)
+- `POST /v1/autopilot/settings/:id` (Update Status)

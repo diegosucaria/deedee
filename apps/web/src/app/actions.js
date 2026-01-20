@@ -927,3 +927,69 @@ export async function toggleWatcher(id, status) {
         return { success: true };
     } catch (e) { return { success: false, error: e.message }; }
 }
+
+// --- Autopilot Actions ---
+
+export async function getAutopilotDrafts(status = 'pending') {
+    try {
+        return await fetchAPI(`/v1/autopilot/drafts?status=${status}`);
+    } catch (error) {
+        console.error('getAutopilotDrafts Error:', error);
+        return [];
+    }
+}
+
+export async function approveDraft(id) {
+    try {
+        const res = await fetchAPI(`/v1/autopilot/drafts/${id}/approve`, { method: 'POST' });
+        revalidatePath('/autopilot');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function rejectDraft(id) {
+    try {
+        await fetchAPI(`/v1/autopilot/drafts/${id}/reject`, { method: 'POST' });
+        revalidatePath('/autopilot');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function editDraft(id, content) {
+    try {
+        await fetchAPI(`/v1/autopilot/drafts/${id}`, {
+            method: 'PUT',
+            body: JSON.stringify({ content })
+        });
+        revalidatePath('/autopilot');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function getAutopilotSettings() {
+    try {
+        return await fetchAPI(`/v1/autopilot/settings`);
+    } catch (error) {
+        console.error('getAutopilotSettings Error:', error);
+        return [];
+    }
+}
+
+export async function updateAutopilotStatus(contactId, status) {
+    try {
+        await fetchAPI(`/v1/autopilot/settings/${contactId}`, {
+            method: 'POST',
+            body: JSON.stringify({ status })
+        });
+        revalidatePath('/autopilot');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
