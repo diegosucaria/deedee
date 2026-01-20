@@ -1281,8 +1281,11 @@ IF you are asked to draft a message for the user, or if you are replying via the
           // Capture to Summary
           executionSummary.toolOutputs.push({ name: executionName, result });
 
-          // Log
-          const logResult = JSON.stringify(result);
+          // Log (Truncated to avoid console pollution)
+          let logResult = JSON.stringify(result);
+          if (['readVaultFile', 'readResource'].includes(executionName) || logResult.length > 1000) {
+            logResult = logResult.substring(0, 200) + '... [TRUNCATED]';
+          }
           console.log(`Tool Result (${executionName}):`, logResult);
 
           // Sanitize for DB AND Model to prevent Context Pollution
