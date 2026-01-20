@@ -996,6 +996,19 @@ export async function updateAutopilotStatus(contactId, status, duration = 0) {
     }
 }
 
+export async function toggleAutopilotPin(contactId, isPinned) {
+    try {
+        await fetchAPI(`/v1/autopilot/settings/${contactId}/pin`, {
+            method: 'POST',
+            body: JSON.stringify({ isPinned })
+        });
+        revalidatePath('/autopilot');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function getStyleProfile() {
     try {
         const data = await fetchAPI('/v1/autopilot/style');

@@ -142,6 +142,7 @@ function createAutopilotRouter(agent) {
             // 3. Enrich & Calculate Properties
             const enriched = people.map(p => {
                 let has_style = false;
+                let is_pinned = false; // [NEW] Pinned Status
                 try {
                     let meta = JSON.parse(p.metadata || '{}');
                     // Handle double-encoded legacy data
@@ -149,6 +150,7 @@ function createAutopilotRouter(agent) {
                         try { meta = JSON.parse(meta); } catch (e) { }
                     }
                     if (meta && meta.style_profile && meta.style_profile.length > 10) has_style = true;
+                    if (meta && meta.is_pinned) is_pinned = true;
                 } catch (e) { }
 
                 // Resolve Timestamp
@@ -164,12 +166,17 @@ function createAutopilotRouter(agent) {
                 return {
                     ...p,
                     has_style: has_style,
+                    is_pinned: is_pinned, // [NEW]
                     last_message_at: ts * 1000 // Convert Seconds to MS
                 };
             });
 
-            // 4. Sort: Style First, Then Recency
+            // 4. Sort: Pinned > Style > Recency
             enriched.sort((a, b) => {
+                // Priority 0: Pinned (High Priority)
+                if (a.is_pinned && !b.is_pinned) return -1;
+                if (!a.is_pinned && b.is_pinned) return 1;
+
                 // Priority 1: Has Style Learned
                 if (a.has_style && !b.has_style) return -1;
                 if (!a.has_style && b.has_style) return 1;
@@ -206,6 +213,41 @@ function createAutopilotRouter(agent) {
             }
             res.json({ success: true });
         } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // POST /settings/:id/pin (Toggle Pin)
+    router.post('/settings/:id/pin', (req, res) => {
+        try {
+            const { id } = req.params;
+            const { isPinned } = req.body; // boolean
+
+            const person = agent.db.getPerson(id);
+            if (!person) return res.status(404).json({ error: 'Person not found' });
+
+            // Update Metadata
+            let meta = {};
+            try {
+                // Handle existing metadata carefully (legacy string/object mix)
+                // db.getPerson ALREADY parses metadata if it can. But we must be safe.
+                if (typeof person.metadata === 'object' && person.metadata !== null) {
+                    meta = person.metadata;
+                } else if (typeof person.metadata === 'string') {
+                    meta = JSON.parse(person.metadata);
+                    // Double encode check
+                    if (typeof meta === 'string') meta = JSON.parse(meta);
+                }
+            } catch (e) { }
+
+            meta.is_pinned = !!isPinned; // Force boolean
+
+            // Save
+            agent.db.updatePerson(person.id, { metadata: meta });
+
+            res.json({ success: true });
+        } catch (e) {
+            console.error('Error toggling pin:', e);
             res.status(500).json({ error: e.message });
         }
     });

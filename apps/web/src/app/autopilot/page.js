@@ -2,8 +2,8 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
-import { getAutopilotDrafts, approveDraft, rejectDraft, editDraft, getAutopilotSettings, updateAutopilotStatus, getStyleProfile, saveStyleProfile, analyzeStyle, getContactStyle, saveContactStyle, analyzeContactStyle } from '../actions';
-import { Loader2, Check, X, Edit2, Save, User, Settings, MessageSquare, ShieldAlert, Sparkles, Brain, Search, Trash, Clock, RefreshCw } from 'lucide-react';
+import { getAutopilotDrafts, approveDraft, rejectDraft, editDraft, getAutopilotSettings, updateAutopilotStatus, toggleAutopilotPin, getStyleProfile, saveStyleProfile, analyzeStyle, getContactStyle, saveContactStyle, analyzeContactStyle } from '../actions';
+import { Loader2, Check, X, Edit2, Save, User, Settings, MessageSquare, ShieldAlert, Sparkles, Brain, Search, Trash, Clock, RefreshCw, Pin } from 'lucide-react';
 import clsx from 'clsx';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
 import { useSocket } from '../../hooks/useSocket';
@@ -126,6 +126,20 @@ function AutopilotPage() {
         // Optimistic update
         setSettings(prev => prev.map(p => p.id === contactId ? { ...p, autopilot_status: newStatus } : p));
         await updateAutopilotStatus(contactId, newStatus, selectedDuration);
+    };
+
+    const handlePin = async (contactId, currentPinStatus) => {
+        const newStatus = !currentPinStatus;
+        // Optimistic update
+        setSettings(prev => {
+            const updated = prev.map(p => p.id === contactId ? { ...p, is_pinned: newStatus } : p);
+            // Re-sort locally to reflect jump immediately (optional, or wait for reload)
+            // Let's just update state, the render sort will handle position?
+            // Actually render sort is dynamic based on `settings` state.
+            return updated;
+        });
+        await toggleAutopilotPin(contactId, newStatus);
+        // loadData(); // Full refresh to confirm alignment
     };
 
     const handleContactSelect = async (e) => {
@@ -344,6 +358,10 @@ function AutopilotPage() {
                                     {settings
                                         .filter(p => p.name.toLowerCase().includes(searchQuery.toLowerCase()) || (p.phone && p.phone.includes(searchQuery)))
                                         .sort((a, b) => {
+                                            // Priority 0: Pinned
+                                            if (a.is_pinned && !b.is_pinned) return -1;
+                                            if (!a.is_pinned && b.is_pinned) return 1;
+
                                             // Primary Sort: Last Message (Newest First)
                                             // Ensure we prioritize those with recent messages
                                             const timeA = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
@@ -362,6 +380,13 @@ function AutopilotPage() {
                                             <tr key={person.id} className="group hover:bg-zinc-800/50 transition-colors">
                                                 <td className="p-4">
                                                     <div className="flex items-center gap-3">
+                                                        <button
+                                                            onClick={() => handlePin(person.id, person.is_pinned)}
+                                                            className={clsx("p-1.5 rounded-full transition-colors", person.is_pinned ? "bg-yellow-500/10 text-yellow-500 hover:bg-yellow-500/20" : "text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800")}
+                                                            title={person.is_pinned ? "Unpin Contact" : "Pin to Top"}
+                                                        >
+                                                            <Pin className={clsx("w-4 h-4", person.is_pinned && "fill-current")} />
+                                                        </button>
                                                         <div className="w-10 h-10 rounded-full bg-zinc-800 flex items-center justify-center text-zinc-400">
                                                             <User className="w-5 h-5" />
                                                         </div>
@@ -434,6 +459,9 @@ function AutopilotPage() {
                                         <option value="global">GLOBAL (Baseline)</option>
                                         <optgroup label="Contacts">
                                             {[...settings].sort((a, b) => {
+                                                // Priority: Pinned
+                                                if (a.is_pinned && !b.is_pinned) return -1;
+                                                if (!a.is_pinned && b.is_pinned) return 1;
                                                 // Priority: Has Style
                                                 if (a.has_style && !b.has_style) return -1;
                                                 if (!a.has_style && b.has_style) return 1;
@@ -441,7 +469,7 @@ function AutopilotPage() {
                                                 return (a.name || '').localeCompare(b.name || '');
                                             }).map(p => (
                                                 <option key={p.id} value={p.id}>
-                                                    {p.has_style ? '★ ' : ''}{p.name}
+                                                    {p.is_pinned ? '📌 ' : ''}{p.has_style ? '★ ' : ''}{p.name}
                                                 </option>
                                             ))}
                                         </optgroup>
