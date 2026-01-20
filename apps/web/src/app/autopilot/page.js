@@ -1,13 +1,22 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { getAutopilotDrafts, approveDraft, rejectDraft, editDraft, getAutopilotSettings, updateAutopilotStatus, getStyleProfile, saveStyleProfile, analyzeStyle, getContactStyle, saveContactStyle, analyzeContactStyle } from '../actions';
 import { Loader2, Check, X, Edit2, Save, User, Settings, MessageSquare, ShieldAlert, Sparkles, Brain, Search } from 'lucide-react';
 import clsx from 'clsx';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
 
-export default function AutopilotPage() {
+// Wrapper to handle Suspense boundary for useSearchParams
+export default function AutopilotPageWrapper() {
+    return (
+        <Suspense fallback={<div className="flex items-center justify-center h-full"><Loader2 className="animate-spin h-8 w-8 text-gray-500" /></div>}>
+            <AutopilotPage />
+        </Suspense>
+    );
+}
+
+function AutopilotPage() {
     const router = useRouter();
     const pathname = usePathname();
     const searchParams = useSearchParams();
