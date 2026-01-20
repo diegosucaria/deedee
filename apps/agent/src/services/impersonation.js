@@ -143,7 +143,9 @@ Do not be vague. Be prescriptive.
 
         if (!person || !person.metadata) return null;
         try {
-            let meta = JSON.parse(person.metadata);
+            // db.getPerson already parses JSON, but if used raw it might be string.
+            let meta = typeof person.metadata === 'string' ? JSON.parse(person.metadata) : person.metadata;
+
             // Handle double-encoded legacy data
             if (typeof meta === 'string') {
                 try { meta = JSON.parse(meta); } catch (e) { }
@@ -170,7 +172,8 @@ Do not be vague. Be prescriptive.
 
         let meta = {};
         try {
-            meta = JSON.parse(person.metadata || '{}');
+            const rawMeta = person.metadata || {};
+            meta = typeof rawMeta === 'string' ? JSON.parse(rawMeta) : rawMeta;
             // Handle double-encoded legacy data
             if (typeof meta === 'string') {
                 try { meta = JSON.parse(meta); } catch (e) { }
