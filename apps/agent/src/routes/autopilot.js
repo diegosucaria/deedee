@@ -143,8 +143,12 @@ function createAutopilotRouter(agent) {
             const enriched = people.map(p => {
                 let has_style = false;
                 try {
-                    const meta = JSON.parse(p.metadata || '{}');
-                    if (meta.style_profile && meta.style_profile.length > 10) has_style = true;
+                    let meta = JSON.parse(p.metadata || '{}');
+                    // Handle double-encoded legacy data
+                    if (typeof meta === 'string') {
+                        try { meta = JSON.parse(meta); } catch (e) { }
+                    }
+                    if (meta && meta.style_profile && meta.style_profile.length > 10) has_style = true;
                 } catch (e) { }
 
                 // Resolve Timestamp

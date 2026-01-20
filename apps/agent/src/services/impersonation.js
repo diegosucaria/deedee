@@ -143,7 +143,11 @@ Do not be vague. Be prescriptive.
 
         if (!person || !person.metadata) return null;
         try {
-            const meta = JSON.parse(person.metadata);
+            let meta = JSON.parse(person.metadata);
+            // Handle double-encoded legacy data
+            if (typeof meta === 'string') {
+                try { meta = JSON.parse(meta); } catch (e) { }
+            }
             // Check for specific override or fallback
             return meta.style_profile || null;
         } catch (e) {
@@ -165,11 +169,21 @@ Do not be vague. Be prescriptive.
         if (!person) throw new Error("Person not found");
 
         let meta = {};
-        try { meta = JSON.parse(person.metadata || '{}'); } catch (e) { }
+        try {
+            meta = JSON.parse(person.metadata || '{}');
+            // Handle double-encoded legacy data
+            if (typeof meta === 'string') {
+                try { meta = JSON.parse(meta); } catch (e) { }
+            }
+        } catch (e) { }
+
+        // Ensure meta is an object
+        if (typeof meta !== 'object' || meta === null) meta = {};
 
         meta.style_profile = profileText;
 
-        this.db.updatePerson(person.id, { metadata: JSON.stringify(meta) });
+        // Pass OBJECT, do not stringify (DB layer handles it)
+        this.db.updatePerson(person.id, { metadata: meta });
     }
 
     /**
