@@ -73,7 +73,7 @@ Do not be vague. Be prescriptive.
 
         try {
             const response = await this.agent.client.models.generateContent({
-                model: process.env.WORKER_FLASH || 'gemini-2.0-flash-exp',
+                model: process.env.WORKER_PRO || 'gemini-2.0-flash-exp',
                 contents: [{ role: 'user', parts: [{ text: prompt }] }]
             });
 
@@ -124,8 +124,9 @@ ${examples}
 
         // 4. Call LLM
         try {
+            // PRO is better for deep analysis and nuance extraction
             const response = await this.agent.client.models.generateContent({
-                model: process.env.WORKER_FLASH || 'gemini-2.0-flash-exp',
+                model: process.env.WORKER_PRO || 'gemini-1.5-pro-exp',
                 contents: [{ role: 'user', parts: [{ text: prompt }] }]
             });
 
