@@ -22,6 +22,8 @@ export function useSocket() {
                 reconnection: true,
                 reconnectionAttempts: 5,
                 reconnectionDelay: 1000,
+                transports: ['polling'], // Force polling first to avoid websocket issues initially
+                path: '/socket.io'
             });
         }
 

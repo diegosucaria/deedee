@@ -97,3 +97,5 @@
 - [x] **Autopilot Enhancements**:
     - [x] **Per-Contact Styles**: Analyze and override communication style for specific contacts (Boss vs Partner).
     - [x] **Autopilot Control UI**: Web Interface to manage Drafts, Settings, and Style Profiles.
+    - [x] **Audio & Context**: Fixed Voice Message transcription and Sender Name resolution.
+    - [x] **Real-time**: Fixed Autopilot Socket connection stability.

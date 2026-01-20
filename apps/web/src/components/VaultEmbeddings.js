@@ -27,7 +27,7 @@ export default function VaultEmbeddings({ vaultId }) {
         if (!confirm(`Remove "${filename}" from the search index? (File remains on disk)`)) return;
 
         try {
-            await fetchAPI(`/vaults/${vaultId}/embeddings/${filename}`, { method: 'DELETE' });
+            await fetchAPI(`/vaults/${vaultId}/embeddings/${encodeURIComponent(filename)}`, { method: 'DELETE' });
             loadData();
         } catch (e) {
             alert('Failed to delete index: ' + e.message);

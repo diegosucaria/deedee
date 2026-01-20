@@ -290,9 +290,15 @@ Output a concise list of rules for this specific relationship.
                 }]
             });
 
-            if (result.response) {
+            // Robust response handling
+            if (result.response && typeof result.response.text === 'function') {
                 return result.response.text().trim();
+            } else if (result.response && result.response.candidates && result.response.candidates.length > 0) {
+                return result.response.candidates[0].content.parts[0].text.trim();
+            } else if (result.candidates && result.candidates.length > 0) {
+                return result.candidates[0].content.parts[0].text.trim();
             }
+
             return null;
         } catch (e) {
             console.error('[Impersonation] Audio transcription failed:', e.message);
@@ -319,7 +325,10 @@ Output a concise list of rules for this specific relationship.
                     console.log(`[Impersonation] Transcribing audio message...`);
                     const transcript = await this.transcribeAudio(part);
                     if (transcript) {
+                        console.log(`[Impersonation] Transcription result: "${transcript.substring(0, 50)}..."`);
                         message.content = (message.content ? message.content + '\n' : '') + `[Voice Message]: "${transcript}"`;
+                    } else {
+                        console.log(`[Impersonation] Transcription returned empty/null.`);
                     }
                 }
             }
@@ -362,7 +371,23 @@ Output a concise list of rules for this specific relationship.
 
         const fullContent = buffer.content.join('\n\n');
 
-        console.log(`[Impersonation] Processing buffered messages for ${contactString}: ${buffer.content.length} messages.`);
+        // Resolve Contact Name for better context
+        let contactName = contactString;
+        try {
+            // Try resolving by strict ID (phone/jid)
+            // contactString might be a phone number or JID
+            const cleanId = contactString.includes('@') ? contactString.split('@')[0] : contactString;
+            const person = this.db.getPerson(cleanId);
+            if (person && person.name) {
+                contactName = person.name;
+            } else if (buffer.metadata && buffer.metadata.notifyName) {
+                contactName = buffer.metadata.notifyName; // GitHub issue said 'username' but WA uses notifyName often
+            }
+        } catch (e) {
+            console.warn('[Impersonation] Name resolution failed:', e.message);
+        }
+
+        console.log(`[Impersonation] Processing buffered messages for ${contactName} (${contactString}): ${buffer.content.length} messages.`);
 
         // Call generateDraft with combined context
         // We simulate a 'message' object structure for compatibility
@@ -372,14 +397,14 @@ Output a concise list of rules for this specific relationship.
             source: buffer.source
         };
 
-        const draft = await this.generateDraft(chatId, combinedMessage, contactString, fullContent);
+        const draft = await this.generateDraft(chatId, combinedMessage, contactName, fullContent);
 
         if (draft) {
             this.saveDraft(chatId, contactString, draft, fullContent);
 
             // NOTIFY FRONTEND via Socket (Broadcast)
             if (this.agent && this.agent.interface) {
-                console.log(`[Impersonation] Broadcasting 'autopilot:update' for ${contactString}...`);
+                console.log(`[Impersonation] Broadcasting 'autopilot:update' for ${contactName}...`);
                 this.agent.interface.broadcast('autopilot:update', { type: 'draft_created', chatId });
             } else {
                 console.warn('[Impersonation] Agent interface not available, cannot broadcast update.');

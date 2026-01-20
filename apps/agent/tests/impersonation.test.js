@@ -1,4 +1,76 @@
 const { Agent } = require('../src/agent');
+const { ImpersonationService } = require('../src/services/impersonation');
+
+describe('Impersonation Service Unit', () => {
+    let service;
+    let mockAgent;
+    let mockDb;
+
+    beforeEach(() => {
+        mockDb = {
+            getPerson: jest.fn(),
+            db: { prepare: jest.fn().mockReturnValue({ run: jest.fn(), all: jest.fn().mockReturnValue([]), get: jest.fn() }) },
+            updatePerson: jest.fn()
+        };
+        mockAgent = {
+            client: {
+                models: { generateContent: jest.fn() }
+            },
+            db: mockDb,
+            interface: { broadcast: jest.fn() }
+        };
+        service = new ImpersonationService(mockAgent);
+    });
+
+    test('should transcribe audio using candidates fallback', async () => {
+        const mockResponse = {
+            candidates: [{ content: { parts: [{ text: 'Tra nscript' }] } }]
+        };
+        // Simulate SDK returning object without .response wrapper sometimes, or with it
+        // The code handles result.response and result.candidates
+        mockAgent.client.models.generateContent.mockResolvedValue({
+            response: mockResponse
+        });
+
+        const text = await service.transcribeAudio({});
+        expect(text).toBe('Tra nscript');
+    });
+
+    test('should resolve sender name from DB', async () => {
+        const phone = '1234567890';
+        mockDb.getPerson.mockReturnValue({ name: 'Papi', id: 'uuid' });
+
+        // Mock generation
+        mockAgent.client.models.generateContent.mockResolvedValue({
+            response: { candidates: [{ content: { parts: [{ text: 'Draft reply' }] } }] }
+        });
+
+        // Setup buffer
+        service.messageBuffers.set(phone, {
+            content: ['Hello'],
+            metadata: {},
+            source: 'whatsapp'
+        });
+
+        await service.processBufferedMessage(phone, phone);
+
+        // Verify generateDraft was called with Resolved Name
+        expect(mockAgent.client.models.generateContent).toHaveBeenCalledWith(
+            expect.objectContaining({
+                contents: expect.arrayContaining([
+                    expect.objectContaining({
+                        parts: expect.arrayContaining([
+                            expect.objectContaining({
+                                text: expect.stringContaining('### Incoming Message(s) from Papi:')
+                            })
+                        ])
+                    })
+                ])
+            })
+        );
+    });
+});
+
 const { AgentDB } = require('../src/db');
 const path = require('path');
 const fs = require('fs');
