@@ -139,6 +139,31 @@ describe('Impersonation Service Unit', () => {
         );
     });
 
+    test('should fallback to LID JID if Phone JID has no history', async () => {
+        const lidChatId = '1234567890@lid';
+        const contactIdentifier = '5491122334455';
+
+        // Mock axios to fail/empty first, succeed second
+        axios.get.mockImplementation(async (url, config) => {
+            if (config.params.jid.includes('s.whatsapp.net')) {
+                return { data: [] }; // Phone JID empty
+            }
+            if (config.params.jid.includes('@lid')) {
+                return { data: [{ role: 'user', content: 'Found me!', timestamp: 123 }] };
+            }
+            return { data: [] };
+        });
+
+        mockAgent.client.models.generateContent.mockResolvedValue({
+            response: { candidates: [{ content: { parts: [{ text: 'Draft' }] } }] }
+        });
+
+        await service.generateDraft(lidChatId, { content: 'Hi' }, 'User', '', contactIdentifier);
+
+        // Verify Axios Calls
+        expect(axios.get).toHaveBeenCalledTimes(2);
+    });
+
     test('should generate draft with full conversation context', async () => {
         const chatId = '1234567890';
         mockDb.getPerson.mockReturnValue({ name: 'Papi', id: 'uuid' });

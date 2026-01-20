@@ -429,35 +429,47 @@ Output a concise list of rules for this specific relationship.
 
         // 1. Fetch Context: Full conversation history (both sides)
         let history = [];
-        let historyJid = chatId;
+        const candidateJids = [];
 
-        // LID Resolution for History
-        if (chatId.includes('@lid') && contactIdentifier) {
-            // Clean identifier (phone)
+        // Determine Candidate JIDs
+        // Logic: Try Phone JID first (more likely specific), then the ChatID itself (LID or whatever was passed)
+        if (contactIdentifier) {
             const phone = contactIdentifier.replace(/[^0-9]/g, '');
-            if (phone.length > 5) {
-                historyJid = `${phone}@s.whatsapp.net`;
-                console.log(`[Impersonation] Resolved LID ${chatId} to ${historyJid} for history fetch.`);
+            if (phone.length > 5) candidateJids.push(`${phone}@s.whatsapp.net`);
+        }
+        candidateJids.push(chatId); // Always try the original ID as fallback
+
+        // Remove duplicates
+        const uniqueJids = [...new Set(candidateJids)];
+
+        // Strategy: Use WhatsApp Source of Truth (Remote Fetch)
+        if (chatId.includes('@s.whatsapp.net') || chatId.includes('@g.us') || chatId.includes('@lid')) {
+            const interfacesUrl = process.env.INTERFACES_URL || 'http://interfaces:5000';
+
+            for (const jid of uniqueJids) {
+                if (!jid.includes('@s.whatsapp.net') && !jid.includes('@g.us') && !jid.includes('@lid')) continue;
+
+                try {
+                    console.log(`[Impersonation] Fetching remote history for ${jid}...`);
+                    const res = await axios.get(`${interfacesUrl}/whatsapp/history`, {
+                        params: { jid: jid, limit: 20, session: 'user' },
+                        headers: { Authorization: `Bearer ${process.env.DEEDEE_API_TOKEN}` },
+                        timeout: 2000
+                    });
+
+                    if (res.data && Array.isArray(res.data) && res.data.length > 0) {
+                        history = res.data.reverse();
+                        console.log(`[Impersonation] History found for ${jid} (${history.length} msgs)`);
+                        break; // Stop if we found history
+                    }
+                } catch (e) {
+                    console.warn(`[Impersonation] Failed to fetch history for ${jid}: ${e.message}`);
+                }
             }
         }
 
-        // Strategy: Use WhatsApp Source of Truth if available (for full Context including manual replies)
-        if (historyJid.includes('@s.whatsapp.net') || historyJid.includes('@g.us')) {
-            try {
-                const interfacesUrl = process.env.INTERFACES_URL || 'http://interfaces:5000';
-                console.log(`[Impersonation] Fetching remote history for ${historyJid}...`);
-                const res = await axios.get(`${interfacesUrl}/whatsapp/history`, {
-                    params: { jid: historyJid, limit: 20, session: 'user' }, // session='user' (the Owner's session)
-                    headers: { Authorization: `Bearer ${process.env.DEEDEE_API_TOKEN}` },
-                    timeout: 2000 // Fast timeout
-                });
-                if (res.data && Array.isArray(res.data)) {
-                    history = res.data.reverse(); // Ensure [Oldest, ..., Newest] for transcript
-                }
-            } catch (e) {
-                console.warn(`[Impersonation] Failed to fetch remote history: ${e.message}. Falling back to DB.`);
-            }
-        }
+        // Validation: If no remote history, warn
+        if (history.length === 0) console.warn('[Impersonation] No remote history found for any candidate JID.');
 
         // Fallback to Local DB if remote failed or not a WhatsApp chat
         if (history.length === 0) {
