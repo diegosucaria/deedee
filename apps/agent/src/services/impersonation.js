@@ -400,14 +400,26 @@ Output a concise list of rules for this specific relationship.
         const draft = await this.generateDraft(chatId, combinedMessage, contactName, fullContent);
 
         if (draft) {
-            this.saveDraft(chatId, contactString, draft, fullContent);
+            const saved = this.saveDraft(chatId, contactString, draft, fullContent);
 
-            // NOTIFY FRONTEND via Socket (Broadcast)
-            if (this.agent && this.agent.interface) {
-                console.log(`[Impersonation] Broadcasting 'autopilot:update' for ${contactName}...`);
-                this.agent.interface.broadcast('autopilot:update', { type: 'draft_created', chatId });
-            } else {
-                console.warn('[Impersonation] Agent interface not available, cannot broadcast update.');
+            // Autonomous Mode Check
+            // Re-fetch status to be sure
+            const status = this.getAutopilotStatus(contactString);
+            if (status === 'full') {
+                console.log(`[Impersonation] Autonomous Mode: Auto-sending reply to ${contactString}`);
+                try {
+                    const payload = {
+                        source: buffer.source || 'whatsapp',
+                        content: draft,
+                        metadata: { chatId, session: 'assistant' },
+                        type: 'text'
+                    };
+                    await this.agent.interface.send(payload);
+                    this.markDraftCompleted(saved.lastInsertRowid, 'approved');
+                    console.log(`[Impersonation] Auto-sent successfully.`);
+                } catch (e) {
+                    console.error('[Impersonation] Auto-send failed:', e.message);
+                }
             }
         }
     }
@@ -552,6 +564,85 @@ ${transcript}
         return status;
     }
 
+    /**
+     * Get the latest pending draft for a chat
+     */
+    getPendingDraft(chatId) {
+        return this.db.db.prepare(`
+            SELECT * FROM autopilot_drafts 
+            WHERE chat_id = ? AND status = 'pending' 
+            ORDER BY created_at DESC LIMIT 1
+        `).get(chatId);
+    }
+
+    /**
+     * Mark a draft as handled (completed/rejected)
+     */
+    markDraftCompleted(id, status = 'completed') {
+        this.db.db.prepare('UPDATE autopilot_drafts SET status = ? WHERE id = ?').run(status, id);
+    }
+
+    /**
+     * Active Learning: Analyze the difference between Draft and Final Sent Message
+     */
+    async learnFromCorrection(chatId, draftContent, finalContent) {
+        if (!draftContent || !finalContent) return;
+
+        // simple normalization
+        const draft = draftContent.trim();
+        const final = finalContent.trim();
+
+        if (draft === final) return; // No correction made
+
+        console.log(`[Impersonation] Active Learning: User corrected draft. Analyzing diff...`);
+        console.log(`Draft: "${draft}"`);
+        console.log(`Final: "${final}"`);
+
+        // 1. Prompt LLM to extract the lesson
+        const prompt = `
+You are an expert style analyst. The user corrected an AI-generated draft.
+Analyze the change to understand the user's preferred style.
+
+Draft: "${draft}"
+User Correction: "${final}"
+
+What specific style rule can we learn from this? 
+Examples: "Prefers shorter sentences", "Uses lowercase for 'lol'", "More enthusiastic", "Don't apologize".
+Return a SINGLE, concise rule (max 10 words).
+`;
+
+        try {
+            const result = await this.agent.client.models.generateContent({
+                model: process.env.WORKER_FLASH || 'gemini-2.0-flash-exp',
+                contents: [{ role: 'user', parts: [{ text: prompt }] }]
+            });
+
+            let rule = "";
+            if (result.response) rule = result.response.text().trim();
+            else if (result.candidates) rule = result.candidates[0].content.parts[0].text.trim();
+
+            if (rule) {
+                console.log(`[Impersonation] Learned Rule: "${rule}"`);
+
+                // 2. Append to Contact Style Profile
+                // We append it as a "Learned Preference" block or just a bullet?
+                // Let's verify if we have a current profile.
+                let currentProfile = this.getContactStyle(chatId) || "";
+
+                // Avoid duplicates if simple
+                if (currentProfile.includes(rule)) return;
+
+                const newProfile = currentProfile
+                    ? `${currentProfile}\n- [LEARNED] ${rule}`
+                    : `- [LEARNED] ${rule}`;
+
+                this.saveContactStyle(chatId, newProfile);
+                console.log(`[Impersonation] Updated style profile for ${chatId}`);
+            }
+        } catch (e) {
+            console.error('[Impersonation] Active Learning failed:', e.message);
+        }
+    }
     /**
      * Save a generated draft
      */

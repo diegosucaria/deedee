@@ -157,6 +157,24 @@ class CommunicationExecutor extends BaseExecutor {
                     throw new Error('Interface service not available');
                 }
 
+                // Active Learning Intercept
+                try {
+                    if (this.services.agent && this.services.agent.impersonationService) {
+                        // metadata.chatId is constructed above (e.g. 123@s.whatsapp.net)
+                        const pendingDraft = this.services.agent.impersonationService.getPendingDraft(metadata.chatId);
+                        if (pendingDraft) {
+                            // Mark as handled
+                            this.services.agent.impersonationService.markDraftCompleted(pendingDraft.id, 'approved'); // or 'corrected'
+
+                            // Trigger Learning (Fire & Forget)
+                            this.services.agent.impersonationService.learnFromCorrection(metadata.chatId, pendingDraft.content, content)
+                                .catch(err => console.error('[Communication] Active Learning Error:', err.message));
+                        }
+                    }
+                } catch (learningErr) {
+                    console.warn('[Communication] Active Learning Hook Failed:', learningErr.message);
+                }
+
                 return { success: true, info: `Message sent to ${cleanTo}` };
             }
 

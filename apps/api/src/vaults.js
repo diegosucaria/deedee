@@ -108,4 +108,10 @@ router.get('/:id/files/:filename', async (req, res) => {
     }
 });
 
+// GET /v1/vaults/:id/embeddings
+router.get('/:id/embeddings', (req, res) => proxyRequest(req, res, 'GET', `/v1/vaults/${req.params.id}/embeddings`));
+
+// DELETE /v1/vaults/:id/embeddings/:filename
+router.delete('/:id/embeddings/:filename', (req, res) => proxyRequest(req, res, 'DELETE', `/v1/vaults/${req.params.id}/embeddings/${req.params.filename}`));
+
 module.exports = router;
