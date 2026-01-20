@@ -125,13 +125,35 @@ function createAutopilotRouter(agent) {
     router.get('/settings', (req, res) => {
         try {
             const people = agent.db.db.prepare(`
-                SELECT id, name, phone, autopilot_status, autopilot_expires_at, source, 
+                SELECT id, name, phone, autopilot_status, autopilot_expires_at, source, metadata,
                 (SELECT MAX(timestamp) FROM messages WHERE chat_id = people.phone OR chat_id = people.id) as last_message_at
                 FROM people 
                 WHERE (name IS NULL OR (name NOT LIKE 'sys_%' AND name NOT LIKE 'sch_%'))
-                ORDER BY last_message_at DESC NULLS LAST, name ASC
             `).all();
-            res.json(people);
+
+            // Enrich and Sort (Style Profile Priority)
+            const enriched = people.map(p => {
+                let has_style = false;
+                try {
+                    const meta = JSON.parse(p.metadata || '{}');
+                    // Check if style profile exists and is not trivial
+                    if (meta.style_profile && meta.style_profile.length > 10) has_style = true;
+                } catch (e) { }
+                return { ...p, has_style };
+            });
+
+            enriched.sort((a, b) => {
+                // Priority 1: Has Style Learned
+                if (a.has_style && !b.has_style) return -1;
+                if (!a.has_style && b.has_style) return 1;
+
+                // Priority 2: Recency
+                const tsA = a.last_message_at ? new Date(a.last_message_at).getTime() : 0;
+                const tsB = b.last_message_at ? new Date(b.last_message_at).getTime() : 0;
+                return tsB - tsA;
+            });
+
+            res.json(enriched);
         } catch (e) {
             res.status(500).json({ error: e.message });
         }

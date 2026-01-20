@@ -431,7 +431,7 @@ function AutopilotPage() {
                                         <optgroup label="Contacts">
                                             {settings.map(p => (
                                                 <option key={p.id} value={p.id}>
-                                                    {p.name}
+                                                    {p.name}{p.has_style ? ' ★' : ''}
                                                 </option>
                                             ))}
                                         </optgroup>

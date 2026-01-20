@@ -203,7 +203,7 @@ Do not be vague. Be prescriptive.
             const headers = { 'Authorization': `Bearer ${process.env.DEEDEE_API_TOKEN}` };
 
             const res = await axios.get(`${interfacesUrl}/whatsapp/history?jid=${encodeURIComponent(chatId)}&limit=100`, { headers });
-            const messages = res.data.filter(m => m.role === 'user'); // Sent by me
+            const messages = res.data.filter(m => m.role === 'assistant'); // Sent by me (fromMe=true maps to 'assistant' in getChatHistory)
 
             if (messages.length < 5) return "Not enough history with this contact.";
             corpus = messages.map(m => m.content).join('\n');
@@ -214,7 +214,7 @@ Do not be vague. Be prescriptive.
             // Use contactIdentifier which might be the actual UUID in the DB
             const history = this.db.db.prepare(`
                 SELECT content FROM messages 
-                WHERE (chat_id = ? OR contact_id = ?) AND role = 'user' AND content IS NOT NULL AND content != ''
+                WHERE (chat_id = ? OR contact_id = ?) AND role = 'assistant' AND content IS NOT NULL AND content != ''
                 ORDER BY timestamp DESC LIMIT 50
             `).all(chatId, contactIdentifier).reverse();
             corpus = history.map(m => m.content).join('\n');
