@@ -468,7 +468,8 @@ export async function getSessions(limit = 50, offset = 0, preserveId = null) {
         const query = new URLSearchParams({ limit, offset });
         if (preserveId) query.append('preserveId', preserveId);
 
-        return await fetchAPI(`/v1/sessions?${query.toString()}`);
+        const res = await fetchAPI(`/v1/sessions?${query.toString()}`);
+        return res.sessions || [];
     } catch (error) {
         console.error('getSessions Error:', error);
         return [];
