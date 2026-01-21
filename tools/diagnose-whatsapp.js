@@ -39,6 +39,18 @@ async function startDiagnostic(session = 'user') {
             }
         } else if (connection === 'open') {
             console.log('[Diagnostic] Connection OPEN! 🟢');
+
+            // ACTIVE PROBE 1: Presence
+            console.log('[Diagnostic] 🔍 PROBE 1: Sending Presence Update...');
+            sock.sendPresenceUpdate('available')
+                .then(() => console.log('[Diagnostic] ✅ PROBE 1: Presence Acknowledged'))
+                .catch(e => console.error('[Diagnostic] ❌ PROBE 1 FAILED:', e));
+
+            // ACTIVE PROBE 2: Fetch Blocklist (Simple IQ)
+            console.log('[Diagnostic] 🔍 PROBE 2: Fetching Blocklist...');
+            sock.fetchBlocklist()
+                .then(list => console.log(`[Diagnostic] ✅ PROBE 2: Blocklist Fetched (${list.length} entries)`))
+                .catch(e => console.error('[Diagnostic] ❌ PROBE 2 FAILED:', e));
         }
     });
 
