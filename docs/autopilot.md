@@ -6,6 +6,9 @@ Autopilot allows DeeDee to assist in personal messaging by drafting replies in y
 ## Architecture
 - **Interception**: Messages from "Assisted" contacts are intercepted in `apps/agent/src/agent.js` *after* Watchers but *before* standard routing.
 - **Impersonation**: `ImpersonationService` uses the last 20 messages of chat history to match tone/style via LLM.
+- **Multi-Message Support**: The agent can now draft multiple sequential messages (separated by `[SPLIT]`) to mimic natural human texting patterns.
+- **Autonomous Mode**: trusted contacts can be set to "Fully Autonomous", where the agent sends replies immediately without manual approval.
+- **Active Learning**: When you edit a draft, the agent learns from the diff between its draft and your final message to improve future attempts.
 - **Storage**: Drafts are stored in the `autopilot_drafts` table.
 - **Style Learning**: 
   - `ImpersonationService` can analyze global message history (last 500 messages) to generate a "Style Profile".

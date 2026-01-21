@@ -139,7 +139,7 @@ Everything is customizable via environment variables. Like which models to use.
     -   **Context Switching**: Agent automatically switches context when discussing a vault topic.
     -   **File Management**: Upload invoices, medical reports, or manuals. The Agent can find and read them.
     -   **Wiki**: Auto-updating `index.md` for each vault acting as a high-level summary.
-    -   **[Read the Guide](docs/dj-assistant.md)**: Full details on the DJ Module.
+    -   **[Read the Guide](docs/local-rag.md)**: Full details on Life Vaults.
 
 -   **🎧 DJ Assistant**:
     -   **Crate Digger**: Digitize your vinyl collection by taking photos of covers or receipts.
@@ -281,6 +281,9 @@ See the full documentation for details:
 -   **[Security Model](docs/security.md)**: Details on "YOLO Mode", threat models, and access control.
 -   **[Docker Optimization](docs/docker-optimization.md)**: Explanation of Turbo Prune builds and caching strategy.
 -   **[Tools Master Plan](docs/tools-master-plan.md)**: Status and roadmap of all internal tools.
+-   **[Google Calendar](docs/google-calendar.md)**: Setup guide for Calendar integration.
+-   **[Local RAG / Life Vaults](docs/local-rag.md)**: How the knowledge base works.
+-   **[Troubleshooting](docs/troubleshooting.md)**: Common issues and fixes.
 
 1.  **Agent**: Node.js + LangChain/Gemini.
 2.  **Supervisor**: Watchdog + Git Operations.
