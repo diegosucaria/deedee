@@ -363,10 +363,10 @@ class WhatsAppService {
             this.sock = makeWASocket({
                 auth: state,
                 defaultQueryTimeoutMs: undefined, // endless
-                connectTimeoutMs: 180000, // Increased to 3 minutes to handle History Sync
+                connectTimeoutMs: 60000,
                 retryRequestDelayMs: 2000,
                 keepAliveIntervalMs: 30000,
-                syncFullHistory: true,
+                syncFullHistory: false, // OFF to prevent 30s Initial Sync Timeout
                 markOnlineOnConnect: false,
                 browser: ['DeeDee', 'Chrome', '1.0.0'],
                 // getMessage: async (key) => { ... }
