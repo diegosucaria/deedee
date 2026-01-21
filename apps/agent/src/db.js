@@ -1223,12 +1223,7 @@ class AgentDB {
     this.db.prepare('INSERT INTO metrics (type, value, metadata) VALUES (?, ?, ?)').run(type, value, metaStr);
   }
 
-  logTokenUsage({ model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost }) {
-    this.db.prepare(`
-      INSERT INTO token_usage (model, prompt_tokens, candidate_tokens, total_tokens, chat_id, estimated_cost)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost || 0);
-  }
+
 
   getLatencyTrend(limit = 100) {
     // Get avg latency per hour? Or just raw points for graph?

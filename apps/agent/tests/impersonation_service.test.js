@@ -140,7 +140,7 @@ describe('ImpersonationService', () => {
         // Verify broadcast called
         expect(agentMock.interface.broadcast).toHaveBeenCalledWith(
             'autopilot:update',
-            { type: 'draft_created', chatId }
+            { type: 'draft_created', chatId, cost: 0 }
         );
     });
 });

@@ -418,10 +418,11 @@ Output a concise list of rules for this specific relationship.
             source: buffer.source
         };
 
-        const draft = await this.generateDraft(chatId, combinedMessage, contactName, fullContent, contactString);
+        const result = await this.generateDraft(chatId, combinedMessage, contactName, fullContent, contactString);
 
-        if (draft) {
-            const saved = this.saveDraft(chatId, contactString, draft, fullContent);
+        if (result && result.text) {
+            const { text: draftText, cost } = result;
+            const saved = this.saveDraft(chatId, contactString, draftText, fullContent, cost);
 
             // Autonomous Mode Check
             // Re-fetch status to be sure
@@ -429,7 +430,7 @@ Output a concise list of rules for this specific relationship.
             if (status === 'full') {
                 console.log(`[Impersonation] Autonomous Mode: Auto-sending reply to ${contactString}`);
                 try {
-                    const messages = draft.split('[SPLIT]').map(m => m.trim()).filter(m => m);
+                    const messages = draftText.split('[SPLIT]').map(m => m.trim()).filter(m => m);
 
                     for (const msgContent of messages) {
                         const payload = {
@@ -448,9 +449,14 @@ Output a concise list of rules for this specific relationship.
                 } catch (e) {
                     console.error('[Impersonation] Auto-send failed:', e.message);
                 }
+            } else {
+                console.log(`[Impersonation] Draft saved for ${contactName}. Waiting for approval.`);
             }
+        } else {
+            // Null or invalid draft
         }
     }
+
 
     async generateDraft(chatId, incomingMessage, contactName, contextContent = '', contactIdentifier = null) {
         console.log(`[Impersonation] Generating draft for chat ${chatId} from ${contactName}`);
@@ -486,7 +492,7 @@ Output a concise list of rules for this specific relationship.
                     });
 
                     if (res.data && Array.isArray(res.data) && res.data.length > 0) {
-                        history = res.data.reverse();
+                        history = res.data;
                         console.log(`[Impersonation] History found for ${jid} (${history.length} msgs)`);
                         break; // Stop if we found history
                     }
@@ -549,20 +555,49 @@ ${transcript}
 - Return ONLY the drafted reply text. No quotes.
 - If multiple messages are appropriate (e.g. short sequential thoughts), separate them with exactly: [SPLIT]
 - CRITICAL: maintain the same language as the incoming message.
+- CRITICAL: Do not use multi-line messages unless strictly necessary. Always prefer short answers.
+
 `;
 
         // 4. Call LLM
         try {
             console.log('Prompt:', JSON.stringify({ prompt }));
+            const modelName = process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
+
             const result = await this.agent.client.models.generateContent({
-                model: process.env.WORKER_FLASH || 'gemini-2.0-flash-exp',
+                model: modelName,
                 contents: [{ role: 'user', parts: [{ text: prompt }] }]
             });
 
             let draftText = "";
-            if (result.response && result.response.candidates && result.response.candidates.length > 0) {
-                draftText = result.response.candidates[0].content.parts[0].text.trim();
+            let cost = 0;
+
+            if (result.response) {
+                if (result.response.candidates && result.response.candidates.length > 0) {
+                    draftText = result.response.candidates[0].content.parts[0].text.trim();
+                }
+
+                // COST TRACKING
+                if (result.response.usageMetadata) {
+                    const { promptTokenCount, candidatesTokenCount, totalTokenCount } = result.response.usageMetadata;
+                    const config = new ConfigService();
+                    cost = config.calculateCost(modelName, promptTokenCount, candidatesTokenCount);
+
+                    console.log(`[Impersonation] Draft Cost: $${cost.toFixed(6)} (${totalTokenCount} tokens)`);
+
+                    // Log to DB Stats
+                    this.agent.db.logTokenUsage({
+                        model: modelName,
+                        promptTokens: promptTokenCount,
+                        candidateTokens: candidatesTokenCount,
+                        totalTokens: totalTokenCount,
+                        chatId: chatId,
+                        estimatedCost: cost,
+                        tag: 'autopilot'
+                    });
+                }
             } else if (result.candidates && result.candidates.length > 0) {
+                // Fallback for older SDK structure (unlikely to have usageMetadata here usually)
                 draftText = result.candidates[0].content.parts[0].text.trim();
             } else {
                 throw new Error("No candidates in GenAI response");
@@ -577,7 +612,7 @@ ${transcript}
             // Clean Quotes if present (User Feedback)
             draftText = draftText.replace(/^"|"$/g, '').trim();
 
-            return draftText;
+            return { text: draftText, cost }; // Return Object now
         } catch (error) {
             console.error('[Impersonation] Generation failed:', error);
             return null;
@@ -710,16 +745,22 @@ Return a SINGLE, concise rule (max 10 words).
     /**
      * Save a generated draft
      */
-    saveDraft(chatId, contactId, content, contextContent = null) {
+    saveDraft(chatId, contactId, content, contextContent = null, cost = 0) {
+        const options = JSON.stringify({ cost });
+
         const stmt = this.db.db.prepare(`
-            INSERT INTO autopilot_drafts(chat_id, contact_id, content, context_content, status)
-            VALUES(?, ?, ?, ?, 'pending')
+            INSERT INTO autopilot_drafts(chat_id, contact_id, content, context_content, options, status)
+            VALUES(?, ?, ?, ?, ?, 'pending')
         `);
-        const result = stmt.run(chatId, contactId, content, contextContent);
+        const result = stmt.run(chatId, contactId, content, contextContent, options);
 
         // NOTIFY FRONTEND via Socket (Broadcast)
         if (this.agent && this.agent.interface) {
-            this.agent.interface.broadcast('autopilot:update', { type: 'draft_created', chatId });
+            this.agent.interface.broadcast('autopilot:update', {
+                type: 'draft_created',
+                chatId,
+                cost
+            });
         }
 
         return result;

@@ -265,9 +265,24 @@ function AutopilotPage() {
                                         <h3 className="font-semibold text-lg text-blue-400">{draft.contact_name || draft.contact_id}</h3>
                                         <p className="text-xs text-zinc-500 font-mono mt-1">Chat ID: {draft.chat_id}</p>
                                     </div>
-                                    <span className="text-xs bg-blue-500/10 text-blue-400 px-2 py-1 rounded-full border border-blue-500/20">
-                                        Assisted
-                                    </span>
+                                    <div className="flex flex-col items-end gap-1">
+                                        <span className="text-xs bg-blue-500/10 text-blue-400 px-2 py-1 rounded-full border border-blue-500/20">
+                                            Assisted
+                                        </span>
+                                        {(() => {
+                                            try {
+                                                const opts = draft.options ? JSON.parse(draft.options) : {};
+                                                if (opts.cost) {
+                                                    return (
+                                                        <span className="text-[10px] text-zinc-600 font-mono">
+                                                            ${Number(opts.cost).toFixed(5)}
+                                                        </span>
+                                                    );
+                                                }
+                                            } catch (e) { }
+                                            return null;
+                                        })()}
+                                    </div>
                                 </div>
 
                                 {/* Context Message */}
