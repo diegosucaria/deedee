@@ -172,7 +172,7 @@ class SQLiteStore {
     getGlobalUserHistory(limit) {
         // from_me = 1 means sent by the user account owner
         const rows = this.db.prepare(`
-            SELECT data FROM messages 
+            SELECT data, timestamp FROM messages 
             WHERE from_me = 1 
             ORDER BY timestamp DESC 
             LIMIT ?
@@ -185,7 +185,7 @@ class SQLiteStore {
             return {
                 role: 'user', // "User" from the Agent's perspective (it's the user speaking)
                 content,
-                timestamp: (typeof m.messageTimestamp === 'number' ? m.messageTimestamp : m.messageTimestamp?.low) * 1000
+                timestamp: r.timestamp * 1000
             };
         }).filter(m => m.content && m.content.length > 5); // Filter noise
     }
@@ -921,9 +921,10 @@ class WhatsAppService {
         console.log(`${this.logPrefix} Fetching history for ${jid}. Resolved targets: ${targetJids.join(', ')}`);
 
         // Query IN (...)
+        // Query IN (...)
         const queryPlaceholders = targetJids.map(() => '?').join(',');
         const rows = this.store.db.prepare(`
-            SELECT data FROM messages 
+            SELECT data, timestamp FROM messages 
             WHERE remote_jid IN (${queryPlaceholders})
             ORDER BY timestamp DESC 
             LIMIT ?
@@ -948,7 +949,7 @@ class WhatsAppService {
             return {
                 role: fromMe ? 'assistant' : 'user',
                 content,
-                timestamp: this._getSafeTimestamp(m.messageTimestamp) * 1000
+                timestamp: r.timestamp * 1000 // Use DB timestamp
             };
         });
     }
