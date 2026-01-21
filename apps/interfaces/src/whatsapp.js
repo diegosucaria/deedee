@@ -369,7 +369,7 @@ class WhatsAppService {
                 retryRequestDelayMs: 2000,
                 keepAliveIntervalMs: 30000,
                 syncFullHistory: true,
-                markOnlineOnConnect: true, // there is a periodic assertion to unavailable later, so we don't lose notifications in the main device
+                markOnlineOnConnect: false, // Do NOT mark online automatically to prevent notification suppression on phone
                 browser: ['DeeDee', 'Chrome', '1.0.0'],
                 // getMessage: async (key) => { ... }
             });
@@ -610,7 +610,7 @@ class WhatsAppService {
             }
 
             // Verify processing for ALL sessions (User + Assistant)
-            console.log(`${this.logPrefix} Received from ${phoneNumber} [Type: ${upsertType}]`);
+            // console.log(`${this.logPrefix} Received from ${phoneNumber} [Type: ${upsertType}]`);
 
             // Unwrapping Logic
             let messageContent = msg.message;

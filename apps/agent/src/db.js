@@ -509,7 +509,7 @@ class AgentDB {
         title = `${source.charAt(0).toUpperCase() + source.slice(1)} Chat`;
       }
       session = this.createSession({ id: chatId, title });
-      console.log(`[DB] Auto-created session ${chatId} (${title})`);
+      // console.log(`[DB] Auto-created session ${chatId} (${title})`);
     }
     return session;
   }
