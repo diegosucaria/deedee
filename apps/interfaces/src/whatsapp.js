@@ -366,8 +366,8 @@ class WhatsAppService {
                 connectTimeoutMs: 60000,
                 retryRequestDelayMs: 2000,
                 keepAliveIntervalMs: 30000,
-                syncFullHistory: false,
-                markOnlineOnConnect: true,
+                syncFullHistory: true,
+                markOnlineOnConnect: false,
                 browser: ['DeeDee', 'Chrome', '1.0.0'],
                 // getMessage: async (key) => { ... }
             });
@@ -453,30 +453,27 @@ class WhatsAppService {
                         await this.disconnect(true); // Wipe if server says logged out
                     }
                 } else if (connection === 'open') {
-                    console.log(`${this.logPrefix} Connection opened`);
+                    console.log(`${this.logPrefix} Connection OPEN! 🟢`);
                     this.status = 'connected';
                     this.qr = null;
-                    this.reconnectAttempts = 0; // Reset on success
+                    this.reconnectAttempts = 0; // Reset counter on success
 
-                    // FORCE PASSIVE STATE to restore Phone Notifications
-                    const setPassive = async () => {
-                        try {
-                            await this.sock.sendPresenceUpdate('unavailable');
-                            console.log(`${this.logPrefix} Asserted 'unavailable' presence.`);
-                        } catch (e) {
-                            console.warn(`${this.logPrefix} Failed to set presence:`, e);
-                        }
-                    };
+                    // Set presence to available first, then unavailable?
+                    // Or just periodic update?
+                    // Logic for passive mode: active but unavailable?
+                    if (this.sessionId === 'assistant') {
+                        // Assistant should be online
+                        await this.sock.sendPresenceUpdate('available');
+                    } else {
+                        // User session mirror: default to unavailable to avoid notification suppression?
+                        // But need to be online to receive?
+                        await this.sock.sendPresenceUpdate('unavailable');
 
-                    // 1. Immediate (delayed)
-                    const { delay } = await this._importBaileys();
-                    await delay(2000);
-                    await setPassive();
-
-                    // 2. Periodic Re-assertion (Every 10 mins)
-                    // This counters any implicit "Active" status drift
-                    if (this.presenceInterval) clearInterval(this.presenceInterval);
-                    this.presenceInterval = setInterval(setPassive, 10 * 60 * 1000);
+                        // Periodic heartbeat
+                        this.presenceInterval = setInterval(() => {
+                            this.sock.sendPresenceUpdate('unavailable');
+                        }, 60 * 1000); // 1 min heartbeat
+                    }
 
                     // Log contacts count
                     const contactCount = this.store.getContacts().length;
