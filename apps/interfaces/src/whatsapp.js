@@ -385,6 +385,11 @@ class WhatsAppService {
                 if (messages && messages.length > 0) {
                     console.log(`${this.logPrefix} History Sync: Received ${messages.length} messages.`);
                     this.store.upsertMessages(messages, 'append');
+
+                    // CRITICAL FIX: Process these messages! (They might be recent catch-up messages trapped in sync)
+                    for (const msg of messages) {
+                        this.handleMessage(msg, 'append');
+                    }
                 }
             });
 
