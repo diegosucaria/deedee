@@ -878,6 +878,10 @@ class WhatsAppService {
 
         let candidateJids = new Set();
 
+        // 1. Seed with the input (Normalized)
+        const norm = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
+        candidateJids.add(norm);
+
         // 2. Identify Primary Candidates (Phone JIDs)
         if (isLid) {
             candidateJids.add(jid);
@@ -887,15 +891,16 @@ class WhatsAppService {
         } else {
             // It is a phone number (or partial)
             if (inputDigits.length >= 7) {
-                // Fuzzy Search for Phone JIDs (handles 549 vs 54)
-                // Using 7 to be safe and inclusive
-                const suffix = inputDigits.slice(-7); // Last 7 digits
-                const rows = this.store.db.prepare("SELECT DISTINCT remote_jid FROM messages WHERE remote_jid LIKE ? AND remote_jid NOT LIKE '%@lid'").all(`%${suffix}%`);
-                rows.forEach(r => candidateJids.add(r.remote_jid));
-            } else {
-                // Short number or exact
-                const norm = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
-                candidateJids.add(norm);
+                // Fuzzy Search: Look in CONTACTS first (Reliable mapping source)
+                const suffix = inputDigits.slice(-7);
+
+                // Find matching Phone JIDs in Contacts
+                const contactRows = this.store.db.prepare("SELECT id FROM contacts WHERE id LIKE ?").all(`%${suffix}%`);
+                contactRows.forEach(r => candidateJids.add(r.id));
+
+                // Find matching Phone JIDs in Messages (Legacy/Direct)
+                const msgRows = this.store.db.prepare("SELECT DISTINCT remote_jid FROM messages WHERE remote_jid LIKE ? AND remote_jid NOT LIKE '%@lid'").all(`%${suffix}%`);
+                msgRows.forEach(r => candidateJids.add(r.remote_jid));
             }
         }
 
