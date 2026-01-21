@@ -365,10 +365,10 @@ class WhatsAppService {
             this.sock = makeWASocket({
                 auth: state,
                 defaultQueryTimeoutMs: undefined, // endless
-                connectTimeoutMs: 60000,
+                connectTimeoutMs: 180000, // 3 minutes (Critical for syncFullHistory: true)
                 retryRequestDelayMs: 2000,
                 keepAliveIntervalMs: 30000,
-                syncFullHistory: false, // Prevent timeout loop. DB is already populated.
+                syncFullHistory: true,
                 markOnlineOnConnect: true, // there is a periodic assertion to unavailable later, so we don't lose notifications in the main device
                 browser: ['DeeDee', 'Chrome', '1.0.0'],
                 // getMessage: async (key) => { ... }
