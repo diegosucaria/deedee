@@ -484,26 +484,18 @@ class WhatsAppService {
                     const isProtocol = !!msg.message?.protocolMessage;
                     const msgKeys = Object.keys(msg.message || {}).join(',');
 
-                    // Determine Timestamp
+                    // Debug Log
                     let ts = msg.messageTimestamp;
-                    if (ts && typeof ts !== 'number') {
-                        ts = ts.low || ts; // Handle Long
-                    }
+                    if (ts && typeof ts !== 'number') ts = ts.low || ts;
                     const nowSeconds = Math.floor(Date.now() / 1000);
                     const age = ts ? (nowSeconds - ts) : 0;
 
-                    console.log(`${this.logPrefix} [DEBUG] Msg: ID=${msg.key.id} JID=${msg.key.remoteJid} FromMe=${msg.key.fromMe} Protocol=${isProtocol} Type=${type} Age=${age}s Keys=${msgKeys}`);
+                    console.log(`${this.logPrefix} [DEBUG] Msg: ID=${msg.key.id} Protocol=${isProtocol} Type=${type} Age=${age}s Keys=${msgKeys}`);
 
                     if (!msg.message || msg.message.protocolMessage) continue;
 
-                    // FILTER: Only process 'notify' OR recent 'append' (catch-up)
-                    // If 'append' is older than 5 minutes, ignore it to prevent flood.
-                    if (type === 'append' && age > 300) {
-                        // console.log(`${this.logPrefix} [DEBUG] Skipping old append message`);
-                        continue;
-                    }
-
-                    await this.handleMessage(msg);
+                    // Pass to handler (Decides whether to process based on age/type)
+                    await this.handleMessage(msg, type);
                 }
             });
 
@@ -513,8 +505,19 @@ class WhatsAppService {
         }
     }
 
-    async handleMessage(msg) {
+    async handleMessage(msg, type = 'notify') {
         try {
+            // 0. Age Check (Prevent History Flood)
+            let ts = msg.messageTimestamp;
+            if (ts && typeof ts !== 'number') ts = ts.low || ts;
+            const age = ts ? (Math.floor(Date.now() / 1000) - ts) : 0;
+
+            if (type === 'append' && age > 300) {
+                // Silently ignore old history messages
+                // console.log(`${this.logPrefix} Ignoring old history message (Age: ${age}s)`);
+                return;
+            }
+
             const remoteJid = msg.key.remoteJid;
             if (remoteJid === 'status@broadcast' || msg.key.fromMe) return;
 
