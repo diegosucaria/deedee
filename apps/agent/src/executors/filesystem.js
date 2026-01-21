@@ -1,6 +1,25 @@
+const axios = require('axios');
 const { BaseExecutor } = require('./base');
 
 class FileSystemExecutor extends BaseExecutor {
+    constructor(services) {
+        super(services);
+        this.supervisorUrl = process.env.SUPERVISOR_URL || 'http://supervisor:4000';
+    }
+
+    async _callSupervisor(command, data = {}) {
+        try {
+            const response = await axios.post(`${this.supervisorUrl}/cmd/${command}`, data, {
+                headers: {
+                    'x-supervisor-token': process.env.SUPERVISOR_TOKEN
+                }
+            });
+            return JSON.stringify(response.data);
+        } catch (error) {
+            return `Error calling supervisor: ${error.message} - ${error.response?.data?.error || ''}`;
+        }
+    }
+
     async execute(name, args) {
         const { local } = this.services;
 
@@ -9,6 +28,15 @@ class FileSystemExecutor extends BaseExecutor {
             case 'writeFile': return await local.writeFile(args.path, args.content);
             case 'listDirectory': return await local.listDirectory(args.path);
             case 'runShellCommand': return await local.runShellCommand(args.command);
+
+            // Git Ops via Supervisor
+            case 'commitAndPush':
+                return await this._callSupervisor('commit', { message: args.message });
+            case 'rollbackLastChange':
+                return await this._callSupervisor('rollback');
+            case 'pullLatestChanges':
+                return await this._callSupervisor('pull');
+
             default: return null;
         }
     }
