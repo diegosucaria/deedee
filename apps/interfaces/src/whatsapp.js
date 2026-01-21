@@ -291,6 +291,8 @@ class WhatsAppService {
         this.reconnectAttempts = 0;
         this.store = null;
         this.reconnectTimeout = null;
+        this.sleepTimeout = null;
+        this.presenceInterval = null;
 
         const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
         this.authFolder = path.join(dataDir, `baileys_auth_${sessionId}`);
@@ -377,19 +379,18 @@ class WhatsAppService {
 
             // History Sync - Critical for initial contacts
             this.sock.ev.on('messaging-history.set', ({ contacts, messages }) => {
-                if (contacts && contacts.length > 0) {
-                    console.log(`${this.logPrefix} History Sync: Received ${contacts.length} contacts.`);
-                    this.store.upsertContacts(contacts);
-                }
-                // Handle synced messages
-                if (messages && messages.length > 0) {
-                    console.log(`${this.logPrefix} History Sync: Received ${messages.length} messages.`);
-                    this.store.upsertMessages(messages, 'append');
+                console.log(`${this.logPrefix} History Sync Complete: ${contacts?.length || 0} contacts, ${messages?.length || 0} messages.`);
 
-                    // CRITICAL FIX: Process these messages! (They might be recent catch-up messages trapped in sync)
-                    for (const msg of messages) {
-                        this.handleMessage(msg, 'append');
-                    }
+                if (contacts && contacts.length > 0) this.store.upsertContacts(contacts);
+                if (messages && messages.length > 0) {
+                    this.store.upsertMessages(messages, 'append');
+                    for (const msg of messages) this.handleMessage(msg, 'append');
+                }
+
+                // SMART SLEEP: Sync is done, so we can go to sleep immediately
+                if (this.sessionId === 'user') {
+                    console.log(`${this.logPrefix} [Strategy] Sync finished. Triggering Early Sleep.`);
+                    this._goToSleep();
                 }
             });
 
@@ -468,21 +469,12 @@ class WhatsAppService {
                     // 3. Switch to "Unavailable" to restore phone notifications.
 
                     if (this.sessionId === 'user') {
-                        setTimeout(async () => {
-                            try {
-                                console.log(`${this.logPrefix} [Strategy] Switching to 'unavailable' (Passive Mode) after startup delay.`);
-                                await this.sock.sendPresenceUpdate('unavailable');
-
-                                // Start Heartbeat (Keep asserting unavailable)
-                                if (this.presenceInterval) clearInterval(this.presenceInterval);
-                                this.presenceInterval = setInterval(() => {
-                                    this.sock.sendPresenceUpdate('unavailable');
-                                }, 10 * 60 * 1000); // 10 min heartbeat
-
-                            } catch (e) {
-                                console.error(`${this.logPrefix} Failed to set passive mode:`, e);
-                            }
-                        }, 45000); // Wait 45s (Give Sync time to finish)
+                        // Fallback Timeout: If sync doesn't finish in 45s, sleep anyway
+                        if (this.sleepTimeout) clearTimeout(this.sleepTimeout);
+                        this.sleepTimeout = setTimeout(() => {
+                            console.log(`${this.logPrefix} [Strategy] Sync timed out (or empty). Forcing Sleep.`);
+                            this._goToSleep();
+                        }, 45000);
                     } else {
                         // Assistant stays online
                         await this.sock.sendPresenceUpdate('available');
@@ -973,6 +965,31 @@ class WhatsAppService {
     getGlobalUserHistory(limit = 500) {
         if (!this.store) return [];
         return this.store.getGlobalUserHistory(limit);
+    }
+
+    // Helper for Wake & Sleep
+    async _goToSleep() {
+        // Clear safety timeout since we are running now
+        if (this.sleepTimeout) {
+            clearTimeout(this.sleepTimeout);
+            this.sleepTimeout = null;
+        }
+
+        if (!this.sock) return;
+
+        try {
+            console.log(`${this.logPrefix} [Strategy] Switching to 'unavailable' (Passive Mode).`);
+            await this.sock.sendPresenceUpdate('unavailable');
+
+            // Start Heartbeat (Keep asserting unavailable)
+            if (this.presenceInterval) clearInterval(this.presenceInterval);
+            this.presenceInterval = setInterval(() => {
+                if (this.sock) this.sock.sendPresenceUpdate('unavailable');
+            }, 10 * 60 * 1000); // 10 min heartbeat
+
+        } catch (e) {
+            console.error(`${this.logPrefix} Failed to set passive mode:`, e);
+        }
     }
 }
 
