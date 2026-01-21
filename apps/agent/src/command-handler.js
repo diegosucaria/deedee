@@ -228,6 +228,44 @@ class CommandHandler {
             return true;
         }
 
+        if (cmd === '/diagnose') {
+            const targetSession = args[0] || 'user';
+            const axios = require('axios'); // Lazy require
+
+            await this.sendReply(chatId, message.source, `Running diagnostics for session: '${targetSession}'...`);
+
+            try {
+                // Determine interfaces URL
+                const interfacesUrl = process.env.INTERFACES_URL || 'http://interfaces:5000';
+
+                const res = await axios.post(`${interfacesUrl}/whatsapp/diagnose`, { session: targetSession });
+                const report = res.data;
+
+                let text = `🔍 **Diagnostic Report**\n`;
+                text += `- Session: \`${report.session}\`\n`;
+                text += `- Status: **${report.status.toUpperCase()}**\n`;
+                text += `- Timestamp: ${report.timestamp}\n\n`;
+
+                if (report.error) {
+                    text += `❌ **Critical Error**: ${report.error}`;
+                } else {
+                    const p1 = report.probes.presence;
+                    text += `**Probe 1: Presence**\n`;
+                    text += p1.success ? `✅ Success (${p1.latency}ms)` : `❌ Failed: ${p1.error}`;
+                    text += `\n\n`;
+
+                    const p2 = report.probes.blocklist;
+                    text += `**Probe 2: Blocklist (IQ)**\n`;
+                    text += p2.success ? `✅ Success (${p2.count} items, ${p2.latency}ms)` : `❌ Failed: ${p2.error}`;
+                }
+
+                await this.sendReply(chatId, message.source, text);
+            } catch (e) {
+                await this.sendReply(chatId, message.source, `Diagnostic Failed: ${e.message}`);
+            }
+            return true;
+        }
+
         if (cmd === '/label_calendar') {
             const target = args[0];
             const label = args[1];

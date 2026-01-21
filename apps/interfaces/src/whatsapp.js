@@ -366,7 +366,7 @@ class WhatsAppService {
                 connectTimeoutMs: 60000,
                 retryRequestDelayMs: 2000,
                 keepAliveIntervalMs: 30000,
-                syncFullHistory: false, // OFF to prevent 30s Initial Sync Timeout
+                syncFullHistory: true,
                 markOnlineOnConnect: false,
                 browser: ['DeeDee', 'Chrome', '1.0.0'],
                 // getMessage: async (key) => { ... }
@@ -685,6 +685,42 @@ class WhatsAppService {
             console.error(`${this.logPrefix} Send Failed:`, e.message);
             throw e;
         }
+    }
+
+    async runDiagnostics() {
+        const report = {
+            session: this.sessionId,
+            status: this.status,
+            timestamp: new Date().toISOString(),
+            probes: {}
+        };
+
+        if (this.status !== 'connected' || !this.sock) {
+            report.error = 'Socket not connected';
+            return report;
+        }
+
+        console.log(`${this.logPrefix} Running Diagnostics...`);
+
+        // Probe 1: Presence
+        try {
+            const start = Date.now();
+            await this.sock.sendPresenceUpdate('available');
+            report.probes.presence = { success: true, latency: Date.now() - start };
+        } catch (e) {
+            report.probes.presence = { success: false, error: e.message };
+        }
+
+        // Probe 2: Blocklist (IQ)
+        try {
+            const start = Date.now();
+            const list = await this.sock.fetchBlocklist();
+            report.probes.blocklist = { success: true, count: list.length, latency: Date.now() - start };
+        } catch (e) {
+            report.probes.blocklist = { success: false, error: e.message };
+        }
+
+        return report;
     }
 
     async disconnect(clearSession = false) {

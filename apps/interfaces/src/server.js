@@ -277,6 +277,23 @@ app.post('/whatsapp/connect', async (req, res) => {
   res.json({ success: true, message: `Connecting ${session}...` });
 });
 
+app.post('/whatsapp/diagnose', async (req, res) => {
+  if (isWhatsAppDisabled) return res.status(400).json({ error: 'WhatsApp disabled' });
+
+  const { session } = req.body;
+  const targetSession = session || 'user';
+  const service = whatsappSessions[targetSession];
+
+  if (!service) return res.status(400).json({ error: 'Invalid session ID' });
+
+  try {
+    const report = await service.runDiagnostics();
+    res.json(report);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.post('/whatsapp/disconnect', async (req, res) => {
   if (isWhatsAppDisabled) return res.status(400).json({ error: 'WhatsApp disabled' });
 
