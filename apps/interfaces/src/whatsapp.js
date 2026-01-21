@@ -499,7 +499,15 @@ class WhatsAppService {
 
                     console.log(`${this.logPrefix} [DEBUG] Msg: ID=${msg.key.id} Protocol=${isProtocol} Type=${type} Age=${age}s Keys=${msgKeys}`);
 
-                    if (!msg.message || msg.message.protocolMessage) continue;
+                    if (!msg.message) {
+                        console.log(`${this.logPrefix} [DEBUG] SKIPPING: No 'message' content.`);
+                        continue;
+                    }
+
+                    if (msg.message.protocolMessage) {
+                        console.log(`${this.logPrefix} [DEBUG] SKIPPING: Protocol Message (History/Sync Notification).`);
+                        continue;
+                    }
 
                     // Pass to handler (Decides whether to process based on age/type)
                     await this.handleMessage(msg, type);
