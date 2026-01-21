@@ -368,7 +368,7 @@ class WhatsAppService {
                 connectTimeoutMs: 60000,
                 retryRequestDelayMs: 2000,
                 keepAliveIntervalMs: 30000,
-                syncFullHistory: true,
+                syncFullHistory: false, // Prevent timeout loop. DB is already populated.
                 markOnlineOnConnect: true, // there is a periodic assertion to unavailable later, so we don't lose notifications in the main device
                 browser: ['DeeDee', 'Chrome', '1.0.0'],
                 // getMessage: async (key) => { ... }
@@ -469,12 +469,12 @@ class WhatsAppService {
                     // 3. Switch to "Unavailable" to restore phone notifications.
 
                     if (this.sessionId === 'user') {
-                        // Fallback Timeout: If sync doesn't finish in 45s, sleep anyway
+                        // Fallback Timeout: If sync doesn't finish in 60s, sleep anyway
                         if (this.sleepTimeout) clearTimeout(this.sleepTimeout);
                         this.sleepTimeout = setTimeout(() => {
                             console.log(`${this.logPrefix} [Strategy] Sync timed out (or empty). Forcing Sleep.`);
                             this._goToSleep();
-                        }, 45000);
+                        }, 60000);
                     } else {
                         // Assistant stays online
                         await this.sock.sendPresenceUpdate('available');
