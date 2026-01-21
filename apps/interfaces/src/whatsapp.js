@@ -365,7 +365,7 @@ class WhatsAppService {
                 defaultQueryTimeoutMs: undefined, // endless
                 connectTimeoutMs: 60000,
                 keepAliveIntervalMs: 30000,
-                syncFullHistory: false, // Disable full sync to prevent timeout loops (DB is persistent)
+                syncFullHistory: true,
                 markOnlineOnConnect: false,
                 browser: ['DeeDee', 'Chrome', '1.0.0'],
                 // getMessage: async (key) => { ... }
@@ -516,8 +516,8 @@ class WhatsAppService {
             if (ts && typeof ts !== 'number') ts = ts.low || ts;
             const age = ts ? (Math.floor(Date.now() / 1000) - ts) : 0;
 
-            if (upsertType === 'append' && age > 300) {
-                // Silently ignore old history messages
+            if (upsertType === 'append' && age > 3600) {
+                // Silently ignore old history messages (older than 1 hour)
                 // console.log(`${this.logPrefix} Ignoring old history message (Age: ${age}s)`);
                 return;
             }
