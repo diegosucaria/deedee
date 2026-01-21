@@ -99,3 +99,4 @@
     - [x] **Autopilot Control UI**: Web Interface to manage Drafts, Settings, and Style Profiles.
     - [x] **Audio & Context**: Fixed Voice Message transcription and Sender Name resolution.
     - [x] **Real-time**: Fixed Autopilot Socket connection stability.
+    - [x] **Cost Tracking**: Calculate, log, and display cost per draft.

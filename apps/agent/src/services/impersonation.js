@@ -430,7 +430,7 @@ Output a concise list of rules for this specific relationship.
             if (status === 'full') {
                 console.log(`[Impersonation] Autonomous Mode: Auto-sending reply to ${contactString}`);
                 try {
-                    const messages = draftText.split('[SPLIT]').map(m => m.trim()).filter(m => m);
+                    const messages = draftText.split(/\[\s*SPLIT\s*\]/i).map(m => m.trim()).filter(m => m);
 
                     for (const msgContent of messages) {
                         const payload = {

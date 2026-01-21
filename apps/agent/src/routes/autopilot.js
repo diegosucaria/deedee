@@ -60,7 +60,7 @@ function createAutopilotRouter(agent) {
 
             // Construct message object
             // Construct message object
-            const messages = draft.content.split('[SPLIT]').map(m => m.trim()).filter(m => m);
+            const messages = draft.content.split(/\[\s*SPLIT\s*\]/i).map(m => m.trim()).filter(m => m);
 
             for (const msgContent of messages) {
                 const reply = {
