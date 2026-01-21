@@ -519,8 +519,8 @@ class WhatsAppService {
 
             if (upsertType === 'append' && age > 3600) {
                 // Silently ignore old history messages (older than 1 hour)
-                console.log(`${this.logPrefix} [history-drain] FORCE PROCESSING old message (Age: ${age}s)`);
-                // return; // BYPASS FILTER TO DRAIN BUFFER
+                // console.log(`${this.logPrefix} [history-drain] FORCE PROCESSING old message (Age: ${age}s)`);
+                return;
             }
 
             const remoteJid = msg.key.remoteJid;
