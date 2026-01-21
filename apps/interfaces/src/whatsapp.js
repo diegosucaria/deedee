@@ -470,8 +470,16 @@ class WhatsAppService {
             this.sock.ev.on('creds.update', saveCreds);
 
             this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
-                if (type !== 'notify') return;
+                console.log(`${this.logPrefix} [DEBUG] Upsert: ${messages.length} messages. Type: ${type}`); // Log ALL events
+                if (type !== 'notify') {
+                    // console.log(`${this.logPrefix} [DEBUG] Skipping non-notify type`);
+                    return;
+                }
                 for (const msg of messages) {
+                    // Check if it's potentially interesting
+                    const isProtocol = !!msg.message?.protocolMessage;
+                    console.log(`${this.logPrefix} [DEBUG] Msg: ID=${msg.key.id} JID=${msg.key.remoteJid} FromMe=${msg.key.fromMe} Protocol=${isProtocol} Keys=${Object.keys(msg.message || {}).join(',')}`);
+
                     if (!msg.message || msg.message.protocolMessage) continue;
                     await this.handleMessage(msg);
                 }
