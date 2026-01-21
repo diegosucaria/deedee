@@ -238,7 +238,7 @@ class CommandHandler {
                 // Determine interfaces URL
                 const interfacesUrl = process.env.INTERFACES_URL || 'http://interfaces:5000';
 
-                const res = await axios.post(`${interfacesUrl}/whatsapp/diagnose`, { session: targetSession });
+                const res = await axios.post(`${interfacesUrl}/whatsapp/diagnose`, { session: targetSession }, { headers: { Authorization: `Bearer ${process.env.DEEDEE_API_TOKEN}` } });
                 const report = res.data;
 
                 let text = `🔍 **Diagnostic Report**\n`;
