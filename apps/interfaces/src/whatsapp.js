@@ -367,7 +367,7 @@ class WhatsAppService {
                 retryRequestDelayMs: 2000,
                 keepAliveIntervalMs: 30000,
                 syncFullHistory: true,
-                markOnlineOnConnect: false,
+                markOnlineOnConnect: true, // there is a periodic assertion to unavailable later, so we don't lose notifications in the main device
                 browser: ['DeeDee', 'Chrome', '1.0.0'],
                 // getMessage: async (key) => { ... }
             });
@@ -472,7 +472,7 @@ class WhatsAppService {
                         // Periodic heartbeat
                         this.presenceInterval = setInterval(() => {
                             this.sock.sendPresenceUpdate('unavailable');
-                        }, 60 * 1000); // 1 min heartbeat
+                        }, 10 * 60 * 1000); // 10 min heartbeat
                     }
 
                     // Log contacts count
