@@ -366,8 +366,8 @@ class WhatsAppService {
                 connectTimeoutMs: 60000,
                 retryRequestDelayMs: 2000,
                 keepAliveIntervalMs: 30000,
-                syncFullHistory: true,
-                markOnlineOnConnect: false,
+                syncFullHistory: false,
+                markOnlineOnConnect: true,
                 browser: ['DeeDee', 'Chrome', '1.0.0'],
                 // getMessage: async (key) => { ... }
             });
