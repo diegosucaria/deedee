@@ -257,6 +257,13 @@ class CommandHandler {
                     const p2 = report.probes.blocklist;
                     text += `**Probe 2: Blocklist (IQ)**\n`;
                     text += p2.success ? `✅ Success (${p2.count} items, ${p2.latency}ms)` : `❌ Failed: ${p2.error}`;
+
+                    if (report.store) {
+                        text += `\n\n**Database Stats**\n`;
+                        text += `- Messages: ${report.store.messages}\n`;
+                        text += `- Contacts: ${report.store.contacts}\n`;
+                        text += `- Size: ${(report.store.sizeBytes / 1024 / 1024).toFixed(2)} MB`;
+                    }
                 }
 
                 await this.sendReply(chatId, message.source, text);

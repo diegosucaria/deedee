@@ -710,7 +710,8 @@ class WhatsAppService {
             session: this.sessionId,
             status: this.status,
             timestamp: new Date().toISOString(),
-            probes: {}
+            probes: {},
+            store: this.store ? this.store.getStats() : { error: 'No Store' }
         };
 
         if (this.status !== 'connected' || !this.sock) {
