@@ -442,7 +442,7 @@ class WhatsAppService {
                         console.log(`${this.logPrefix} Reconnecting in 5s...`);
                         // Backoff
                         if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
-                        this.reconnectTimeout = setTimeout(() => this.connect(), 5000);
+                        this.reconnectTimeout = setTimeout(() => this.start(), 5000);
                     } else {
                         console.log(`${this.logPrefix} Logged out by Server. Clearing session.`);
                         await this.disconnect(true); // Wipe if server says logged out
