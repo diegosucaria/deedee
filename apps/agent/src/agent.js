@@ -183,6 +183,15 @@ class Agent {
   }
 
   async onMessage(message) {
+    // Intercept Presence Updates for Autopilot Debounce
+    if (message.type === 'presence') {
+      const { chatId, status } = message.metadata || {};
+      if (chatId && status) {
+        this.impersonationService.handlePresenceUpdate(chatId, status);
+      }
+      return;
+    }
+
     // Default handler: Send to Interface
     await this.processMessage(message, async (reply) => {
       // HANDLE SIMULATION REDIRECT
@@ -665,7 +674,7 @@ class Agent {
           // --- AUTOPILOT LOGIC ---
           // --- AUTOPILOT LOGIC (Buffering & Drafting) ---
           try {
-            console.log(`[Agent Debug] Delegating to Autopilot for ${contactString}. Session=${message.metadata?.session}`);
+            // console.log(`[Agent Debug] Delegating to Autopilot for ${contactString}. Session=${message.metadata?.session}`); // Verbose
             // Delegate entirely to service (Handles Status Check, Buffering, Deboucing, Drafting)
             // We await it, but the service mainly sets a timer returning immediately unless it processes buffer.
             // Actually handleMessage returns void immediately after setting timer.

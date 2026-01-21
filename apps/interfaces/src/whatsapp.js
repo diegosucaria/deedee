@@ -75,7 +75,7 @@ class SQLiteStore {
             if (type !== 'notify' && type !== 'append') return;
 
             const total = messages.length;
-            console.log(`[SQLiteStore] upsertMessages called with ${total} msgs (Type: ${type})`);
+            // console.log(`[SQLiteStore] upsertMessages called with ${total} msgs (Type: ${type})`); // Verbose
 
             const BATCH_SIZE = 3000;
 
@@ -395,9 +395,38 @@ class WhatsAppService {
             });
 
             // --- EXTRA DEBUG LISTENERS ---
-            this.sock.ev.on('presence.update', (data) => console.log(`${this.logPrefix} [DEBUG] Presence: ${data.id} => ${Object.keys(data.presences || {})}`));
-            this.sock.ev.on('contacts.update', (data) => console.log(`${this.logPrefix} [DEBUG] Contacts Update: ${data.length} items`));
-            this.sock.ev.on('message-receipt.update', (data) => console.log(`${this.logPrefix} [DEBUG] Receipt: ${data.key.id} Status: ${data.receipt.status}`));
+            // Forward presence to Agent for Autopilot Debounce
+            this.sock.ev.on('presence.update', async (data) => {
+                const jid = data.id;
+                const presences = data.presences || {};
+
+                // Extract relevant status
+                const statuses = Object.values(presences);
+                if (statuses.length > 0) {
+                    const status = statuses[0].lastKnownPresence;
+
+                    // Only forward 'composing' acts to save bandwidth
+                    if (status === 'composing') {
+                        const payload = {
+                            type: 'presence',
+                            content: '[Presence Update]', // Dummy content for server validation
+                            source: `whatsapp:${this.sessionId}`,
+                            metadata: {
+                                chatId: jid,
+                                status: status,
+                                session: this.sessionId
+                            }
+                        };
+
+                        try {
+                            // Fire and forget
+                            axios.post(`${this.agentUrl}/webhook`, payload).catch(() => { });
+                        } catch (e) { }
+                    }
+                }
+            });
+            // this.sock.ev.on('contacts.update', (data) => console.log(`${this.logPrefix} [DEBUG] Contacts Update: ${data.length} items`));
+            // this.sock.ev.on('message-receipt.update', (data) => console.log(`${this.logPrefix} [DEBUG] Receipt: ${data.key.id} Status: ${data.receipt.status}`));
 
             // --- CONNECTION UPDATE ---
             this.sock.ev.on('connection.update', async (update) => {
@@ -489,7 +518,7 @@ class WhatsAppService {
             this.sock.ev.on('creds.update', saveCreds);
 
             this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
-                console.log(`${this.logPrefix} [DEBUG] Upsert: ${messages.length} messages. Type: ${type}`);
+                // console.log(`${this.logPrefix} [DEBUG] Upsert: ${messages.length} messages. Type: ${type}`); // Verbose
 
                 for (const msg of messages) {
                     // Check if it's potentially interesting
@@ -497,20 +526,20 @@ class WhatsAppService {
                     const msgKeys = Object.keys(msg.message || {}).join(',');
 
                     // Debug Log
-                    let ts = msg.messageTimestamp;
-                    if (ts && typeof ts !== 'number') ts = ts.low || ts;
-                    const nowSeconds = Math.floor(Date.now() / 1000);
-                    const age = ts ? (nowSeconds - ts) : 0;
+                    // let ts = msg.messageTimestamp;
+                    // if (ts && typeof ts !== 'number') ts = ts.low || ts;
+                    // const nowSeconds = Math.floor(Date.now() / 1000);
+                    // const age = ts ? (nowSeconds - ts) : 0;
 
-                    console.log(`${this.logPrefix} [DEBUG] Msg: ID=${msg.key.id} Protocol=${isProtocol} Type=${type} Age=${age}s Keys=${msgKeys}`);
+                    // console.log(`${this.logPrefix} [DEBUG] Msg: ID=${msg.key.id} Protocol=${isProtocol} Type=${type} Age=${age}s Keys=${msgKeys}`);
 
                     if (!msg.message) {
-                        console.log(`${this.logPrefix} [DEBUG] SKIPPING: No 'message' content.`);
+                        // console.log(`${this.logPrefix} [DEBUG] SKIPPING: No 'message' content.`); // Verbose
                         continue;
                     }
 
                     if (msg.message.protocolMessage) {
-                        console.log(`${this.logPrefix} [DEBUG] SKIPPING: Protocol Message (History/Sync Notification).`);
+                        // console.log(`${this.logPrefix} [DEBUG] SKIPPING: Protocol Message (History/Sync Notification).`); // Verbose
                         continue;
                     }
 

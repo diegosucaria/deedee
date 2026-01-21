@@ -360,6 +360,27 @@ Output a concise list of rules for this specific relationship.
     }
 
     /**
+     * Handle presence updates (e.g. 'composing') to extend buffer
+     */
+    handlePresenceUpdate(chatId, status) {
+        const buffer = this.messageBuffers.get(chatId);
+        if (!buffer) return;
+
+        // If user is typing, extend the timer
+        if (status === 'composing') {
+            console.log(`[Impersonation] User is typing in ${chatId}. Extending buffer timer...`);
+            if (buffer.timer) clearTimeout(buffer.timer);
+
+            // Extend by another 10s (refreshing as long as they type)
+            buffer.timer = setTimeout(async () => {
+                // Use stored contact info or fallback to chatId
+                const contactStr = buffer.metadata?.phoneNumber || (chatId.includes('@') ? chatId.split('@')[0] : chatId);
+                await this.processBufferedMessage(chatId, contactStr);
+            }, 10000);
+        }
+    }
+
+    /**
      * Process the buffered messages and generate a draft
      */
     async processBufferedMessage(chatId, contactString) {
@@ -572,35 +593,34 @@ ${transcript}
         // Clean ID (remove @s.whatsapp.net, etc) to match DB 'id' or 'phone' which are usually numeric
         const cleanId = contactIdentifier.includes('@') ? contactIdentifier.split('@')[0] : contactIdentifier;
 
-        console.log(`[Autopilot Debug] Checking status for raw='${contactIdentifier}', clean='${cleanId}', name='${contactName}'`);
+        // console.log(`[Autopilot Debug] Checking status for raw='${contactIdentifier}', clean='${cleanId}', name='${contactName}'`);
 
         // 1. Try finding person by CLEAN ID directly
         let person = this.db.db.prepare('SELECT id, autopilot_status, autopilot_expires_at FROM people WHERE id = ?').get(cleanId);
-        if (person) console.log(`[Autopilot Debug] Found by ID match:`, person);
+        // if (person) console.log(`[Autopilot Debug] Found by ID match:`, person);
 
         // 2. If not found, try by phone/metadata match (using both clean and raw to be safe)
         if (!person) {
-            console.log(`[Autopilot Debug] Not found by ID. Trying fallback query...`);
+            // console.log(`[Autopilot Debug] Not found by ID. Trying fallback query...`);
             person = this.db.db.prepare('SELECT id, autopilot_status, autopilot_expires_at FROM people WHERE phone = ? OR id = ?').get(cleanId, contactIdentifier);
-            if (person) console.log(`[Autopilot Debug] Found by Fallback match:`, person);
+            // if (person) console.log(`[Autopilot Debug] Found by Fallback match:`, person);
         }
 
         if (!person) {
-            console.log(`[Autopilot Debug] Person NOT found in DB. Defaulting to 'off'.`);
+            // console.log(`[Autopilot Debug] Person NOT found in DB. Defaulting to 'off'.`);
             return 'off';
         }
 
         let status = person.autopilot_status || 'off';
-        console.log(`[Autopilot Debug] Resolved Status: ${status}`);
+        // console.log(`[Autopilot Debug] Resolved Status: ${status}`);
 
         // Check expiration
         if (person.autopilot_expires_at) {
             const expiry = new Date(person.autopilot_expires_at);
             if (expiry < new Date()) {
                 console.log(`[Impersonation] Autopilot expired for ${contactIdentifier}. Reverting to 'off'.`);
-                // Update DB to clear status and expiry
                 this.db.updatePerson(person.id, { autopilot_status: 'off', autopilot_expires_at: null });
-                status = 'off';
+                return 'off';
             }
         }
 
