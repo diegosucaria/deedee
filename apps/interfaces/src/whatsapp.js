@@ -363,7 +363,8 @@ class WhatsAppService {
             this.sock = makeWASocket({
                 auth: state,
                 defaultQueryTimeoutMs: undefined, // endless
-                connectTimeoutMs: 60000,
+                connectTimeoutMs: 180000, // Increased to 3 minutes to handle History Sync
+                retryRequestDelayMs: 2000,
                 keepAliveIntervalMs: 30000,
                 syncFullHistory: true,
                 markOnlineOnConnect: false,
