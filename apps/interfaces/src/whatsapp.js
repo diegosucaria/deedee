@@ -393,568 +393,573 @@ class WhatsAppService {
                 }
             });
 
+        });
 
+        // --- EXTRA DEBUG LISTENERS ---
+        this.sock.ev.on('presence.update', (data) => console.log(`${this.logPrefix} [DEBUG] Presence: ${data.id} => ${Object.keys(data.presences || {})}`));
+        this.sock.ev.on('contacts.update', (data) => console.log(`${this.logPrefix} [DEBUG] Contacts Update: ${data.length} items`));
+        this.sock.ev.on('message-receipt.update', (data) => console.log(`${this.logPrefix} [DEBUG] Receipt: ${data.key.id} Status: ${data.receipt.status}`));
 
-            // --- CONNECTION UPDATE ---
-            this.sock.ev.on('connection.update', async (update) => {
-                const { connection, lastDisconnect, qr } = update;
+        // --- CONNECTION UPDATE ---
+        this.sock.ev.on('connection.update', async (update) => {
+            const { connection, lastDisconnect, qr } = update;
 
-                if (qr) {
-                    console.log(`${this.logPrefix} QR Code generated`);
-                    this.status = 'scan_qr';
-                    this.qr = await QRCode.toDataURL(qr);
+            if (qr) {
+                console.log(`${this.logPrefix} QR Code generated`);
+                this.status = 'scan_qr';
+                this.qr = await QRCode.toDataURL(qr);
+            }
+
+            if (connection === 'close') {
+                // Clear presence interval
+                if (this.presenceInterval) {
+                    clearInterval(this.presenceInterval);
+                    this.presenceInterval = null;
                 }
 
-                if (connection === 'close') {
-                    // Clear presence interval
-                    if (this.presenceInterval) {
-                        clearInterval(this.presenceInterval);
-                        this.presenceInterval = null;
-                    }
+                // baileys-specific error codes
+                const statusCode = (lastDisconnect?.error)?.output?.statusCode;
+                const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
-                    // baileys-specific error codes
-                    const statusCode = (lastDisconnect?.error)?.output?.statusCode;
-                    const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+                console.log(`${this.logPrefix} Connection closed (Status: ${statusCode}). Reconnect: ${shouldReconnect}`);
 
-                    console.log(`${this.logPrefix} Connection closed (Status: ${statusCode}). Reconnect: ${shouldReconnect}`);
-
-                    // Auto-Recovery for loop 515
-                    if (statusCode === 515) {
-                        this.reconnectAttempts++;
-                        console.log(`${this.logPrefix} Stream Error 515 count: ${this.reconnectAttempts}`);
-                        if (this.reconnectAttempts >= 10) {
-                            console.error(`${this.logPrefix} Too many 515 errors. Corruption likely. Wiping session.`);
-                            await this.disconnect(true); // Explicit wipe
-                            // Restart to generate NEW QR
-                            if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
-                            this.reconnectTimeout = setTimeout(() => this.start(), 1000);
-                            return;
-                        }
-                    }
-
-                    if (this.status === 'scan_qr' && statusCode !== 515) {
-                        console.log(`${this.logPrefix} Connection closed while scanning QR. Stopping auto-retry to prevent loop.`);
-                        this.status = 'disconnected';
-                        this.qr = null;
-                        this.sock = null;
+                // Auto-Recovery for loop 515
+                if (statusCode === 515) {
+                    this.reconnectAttempts++;
+                    console.log(`${this.logPrefix} Stream Error 515 count: ${this.reconnectAttempts}`);
+                    if (this.reconnectAttempts >= 10) {
+                        console.error(`${this.logPrefix} Too many 515 errors. Corruption likely. Wiping session.`);
+                        await this.disconnect(true); // Explicit wipe
+                        // Restart to generate NEW QR
+                        if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+                        this.reconnectTimeout = setTimeout(() => this.start(), 1000);
                         return;
                     }
+                }
 
+                if (this.status === 'scan_qr' && statusCode !== 515) {
+                    console.log(`${this.logPrefix} Connection closed while scanning QR. Stopping auto-retry to prevent loop.`);
                     this.status = 'disconnected';
                     this.qr = null;
-
-                    if (shouldReconnect) {
-                        console.log(`${this.logPrefix} Reconnecting in 5s...`);
-                        // Backoff
-                        if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
-                        this.reconnectTimeout = setTimeout(() => this.connect(), 5000);
-                    } else {
-                        console.log(`${this.logPrefix} Logged out by Server. Clearing session.`);
-                        await this.disconnect(true); // Wipe if server says logged out
-                    }
-                } else if (connection === 'open') {
-                    console.log(`${this.logPrefix} Connection OPEN! 🟢`);
-                    this.status = 'connected';
-                    this.qr = null;
-                    this.reconnectAttempts = 0; // Reset counter on success
-
-                    // Set presence to available first, then unavailable?
-                    // Or just periodic update?
-                    // Logic for passive mode: active but unavailable?
-                    if (this.sessionId === 'assistant') {
-                        // Assistant should be online
-                        await this.sock.sendPresenceUpdate('available');
-                    } else {
-                        // User session mirror: default to unavailable to avoid notification suppression?
-                        // But need to be online to receive?
-                        await this.sock.sendPresenceUpdate('unavailable');
-
-                        // Periodic heartbeat
-                        this.presenceInterval = setInterval(() => {
-                            this.sock.sendPresenceUpdate('unavailable');
-                        }, 10 * 60 * 1000); // 10 min heartbeat
-                    }
-
-                    // Log contacts count
-                    const contactCount = this.store.getContacts().length;
-                    console.log(`${this.logPrefix} Store has ${contactCount} contacts.`);
+                    this.sock = null;
+                    return;
                 }
-            });
 
-            this.sock.ev.on('creds.update', saveCreds);
+                this.status = 'disconnected';
+                this.qr = null;
 
-            this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
-                console.log(`${this.logPrefix} [DEBUG] Upsert: ${messages.length} messages. Type: ${type}`);
-
-                for (const msg of messages) {
-                    // Check if it's potentially interesting
-                    const isProtocol = !!msg.message?.protocolMessage;
-                    const msgKeys = Object.keys(msg.message || {}).join(',');
-
-                    // Debug Log
-                    let ts = msg.messageTimestamp;
-                    if (ts && typeof ts !== 'number') ts = ts.low || ts;
-                    const nowSeconds = Math.floor(Date.now() / 1000);
-                    const age = ts ? (nowSeconds - ts) : 0;
-
-                    console.log(`${this.logPrefix} [DEBUG] Msg: ID=${msg.key.id} Protocol=${isProtocol} Type=${type} Age=${age}s Keys=${msgKeys}`);
-
-                    if (!msg.message) {
-                        console.log(`${this.logPrefix} [DEBUG] SKIPPING: No 'message' content.`);
-                        continue;
-                    }
-
-                    if (msg.message.protocolMessage) {
-                        console.log(`${this.logPrefix} [DEBUG] SKIPPING: Protocol Message (History/Sync Notification).`);
-                        continue;
-                    }
-
-                    // Pass to handler (Decides whether to process based on age/type)
-                    await this.handleMessage(msg, type);
+                if (shouldReconnect) {
+                    console.log(`${this.logPrefix} Reconnecting in 5s...`);
+                    // Backoff
+                    if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+                    this.reconnectTimeout = setTimeout(() => this.connect(), 5000);
+                } else {
+                    console.log(`${this.logPrefix} Logged out by Server. Clearing session.`);
+                    await this.disconnect(true); // Wipe if server says logged out
                 }
-            });
+            } else if (connection === 'open') {
+                console.log(`${this.logPrefix} Connection OPEN! 🟢`);
+                this.status = 'connected';
+                this.qr = null;
+                this.reconnectAttempts = 0; // Reset counter on success
 
-        } catch (err) {
-            console.error(`${this.logPrefix} Connect Error:`, err);
-            this.status = 'disconnected';
-        }
+                // Set presence to available first, then unavailable?
+                // Or just periodic update?
+                // Logic for passive mode: active but unavailable?
+                if (this.sessionId === 'assistant') {
+                    // Assistant should be online
+                    await this.sock.sendPresenceUpdate('available');
+                } else {
+                    // User session mirror: default to unavailable to avoid notification suppression?
+                    // But need to be online to receive?
+                    await this.sock.sendPresenceUpdate('unavailable');
+
+                    // Periodic heartbeat
+                    this.presenceInterval = setInterval(() => {
+                        this.sock.sendPresenceUpdate('unavailable');
+                    }, 10 * 60 * 1000); // 10 min heartbeat
+                }
+
+                // Log contacts count
+                const contactCount = this.store.getContacts().length;
+                console.log(`${this.logPrefix} Store has ${contactCount} contacts.`);
+            }
+        });
+
+        this.sock.ev.on('creds.update', saveCreds);
+
+        this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
+            console.log(`${this.logPrefix} [DEBUG] Upsert: ${messages.length} messages. Type: ${type}`);
+
+            for (const msg of messages) {
+                // Check if it's potentially interesting
+                const isProtocol = !!msg.message?.protocolMessage;
+                const msgKeys = Object.keys(msg.message || {}).join(',');
+
+                // Debug Log
+                let ts = msg.messageTimestamp;
+                if (ts && typeof ts !== 'number') ts = ts.low || ts;
+                const nowSeconds = Math.floor(Date.now() / 1000);
+                const age = ts ? (nowSeconds - ts) : 0;
+
+                console.log(`${this.logPrefix} [DEBUG] Msg: ID=${msg.key.id} Protocol=${isProtocol} Type=${type} Age=${age}s Keys=${msgKeys}`);
+
+                if (!msg.message) {
+                    console.log(`${this.logPrefix} [DEBUG] SKIPPING: No 'message' content.`);
+                    continue;
+                }
+
+                if (msg.message.protocolMessage) {
+                    console.log(`${this.logPrefix} [DEBUG] SKIPPING: Protocol Message (History/Sync Notification).`);
+                    continue;
+                }
+
+                // Pass to handler (Decides whether to process based on age/type)
+                await this.handleMessage(msg, type);
+            }
+        });
+
+    } catch(err) {
+        console.error(`${this.logPrefix} Connect Error:`, err);
+        this.status = 'disconnected';
     }
+}
 
     async handleMessage(msg, upsertType = 'notify') {
-        try {
-            // 0. Age Check (Prevent History Flood)
-            let ts = msg.messageTimestamp;
-            if (ts && typeof ts !== 'number') ts = ts.low || ts;
-            const age = ts ? (Math.floor(Date.now() / 1000) - ts) : 0;
+    try {
+        // 0. Age Check (Prevent History Flood)
+        let ts = msg.messageTimestamp;
+        if (ts && typeof ts !== 'number') ts = ts.low || ts;
+        const age = ts ? (Math.floor(Date.now() / 1000) - ts) : 0;
 
-            if (upsertType === 'append' && age > 300) {
-                // Silently ignore old history messages (older than 5 minutes ago)
-                // console.log(`${this.logPrefix} [history-drain] FORCE PROCESSING old message (Age: ${age}s)`);
-                return;
-            }
-
-            const remoteJid = msg.key.remoteJid;
-            if (remoteJid === 'status@broadcast' || msg.key.fromMe) return;
-
-            let phoneNumber = remoteJid.split('@')[0];
-
-            // Handle LID: If remoteJid is an LID, check if we have a participant (likely the real phone JID)
-            if (remoteJid.includes('@lid')) {
-                if (msg.key.participant) {
-                    const participantNumber = msg.key.participant.split('@')[0];
-                    if (participantNumber) {
-                        console.log(`${this.logPrefix} Resolving LID (via participant) ${phoneNumber} to ${participantNumber}`);
-                        phoneNumber = participantNumber;
-                    }
-                } else if (this.store) {
-                    const resolvedJid = this.store.getContactByLid(remoteJid);
-                    if (resolvedJid) {
-                        const resolvedPhone = resolvedJid.split('@')[0];
-                        console.log(`${this.logPrefix} Resolving LID (via DB) ${phoneNumber} to ${resolvedPhone}`);
-                        phoneNumber = resolvedPhone;
-                    }
-                }
-            }
-
-            // Security Check
-            // RELAXED for 'user' session (Passive Mode) - We want to read EVERYTHING
-            if (this.sessionId !== 'user') {
-                if (this.allowedNumbers.size === 0) {
-                    console.warn(`${this.logPrefix} Ignored message from ${phoneNumber} because ALLOWED_WHATSAPP_NUMBERS is empty (Secure Mode).`);
-                    return;
-                }
-
-                if (!this.allowedNumbers.has(phoneNumber)) {
-                    console.warn(`${this.logPrefix} Blocked message from unauthorized number: ${phoneNumber}`);
-                    return;
-                }
-            } else {
-                // For user session, we might want to log that we are processing a message from a non-allowed number
-                if (!this.allowedNumbers.has(phoneNumber)) {
-                    // console.log(`${this.logPrefix} Passive Mode: Processing message from ${phoneNumber}`);
-                }
-            }
-
-            // Verify processing for ALL sessions (User + Assistant)
-            console.log(`${this.logPrefix} Received from ${phoneNumber} [Type: ${upsertType}]`);
-
-            // Unwrapping Logic
-            let messageContent = msg.message;
-            if (messageContent.ephemeralMessage) {
-                messageContent = messageContent.ephemeralMessage.message;
-            } else if (messageContent.viewOnceMessage) {
-                messageContent = messageContent.viewOnceMessage.message;
-            } else if (messageContent.viewOnceMessageV2) {
-                messageContent = messageContent.viewOnceMessageV2.message;
-            } else if (messageContent.documentWithCaptionMessage) {
-                messageContent = messageContent.documentWithCaptionMessage.message;
-            }
-
-            let text = '';
-            let type = 'text';
-            let buffer = null;
-            let mimeType = null;
-
-            // Simple Text
-            if (messageContent.conversation) {
-                text = messageContent.conversation;
-            } else if (messageContent.extendedTextMessage) {
-                text = messageContent.extendedTextMessage.text;
-            }
-            // Audio
-            else if (messageContent.audioMessage) {
-                type = 'audio';
-                text = '[Voice Message]';
-                mimeType = messageContent.audioMessage.mimetype;
-                if (this.downloadMediaMessage) {
-                    try {
-                        buffer = await this.downloadMediaMessage(msg, 'buffer', {}, { logger: console });
-                        console.log(`${this.logPrefix} Downloaded audio: ${buffer.length} bytes`);
-                    } catch (e) {
-                        console.error(`${this.logPrefix} Audio Download Failed:`, e);
-                    }
-                }
-            }
-            // Image
-            else if (messageContent.imageMessage) {
-                type = 'image';
-                text = messageContent.imageMessage.caption || '[Image]';
-                mimeType = messageContent.imageMessage.mimetype;
-                if (this.downloadMediaMessage) {
-                    try {
-                        buffer = await this.downloadMediaMessage(msg, 'buffer', {}, { logger: console });
-                        console.log(`${this.logPrefix} Downloaded image: ${buffer.length} bytes`);
-                    } catch (e) {
-                        console.error(`${this.logPrefix} Image Download Failed:`, e);
-                    }
-                }
-            } else {
-                return;
-            }
-
-            if (!text && !buffer) {
-                console.warn(`${this.logPrefix} Received message with no content. Ignoring.`);
-                return;
-            }
-
-            // Distinguish Source like 'whatsapp:user' vs 'whatsapp:assistant'
-            const source = `whatsapp:${this.sessionId}`;
-            const userMessage = createUserMessage(text, source, phoneNumber);
-
-            // Append session ID to metadata
-            const isGroup = remoteJid.endsWith('@g.us');
-            userMessage.metadata = {
-                chatId: remoteJid,
-                phoneNumber,
-                session: this.sessionId,
-                isGroup,
-                groupName: isGroup ? 'Unknown Group' : undefined // We could fetch subject if needed
-            };
-
-            // Inline Data for Agent
-            if (buffer) {
-                userMessage.parts = userMessage.parts || [];
-                userMessage.parts.push({
-                    inlineData: {
-                        mimeType: mimeType || (type === 'audio' ? 'audio/ogg' : 'image/jpeg'),
-                        data: buffer.toString('base64')
-                    }
-                });
-            }
-
-            await axios.post(`${this.agentUrl}/webhook`, userMessage);
-
-        } catch (err) {
-            console.error(`${this.logPrefix} Message Handler Error:`, err.message);
+        if (upsertType === 'append' && age > 300) {
+            // Silently ignore old history messages (older than 5 minutes ago)
+            // console.log(`${this.logPrefix} [history-drain] FORCE PROCESSING old message (Age: ${age}s)`);
+            return;
         }
-    }
 
-    async sendMessage(toJid, content, options = {}) {
-        if (!this.sock) throw new Error(`${this.logPrefix} WhatsApp not initialized`);
+        const remoteJid = msg.key.remoteJid;
+        if (remoteJid === 'status@broadcast' || msg.key.fromMe) return;
 
-        try {
-            const type = options.type || 'text';
-            console.log(`${this.logPrefix} Sending ${type} to ${toJid}`);
+        let phoneNumber = remoteJid.split('@')[0];
 
-            if (type === 'text') {
-                await this.sock.sendMessage(toJid, { text: content });
-            } else if (type === 'audio') {
-                const buffer = Buffer.from(content, 'base64');
-                await this.sock.sendMessage(toJid, { audio: buffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
-            } else if (type === 'image') {
-                const buffer = Buffer.from(content, 'base64');
-                await this.sock.sendMessage(toJid, { image: buffer });
+        // Handle LID: If remoteJid is an LID, check if we have a participant (likely the real phone JID)
+        if (remoteJid.includes('@lid')) {
+            if (msg.key.participant) {
+                const participantNumber = msg.key.participant.split('@')[0];
+                if (participantNumber) {
+                    console.log(`${this.logPrefix} Resolving LID (via participant) ${phoneNumber} to ${participantNumber}`);
+                    phoneNumber = participantNumber;
+                }
+            } else if (this.store) {
+                const resolvedJid = this.store.getContactByLid(remoteJid);
+                if (resolvedJid) {
+                    const resolvedPhone = resolvedJid.split('@')[0];
+                    console.log(`${this.logPrefix} Resolving LID (via DB) ${phoneNumber} to ${resolvedPhone}`);
+                    phoneNumber = resolvedPhone;
+                }
+            }
+        }
+
+        // Security Check
+        // RELAXED for 'user' session (Passive Mode) - We want to read EVERYTHING
+        if (this.sessionId !== 'user') {
+            if (this.allowedNumbers.size === 0) {
+                console.warn(`${this.logPrefix} Ignored message from ${phoneNumber} because ALLOWED_WHATSAPP_NUMBERS is empty (Secure Mode).`);
+                return;
             }
 
-        } catch (e) {
-            console.error(`${this.logPrefix} Send Failed:`, e.message);
-            throw e;
+            if (!this.allowedNumbers.has(phoneNumber)) {
+                console.warn(`${this.logPrefix} Blocked message from unauthorized number: ${phoneNumber}`);
+                return;
+            }
+        } else {
+            // For user session, we might want to log that we are processing a message from a non-allowed number
+            if (!this.allowedNumbers.has(phoneNumber)) {
+                // console.log(`${this.logPrefix} Passive Mode: Processing message from ${phoneNumber}`);
+            }
         }
-    }
 
-    async runDiagnostics() {
-        const report = {
+        // Verify processing for ALL sessions (User + Assistant)
+        console.log(`${this.logPrefix} Received from ${phoneNumber} [Type: ${upsertType}]`);
+
+        // Unwrapping Logic
+        let messageContent = msg.message;
+        if (messageContent.ephemeralMessage) {
+            messageContent = messageContent.ephemeralMessage.message;
+        } else if (messageContent.viewOnceMessage) {
+            messageContent = messageContent.viewOnceMessage.message;
+        } else if (messageContent.viewOnceMessageV2) {
+            messageContent = messageContent.viewOnceMessageV2.message;
+        } else if (messageContent.documentWithCaptionMessage) {
+            messageContent = messageContent.documentWithCaptionMessage.message;
+        }
+
+        let text = '';
+        let type = 'text';
+        let buffer = null;
+        let mimeType = null;
+
+        // Simple Text
+        if (messageContent.conversation) {
+            text = messageContent.conversation;
+        } else if (messageContent.extendedTextMessage) {
+            text = messageContent.extendedTextMessage.text;
+        }
+        // Audio
+        else if (messageContent.audioMessage) {
+            type = 'audio';
+            text = '[Voice Message]';
+            mimeType = messageContent.audioMessage.mimetype;
+            if (this.downloadMediaMessage) {
+                try {
+                    buffer = await this.downloadMediaMessage(msg, 'buffer', {}, { logger: console });
+                    console.log(`${this.logPrefix} Downloaded audio: ${buffer.length} bytes`);
+                } catch (e) {
+                    console.error(`${this.logPrefix} Audio Download Failed:`, e);
+                }
+            }
+        }
+        // Image
+        else if (messageContent.imageMessage) {
+            type = 'image';
+            text = messageContent.imageMessage.caption || '[Image]';
+            mimeType = messageContent.imageMessage.mimetype;
+            if (this.downloadMediaMessage) {
+                try {
+                    buffer = await this.downloadMediaMessage(msg, 'buffer', {}, { logger: console });
+                    console.log(`${this.logPrefix} Downloaded image: ${buffer.length} bytes`);
+                } catch (e) {
+                    console.error(`${this.logPrefix} Image Download Failed:`, e);
+                }
+            }
+        } else {
+            return;
+        }
+
+        if (!text && !buffer) {
+            console.warn(`${this.logPrefix} Received message with no content. Ignoring.`);
+            return;
+        }
+
+        // Distinguish Source like 'whatsapp:user' vs 'whatsapp:assistant'
+        const source = `whatsapp:${this.sessionId}`;
+        const userMessage = createUserMessage(text, source, phoneNumber);
+
+        // Append session ID to metadata
+        const isGroup = remoteJid.endsWith('@g.us');
+        userMessage.metadata = {
+            chatId: remoteJid,
+            phoneNumber,
             session: this.sessionId,
-            status: this.status,
-            timestamp: new Date().toISOString(),
-            probes: {}
+            isGroup,
+            groupName: isGroup ? 'Unknown Group' : undefined // We could fetch subject if needed
         };
 
-        if (this.status !== 'connected' || !this.sock) {
-            report.error = 'Socket not connected';
-            return report;
+        // Inline Data for Agent
+        if (buffer) {
+            userMessage.parts = userMessage.parts || [];
+            userMessage.parts.push({
+                inlineData: {
+                    mimeType: mimeType || (type === 'audio' ? 'audio/ogg' : 'image/jpeg'),
+                    data: buffer.toString('base64')
+                }
+            });
         }
 
-        console.log(`${this.logPrefix} Running Diagnostics...`);
+        await axios.post(`${this.agentUrl}/webhook`, userMessage);
 
-        // Probe 1: Presence
-        try {
-            const start = Date.now();
-            await this.sock.sendPresenceUpdate('available');
-            report.probes.presence = { success: true, latency: Date.now() - start };
-        } catch (e) {
-            report.probes.presence = { success: false, error: e.message };
+    } catch (err) {
+        console.error(`${this.logPrefix} Message Handler Error:`, err.message);
+    }
+}
+
+    async sendMessage(toJid, content, options = {}) {
+    if (!this.sock) throw new Error(`${this.logPrefix} WhatsApp not initialized`);
+
+    try {
+        const type = options.type || 'text';
+        console.log(`${this.logPrefix} Sending ${type} to ${toJid}`);
+
+        if (type === 'text') {
+            await this.sock.sendMessage(toJid, { text: content });
+        } else if (type === 'audio') {
+            const buffer = Buffer.from(content, 'base64');
+            await this.sock.sendMessage(toJid, { audio: buffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
+        } else if (type === 'image') {
+            const buffer = Buffer.from(content, 'base64');
+            await this.sock.sendMessage(toJid, { image: buffer });
         }
 
-        // Probe 2: Blocklist (IQ)
-        try {
-            const start = Date.now();
-            const list = await this.sock.fetchBlocklist();
-            report.probes.blocklist = { success: true, count: list.length, latency: Date.now() - start };
-        } catch (e) {
-            report.probes.blocklist = { success: false, error: e.message };
-        }
+    } catch (e) {
+        console.error(`${this.logPrefix} Send Failed:`, e.message);
+        throw e;
+    }
+}
 
+    async runDiagnostics() {
+    const report = {
+        session: this.sessionId,
+        status: this.status,
+        timestamp: new Date().toISOString(),
+        probes: {}
+    };
+
+    if (this.status !== 'connected' || !this.sock) {
+        report.error = 'Socket not connected';
         return report;
     }
 
+    console.log(`${this.logPrefix} Running Diagnostics...`);
+
+    // Probe 1: Presence
+    try {
+        const start = Date.now();
+        await this.sock.sendPresenceUpdate('available');
+        report.probes.presence = { success: true, latency: Date.now() - start };
+    } catch (e) {
+        report.probes.presence = { success: false, error: e.message };
+    }
+
+    // Probe 2: Blocklist (IQ)
+    try {
+        const start = Date.now();
+        const list = await this.sock.fetchBlocklist();
+        report.probes.blocklist = { success: true, count: list.length, latency: Date.now() - start };
+    } catch (e) {
+        report.probes.blocklist = { success: false, error: e.message };
+    }
+
+    return report;
+}
+
     async disconnect(clearSession = false) {
-        try {
-            console.log(`${this.logPrefix} Disconnecting... (Clear: ${clearSession})`);
-            if (this.sock) {
-                if (clearSession) {
-                    try {
-                        await this.sock.logout();
-                    } catch (err) {
-                        console.warn(`${this.logPrefix} Logout failed (ignoring): ${err.message}`);
-                    }
-                } else {
-                    this.sock.end(undefined);
-                }
-                this.sock = null;
-            }
-
+    try {
+        console.log(`${this.logPrefix} Disconnecting... (Clear: ${clearSession})`);
+        if (this.sock) {
             if (clearSession) {
-                if (fs.existsSync(this.authFolder)) {
-                    console.log(`${this.logPrefix} Deleting session files...`);
-                    try {
-                        fs.rmSync(this.authFolder, { recursive: true, force: true });
-                    } catch (e) {
-                        console.error(`${this.logPrefix} Failed to delete session files:`, e);
-                    }
+                try {
+                    await this.sock.logout();
+                } catch (err) {
+                    console.warn(`${this.logPrefix} Logout failed (ignoring): ${err.message}`);
+                }
+            } else {
+                this.sock.end(undefined);
+            }
+            this.sock = null;
+        }
+
+        if (clearSession) {
+            if (fs.existsSync(this.authFolder)) {
+                console.log(`${this.logPrefix} Deleting session files...`);
+                try {
+                    fs.rmSync(this.authFolder, { recursive: true, force: true });
+                } catch (e) {
+                    console.error(`${this.logPrefix} Failed to delete session files:`, e);
                 }
             }
-        } catch (e) {
-            console.error(`${this.logPrefix} Disconnect Error:`, e);
-        } finally {
-            // CRITICAL: Always reset status to allow reconnect
-            this.status = 'disconnected';
-            this.qr = null;
-            if (this.reconnectTimeout) {
-                clearTimeout(this.reconnectTimeout);
-                this.reconnectTimeout = null;
-            }
+        }
+    } catch (e) {
+        console.error(`${this.logPrefix} Disconnect Error:`, e);
+    } finally {
+        // CRITICAL: Always reset status to allow reconnect
+        this.status = 'disconnected';
+        this.qr = null;
+        if (this.reconnectTimeout) {
+            clearTimeout(this.reconnectTimeout);
+            this.reconnectTimeout = null;
         }
     }
+}
 
-    getStatus() {
-        const me = this.sock?.user;
-        let formattedMe = null;
-        if (me) {
-            formattedMe = {
-                id: me.id.split(':')[0].split('@')[0],
-                name: me.name
-            };
-        }
-
-        return {
-            status: this.status,
-            qr: this.qr,
-            allowedNumbers: Array.from(this.allowedNumbers),
-            me: formattedMe,
-            session: this.sessionId,
-            stats: this.store ? this.store.getStats() : null
+getStatus() {
+    const me = this.sock?.user;
+    let formattedMe = null;
+    if (me) {
+        formattedMe = {
+            id: me.id.split(':')[0].split('@')[0],
+            name: me.name
         };
     }
 
-    searchContacts(query) {
-        if (!query || !this.store) return [];
-        const q = query.toLowerCase();
+    return {
+        status: this.status,
+        qr: this.qr,
+        allowedNumbers: Array.from(this.allowedNumbers),
+        me: formattedMe,
+        session: this.sessionId,
+        stats: this.store ? this.store.getStats() : null
+    };
+}
 
-        // Use store method
-        const contacts = this.store.getAllContactsRaw();
-        console.log(`${this.logPrefix} Searching ${contacts.length} contacts for: "${q}"...`);
+searchContacts(query) {
+    if (!query || !this.store) return [];
+    const q = query.toLowerCase();
 
-        const results = [];
+    // Use store method
+    const contacts = this.store.getAllContactsRaw();
+    console.log(`${this.logPrefix} Searching ${contacts.length} contacts for: "${q}"...`);
 
-        for (const contact of contacts) {
-            const name = (contact.name || '').toLowerCase();
-            const notify = (contact.notify || '').toLowerCase();
-            const phone = contact.id.split('@')[0];
+    const results = [];
 
-            if (name.includes(q) || notify.includes(q) || phone.includes(q)) {
-                results.push({
-                    id: contact.id,
-                    name: contact.name,
-                    notify: contact.notify,
-                    phone
-                });
-            }
+    for (const contact of contacts) {
+        const name = (contact.name || '').toLowerCase();
+        const notify = (contact.notify || '').toLowerCase();
+        const phone = contact.id.split('@')[0];
+
+        if (name.includes(q) || notify.includes(q) || phone.includes(q)) {
+            results.push({
+                id: contact.id,
+                name: contact.name,
+                notify: contact.notify,
+                phone
+            });
         }
-        return results;
+    }
+    return results;
+}
+
+getContacts() {
+    if (!this.store) return [];
+    return this.store.getContacts().map(c => ({
+        id: c.id,
+        name: c.name,
+        notify: c.notify,
+        phone: c.id.split('@')[0]
+    }));
+}
+
+getContact(jid) {
+    if (!this.store) return null;
+    const c = this.store.getContact(jid);
+    if (!c) return null;
+    return {
+        id: c.id,
+        name: c.name,
+        notify: c.notify,
+        phone: c.id.split('@')[0]
+    };
+}
+
+// Helper for safe timestamp conversion (handles Number vs Long)
+_getSafeTimestamp(ts) {
+    if (typeof ts === 'number') return ts;
+    if (ts && typeof ts.toNumber === 'function') return ts.toNumber();
+    if (ts && typeof ts.low === 'number') return ts.low;
+    return 0;
+}
+
+// --- New Methods for Smart Learn ---
+
+getRecentChats(limit = 10) {
+    if (!this.store) return [];
+    return this.store.getRecentChats(limit);
+}
+
+getChatHistory(jid, limit = 50) {
+    if (!this.store) {
+        console.warn(`${this.logPrefix} Store empty.`);
+        return [];
     }
 
-    getContacts() {
-        if (!this.store) return [];
-        return this.store.getContacts().map(c => ({
-            id: c.id,
-            name: c.name,
-            notify: c.notify,
-            phone: c.id.split('@')[0]
-        }));
-    }
+    // Logic to handle Split JIDs (ID vs LID, and Country Code Prefix issues)
+    // 1. Sanitize Input
+    const inputDigits = jid.replace(/[^0-9]/g, '');
+    const isLid = jid.includes('@lid');
 
-    getContact(jid) {
-        if (!this.store) return null;
-        const c = this.store.getContact(jid);
-        if (!c) return null;
-        return {
-            id: c.id,
-            name: c.name,
-            notify: c.notify,
-            phone: c.id.split('@')[0]
-        };
-    }
+    let candidateJids = new Set();
 
-    // Helper for safe timestamp conversion (handles Number vs Long)
-    _getSafeTimestamp(ts) {
-        if (typeof ts === 'number') return ts;
-        if (ts && typeof ts.toNumber === 'function') return ts.toNumber();
-        if (ts && typeof ts.low === 'number') return ts.low;
-        return 0;
-    }
-
-    // --- New Methods for Smart Learn ---
-
-    getRecentChats(limit = 10) {
-        if (!this.store) return [];
-        return this.store.getRecentChats(limit);
-    }
-
-    getChatHistory(jid, limit = 50) {
-        if (!this.store) {
-            console.warn(`${this.logPrefix} Store empty.`);
-            return [];
-        }
-
-        // Logic to handle Split JIDs (ID vs LID, and Country Code Prefix issues)
-        // 1. Sanitize Input
-        const inputDigits = jid.replace(/[^0-9]/g, '');
-        const isLid = jid.includes('@lid');
-
-        let candidateJids = new Set();
-
-        // 2. Identify Primary Candidates (Phone JIDs)
-        if (isLid) {
-            candidateJids.add(jid);
-            // Try to find the Phone JID for this LID
-            const row = this.store.db.prepare('SELECT id FROM contacts WHERE lid = ?').get(jid);
-            if (row && row.id) candidateJids.add(row.id);
+    // 2. Identify Primary Candidates (Phone JIDs)
+    if (isLid) {
+        candidateJids.add(jid);
+        // Try to find the Phone JID for this LID
+        const row = this.store.db.prepare('SELECT id FROM contacts WHERE lid = ?').get(jid);
+        if (row && row.id) candidateJids.add(row.id);
+    } else {
+        // It is a phone number (or partial)
+        if (inputDigits.length >= 7) {
+            // Fuzzy Search for Phone JIDs (handles 549 vs 54)
+            // Using 7 to be safe and inclusive
+            const suffix = inputDigits.slice(-7); // Last 7 digits
+            const rows = this.store.db.prepare("SELECT DISTINCT remote_jid FROM messages WHERE remote_jid LIKE ? AND remote_jid NOT LIKE '%@lid'").all(`%${suffix}%`);
+            rows.forEach(r => candidateJids.add(r.remote_jid));
         } else {
-            // It is a phone number (or partial)
-            if (inputDigits.length >= 7) {
-                // Fuzzy Search for Phone JIDs (handles 549 vs 54)
-                // Using 7 to be safe and inclusive
-                const suffix = inputDigits.slice(-7); // Last 7 digits
-                const rows = this.store.db.prepare("SELECT DISTINCT remote_jid FROM messages WHERE remote_jid LIKE ? AND remote_jid NOT LIKE '%@lid'").all(`%${suffix}%`);
-                rows.forEach(r => candidateJids.add(r.remote_jid));
-            } else {
-                // Short number or exact
-                const norm = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
-                candidateJids.add(norm);
-            }
-        }
-
-        // 3. Expand to include linked LIDs/IDs
-        // For every Candidate JID found so far, find its partner (Phone <-> LID)
-        const currentList = Array.from(candidateJids);
-        if (currentList.length > 0) {
-            const placeholders = currentList.map(() => '?').join(',');
-
-            // Find LIDs for these Phone IDs
-            const lids = this.store.db.prepare(`SELECT lid FROM contacts WHERE id IN (${placeholders})`).all(...currentList);
-            lids.forEach(r => { if (r.lid) candidateJids.add(r.lid); });
-
-            // Find IDs for these LIDs (bidirectional check)
-            const ids = this.store.db.prepare(`SELECT id FROM contacts WHERE lid IN (${placeholders})`).all(...currentList);
-            ids.forEach(r => { if (r.id) candidateJids.add(r.id); });
-        }
-
-        // 4. Fallback (if still empty)
-        if (candidateJids.size === 0) {
+            // Short number or exact
             const norm = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
             candidateJids.add(norm);
         }
+    }
 
-        const targetJids = Array.from(candidateJids);
-        console.log(`${this.logPrefix} Fetching history for ${jid}. Resolved targets: ${targetJids.join(', ')}`);
+    // 3. Expand to include linked LIDs/IDs
+    // For every Candidate JID found so far, find its partner (Phone <-> LID)
+    const currentList = Array.from(candidateJids);
+    if (currentList.length > 0) {
+        const placeholders = currentList.map(() => '?').join(',');
 
-        // Query IN (...)
-        const queryPlaceholders = targetJids.map(() => '?').join(',');
-        const rows = this.store.db.prepare(`
+        // Find LIDs for these Phone IDs
+        const lids = this.store.db.prepare(`SELECT lid FROM contacts WHERE id IN (${placeholders})`).all(...currentList);
+        lids.forEach(r => { if (r.lid) candidateJids.add(r.lid); });
+
+        // Find IDs for these LIDs (bidirectional check)
+        const ids = this.store.db.prepare(`SELECT id FROM contacts WHERE lid IN (${placeholders})`).all(...currentList);
+        ids.forEach(r => { if (r.id) candidateJids.add(r.id); });
+    }
+
+    // 4. Fallback (if still empty)
+    if (candidateJids.size === 0) {
+        const norm = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
+        candidateJids.add(norm);
+    }
+
+    const targetJids = Array.from(candidateJids);
+    console.log(`${this.logPrefix} Fetching history for ${jid}. Resolved targets: ${targetJids.join(', ')}`);
+
+    // Query IN (...)
+    const queryPlaceholders = targetJids.map(() => '?').join(',');
+    const rows = this.store.db.prepare(`
             SELECT data FROM messages 
             WHERE remote_jid IN (${queryPlaceholders})
             ORDER BY timestamp DESC 
             LIMIT ?
         `).all(...targetJids, limit);
 
-        return rows.reverse().map(r => {
-            const m = JSON.parse(r.data);
+    return rows.reverse().map(r => {
+        const m = JSON.parse(r.data);
 
-            // Simplify for agent consumption
-            let content = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
-            const msgType = Object.keys(m.message || {})[0];
+        // Simplify for agent consumption
+        let content = m.message?.conversation || m.message?.extendedTextMessage?.text || '';
+        const msgType = Object.keys(m.message || {})[0];
 
-            if (!content) {
-                if (m.message?.audioMessage) content = '[Audio Message]';
-                else if (m.message?.imageMessage) content = `[Image: ${m.message.imageMessage.caption || ''}]`;
-                else if (m.message?.videoMessage) content = `[Video: ${m.message.videoMessage.caption || ''}]`;
-                else if (m.message?.stickerMessage) content = '[Sticker]';
-                else content = `[Media: ${msgType}]`;
-            }
+        if (!content) {
+            if (m.message?.audioMessage) content = '[Audio Message]';
+            else if (m.message?.imageMessage) content = `[Image: ${m.message.imageMessage.caption || ''}]`;
+            else if (m.message?.videoMessage) content = `[Video: ${m.message.videoMessage.caption || ''}]`;
+            else if (m.message?.stickerMessage) content = '[Sticker]';
+            else content = `[Media: ${msgType}]`;
+        }
 
-            const fromMe = m.key.fromMe;
-            return {
-                role: fromMe ? 'assistant' : 'user',
-                content,
-                timestamp: this._getSafeTimestamp(m.messageTimestamp) * 1000
-            };
-        });
-    }
+        const fromMe = m.key.fromMe;
+        return {
+            role: fromMe ? 'assistant' : 'user',
+            content,
+            timestamp: this._getSafeTimestamp(m.messageTimestamp) * 1000
+        };
+    });
+}
 
     async getProfilePicture(jid) {
-        if (!this.sock) return null;
-        try {
-            return await this.sock.profilePictureUrl(jid, 'image');
-        } catch (e) {
-            // 404/401 implies no picture
-            return null;
-        }
+    if (!this.sock) return null;
+    try {
+        return await this.sock.profilePictureUrl(jid, 'image');
+    } catch (e) {
+        // 404/401 implies no picture
+        return null;
     }
-    getGlobalUserHistory(limit = 500) {
-        if (!this.store) return [];
-        return this.store.getGlobalUserHistory(limit);
-    }
+}
+getGlobalUserHistory(limit = 500) {
+    if (!this.store) return [];
+    return this.store.getGlobalUserHistory(limit);
+}
 }
 
 module.exports = { WhatsAppService, SQLiteStore };
