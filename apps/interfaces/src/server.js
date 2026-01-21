@@ -135,7 +135,7 @@ const authMiddleware = (req, res, next) => {
   // Skip auth for health check
   if (req.path === '/health') return next();
 
-  const token = req.headers.authorization?.split(' ')[1] || req.query.token;
+  const token = req.headers.authorization?.split(' ')[1];
   if (token !== process.env.DEEDEE_API_TOKEN) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
@@ -156,22 +156,6 @@ app.get('/health', (req, res) => {
 });
 
 // --- WHATSAPP ENDPOINTS ---
-
-app.get('/whatsapp/db', (req, res) => {
-  if (isWhatsAppDisabled) return res.status(404).send('WhatsApp disabled');
-
-  const { session } = req.query;
-  const targetSession = session || 'user';
-  const service = whatsappSessions[targetSession];
-
-  if (!service || !service.store) {
-    return res.status(404).send('Session or Store not found');
-  }
-
-  const dbPath = service.store.path;
-  res.download(dbPath, `whatsapp_${targetSession}.db`);
-});
-
 app.get('/whatsapp/status', (req, res) => {
   if (isWhatsAppDisabled) return res.json({ status: 'disabled' });
 
