@@ -393,91 +393,103 @@ class WhatsAppService {
                 }
             });
 
-        });
+            // --- EXTRA DEBUG LISTENERS ---
+            this.sock.ev.on('presence.update', (data) => console.log(`${this.logPrefix} [DEBUG] Presence: ${data.id} => ${Object.keys(data.presences || {})}`));
+            this.sock.ev.on('contacts.update', (data) => console.log(`${this.logPrefix} [DEBUG] Contacts Update: ${data.length} items`));
+            this.sock.ev.on('message-receipt.update', (data) => console.log(`${this.logPrefix} [DEBUG] Receipt: ${data.key.id} Status: ${data.receipt.status}`));
 
-        // --- EXTRA DEBUG LISTENERS ---
-        this.sock.ev.on('presence.update', (data) => console.log(`${this.logPrefix} [DEBUG] Presence: ${data.id} => ${Object.keys(data.presences || {})}`));
-        this.sock.ev.on('contacts.update', (data) => console.log(`${this.logPrefix} [DEBUG] Contacts Update: ${data.length} items`));
-        this.sock.ev.on('message-receipt.update', (data) => console.log(`${this.logPrefix} [DEBUG] Receipt: ${data.key.id} Status: ${data.receipt.status}`));
+            // --- CONNECTION UPDATE ---
+            this.sock.ev.on('connection.update', async (update) => {
+                const { connection, lastDisconnect, qr } = update;
 
-        // --- CONNECTION UPDATE ---
-        this.sock.ev.on('connection.update', async (update) => {
-            const { connection, lastDisconnect, qr } = update;
-
-            if (qr) {
-                console.log(`${this.logPrefix} QR Code generated`);
-                this.status = 'scan_qr';
-                this.qr = await QRCode.toDataURL(qr);
-            }
-
-            if (connection === 'close') {
-                // Clear presence interval
-                if (this.presenceInterval) {
-                    clearInterval(this.presenceInterval);
-                    this.presenceInterval = null;
+                if (qr) {
+                    console.log(`${this.logPrefix} QR Code generated`);
+                    this.status = 'scan_qr';
+                    this.qr = await QRCode.toDataURL(qr);
                 }
 
-                // baileys-specific error codes
-                const statusCode = (lastDisconnect?.error)?.output?.statusCode;
-                const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
+                if (connection === 'close') {
+                    // Clear presence interval
+                    if (this.presenceInterval) {
+                        clearInterval(this.presenceInterval);
+                        this.presenceInterval = null;
+                    }
 
-                console.log(`${this.logPrefix} Connection closed (Status: ${statusCode}). Reconnect: ${shouldReconnect}`);
+                    // baileys-specific error codes
+                    const statusCode = (lastDisconnect?.error)?.output?.statusCode;
+                    const shouldReconnect = statusCode !== DisconnectReason.loggedOut;
 
-                // Auto-Recovery for loop 515
-                if (statusCode === 515) {
-                    this.reconnectAttempts++;
-                    console.log(`${this.logPrefix} Stream Error 515 count: ${this.reconnectAttempts}`);
-                    if (this.reconnectAttempts >= 10) {
-                        console.error(`${this.logPrefix} Too many 515 errors. Corruption likely. Wiping session.`);
-                        await this.disconnect(true); // Explicit wipe
-                        // Restart to generate NEW QR
-                        if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
-                        this.reconnectTimeout = setTimeout(() => this.start(), 1000);
+                    console.log(`${this.logPrefix} Connection closed (Status: ${statusCode}). Reconnect: ${shouldReconnect}`);
+
+                    // Auto-Recovery for loop 515
+                    if (statusCode === 515) {
+                        this.reconnectAttempts++;
+                        console.log(`${this.logPrefix} Stream Error 515 count: ${this.reconnectAttempts}`);
+                        if (this.reconnectAttempts >= 10) {
+                            console.error(`${this.logPrefix} Too many 515 errors. Corruption likely. Wiping session.`);
+                            await this.disconnect(true); // Explicit wipe
+                            // Restart to generate NEW QR
+                            if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+                            this.reconnectTimeout = setTimeout(() => this.start(), 1000);
+                            return;
+                        }
+                    }
+
+                    if (this.status === 'scan_qr' && statusCode !== 515) {
+                        console.log(`${this.logPrefix} Connection closed while scanning QR. Stopping auto-retry to prevent loop.`);
+                        this.status = 'disconnected';
+                        this.qr = null;
+                        this.sock = null;
                         return;
                     }
-                }
 
-                if (this.status === 'scan_qr' && statusCode !== 515) {
-                    console.log(`${this.logPrefix} Connection closed while scanning QR. Stopping auto-retry to prevent loop.`);
                     this.status = 'disconnected';
                     this.qr = null;
-                    this.sock = null;
-                    return;
-                }
 
-                this.status = 'disconnected';
-                this.qr = null;
+                    if (shouldReconnect) {
+                        console.log(`${this.logPrefix} Reconnecting in 5s...`);
+                        // Backoff
+                        if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
+                        this.reconnectTimeout = setTimeout(() => this.connect(), 5000);
+                    } else {
+                        console.log(`${this.logPrefix} Logged out by Server. Clearing session.`);
+                        await this.disconnect(true); // Wipe if server says logged out
+                    }
 
-                if (shouldReconnect) {
-                    console.log(`${this.logPrefix} Reconnecting in 5s...`);
-                    // Backoff
-                    if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
-                    this.reconnectTimeout = setTimeout(() => this.connect(), 5000);
-                } else {
-                    console.log(`${this.logPrefix} Logged out by Server. Clearing session.`);
-                    await this.disconnect(true); // Wipe if server says logged out
-                }
-            } else if (connection === 'open') {
-                console.log(`${this.logPrefix} Connection OPEN! 🟢`);
-                this.status = 'connected';
-                this.qr = null;
-                this.reconnectAttempts = 0; // Reset counter on success
+                } else if (connection === 'open') {
+                    console.log(`${this.logPrefix} Connection OPEN! 🟢`);
+                    this.status = 'connected';
+                    this.qr = null;
+                    this.reconnectAttempts = 0; // Reset counter on success
 
-                // Set presence to available first, then unavailable?
-                // Or just periodic update?
-                // Logic for passive mode: active but unavailable?
-                if (this.sessionId === 'assistant') {
-                    // Assistant should be online
-                    await this.sock.sendPresenceUpdate('available');
-                } else {
-                    // User session mirror: default to unavailable to avoid notification suppression?
-                    // But need to be online to receive?
-                    await this.sock.sendPresenceUpdate('unavailable');
+                    // WAKE & SLEEP STRATEGY
+                    // 1. We started "Online" (markOnlineOnConnect: true) to trigger data push.
+                    // 2. Wait 5s for buffers to assume we are active.
+                    // 3. Switch to "Unavailable" to restore phone notifications.
 
-                    // Periodic heartbeat
-                    this.presenceInterval = setInterval(() => {
-                        this.sock.sendPresenceUpdate('unavailable');
-                    }, 10 * 60 * 1000); // 10 min heartbeat
+                    if (this.sessionId === 'user') {
+                        setTimeout(async () => {
+                            try {
+                                console.log(`${this.logPrefix} [Strategy] Switching to 'unavailable' (Passive Mode)...`);
+                                await this.sock.sendPresenceUpdate('unavailable');
+
+                                // Start Heartbeat (Keep asserting unavailable)
+                                if (this.presenceInterval) clearInterval(this.presenceInterval);
+                                this.presenceInterval = setInterval(() => {
+                                    this.sock.sendPresenceUpdate('unavailable');
+                                }, 10 * 60 * 1000); // 10 min heartbeat
+
+                            } catch (e) {
+                                console.error(`${this.logPrefix} Failed to set passive mode:`, e);
+                            }
+                        }, 5000);
+                    } else {
+                        // Assistant stays online
+                        await this.sock.sendPresenceUpdate('available');
+                    }
+
+                    // Log contacts count
+                    const contactCount = this.store.getContacts().length;
                 }
 
                 // Log contacts count
