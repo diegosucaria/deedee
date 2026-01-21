@@ -509,14 +509,14 @@ class WhatsAppService {
         }
     }
 
-    async handleMessage(msg, type = 'notify') {
+    async handleMessage(msg, upsertType = 'notify') {
         try {
             // 0. Age Check (Prevent History Flood)
             let ts = msg.messageTimestamp;
             if (ts && typeof ts !== 'number') ts = ts.low || ts;
             const age = ts ? (Math.floor(Date.now() / 1000) - ts) : 0;
 
-            if (type === 'append' && age > 300) {
+            if (upsertType === 'append' && age > 300) {
                 // Silently ignore old history messages
                 // console.log(`${this.logPrefix} Ignoring old history message (Age: ${age}s)`);
                 return;
@@ -565,7 +565,7 @@ class WhatsAppService {
             }
 
             // Verify processing for ALL sessions (User + Assistant)
-            console.log(`${this.logPrefix} Received from ${phoneNumber} [Type: ${type}]`);
+            console.log(`${this.logPrefix} Received from ${phoneNumber} [Type: ${upsertType}]`);
 
             // Unwrapping Logic
             let messageContent = msg.message;
