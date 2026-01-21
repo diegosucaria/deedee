@@ -408,15 +408,22 @@ Output a concise list of rules for this specific relationship.
             if (status === 'full') {
                 console.log(`[Impersonation] Autonomous Mode: Auto-sending reply to ${contactString}`);
                 try {
-                    const payload = {
-                        source: buffer.source || 'whatsapp',
-                        content: draft,
-                        metadata: { chatId, session: 'assistant' },
-                        type: 'text'
-                    };
-                    await this.agent.interface.send(payload);
+                    const messages = draft.split('[SPLIT]').map(m => m.trim()).filter(m => m);
+
+                    for (const msgContent of messages) {
+                        const payload = {
+                            source: buffer.source || 'whatsapp',
+                            content: msgContent,
+                            metadata: { chatId, session: 'assistant' },
+                            type: 'text'
+                        };
+                        await this.agent.interface.send(payload);
+                        // Small delay between messages for natural feel
+                        if (messages.length > 1) await new Promise(r => setTimeout(r, 800));
+                    }
+
                     this.markDraftCompleted(saved.lastInsertRowid, 'approved');
-                    console.log(`[Impersonation] Auto-sent successfully.`);
+                    console.log(`[Impersonation] Auto-sent ${messages.length} messages successfully.`);
                 } catch (e) {
                     console.error('[Impersonation] Auto-send failed:', e.message);
                 }
@@ -519,6 +526,7 @@ ${transcript}
 - If the incoming message is short, keep the reply short, single line.
 - If the incoming message is a conversation closure (e.g. "ok", "thanks", "listo", "perfecto") and requires no response, output exactly: [NO_REPLY]
 - Return ONLY the drafted reply text. No quotes.
+- If multiple messages are appropriate (e.g. short sequential thoughts), separate them with exactly: [SPLIT]
 - CRITICAL: maintain the same language as the incoming message.
 `;
 
@@ -561,12 +569,15 @@ ${transcript}
     getAutopilotStatus(contactIdentifier, contactName) {
         if (!contactIdentifier) return 'off';
 
-        // 1. Try finding person by ID directly
-        let person = this.db.db.prepare('SELECT autopilot_status FROM people WHERE id = ?').get(contactIdentifier);
+        // Clean ID (remove @s.whatsapp.net, etc) to match DB 'id' or 'phone' which are usually numeric
+        const cleanId = contactIdentifier.includes('@') ? contactIdentifier.split('@')[0] : contactIdentifier;
 
-        // 2. If not found, try by phone/metadata match
-        if (!person && contactIdentifier) {
-            person = this.db.db.prepare('SELECT id, autopilot_status, autopilot_expires_at FROM people WHERE phone = ? OR id = ?').get(contactIdentifier, contactIdentifier);
+        // 1. Try finding person by CLEAN ID directly
+        let person = this.db.db.prepare('SELECT id, autopilot_status, autopilot_expires_at FROM people WHERE id = ?').get(cleanId);
+
+        // 2. If not found, try by phone/metadata match (using both clean and raw to be safe)
+        if (!person) {
+            person = this.db.db.prepare('SELECT id, autopilot_status, autopilot_expires_at FROM people WHERE phone = ? OR id = ?').get(cleanId, contactIdentifier);
         }
 
         if (!person) return 'off';

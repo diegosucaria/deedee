@@ -286,7 +286,16 @@ function AutopilotPage() {
                                             className="w-full bg-transparent text-zinc-200 outline-none resize-none h-24 font-mono text-sm"
                                         />
                                     ) : (
-                                        <p className="text-zinc-300 whitespace-pre-wrap font-mono text-sm">{draft.content}</p>
+                                        <div className="space-y-2">
+                                            {draft.content.split('[SPLIT]').map((segment, idx) => (
+                                                <div key={idx} className={clsx("relative", idx > 0 && "pt-1")}>
+                                                    {/* Visual connector for multi-part messages if desired, or just spacing */}
+                                                    <p className={clsx("text-zinc-300 whitespace-pre-wrap font-mono text-sm bg-zinc-900/50 p-2 rounded", idx > 0 && "ml-4 border-l-2 border-zinc-800")}>
+                                                        {segment.trim()}
+                                                    </p>
+                                                </div>
+                                            ))}
+                                        </div>
                                     )}
 
                                     {editingDraftId !== draft.id && (

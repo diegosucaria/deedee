@@ -59,18 +59,29 @@ function createAutopilotRouter(agent) {
             }
 
             // Construct message object
-            const reply = {
-                role: 'assistant', // This is still 'assistant' role internally (Agent acting), but delivered via User Session
-                content: draft.content,
-                source: source, // 'whatsapp:user' signals server.js to use that sock
-                metadata: {
-                    chatId: draft.chat_id,
-                    session: 'user' // Explicitly target user session
-                }
-            };
+            // Construct message object
+            const messages = draft.content.split('[SPLIT]').map(m => m.trim()).filter(m => m);
 
-            // Send the message using the Agent's interface
-            await agent.interface.send(reply);
+            for (const msgContent of messages) {
+                const reply = {
+                    role: 'assistant', // This is still 'assistant' role internally (Agent acting), but delivered via User Session
+                    content: msgContent,
+                    source: source, // 'whatsapp:user' signals server.js to use that sock
+                    metadata: {
+                        chatId: draft.chat_id,
+                        session: 'user' // Explicitly target user session
+                    }
+                };
+
+                // Send the message using the Agent's interface
+                await agent.interface.send(reply);
+
+                // Delay if multiple
+                if (messages.length > 1) await new Promise(r => setTimeout(r, 800));
+            }
+
+            // Log success (optional, but good for debugging)
+            console.log(`[Autopilot] Approved draft ${id}. Sent ${messages.length} messages.`);
 
             // Update Status
             agent.db.db.prepare("UPDATE autopilot_drafts SET status = 'approved' WHERE id = ?").run(id);
