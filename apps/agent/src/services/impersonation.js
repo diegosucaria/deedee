@@ -572,17 +572,26 @@ ${transcript}
         // Clean ID (remove @s.whatsapp.net, etc) to match DB 'id' or 'phone' which are usually numeric
         const cleanId = contactIdentifier.includes('@') ? contactIdentifier.split('@')[0] : contactIdentifier;
 
+        console.log(`[Autopilot Debug] Checking status for raw='${contactIdentifier}', clean='${cleanId}', name='${contactName}'`);
+
         // 1. Try finding person by CLEAN ID directly
         let person = this.db.db.prepare('SELECT id, autopilot_status, autopilot_expires_at FROM people WHERE id = ?').get(cleanId);
+        if (person) console.log(`[Autopilot Debug] Found by ID match:`, person);
 
         // 2. If not found, try by phone/metadata match (using both clean and raw to be safe)
         if (!person) {
+            console.log(`[Autopilot Debug] Not found by ID. Trying fallback query...`);
             person = this.db.db.prepare('SELECT id, autopilot_status, autopilot_expires_at FROM people WHERE phone = ? OR id = ?').get(cleanId, contactIdentifier);
+            if (person) console.log(`[Autopilot Debug] Found by Fallback match:`, person);
         }
 
-        if (!person) return 'off';
+        if (!person) {
+            console.log(`[Autopilot Debug] Person NOT found in DB. Defaulting to 'off'.`);
+            return 'off';
+        }
 
         let status = person.autopilot_status || 'off';
+        console.log(`[Autopilot Debug] Resolved Status: ${status}`);
 
         // Check expiration
         if (person.autopilot_expires_at) {
@@ -597,6 +606,7 @@ ${transcript}
 
         return status;
     }
+
 
     /**
      * Get the latest pending draft for a chat

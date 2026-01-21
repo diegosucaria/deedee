@@ -665,6 +665,7 @@ class Agent {
           // --- AUTOPILOT LOGIC ---
           // --- AUTOPILOT LOGIC (Buffering & Drafting) ---
           try {
+            console.log(`[Agent Debug] Delegating to Autopilot for ${contactString}. Session=${message.metadata?.session}`);
             // Delegate entirely to service (Handles Status Check, Buffering, Deboucing, Drafting)
             // We await it, but the service mainly sets a timer returning immediately unless it processes buffer.
             // Actually handleMessage returns void immediately after setting timer.
