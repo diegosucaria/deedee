@@ -499,8 +499,14 @@ class WhatsAppService {
 
                     if (this.sessionId === 'user') {
                         // FORCE UNAVAILABLE IMMEDIATELY to prevent notification stealing
-                        console.log(`${this.logPrefix} [Strategy] Connection Open. Forcing 'unavailable' immediately.`);
-                        await this.sock.sendPresenceUpdate('unavailable');
+                        // We add a small delay to ensure the connection "Online" state is established before we switch it off.
+                        // Sometimes switching too fast is ignored by the server.
+                        setTimeout(async () => {
+                            if (this.sock) {
+                                console.log(`${this.logPrefix} [Strategy] Connection Open (+2s). Forcing 'unavailable' now.`);
+                                await this.sock.sendPresenceUpdate('unavailable');
+                            }
+                        }, 2000);
 
                         // Fallback Timeout: If sync doesn't finish in 60s, sleep anyway
                         if (this.sleepTimeout) clearTimeout(this.sleepTimeout);
