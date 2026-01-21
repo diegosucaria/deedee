@@ -70,68 +70,72 @@ class SQLiteStore {
     }
 
     async upsertMessages(messages, type) {
-        // 'append' is for history sync
-        if (type !== 'notify' && type !== 'append') return;
+        try {
+            // 'append' is for history sync
+            if (type !== 'notify' && type !== 'append') return;
 
-        const total = messages.length;
-        console.log(`[SQLiteStore] upsertMessages called with ${total} msgs (Type: ${type})`);
+            const total = messages.length;
+            console.log(`[SQLiteStore] upsertMessages called with ${total} msgs (Type: ${type})`);
 
-        const BATCH_SIZE = 3000;
+            const BATCH_SIZE = 3000;
 
-        const stmt = this.db.prepare(`
-            INSERT INTO messages (key_id, remote_jid, from_me, timestamp, content, data)
-            VALUES (?, ?, ?, ?, ?, ?)
-            ON CONFLICT(key_id, remote_jid) DO NOTHING
-        `);
+            const stmt = this.db.prepare(`
+                INSERT INTO messages (key_id, remote_jid, from_me, timestamp, content, data)
+                VALUES (?, ?, ?, ?, ?, ?)
+                ON CONFLICT(key_id, remote_jid) DO NOTHING
+            `);
 
-        const insertBatch = this.db.transaction((msgs) => {
-            const now = Date.now() / 1000;
-            for (const msg of msgs) {
-                const jid = msg.key.remoteJid;
-                if (!jid) continue;
-                // Ignore protocol messages
-                if (msg.message?.protocolMessage || msg.message?.senderKeyDistributionMessage) continue;
+            const insertBatch = this.db.transaction((msgs) => {
+                const now = Date.now() / 1000;
+                for (const msg of msgs) {
+                    const jid = msg.key.remoteJid;
+                    if (!jid) continue;
+                    // Ignore protocol messages
+                    if (msg.message?.protocolMessage || msg.message?.senderKeyDistributionMessage) continue;
 
-                const ts = (typeof msg.messageTimestamp === 'number')
-                    ? msg.messageTimestamp
-                    : (msg.messageTimestamp?.low || now);
+                    const ts = (typeof msg.messageTimestamp === 'number')
+                        ? msg.messageTimestamp
+                        : (msg.messageTimestamp?.low || now);
 
-                // Debug first message in batch
-                // if (msgs.indexOf(msg) === 0) console.log(`[SQLiteStore] Sample TS: ${ts} (Now: ${now})`);
+                    // Debug first message in batch
+                    // if (msgs.indexOf(msg) === 0) console.log(`[SQLiteStore] Sample TS: ${ts} (Now: ${now})`);
 
-                // Content Snippet
-                let content = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
-                if (!content) {
-                    if (msg.message?.audioMessage) content = '[Audio]';
-                    else if (msg.message?.imageMessage) content = '[Image]';
-                    else if (msg.message?.stickerMessage) content = '[Sticker]';
-                    else if (msg.message?.videoMessage) content = '[Video]';
-                    else content = '[Media]';
+                    // Content Snippet
+                    let content = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+                    if (!content) {
+                        if (msg.message?.audioMessage) content = '[Audio]';
+                        else if (msg.message?.imageMessage) content = '[Image]';
+                        else if (msg.message?.stickerMessage) content = '[Sticker]';
+                        else if (msg.message?.videoMessage) content = '[Video]';
+                        else content = '[Media]';
+                    }
+
+                    stmt.run(
+                        msg.key.id,
+                        jid,
+                        msg.key.fromMe ? 1 : 0,
+                        ts,
+                        content,
+                        JSON.stringify(msg)
+                    );
                 }
+            });
 
-                stmt.run(
-                    msg.key.id,
-                    jid,
-                    msg.key.fromMe ? 1 : 0,
-                    ts,
-                    content,
-                    JSON.stringify(msg)
-                );
+            const batchSize = Math.min(total, BATCH_SIZE);
+            // Log only if significant batch (avoids spam on live chat)
+            // if (total > 50) console.log(`[SQLiteStore] Upserting ${total} messages...`); // We logged at top already
+
+            // Async Chunking
+            for (let i = 0; i < total; i += BATCH_SIZE) {
+                const batch = messages.slice(i, i + BATCH_SIZE);
+                insertBatch(batch);
+                if (total > BATCH_SIZE) await new Promise(resolve => setTimeout(resolve, 5));
             }
-        });
 
-        const batchSize = Math.min(total, BATCH_SIZE);
-        // Log only if significant batch (avoids spam on live chat)
-        // if (total > 50) console.log(`[SQLiteStore] Upserting ${total} messages...`); // We logged at top already
-
-        // Async Chunking
-        for (let i = 0; i < total; i += BATCH_SIZE) {
-            const batch = messages.slice(i, i + BATCH_SIZE);
-            insertBatch(batch);
-            if (total > BATCH_SIZE) await new Promise(resolve => setTimeout(resolve, 5));
+            if (total > 50) console.log(`[SQLiteStore] Finished upserting ${total} messages.`);
+        } catch (e) {
+            console.error('[SQLiteStore] Upsert Failed:', e);
         }
-
-        if (total > 50) console.log(`[SQLiteStore] Finished upserting ${total} messages.`);
     }
 
     bind(ev) {
@@ -359,12 +363,12 @@ class WhatsAppService {
             this.sock = makeWASocket({
                 auth: state,
                 defaultQueryTimeoutMs: undefined, // endless
-                connectTimeoutMs: 60000, // Increased timeout
+                connectTimeoutMs: 60000,
                 keepAliveIntervalMs: 30000,
-                syncFullHistory: true, // Request full history
-                markOnlineOnConnect: false, // Do not show "Online" status automatically
-                browser: ['DeeDee', 'Chrome', '1.0.0'], // Fixes notification loss on phone
-                // getMessage: async (key) => { ... } // Optional: support history reading for bots
+                syncFullHistory: false, // Disable full sync to prevent timeout loops (DB is persistent)
+                markOnlineOnConnect: false,
+                browser: ['DeeDee', 'Chrome', '1.0.0'],
+                // getMessage: async (key) => { ... }
             });
 
             // Bind Store
@@ -560,9 +564,8 @@ class WhatsAppService {
                 }
             }
 
-            if (this.sessionId !== 'user') {
-                console.log(`${this.logPrefix} Received from ${phoneNumber}`);
-            }
+            // Verify processing for ALL sessions (User + Assistant)
+            console.log(`${this.logPrefix} Received from ${phoneNumber} [Type: ${type}]`);
 
             // Unwrapping Logic
             let messageContent = msg.message;
