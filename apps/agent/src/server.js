@@ -98,6 +98,10 @@ app.get('/status', (req, res) => {
 app.post('/webhook', (req, res) => {
   const message = req.body;
 
+  if (message) {
+    console.log(`[Server] Webhook received message from ${message.source} (ChatID: ${message.metadata?.chatId})`);
+  }
+
   if (!message || (!message.content && !message.parts)) {
     return res.status(400).json({ error: 'Invalid message format' });
   }

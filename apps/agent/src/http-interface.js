@@ -112,6 +112,7 @@ class HttpInterface extends EventEmitter {
    * @param {import('@deedee/shared/src/types').Message} message 
    */
   receive(message) {
+    console.log(`[HttpInterface] Emitting 'message' event for ${message.source}`);
     this.emit('message', message);
   }
 }
