@@ -470,17 +470,32 @@ class WhatsAppService {
             this.sock.ev.on('creds.update', saveCreds);
 
             this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
-                console.log(`${this.logPrefix} [DEBUG] Upsert: ${messages.length} messages. Type: ${type}`); // Log ALL events
-                if (type !== 'notify') {
-                    // console.log(`${this.logPrefix} [DEBUG] Skipping non-notify type`);
-                    return;
-                }
+                console.log(`${this.logPrefix} [DEBUG] Upsert: ${messages.length} messages. Type: ${type}`);
+
                 for (const msg of messages) {
                     // Check if it's potentially interesting
                     const isProtocol = !!msg.message?.protocolMessage;
-                    console.log(`${this.logPrefix} [DEBUG] Msg: ID=${msg.key.id} JID=${msg.key.remoteJid} FromMe=${msg.key.fromMe} Protocol=${isProtocol} Keys=${Object.keys(msg.message || {}).join(',')}`);
+                    const msgKeys = Object.keys(msg.message || {}).join(',');
+
+                    // Determine Timestamp
+                    let ts = msg.messageTimestamp;
+                    if (ts && typeof ts !== 'number') {
+                        ts = ts.low || ts; // Handle Long
+                    }
+                    const nowSeconds = Math.floor(Date.now() / 1000);
+                    const age = ts ? (nowSeconds - ts) : 0;
+
+                    console.log(`${this.logPrefix} [DEBUG] Msg: ID=${msg.key.id} JID=${msg.key.remoteJid} FromMe=${msg.key.fromMe} Protocol=${isProtocol} Type=${type} Age=${age}s Keys=${msgKeys}`);
 
                     if (!msg.message || msg.message.protocolMessage) continue;
+
+                    // FILTER: Only process 'notify' OR recent 'append' (catch-up)
+                    // If 'append' is older than 5 minutes, ignore it to prevent flood.
+                    if (type === 'append' && age > 300) {
+                        // console.log(`${this.logPrefix} [DEBUG] Skipping old append message`);
+                        continue;
+                    }
+
                     await this.handleMessage(msg);
                 }
             });
