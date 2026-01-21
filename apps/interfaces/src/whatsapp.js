@@ -470,7 +470,7 @@ class WhatsAppService {
                     if (this.sessionId === 'user') {
                         setTimeout(async () => {
                             try {
-                                console.log(`${this.logPrefix} [Strategy] Switching to 'unavailable' (Passive Mode)...`);
+                                console.log(`${this.logPrefix} [Strategy] Switching to 'unavailable' (Passive Mode) after startup delay.`);
                                 await this.sock.sendPresenceUpdate('unavailable');
 
                                 // Start Heartbeat (Keep asserting unavailable)
@@ -482,7 +482,7 @@ class WhatsAppService {
                             } catch (e) {
                                 console.error(`${this.logPrefix} Failed to set passive mode:`, e);
                             }
-                        }, 5000);
+                        }, 45000); // Wait 45s (Give Sync time to finish)
                     } else {
                         // Assistant stays online
                         await this.sock.sendPresenceUpdate('available');
