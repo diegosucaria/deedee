@@ -517,8 +517,8 @@ class WhatsAppService {
             if (ts && typeof ts !== 'number') ts = ts.low || ts;
             const age = ts ? (Math.floor(Date.now() / 1000) - ts) : 0;
 
-            if (upsertType === 'append' && age > 3600) {
-                // Silently ignore old history messages (older than 1 hour)
+            if (upsertType === 'append' && age > 300) {
+                // Silently ignore old history messages (older than 5 minutes ago)
                 // console.log(`${this.logPrefix} [history-drain] FORCE PROCESSING old message (Age: ${age}s)`);
                 return;
             }
