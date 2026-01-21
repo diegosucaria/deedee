@@ -73,6 +73,9 @@ class SQLiteStore {
         // 'append' is for history sync
         if (type !== 'notify' && type !== 'append') return;
 
+        const total = messages.length;
+        console.log(`[SQLiteStore] upsertMessages called with ${total} msgs (Type: ${type})`);
+
         const BATCH_SIZE = 3000;
 
         const stmt = this.db.prepare(`
@@ -82,6 +85,7 @@ class SQLiteStore {
         `);
 
         const insertBatch = this.db.transaction((msgs) => {
+            const now = Date.now() / 1000;
             for (const msg of msgs) {
                 const jid = msg.key.remoteJid;
                 if (!jid) continue;
@@ -90,7 +94,10 @@ class SQLiteStore {
 
                 const ts = (typeof msg.messageTimestamp === 'number')
                     ? msg.messageTimestamp
-                    : (msg.messageTimestamp?.low || Date.now() / 1000);
+                    : (msg.messageTimestamp?.low || now);
+
+                // Debug first message in batch
+                // if (msgs.indexOf(msg) === 0) console.log(`[SQLiteStore] Sample TS: ${ts} (Now: ${now})`);
 
                 // Content Snippet
                 let content = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
@@ -113,9 +120,9 @@ class SQLiteStore {
             }
         });
 
-        const total = messages.length;
+        const batchSize = Math.min(total, BATCH_SIZE);
         // Log only if significant batch (avoids spam on live chat)
-        if (total > 50) console.log(`[SQLiteStore] Upserting ${total} messages...`);
+        // if (total > 50) console.log(`[SQLiteStore] Upserting ${total} messages...`); // We logged at top already
 
         // Async Chunking
         for (let i = 0; i < total; i += BATCH_SIZE) {
