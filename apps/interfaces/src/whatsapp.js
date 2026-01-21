@@ -498,6 +498,10 @@ class WhatsAppService {
                     // 3. Switch to "Unavailable" to restore phone notifications.
 
                     if (this.sessionId === 'user') {
+                        // FORCE UNAVAILABLE IMMEDIATELY to prevent notification stealing
+                        console.log(`${this.logPrefix} [Strategy] Connection Open. Forcing 'unavailable' immediately.`);
+                        await this.sock.sendPresenceUpdate('unavailable');
+
                         // Fallback Timeout: If sync doesn't finish in 60s, sleep anyway
                         if (this.sleepTimeout) clearTimeout(this.sleepTimeout);
                         this.sleepTimeout = setTimeout(() => {
