@@ -305,7 +305,24 @@ app.post('/whatsapp/disconnect', async (req, res) => {
   await service.disconnect(true); // Explicitly clear session on manual disconnect
   // Auto-restart to generate new QR
   setTimeout(() => service.start(), 1000);
-  res.json({ success: true });
+});
+
+app.post('/whatsapp/repair', async (req, res) => {
+  if (isWhatsAppDisabled) return res.status(400).json({ error: 'WhatsApp disabled' });
+
+  const { session } = req.body;
+  const targetSession = session || 'user';
+  const service = whatsappSessions[targetSession];
+
+  if (!service) return res.status(400).json({ error: 'Invalid session ID' });
+
+  try {
+    const result = await service.repairSession();
+    res.json(result);
+  } catch (err) {
+    console.error('[Interfaces] Repair Status Failed:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 // Endpoint for Agent to send messages out

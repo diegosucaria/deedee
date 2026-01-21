@@ -1098,3 +1098,11 @@ export async function deleteVaultEmbedding(vaultId, filename) {
         return { success: false, error: error.message };
     }
 }
+
+export async function repairWhatsAppSession(session) {
+    try {
+        await fetchAPI('/whatsapp/repair', { method: 'POST', body: JSON.stringify({ session }) });
+        revalidatePath('/settings'); // Assuming this is where it's used
+        return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+}

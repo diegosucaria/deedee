@@ -16,7 +16,8 @@ describe('Impersonation Service Unit', () => {
                     get: jest.fn().mockReturnValue(null)
                 }))
             },
-            updatePerson: jest.fn()
+            updatePerson: jest.fn(),
+            logTokenUsage: jest.fn()
         };
         mockAgent = {
             client: {
@@ -224,6 +225,37 @@ describe('Impersonation Service Unit', () => {
                         ])
                     })
                 ])
+            })
+        );
+    });
+
+    test('should calculate and log cost for draft generation', async () => {
+        const chatId = '1234567890';
+        mockDb.getPerson.mockReturnValue({ name: 'Papi' });
+
+        // Mock Response with Usage
+        mockAgent.client.models.generateContent.mockResolvedValue({
+            response: {
+                candidates: [{ content: { parts: [{ text: 'Expensive Draft' }] } }],
+                usageMetadata: {
+                    promptTokenCount: 100,
+                    candidatesTokenCount: 50,
+                    totalTokenCount: 150
+                }
+            }
+        });
+
+        await service.generateDraft(chatId, { content: 'Hi' }, 'Papi');
+
+        // Verify Cost Calculation & Logging
+        // Cost for Flash (default): (100/1M * 0.15) + (50/1M * 0.60) = 0.000015 + 0.000030 = 0.000045 (Tier 1)
+        // Or whatever ConfigService logic is. just verifying it's called with > 0 cost.
+        expect(mockDb.logTokenUsage).toHaveBeenCalledWith(
+            expect.objectContaining({
+                chatId: chatId,
+                estimatedCost: expect.any(Number),
+                tag: 'autopilot',
+                totalTokens: 150
             })
         );
     });

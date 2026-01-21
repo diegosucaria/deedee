@@ -100,3 +100,4 @@
     - [x] **Audio & Context**: Fixed Voice Message transcription and Sender Name resolution.
     - [x] **Real-time**: Fixed Autopilot Socket connection stability.
     - [x] **Cost Tracking**: Calculate, log, and display cost per draft.
+    - [x] **Session Repair**: Implemented Level 2 ("Surgical Strike") repair for stale WhatsApp sessions.

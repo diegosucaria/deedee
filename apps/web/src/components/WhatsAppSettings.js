@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Smartphone, LogOut, Loader2, AlertCircle, ScanLine } from 'lucide-react';
-import { getWhatsAppStatus, connectWhatsApp, disconnectWhatsApp } from '../app/actions';
+import { RefreshCw, Smartphone, LogOut, Loader2, AlertCircle, ScanLine, Wrench } from 'lucide-react';
+import { getWhatsAppStatus, connectWhatsApp, disconnectWhatsApp, repairWhatsAppSession } from '../app/actions';
 import ContactList from './ContactList';
 
 export default function WhatsAppSettings() {
@@ -108,6 +108,15 @@ function SessionCard({ sessionKey, title, description, data, refresh, onShowCont
         setBusy(false);
     };
 
+    const handleRepair = async () => {
+        if (!confirm(`Run Surgical Repair on ${title}? This will delete recent session data and force a re-sync. Use only if stuck.`)) return;
+        setBusy(true);
+        const res = await repairWhatsAppSession(sessionKey);
+        if (!res.success) setCardError(res.error || 'Repair failed');
+        await refresh();
+        setBusy(false);
+    };
+
     return (
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden flex flex-col">
             <div className="p-6 border-b border-zinc-800 bg-zinc-900/50 flex-grow-0">
@@ -168,6 +177,17 @@ function SessionCard({ sessionKey, title, description, data, refresh, onShowCont
                             >
                                 {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <LogOut className="w-4 h-4" />}
                                 Disconnect
+                            </button>
+                        </div>
+                        <div className="pt-2 border-t border-zinc-800/50">
+                            <button
+                                onClick={handleRepair}
+                                disabled={busy}
+                                className="w-full py-1.5 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-500/80 hover:text-yellow-500 rounded text-xs font-medium transition-colors flex items-center justify-center gap-2"
+                                title="Use this if connection is stuck or not receiving messages (Level 2 Fix)"
+                            >
+                                <Wrench className="w-3 h-3" />
+                                Repair Session (Surgical)
                             </button>
                         </div>
                     </div>

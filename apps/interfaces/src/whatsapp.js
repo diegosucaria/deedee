@@ -1031,6 +1031,40 @@ class WhatsAppService {
             console.error(`${this.logPrefix} Failed to set passive mode:`, e);
         }
     }
+    async repairSession() {
+        console.log(`${this.logPrefix} 🛠️ REPAIRING SESSION (Level 2: Surgical Strike)...`);
+
+        // 1. Force Disconnect (Keep Session)
+        await this.disconnect(false);
+
+        // 2. Surgical Deletion
+        if (fs.existsSync(this.authFolder)) {
+            const files = fs.readdirSync(this.authFolder);
+            let deletedCount = 0;
+
+            for (const file of files) {
+                // Delete 'app-state-*' and 'pre-key-*'
+                // KEEP: creds.json (Identity)
+                if (file.startsWith('app-state-') || file.startsWith('pre-key-')) {
+                    try {
+                        fs.unlinkSync(path.join(this.authFolder, file));
+                        deletedCount++;
+                    } catch (e) {
+                        console.error(`${this.logPrefix} Failed to delete ${file}:`, e.message);
+                    }
+                }
+            }
+            console.log(`${this.logPrefix} Deleted ${deletedCount} corrupted/stale session files.`);
+        }
+
+        // 3. Restart (Triggers Re-Sync)
+        console.log(`${this.logPrefix} Restarting to trigger full re-sync...`);
+        // Small delay to ensure file system release
+        await new Promise(r => setTimeout(r, 1000));
+        await this.start();
+
+        return { success: true, message: 'Session repair triggered. Watch logs for re-sync.' };
+    }
 }
 
 module.exports = { WhatsAppService, SQLiteStore };

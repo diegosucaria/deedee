@@ -1,4 +1,5 @@
 const axios = require('axios');
+const { ConfigService } = require('./config-service');
 
 class ImpersonationService {
     constructor(agent) {
@@ -568,6 +569,13 @@ ${transcript}
                 model: modelName,
                 contents: [{ role: 'user', parts: [{ text: prompt }] }]
             });
+
+            if (!result.response || !result.response.usageMetadata) {
+                console.warn('[Impersonation] Warning: No usageMetadata in GenAI response. Cost will be 0. Keys:', Object.keys(result.response || {}));
+            } else {
+                // Debug: Confirm metadata received
+                console.log('[Impersonation] Metadata received. Tokens:', result.response.usageMetadata.totalTokenCount);
+            }
 
             let draftText = "";
             let cost = 0;
