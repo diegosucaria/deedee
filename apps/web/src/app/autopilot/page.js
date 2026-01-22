@@ -586,7 +586,7 @@ return (
                     </div>
                 </div>
             )}
-        </main >
-    </div >
+        </main>
+    </div>
 );
 }
