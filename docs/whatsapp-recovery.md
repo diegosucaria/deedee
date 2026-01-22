@@ -48,16 +48,18 @@ Investigating logs revealed *another* hardcoded timeout in `lib/Socket/chats.js`
 -   **Fix**: Patched `chats.js` to increase this specific timeout to **120s** as well.
 -   **Status**: **Implemented** (Automatic).
 
-### Level 5: The "Streaming Sync" Refactor (Architectural Fix)
-The user challenged the timeout patch. A better engineering solution is to **process sync data incrementally**.
--   **Problem**: `resyncAppState` buffers *everything* before processing *anything*.
--   **Solution**: Refactor `resyncAppState` in `lib/Socket/chats.js` to:
-    1.  Remove `createBufferedFunction` wrapper.
-    2.  Process `mutationMap` immediately after each chunk decode.
-    3.  Call `ev.flush()` and `ev.buffer()` inside the loop.
--   **Benefit**: Eliminates timeout risk completely, UI updates progress in real-time.
--   **Action**: Apply this complex refactor via the same patch file.
--   **Status**: **Implemented** (Automatic).
+### Level 9: Anti-Zombie Defense (Auto-Wipe on Crypto Failure)
+-   **Analysis**: Logs revealed `transaction failed` followed by `No session found` during Initial Sync. `chats.js` was swallowing this error, leaving the connection in a "Zombie" state (Open but broken) until the 2-min timeout hit.
+-   **Fix**: Patched `chats.js` to detect "No session found" and immediately emit a `401 Logged Out` error.
+-   **Result**: This triggers `whatsapp.js`'s existing logic to **automatically nuclear wipe** `creds.json` and the auth folder, allowing a fresh start without manual intervention.
+-   **Status**: **Implemented**.
+
+### Level 10: Resilient Sync (The "Anti-Rollback" Fix)
+-   **Pivot**: User rejected "Nuclear Wipe" (Level 9).
+-   **Analysis**: A single "No session found" error causes the entire sync transaction to rollback, killing the session.
+-   **Fix**: Modified `chats.js` to catch this specific error, log a warning, and **SKIP** the corrupt chunk/collection.
+-   **Result**: The sync process continues. Valid data is saved. Corrupt data (like `status@broadcast`) is ignored. The session stays alive.
+-   **Status**: **Implemented**.
 
 ### Level 4: The Deep Dive (Buffer Timeout Patch)
 We discovered that the "Zombie Session" often correlates with `Buffer timeout reached, auto-flushing`. This means the initial sync is taking longer than the hardcoded 30s limit in Baileys, causing the event buffer to flush prematurely and potentially corrupting the session state.
