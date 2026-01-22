@@ -35,7 +35,11 @@ Completely wipes the session.
 - **Cost**: Requires QR Code scan.
 - **Status**: **Implemented**.
 
-## Future Automation
-If Level 2 proves successful in resolving the Zombie State without side effects, we can automate it:
-- Monitor logs for `Timeout in AwaitingInitialSync`.
-- If detected, automatically invoke `whatsappSessions.user.repairSession()`.
+### Protocol Self-Healing (The Real Fix)
+We have enabled the **Message Retry Mechanism** in the Baileys configuration.
+- **Component**: `msgRetryCounterCache` (In-Memory Map).
+- **Capability**: `getMessage` callback hooked to `SQLiteStore`.
+- **Effect**: When a "No session found" error occurs, the client can now sign a "Retry Receipt" effectively asking the sender to re-encrypt and re-send the message. This prevents the "Zombie State" where messages are silently dropped.
+- **Status**: **Implemented** (Automatic).
+
+### Level 3: The Nuke (Hard Reset)
