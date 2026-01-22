@@ -42,6 +42,12 @@ We have enabled the **Message Retry Mechanism** in the Baileys configuration.
 - **Effect**: When a "No session found" error occurs, the client can now sign a "Retry Receipt" effectively asking the sender to re-encrypt and re-send the message. This prevents the "Zombie State" where messages are silently dropped.
 - **Status**: **Implemented** (Automatic).
 
+### Level 5.5: The Hidden Timer (AwaitingInitialSync)
+Investigating logs revealed *another* hardcoded timeout in `lib/Socket/chats.js` that interrupts the sync if `HistorySyncNotification` isn't received within **20 seconds**.
+-   **Log**: `Timeout in AwaitingInitialSync, forcing state to Online and flushing buffer`.
+-   **Fix**: Patched `chats.js` to increase this specific timeout to **120s** as well.
+-   **Status**: **Implemented** (Automatic).
+
 ### Level 5: The "Streaming Sync" Refactor (Architectural Fix)
 The user challenged the timeout patch. A better engineering solution is to **process sync data incrementally**.
 -   **Problem**: `resyncAppState` buffers *everything* before processing *anything*.
