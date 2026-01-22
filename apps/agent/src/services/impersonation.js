@@ -83,23 +83,16 @@ class ImpersonationService {
             }
         }
 
-        // --- AUTOPILOT 2.0: LOGIC GUARDRAILS ---
-        // We append rigid constraints based on the 'relationship' field.
-        // This ensures that even if the "Learned Style" is vague, the Relationship enforces the confusing boundary.
-        const relationship = (person.relationship || '').toLowerCase();
-        let constraints = "";
-
-        if (relationship.match(/boss|client|work|colleague|professional|instructor|teacher/)) {
-            constraints = "\n[SYSTEM CONSTRAINT]: Professional relationship. Use formal tone. NO slang. NO nicknames. Sentences should be polite and functional.";
-        } else if (relationship.match(/friend|partner|coupon|fam|cousin|bro|sister|wife|gf|girlfriend|boyfriend/)) {
-            constraints = "\n[SYSTEM CONSTRAINT]: Personal relationship. Casual tone allowed. Slang allowed if consistent with examples.";
-        }
-
-        if (constraints) {
-            return (styleProfile || "") + constraints;
-        }
-
         return styleProfile;
+    }
+
+    getPersonRelationship(contactIdOrPhone) {
+        let person = this.db.getPerson(contactIdOrPhone);
+        if (!person && contactIdOrPhone.includes('@')) {
+            const phone = contactIdOrPhone.split('@')[0];
+            person = this.db.getPerson(phone);
+        }
+        return person ? (person.relationship || null) : null;
     }
 
     /**
@@ -485,6 +478,7 @@ Output a concise list of rules for this specific relationship.
         // 2. Fetch Styles
         const globalStyle = this.getStyleProfile();
         const contactStyle = this.getContactStyle(chatId);
+        const relationship = this.getPersonRelationship(chatId);
 
         // 3. Build Prompt
         const prompt = `
@@ -494,6 +488,13 @@ Do not sound like a helpful AI. Sound like a human.
 ${globalStyle ? `### GLOBAL INSTRUCTIONS (Manual Override):\n${globalStyle}\n` : ''}
 
 ${contactStyle ? `### CONTACT-SPECIFIC STYLE (Override/Nuance for this person):\n${contactStyle}\n` : ''}
+
+${relationship ? `### RELATIONSHIP CONTEXT (GUARDRAILS):
+The user's relationship with this person is: "${relationship}".
+Infer the appropriate social distance and tone from this relationship.
+- If it implies authority (e.g. Boss, Client), use a FORMAL, polite tone. No slang.
+- If it implies closeness (e.g. Friend, Partner), use a CASUAL tone. Slang permitted if consistent with examples.
+` : ''}
 
 ### REAL WORLD EXAMPLES (THE MIRROR)
 Here are the last ${sentMessages.length > 30 ? 30 : sentMessages.length} messages ${ownerName} sent to this person.

@@ -120,6 +120,23 @@ describe('ImpersonationService', () => {
         expect(prompt).toContain('### CONTACT-SPECIFIC STYLE (Override/Nuance for this person):\nContact Style');
     });
 
+    test('generateDraft should inject Relationship Context into prompt', async () => {
+        const chatId = '9999999999@s.whatsapp.net';
+        const contactId = 'contact-relationship-test';
+        const phone = '9999999999';
+
+        // Setup Person with Relationship
+        db.db.prepare("INSERT INTO people (id, name, phone, relationship) VALUES (?, ?, ?, ?)").run(contactId, 'Rel Test', phone, 'Supreme Leader');
+
+        await service.generateDraft(chatId, { content: "Heilsa" }, "Rel Test");
+
+        const callArgs = agentMock.client.models.generateContent.mock.calls[0][0];
+        const prompt = callArgs.contents[0].parts[0].text;
+
+        expect(prompt).toContain('### RELATIONSHIP CONTEXT (GUARDRAILS):');
+        expect(prompt).toContain('The user\'s relationship with this person is: "Supreme Leader".');
+    });
+
     test('should broadcast autopilot:update event when draft is generated', async () => {
         const chatId = 'broadcast-test-chat';
 
