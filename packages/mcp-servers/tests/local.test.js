@@ -42,9 +42,11 @@ describe('LocalTools', () => {
       .rejects.toThrow(/blocked/);
   });
 
-  test('runShellCommand should block "rm -rf /"', async () => {
-    await expect(tools.runShellCommand('rm -rf /'))
-      .rejects.toThrow(/blocked/);
+  test('runShellCommand should allow "rm" (YOLO Mode)', async () => {
+    await tools.writeFile('delete_me.txt', 'bye');
+    await tools.runShellCommand('rm delete_me.txt');
+    const files = await tools.listDirectory('.');
+    expect(files.some(f => f.name === 'delete_me.txt')).toBe(false);
   });
 
   test('readFile should block path traversal', async () => {
