@@ -1,8 +1,8 @@
 diff --git a/node_modules/@whiskeysockets/baileys/lib/Socket/chats.js b/node_modules/@whiskeysockets/baileys/lib/Socket/chats.js
-index 8202174..2acb16f 100644
+index 8202174..cb167ee 100644
 --- a/node_modules/@whiskeysockets/baileys/lib/Socket/chats.js
 +++ b/node_modules/@whiskeysockets/baileys/lib/Socket/chats.js
-@@ -345,111 +345,134 @@ export const makeChatsSocket = (config) => {
+@@ -345,111 +345,142 @@ export const makeChatsSocket = (config) => {
              }
          };
      };
@@ -128,13 +128,6 @@ index 8202174..2acb16f 100644
 -                            logger.info(`synced ${name} to v${newState.version}`);
 -                            initialVersionMap[name] = newState.version;
 -                            Object.assign(globalMutationMap, mutationMap);
--                        }
--                        if (hasMorePatches) {
--                            logger.info(`${name} has more patches...`);
--                        }
--                        else {
--                            // collection is done with sync
--                            collectionsToHandle.delete(name);
 +                    // extract from binary node
 +                    const decoded = await extractSyncdPatches(result, config?.options);
 +                    for (const key in decoded) {
@@ -170,19 +163,11 @@ index 8202174..2acb16f 100644
 +                                collectionsToHandle.delete(name);
 +                            }
                          }
--                    }
--                    catch (error) {
--                        // if retry attempts overshoot
--                        // or key not found
--                        const isIrrecoverableError = attemptsMap[name] >= MAX_SYNC_ATTEMPTS ||
--                            error.output?.statusCode === 404 ||
--                            error.name === 'TypeError';
--                        logger.info({ name, error: error.stack }, `failed to sync state from version${isIrrecoverableError ? '' : ', removing and trying from scratch'}`);
--                        await authState.keys.set({ 'app-state-sync-version': { [name]: null } });
--                        // increment number of retries
--                        attemptsMap[name] = (attemptsMap[name] || 0) + 1;
--                        if (isIrrecoverableError) {
--                            // stop retrying
+-                        if (hasMorePatches) {
+-                            logger.info(`${name} has more patches...`);
+-                        }
+-                        else {
+-                            // collection is done with sync
 -                            collectionsToHandle.delete(name);
 +                        catch (error) {
 +                            // LEVEL 10: RESILIENT SYNC
@@ -207,30 +192,51 @@ index 8202174..2acb16f 100644
 +                            }
                          }
                      }
+-                    catch (error) {
+-                        // if retry attempts overshoot
+-                        // or key not found
+-                        const isIrrecoverableError = attemptsMap[name] >= MAX_SYNC_ATTEMPTS ||
+-                            error.output?.statusCode === 404 ||
+-                            error.name === 'TypeError';
+-                        logger.info({ name, error: error.stack }, `failed to sync state from version${isIrrecoverableError ? '' : ', removing and trying from scratch'}`);
+-                        await authState.keys.set({ 'app-state-sync-version': { [name]: null } });
+-                        // increment number of retries
+-                        attemptsMap[name] = (attemptsMap[name] || 0) + 1;
+-                        if (isIrrecoverableError) {
+-                            // stop retrying
+-                            collectionsToHandle.delete(name);
+-                        }
 +                    // Flush buffer after each chunk to prevent timeout
-+                    ev.flush();
++                    try {
++                        ev.flush();
++                    } catch (err) {
++                        logger.error({ err }, 'failed to flush events during sync chunk');
+                     }
 +                    ev.buffer();
                  }
--            }
--        }, authState?.creds?.me?.id || 'resync-app-state');
--        const { onMutation } = newAppStateChunkHandler(isInitialSync);
--        for (const key in globalMutationMap) {
--            onMutation(globalMutationMap[key]);
 +            }, authState?.creds?.me?.id || 'resync-app-state');
 +            // const { onMutation } = newAppStateChunkHandler(isInitialSync);
 +            // for (const key in globalMutationMap) {
 +            //     onMutation(globalMutationMap[key]);
 +            // }
++        }
++        finally {
++            try {
++                ev.flush();
++            } catch (err) {
++                logger.error({ err }, 'failed to flush events in finally');
+             }
+-        }, authState?.creds?.me?.id || 'resync-app-state');
+-        const { onMutation } = newAppStateChunkHandler(isInitialSync);
+-        for (const key in globalMutationMap) {
+-            onMutation(globalMutationMap[key]);
          }
 -    });
-+        finally {
-+            ev.flush();
-+        }
 +    };
      /**
       * fetch the profile picture of a user/group
       * type = "preview" for a low res picture
-@@ -802,7 +825,7 @@ export const makeChatsSocket = (config) => {
+@@ -802,7 +833,7 @@ export const makeChatsSocket = (config) => {
          const historyMsg = getHistoryMsg(msg.message);
          const shouldProcessHistoryMsg = historyMsg
              ? shouldSyncHistoryMessage(historyMsg) &&
@@ -239,7 +245,7 @@ index 8202174..2acb16f 100644
              : false;
          // State machine: decide on sync and flush
          if (historyMsg && syncState === SyncState.AwaitingInitialSync) {
-@@ -914,7 +937,7 @@ export const makeChatsSocket = (config) => {
+@@ -914,7 +945,7 @@ export const makeChatsSocket = (config) => {
                  syncState = SyncState.Online;
                  ev.flush();
              }
@@ -248,6 +254,35 @@ index 8202174..2acb16f 100644
      });
      return {
          ...sock,
+diff --git a/node_modules/@whiskeysockets/baileys/lib/Socket/messages-recv.js b/node_modules/@whiskeysockets/baileys/lib/Socket/messages-recv.js
+index f2e2e10..5927b71 100644
+--- a/node_modules/@whiskeysockets/baileys/lib/Socket/messages-recv.js
++++ b/node_modules/@whiskeysockets/baileys/lib/Socket/messages-recv.js
+@@ -989,7 +989,9 @@ export const makeMessagesRecvSocket = (config) => {
+                 // message failed to decrypt
+                 if (msg.messageStubType === proto.WebMessageInfo.StubType.CIPHERTEXT && msg.category !== 'peer') {
+                     if (msg?.messageStubParameters?.[0] === MISSING_KEYS_ERROR_TEXT ||
+-                        msg.messageStubParameters?.[0] === NO_MESSAGE_FOUND_ERROR_TEXT) {
++                        msg.messageStubParameters?.[0] === NO_MESSAGE_FOUND_ERROR_TEXT ||
++                        msg.messageStubParameters?.[0]?.includes('No session found') ||
++                        msg.messageStubParameters?.[0]?.includes('No matching sessions found')) {
+                         return sendMessageAck(node);
+                     }
+                     const errorMessage = msg?.messageStubParameters?.[0] || '';
+diff --git a/node_modules/@whiskeysockets/baileys/lib/Utils/auth-utils.js b/node_modules/@whiskeysockets/baileys/lib/Utils/auth-utils.js
+index e02ea02..23f0c60 100644
+--- a/node_modules/@whiskeysockets/baileys/lib/Utils/auth-utils.js
++++ b/node_modules/@whiskeysockets/baileys/lib/Utils/auth-utils.js
+@@ -224,7 +224,8 @@ export const addTransactionCapability = (state, logger, { maxCommitRetries, dela
+                     return result;
+                 }
+                 catch (error) {
+-                    logger.error({ error }, 'transaction failed, rolling back');
++                    const isSessionError = error.message?.includes('No session found') || error.name === 'SessionError';
++                    logger[isSessionError ? 'warn' : 'error']({ error }, 'transaction failed, rolling back');
+                     throw error;
+                 }
+             });
 diff --git a/node_modules/@whiskeysockets/baileys/lib/Utils/event-buffer.js b/node_modules/@whiskeysockets/baileys/lib/Utils/event-buffer.js
 index 6922384..1662c0e 100644
 --- a/node_modules/@whiskeysockets/baileys/lib/Utils/event-buffer.js
