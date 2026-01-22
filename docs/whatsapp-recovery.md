@@ -42,4 +42,10 @@ We have enabled the **Message Retry Mechanism** in the Baileys configuration.
 - **Effect**: When a "No session found" error occurs, the client can now sign a "Retry Receipt" effectively asking the sender to re-encrypt and re-send the message. This prevents the "Zombie State" where messages are silently dropped.
 - **Status**: **Implemented** (Automatic).
 
+### Level 4: The Deep Dive (Buffer Timeout Patch)
+We discovered that the "Zombie Session" often correlates with `Buffer timeout reached, auto-flushing`. This means the initial sync is taking longer than the hardcoded 30s limit in Baileys, causing the event buffer to flush prematurely and potentially corrupting the session state.
+- **Fix**: Patched `@whiskeysockets/baileys` to increase `BUFFER_TIMEOUT_MS` from **30s** to **120s**.
+- **Mechanism**: `patch-package` runs automatically on `postinstall`, ensuring the fix persists in Docker deployments.
+- **Status**: **Implemented**.
+
 ### Level 3: The Nuke (Hard Reset)

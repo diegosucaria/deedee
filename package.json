@@ -11,12 +11,15 @@
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",
     "lint": "eslint .",
     "build": "npm run build --workspace=apps/web",
+    "postinstall": "patch-package",
     "prepare": "husky"
   },
   "devDependencies": {
     "eslint": "^8.56.0",
     "husky": "^9.1.7",
     "jest": "^29.7.0",
+    "patch-package": "^8.0.1",
+    "postinstall-postinstall": "^2.1.0",
     "typescript": "^5.3.3"
   }
 }

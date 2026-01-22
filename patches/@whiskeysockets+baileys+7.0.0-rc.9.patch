@@ -1,0 +1,24 @@
+diff --git a/node_modules/@whiskeysockets/baileys/lib/Utils/event-buffer.js b/node_modules/@whiskeysockets/baileys/lib/Utils/event-buffer.js
+index 6922384..15d348d 100644
+--- a/node_modules/@whiskeysockets/baileys/lib/Utils/event-buffer.js
++++ b/node_modules/@whiskeysockets/baileys/lib/Utils/event-buffer.js
+@@ -30,7 +30,7 @@ export const makeEventBuffer = (logger) => {
+     let bufferTimeout = null;
+     let bufferCount = 0;
+     const MAX_HISTORY_CACHE_SIZE = 10000; // Limit the history cache size to prevent memory bloat
+-    const BUFFER_TIMEOUT_MS = 30000; // 30 seconds
++    const BUFFER_TIMEOUT_MS = 120000; // 2 minutes (Patched: Increased from 30s to fix timeout during initial sync)
+     // take the generic event and fire it as a baileys event
+     ev.on('event', (map) => {
+         for (const event in map) {
+@@ -169,8 +169,8 @@ const makeBufferData = () => {
+     };
+ };
+ function append(data, historyCache, event,
+-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+-eventData, logger) {
++    // eslint-disable-next-line @typescript-eslint/no-explicit-any
++    eventData, logger) {
+     switch (event) {
+         case 'messaging-history.set':
+             for (const chat of eventData.chats) {
