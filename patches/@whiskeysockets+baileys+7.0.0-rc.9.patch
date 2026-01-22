@@ -1,8 +1,8 @@
 diff --git a/node_modules/@whiskeysockets/baileys/lib/Socket/chats.js b/node_modules/@whiskeysockets/baileys/lib/Socket/chats.js
-index 8202174..e68f079 100644
+index 8202174..26ad6f4 100644
 --- a/node_modules/@whiskeysockets/baileys/lib/Socket/chats.js
 +++ b/node_modules/@whiskeysockets/baileys/lib/Socket/chats.js
-@@ -345,111 +345,127 @@ export const makeChatsSocket = (config) => {
+@@ -345,111 +345,139 @@ export const makeChatsSocket = (config) => {
              }
          };
      };
@@ -185,6 +185,18 @@ index 8202174..e68f079 100644
 -                            // stop retrying
 -                            collectionsToHandle.delete(name);
 +                        catch (error) {
++                            // FAST FAIL: If session is corrupt ("No session found"), trigger immediate wipe via 401
++                            if (error.message && error.message.includes('No session found')) {
++                                logger.error('Critical Crypto Error: Triggering Nuclear Wipe via 401 signal');
++                                ev.emit('connection.update', {
++                                    connection: 'close',
++                                    lastDisconnect: {
++                                        error: { output: { statusCode: 401 } },
++                                        date: new Date()
++                                    }
++                                });
++                                throw error;
++                            }
 +                            // if retry attempts overshoot
 +                            // or key not found
 +                            const isIrrecoverableError = attemptsMap[name] >= MAX_SYNC_ATTEMPTS ||
@@ -223,7 +235,7 @@ index 8202174..e68f079 100644
      /**
       * fetch the profile picture of a user/group
       * type = "preview" for a low res picture
-@@ -802,7 +818,7 @@ export const makeChatsSocket = (config) => {
+@@ -802,7 +830,7 @@ export const makeChatsSocket = (config) => {
          const historyMsg = getHistoryMsg(msg.message);
          const shouldProcessHistoryMsg = historyMsg
              ? shouldSyncHistoryMessage(historyMsg) &&
@@ -232,7 +244,7 @@ index 8202174..e68f079 100644
              : false;
          // State machine: decide on sync and flush
          if (historyMsg && syncState === SyncState.AwaitingInitialSync) {
-@@ -914,7 +930,7 @@ export const makeChatsSocket = (config) => {
+@@ -914,7 +942,7 @@ export const makeChatsSocket = (config) => {
                  syncState = SyncState.Online;
                  ev.flush();
              }
