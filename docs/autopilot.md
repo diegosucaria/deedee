@@ -13,6 +13,11 @@ Autopilot allows DeeDee to assist in personal messaging by drafting replies in y
 - **Style Learning**: 
   - `ImpersonationService` can analyze global message history (last 500 messages) to generate a "Style Profile".
   - This profile is stored in `agent_settings` (key: `user_style_profile`) and prepended to the system prompt during draft generation.
+- **Guardrails**:
+  - The system checks the contact's `relationship` field (e.g., "Boss", "Friend", "Wife").
+  - **Professional** relationships enforce formal tone and ban slang.
+  - **Personal** relationships allow casual tone and slang.
+  - This constraint is appended at runtime to override any ambiguous learned style.
 - **Safety**: Function calling is disabled for drafts to prevent accidental command execution.
 
 ## Usage

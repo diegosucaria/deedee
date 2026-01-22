@@ -48,85 +48,8 @@ class ImpersonationService {
      * Analyze global history to generate a style profile
      */
     async analyzeGlobalStyle() {
-        console.log('[Impersonation] Analyzing global style...');
-
-        // 1. Fetch from Interfaces (Real User History)
-        let messages = [];
-        try {
-            // Internal URL for Interfaces Service
-            const interfacesUrl = process.env.INTERFACES_URL || 'http://localhost:5000';
-            const headers = { 'Authorization': `Bearer ${process.env.DEEDEE_API_TOKEN}` };
-
-            const res = await axios.get(`${interfacesUrl}/whatsapp/global-history?limit=500`, { headers });
-            messages = res.data;
-        } catch (e) {
-            console.error('[Impersonation] Failed to fetch history from Interfaces:', e.message);
-            throw new Error(`Unable to fetch global history from WhatsApp. Ensure the interface is running. Error: ${e.message}`);
-        }
-
-        if (!messages || messages.length < 10) {
-            return "Not enough history to analyze style.";
-        }
-
-        const corpus = messages.map(m => m.content).join('\n');
-
-        // 2. Prompt Gemini
-        const ownerName = this.getOwnerName();
-        const prompt = `
-You are an expert linguist and ghostwriter. Analyze the following sample of messages sent by the user "${ownerName}".
-Create a "Style Profile" that describes EXACTLY how they write.
-
-Focus on:
-- Tone (e.g., casual, dry, enthusiastic, direct)
-- Formatting (capitalization, punctuation usage)
-- Common slang or abbreviations
-- Sentence structure complexity
-- Language mixing (Does he/she mix English and Spanish?)
-
-Sample:
-"""
-${corpus.substring(0, 30000)} 
-"""
-(Truncated to avoid token limits if necessary)
-
-Output a concise, bulleted list of rules to follow to impersonate him perfectly. 
-Do not be vague. Be prescriptive.
-`;
-
-        try {
-            // PRO is better for deep analysis and nuance extraction
-            const result = await this.agent.client.models.generateContent({
-                model: process.env.WORKER_PRO || 'gemini-1.5-pro-exp',
-                contents: [{ role: 'user', parts: [{ text: prompt }] }]
-            });
-
-            // Handle Response safely
-            let profile = "";
-            if (result.response && result.response.candidates && result.response.candidates.length > 0) {
-                profile = result.response.candidates[0].content.parts[0].text.trim();
-            } else if (result.candidates && result.candidates.length > 0) {
-                // Fallback for different response structure
-                // SDK might return candidates directly if not using EnhancedResponse
-                profile = result.candidates[0].content.parts[0].text.trim();
-            } else {
-                throw new Error("No candidates in GenAI response");
-            }
-
-            this.saveStyleProfile(profile);
-
-            // Log analysis result JSON
-            console.log(JSON.stringify({
-                event: 'global_style_analyzed',
-                timestamp: new Date().toISOString(),
-                sample_size: messages.length,
-                generated_profile_length: profile.length
-            }));
-
-            return profile;
-        } catch (e) {
-            console.error('[Impersonation] Analysis failed:', e);
-            throw e;
-        }
+        console.warn('[Impersonation] Global Style Analysis is DISABLED in Autopilot 2.0. Please use Manual Global Instructions.');
+        return "Global Analysis Disabled. Use Manual Instructions.";
     }
 
     /**
@@ -142,20 +65,41 @@ Do not be vague. Be prescriptive.
             person = this.db.getPerson(phone);
         }
 
-        if (!person || !person.metadata) return null;
-        try {
-            // db.getPerson already parses JSON, but if used raw it might be string.
-            let meta = typeof person.metadata === 'string' ? JSON.parse(person.metadata) : person.metadata;
+        if (!person) return null;
 
-            // Handle double-encoded legacy data
-            if (typeof meta === 'string') {
-                try { meta = JSON.parse(meta); } catch (e) { }
+        let styleProfile = null;
+        if (person.metadata) {
+            try {
+                // db.getPerson already parses JSON, but if used raw it might be string.
+                let meta = typeof person.metadata === 'string' ? JSON.parse(person.metadata) : person.metadata;
+
+                // Handle double-encoded legacy data
+                if (typeof meta === 'string') {
+                    try { meta = JSON.parse(meta); } catch (e) { }
+                }
+                styleProfile = meta.style_profile || null;
+            } catch (e) {
+                // parsing error
             }
-            // Check for specific override or fallback
-            return meta.style_profile || null;
-        } catch (e) {
-            return null;
         }
+
+        // --- AUTOPILOT 2.0: LOGIC GUARDRAILS ---
+        // We append rigid constraints based on the 'relationship' field.
+        // This ensures that even if the "Learned Style" is vague, the Relationship enforces the confusing boundary.
+        const relationship = (person.relationship || '').toLowerCase();
+        let constraints = "";
+
+        if (relationship.match(/boss|client|work|colleague|professional|instructor|teacher/)) {
+            constraints = "\n[SYSTEM CONSTRAINT]: Professional relationship. Use formal tone. NO slang. NO nicknames. Sentences should be polite and functional.";
+        } else if (relationship.match(/friend|partner|coupon|fam|cousin|bro|sister|wife|gf|girlfriend|boyfriend/)) {
+            constraints = "\n[SYSTEM CONSTRAINT]: Personal relationship. Casual tone allowed. Slang allowed if consistent with examples.";
+        }
+
+        if (constraints) {
+            return (styleProfile || "") + constraints;
+        }
+
+        return styleProfile;
     }
 
     /**
@@ -486,10 +430,11 @@ Output a concise list of rules for this specific relationship.
 
                 try {
                     console.log(`[Impersonation] Fetching remote history for ${jid}...`);
+                    // Fetch 100 messages to ensure we have enough sent examples
                     const res = await axios.get(`${interfacesUrl}/whatsapp/history`, {
-                        params: { jid: jid, limit: 20, session: 'user' },
+                        params: { jid: jid, limit: 100, session: 'user' },
                         headers: { Authorization: `Bearer ${process.env.DEEDEE_API_TOKEN}` },
-                        timeout: 2000
+                        timeout: 3000
                     });
 
                     if (res.data && Array.isArray(res.data) && res.data.length > 0) {
@@ -511,12 +456,20 @@ Output a concise list of rules for this specific relationship.
             history = this.db.db.prepare(`
                 SELECT role, content FROM messages 
                 WHERE chat_id = ? AND content IS NOT NULL AND content != ''
-                ORDER BY timestamp DESC LIMIT 20
+                ORDER BY timestamp DESC LIMIT 100
             `).all(chatId).reverse();
         }
 
         console.log(`[Impersonation] Transcript Gen: ChatID=${chatId}, HistoryLen=${history.length}`);
-        if (history.length > 0) console.log('[Impersonation] Sample:', history[0]); //temp delete this later
+
+        // --- 1.5 THE MIRROR: Extract Recent Sent Messages ---
+        // Filter for messages sent by 'assistant' (The User)
+        const sentMessages = history.filter(m => m.role === 'assistant' && m.content && m.content.length > 2);
+        // Take the last 30 examples
+        const styleExamples = sentMessages.slice(-30).map(m => `"${m.content}"`).join('\n');
+
+        // Prepare Transcript (Last 20 messages for Context)
+        const recentHistory = history.slice(-20);
 
         // Format as transcript: "Name: Content"
         // In our mirroring logic: 
@@ -524,7 +477,7 @@ Output a concise list of rules for this specific relationship.
         // role='user' -> The Contact (Them)
         const ownerName = this.getOwnerName();
 
-        const transcript = history.map(m => {
+        const transcript = recentHistory.map(m => {
             const sender = m.role === 'assistant' ? ownerName : contactName;
             return `${sender}: ${m.content}`;
         }).join('\n');
@@ -538,9 +491,16 @@ Output a concise list of rules for this specific relationship.
 You are an AI acting as the user "${ownerName}". Your goal is to draft a reply to the incoming message(s) that sounds EXACTLY like ${ownerName}.
 Do not sound like a helpful AI. Sound like a human. 
 
-${globalStyle ? `### GLOBAL STYLE GUIDE (Baseline):\n${globalStyle}\n` : ''}
+${globalStyle ? `### GLOBAL INSTRUCTIONS (Manual Override):\n${globalStyle}\n` : ''}
 
 ${contactStyle ? `### CONTACT-SPECIFIC STYLE (Override/Nuance for this person):\n${contactStyle}\n` : ''}
+
+### REAL WORLD EXAMPLES (THE MIRROR)
+Here are the last ${sentMessages.length > 30 ? 30 : sentMessages.length} messages ${ownerName} sent to this person.
+Mimic the TONE, LENGTH, and VOCABULARY exactly.
+If they are formal, be formal. If they are slang-heavy, use slang.
+
+${styleExamples}
 
 ### Conversation History (Context):
 ${transcript}
@@ -549,7 +509,7 @@ ${transcript}
 "${incomingMessage.content}"
 
 ### Instructions:
-- Draft a reply in ${ownerName}'s style.
+- Draft a reply in ${ownerName}'s style based on the EXAMPLES above.
 - Keep it relevant to the conversation.
 - If the incoming message is short, keep the reply short, single line.
 - If the incoming message is a conversation closure (e.g. "ok", "thanks", "listo", "perfecto") and requires no response, output exactly: [NO_REPLY]
@@ -559,7 +519,6 @@ ${transcript}
 - CRITICAL: Do not use multi-line messages unless strictly necessary. Always prefer short answers.
 
 `;
-
         // 4. Call LLM
         try {
             console.log('Prompt:', JSON.stringify({ prompt }));
