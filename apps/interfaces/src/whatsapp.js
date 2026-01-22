@@ -384,7 +384,7 @@ class WhatsAppService {
                 retryRequestDelayMs: 2000,
                 keepAliveIntervalMs: 30000,
                 syncFullHistory: true, // Always sync logic
-                markOnlineOnConnect: false, // Notification Stealing Prevention
+                markOnlineOnConnect: true, // REQUIRED true to trigger initial history sync from server
                 browser: ['DeeDee', 'Chrome', '1.0.0'],
 
                 // 2. Retry Capability: Allows Baileys to look up the original message to sign the retry receipt
