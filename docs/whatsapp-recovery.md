@@ -42,6 +42,17 @@ We have enabled the **Message Retry Mechanism** in the Baileys configuration.
 - **Effect**: When a "No session found" error occurs, the client can now sign a "Retry Receipt" effectively asking the sender to re-encrypt and re-send the message. This prevents the "Zombie State" where messages are silently dropped.
 - **Status**: **Implemented** (Automatic).
 
+### Level 5: The "Streaming Sync" Refactor (Architectural Fix)
+The user challenged the timeout patch. A better engineering solution is to **process sync data incrementally**.
+-   **Problem**: `resyncAppState` buffers *everything* before processing *anything*.
+-   **Solution**: Refactor `resyncAppState` in `lib/Socket/chats.js` to:
+    1.  Remove `createBufferedFunction` wrapper.
+    2.  Process `mutationMap` immediately after each chunk decode.
+    3.  Call `ev.flush()` and `ev.buffer()` inside the loop.
+-   **Benefit**: Eliminates timeout risk completely, UI updates progress in real-time.
+-   **Action**: Apply this complex refactor via the same patch file.
+-   **Status**: **Implemented** (Automatic).
+
 ### Level 4: The Deep Dive (Buffer Timeout Patch)
 We discovered that the "Zombie Session" often correlates with `Buffer timeout reached, auto-flushing`. This means the initial sync is taking longer than the hardcoded 30s limit in Baileys, causing the event buffer to flush prematurely and potentially corrupting the session state.
 - **Fix**: Patched `@whiskeysockets/baileys` to increase `BUFFER_TIMEOUT_MS` from **30s** to **120s**.
