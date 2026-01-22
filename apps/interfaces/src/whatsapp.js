@@ -645,7 +645,7 @@ class WhatsAppService {
             }
 
             // Verify processing for ALL sessions (User + Assistant)
-            // console.log(`${this.logPrefix} Received from ${phoneNumber} [Type: ${upsertType}]`);
+            console.log(`${this.logPrefix} Received from ${phoneNumber} [Type: ${upsertType}]`);
 
             // Unwrapping Logic
             let messageContent = msg.message;
