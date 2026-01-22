@@ -2,7 +2,7 @@
 
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
-import { getAutopilotDrafts, approveDraft, rejectDraft, editDraft, getAutopilotSettings, updateAutopilotStatus, toggleAutopilotPin, getStyleProfile, saveStyleProfile, analyzeStyle, getContactStyle, saveContactStyle, analyzeContactStyle } from '../actions';
+import { getAutopilotDrafts, approveDraft, rejectDraft, editDraft, getAutopilotSettings, updateAutopilotStatus, toggleAutopilotPin, getStyleProfile, saveStyleProfile, analyzeStyle, getContactStyle, saveContactStyle, analyzeContactStyle, updatePerson } from '../actions';
 import { Loader2, Check, X, Edit2, Save, User, Settings, MessageSquare, ShieldAlert, Sparkles, Brain, Search, Trash, Clock, RefreshCw, Pin } from 'lucide-react';
 import clsx from 'clsx';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
@@ -169,11 +169,7 @@ function AutopilotPage() {
         } else {
             // Save Relationship first
             if (selectedRelationship !== undefined) {
-                // Import updatePerson dynamically or assume it's available? 
-                // It is NOT imported at top level. Need to import it.
-                // Actually, I can add it to the imports at top of file.
-                // For now, let's assume I add it to import list in next chunk.
-                const { updatePerson } = require('../actions');
+                // Save relationship updates
                 await updatePerson(selectedContactStyleId, { relationship: selectedRelationship });
             }
             await saveContactStyle(selectedContactStyleId, styleProfile);

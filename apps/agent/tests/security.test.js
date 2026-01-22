@@ -7,7 +7,11 @@ const { createUserMessage } = require('@deedee/shared/src/types');
 jest.mock('../src/db', () => ({
     AgentDB: jest.fn().mockImplementation(() => ({
         db: {
-            prepare: jest.fn().mockReturnValue({ all: jest.fn().mockReturnValue([]) })
+            prepare: jest.fn().mockReturnValue({
+                all: jest.fn().mockReturnValue([]),
+                get: jest.fn().mockReturnValue(null),
+                run: jest.fn()
+            })
         },
         saveMessage: jest.fn(),
         getKey: jest.fn(),

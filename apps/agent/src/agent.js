@@ -574,7 +574,7 @@ class Agent {
       // Security: whatsapp:user is PASSIVE (ignored) unless it triggers a watcher.
       if (message.source?.startsWith('whatsapp')) {
         const isUserSession = message.source === 'whatsapp:user'; // Messages from friends to ME
-        const contactString = message.metadata?.phoneNumber;
+        const contactString = message.metadata?.phoneNumber || message.metadata?.chatId;
         const groupName = message.metadata?.groupName;
         const msgContent = message.content?.toLowerCase() || '';
 

@@ -125,7 +125,7 @@ function createAutopilotRouter(agent) {
             // 1. Get People from Agent DB
             // Preserve existing filters (sys_, sch_)
             const people = agent.db.db.prepare(`
-                SELECT id, name, phone, autopilot_status, autopilot_expires_at, source, metadata 
+                SELECT id, name, phone, relationship, autopilot_status, autopilot_expires_at, source, metadata 
                 FROM people 
                 WHERE (name IS NULL OR (name NOT LIKE 'sys_%' AND name NOT LIKE 'sch_%'))
             `).all();

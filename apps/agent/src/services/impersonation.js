@@ -252,7 +252,10 @@ Output a concise list of rules for this specific relationship.
         // Pass phone/username if available in metadata for better lookup
         const autopilotStatus = this.getAutopilotStatus(contactString, message.metadata?.username);
 
-        if (autopilotStatus === 'off') return;
+        if (autopilotStatus === 'off') {
+            // console.log(`[Impersonation Debug] Ignored message from ${contactString} (Status: off)`);
+            return;
+        }
 
         console.log(`[Impersonation] Buffering message for ${contactString} (Status: ${autopilotStatus})`);
 
@@ -599,14 +602,13 @@ ${transcript}
         // console.log(`[Autopilot Debug] Checking status for raw='${contactIdentifier}', clean='${cleanId}', name='${contactName}'`);
 
         // 1. Try finding person by CLEAN ID directly
+        // console.log(`[Autopilot Debug] Checking status for raw='${contactIdentifier}', clean='${cleanId}'`);
         let person = this.db.db.prepare('SELECT id, autopilot_status, autopilot_expires_at FROM people WHERE id = ?').get(cleanId);
-        // if (person) console.log(`[Autopilot Debug] Found by ID match:`, person);
 
         // 2. If not found, try by phone/metadata match (using both clean and raw to be safe)
         if (!person) {
             // console.log(`[Autopilot Debug] Not found by ID. Trying fallback query...`);
             person = this.db.db.prepare('SELECT id, autopilot_status, autopilot_expires_at FROM people WHERE phone = ? OR id = ?').get(cleanId, contactIdentifier);
-            // if (person) console.log(`[Autopilot Debug] Found by Fallback match:`, person);
         }
 
         if (!person) {
@@ -615,7 +617,7 @@ ${transcript}
         }
 
         let status = person.autopilot_status || 'off';
-        // console.log(`[Autopilot Debug] Resolved Status: ${status}`);
+        // console.log(`[Autopilot Debug] Found Person: ${person.id}, Status: ${status}`);
 
         // Check expiration
         if (person.autopilot_expires_at) {
