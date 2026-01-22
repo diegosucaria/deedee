@@ -115,7 +115,7 @@ describe('ImpersonationService', () => {
         const callArgs = agentMock.client.models.generateContent.mock.calls[0][0];
         const prompt = callArgs.contents[0].parts[0].text;
 
-        expect(prompt).toContain('### GLOBAL STYLE GUIDE (Baseline):\nGlobal Style');
+        expect(prompt).toContain('### GLOBAL INSTRUCTIONS (Manual Override):\nGlobal Style');
         // This confirms that getContactStyle successfully resolved the contact from the chatId
         expect(prompt).toContain('### CONTACT-SPECIFIC STYLE (Override/Nuance for this person):\nContact Style');
     });
