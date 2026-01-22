@@ -29,6 +29,9 @@ COPY patches ./patches
 # Install dependencies
 # Install dependencies
 RUN npm install
+# Post-install debugging
+RUN cat node_modules/@whiskeysockets/baileys/lib/Utils/event-buffer.js | grep "Patched" || echo "PATCH FAILED"
+
 RUN npm prune --production
 
 # Copy source code
