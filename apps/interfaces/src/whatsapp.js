@@ -77,7 +77,7 @@ class SQLiteStore {
             const total = messages.length;
             // console.log(`[SQLiteStore] upsertMessages called with ${total} msgs (Type: ${type})`); // Verbose
 
-            const BATCH_SIZE = 3000;
+            const BATCH_SIZE = 250;
 
             const stmt = this.db.prepare(`
                 INSERT INTO messages (key_id, remote_jid, from_me, timestamp, content, data)
@@ -132,7 +132,7 @@ class SQLiteStore {
                 if (total > BATCH_SIZE) await new Promise(resolve => setTimeout(resolve, 5));
             }
 
-            if (total > 50) console.log(`[SQLiteStore] Finished upserting ${total} messages.`);
+            // if (total > 50) console.log(`[SQLiteStore] Finished upserting ${total} messages.`);
         } catch (e) {
             console.error('[SQLiteStore] Upsert Failed:', e);
         }
