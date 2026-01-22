@@ -24,7 +24,7 @@ WORKDIR /app
 # Copy pruned lockfile and package.json
 COPY --from=pruner /app/out/json/ .
 COPY --from=pruner /app/out/package-lock.json ./package-lock.json
-COPY patches ./patches
+RUN mkdir -p patches
 
 # Install dependencies
 # Install dependencies

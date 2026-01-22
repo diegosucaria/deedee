@@ -26,7 +26,7 @@ WORKDIR /app
 # First, copy ONLY the pruned lockfile and package.json files
 COPY --from=pruner /app/out/json/ .
 COPY --from=pruner /app/out/package-lock.json ./package-lock.json
-COPY patches ./patches
+RUN mkdir -p patches
 
 # Install dependencies (this step is now cached unless "web" dependencies change)
 RUN npm install
