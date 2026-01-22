@@ -499,14 +499,14 @@ class WhatsAppService {
 
                     if (this.sessionId === 'user') {
                         // FORCE UNAVAILABLE IMMEDIATELY to prevent notification stealing
-                        // We add a small delay to ensure the connection "Online" state is established before we switch it off.
-                        // Sometimes switching too fast is ignored by the server.
+                        // We add a SIGNIPICANT delay (60s) to ensure the connection "Online" state is established 
+                        // and the initial sync (decryption of pending messages) completes before we switch it off.
                         setTimeout(async () => {
                             if (this.sock) {
-                                console.log(`${this.logPrefix} [Strategy] Connection Open (+2s). Forcing 'unavailable' now.`);
+                                console.log(`${this.logPrefix} [Strategy] Connection Open (+60s). Forcing 'unavailable' now.`);
                                 await this.sock.sendPresenceUpdate('unavailable');
                             }
-                        }, 2000);
+                        }, 60000);
 
                         // Fallback Timeout: If sync doesn't finish in 60s, sleep anyway
                         if (this.sleepTimeout) clearTimeout(this.sleepTimeout);
@@ -1037,15 +1037,14 @@ class WhatsAppService {
         // 1. Force Disconnect (Keep Session)
         await this.disconnect(false);
 
-        // 2. Surgical Deletion
+        // 2. Surgical Deletion (Level 2.5: Scorched Earth - Keep only identity)
         if (fs.existsSync(this.authFolder)) {
             const files = fs.readdirSync(this.authFolder);
             let deletedCount = 0;
 
             for (const file of files) {
-                // Delete 'app-state-*' and 'pre-key-*'
-                // KEEP: creds.json (Identity)
-                if (file.startsWith('app-state-') || file.startsWith('pre-key-')) {
+                // DELETE EVERYTHING except creds.json
+                if (file !== 'creds.json') {
                     try {
                         fs.unlinkSync(path.join(this.authFolder, file));
                         deletedCount++;
@@ -1054,7 +1053,7 @@ class WhatsAppService {
                     }
                 }
             }
-            console.log(`${this.logPrefix} Deleted ${deletedCount} corrupted/stale session files.`);
+            console.log(`${this.logPrefix} Deleted ${deletedCount} session files (All except creds.json).`);
         }
 
         // 3. Restart (Triggers Re-Sync)

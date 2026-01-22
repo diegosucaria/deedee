@@ -19,12 +19,12 @@ Attempts to simply disconnect and reconnect the socket.
 - **Goal**: Establish a fresh socket connection.
 - **Status**: **Implemented** (Standard Baileys retry logic).
 
-### Level 2: The Surgical Strike (Semi-Automated)
-Forces a "Soft Reset" by deleting ephemeral session sync data while keeping identity keys.
-- **Action**: Deletes `app-state-sync-*` and `pre-key-*` files from `baileys_auth_user/`.
-- **Preserves**: `creds.json` (Device Identity).
+### Level 2.5: The Scorched Earth (Semi-Automated)
+Forces a "Deep Soft Reset" designed to fix crypto/session mismatch errors without a QR scan.
+- **Action**: Deletes **EVERYTHING** in `baileys_auth_user/` folder.
+- **Preserves**: **ONLY** `creds.json` (Device Identity).
 - **Trigger**: Manual "Repair Session" button in Settings.
-- **Goal**: Force WhatsApp server to re-send history and renegotiate session keys without requiring a QR scan.
+- **Goal**: Force WhatsApp client to rebuild the entire session store from identity, resolving `No session found` decryption errors.
 - **Status**: **Implemented** (Manual trigger).
 
 ### Level 3: The Nuke (Hard Reset)
