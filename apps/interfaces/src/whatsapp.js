@@ -237,6 +237,17 @@ class SQLiteStore {
         });
     }
 
+    // New Helper: Get single message by key (for retries)
+    getMessageByKey(keyId, remoteJid) {
+        // We only store 'data' blob which is the full proto
+        // The table composite key is (key_id, remote_jid)
+        const row = this.db.prepare('SELECT data FROM messages WHERE key_id = ? AND remote_jid = ?').get(keyId, remoteJid);
+        if (row && row.data) {
+            return JSON.parse(row.data); // Returns full WebMessageInfo object
+        }
+        return null;
+    }
+
     // Check if a JID exists in messages (normalization helper)
     hasOutputForJid(jid) {
         const row = this.db.prepare('SELECT 1 FROM messages WHERE remote_jid = ? LIMIT 1').get(jid);
@@ -362,16 +373,30 @@ class WhatsAppService {
 
             const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
 
+            // Protocol Self-Healing (Issue #2135 Fix)
+            // 1. Retry Cache: Tracks how many times a message ID has been requested for retry
+            this.msgRetryCounterCache = this.msgRetryCounterCache || new Map();
+
             this.sock = makeWASocket({
                 auth: state,
                 defaultQueryTimeoutMs: undefined, // endless
-                connectTimeoutMs: 180000, // 3 minutes (Critical for syncFullHistory: true)
+                connectTimeoutMs: 180000, // 3 minutes
                 retryRequestDelayMs: 2000,
                 keepAliveIntervalMs: 30000,
-                syncFullHistory: true,
-                markOnlineOnConnect: false, // Do NOT mark online automatically to prevent notification suppression on phone
+                syncFullHistory: true, // Always sync logic
+                markOnlineOnConnect: false, // Notification Stealing Prevention
                 browser: ['DeeDee', 'Chrome', '1.0.0'],
-                // getMessage: async (key) => { ... }
+
+                // 2. Retry Capability: Allows Baileys to look up the original message to sign the retry receipt
+                msgRetryCounterCache: this.msgRetryCounterCache,
+                getMessage: async (key) => {
+                    if (this.store) {
+                        const msg = this.store.getMessageByKey(key.id, key.remoteJid);
+                        return msg?.message || undefined;
+                    }
+                    // Fallback to proto if not found (or undefined to signal not found)
+                    return undefined;
+                }
             });
 
             // Bind Store
