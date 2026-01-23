@@ -199,6 +199,11 @@ class SQLiteStore {
         return row ? { ...JSON.parse(row.data), ...row } : null;
     }
 
+    getContactByLid(lid) {
+        const row = this.db.prepare('SELECT * FROM contacts WHERE lid = ?').get(lid);
+        return row ? { ...JSON.parse(row.data), ...row } : null;
+    }
+
     getAllContactsRaw() {
         // For searchContacts compatibility which expects array of objects
         return this.getContacts();
@@ -609,6 +614,7 @@ class WhatsAppService {
 
             // Handle LID: If remoteJid is an LID, check if we have a participant (likely the real phone JID)
             if (remoteJid.includes('@lid')) {
+                // console.log(`${this.logPrefix} [LID Debug] Handling LID ${remoteJid}. Participant: ${msg.key.participant}`);
                 if (msg.key.participant) {
                     const participantNumber = msg.key.participant.split('@')[0];
                     if (participantNumber) {
@@ -616,10 +622,27 @@ class WhatsAppService {
                         phoneNumber = participantNumber;
                     }
                 } else if (this.store) {
-                    const resolvedJid = this.store.getContactByLid(remoteJid);
-                    if (resolvedJid) {
-                        const resolvedPhone = resolvedJid.split('@')[0];
+                    const resolvedData = this.store.getContactByLid(remoteJid);
+                    if (resolvedData) {
+                        const resolvedId = resolvedData.id || '';
+                        const resolvedPhone = resolvedId.split('@')[0];
                         console.log(`${this.logPrefix} Resolving LID (via DB) ${phoneNumber} to ${resolvedPhone}`);
+                        phoneNumber = resolvedPhone;
+                    } else {
+                        console.log(`${this.logPrefix} [LID Warning] Could not resolve LID ${remoteJid} from DB.`);
+                    }
+                }
+            } else {
+                // Fallback: If phoneNumber is very long (>14 digits), it might be a raw LID without suffix
+                // or Baileys normalized it. Try to resolve it.
+                if (phoneNumber.length > 14 && this.store) {
+                    // Try appending @lid
+                    const potentialLid = phoneNumber + '@lid';
+                    const resolvedData = this.store.getContactByLid(potentialLid);
+                    if (resolvedData) {
+                        const resolvedId = resolvedData.id || '';
+                        const resolvedPhone = resolvedId.split('@')[0];
+                        console.log(`${this.logPrefix} Resolving Ambiguous ID ${phoneNumber} to ${resolvedPhone} (via Fallback LID Match)`);
                         phoneNumber = resolvedPhone;
                     }
                 }

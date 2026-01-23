@@ -101,3 +101,5 @@
     - [x] **Real-time**: Fixed Autopilot Socket connection stability.
     - [x] **Cost Tracking**: Calculate, log, and display cost per draft.
     - [x] **Session Repair**: Implemented Level 2 ("Surgical Strike") repair for stale WhatsApp sessions.
+    - [x] **Dynamic Guardrails**: Replaced rigid regex with LLM-driven Relationship Context injection.
+    - [x] **Bugfixes**: Fixed draft triggering regression and UI relationship persistence.
