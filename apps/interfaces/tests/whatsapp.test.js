@@ -300,7 +300,7 @@ describe('WhatsAppService Unit Tests', () => {
 
         // Mock Store resolution
         whatsapp.store = {
-            getContactByLid: jest.fn().mockReturnValue(realNumber + '@s.whatsapp.net')
+            getContactByLid: jest.fn().mockReturnValue({ id: realNumber + '@s.whatsapp.net' })
         };
 
         // 2. Handle Message (Missing Participant)
