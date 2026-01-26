@@ -3,7 +3,7 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const Database = require('better-sqlite3');
-const pdf = require('pdf-parse');
+// const pdf = require('pdf-parse'); // Moved to lazy load
 const { ConfigService } = require('./config-service');
 
 class RagService {
@@ -73,6 +73,7 @@ class RagService {
         const ext = path.extname(filepath).toLowerCase();
 
         if (ext === '.pdf') {
+            const pdf = require('pdf-parse');
             const data = await pdf(buffer);
             text = data.text;
         } else {
