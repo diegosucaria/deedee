@@ -67,4 +67,20 @@ We discovered that the "Zombie Session" often correlates with `Buffer timeout re
 - **Mechanism**: `patch-package` runs automatically on `postinstall`, ensuring the fix persists in Docker deployments.
 - **Status**: **Implemented**.
 
+### Level 11: Intelligent Backoff (The "Good Citizen" Fix)
+Instead of immediate or constant-delay retries which can trigger server-side rate limits, we implemented a proper **Exponential Backoff** strategy.
+-   **Algorithm**: `min(1000 * 1.5^attempts, 60000)` + 20% Jitter.
+-   **Benefit**: Prevents "Thundering Herd" on server restarts and reduces ban risk.
+-   **Status**: **Implemented** (v7-rc.9 integration).
+
+### Level 12: Dual Heartbeat (Zombie Killer)
+To detect "Zombie" sessions where the TCP socket is open but the session logic is dead.
+-   **Mechanism**:
+    1.  **TCP**: Baileys standard Pings (Every 20s).
+    2.  **Application**: A loop every **60s** that sends a specific Presence Update.
+        -   **User Session**: Sends `unavailable`. This serves as a heartbeat AND **enforces "Do Not Disturb"** to prevent the web client from stealing notifications from the real phone.
+        -   **Assistant**: Sends `available`.
+-   **Action**: If the hook fails (timeout/error), it immediately triggers a `disconnect` + `connect` cycle to refresh the socket.
+-   **Status**: **Implemented**.
+
 ### Level 3: The Nuke (Hard Reset)

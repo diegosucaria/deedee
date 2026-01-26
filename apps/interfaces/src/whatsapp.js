@@ -309,6 +309,17 @@ class WhatsAppService {
         this.reconnectTimeout = null;
         this.sleepTimeout = null;
         this.presenceInterval = null;
+        this.heartbeatTimer = null;
+        this.lastHeartbeat = Date.now();
+        this.isReconnecting = false;
+
+        // Reconnection Config (Standard)
+        this.reconnectConfig = {
+            initialMs: 1000,
+            maxMs: 60000,
+            factor: 1.5,
+            jitter: 0.2
+        };
 
         const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
         this.authFolder = path.join(dataDir, `baileys_auth_${sessionId}`);
@@ -329,6 +340,53 @@ class WhatsAppService {
         } else {
             console.error(`${this.logPrefix} 🛑 SECURITY ERROR: No ALLOWED_WHATSAPP_NUMBERS set. Ignoring ALL messages.`);
         }
+    }
+
+    calculateBackoff() {
+        const { initialMs, maxMs, factor, jitter } = this.reconnectConfig;
+        const delay = Math.min(initialMs * Math.pow(factor, this.reconnectAttempts), maxMs);
+        const jitterAmount = delay * jitter;
+        const jittered = delay + (Math.random() * jitterAmount * 2 - jitterAmount);
+        return Math.floor(jittered);
+    }
+
+    startHeartbeatLoop() {
+        if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+
+        console.log(`${this.logPrefix} Starting Application Heartbeat Loop (60s)`);
+
+        this.heartbeatTimer = setInterval(async () => {
+            if (this.status !== 'connected' || !this.sock) {
+                return;
+            }
+
+            // 1. WS Ping (Lower Level - Keep TCP Alive)
+            // Baileys does this automatically via keepAliveIntervalMs, but we can double check
+            // or rely on the App Level check below to catch "Zombie" sockets.
+
+            // 2. App Level Pulse (Higher Level - Ensure Logic is Alive)
+            try {
+                this.lastHeartbeat = Date.now();
+
+                // Dual Strategy for Notification Safety
+                if (this.sessionId === 'user') {
+                    // FORCE UNAVAILABLE: Serves as a ping AND prevents notification stealing
+                    await this.sock.sendPresenceUpdate('unavailable');
+                } else {
+                    // Assistant: Just show available
+                    await this.sock.sendPresenceUpdate('available');
+                }
+
+            } catch (e) {
+                console.error(`${this.logPrefix} 💔 HEARTBEAT FAILED:`, e.message);
+
+                // Force Recycle
+                this.status = 'disconnected';
+                console.log(`${this.logPrefix} 🚑 Initiating Emergency Restart...`);
+                await this.disconnect(false); // Do not wipe session, just restart
+                this.connect();
+            }
+        }, 60000); // 1 minute interval
     }
 
     async _importBaileys() {
@@ -507,10 +565,14 @@ class WhatsAppService {
                     this.qr = null;
 
                     if (shouldReconnect) {
-                        console.log(`${this.logPrefix} Reconnecting in 5s...`);
-                        // Backoff
+                        const delayMs = this.calculateBackoff();
+                        console.log(`${this.logPrefix} Connection Lost. Reconnecting in ${delayMs}ms (Attempt ${this.reconnectAttempts + 1})...`);
+
+                        // Increment attempts
+                        this.reconnectAttempts++;
+
                         if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
-                        this.reconnectTimeout = setTimeout(() => this.connect(), 5000);
+                        this.reconnectTimeout = setTimeout(() => this.connect(), delayMs);
                     } else {
                         console.log(`${this.logPrefix} Logged out by Server. Clearing session.`);
                         await this.disconnect(true); // Wipe if server says logged out
@@ -522,6 +584,9 @@ class WhatsAppService {
                     this.qr = null;
                     this.reconnectAttempts = 0; // Reset counter on success
 
+                    // Start Heartbeat
+                    this.startHeartbeatLoop();
+
                     // WAKE & SLEEP STRATEGY
                     // 1. We started "Online" (markOnlineOnConnect: true) to trigger data push.
                     // 2. Wait 5s for buffers to assume we are active.
@@ -531,6 +596,8 @@ class WhatsAppService {
                         // FORCE UNAVAILABLE IMMEDIATELY to prevent notification stealing
                         // We add a SIGNIPICANT delay (60s) to ensure the connection "Online" state is established 
                         // and the initial sync (decryption of pending messages) completes before we switch it off.
+
+                        // The heartbeat will now handle this periodically, but we do an initial one.
                         setTimeout(async () => {
                             if (this.sock) {
                                 console.log(`${this.logPrefix} [Strategy] Connection Open (+180s). Forcing 'unavailable' now.`);
@@ -546,6 +613,7 @@ class WhatsAppService {
                         }, 180000);
                     } else {
                         // Assistant stays online
+                        // Heartbeat handles this too, but good to set initially
                         await this.sock.sendPresenceUpdate('available');
                     }
 
