@@ -96,4 +96,15 @@ describe('WhatsApp SQLiteStore', () => {
         expect(recent[0].lastTimestamp).toBe(2000000); // 2000 * 1000
         expect(recent[0].snippets[recent[0].snippets.length - 1]).toBe('Second');
     });
+    test('getContactByLid should return full contact object', () => {
+        const contact = { id: '5551234@s.whatsapp.net', lid: '123456789@lid', name: 'Test User' };
+        ev.emit('contacts.upsert', [contact]);
+
+        const resolved = store.getContactByLid('123456789@lid');
+        expect(resolved).not.toBeNull();
+        expect(typeof resolved).toBe('object');
+        // This is where it fails if it returns a string
+        expect(resolved.id).toBe('5551234@s.whatsapp.net');
+        expect(resolved.name).toBe('Test User');
+    });
 });

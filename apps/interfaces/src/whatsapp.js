@@ -259,11 +259,6 @@ class SQLiteStore {
         return !!row;
     }
 
-    getContactByLid(lid) {
-        const row = this.db.prepare('SELECT id FROM contacts WHERE lid = ?').get(lid);
-        return row ? row.id : null;
-    }
-
     findFuzzyJid(digits) {
         const row = this.db.prepare('SELECT remote_jid FROM messages WHERE remote_jid LIKE ? LIMIT 1').get(digits + '%');
         return row ? row.remote_jid : null;
