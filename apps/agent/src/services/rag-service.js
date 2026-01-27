@@ -39,6 +39,41 @@ class RagService {
             );
         `);
 
+
+        // Initialize FTS5 Table for Hybrid Search
+        // content is indexed for full text search
+        // chunk_index, document_id are unindexed columns for join
+        try {
+            this.db.exec(`
+                CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
+                    content,
+                    chunk_index UNINDEXED,
+                    document_id UNINDEXED
+                );
+            `);
+        } catch (e) {
+            console.error('[RAG] Failed to init FTS5 table:', e.message);
+        }
+
+        // Migration: Backfill FTS if empty but chunks exist (Avoid re-ingest if possible)
+        try {
+            const ftsCount = this.db.prepare('SELECT COUNT(*) as count FROM chunks_fts').get().count;
+            if (ftsCount === 0) {
+                const chunksCount = this.db.prepare('SELECT COUNT(*) as count FROM chunks').get().count;
+                if (chunksCount > 0) {
+                    console.log(`[RAG] Backfilling FTS index from ${chunksCount} existing chunks...`);
+                    // Bulk insert
+                    this.db.prepare(`
+                        INSERT INTO chunks_fts (content, chunk_index, document_id)
+                        SELECT content, chunk_index, document_id FROM chunks
+                    `).run();
+                    console.log('[RAG] FTS Backfill complete.');
+                }
+            }
+        } catch (e) {
+            console.warn('[RAG] FTS Backfill check failed:', e.message);
+        }
+
         // Migration: Add vault_id if missing
         try {
             this.db.prepare('ALTER TABLE documents ADD COLUMN vault_id TEXT').run();
@@ -109,6 +144,10 @@ class RagService {
 
                     this.db.prepare('INSERT INTO chunks (document_id, content, embedding, chunk_index) VALUES (?, ?, ?, ?)')
                         .run(docId, chunk, vectorApi, globalIdx);
+
+                    // Insert into FTS
+                    this.db.prepare('INSERT INTO chunks_fts (content, chunk_index, document_id) VALUES (?, ?, ?)')
+                        .run(chunk, globalIdx, docId);
                 } catch (e) {
                     console.error(`[RAG] Failed to embed chunk ${globalIdx}:`, e.message);
                 }
@@ -125,6 +164,7 @@ class RagService {
             console.log(`[RAG] Deleting document ${filename} (Vault: ${vaultId})`);
             // Cascade delete chunks
             this.db.prepare('DELETE FROM chunks WHERE document_id = ?').run(doc.id);
+            this.db.prepare('DELETE FROM chunks_fts WHERE document_id = ?').run(doc.id);
             this.db.prepare('DELETE FROM documents WHERE id = ?').run(doc.id);
             return true;
         }
@@ -206,30 +246,100 @@ class RagService {
     }
 
     async search(query, vaultId = null, limit = 5) {
-        console.log(`[RAG] Searching for: "${query}" (Vault: ${vaultId || 'Global'})`);
+        console.log(`[RAG] Hybrid Searching for: "${query}" (Vault: ${vaultId || 'Global'})`);
         const queryEmbedding = await this._getEmbedding(query, 'RETRIEVAL_QUERY');
 
-        // Fetch all chunks (Brute force for now)
-        let sql = 'SELECT chunks.id, chunks.content, chunks.embedding, documents.filename, documents.vault_id FROM chunks JOIN documents ON chunks.document_id = documents.id';
+        // 1. Vector Search (Cosine Similarity)
+        // Fetch All Chunks (Current Limitations of Better-Sqlite3 / No Vector Extension)
+        let vectorSql = 'SELECT chunks.id, chunks.content, chunks.embedding, chunk_index, document_id, documents.filename, documents.vault_id FROM chunks JOIN documents ON chunks.document_id = documents.id';
         const params = [];
-
         if (vaultId) {
-            sql += ' WHERE documents.vault_id = ?';
+            vectorSql += ' WHERE documents.vault_id = ?';
             params.push(vaultId);
         }
 
-        const allChunks = this.db.prepare(sql).all(...params);
+        const allChunks = this.db.prepare(vectorSql).all(...params);
 
-        const results = allChunks.map(chunk => {
+        // Calculate similarity and store in map
+        const vectorScores = new Map(); // id -> score (0-1)
+
+        allChunks.forEach(chunk => {
             const vector = new Float32Array(chunk.embedding.buffer, chunk.embedding.byteOffset, chunk.embedding.byteLength / 4);
             const score = this._cosineSimilarity(queryEmbedding, vector);
-            return { ...chunk, score };
+            vectorScores.set(chunk.id, score);
+        });
+
+        // 2. Keyword Search (FTS5) - BM25
+        // FTS5 rank is negative (lower is better), so we need to inverse/normalize it?
+        // Actually FTS5 `rank` function returns score. 
+        // Simple approach: SELECT *, rank FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY rank
+        // But matching constraint is tricky with joins if we need to filter by Vault.
+        // We can select document_ids first?
+        // FTS Table has (content, chunk_index, document_id)
+
+        // Construct MATCH query. Sanitize query by removing special chars that break FTS syntax
+        const sanitizedQuery = query.replace(/[^a-zA-Z0-9 ]/g, ' ').trim();
+
+        const ftsScores = new Map(); // chunk table id?? No, chunks_fts rowid! 
+        // Wait, proper mapping: 
+        // We inserted into chunks_fts. Rowid might not match chunks.id unless we forced it?
+        // We didn't force ROWID. 
+        // But we stored `document_id` and `chunk_index`. This forms a unique composite key.
+        // Let's create a lookup map from the vector phase: `${document_id}_${chunk_index}` -> chunk.id
+        const chunkLookup = new Map();
+        allChunks.forEach(c => chunkLookup.set(`${c.document_id}_${c.chunk_index}`, c.id));
+
+        if (sanitizedQuery.length > 2) {
+            try {
+                // simple OR query or phrase? Standard match using FTS5
+                // We perform search and get unindexed cols
+                const keywordResults = this.db.prepare(`
+                    SELECT document_id, chunk_index, rank 
+                    FROM chunks_fts 
+                    WHERE chunks_fts MATCH ? 
+                    ORDER BY rank 
+                    LIMIT 20
+                `).all(`"${sanitizedQuery}"`); // simple phrase search?
+
+                // Normalize Rank: FTS rank is arbitrary magnitude. 
+                // Let's just give a flat boost of 1.0 to any FTS match, or 1.0/rank?
+                // Simpler: If it matches keyword, boost score by +0.3
+                keywordResults.forEach(res => {
+                    const key = `${res.document_id}_${res.chunk_index}`;
+                    const chunkId = chunkLookup.get(key);
+                    if (chunkId && vectorScores.has(chunkId)) {
+                        ftsScores.set(chunkId, 1.0); // Binary boost for now, or use rank?
+                    }
+                });
+            } catch (e) {
+                console.warn('[RAG] FTS Search failed:', e.message);
+            }
+        }
+
+        // 3. Combine Scores
+        // Weight: 0.7 Vector + 0.3 Keyword
+        // Note: Vector is Cosine (-1 to 1). We should clamp to 0-1?
+        // FTS is binary 1.0 here.
+
+        const finalResults = allChunks.map(chunk => {
+            const vScore = Math.max(0, vectorScores.get(chunk.id) || 0); // Clamp negative
+            const fScore = ftsScores.get(chunk.id) || 0;
+
+            // Formula: Weighted Average
+            // If FTS match, it's very significant.
+            const combined = (vScore * 0.7) + (fScore * 0.3);
+
+            return {
+                ...chunk,
+                score: combined,
+                debug: { vScore, fScore }
+            };
         });
 
         // Sort descending
-        results.sort((a, b) => b.score - a.score);
+        finalResults.sort((a, b) => b.score - a.score);
 
-        return results.slice(0, limit);
+        return finalResults.slice(0, limit);
     }
 
     _chunkText(text, size = 1000, overlap = 200) {

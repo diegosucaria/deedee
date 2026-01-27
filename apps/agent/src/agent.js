@@ -178,6 +178,19 @@ class Agent {
       }
     }
 
+    // --- MEMORY SYNC ---
+    try {
+      console.log('[Memory] Syncing DB Facts to Durable Memory...');
+      const facts = this.db.getAllFacts();
+      const memoryPath = await this.journal.syncFactsToMemory(facts);
+      // Add minimal delay to ensure write flush
+      await new Promise(r => setTimeout(r, 100));
+      await this.ragService.ingestDocument(memoryPath, 'memory'); // Special vault 'memory' or null
+      console.log('[Memory] Durable Memory synced and ingested.');
+    } catch (e) {
+      console.error('[Memory] Startup Sync Failed:', e.message);
+    }
+
     this.interface.on('message', this.onMessage);
     console.log('Agent listening for messages.');
   }

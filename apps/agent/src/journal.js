@@ -101,6 +101,32 @@ class JournalManager {
             last7DaysEntries
         };
     }
+    async syncFactsToMemory(facts) {
+        // facts: array of { key, value }
+        // We overwrite MEMORY.md with a structured view
+        const memoryPath = path.join(path.dirname(this.journalDir), 'MEMORY.md'); // data/MEMORY.md
+
+        const header = '# Durable Memory\n\nThis file is auto-generated from the Agent Brain (Facts). Do not edit manually, use the Dashboard.\n\n';
+        const content = facts.map(f => {
+            let val = f.value;
+            try {
+                // Attempt to parse if it's a JSON string
+                const parsed = JSON.parse(f.value);
+                if (typeof parsed === 'string' || typeof parsed === 'number' || typeof parsed === 'boolean') {
+                    val = parsed;
+                } else {
+                    // For objects/arrays, keep JSON or format nicely?
+                    // Let's keep JSON for complex types but simple for primitives
+                    val = JSON.stringify(parsed);
+                }
+            } catch (e) { }
+            return `- **${f.key}**: ${val}`;
+        }).join('\n');
+
+        fs.writeFileSync(memoryPath, header + content, 'utf8');
+        console.log(`[Journal] Synced ${facts.length} facts to MEMORY.md`);
+        return memoryPath;
+    }
 }
 
 module.exports = { JournalManager };

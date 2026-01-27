@@ -283,9 +283,9 @@ function AutopilotPage() {
                                         {(() => {
                                             try {
                                                 const opts = draft.options ? JSON.parse(draft.options) : {};
-                                                if (opts.cost) {
+                                                if (opts.cost !== undefined && opts.cost !== null) {
                                                     return (
-                                                        <span className="text-[10px] text-zinc-600 font-mono">
+                                                        <span className="text-[10px] text-zinc-500 font-mono" title="Estimated API Cost">
                                                             ${Number(opts.cost).toFixed(5)}
                                                         </span>
                                                     );

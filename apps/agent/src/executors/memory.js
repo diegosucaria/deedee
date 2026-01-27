@@ -23,24 +23,68 @@ class MemoryExecutor extends BaseExecutor {
                 const { agent } = this.services;
                 const modelName = agent.configService.getModel('FLASH');
                 const logText = messages.map(m => `[${m.timestamp}] ${m.role}: ${m.content}`).join('\n');
-                const summaryReq = `Summarize the following chat logs from ${date} into a concise bullet-point journal entry. Focus on what was achieved, facts learned, or tasks completed. Ignore trivial chatter.\n\nLogs:\n${logText}`;
+
+                const summaryReq = `You are a Memory Consolidation System.
+                Analyze the following chat logs from ${date}.
+                
+                Produce a JSON object with two fields:
+                1. "summary": A concise bullet-point journal entry of what happened, tasks completed, and context.
+                2. "facts": An array of { key, value } objects representing NEW durable facts, preferences, or critical information learned about the user or world.
+                   - Keys should be snake_case (e.g. user_project_name, favorite_color).
+                   - Values should be concise strings.
+                   - Only include facts that are meant to be remembered forever. 
+                
+                Logs:
+                ${logText}`;
 
                 try {
                     const response = await client.models.generateContent({
                         model: modelName,
-                        contents: [{ parts: [{ text: summaryReq }] }]
+                        contents: [{ parts: [{ text: summaryReq }] }],
+                        generationConfig: { responseMimeType: 'application/json' }
                     });
 
-                    let summary = '';
-                    if (response.candidates && response.candidates[0].content && response.candidates[0].content.parts) {
-                        summary = response.candidates[0].content.parts.map(p => p.text).join(' ');
+                    let data = null;
+                    try {
+                        const raw = response.candidates[0].content.parts.map(p => p.text).join(' ');
+                        data = JSON.parse(raw);
+                    } catch (e) {
+                        // Fallback JSON extraction
+                        // Sometimes model wraps in markdown code block
+                        const raw = response.candidates[0].content.parts.map(p => p.text).join(' ');
+                        const match = raw.match(/```json\n([\s\S]*?)\n```/) || raw.match(/{[\s\S]*}/);
+                        if (match) data = JSON.parse(match[1] || match[0]);
                     }
 
-                    if (summary) {
-                        this.services.journal.log(`## Daily Summary (${date})\n${summary}`);
-                        return { success: true, summary_preview: summary.substring(0, 100) + '...' };
+                    if (data && data.summary) {
+                        // 1. Log Journal
+                        this.services.journal.log(`## Daily Summary (${date})\n${data.summary}`);
+
+                        // 2. Save Facts to DB
+                        let factsAdded = 0;
+                        if (data.facts && Array.isArray(data.facts)) {
+                            for (const f of data.facts) {
+                                if (f.key && f.value) {
+                                    db.setKey(f.key, f.value);
+                                    factsAdded++;
+                                }
+                            }
+                        }
+
+                        // 3. Sync & Ingest
+                        if (factsAdded > 0) {
+                            const allFacts = db.getAllFacts();
+                            const memoryPath = await this.services.journal.syncFactsToMemory(allFacts);
+                            await agent.ragService.ingestDocument(memoryPath, 'memory');
+                        }
+
+                        return {
+                            success: true,
+                            summary_preview: data.summary.substring(0, 100) + '...',
+                            facts_learned: factsAdded
+                        };
                     } else {
-                        return { error: 'Failed to generate summary.' };
+                        return { error: 'Failed to generate valid summary JSON.' };
                     }
                 } catch (err) {
                     return { error: `Consolidation failed: ${err.message}` };

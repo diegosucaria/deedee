@@ -192,7 +192,6 @@ describe('Agent with Tools', () => {
   let mockInterface;
 
   beforeEach(() => {
-    jest.useFakeTimers();
     jest.clearAllMocks();
     mockInterface = new MockInterface();
     mockInterface.broadcast = jest.fn().mockResolvedValue(true);
@@ -212,7 +211,6 @@ describe('Agent with Tools', () => {
 
   afterEach(async () => {
     if (agent) await agent.stop();
-    jest.useRealTimers();
   });
 
   test('should execute tool and reply', async () => {

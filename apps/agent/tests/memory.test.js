@@ -16,7 +16,16 @@ describe('Memory Tools', () => {
         client = {
             models: {
                 generateContent: jest.fn().mockResolvedValue({
-                    candidates: [{ content: { parts: [{ text: 'Summary of the day.' }] } }]
+                    candidates: [{
+                        content: {
+                            parts: [{
+                                text: JSON.stringify({
+                                    summary: 'Summary of the day.',
+                                    facts: [{ key: 'mock_key', value: 'mock_val' }]
+                                })
+                            }]
+                        }
+                    }]
                 }),
                 getAllAgentSettings: jest.fn().mockReturnValue({})
             }
@@ -34,6 +43,9 @@ describe('Memory Tools', () => {
             agent: { // Mock Agent Structure for ConfigService
                 configService: {
                     getModel: jest.fn().mockReturnValue('gemini-mock')
+                },
+                ragService: {
+                    ingestDocument: jest.fn().mockResolvedValue(true)
                 }
             }
         });
@@ -63,7 +75,9 @@ describe('Memory Tools', () => {
             { timestamp: '2023-01-01T10:00:00Z', role: 'user', content: 'Hi' },
             { timestamp: '2023-01-01T10:01:00Z', role: 'model', content: 'Hello' }
         ]);
+        db.getAllFacts = jest.fn().mockReturnValue([{ key: 'mock', value: 'value' }]);
         journal.log = jest.fn();
+        journal.syncFactsToMemory = jest.fn().mockResolvedValue('path/to/memory.md');
 
         const result = await executor.execute('consolidateMemory', { date: '2023-01-01' }, {});
 
