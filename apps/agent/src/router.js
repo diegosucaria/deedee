@@ -52,13 +52,11 @@ class Router {
         
         **TARGET: FLASH (Low Latency)**
         **toolMode: SEARCH**
-        * **Simple External Facts:** "Weather in Tokyo", "Who won the game?", "Stock price of AAPL", "Latest news on AI".
-        * **NOTE:** Do NOT use this for internal history, personal memory, OR complex web navigation (Bookings, interactive pages).
+        * **External Facts:** "Weather in Tokyo", "Who won the game?", "Stock price of AAPL", "Latest news on AI".
+        * **NOTE:** Do NOT use this for internal history or personal memory.
         
         **toolMode: STANDARD**
-        * **Navigation/Deep Web:** "Check flight prices on Aerolíneas", "Browse Reddit", "Login to X".
         * **Home Automation:** "Turn on lights", "What's the temperature?".
-        * **Casual Chat:** Greetings, "How are you?".
         * **Casual Chat:** Greetings, "How are you?".
         * **Internal Tools:** "Remember this fact", "Set a timer".
         * **Complex Logic / Conditionals:** "Check the weather AND if it rains, send a message", "Find stocks AND notify me if...", "Use this tool to...".
@@ -71,7 +69,7 @@ class Router {
         **TARGET: PRO (Deep Reasoning)**
         **toolMode: STANDARD**
         * **Coding & Architecture:** Terraform, GCP, Kubernetes.
-        * **Complex Planning:** Travel itineraries, Flight comparisons (dates/logic).
+        * **Complex Planning:** Travel itineraries.
         * **Analysis:** Summarizing long text.
         * **Memory & History:** "Search my conversation with...", "What did I say yesterday?", "Find the message about..." (Requires internal tools, NOT Google).
         
