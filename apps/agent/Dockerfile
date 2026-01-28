@@ -19,8 +19,7 @@ COPY packages/node-red-mcp/package.json packages/node-red-mcp/package.json
 
 # Copy all package.json files from inside mcp-servers too if they exist, 
 # or we can rely on workspace definitions. 
-# For now, let's copy the specific one we know exists:
-# (Note: Plex MCP server is Python and not a workspace, so safe to skip here for turbo)
+COPY packages/mcp-servers/browser/package.json packages/mcp-servers/browser/package.json
 
 RUN turbo prune --scope=@deedee/agent --docker
 
@@ -34,7 +33,6 @@ COPY --from=pruner /app/out/package-lock.json ./package-lock.json
 RUN mkdir -p patches
 
 # Install dependencies (cached)
-# Install dependencies (cached)
 RUN npm install
 RUN npm prune --production
 
@@ -47,10 +45,14 @@ WORKDIR /app
 ENV LANG=C.UTF-8
 ENV NODE_ENV=production
 
-# Install Runtime Dependencies: Python, UV, curl
-RUN apk add --no-cache python3 py3-pip curl gcompat
+# Install Runtime Dependencies: Python, UV, curl, chromium (for browser MCP)
+RUN apk add --no-cache python3 py3-pip curl gcompat chromium
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:/root/.cargo/bin:$PATH"
+
+# Playwright Config for Alpine/ARM
+ENV BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser
+ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1
 
 # Create Virtual Environment for MCP Servers
 ENV VIRTUAL_ENV=/opt/venv

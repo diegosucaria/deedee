@@ -35,5 +35,16 @@
             "NODE_RED_PASSWORD": "${NODE_RED_PASSWORD}"
         },
         "disabled": false
+    },
+    "browser": {
+        "command": "node",
+        "args": [
+            "index.js"
+        ],
+        "cwd": "../../packages/mcp-servers/browser",
+        "env": {
+            "BROWSER_HEADLESS": "${BROWSER_HEADLESS}"
+        },
+        "disabled": false
     }
 }

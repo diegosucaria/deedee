@@ -46,14 +46,13 @@ describe('People Feature Integration', () => {
     });
 
     afterAll(async () => {
-        if (db && db.db) {
-            try { db.db.close(); } catch (e) { }
+        // Stop agent FIRST to close server handles and stop scheduler jobs
+        if (agent) {
+            try { await agent.stop(); } catch (e) { console.error('Error stopping agent:', e); }
         }
 
-        // Stop agent to close server handles if any
-        if (agent && agent.db && agent.db.db) {
-            // Redundant if we swapped it, but just in case
-            try { agent.db.db.close(); } catch (e) { }
+        if (db && db.db) {
+            try { db.db.close(); } catch (e) { }
         }
 
         // Give it a moment to release locks
