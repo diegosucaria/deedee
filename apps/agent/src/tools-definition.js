@@ -279,7 +279,7 @@ const toolDefinitions = [
       // External Tools
       {
         name: "googleSearch",
-        description: "Perform a Google Search to get real-time information (weather, news, stocks, facts).",
+        description: "Perform a Google Search for quick facts, weather, news, or simple Q&A. Do NOT use this for deep research, flight booking, or interacting with pages. For those, use 'browser_navigate'.",
         parameters: {
           type: "OBJECT",
           properties: {
