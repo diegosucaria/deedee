@@ -27,7 +27,20 @@ describe('Browser MCP Server', () => {
             content: jest.fn().mockResolvedValue('<html><body><h1>Hello</h1></body></html>'),
             click: jest.fn().mockResolvedValue(),
             fill: jest.fn().mockResolvedValue(),
-            evaluate: jest.fn().mockResolvedValue('result')
+            evaluate: jest.fn().mockResolvedValue('result'),
+            accessibility: {
+                snapshot: jest.fn().mockResolvedValue({
+                    role: 'WebArea',
+                    name: 'Mock Page',
+                    children: [
+                        { role: 'button', name: 'Submit' }
+                    ]
+                })
+            },
+            viewportSize: jest.fn().mockReturnValue({ width: 1280, height: 800 }),
+            mouse: {
+                click: jest.fn().mockResolvedValue()
+            }
         };
         mockBrowser = {
             pages: jest.fn().mockReturnValue([mockPage]),

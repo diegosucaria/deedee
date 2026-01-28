@@ -10,12 +10,17 @@ DeeDee now includes robust browser automation capabilities. This allows the agen
 ## Tools
 
 ### Navigation & Vision
--   `browser_navigate(url)`: Visit a website.
+-   `browser_navigate(url, waitUntil?, timeout?)`: Visit a website. Supports `networkidle` for SPAs.
 -   `browser_screenshot(fullPage)`: Take a photo of the page.
--   `browser_extract_text(selector?)`: Read the page content.
+-   `browser_click_vision(description)`: Click using standard visual description.
+-   `browser_click_vision_annotated(description)`: **(Recommended)** Click using "Set-of-Mark" vision. Injects numeric labels into the page and asks the model to pick the number. 100% precision.
+
+### Inspection
+-   `browser_extract_text()`: Read page (Markdown). Good for articles.
+-   `browser_get_accessibility_tree()`: **(Recommended for SPAs)** Read semantic structure (Buttons, Inputs, Roles). Good for apps like Gmail/Spotify.
 
 ### Interaction
--   `browser_click(selector)`: Click buttons or links.
+-   `browser_click(selector)`: Click buttons or links (CSS).
 -   `browser_type(selector, text)`: Type standard text.
 -   `browser_run_script(script)`: Execute custom JavaScript.
 

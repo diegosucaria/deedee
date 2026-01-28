@@ -149,9 +149,19 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                 inputSchema: {
                     type: "object",
                     properties: {
-                        url: { type: "string", description: "The URL to visit" }
+                        url: { type: "string", description: "The URL to visit" },
+                        waitUntil: { type: "string", description: "When to consider navigation succeeded (load, domcontentloaded, networkidle). Default: domcontentloaded", enum: ["load", "domcontentloaded", "networkidle"] },
+                        timeout: { type: "integer", description: "Timeout in milliseconds (default: 30000)" }
                     },
                     required: ["url"]
+                }
+            },
+            {
+                name: "browser_get_accessibility_tree",
+                description: "Get the simplified accessibility tree of the page. Useful for understanding complex web apps where Markdown is insufficient.",
+                inputSchema: {
+                    type: "object",
+                    properties: {}
                 }
             },
             {
@@ -234,6 +244,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     },
                     required: ["description"]
                 }
+            },
+            {
+                name: "browser_click_vision_annotated",
+                description: "Click an element by visual description using Annotated Vision (Set-of-Mark). Highly reliable.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        description: { type: "string", description: "Visual description of the element (e.g. 'The red Sign Up button in the top right')" }
+                    },
+                    required: ["description"]
+                }
             }
         ]
     };
@@ -253,139 +274,221 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         // --- VISION TOOL LOGIC ---
-        if (name === "browser_click_vision") {
-            // ... existing vision logic ...
-            // Re-implementing simplified to keep context
+        if (name === "browser_click_vision_annotated") {
             const description = args.description;
-            console.error(`[Browser] Vision Click requested: "${description}"`);
+            console.error(`[Browser] Annotated Vision Click requested: "${description}"`);
 
+            if (!process.env.GOOGLE_API_KEY) throw new Error("GOOGLE_API_KEY missing.");
+
+            // 1. Inject Labels (Set-of-Mark)
+            // simplified script to label interactive elements
+            const labels = await p.evaluate(() => {
+                const interactives = Array.from(document.querySelectorAll('button, a, input, [role="button"]'));
+                // Filter visible
+                const visible = interactives.filter(el => {
+                    const rect = el.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0 &&
+                        rect.top >= 0 && rect.left >= 0 &&
+                        rect.bottom <= window.innerHeight && rect.right <= window.innerWidth;
+                });
+
+                const map = {};
+                visible.forEach((el, index) => {
+                    const id = `agent-label-${index}`;
+                    el.dataset.agentLabelId = id;
+
+                    // Create overlay
+                    const rect = el.getBoundingClientRect();
+                    const overlay = document.createElement('div');
+                    overlay.id = id;
+                    overlay.style.position = 'fixed';
+                    overlay.style.left = rect.left + 'px';
+                    overlay.style.top = rect.top + 'px';
+                    overlay.style.zIndex = '999999';
+                    overlay.style.background = 'yellow';
+                    overlay.style.color = 'black';
+                    overlay.style.border = '1px solid black';
+                    overlay.style.fontWeight = 'bold';
+                    overlay.style.fontSize = '12px';
+                    overlay.style.padding = '2px';
+                    overlay.innerText = index.toString();
+
+                    document.body.appendChild(overlay);
+                    map[index] = id;
+                });
+                return map;
+            });
+
+            // 2. Screenshot
             const buffer = await p.screenshot({ fullPage: false });
             const base64Image = buffer.toString('base64');
             const { width, height } = p.viewportSize() || { width: 1280, height: 800 };
 
-            if (!process.env.GOOGLE_API_KEY) {
-                throw new Error("GOOGLE_API_KEY is missing. Cannot use vision capabilities.");
-            }
+            // 3. Cleanup labels immediately
+            await p.evaluate(() => {
+                document.querySelectorAll('div[id^="agent-label-"]').forEach(el => el.remove());
+                // Note: we leave data attributes for a moment to identify? No, we use index.
+            });
 
+            // 4. Vision
             const { GoogleGenerativeAI } = await import("@google/genai");
             const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
             const modelName = process.env.WORKER_FLASH || "gemini-2.0-flash-exp";
             const model = genAI.getGenerativeModel({ model: modelName });
 
             const prompt = `
-            You are a UI locator. 
-            Screen size: ${width}x${height}.
-            
-            Task: Find the center coordinates of the element described as: "${description}".
-            
-            Return ONLY a JSON object with "x" (int) and "y" (int).
-            Example: {"x": 100, "y": 200}
-            If not found, return {"error": "not found"}.
-            `;
+             You are a UI driver.
+             Task: Identify the numeric label ID for the element described as: "${description}".
+             Return ONLY a JSON object with "labelIndex" (int).
+             Example: {"labelIndex": 5}
+             If not found, return {"error": "not found"}.
+             `;
 
             const result = await model.generateContent([
                 prompt,
                 { inlineData: { data: base64Image, mimeType: "image/png" } }
             ]);
-
             const response = await result.response;
             const text = response.text();
             const jsonText = text.replace(/```json/g, '').replace(/```/g, '').trim();
 
-            let coords;
-            try {
-                coords = JSON.parse(jsonText);
-            } catch (e) {
-                throw new Error(`Failed to parse vision response: ${text}`);
+            let targetParams;
+            try { targetParams = JSON.parse(jsonText); } catch (e) { throw new Error(`Failed to parse: ${text}`); }
+
+            if (targetParams.error || targetParams.labelIndex === undefined) {
+                return { isError: true, content: [{ type: "text", text: `Element not found: ${description}` }] };
             }
 
-            if (coords.error) {
-                return { isError: true, content: [{ type: "text", text: `Vision could not find element: ${description}` }] };
+            // 5. Click by finding the element with that index in our original list? 
+            // We need to re-query or assume stability.
+            // Best way: Re-query the exact same list logic.
+            await p.evaluate((index) => {
+                const interactives = Array.from(document.querySelectorAll('button, a, input, [role="button"]'));
+                // Re-filter identical logic
+                const visible = interactives.filter(el => {
+                    const rect = el.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0 &&
+                        rect.top >= 0 && rect.left >= 0 &&
+                        rect.bottom <= window.innerHeight && rect.right <= window.innerWidth;
+                });
+
+                const target = visible[index];
+                if (target) {
+                    target.click();
+                } else {
+                    throw new Error('Element index mismatch or shift');
+                }
+            }, targetParams.labelIndex);
+
+            return { content: [{ type: "text", text: `Clicked label ${targetParams.labelIndex} ("${description}")` }] };
+        }
+
+        if (name === "browser_click_vision") {
+
+            // --- STANDARD TOOLS ---
+            if (name === "browser_navigate") {
+                const waitUntil = args.waitUntil || 'domcontentloaded';
+                const timeout = args.timeout || 30000;
+
+                await p.goto(args.url, { waitUntil: waitUntil, timeout: timeout });
+                const title = await p.title();
+                return { content: [{ type: "text", text: `Navigated to: ${title} (${args.url})` }] };
             }
 
-            await p.mouse.click(coords.x, coords.y);
-            return { content: [{ type: "text", text: `Clicked visually at (${coords.x}, ${coords.y})` }] };
-        }
+            if (name === "browser_get_accessibility_tree") {
+                const snapshot = await p.accessibility.snapshot({ interestingOnly: true });
 
-        // --- STANDARD TOOLS ---
-        if (name === "browser_navigate") {
-            await p.goto(args.url, { waitUntil: 'domcontentloaded' });
-            const title = await p.title();
-            return { content: [{ type: "text", text: `Navigated to: ${title} (${args.url})` }] };
-        }
+                // Helper to recursively simplify tree
+                function simplifyNode(node) {
+                    const simple = {
+                        role: node.role,
+                        name: node.name
+                    };
+                    if (node.value) simple.value = node.value;
+                    if (node.description) simple.description = node.description;
+                    if (node.checked) simple.checked = node.checked;
+                    if (node.children && node.children.length > 0) {
+                        simple.children = node.children.map(simplifyNode);
+                    }
+                    return simple;
+                }
 
-        if (name === "browser_screenshot") {
-            const buffer = await p.screenshot({ fullPage: args.fullPage || false });
-            const base64 = buffer.toString('base64');
+                const simplified = snapshot ? simplifyNode(snapshot) : { error: "No accessibility tree found" };
+                return { content: [{ type: "text", text: JSON.stringify(simplified, null, 2) }] };
+            }
+
+            if (name === "browser_screenshot") {
+                const buffer = await p.screenshot({ fullPage: args.fullPage || false });
+                const base64 = buffer.toString('base64');
+                return {
+                    content: [{
+                        type: "image",
+                        data: base64,
+                        mimeType: "image/png"
+                    }]
+                };
+            }
+
+            if (name === "browser_extract_text") {
+                const html = await p.content();
+                const turndownService = new TurndownService();
+                const markdown = turndownService.turndown(html);
+                return { content: [{ type: "text", text: markdown }] };
+            }
+
+            if (name === "browser_click") {
+                await p.click(args.selector);
+                return { content: [{ type: "text", text: `Clicked ${args.selector}` }] };
+            }
+
+            if (name === "browser_type") {
+                await p.fill(args.selector, args.text);
+                return { content: [{ type: "text", text: `Typed into ${args.selector}` }] };
+            }
+
+            // browser_save_secret implementation removed
+
+            if (name === "browser_list_secrets") {
+                const fileSecrets = loadSecrets();
+                const envSecrets = Object.keys(process.env).filter(k =>
+                    k.includes('PASSWORD') || k.includes('USER') || k.includes('TOKEN')
+                );
+                const allKeys = [...new Set([...Object.keys(fileSecrets), ...envSecrets])];
+                return { content: [{ type: "text", text: JSON.stringify(allKeys) }] };
+            }
+
+            if (name === "browser_fill_secret") {
+                // Priority: File > Env
+                const fileSecrets = loadSecrets();
+                let val = fileSecrets[args.secretKey];
+
+                if (!val) {
+                    val = process.env[args.secretKey];
+                }
+
+                if (!val) {
+                    return { isError: true, content: [{ type: "text", text: `Secret key '${args.secretKey}' not found.` }] };
+                }
+                await p.fill(args.selector, val);
+                return { content: [{ type: "text", text: `Securely typed secret for ${args.selector}` }] };
+            }
+
+            if (name === "browser_run_script") {
+                const safeScript = args.script.includes('return') ? args.script : `return ${args.script}`;
+                // Evaluate as function body to allow 'return'
+                const result = await p.evaluate(new Function(safeScript));
+                return { content: [{ type: "text", text: JSON.stringify(result) }] };
+            }
+
+            throw new Error(`Tool ${name} not implemented.`);
+        } catch (err) {
+            console.error(`[Browser] Error executing ${name}:`, err);
             return {
-                content: [{
-                    type: "image",
-                    data: base64,
-                    mimeType: "image/png"
-                }]
+                isError: true,
+                content: [{ type: "text", text: `Error: ${err.message}` }]
             };
         }
-
-        if (name === "browser_extract_text") {
-            const html = await p.content();
-            const turndownService = new TurndownService();
-            const markdown = turndownService.turndown(html);
-            return { content: [{ type: "text", text: markdown }] };
-        }
-
-        if (name === "browser_click") {
-            await p.click(args.selector);
-            return { content: [{ type: "text", text: `Clicked ${args.selector}` }] };
-        }
-
-        if (name === "browser_type") {
-            await p.fill(args.selector, args.text);
-            return { content: [{ type: "text", text: `Typed into ${args.selector}` }] };
-        }
-
-        // browser_save_secret implementation removed
-
-        if (name === "browser_list_secrets") {
-            const fileSecrets = loadSecrets();
-            const envSecrets = Object.keys(process.env).filter(k =>
-                k.includes('PASSWORD') || k.includes('USER') || k.includes('TOKEN')
-            );
-            const allKeys = [...new Set([...Object.keys(fileSecrets), ...envSecrets])];
-            return { content: [{ type: "text", text: JSON.stringify(allKeys) }] };
-        }
-
-        if (name === "browser_fill_secret") {
-            // Priority: File > Env
-            const fileSecrets = loadSecrets();
-            let val = fileSecrets[args.secretKey];
-
-            if (!val) {
-                val = process.env[args.secretKey];
-            }
-
-            if (!val) {
-                return { isError: true, content: [{ type: "text", text: `Secret key '${args.secretKey}' not found.` }] };
-            }
-            await p.fill(args.selector, val);
-            return { content: [{ type: "text", text: `Securely typed secret for ${args.selector}` }] };
-        }
-
-        if (name === "browser_run_script") {
-            const safeScript = args.script.includes('return') ? args.script : `return ${args.script}`;
-            // Evaluate as function body to allow 'return'
-            const result = await p.evaluate(new Function(safeScript));
-            return { content: [{ type: "text", text: JSON.stringify(result) }] };
-        }
-
-        throw new Error(`Tool ${name} not implemented.`);
-    } catch (err) {
-        console.error(`[Browser] Error executing ${name}:`, err);
-        return {
-            isError: true,
-            content: [{ type: "text", text: `Error: ${err.message}` }]
-        };
-    }
-});
+    });
 
 async function run() {
     const transport = new StdioServerTransport();
