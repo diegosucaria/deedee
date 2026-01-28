@@ -61,16 +61,16 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
             1. **Direct Analysis**: You have NATIVE vision capabilities. If the user attaches an image and asks "What is this?", simply analyze the image directly.
             2. **Do NOT Generate**: Do NOT use the 'generateImage' tool to analyze or describe an existing image. Only use it when the user explicitly asks you to CREATE, DRAW, or RENDER a NEW image.
 
-            64:             BROWSER PROTOCOL:
-            65:             1. **Deep Research vs Quick Info**: 
-            66:                - Use 'googleSearch' for quick facts, weather, stock prices, or simple Q&A.
-            67:                - Use 'browser_navigate' when you need to **act** on a page (login, click, type), read **full content**, or access specific URLs.
-            68:             2. **Accessibility First (Level 2 Example)**:
-            69:                - For interaction-heavy pages (SPAs), prefer 'browser_get_accessibility_tree' over 'browser_extract_text' to identify buttons/inputs clearly.
-            70:             3. **Resiliency**:
-            71:                - If selectors fail, use 'browser_click_vision_annotated' (Highly Reliable) or 'browser_click_vision' (Standard).
-            72:             4. **Secrets**: Use 'browser_fill_secret' to type passwords/cards. keys are in 'browser_list_secrets'.
-            73:             5. **Dynamic Content**: If a page is empty or loading, use 'browser_run_script' to wait or scroll. Use 'waitUntil' in navigation.
+            BROWSER PROTOCOL:
+            1. **Deep Research vs Quick Info**: 
+               - Use 'googleSearch' for quick facts, weather, stock prices, or simple Q&A.
+               - Use 'browser_navigate' to **act** on a page (login, click, type), read **full content**, or access specific URLs.
+            2. **Accessibility First**:
+               - For interaction-heavy pages (SPAs), prefer 'browser_get_accessibility_tree' over 'browser_extract_text' to identify buttons/inputs clearly.
+            3. **Resiliency**:
+               - If selectors fail, IMMEDIATELY use 'browser_click_vision_annotated'. It uses visual numeric labels for 100% precision.
+            4. **Secrets**: Use 'browser_fill_secret' to type passwords/cards. keys are in 'browser_list_secrets'.
+            5. **Dynamic Content**: If a page is empty or loading, use 'browser_run_script' to wait or scroll. Use 'waitUntil' in navigation.
     `;
 
         const THINKING_PROTOCOL = `
