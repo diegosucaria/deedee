@@ -377,8 +377,20 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 });
 
                 // New SDK response structure
+                // New SDK response structure
                 const responseText = result.response.candidates[0].content.parts[0].text;
                 const jsonText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+
+                // Extract Usage
+                const usage = result.response.usageMetadata;
+                const meta = usage ? {
+                    usage: {
+                        model: modelName,
+                        inputTokens: usage.promptTokenCount,
+                        outputTokens: usage.candidatesTokenCount,
+                        totalTokens: usage.totalTokenCount
+                    }
+                } : undefined;
 
                 let targetParams;
                 try { targetParams = JSON.parse(jsonText); } catch (e) { throw new Error(`Failed to parse: ${responseText}`); }
@@ -406,7 +418,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     }
                 }, targetParams.labelIndex);
 
-                return { content: [{ type: "text", text: `Clicked label ${targetParams.labelIndex} ("${description}")` }] };
+                return {
+                    content: [{ type: "text", text: `Clicked label ${targetParams.labelIndex} ("${description}")` }],
+                    _meta: meta
+                };
 
             } catch (genError) {
                 console.error("Vision API Error:", genError);

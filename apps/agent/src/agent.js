@@ -1673,11 +1673,19 @@ IF you are asked to draft a message for the user, or if you are replying via the
 
     // --- DELEGATE TO EXECUTOR (File, Scheduler, GSuite, Image, Audio, MCP) ---
     try {
-      return await this.toolExecutor.execute(executionName, args, {
+      const result = await this.toolExecutor.execute(executionName, args, {
         message,
         sendCallback,
         processMessage: this.processMessage.bind(this)
       });
+
+      // Side-channel usage tracking for MCP tools (e.g. Browser Vision)
+      if (result && result._meta && result._meta.usage && usageCallback) {
+        const u = result._meta.usage;
+        usageCallback(u.model, u.inputTokens, u.outputTokens);
+      }
+
+      return result;
     } catch (error) {
       console.error(`[Agent] Tool Execution Error (${executionName}):`, error);
       throw error;
