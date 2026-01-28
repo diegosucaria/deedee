@@ -553,9 +553,15 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         if (name === "browser_run_script") {
-            const safeScript = args.script.includes('return') ? args.script : `return ${args.script}`;
-            // Evaluate as function body to allow 'return'
-            const result = await p.evaluate(new Function(safeScript));
+            const safeScript = args.script;
+            // FIX: Use AsyncFunction to allow top-level await in scripts
+            // This is critical for complex automation (e.g. waiting for elements)
+            const result = await p.evaluate(async (scriptBody) => {
+                const AsyncFunction = Object.getPrototypeOf(async function () { }).constructor;
+                const fn = new AsyncFunction(scriptBody);
+                return await fn();
+            }, safeScript);
+
             return { content: [{ type: "text", text: JSON.stringify(result) }] };
         }
 
