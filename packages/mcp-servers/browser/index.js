@@ -58,11 +58,19 @@ function cleanProfile() {
     }
 }
 
+const { execSync } = require('child_process');
+
 /** 
- * Aggressively clean up all Chromium lock files
+ * Aggressively clean up all Chromium lock files and processes
  */
 function nukeProfileLocks() {
     try {
+        // 1. Kill stray processes (only works in container/if we have perms)
+        console.log('[Browser] Killing stray chromium processes...');
+        try { execSync('pkill -f chromium'); } catch (e) { }
+        try { execSync('pkill -f chrome'); } catch (e) { }
+
+        // 2. Remove lock files
         const locks = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
         locks.forEach(f => {
             const p = path.join(USER_DATA_DIR, f);
