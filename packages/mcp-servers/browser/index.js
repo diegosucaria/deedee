@@ -58,6 +58,21 @@ function cleanProfile() {
     }
 }
 
+/** 
+ * Aggressively clean up all Chromium lock files
+ */
+function nukeProfileLocks() {
+    try {
+        const locks = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
+        locks.forEach(f => {
+            const p = path.join(USER_DATA_DIR, f);
+            if (fs.existsSync(p)) {
+                try { fs.unlinkSync(p); } catch (e) { }
+            }
+        });
+    } catch (e) { }
+}
+
 /**
  * Initialize Browser (Lazy Load or on Startup)
  * We use a persistent context.
@@ -79,6 +94,7 @@ async function ensureBrowser() {
     } else {
         // Try to clean stale locks
         cleanProfile();
+        nukeProfileLocks();
     }
 
     const launchOptions = {
@@ -103,6 +119,8 @@ async function ensureBrowser() {
     } catch (launchErr) {
         console.error('[Browser] Launch failed. Retrying with cleaner profile...', launchErr);
         // Force nuke? No, secrets. Just retry once.
+        console.log('[Browser] Retrying launch with aggressive cleanup...');
+        nukeProfileLocks();
         cleanProfile();
         // Small delay
         await new Promise(r => setTimeout(r, 1000));
@@ -331,12 +349,12 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             });
 
             // 4. Vision
-            const { GoogleGenerativeAI } = await import("@google/genai");
-            const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+            // Use new @google/genai SDK (V1)
+            const { GoogleGenAI } = require("@google/genai");
+            const client = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY });
             const modelName = process.env.WORKER_FLASH || "gemini-2.0-flash-exp";
-            const model = genAI.getGenerativeModel({ model: modelName });
 
-            const prompt = `
+            const promptText = `
              You are a UI driver.
              Task: Identify the numeric label ID for the element described as: "${description}".
              Return ONLY a JSON object with "labelIndex" (int).
@@ -344,44 +362,75 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
              If not found, return {"error": "not found"}.
              `;
 
-            const result = await model.generateContent([
-                prompt,
-                { inlineData: { data: base64Image, mimeType: "image/png" } }
-            ]);
-            const response = await result.response;
-            const text = response.text();
-            const jsonText = text.replace(/```json/g, '').replace(/```/g, '').trim();
-
-            let targetParams;
-            try { targetParams = JSON.parse(jsonText); } catch (e) { throw new Error(`Failed to parse: ${text}`); }
-
-            if (targetParams.error || targetParams.labelIndex === undefined) {
-                return { isError: true, content: [{ type: "text", text: `Element not found: ${description}` }] };
-            }
-
-            // 5. Click by finding the element with that index in our original list? 
-            // We need to re-query or assume stability.
-            // Best way: Re-query the exact same list logic.
-            await p.evaluate((index) => {
-                const interactives = Array.from(document.querySelectorAll('button, a, input, [role="button"]'));
-                // Re-filter identical logic
-                const visible = interactives.filter(el => {
-                    const rect = el.getBoundingClientRect();
-                    return rect.width > 0 && rect.height > 0 &&
-                        rect.top >= 0 && rect.left >= 0 &&
-                        rect.bottom <= window.innerHeight && rect.right <= window.innerWidth;
+            try {
+                const result = await client.models.generateContent({
+                    model: modelName,
+                    contents: [
+                        {
+                            role: 'user',
+                            parts: [
+                                { text: promptText },
+                                { inlineData: { mimeType: "image/png", data: base64Image } }
+                            ]
+                        }
+                    ]
                 });
 
-                const target = visible[index];
-                if (target) {
-                    target.click();
-                } else {
-                    throw new Error('Element index mismatch or shift');
-                }
-            }, targetParams.labelIndex);
+                // New SDK response structure
+                const responseText = result.response.candidates[0].content.parts[0].text;
+                const jsonText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
 
-            return { content: [{ type: "text", text: `Clicked label ${targetParams.labelIndex} ("${description}")` }] };
-        }
+                let targetParams;
+                try { targetParams = JSON.parse(jsonText); } catch (e) { throw new Error(`Failed to parse: ${responseText}`); }
+
+                if (targetParams.error || targetParams.labelIndex === undefined) {
+                    return { isError: true, content: [{ type: "text", text: `Element not found: ${description}` }] };
+                }
+
+                // 5. Click by finding the element with that index
+                await p.evaluate((index) => {
+                    const interactives = Array.from(document.querySelectorAll('button, a, input, [role="button"]'));
+                    // Re-filter identical logic
+                    const visible = interactives.filter(el => {
+                        const rect = el.getBoundingClientRect();
+                        return rect.width > 0 && rect.height > 0 &&
+                            rect.top >= 0 && rect.left >= 0 &&
+                            rect.bottom <= window.innerHeight && rect.right <= window.innerWidth;
+                    });
+
+                    const target = visible[index];
+                    if (target) {
+                        target.click();
+                    } else {
+                        throw new Error('Element index mismatch or shift');
+                    }
+                }, targetParams.labelIndex);
+
+                return { content: [{ type: "text", text: `Clicked label ${targetParams.labelIndex} ("${description}")` }] };
+
+            } catch (genError) {
+                console.error("Vision API Error:", genError);
+                throw new Error(`Vision AI failed: ${genError.message}`);
+            } // Close try block for generation
+        } // Close if block (this is tricky with replace_file_content lines, checking boundaries)
+
+        // Wait, I am replacing a huge chunk.
+        // The EndLine 373 in view_file was "const visible = ...".
+        // My replacement content seems to duplicate the click logic which was AFTER line 373?
+        // No, line 373 in view_file (from Step 1934) is inside the evaluate callback.
+        // I need to be careful.
+
+        // Let's adjust the replace to cover exactly the Vision block logic until the click implementation.
+        // Actually, the previous implementation had the click logic separated.
+        // My ReplacementContent INCLUDES the click logic.
+        // So I should replace until the end of the block?
+        // Let's look at the file content again.
+        // Lines 352-383 covers Vision setup + generation + parsing + click + return.
+        // Line 384 is closing brace for `if (name === "browser_click_vision_annotated") {`
+
+        // So I should replace lines 352 to 383 (exclusive of 384).
+
+
 
         if (name === "browser_click_vision") {
             // Placeholder for vision click implementation if needed, or remove if unused/duplicate of annotated
@@ -410,6 +459,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         if (name === "browser_get_accessibility_tree") {
+            if (!p || !p.accessibility) throw new Error("Browser page not ready or accessibility API unavailable");
             const snapshot = await p.accessibility.snapshot({ interestingOnly: true });
 
             // Helper to recursively simplify tree

@@ -1235,6 +1235,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
         functionCalls = uniqueCalls;
 
         console.log(`[Agent] Processing ${functionCalls.length} tool calls in parallel.`);
+        // console.log(JSON.stringify(functionCalls)); // PREVENT SPAM
         const toolNames = functionCalls.map(c => (c.name || '').replace('default_api:', '')).join(', ');
         await reportProgress(`Executing ${functionCalls.length} tools: ${toolNames}...`);
 
