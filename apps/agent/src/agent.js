@@ -243,9 +243,10 @@ class Agent {
         // Already formatted
         normalizedMessage = payload;
       } else if (Array.isArray(payload)) {
-        // Function response array - DO NOT WRAP in parts, pass as message directly
-        shouldUseRaw = true;
-        normalizedMessage = payload;
+        // Function response array - The SDK expects { role: 'user', parts: [...] } or { role: 'function', parts: [...] }
+        // For Gemini v1beta/v2, function responses are sent as 'function' role or 'user' role with functionResponse parts.
+        // Let's default to binding it to the parts of a 'user' message if not specified.
+        normalizedMessage.parts = payload;
       } else if (typeof payload === 'object') {
         // Try to salvage object input (e.g. from tool output or malformed request)
         if (payload.text) {
@@ -255,6 +256,8 @@ class Agent {
           try {
             const jsonStr = JSON.stringify(payload);
             if (jsonStr === '{}') throw new Error('Empty object payload');
+            // If completely unknown object, treat as text?
+            // normalizedMessage.parts.push({ text: jsonStr });
           } catch (e) { /* ignore */ }
         }
       }
@@ -994,10 +997,13 @@ class Agent {
 
       if (useNativeSearch) {
         // Exclusive Mode
+        console.log('[Agent] Tool Mode: NATIVE SEARCH (Exclusive). Other tools disabled.');
         geminiTools = [{ googleSearch: {} }];
       } else {
         // Standard Function Calling (includes 'googleSearch' polyfill if needed)
         console.log(`[Agent] Mode: STANDARD (Function Calling) - Enforced for ${decision.toolMode}`);
+        // const toolNames = allTools.map(t => t.name).join(', ');
+        // console.log(`[Agent] Available Tools for Model: [${toolNames}]`);
         geminiTools = [{ functionDeclarations: allTools }];
       }
 

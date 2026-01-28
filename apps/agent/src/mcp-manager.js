@@ -152,11 +152,22 @@ class MCPManager {
                     });
                 } else {
                     // Default: Stdio Transport
+                    // Robust CWD Resolution: Relative to config directory, not process.cwd()
+                    const configDir = path.dirname(this.configPath);
+                    const resolvedCwd = serverConfig.cwd
+                        ? path.resolve(configDir, serverConfig.cwd)
+                        : configDir;
+
+                    // Robust Command: Use current node executable if 'node' is specified
+                    const command = serverConfig.command === 'node' ? process.execPath : serverConfig.command;
+
+                    console.log(`[MCP] Spawning ${name}: cmd=${command}, cwd=${resolvedCwd}`);
+
                     transport = new StdioClientTransport({
-                        command: serverConfig.command,
+                        command: command,
                         args: serverConfig.args || [],
                         env: env,
-                        cwd: serverConfig.cwd // Support running from specific directory
+                        cwd: resolvedCwd
                     });
                 }
 

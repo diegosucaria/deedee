@@ -41,31 +41,73 @@ const server = new Server(
 );
 
 /**
+ * Force cleanup of profile lock if it exists (Docker crash recovery)
+ */
+function cleanProfile() {
+    try {
+        const lockFile = path.join(USER_DATA_DIR, 'SingletonLock');
+        if (fs.existsSync(lockFile)) {
+            console.warn(`[Browser] Found stale SingletonLock at ${lockFile}. Removing...`);
+            fs.unlinkSync(lockFile); // Only delete the symlink/file itself
+        }
+
+        // Also clean singleton cookie/sockets? Usually lock is the main blocker.
+        // SingletonCookie, SingletonSocket
+    } catch (e) {
+        console.error('[Browser] Failed to clean profile:', e);
+    }
+}
+
+/**
  * Initialize Browser (Lazy Load or on Startup)
  * We use a persistent context.
  */
 async function ensureBrowser() {
-    if (page) return page;
+    if (page) {
+        if (!page.isClosed()) return page;
+        console.warn('[Browser] Page was closed. Re-initializing...');
+        page = null;
+        if (browser) await browser.close().catch(() => { });
+        browser = null;
+    }
 
     console.error(`[Browser] Launching browser... (Headless: ${HEADLESS}, Profile: ${USER_DATA_DIR}, Exec: ${EXECUTABLE_PATH || 'Bundled'})`);
 
     if (!fs.existsSync(USER_DATA_DIR)) {
         console.error(`[Browser] Creating profile directory: ${USER_DATA_DIR}`);
         fs.mkdirSync(USER_DATA_DIR, { recursive: true });
+    } else {
+        // Try to clean stale locks
+        cleanProfile();
     }
 
     const launchOptions = {
         headless: HEADLESS,
         viewport: { width: 1280, height: 800 },
         userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
-        args: ['--no-sandbox', '--disable-setuid-sandbox', '--disable-dev-shm-usage'] // Required for Docker
+        args: [
+            '--no-sandbox',
+            '--disable-setuid-sandbox',
+            '--disable-dev-shm-usage',
+            '--disable-gpu' // Often helps in Docker
+        ],
+        ignoreDefaultArgs: ['--enable-automation'] // Reduce detection?
     };
 
     if (EXECUTABLE_PATH) {
         launchOptions.executablePath = EXECUTABLE_PATH;
     }
 
-    browser = await chromium.launchPersistentContext(USER_DATA_DIR, launchOptions);
+    try {
+        browser = await chromium.launchPersistentContext(USER_DATA_DIR, launchOptions);
+    } catch (launchErr) {
+        console.error('[Browser] Launch failed. Retrying with cleaner profile...', launchErr);
+        // Force nuke? No, secrets. Just retry once.
+        cleanProfile();
+        // Small delay
+        await new Promise(r => setTimeout(r, 1000));
+        browser = await chromium.launchPersistentContext(USER_DATA_DIR, launchOptions);
+    }
 
     // Get first page or create new
     const pages = browser.pages();
