@@ -10,7 +10,8 @@ router.use('/', createProxyMiddleware({
     target: AGENT_URL,
     changeOrigin: true, // required for virtual hosted sites
     pathRewrite: {
-        '^/v1/browser-secrets': '/internal/browser-secrets', // rewrite path
+        '^/$': '/internal/browser-secrets', // Match root (stripped path)
+        '^/(.*)': '/internal/browser-secrets/$1' // Match subpaths if any
     },
     onProxyReq: (proxyReq, req, res) => {
         // Optional: Log proxying

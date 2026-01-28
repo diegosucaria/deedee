@@ -384,111 +384,125 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         if (name === "browser_click_vision") {
+            // Placeholder for vision click implementation if needed, or remove if unused/duplicate of annotated
+            const description = args.description;
+            // For now, let's just implement it or throw not implemented if it's not ready. 
+            // But looking at schema, it IS defined. 
+            // Let's defer to error or simple implementation?
+            // Actually, the previous code had NO implementation for this specific block, just opened it.
+            // Let's assume we want to fall through or handle it.
+            // But wait, the previous code swallows navigate. 
 
-            // --- STANDARD TOOLS ---
-            if (name === "browser_navigate") {
-                const waitUntil = args.waitUntil || 'domcontentloaded';
-                const timeout = args.timeout || 30000;
+            // Re-implementing correctly:
+            console.log("Vision click (simple) not fully implemented, falling back to annotated or error.");
+            throw new Error("Please use browser_click_vision_annotated for better reliability.");
+        }
 
-                await p.goto(args.url, { waitUntil: waitUntil, timeout: timeout });
-                const title = await p.title();
-                return { content: [{ type: "text", text: `Navigated to: ${title} (${args.url})` }] };
-            }
+        // --- STANDARD TOOLS ---
 
-            if (name === "browser_get_accessibility_tree") {
-                const snapshot = await p.accessibility.snapshot({ interestingOnly: true });
+        if (name === "browser_navigate") {
+            const waitUntil = args.waitUntil || 'domcontentloaded';
+            const timeout = args.timeout || 30000;
 
-                // Helper to recursively simplify tree
-                function simplifyNode(node) {
-                    const simple = {
-                        role: node.role,
-                        name: node.name
-                    };
-                    if (node.value) simple.value = node.value;
-                    if (node.description) simple.description = node.description;
-                    if (node.checked) simple.checked = node.checked;
-                    if (node.children && node.children.length > 0) {
-                        simple.children = node.children.map(simplifyNode);
-                    }
-                    return simple;
-                }
+            await p.goto(args.url, { waitUntil: waitUntil, timeout: timeout });
+            const title = await p.title();
+            return { content: [{ type: "text", text: `Navigated to: ${title} (${args.url})` }] };
+        }
 
-                const simplified = snapshot ? simplifyNode(snapshot) : { error: "No accessibility tree found" };
-                return { content: [{ type: "text", text: JSON.stringify(simplified, null, 2) }] };
-            }
+        if (name === "browser_get_accessibility_tree") {
+            const snapshot = await p.accessibility.snapshot({ interestingOnly: true });
 
-            if (name === "browser_screenshot") {
-                const buffer = await p.screenshot({ fullPage: args.fullPage || false });
-                const base64 = buffer.toString('base64');
-                return {
-                    content: [{
-                        type: "image",
-                        data: base64,
-                        mimeType: "image/png"
-                    }]
+            // Helper to recursively simplify tree
+            function simplifyNode(node) {
+                const simple = {
+                    role: node.role,
+                    name: node.name
                 };
-            }
-
-            if (name === "browser_extract_text") {
-                const html = await p.content();
-                const turndownService = new TurndownService();
-                const markdown = turndownService.turndown(html);
-                return { content: [{ type: "text", text: markdown }] };
-            }
-
-            if (name === "browser_click") {
-                await p.click(args.selector);
-                return { content: [{ type: "text", text: `Clicked ${args.selector}` }] };
-            }
-
-            if (name === "browser_type") {
-                await p.fill(args.selector, args.text);
-                return { content: [{ type: "text", text: `Typed into ${args.selector}` }] };
-            }
-
-            // browser_save_secret implementation removed
-
-            if (name === "browser_list_secrets") {
-                const fileSecrets = loadSecrets();
-                const envSecrets = Object.keys(process.env).filter(k =>
-                    k.includes('PASSWORD') || k.includes('USER') || k.includes('TOKEN')
-                );
-                const allKeys = [...new Set([...Object.keys(fileSecrets), ...envSecrets])];
-                return { content: [{ type: "text", text: JSON.stringify(allKeys) }] };
-            }
-
-            if (name === "browser_fill_secret") {
-                // Priority: File > Env
-                const fileSecrets = loadSecrets();
-                let val = fileSecrets[args.secretKey];
-
-                if (!val) {
-                    val = process.env[args.secretKey];
+                if (node.value) simple.value = node.value;
+                if (node.description) simple.description = node.description;
+                if (node.checked) simple.checked = node.checked;
+                if (node.children && node.children.length > 0) {
+                    simple.children = node.children.map(simplifyNode);
                 }
-
-                if (!val) {
-                    return { isError: true, content: [{ type: "text", text: `Secret key '${args.secretKey}' not found.` }] };
-                }
-                await p.fill(args.selector, val);
-                return { content: [{ type: "text", text: `Securely typed secret for ${args.selector}` }] };
+                return simple;
             }
 
-            if (name === "browser_run_script") {
-                const safeScript = args.script.includes('return') ? args.script : `return ${args.script}`;
-                // Evaluate as function body to allow 'return'
-                const result = await p.evaluate(new Function(safeScript));
-                return { content: [{ type: "text", text: JSON.stringify(result) }] };
-            }
+            const simplified = snapshot ? simplifyNode(snapshot) : { error: "No accessibility tree found" };
+            return { content: [{ type: "text", text: JSON.stringify(simplified, null, 2) }] };
+        }
 
-            throw new Error(`Tool ${name} not implemented.`);
-        } catch (err) {
-            console.error(`[Browser] Error executing ${name}:`, err);
+        if (name === "browser_screenshot") {
+            const buffer = await p.screenshot({ fullPage: args.fullPage || false });
+            const base64 = buffer.toString('base64');
             return {
-                isError: true,
-                content: [{ type: "text", text: `Error: ${err.message}` }]
+                content: [{
+                    type: "image",
+                    data: base64,
+                    mimeType: "image/png"
+                }]
             };
         }
-    });
+
+        if (name === "browser_extract_text") {
+            const html = await p.content();
+            const turndownService = new TurndownService();
+            const markdown = turndownService.turndown(html);
+            return { content: [{ type: "text", text: markdown }] };
+        }
+
+        if (name === "browser_click") {
+            await p.click(args.selector);
+            return { content: [{ type: "text", text: `Clicked ${args.selector}` }] };
+        }
+
+        if (name === "browser_type") {
+            await p.fill(args.selector, args.text);
+            return { content: [{ type: "text", text: `Typed into ${args.selector}` }] };
+        }
+
+        // browser_save_secret implementation removed
+
+        if (name === "browser_list_secrets") {
+            const fileSecrets = loadSecrets();
+            const envSecrets = Object.keys(process.env).filter(k =>
+                k.includes('PASSWORD') || k.includes('USER') || k.includes('TOKEN')
+            );
+            const allKeys = [...new Set([...Object.keys(fileSecrets), ...envSecrets])];
+            return { content: [{ type: "text", text: JSON.stringify(allKeys) }] };
+        }
+
+        if (name === "browser_fill_secret") {
+            // Priority: File > Env
+            const fileSecrets = loadSecrets();
+            let val = fileSecrets[args.secretKey];
+
+            if (!val) {
+                val = process.env[args.secretKey];
+            }
+
+            if (!val) {
+                return { isError: true, content: [{ type: "text", text: `Secret key '${args.secretKey}' not found.` }] };
+            }
+            await p.fill(args.selector, val);
+            return { content: [{ type: "text", text: `Securely typed secret for ${args.selector}` }] };
+        }
+
+        if (name === "browser_run_script") {
+            const safeScript = args.script.includes('return') ? args.script : `return ${args.script}`;
+            // Evaluate as function body to allow 'return'
+            const result = await p.evaluate(new Function(safeScript));
+            return { content: [{ type: "text", text: JSON.stringify(result) }] };
+        }
+
+        throw new Error(`Tool ${name} not implemented.`);
+    } catch (err) {
+        console.error(`[Browser] Error executing ${name}:`, err);
+        return {
+            isError: true,
+            content: [{ type: "text", text: `Error: ${err.message}` }]
+        };
+    }
+});
 
 async function run() {
     const transport = new StdioServerTransport();

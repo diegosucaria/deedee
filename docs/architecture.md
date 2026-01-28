@@ -74,6 +74,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - `POST /v1/live/token`: Proxy for Gemini Live ephemeral tokens.
     - `POST /v1/live/tools/execute`: Proxy for Gemini Live client-side tool execution.
     - `GET /v1/vaults`: List and manage Life Vaults.
+    - `GET/POST /v1/browser-secrets`: Securely manage browser automation credentials.
     - `POST /v1/vaults/:id/files`: Secure file upload to vaults. [Proxy -> Agent]
     - `GET /v1/vaults/:id/files/:filename`: Secure file download. [Proxy -> Agent]
 - **Auth**: Bearer Token (`DEEDEE_API_TOKEN`). All routes protected (except `/health`).

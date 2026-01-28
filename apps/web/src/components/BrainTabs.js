@@ -24,7 +24,9 @@ export default function BrainTabs({ goals, facts, aliases, tools, servers }) {
         { id: 'goals', label: 'Goals', icon: Target },
         { id: 'memory', label: 'Memory', icon: Database },
         { id: 'aliases', label: 'Aliases', icon: Tags },
+        { id: 'aliases', label: 'Aliases', icon: Tags },
         { id: 'tools', label: 'Tools & MCP', icon: Wrench },
+        { id: 'secrets', label: 'Browser Secrets', icon: Wrench }, // Reusing Wrench or maybe replace with Lock if available, but Wrench is fine for now
     ];
 
     return (
@@ -73,10 +75,6 @@ export default function BrainTabs({ goals, facts, aliases, tools, servers }) {
                             <MemoryList facts={facts} />
                         </div>
 
-                        <div>
-                            <h3 className="text-lg font-medium text-zinc-300 mb-2">Browser Secrets</h3>
-                            <SecretsEditor />
-                        </div>
                     </div>
                 )}
                 {activeTab === 'aliases' && (
@@ -103,7 +101,16 @@ export default function BrainTabs({ goals, facts, aliases, tools, servers }) {
                         </div>
                     </div>
                 )}
+                {activeTab === 'secrets' && (
+                    <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        <div className="mb-4">
+                            <h2 className="text-xl font-semibold text-white">Browser Secrets</h2>
+                            <p className="text-zinc-400 text-sm">Securely manage credentials for the Agent's browser.</p>
+                        </div>
+                        <SecretsEditor />
+                    </div>
+                )}
             </div>
-        </div>
+        </div >
     );
 }
