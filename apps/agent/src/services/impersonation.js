@@ -533,24 +533,28 @@ ${transcript}
                 contents: [{ role: 'user', parts: [{ text: prompt }] }]
             });
 
-            if (!result.response || !result.response.usageMetadata) {
-                console.warn('[Impersonation] Warning: No usageMetadata in GenAI response. Cost will be 0. Keys:', Object.keys(result.response || {}));
+            // Handle both New SDK (@google/genai) and Old SDK structure
+            const response = result.response || result;
+            const metadata = response.usageMetadata || result.usageMetadata;
+
+            if (!metadata) {
+                console.warn('[Impersonation] Warning: No usageMetadata in GenAI response. Cost will be 0. Keys:', Object.keys(response || {}));
             } else {
                 // Debug: Confirm metadata received
-                console.log('[Impersonation] Metadata received. Tokens:', result.response.usageMetadata.totalTokenCount);
+                console.log('[Impersonation] Metadata received. Tokens:', metadata.totalTokenCount);
             }
 
             let draftText = "";
             let cost = 0;
 
-            if (result.response) {
-                if (result.response.candidates && result.response.candidates.length > 0) {
-                    draftText = result.response.candidates[0].content.parts[0].text.trim();
+            if (response) {
+                if (response.candidates && response.candidates.length > 0) {
+                    draftText = response.candidates[0].content.parts[0].text.trim();
                 }
 
                 // COST TRACKING
-                if (result.response.usageMetadata) {
-                    const { promptTokenCount, candidatesTokenCount, totalTokenCount } = result.response.usageMetadata;
+                if (metadata) {
+                    const { promptTokenCount, candidatesTokenCount, totalTokenCount } = metadata;
                     const config = new ConfigService();
                     cost = config.calculateCost(modelName, promptTokenCount, candidatesTokenCount);
 

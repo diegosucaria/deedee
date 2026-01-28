@@ -8,6 +8,7 @@
     },
     "dependencies": {
         "@modelcontextprotocol/sdk": "^0.6.0",
+        "@google/genai": "^1.34.0",
         "dotenv": "^16.4.5",
         "playwright": "^1.44.0",
         "turndown": "^7.1.3",

@@ -158,6 +158,17 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     },
                     required: ["script"]
                 }
+            },
+            {
+                name: "browser_click_vision",
+                description: "Click an element by visual description using AI Vision (Use when selectors fail).",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        description: { type: "string", description: "Visual description of the element (e.g. 'The red Sign Up button in the top right')" }
+                    },
+                    required: ["description"]
+                }
             }
         ]
     };
@@ -168,6 +179,73 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
     try {
         const p = await ensureBrowser();
+
+        // --- VISION TOOL LOGIC ---
+        if (name === "browser_click_vision") {
+            const description = args.description;
+            console.error(`[Browser] Vision Click requested: "${description}"`);
+
+            // 1. Take Screenshot (Viewport only to match coordinates)
+            // Note: Playwright usually defaults to viewport screenshot unless fullPage: true
+            const buffer = await p.screenshot({ fullPage: false });
+            const base64Image = buffer.toString('base64');
+            const { width, height } = p.viewportSize() || { width: 1280, height: 800 };
+
+            // 2. Call Gemini Flash
+            if (!process.env.GOOGLE_API_KEY) {
+                throw new Error("GOOGLE_API_KEY is missing. Cannot use vision capabilities.");
+            }
+
+            // Dynamic import to support ESM
+            const { GoogleGenerativeAI } = await import("@google/genai");
+            const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
+            const modelName = process.env.WORKER_FLASH || "gemini-2.0-flash-exp";
+            const model = genAI.getGenerativeModel({ model: modelName });
+
+            const prompt = `
+            You are a UI locator. 
+            Screen size: ${width}x${height}.
+            
+            Task: Find the center coordinates of the element described as: "${description}".
+            
+            Return ONLY a JSON object with "x" (int) and "y" (int).
+            Example: {"x": 100, "y": 200}
+            If not found, return {"error": "not found"}.
+            `;
+
+            const result = await model.generateContent([
+                prompt,
+                { inlineData: { data: base64Image, mimeType: "image/png" } }
+            ]);
+
+            const response = await result.response;
+            const text = response.text();
+
+            // Clean markdown JSON if present
+            const jsonText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+            let coords;
+            try {
+                coords = JSON.parse(jsonText);
+            } catch (e) {
+                throw new Error(`Failed to parse vision response: ${text}`);
+            }
+
+            if (coords.error) {
+                return { isError: true, content: [{ type: "text", text: `Vision could not find element: ${description}` }] };
+            }
+
+            if (typeof coords.x !== 'number' || typeof coords.y !== 'number') {
+                throw new Error(`Invalid coordinates returned: ${jsonText}`);
+            }
+
+            // 3. Click
+            console.error(`[Browser] Vision found coordinates: (${coords.x}, ${coords.y}). Clicking...`);
+            await p.mouse.click(coords.x, coords.y);
+
+            return { content: [{ type: "text", text: `Clicked visually at (${coords.x}, ${coords.y})` }] };
+        }
+
+        // --- STANDARD TOOLS ---
         if (name === "browser_navigate") {
             await p.goto(args.url, { waitUntil: 'domcontentloaded' });
             const title = await p.title();

@@ -37,7 +37,7 @@ class SQLiteStore {
 
             if (batch.length > 0) {
                 // Log only occasionally or for large batches
-                console.log(`[SQLiteStore] Processing queue batch: ${batch.length} items. Remaining: ${this.messageQueue.length}`);
+                if (batch.length > 50) console.log(`[SQLiteStore] Processing queue batch: ${batch.length} items. Remaining: ${this.messageQueue.length}`);
 
                 const stmt = this.db.prepare(`
                     INSERT INTO messages (key_id, remote_jid, from_me, timestamp, content, data)
@@ -83,8 +83,15 @@ class SQLiteStore {
                     }
                 });
 
-                // Execute transaction synchronously (on background tick)
-                insertTransaction(batch);
+                // Execute transaction synchronously (on background tick) - Wrapped for Safety
+                try {
+                    insertTransaction(batch);
+                } catch (txError) {
+                    console.error('[SQLiteStore] Transaction Failed!', txError);
+                    if (txError.code) console.error(`[SQLiteStore] Error Code: ${txError.code}`);
+                    // Optional: Re-queue batch? For now, we drop to prevent loop death, or user can decide.
+                    // If we re-queue, we risk infinite loop if it's a data issue.
+                }
             }
         } catch (e) {
             console.error('[SQLiteStore] Queue Processing Failed:', e);
@@ -494,24 +501,29 @@ class WhatsAppService {
                 }
             });
 
-            // Bind Store
-            this.store.bind(this.sock.ev);
+            // Bind Store - DISABLED causing sync blocking
+            // this.store.bind(this.sock.ev);
 
             // History Sync - Critical for initial contacts
             this.sock.ev.on('messaging-history.set', ({ contacts, messages }) => {
-                console.log(`${this.logPrefix} History Sync Complete: ${contacts?.length || 0} contacts, ${messages?.length || 0} messages.`);
+                // Ensure this is strictly async to not block the WebSocket Buffer
+                setImmediate(() => {
+                    console.log(`${this.logPrefix} History Sync Complete: ${contacts?.length || 0} contacts, ${messages?.length || 0} messages.`);
 
-                if (contacts && contacts.length > 0) this.store.upsertContacts(contacts);
-                if (messages && messages.length > 0) {
-                    this.store.upsertMessages(messages, 'append');
-                    for (const msg of messages) this.handleMessage(msg, 'append');
-                }
+                    if (contacts && contacts.length > 0 && this.store) this.store.upsertContacts(contacts);
+                    if (messages && messages.length > 0) {
+                        if (this.store) this.store.upsertMessages(messages, 'append');
+                        // We don't need to 'handleMessage' for history, usually.
+                        // But if we do, it should also be async.
+                        //  for (const msg of messages) this.handleMessage(msg, 'append');
+                    }
 
-                // SMART SLEEP: Sync is done, so we can go to sleep immediately
-                if (this.sessionId === 'user') {
-                    console.log(`${this.logPrefix} [Strategy] Sync finished. Triggering Early Sleep.`);
-                    this._goToSleep();
-                }
+                    // SMART SLEEP
+                    if (this.sessionId === 'user') {
+                        console.log(`${this.logPrefix} [Strategy] Sync finished. Triggering Early Sleep.`);
+                        this._goToSleep();
+                    }
+                });
             });
 
             // --- EXTRA DEBUG LISTENERS ---
@@ -659,6 +671,11 @@ class WhatsAppService {
 
             this.sock.ev.on('messages.upsert', async ({ messages, type }) => {
                 // console.log(`${this.logPrefix} [DEBUG] Upsert: ${messages.length} messages. Type: ${type}`); // Verbose
+
+                // MANUAL STORE UPDATE (Since bind is disabled)
+                if (this.store) {
+                    this.store.upsertMessages(messages, type);
+                }
 
                 for (const msg of messages) {
                     // Check if it's potentially interesting
