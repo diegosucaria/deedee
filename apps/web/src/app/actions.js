@@ -108,6 +108,26 @@ export async function deleteFact(key) {
     } catch (e) { return { success: false, error: e.message }; }
 }
 
+export async function updateFact(originalKey, newKey, value) {
+    try {
+        if (!newKey || !value) return { success: false, error: 'Key and Value required' };
+
+        // 1. Create/Update the new key
+        await fetchAPI('/v1/facts', {
+            method: 'POST',
+            body: JSON.stringify({ key: newKey, value })
+        });
+
+        // 2. If key renamed, delete old key
+        if (originalKey !== newKey) {
+            await fetchAPI(`/v1/facts/${encodeURIComponent(originalKey)}`, { method: 'DELETE' });
+        }
+
+        revalidatePath('/brain');
+        return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+}
+
 // --- Aliases ---
 export async function addAlias(prevState, formData) {
     try {

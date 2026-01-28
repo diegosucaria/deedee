@@ -1,7 +1,7 @@
 'use client';
 
 import { useFormState } from 'react-dom';
-import { addFact, deleteFact } from '@/app/actions';
+import { addFact, deleteFact, updateFact } from '@/app/actions';
 import { Trash2, Plus, Database, Search } from 'lucide-react';
 import { useState } from 'react';
 
@@ -11,6 +11,7 @@ export default function MemoryList({ facts }) {
     const [state, formAction] = useFormState(addFact, initialState);
     const [search, setSearch] = useState('');
     const [editingKey, setEditingKey] = useState(null);
+    const [editKeyInput, setEditKeyInput] = useState('');
     const [editValue, setEditValue] = useState('');
 
     const filteredFacts = facts.filter(f =>
@@ -20,20 +21,12 @@ export default function MemoryList({ facts }) {
 
     const handleEditClick = (fact) => {
         setEditingKey(fact.key);
+        setEditKeyInput(fact.key);
         setEditValue(typeof fact.value === 'object' ? JSON.stringify(fact.value) : fact.value);
     };
 
     const handleSaveEdit = async () => {
-        // Optimistic update or wait for server action?
-        // We'll trust the formAction to handle revalidation
-        const formData = new FormData();
-        formData.append('key', editingKey);
-        formData.append('value', editValue);
-
-        // We can interact with the server action directly or mock a form submission
-        // Since useFormState wraps the action, we can try calling the original action directly if exported, 
-        // or just use a hidden form submit. simpler is reuse the verified action.
-        await addFact(null, formData);
+        await updateFact(editingKey, editKeyInput, editValue);
         setEditingKey(null);
     };
 
@@ -119,9 +112,17 @@ export default function MemoryList({ facts }) {
                                 <div className="flex gap-2 mt-2">
                                     <input
                                         type="text"
+                                        value={editKeyInput}
+                                        onChange={(e) => setEditKeyInput(e.target.value)}
+                                        className="w-1/3 bg-black border border-zinc-700 rounded px-2 py-1 text-sm font-mono text-white focus:outline-none focus:border-indigo-500"
+                                        placeholder="Key"
+                                    />
+                                    <input
+                                        type="text"
                                         value={editValue}
                                         onChange={(e) => setEditValue(e.target.value)}
                                         className="flex-1 bg-black border border-zinc-700 rounded px-2 py-1 text-sm font-mono text-white focus:outline-none focus:border-indigo-500"
+                                        placeholder="Value"
                                     />
                                     <button onClick={handleSaveEdit} className="text-xs bg-indigo-600 hover:bg-indigo-500 text-white px-3 py-1 rounded">Save</button>
                                     <button onClick={() => setEditingKey(null)} className="text-xs bg-zinc-800 hover:bg-zinc-700 text-zinc-300 px-3 py-1 rounded">Cancel</button>
