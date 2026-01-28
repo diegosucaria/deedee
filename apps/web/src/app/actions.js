@@ -1,3 +1,5 @@
+'use server';
+
 import { fetchAPI } from '@/lib/api';
 import { revalidatePath } from 'next/cache';
 
