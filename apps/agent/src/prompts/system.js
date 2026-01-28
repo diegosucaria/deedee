@@ -68,8 +68,10 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
                - Use 'browser_navigate' to **act** on a page (login, click, type), read **full content**, or access specific URLs.
             2. **Accessibility First**:
                - For interaction-heavy pages (SPAs), prefer 'browser_get_accessibility_tree' over 'browser_extract_text' to identify buttons/inputs clearly.
-            3. **Resiliency**:
-               - If selectors fail, IMMEDIATELY use 'browser_click_vision_annotated'. It uses visual numeric labels for 100% precision.
+            3. **Resiliency / Anti-Loop**:
+               - If selectors fail, OR if a click has **NO EFFECT** (page doesn't change), STOP.
+               - Do NOT retry the same action blindly.
+               - IMMEDIATELY switch to 'browser_click_vision_annotated' (Visual Labels).
             4. **Secrets**: Use 'browser_fill_secret' to type passwords/cards. keys are in 'browser_list_secrets'.
             5. **Dynamic Content**: If a page is empty or loading, use 'browser_run_script' to wait or scroll. Use 'waitUntil' in navigation.
     `;

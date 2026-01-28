@@ -202,7 +202,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "browser_click",
-                description: "Click an element identified by a CSS selector.",
+                description: "Click an element identified by a CSS selector. IF THIS FAILS (e.g. 'Element not found'), do NOT retry blindly. IMMEDIATELY switch to 'browser_click_vision_annotated'.",
                 inputSchema: {
                     type: "object",
                     properties: {
@@ -213,7 +213,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "browser_type",
-                description: "Type text into an input field.",
+                description: "Type text into an input field. If the field is hard to select, use 'browser_click_vision_annotated' to click it first.",
                 inputSchema: {
                     type: "object",
                     properties: {
