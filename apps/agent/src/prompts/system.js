@@ -64,6 +64,7 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
             BROWSER PROTOCOL:
             1. **Deep Research vs Quick Info**: 
                - Use 'googleSearch' for quick facts, weather, stock prices, or simple Q&A.
+               - **CRITICAL**: If the user explicitly asks to "navigate", "browse", "go to", "log in", or "check page", you MUST use 'browser_navigate', even if you think you can answer with search.
                - Use 'browser_navigate' to **act** on a page (login, click, type), read **full content**, or access specific URLs.
             2. **Accessibility First**:
                - For interaction-heavy pages (SPAs), prefer 'browser_get_accessibility_tree' over 'browser_extract_text' to identify buttons/inputs clearly.
