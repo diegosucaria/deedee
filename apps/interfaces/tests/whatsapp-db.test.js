@@ -32,7 +32,7 @@ describe('WhatsApp SQLiteStore', () => {
         expect(saved.id).toBe('123@s.whatsapp.net');
     });
 
-    test('should save and retrieve messages', () => {
+    test('should save and retrieve messages', async () => {
         const jid = '123@s.whatsapp.net';
         const msgs = [
             {
@@ -49,6 +49,9 @@ describe('WhatsApp SQLiteStore', () => {
 
         // Type 'notify' triggers insert
         ev.emit('messages.upsert', { messages: msgs, type: 'notify' });
+
+        // Wait for queue to drain (Queue flush is 500ms)
+        await new Promise(r => setTimeout(r, 600));
 
         const history = store.getChatHistory(jid);
         // getChatHistory returns parsed message objects (simplified or full depending on implementation?)
@@ -73,7 +76,7 @@ describe('WhatsApp SQLiteStore', () => {
         expect(saved.notify).toBe('Alice Updated');
     });
 
-    test('getRecentChats should return correct summary', () => {
+    test('getRecentChats should return correct summary', async () => {
         const jid = '123@s.whatsapp.net';
         const msgs = [
             {
@@ -88,6 +91,9 @@ describe('WhatsApp SQLiteStore', () => {
             }
         ];
         ev.emit('messages.upsert', { messages: msgs, type: 'notify' });
+
+        // Wait for queue
+        await new Promise(r => setTimeout(r, 600));
 
         const recent = store.getRecentChats();
         expect(recent.length).toBe(1);

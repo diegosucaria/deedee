@@ -165,9 +165,9 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
 
 server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
-    const p = await ensureBrowser();
 
     try {
+        const p = await ensureBrowser();
         if (name === "browser_navigate") {
             await p.goto(args.url, { waitUntil: 'domcontentloaded' });
             const title = await p.title();

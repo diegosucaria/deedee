@@ -10,10 +10,98 @@ class SQLiteStore {
         this.path = filePath;
         this.db = new Database(filePath);
         this.init();
+
+        // Queue System
+        this.messageQueue = [];
+        this.isProcessingQueue = false;
+        this.queueFlushInterval = null;
+
+        // Start Queue Processor
+        this.startQueueProcessor();
+    }
+
+    startQueueProcessor() {
+        if (this.queueFlushInterval) clearInterval(this.queueFlushInterval);
+        this.queueFlushInterval = setInterval(() => this.processQueue(), 500); // Check every 500ms
+    }
+
+    async processQueue() {
+        if (this.isProcessingQueue || this.messageQueue.length === 0) return;
+
+        this.isProcessingQueue = true;
+
+        try {
+            // Process max 200 items at a time
+            const BATCH_SIZE = 200;
+            const batch = this.messageQueue.splice(0, BATCH_SIZE);
+
+            if (batch.length > 0) {
+                // Log only occasionally or for large batches
+                console.log(`[SQLiteStore] Processing queue batch: ${batch.length} items. Remaining: ${this.messageQueue.length}`);
+
+                const stmt = this.db.prepare(`
+                    INSERT INTO messages (key_id, remote_jid, from_me, timestamp, content, data)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                    ON CONFLICT(key_id, remote_jid) DO NOTHING
+                `);
+
+                const insertTransaction = this.db.transaction((msgs) => {
+                    const now = Date.now() / 1000;
+                    for (const msg of msgs) {
+                        try {
+                            const jid = msg.key.remoteJid;
+                            if (!jid) continue;
+
+                            // Ignore protocol messages
+                            if (msg.message?.protocolMessage || msg.message?.senderKeyDistributionMessage) continue;
+
+                            const ts = (typeof msg.messageTimestamp === 'number')
+                                ? msg.messageTimestamp
+                                : (msg.messageTimestamp?.low || now);
+
+                            // Content Snippet
+                            let content = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
+                            if (!content) {
+                                if (msg.message?.audioMessage) content = '[Audio]';
+                                else if (msg.message?.imageMessage) content = '[Image]';
+                                else if (msg.message?.stickerMessage) content = '[Sticker]';
+                                else if (msg.message?.videoMessage) content = '[Video]';
+                                else content = '[Media]';
+                            }
+
+                            stmt.run(
+                                msg.key.id,
+                                jid,
+                                msg.key.fromMe ? 1 : 0,
+                                ts,
+                                content,
+                                JSON.stringify(msg)
+                            );
+                        } catch (e) {
+                            console.error('[SQLiteStore] Error processing individual message in queue:', e.message);
+                        }
+                    }
+                });
+
+                // Execute transaction synchronously (on background tick)
+                insertTransaction(batch);
+            }
+        } catch (e) {
+            console.error('[SQLiteStore] Queue Processing Failed:', e);
+        } finally {
+            this.isProcessingQueue = false;
+
+            // If more items, trigger immediately
+            if (this.messageQueue.length > 0) {
+                setImmediate(() => this.processQueue());
+            }
+        }
+
     }
 
     init() {
         this.db.pragma('journal_mode = WAL');
+        this.db.pragma('synchronous = NORMAL');
         this.db.exec(`
             CREATE TABLE IF NOT EXISTS contacts (
                 id TEXT PRIMARY KEY,
@@ -71,70 +159,19 @@ class SQLiteStore {
 
     async upsertMessages(messages, type) {
         try {
-            // 'append' is for history sync
+            // 'append' is for history sync, 'notify' is for new messages
             if (type !== 'notify' && type !== 'append') return;
 
-            const total = messages.length;
-            // console.log(`[SQLiteStore] upsertMessages called with ${total} msgs (Type: ${type})`); // Verbose
+            // Push to memory queue (FAST - Non-blocking)
+            // console.log(`[SQLiteStore] Enqueueing ${messages.length} messages (Total in queue: ${this.messageQueue.length + messages.length})`);
+            this.messageQueue.push(...messages);
 
-            const BATCH_SIZE = 250;
-
-            const stmt = this.db.prepare(`
-                INSERT INTO messages (key_id, remote_jid, from_me, timestamp, content, data)
-                VALUES (?, ?, ?, ?, ?, ?)
-                ON CONFLICT(key_id, remote_jid) DO NOTHING
-            `);
-
-            const insertBatch = this.db.transaction((msgs) => {
-                const now = Date.now() / 1000;
-                for (const msg of msgs) {
-                    const jid = msg.key.remoteJid;
-                    if (!jid) continue;
-                    // Ignore protocol messages
-                    if (msg.message?.protocolMessage || msg.message?.senderKeyDistributionMessage) continue;
-
-                    const ts = (typeof msg.messageTimestamp === 'number')
-                        ? msg.messageTimestamp
-                        : (msg.messageTimestamp?.low || now);
-
-                    // Debug first message in batch
-                    // if (msgs.indexOf(msg) === 0) console.log(`[SQLiteStore] Sample TS: ${ts} (Now: ${now})`);
-
-                    // Content Snippet
-                    let content = msg.message?.conversation || msg.message?.extendedTextMessage?.text || '';
-                    if (!content) {
-                        if (msg.message?.audioMessage) content = '[Audio]';
-                        else if (msg.message?.imageMessage) content = '[Image]';
-                        else if (msg.message?.stickerMessage) content = '[Sticker]';
-                        else if (msg.message?.videoMessage) content = '[Video]';
-                        else content = '[Media]';
-                    }
-
-                    stmt.run(
-                        msg.key.id,
-                        jid,
-                        msg.key.fromMe ? 1 : 0,
-                        ts,
-                        content,
-                        JSON.stringify(msg)
-                    );
-                }
-            });
-
-            const batchSize = Math.min(total, BATCH_SIZE);
-            // Log only if significant batch (avoids spam on live chat)
-            // if (total > 50) console.log(`[SQLiteStore] Upserting ${total} messages...`); // We logged at top already
-
-            // Async Chunking
-            for (let i = 0; i < total; i += BATCH_SIZE) {
-                const batch = messages.slice(i, i + BATCH_SIZE);
-                insertBatch(batch);
-                if (total > BATCH_SIZE) await new Promise(resolve => setTimeout(resolve, 5));
+            // Trigger processing on next tick if not running
+            if (!this.isProcessingQueue) {
+                setImmediate(() => this.processQueue());
             }
-
-            // if (total > 50) console.log(`[SQLiteStore] Finished upserting ${total} messages.`);
         } catch (e) {
-            console.error('[SQLiteStore] Upsert Failed:', e);
+            console.error('[SQLiteStore] Upsert Enqueue Failed:', e);
         }
     }
 

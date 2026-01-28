@@ -46,7 +46,10 @@ ENV LANG=C.UTF-8
 ENV NODE_ENV=production
 
 # Install Runtime Dependencies: Python, UV, curl, chromium (for browser MCP)
-RUN apk add --no-cache python3 py3-pip curl gcompat chromium
+# Full Chromium dependencies for Alpine: nss, freetype, harfbuzz, ca-certificates, ttf-freefont
+RUN apk add --no-cache python3 py3-pip curl gcompat \
+    chromium nss freetype harfbuzz ca-certificates ttf-freefont
+
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:/root/.cargo/bin:$PATH"
 
