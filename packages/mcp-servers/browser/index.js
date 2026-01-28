@@ -378,6 +378,10 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
                 // New SDK response structure
                 // New SDK response structure
+                // New SDK response structure
+                if (!result.response.candidates || result.response.candidates.length === 0) {
+                    return { isError: true, content: [{ type: "text", text: "Vision API returned no candidates. Safety block or error." }] };
+                }
                 const responseText = result.response.candidates[0].content.parts[0].text;
                 const jsonText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
 
@@ -474,7 +478,11 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         if (name === "browser_get_accessibility_tree") {
-            if (!p || !p.accessibility) throw new Error("Browser page not ready or accessibility API unavailable");
+            if (!p) throw new Error("Browser page not available");
+            // Wait for page to be reasonably ready to avoid "not ready" errors
+            try { await p.waitForLoadState('domcontentloaded', { timeout: 2000 }); } catch (e) { /* ignore timeout */ }
+            if (!p.accessibility) throw new Error("Accessibility API unavailable");
+
             const snapshot = await p.accessibility.snapshot({ interestingOnly: true });
 
             // Helper to recursively simplify tree
@@ -511,6 +519,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (name === "browser_extract_text") {
             const html = await p.content();
             const turndownService = new TurndownService();
+            turndownService.remove(['script', 'style', 'noscript', 'svg']);
             const markdown = turndownService.turndown(html);
             return { content: [{ type: "text", text: markdown }] };
         }
