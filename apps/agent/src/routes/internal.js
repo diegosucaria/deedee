@@ -541,6 +541,49 @@ function createInternalRouter(agent) {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
+    // --- Browser Secrets ---
+    router.get('/browser-secrets', (req, res) => {
+        try {
+            // Determine Data Dir similar to AgentDB logic or standard convention
+            const dataDir = process.env.DATA_DIR || (agent.db && agent.db.dbPath ? path.dirname(agent.db.dbPath) : path.join(process.cwd(), 'data'));
+            const secretsFile = path.join(dataDir, 'browser_profile', 'browser-secrets.json');
+
+            if (!fs.existsSync(secretsFile)) {
+                return res.json({});
+            }
+
+            const content = fs.readFileSync(secretsFile, 'utf-8');
+            try {
+                const json = JSON.parse(content);
+                res.json(json);
+            } catch (e) {
+                // If invalid JSON, return empty or error? Let's return raw as text if needed, but UI expects JSON.
+                // Or empty object to be safe.
+                console.error('[API] Failed to parse browser-secrets.json:', e);
+                res.json({});
+            }
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.post('/browser-secrets', (req, res) => {
+        try {
+            const secrets = req.body; // Expects JSON object
+            if (typeof secrets !== 'object') return res.status(400).json({ error: 'Invalid format. Expected JSON object.' });
+
+            const dataDir = process.env.DATA_DIR || (agent.db && agent.db.dbPath ? path.dirname(agent.db.dbPath) : path.join(process.cwd(), 'data'));
+            const userProfileDir = path.join(dataDir, 'browser_profile');
+            const secretsFile = path.join(userProfileDir, 'browser-secrets.json');
+
+            // Ensure dir exists
+            if (!fs.existsSync(userProfileDir)) {
+                fs.mkdirSync(userProfileDir, { recursive: true });
+            }
+
+            fs.writeFileSync(secretsFile, JSON.stringify(secrets, null, 2), 'utf-8');
+            res.json({ success: true });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
     // --- Logs ---
     router.get('/logs/jobs', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });

@@ -60,6 +60,15 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
             VISION PROTOCOL:
             1. **Direct Analysis**: You have NATIVE vision capabilities. If the user attaches an image and asks "What is this?", simply analyze the image directly.
             2. **Do NOT Generate**: Do NOT use the 'generateImage' tool to analyze or describe an existing image. Only use it when the user explicitly asks you to CREATE, DRAW, or RENDER a NEW image.
+
+            BROWSER PROTOCOL:
+            1. **Deep Research vs Quick Info**: 
+               - Use 'googleSearch' for quick facts, weather, stock prices, or simple Q&A.
+               - Use 'browser_navigate' when you need to **act** on a page (login, click, type), read **full content** (not just snippets), or access specific URLs provided by the user.
+            2. **Persistence**: The browser has a persistent profile. You are logged in if you logged in previously.
+            3. **Resiliency**: If a CSS selector fails in 'browser_click', IMMEDIATELY fallback to 'browser_click_vision' with a visual description. Do not give up.
+            4. **Secrets**: Use 'browser_fill_secret' to type passwords/cards. keys are in 'browser_list_secrets'.
+            5. **Dynamic Content**: If a page is empty or loading, use 'browser_run_script' to wait or scroll.
     `;
 
         const THINKING_PROTOCOL = `

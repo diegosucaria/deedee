@@ -39,6 +39,7 @@ app.use('/v1/facts', require('./routes/facts'));         // [NEW]
 app.use('/v1/backups', require('./routes/backups'));     // [NEW]
 app.use('/v1/dj', require('./routes/dj'));               // [NEW]
 app.use('/v1/autopilot', require('./routes/autopilot')); // [NEW]
+app.use('/v1/browser-secrets', require('./routes/secrets')); // [NEW] Proxy to Agent Internal
 
 // BETTER: Add to apps/api/src/dashboard.js if it proxies to agent.
 const http = require('http');

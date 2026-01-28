@@ -24,6 +24,12 @@ To avoid leaking passwords in logs or context, utilize the **Secret Store**:
 1.  **List Secrets**: `browser_list_secrets()` shows available keys (e.g. `AMAZON_PASSWORD`).
 2.  **Use Secrets**: `browser_fill_secret(selector, 'AMAZON_PASSWORD')` types the value securely.
 
+### Security Architecture
+-   **Agent Access**: Read-Only via internal file access.
+-   **Management**: Secrets are managed via the Web UI (Brain > Memory > Secrets).
+-   **Isolation**: The Web UI uses a secured proxy (`/v1/browser-secrets` -> Agent `/internal/browser-secrets`) to avoid direct filesystem access or unauthenticated internal calls.
+
+
 ## Configuration (Env Vars)
 -   `BROWSER_HEADLESS`: `true` (default) or `false`.
 -   `BROWSER_USER_DATA_DIR`: Path to profile.

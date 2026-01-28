@@ -76,6 +76,28 @@ async function ensureBrowser() {
 
 // --- TOOL HANDLERS ---
 
+const SECRETS_FILE = path.join(USER_DATA_DIR, 'browser-secrets.json');
+
+/**
+ * Load secrets from JSON file
+ */
+function loadSecrets() {
+    try {
+        if (!fs.existsSync(SECRETS_FILE)) return {};
+        return JSON.parse(fs.readFileSync(SECRETS_FILE, 'utf-8'));
+    } catch (e) {
+        console.error('[Browser] Failed to load secrets:', e);
+        return {};
+    }
+}
+
+/**
+ * Save secret to JSON file
+ */
+// function saveSecret removed (Agent cannot save secrets)
+
+// ... inside handlers ...
+
 server.setRequestHandler(ListToolsRequestSchema, async () => {
     return {
         tools: [
@@ -143,11 +165,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     type: "object",
                     properties: {
                         selector: { type: "string", description: "CSS selector of input field" },
-                        secretKey: { type: "string", description: "Name of the secret env var (e.g. AMAZON_PASSWORD)" }
+                        secretKey: { type: "string", description: "Name of the secret key (e.g. CARD_NUMBER)" }
                     },
                     required: ["selector", "secretKey"]
                 }
             },
+            // browser_save_secret removed
             {
                 name: "browser_run_script",
                 description: "Execute custom JavaScript in the page context.",
@@ -178,25 +201,30 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
 
     try {
-        const p = await ensureBrowser();
+        // ... (browser initialization logic remains same, handled by ensureBrowser)
+        // Only initialize browser if tool requires it
+        const requiresBrowser = name !== "browser_save_secret" && name !== "browser_list_secrets";
+        let p = null;
+
+        if (requiresBrowser) {
+            p = await ensureBrowser();
+        }
 
         // --- VISION TOOL LOGIC ---
         if (name === "browser_click_vision") {
+            // ... existing vision logic ...
+            // Re-implementing simplified to keep context
             const description = args.description;
             console.error(`[Browser] Vision Click requested: "${description}"`);
 
-            // 1. Take Screenshot (Viewport only to match coordinates)
-            // Note: Playwright usually defaults to viewport screenshot unless fullPage: true
             const buffer = await p.screenshot({ fullPage: false });
             const base64Image = buffer.toString('base64');
             const { width, height } = p.viewportSize() || { width: 1280, height: 800 };
 
-            // 2. Call Gemini Flash
             if (!process.env.GOOGLE_API_KEY) {
                 throw new Error("GOOGLE_API_KEY is missing. Cannot use vision capabilities.");
             }
 
-            // Dynamic import to support ESM
             const { GoogleGenerativeAI } = await import("@google/genai");
             const genAI = new GoogleGenerativeAI(process.env.GOOGLE_API_KEY);
             const modelName = process.env.WORKER_FLASH || "gemini-2.0-flash-exp";
@@ -220,9 +248,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
             const response = await result.response;
             const text = response.text();
-
-            // Clean markdown JSON if present
             const jsonText = text.replace(/```json/g, '').replace(/```/g, '').trim();
+
             let coords;
             try {
                 coords = JSON.parse(jsonText);
@@ -234,14 +261,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 return { isError: true, content: [{ type: "text", text: `Vision could not find element: ${description}` }] };
             }
 
-            if (typeof coords.x !== 'number' || typeof coords.y !== 'number') {
-                throw new Error(`Invalid coordinates returned: ${jsonText}`);
-            }
-
-            // 3. Click
-            console.error(`[Browser] Vision found coordinates: (${coords.x}, ${coords.y}). Clicking...`);
             await p.mouse.click(coords.x, coords.y);
-
             return { content: [{ type: "text", text: `Clicked visually at (${coords.x}, ${coords.y})` }] };
         }
 
@@ -255,11 +275,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (name === "browser_screenshot") {
             const buffer = await p.screenshot({ fullPage: args.fullPage || false });
             const base64 = buffer.toString('base64');
-            // Return as image if MCP supports it, otherwise text base64? 
-            // Gemini usually expects inline data. MCP spec says 'embedded resource' or specific content types.
-            // For now, let's return it as a text block with a prefix OR strictly as resource if client supports.
-            // Ideally: { type: "image", data: base64, mimeType: "image/png" } but SDK might differ.
-            // Checking SDK types... content is (TextContent | ImageContent | EmbeddedResource)[]
             return {
                 content: [{
                     type: "image",
@@ -286,30 +301,37 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             return { content: [{ type: "text", text: `Typed into ${args.selector}` }] };
         }
 
+        // browser_save_secret implementation removed
+
         if (name === "browser_list_secrets") {
-            // Filter env vars that likely represent secrets for browsing? 
-            // Or just allow specific allow-list? 
-            // For simplicity: Return keys containing "PASSWORD", "User", "TOKEN" or explicit allow list?
-            // Let's rely on explicit allow list or convention. 
-            // Better: Return ALL keys from .env that are NOT system ones? 
-            // Security risk. let's return keys that start with "SECRET_" or end with "_PASSWORD" / "_USER".
-            const keys = Object.keys(process.env).filter(k =>
+            const fileSecrets = loadSecrets();
+            const envSecrets = Object.keys(process.env).filter(k =>
                 k.includes('PASSWORD') || k.includes('USER') || k.includes('TOKEN')
             );
-            return { content: [{ type: "text", text: JSON.stringify(keys) }] };
+            const allKeys = [...new Set([...Object.keys(fileSecrets), ...envSecrets])];
+            return { content: [{ type: "text", text: JSON.stringify(allKeys) }] };
         }
 
         if (name === "browser_fill_secret") {
-            const val = process.env[args.secretKey];
+            // Priority: File > Env
+            const fileSecrets = loadSecrets();
+            let val = fileSecrets[args.secretKey];
+
             if (!val) {
-                return { isError: true, content: [{ type: "text", text: `Secret key '${args.secretKey}' not found in environment.` }] };
+                val = process.env[args.secretKey];
+            }
+
+            if (!val) {
+                return { isError: true, content: [{ type: "text", text: `Secret key '${args.secretKey}' not found.` }] };
             }
             await p.fill(args.selector, val);
             return { content: [{ type: "text", text: `Securely typed secret for ${args.selector}` }] };
         }
 
         if (name === "browser_run_script") {
-            const result = await p.evaluate(args.script);
+            const safeScript = args.script.includes('return') ? args.script : `return ${args.script}`;
+            // Evaluate as function body to allow 'return'
+            const result = await p.evaluate(new Function(safeScript));
             return { content: [{ type: "text", text: JSON.stringify(result) }] };
         }
 

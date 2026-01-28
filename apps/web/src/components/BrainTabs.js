@@ -9,6 +9,7 @@ import MemoryList from '@/components/MemoryList';
 import AliasList from '@/components/AliasList';
 import ToolsList from '@/components/ToolsList';
 import MCPServerList from '@/components/MCPServerList';
+import SecretsEditor from '@/components/SecretsEditor';
 
 export default function BrainTabs({ goals, facts, aliases, tools, servers }) {
     const router = useRouter();
@@ -66,7 +67,16 @@ export default function BrainTabs({ goals, facts, aliases, tools, servers }) {
                             <h2 className="text-xl font-semibold text-white">Long-term Memory</h2>
                             <p className="text-zinc-400 text-sm">Key-Value store for persistent facts and context.</p>
                         </div>
-                        <MemoryList facts={facts} />
+
+                        <div className="mb-8">
+                            <h3 className="text-lg font-medium text-zinc-300 mb-2">Facts</h3>
+                            <MemoryList facts={facts} />
+                        </div>
+
+                        <div>
+                            <h3 className="text-lg font-medium text-zinc-300 mb-2">Browser Secrets</h3>
+                            <SecretsEditor />
+                        </div>
                     </div>
                 )}
                 {activeTab === 'aliases' && (

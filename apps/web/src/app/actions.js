@@ -1,5 +1,3 @@
-'use server';
-
 import { fetchAPI } from '@/lib/api';
 import { revalidatePath } from 'next/cache';
 
@@ -126,6 +124,33 @@ export async function updateFact(originalKey, newKey, value) {
         revalidatePath('/brain');
         return { success: true };
     } catch (e) { return { success: false, error: e.message }; }
+}
+
+// --- Browser Secrets (via Agent API) ---
+// Secure: No direct filesystem access from Web container
+
+export async function getBrowserSecretsRaw() {
+    try {
+        const secrets = await fetchAPI('/v1/browser-secrets');
+        return JSON.stringify(secrets, null, 2);
+    } catch (e) {
+        console.error('Failed to fetch browser secrets:', e);
+        return '{}';
+    }
+}
+
+export async function saveBrowserSecretsRaw(jsonContent) {
+    try {
+        const secrets = JSON.parse(jsonContent);
+        await fetchAPI('/v1/browser-secrets', {
+            method: 'POST',
+            body: JSON.stringify(secrets)
+        });
+        revalidatePath('/brain');
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
 }
 
 // --- Aliases ---
