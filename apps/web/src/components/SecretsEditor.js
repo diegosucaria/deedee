@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useMemo } from 'react';
 import { getBrowserSecretsRaw, saveBrowserSecretsRaw } from '@/app/actions';
-import { Save, AlertCircle, Check, Eye, EyeOff, Plus, Trash2, Code, List, FileJson } from 'lucide-react';
+import { Save, AlertCircle, Check, Eye, EyeOff, Plus, Trash2, Code, List, FileJson, ArrowUp, ArrowDown } from 'lucide-react';
 
 export default function SecretsEditor() {
     const [mode, setMode] = useState('table'); // 'table' | 'json'
@@ -89,6 +89,16 @@ export default function SecretsEditor() {
 
     const deleteRow = (index) => {
         const newData = tableData.filter((_, i) => i !== index);
+        updateFromTable(newData);
+    };
+
+    const moveRow = (index, direction) => {
+        const newData = [...tableData];
+        if (direction === 'up' && index > 0) {
+            [newData[index - 1], newData[index]] = [newData[index], newData[index - 1]];
+        } else if (direction === 'down' && index < newData.length - 1) {
+            [newData[index + 1], newData[index]] = [newData[index], newData[index + 1]];
+        }
         updateFromTable(newData);
     };
 
@@ -185,6 +195,22 @@ export default function SecretsEditor() {
                                                     onChange={(e) => updateRow(i, 'value', e.target.value)}
                                                     className="w-full bg-black/50 border border-zinc-800 rounded px-3 py-2 text-xs font-mono text-zinc-300 focus:outline-none focus:border-indigo-500/50 placeholder:text-zinc-700"
                                                 />
+                                            </div>
+                                            <div className="flex gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
+                                                <button
+                                                    onClick={() => moveRow(i, 'up')}
+                                                    disabled={i === 0}
+                                                    className="p-1.5 text-zinc-600 hover:text-zinc-300 disabled:opacity-30 disabled:hover:text-zinc-600"
+                                                >
+                                                    <ArrowUp size={14} />
+                                                </button>
+                                                <button
+                                                    onClick={() => moveRow(i, 'down')}
+                                                    disabled={i === tableData.length - 1}
+                                                    className="p-1.5 text-zinc-600 hover:text-zinc-300 disabled:opacity-30 disabled:hover:text-zinc-600"
+                                                >
+                                                    <ArrowDown size={14} />
+                                                </button>
                                             </div>
                                             <button
                                                 onClick={() => deleteRow(i)}
