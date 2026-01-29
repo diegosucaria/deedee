@@ -679,29 +679,34 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         if (name === "browser_click") {
             let selector = args.selector;
-            // Fix common Agent hallucinations for selectors (jQuery style -> Playwright style)
+            // Fix common Agent hallucinations
             if (selector.includes(':contains(')) {
                 selector = selector.replace(/:contains\((['"]?)(.*?)\1\)/g, ':has-text("$2")');
-                console.log(`[Browser] Fixed selector: ${args.selector} -> ${selector}`);
             }
 
             try {
+                // Try scrolling first
+                try {
+                    const loc = p.locator(selector).first();
+                    await loc.scrollIntoViewIfNeeded({ timeout: 2000 });
+                } catch (ignore) { }
+
                 await p.click(selector, { timeout: 30000 });
             } catch (e) {
                 console.log(`[Browser] Standard click failed for ${selector}: ${e.message}`);
 
                 // Fallback 1: Force Click
                 try {
-                    console.log(`[Browser] Retrying with force:true...`);
                     await p.click(selector, { force: true, timeout: 5000 });
                 } catch (e2) {
-                    // Fallback 2: Try as text locator if it failed as selector
+                    // Fallback 2: Text locator
                     if (!selector.startsWith('text=') && !selector.includes('>>')) {
-                        console.log(`[Browser] Retrying as text locator...`);
                         try {
-                            await p.getByText(args.selector.replace(/['"]/g, '')).click({ timeout: 5000 });
+                            const textLoc = p.getByText(args.selector.replace(/['"]/g, '')).first();
+                            await textLoc.scrollIntoViewIfNeeded({ timeout: 2000 });
+                            await textLoc.click({ timeout: 5000, force: true });
                         } catch (e3) {
-                            throw new Error(`Failed to click "${args.selector}": ${e.message} / ${e2.message}`);
+                            throw new Error(`Failed to click "${args.selector}": ${e.message}`);
                         }
                     } else {
                         throw e2;
@@ -712,7 +717,23 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         if (name === "browser_type") {
-            await p.fill(args.selector, args.text);
+            try {
+                // Try scrolling first
+                try {
+                    const loc = p.locator(args.selector).first();
+                    await loc.scrollIntoViewIfNeeded({ timeout: 2000 });
+                } catch (ignore) { }
+
+                await p.fill(args.selector, args.text, { timeout: 30000 });
+            } catch (e) {
+                console.log(`[Browser] Standard fill failed for ${args.selector}: ${e.message}. Retrying with type/press...`);
+                try {
+                    await p.click(args.selector, { timeout: 3000, force: true });
+                    await p.keyboard.type(args.text);
+                } catch (e2) {
+                    throw new Error(`Failed to type into "${args.selector}": ${e.message}`);
+                }
+            }
             return { content: [{ type: "text", text: `Typed into ${args.selector}` }] };
         }
 
