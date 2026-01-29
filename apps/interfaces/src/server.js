@@ -25,14 +25,40 @@ const defaultTelegramId = allowedTelegramIds.length > 0 ? allowedTelegramIds[0] 
 app.use(express.json({ limit: '50mb' }));
 
 // --- SOCKET.IO ---
+
+// Auth Middleware to Identify Trusted Producers (Agent/Browser)
+io.use((socket, next) => {
+  const token = socket.handshake.auth?.token || socket.handshake.query?.token;
+  if (token && token === process.env.DEEDEE_API_TOKEN) {
+    socket.isTrusted = true;
+    console.log(`[Interfaces] Trusted Socket Connected: ${socket.id} (Agent/Browser)`);
+  }
+  next();
+});
+
 io.on("connection", (socket) => {
   const { chatId } = socket.handshake.query;
-  console.log(`[Interfaces] Socket connected: ${socket.id} (ChatID: ${chatId || 'None'})`);
+  // Reduce noise for frequent connect/disconnects if needed, or keep for debugging
+  // console.log(`[Interfaces] Socket connected: ${socket.id} (ChatID: ${chatId || 'None'})`);
 
   if (chatId) {
     socket.join(chatId);
     console.log(`[Interfaces] Socket ${socket.id} joined room ${chatId}`);
   }
+
+  // Handle Browser Screencast Frames (Relay)
+  socket.on('browser:frame', (data) => {
+    // SECURITY: Only allow trusted producers (Agent/Browser Layer) to emit frames
+    if (!socket.isTrusted) {
+      // Create a warning once per socket to avoid log spam? or just ignore.
+      return;
+    }
+
+    // Broadcast to all clients (or specifically those watching?)
+    // For now, broadcast global "browser:frame" to everyone.
+    // data should contain { data: base64, timestamp: ... }
+    io.emit('browser:frame', data);
+  });
 
   // Forward client message to Agent
   socket.on("chat:message", async (data) => {
@@ -100,7 +126,7 @@ io.on("connection", (socket) => {
   });
 
   socket.on("disconnect", () => {
-    console.log(`[Interfaces] Socket disconnected: ${socket.id}`);
+    // console.log(`[Interfaces] Socket disconnected: ${socket.id}`);
   });
 });
 
