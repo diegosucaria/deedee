@@ -116,7 +116,11 @@ class Agent {
       await this.scheduler.stop();
     }
     if (this.mcp) {
-      await this.mcp.close().catch(err => console.error('[Agent] Error closing MCP:', err));
+      try {
+        await this.mcp.close();
+      } catch (err) {
+        console.error('[Agent] Error closing MCP:', err);
+      }
     }
     if (this.db) {
       this.db.close();
