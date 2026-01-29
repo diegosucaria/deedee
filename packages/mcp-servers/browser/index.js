@@ -644,14 +644,37 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         if (name === "browser_click") {
-            try {
-                await p.click(args.selector, { timeout: 30000 });
-            } catch (e) {
-                // Retry with force if standard click fails/timeout
-                console.log(`[Browser] Standard click failed, retrying with force:true for ${args.selector}`);
-                await p.click(args.selector, { force: true, timeout: 30000 });
+            let selector = args.selector;
+            // Fix common Agent hallucinations for selectors (jQuery style -> Playwright style)
+            if (selector.includes(':contains(')) {
+                selector = selector.replace(/:contains\((['"]?)(.*?)\1\)/g, ':has-text("$2")');
+                console.log(`[Browser] Fixed selector: ${args.selector} -> ${selector}`);
             }
-            return { content: [{ type: "text", text: `Clicked ${args.selector}` }] };
+
+            try {
+                await p.click(selector, { timeout: 30000 });
+            } catch (e) {
+                console.log(`[Browser] Standard click failed for ${selector}: ${e.message}`);
+
+                // Fallback 1: Force Click
+                try {
+                    console.log(`[Browser] Retrying with force:true...`);
+                    await p.click(selector, { force: true, timeout: 5000 });
+                } catch (e2) {
+                    // Fallback 2: Try as text locator if it failed as selector
+                    if (!selector.startsWith('text=') && !selector.includes('>>')) {
+                        console.log(`[Browser] Retrying as text locator...`);
+                        try {
+                            await p.getByText(args.selector.replace(/['"]/g, '')).click({ timeout: 5000 });
+                        } catch (e3) {
+                            throw new Error(`Failed to click "${args.selector}": ${e.message} / ${e2.message}`);
+                        }
+                    } else {
+                        throw e2;
+                    }
+                }
+            }
+            return { content: [{ type: "text", text: `Clicked ${selector}` }] };
         }
 
         if (name === "browser_type") {
