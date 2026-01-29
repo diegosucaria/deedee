@@ -456,7 +456,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                                     { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
                                     { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
                                     { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
-                                    // CIVIC_INTEGRITY removed as it might cause issues on some models
+                                    { category: "HARM_CATEGORY_CIVIC_INTEGRITY", threshold: "BLOCK_NONE" }
                                 ]
                             },
                             contents: [
