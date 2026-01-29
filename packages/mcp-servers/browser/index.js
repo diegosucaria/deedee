@@ -67,15 +67,22 @@ function nukeProfileLocks() {
     try {
         // 1. Kill stray processes (only works in container/if we have perms)
         console.log('[Browser] Killing stray chromium processes...');
-        try { execSync('pkill -f chromium'); } catch (e) { }
-        try { execSync('pkill -f chrome'); } catch (e) { }
+        try { execSync('pkill -f chromium'); console.log('[Browser] pkill chromium executed.'); } catch (e) { console.log(`[Browser] pkill chromium result: ${e.message}`); }
+        try { execSync('pkill -f chrome'); console.log('[Browser] pkill chrome executed.'); } catch (e) { console.log(`[Browser] pkill chrome result: ${e.message}`); }
 
         // 2. Remove lock files
         const locks = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
         locks.forEach(f => {
             const p = path.join(USER_DATA_DIR, f);
             if (fs.existsSync(p)) {
-                try { fs.unlinkSync(p); } catch (e) { }
+                try {
+                    fs.unlinkSync(p);
+                    console.log(`[Browser] Deleted lock file: ${f}`);
+                } catch (e) {
+                    console.error(`[Browser] FAILED to delete lock file ${f}:`, e);
+                }
+            } else {
+                console.log(`[Browser] Lock file not found: ${f}`);
             }
         });
     } catch (e) { }
@@ -384,8 +391,6 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     ]
                 });
 
-                // New SDK response structure
-                // New SDK response structure
                 // New SDK response structure
                 if (!result?.response?.candidates || result.response.candidates.length === 0) {
                     return { isError: true, content: [{ type: "text", text: "Vision API returned no candidates. Safety block or error." }] };
