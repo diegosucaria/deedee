@@ -434,64 +434,56 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
              If not found, return {"error": "not found"}.
              `;
 
-            // Helper to try generation with fallback
+            // Helper to try generation (Single model, no loop)
             async function tryGenerateContent(client, promptText, base64Image) {
-                const modelsToTry = [
-                    process.env.WORKER_FLASH || "gemini-2.0-flash-exp"
-                ];
+                const model = process.env.WORKER_FLASH || "gemini-2.0-flash-exp";
 
-                // Deduplicate
-                const uniqueModels = [...new Set(modelsToTry)];
-
-                let lastError = null;
-
-                for (const model of uniqueModels) {
-                    try {
-                        console.log(`[Browser] Attempting Vision with model: ${model}`);
-                        const result = await client.models.generateContent({
-                            model: model,
-                            config: {
-                                safetySettings: [
-                                    { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-                                    { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-                                    { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-                                    { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
-                                    { category: "HARM_CATEGORY_CIVIC_INTEGRITY", threshold: "BLOCK_NONE" }
-                                ]
-                            },
-                            contents: [
-                                {
-                                    role: 'user',
-                                    parts: [
-                                        { text: promptText },
-                                        { inlineData: { mimeType: "image/png", data: base64Image } }
-                                    ]
-                                }
+                try {
+                    console.log(`[Browser] Attempting Vision with model: ${model}`);
+                    const result = await client.models.generateContent({
+                        model: model,
+                        config: {
+                            safetySettings: [
+                                { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+                                { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+                                { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+                                { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
+                                { category: "HARM_CATEGORY_CIVIC_INTEGRITY", threshold: "BLOCK_NONE" }
                             ]
-                        });
-
-                        // Validate candidates
-                        if (result?.response?.candidates && result.response.candidates.length > 0) {
-                            const candidate = result.response.candidates[0];
-                            // Check finish reason
-                            if (candidate.finishReason && candidate.finishReason !== "STOP") {
-                                console.warn(`[Browser] Model ${model} finished with reason: ${candidate.finishReason}`);
-                                // If safety, try next model
-                                if (candidate.finishReason === "SAFETY") continue;
+                        },
+                        contents: [
+                            {
+                                role: 'user',
+                                parts: [
+                                    { text: promptText },
+                                    { inlineData: { mimeType: "image/png", data: base64Image } }
+                                ]
                             }
-                            return { result, model };
-                        }
+                        ]
+                    });
 
-                        // If no candidates, log and try next
-                        const blockReason = result?.response?.promptFeedback?.blockReason;
-                        console.warn(`[Browser] Model ${model} returned no candidates. BlockReason: ${blockReason || 'Unknown'}`);
+                    // Validate candidates (Handle both V1 SDK flat structure and legacy nested)
+                    const candidates = result.candidates || result.response?.candidates;
 
-                    } catch (e) {
-                        console.error(`[Browser] Error with model ${model}: ${e.message}`);
-                        lastError = e;
+                    if (candidates && candidates.length > 0) {
+                        const candidate = candidates[0];
+                        return { result, model };
                     }
+
+                    // Log failure details
+                    const blockReason = result.promptFeedback?.blockReason || result.response?.promptFeedback?.blockReason;
+                    console.warn(`[Browser] Model ${model} returned no candidates. BlockReason: ${blockReason || 'Unknown'}`);
+
+                    if (blockReason === undefined) {
+                        console.warn(`[Browser] Raw Response for ${model}:`, JSON.stringify(result, null, 2));
+                    }
+
+                    throw new Error(`Vision model ${model} returned no candidates.`);
+
+                } catch (e) {
+                    console.error(`[Browser] Error with model ${model}: ${e.message}`);
+                    throw e;
                 }
-                throw lastError || new Error("All vision models failed or were blocked.");
             }
 
             try {
