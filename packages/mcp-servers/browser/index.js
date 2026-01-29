@@ -437,9 +437,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             // Helper to try generation with fallback
             async function tryGenerateContent(client, promptText, base64Image) {
                 const modelsToTry = [
-                    process.env.WORKER_FLASH || "gemini-2.0-flash-exp",
-                    "gemini-2.0-flash-exp",
-                    "gemini-1.5-flash-latest"
+                    process.env.WORKER_FLASH || "gemini-2.0-flash-exp"
                 ];
 
                 // Deduplicate
