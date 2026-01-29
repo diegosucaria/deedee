@@ -1682,6 +1682,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
       // Side-channel usage tracking for MCP tools (e.g. Browser Vision)
       if (result && result._meta && result._meta.usage && usageCallback) {
         const u = result._meta.usage;
+        console.log(`[Agent] Tracking usage from tool '${executionName}': ${u.model} (In: ${u.inputTokens}, Out: ${u.outputTokens})`);
         usageCallback(u.model, u.inputTokens, u.outputTokens);
       }
 
