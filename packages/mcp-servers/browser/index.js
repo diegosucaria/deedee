@@ -434,38 +434,74 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
              If not found, return {"error": "not found"}.
              `;
 
-            try {
-                const result = await client.models.generateContent({
-                    model: modelName,
-                    config: {
-                        safetySettings: [
-                            { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
-                            { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
-                            { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-                            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
-                            { category: "HARM_CATEGORY_CIVIC_INTEGRITY", threshold: "BLOCK_NONE" }
-                        ]
-                    },
-                    contents: [
-                        {
-                            role: 'user',
-                            parts: [
-                                { text: promptText },
-                                { inlineData: { mimeType: "image/png", data: base64Image } }
+            // Helper to try generation with fallback
+            async function tryGenerateContent(client, promptText, base64Image) {
+                const modelsToTry = [
+                    process.env.WORKER_FLASH || "gemini-2.0-flash-exp",
+                    "gemini-2.0-flash-exp",
+                    "gemini-1.5-flash-latest"
+                ];
+
+                // Deduplicate
+                const uniqueModels = [...new Set(modelsToTry)];
+
+                let lastError = null;
+
+                for (const model of uniqueModels) {
+                    try {
+                        console.log(`[Browser] Attempting Vision with model: ${model}`);
+                        const result = await client.models.generateContent({
+                            model: model,
+                            config: {
+                                safetySettings: [
+                                    { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
+                                    { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
+                                    { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
+                                    { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
+                                    // CIVIC_INTEGRITY removed as it might cause issues on some models
+                                ]
+                            },
+                            contents: [
+                                {
+                                    role: 'user',
+                                    parts: [
+                                        { text: promptText },
+                                        { inlineData: { mimeType: "image/png", data: base64Image } }
+                                    ]
+                                }
                             ]
+                        });
+
+                        // Validate candidates
+                        if (result?.response?.candidates && result.response.candidates.length > 0) {
+                            const candidate = result.response.candidates[0];
+                            // Check finish reason
+                            if (candidate.finishReason && candidate.finishReason !== "STOP") {
+                                console.warn(`[Browser] Model ${model} finished with reason: ${candidate.finishReason}`);
+                                // If safety, try next model
+                                if (candidate.finishReason === "SAFETY") continue;
+                            }
+                            return { result, model };
                         }
-                    ]
-                });
 
-                // DEBUG: Log the full response to analyze safety blocks
-                console.log('[Browser] Vision API Result:', JSON.stringify(result, null, 2));
+                        // If no candidates, log and try next
+                        const blockReason = result?.response?.promptFeedback?.blockReason;
+                        console.warn(`[Browser] Model ${model} returned no candidates. BlockReason: ${blockReason || 'Unknown'}`);
 
-                // New SDK response structure
-                if (!result?.response?.candidates || result.response.candidates.length === 0) {
-                    const blockReason = result?.response?.promptFeedback?.blockReason || 'Unknown';
-                    console.error(`[Browser] Vision Blocked. Reason: ${blockReason}`);
-                    return { isError: true, content: [{ type: "text", text: `Vision API blocked. Reason: ${blockReason}. See logs.` }] };
+                    } catch (e) {
+                        console.error(`[Browser] Error with model ${model}: ${e.message}`);
+                        lastError = e;
+                    }
                 }
+                throw lastError || new Error("All vision models failed or were blocked.");
+            }
+
+            try {
+                const { result, model } = await tryGenerateContent(client, promptText, base64Image);
+
+                // DEBUG: Log valid result
+                console.log(`[Browser] Vision success with ${model}.`);
+
                 const responseText = result.response.candidates[0].content.parts[0].text;
                 const jsonText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
 
@@ -473,7 +509,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const usage = result.response.usageMetadata;
                 const meta = usage ? {
                     usage: {
-                        model: modelName,
+                        model: model,
                         inputTokens: usage.promptTokenCount,
                         outputTokens: usage.candidatesTokenCount,
                         totalTokens: usage.totalTokenCount
