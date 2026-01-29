@@ -798,7 +798,7 @@ export default function ChatSessionPage({ params }) {
 
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
-                <LiveBrowserWidget />
+
                 {messages
                     .filter(msg => {
                         // Hide tool calls/responses by default as requested
@@ -927,6 +927,9 @@ export default function ChatSessionPage({ params }) {
                             )}
                         </div>
                     ))}
+
+                {/* Live Browser (Always visible, bottom of chat) */}
+                <LiveBrowserWidget />
 
                 {/* Typing Indicator */}
                 {isWaiting && (
