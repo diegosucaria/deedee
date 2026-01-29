@@ -23,6 +23,7 @@ router.use('/', createProxyMiddleware({
             proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
             // stream the data
             proxyReq.write(bodyData);
+            proxyReq.end();
         }
     }
 }));
