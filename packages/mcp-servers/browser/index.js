@@ -387,7 +387,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 // New SDK response structure
                 // New SDK response structure
                 // New SDK response structure
-                if (!result.response.candidates || result.response.candidates.length === 0) {
+                if (!result?.response?.candidates || result.response.candidates.length === 0) {
                     return { isError: true, content: [{ type: "text", text: "Vision API returned no candidates. Safety block or error." }] };
                 }
                 const responseText = result.response.candidates[0].content.parts[0].text;
@@ -489,11 +489,46 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             if (!p) throw new Error("Browser page not available");
             // Wait for page to be reasonably ready to avoid "not ready" errors
             try { await p.waitForLoadState('domcontentloaded', { timeout: 2000 }); } catch (e) { /* ignore timeout */ }
-            if (!p.accessibility) throw new Error("Accessibility API unavailable");
+            let snapshot;
 
-            const snapshot = await p.accessibility.snapshot({ interestingOnly: true });
+            // Try native accessibility first
+            if (p.accessibility) {
+                try {
+                    snapshot = await p.accessibility.snapshot({ interestingOnly: true });
+                } catch (e) {
+                    console.warn("[Browser] Native accessibility snapshot failed, using JS fallback:", e.message);
+                }
+            } else {
+                console.warn("[Browser] p.accessibility unavailable, using JS fallback.");
+            }
 
-            // Helper to recursively simplify tree
+            // Fallback: JS-based extraction of interactive elements
+            if (!snapshot) {
+                snapshot = await p.evaluate(() => {
+                    function isVisible(el) {
+                        const r = el.getBoundingClientRect();
+                        return r.width > 0 && r.height > 0 && window.getComputedStyle(el).visibility !== 'hidden';
+                    }
+
+                    const interactives = Array.from(document.querySelectorAll('button, a, input, select, textarea, [role], [onclick]'))
+                        .filter(isVisible)
+                        .map(el => {
+                            let role = el.getAttribute('role') || el.tagName.toLowerCase();
+                            let name = (el.innerText || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
+                            // Cleanup name
+                            name = name.replace(/\s+/g, ' ').substring(0, 100);
+
+                            const node = { role, name };
+                            if (el.value) node.value = el.value;
+                            if (el.placeholder) node.placeholder = el.placeholder;
+                            return node;
+                        });
+
+                    return { role: 'WebArea (JS Fallback)', name: document.title, children: interactives };
+                });
+            }
+
+            // Helper to recursively simplify tree (if it was native)
             function simplifyNode(node) {
                 const simple = {
                     role: node.role,
@@ -508,7 +543,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 return simple;
             }
 
-            const simplified = snapshot ? simplifyNode(snapshot) : { error: "No accessibility tree found" };
+            const simplified = snapshot.children ? snapshot : simplifyNode(snapshot);
             return { content: [{ type: "text", text: JSON.stringify(simplified, null, 2) }] };
         }
 
