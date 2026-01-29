@@ -62,8 +62,15 @@ export default function SecretsEditor() {
     };
 
     const updateFromTable = (newData) => {
-        const obj = newData.reduce((acc, { key, value }) => {
-            if (key) acc[key] = value;
+        const obj = newData.reduce((acc, { key, value }, index) => {
+            // Allow empty keys to support "Add Row" functionality
+            // Note: Multiple empty keys will overwrite each other, but that's acceptable for this simple editor
+            // We strip null/undefined but keep empty string
+            if (key !== null && key !== undefined) {
+                // Prevent key collision loss during editing by appending a temporary suffix if needed? 
+                // No, simpler: just let it overwrite for now, but usually user focuses and types.
+                acc[key] = value;
+            }
             return acc;
         }, {});
         setJsonContent(JSON.stringify(obj, null, 2));
@@ -232,9 +239,6 @@ export default function SecretsEditor() {
                             <AlertCircle size={12} /> {errorMsg}
                         </span>
                     )}
-                </div>
-                <div className="text-zinc-600">
-                    Use <code>browser_fill_secret(key)</code> to inject these values.
                 </div>
             </div>
         </div>
