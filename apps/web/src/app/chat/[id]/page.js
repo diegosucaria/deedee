@@ -846,7 +846,15 @@ export default function ChatSessionPage({ params }) {
                                             </div>
                                         ) : (
                                             <div className="markdown prose prose-invert prose-sm max-w-none break-words">
-                                                <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                                <ReactMarkdown
+                                                    components={{
+                                                        a: ({ node, ...props }) => (
+                                                            <a {...props} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline" />
+                                                        )
+                                                    }}
+                                                >
+                                                    {msg.content}
+                                                </ReactMarkdown>
                                             </div>
                                         )}
 
@@ -911,7 +919,15 @@ export default function ChatSessionPage({ params }) {
                                             </div>
                                         ) : (
                                             <div className="markdown prose prose-invert prose-sm max-w-none break-words">
-                                                <ReactMarkdown>{msg.content}</ReactMarkdown>
+                                                <ReactMarkdown
+                                                    components={{
+                                                        a: ({ node, ...props }) => (
+                                                            <a {...props} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline" />
+                                                        )
+                                                    }}
+                                                >
+                                                    {msg.content}
+                                                </ReactMarkdown>
                                             </div>
                                         )}
                                         <div className="mt-1 text-[10px] opacity-50 flex items-center gap-2 text-zinc-500">
