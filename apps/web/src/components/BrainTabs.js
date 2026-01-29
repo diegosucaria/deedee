@@ -24,7 +24,6 @@ export default function BrainTabs({ goals, facts, aliases, tools, servers }) {
         { id: 'goals', label: 'Goals', icon: Target },
         { id: 'memory', label: 'Memory', icon: Database },
         { id: 'aliases', label: 'Aliases', icon: Tags },
-
         { id: 'tools', label: 'Tools & MCP', icon: Wrench },
         { id: 'secrets', label: 'Browser Secrets', icon: Wrench }, // Reusing Wrench or maybe replace with Lock if available, but Wrench is fine for now
     ];

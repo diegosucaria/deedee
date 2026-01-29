@@ -594,7 +594,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
             await p.goto(args.url, { waitUntil: waitUntil, timeout: timeout });
             const title = await p.title();
-            return { content: [{ type: "text", text: `Navigated to: ${title} (${args.url})` }] };
+            return { content: [{ type: "text", text: `Navigated to: ${title} (${args.url})\n\nTip: Use 'browser_click_vision_annotated' for reliable interaction with complex UIs.` }] };
         }
 
         if (name === "browser_get_accessibility_tree") {
@@ -672,11 +672,104 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         if (name === "browser_extract_text") {
-            const html = await p.content();
-            const turndownService = new TurndownService();
-            turndownService.remove(['script', 'style', 'noscript', 'svg']);
-            const markdown = turndownService.turndown(html);
-            return { content: [{ type: "text", text: markdown }] };
+            // DOM Distillation: Visible Only, Interactive Emphasis
+            const markdown = await p.evaluate(() => {
+                function isVisible(el) {
+                    if (!el) return false;
+                    const style = window.getComputedStyle(el);
+                    if (style.display === 'none' || style.visibility === 'hidden' || style.opacity === '0') return false;
+                    const rect = el.getBoundingClientRect();
+                    return rect.width > 0 && rect.height > 0;
+                }
+
+                function getInteractiveLabel(el) {
+                    return (el.innerText || el.getAttribute('aria-label') || el.getAttribute('title') || '').trim();
+                }
+
+                function traverse(node, depth = 0) {
+                    if (depth > 20) return ''; // Prevent deep recursion
+                    if (node.nodeType === Node.TEXT_NODE) {
+                        const text = node.textContent.replace(/\s+/g, ' ');
+                        return text.trim() ? text : ''; // Keep space? logic below handles joining
+                    }
+
+                    if (node.nodeType !== Node.ELEMENT_NODE) return '';
+                    const el = node;
+                    const tagName = el.tagName.toLowerCase();
+
+                    // Skip non-content tags
+                    if (['script', 'style', 'noscript', 'svg', 'path', 'header', 'footer', 'nav'].includes(tagName)) {
+                        // We might want nav/header/footer if they contain CRITICAL buttons, but usually they are bloated.
+                        // Let's keep them IF they are not too deep, or just process them?
+                        // "header" usually has Login/Search. Let's KEEP them but rely on visibility.
+                        if (['script', 'style', 'noscript', 'svg', 'path'].includes(tagName)) return '';
+                    }
+
+                    if (!isVisible(el)) return '';
+
+                    // Formatting prefixes/suffixes
+                    let prefix = '';
+                    let suffix = '';
+                    let childrenContent = '';
+
+                    // Interactive Elements
+                    if (tagName === 'button' || (tagName === 'a' && el.getAttribute('role') === 'button')) {
+                        return ` [BUTTON: ${getInteractiveLabel(el)}] `;
+                    }
+                    if (tagName === 'a' && el.href) {
+                        const label = getInteractiveLabel(el);
+                        // Skip empty links or javascript:void
+                        if (!label && !el.querySelector('img')) return '';
+                        return ` [LINK: ${label}](${el.href}) `;
+                    }
+                    if (tagName === 'input') {
+                        const type = el.type.toLowerCase();
+                        if (['hidden', 'submit', 'image'].includes(type)) return ''; // Submit usually covered by button
+                        const label = el.placeholder || el.getAttribute('aria-label') || el.name || '';
+                        return ` [INPUT: ${type} "${label}" value="${el.value}"] `;
+                    }
+                    if (tagName === 'select') {
+                        return ` [SELECT: ${getInteractiveLabel(el)}] `;
+                    }
+                    if (tagName === 'textarea') {
+                        return ` [TEXTAREA: ${getInteractiveLabel(el)}] `;
+                    }
+
+                    // Structural Elements
+                    const isBlock = ['div', 'p', 'section', 'article', 'li', 'tr', 'h1', 'h2', 'h3', 'h4', 'h5', 'h6'].includes(tagName);
+                    if (isBlock) prefix = '\n';
+
+                    if (['h1', 'h2', 'h3'].includes(tagName)) {
+                        prefix = `\n${'#'.repeat(parseInt(tagName.replace('h', '')))} `;
+                        suffix = '\n';
+                    }
+                    if (tagName === 'li') prefix = '\n- ';
+
+                    // Recursion
+                    const childNodes = Array.from(el.childNodes);
+                    childrenContent = childNodes.map(child => traverse(child, depth + 1)).join('');
+
+                    // Cleanup spaces
+                    childrenContent = childrenContent.replace(/\s+/g, ' ');
+
+                    return prefix + childrenContent + suffix;
+                }
+
+                return traverse(document.body);
+            });
+
+            // Post-processing cleanup
+            const cleanMarkdown = markdown
+                .replace(/\n\s+/g, '\n') // Trim start of lines
+                .replace(/\n{3,}/g, '\n\n') // Max 2 newlines
+                .trim();
+
+            return {
+                content: [{
+                    type: "text",
+                    text: cleanMarkdown + "\n\n(Note: This is a Distilled View. Use 'browser_click_vision_annotated' for reliable interaction.)"
+                }]
+            };
         }
 
         if (name === "browser_click") {
