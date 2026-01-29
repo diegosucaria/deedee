@@ -70,22 +70,22 @@ function nukeProfileLocks() {
         try { execSync('pkill -f chromium'); console.log('[Browser] pkill chromium executed.'); } catch (e) { console.log(`[Browser] pkill chromium result: ${e.message}`); }
         try { execSync('pkill -f chrome'); console.log('[Browser] pkill chrome executed.'); } catch (e) { console.log(`[Browser] pkill chrome result: ${e.message}`); }
 
-        // 2. Remove lock files
+        // 2. Remove lock files FORCEFULLY
         const locks = ['SingletonLock', 'SingletonCookie', 'SingletonSocket'];
         locks.forEach(f => {
             const p = path.join(USER_DATA_DIR, f);
-            if (fs.existsSync(p)) {
-                try {
+            // Always try to unlink, even if we think it doesn't exist (symlinks can be tricky)
+            try {
+                if (fs.existsSync(p) || fs.lstatSync(p).isSymbolicLink()) {
                     fs.unlinkSync(p);
                     console.log(`[Browser] Deleted lock file: ${f}`);
-                } catch (e) {
-                    console.error(`[Browser] FAILED to delete lock file ${f}:`, e);
                 }
-            } else {
-                console.log(`[Browser] Lock file not found: ${f}`);
+            } catch (e) {
+                // Ignore "ENOENT" if it raced, but log others
+                if (e.code !== 'ENOENT') console.error(`[Browser] FAILED to delete lock file ${f}:`, e.message);
             }
         });
-    } catch (e) { }
+    } catch (e) { console.error('[Browser] nukeProfileLocks error:', e); }
 }
 
 /**
@@ -129,17 +129,26 @@ async function ensureBrowser() {
         launchOptions.executablePath = EXECUTABLE_PATH;
     }
 
+    // --- LAUNCH ---
     try {
+        console.log(`[Browser] Launching with User Data Dir: ${USER_DATA_DIR}`);
         browser = await chromium.launchPersistentContext(USER_DATA_DIR, launchOptions);
     } catch (launchErr) {
-        console.error('[Browser] Launch failed. Retrying with cleaner profile...', launchErr);
-        // Force nuke? No, secrets. Just retry once.
-        console.log('[Browser] Retrying launch with aggressive cleanup...');
+        console.error('[Browser] First launch failed. Retrying with aggressive cleanup...', launchErr.message);
+
+        // Force nuke locks
         nukeProfileLocks();
-        cleanProfile();
-        // Small delay
-        await new Promise(r => setTimeout(r, 1000));
-        browser = await chromium.launchPersistentContext(USER_DATA_DIR, launchOptions);
+
+        // Wait a bit for filesystem to catch up
+        await new Promise(r => setTimeout(r, 2000));
+
+        try {
+            console.log('[Browser] Retrying launch...');
+            browser = await chromium.launchPersistentContext(USER_DATA_DIR, launchOptions);
+        } catch (retryErr) {
+            console.error('[Browser] FATAL: Retry launch failed:', retryErr);
+            throw retryErr;
+        }
     }
 
 
