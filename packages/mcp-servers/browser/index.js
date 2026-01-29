@@ -533,7 +533,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         }
 
         if (name === "browser_click") {
-            await p.click(args.selector);
+            try {
+                await p.click(args.selector, { timeout: 30000 });
+            } catch (e) {
+                // Retry with force if standard click fails/timeout
+                console.log(`[Browser] Standard click failed, retrying with force:true for ${args.selector}`);
+                await p.click(args.selector, { force: true, timeout: 30000 });
+            }
             return { content: [{ type: "text", text: `Clicked ${args.selector}` }] };
         }
 
@@ -579,7 +585,17 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 return await fn();
             }, safeScript);
 
-            return { content: [{ type: "text", text: JSON.stringify(result) }] };
+            // Ensure result is a string
+            let outputText = "";
+            if (typeof result === "object") {
+                outputText = JSON.stringify(result, null, 2);
+            } else if (result !== undefined && result !== null) {
+                outputText = String(result);
+            } else {
+                outputText = "Script executed successfully (no return value).";
+            }
+
+            return { content: [{ type: "text", text: outputText }] };
         }
 
         throw new Error(`Tool ${name} not implemented.`);
