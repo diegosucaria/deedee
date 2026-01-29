@@ -500,11 +500,13 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 // DEBUG: Log valid result
                 console.log(`[Browser] Vision success with ${model}.`);
 
-                const responseText = result.response.candidates[0].content.parts[0].text;
+                // Fix: GoogleGenAI SDK v0.1.0 returns the response object directly, 
+                // NOT nested in .response property like Vertex AI SDK.
+                const responseText = result.candidates[0].content.parts[0].text;
                 const jsonText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
 
                 // Extract Usage
-                const usage = result.response.usageMetadata;
+                const usage = result.usageMetadata;
                 const meta = usage ? {
                     usage: {
                         model: model,
