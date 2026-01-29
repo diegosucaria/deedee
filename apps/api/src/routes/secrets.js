@@ -14,8 +14,16 @@ router.use('/', createProxyMiddleware({
         '^/(.*)': '/internal/browser-secrets/$1' // Match subpaths if any
     },
     onProxyReq: (proxyReq, req, res) => {
-        // Optional: Log proxying
-        // console.log(`[API Proxy] Forwarding ${req.method} ${req.originalUrl} -> ${proxyReq.path}`);
+        // Essential: Fix body parsing for proxy
+        // Since express.json() consumes the stream, we must restream it for the proxy
+        if (req.body && Object.keys(req.body).length > 0) {
+            const bodyData = JSON.stringify(req.body);
+            // set header
+            proxyReq.setHeader('Content-Type', 'application/json');
+            proxyReq.setHeader('Content-Length', Buffer.byteLength(bodyData));
+            // stream the data
+            proxyReq.write(bodyData);
+        }
     }
 }));
 

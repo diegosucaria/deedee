@@ -442,7 +442,8 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                             { category: "HARM_CATEGORY_HATE_SPEECH", threshold: "BLOCK_NONE" },
                             { category: "HARM_CATEGORY_HARASSMENT", threshold: "BLOCK_NONE" },
                             { category: "HARM_CATEGORY_SEXUALLY_EXPLICIT", threshold: "BLOCK_NONE" },
-                            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" }
+                            { category: "HARM_CATEGORY_DANGEROUS_CONTENT", threshold: "BLOCK_NONE" },
+                            { category: "HARM_CATEGORY_CIVIC_INTEGRITY", threshold: "BLOCK_NONE" }
                         ]
                     },
                     contents: [
@@ -456,9 +457,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                     ]
                 });
 
+                // DEBUG: Log the full response to analyze safety blocks
+                console.log('[Browser] Vision API Result:', JSON.stringify(result, null, 2));
+
                 // New SDK response structure
                 if (!result?.response?.candidates || result.response.candidates.length === 0) {
-                    return { isError: true, content: [{ type: "text", text: "Vision API returned no candidates. Safety block or error." }] };
+                    const blockReason = result?.response?.promptFeedback?.blockReason || 'Unknown';
+                    console.error(`[Browser] Vision Blocked. Reason: ${blockReason}`);
+                    return { isError: true, content: [{ type: "text", text: `Vision API blocked. Reason: ${blockReason}. See logs.` }] };
                 }
                 const responseText = result.response.candidates[0].content.parts[0].text;
                 const jsonText = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
