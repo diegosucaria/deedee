@@ -516,21 +516,43 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 }
 
                 // 5. Click by finding the element with that index
-                await p.evaluate((index) => {
-                    const interactives = Array.from(document.querySelectorAll('button, a, input, [role="button"]'));
-                    // Re-filter identical logic
-                    const visible = interactives.filter(el => {
-                        const rect = el.getBoundingClientRect();
-                        return rect.width > 0 && rect.height > 0 &&
-                            rect.top >= 0 && rect.left >= 0 &&
-                            rect.bottom <= window.innerHeight && rect.right <= window.innerWidth;
-                    });
+                // 5. Click by finding the element with that unique ID (more robust than index regeneration)
+                await p.evaluate(async (index) => {
+                    const targetSelector = `[data-agent-label-id="agent-label-${index}"]`;
+                    const target = document.querySelector(targetSelector);
 
-                    const target = visible[index];
                     if (target) {
+                        // VISUAL DEBUGGING: Show where we are clicking
+                        const rect = target.getBoundingClientRect();
+                        const cursor = document.createElement('div');
+                        cursor.style.position = 'fixed';
+                        cursor.style.left = (rect.left + rect.width / 2 - 10) + 'px'; // Center
+                        cursor.style.top = (rect.top + rect.height / 2 - 10) + 'px';
+                        cursor.style.width = '20px';
+                        cursor.style.height = '20px';
+                        cursor.style.borderRadius = '50%';
+                        cursor.style.backgroundColor = 'rgba(255, 0, 0, 0.7)'; // Red
+                        cursor.style.border = '2px solid white';
+                        cursor.style.boxShadow = '0 0 15px rgba(255, 0, 0, 0.8)';
+                        cursor.style.zIndex = '2147483647'; // Max z-index
+                        cursor.style.pointerEvents = 'none';
+                        cursor.style.transition = 'all 0.3s ease-out';
+
+                        document.body.appendChild(cursor);
+
+                        // Pause to let the user see the target (and for the UI to settle)
+                        await new Promise(r => setTimeout(r, 1000));
+
                         target.click();
+
+                        // Cleanup cursor
+                        cursor.remove();
+
+                        // Cleanup data attributes? Maybe leave them for inspection or overwrite next time.
                     } else {
-                        throw new Error('Element index mismatch or shift');
+                        // Fallback: If for some reason attribute is gone, try to find by index again (risky but better than failing)
+                        // console.warn('Attribute target failed, falling back to index...');
+                        throw new Error(`Element with label ${index} not found (DOM changed or attribute lost)`);
                     }
                 }, targetParams.labelIndex);
 
