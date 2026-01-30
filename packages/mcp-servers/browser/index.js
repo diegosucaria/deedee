@@ -256,11 +256,12 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
             },
             {
                 name: "browser_screenshot",
-                description: "Take a screenshot of the current page. Returns base64 image.",
+                description: "Take a screenshot of the current page. Use 'analyze_errors=true' to check for validation errors (red text) after a failed submission.",
                 inputSchema: {
                     type: "object",
                     properties: {
-                        fullPage: { type: "boolean", description: "Capture full scrollable page (default false)" }
+                        fullPage: { type: "boolean", description: "Capture full scrollable page (default: false)" },
+                        analyze_errors: { type: "boolean", description: "Analyze screenshot for validation errors (e.g. 'Required field') and return suggestions. Useful when forms fail silently." }
                     }
                 }
             },
@@ -676,13 +677,73 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (name === "browser_screenshot") {
             const buffer = await p.screenshot({ fullPage: args.fullPage || false });
             const base64 = buffer.toString('base64');
-            return {
+            const result = {
                 content: [{
                     type: "image",
                     data: base64,
                     mimeType: "image/png"
                 }]
             };
+
+            // Visual Validation Feature
+            if (args.analyze_errors) {
+                try {
+                    const { GoogleGenAI } = require("@google/genai");
+                    const client = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY });
+                    const modelName = process.env.WORKER_FLASH || "gemini-2.0-flash-exp";
+
+                    const prompt = `
+                    Analyze this screenshot for UI validation errors, red text, or warning messages.
+                    Specifically look for missing fields or "Select" dropdown errors.
+                    Return ONLY a JSON object:
+                    {
+                        "hasErrors": boolean,
+                        "errors": ["list of error strings found"],
+                        "suggestion": "How to fix it (e.g. 'Use vision click instead of type')"
+                    }
+                    If no errors are found, return { "hasErrors": false }.
+                    `;
+
+                    const visionResult = await client.models.generateContent({
+                        model: modelName,
+                        contents: [{
+                            role: 'user',
+                            parts: [
+                                { text: prompt },
+                                { inlineData: { mimeType: "image/png", data: base64 } }
+                            ]
+                        }]
+                    });
+
+                    const responseText = visionResult.response?.text() ||
+                        visionResult.candidates?.[0]?.content?.parts?.[0]?.text || "{}";
+
+                    const cleanJson = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
+                    const analysis = JSON.parse(cleanJson);
+
+                    if (analysis.hasErrors) {
+                        result.content.push({
+                            type: "text",
+                            text: `\n\n⚠️ VISUAL VALIDATION FAILED:\nErrors: ${analysis.errors.join(', ')}\nSuggestion: ${analysis.suggestion}`
+                        });
+                        result.isError = true; // Mark tool as failed so Agent notices
+                    } else {
+                        result.content.push({
+                            type: "text",
+                            text: "\n\n✅ Visual Validation Passed: No errors detected."
+                        });
+                    }
+
+                } catch (e) {
+                    console.error("Visual Validation Failed:", e);
+                    result.content.push({
+                        type: "text",
+                        text: `\n\n⚠️ Visual Validation Verification Failed: ${e.message}`
+                    });
+                }
+            }
+
+            return result;
         }
 
         if (name === "browser_extract_text") {
