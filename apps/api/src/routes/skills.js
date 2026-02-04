@@ -55,36 +55,13 @@ function parseSkill(content, fileName, type) {
     };
 }
 
-// GET /v1/skills - List all skills
+// GET /v1/skills - List all skills (Consolidated via Agent Service)
 router.get('/', async (req, res) => {
     try {
-        const skills = [];
-
-        // 1. Scan Built-in
-        if (await fs.pathExists(SKILL_DIRS.builtin)) {
-            const files = await fs.readdir(SKILL_DIRS.builtin);
-            for (const f of files) {
-                if (f.endsWith('.md')) {
-                    const content = await fs.readFile(path.join(SKILL_DIRS.builtin, f), 'utf8');
-                    skills.push(parseSkill(content, f, 'builtin'));
-                }
-            }
+        if (!req.agent || !req.agent.skillService) {
+            return res.status(503).json({ error: 'Agent SkillService not available' });
         }
-
-        // 2. Scan User (data/skills)
-        if (await fs.pathExists(SKILL_DIRS.user)) {
-            const files = await fs.readdir(SKILL_DIRS.user);
-            for (const f of files) {
-                if (f.endsWith('.md')) {
-                    const content = await fs.readFile(path.join(SKILL_DIRS.user, f), 'utf8');
-                    // Override builtin if same name? Agent logic uses Map set(), so yes.
-                    // We pushed to array so logic is different here. 
-                    // Let's filter duplicates by name in client or here.
-                    skills.push(parseSkill(content, f, 'user'));
-                }
-            }
-        }
-
+        const skills = req.agent.skillService.getAllSkills();
         res.json(skills);
     } catch (e) {
         console.error('List Skills Error:', e);
@@ -96,19 +73,17 @@ router.get('/', async (req, res) => {
 router.get('/:filename', async (req, res) => {
     try {
         const f = req.params.filename;
-        let p = path.join(SKILL_DIRS.user, f);
-        let type = 'user';
+        const skills = req.agent.skillService.getAllSkills();
+        // Since getAllSkills returns object with metadata, we search by fileName or name
+        const match = skills.find(s => s.fileName === f || s.name === f.replace('.md', ''));
 
-        if (!await fs.pathExists(p)) {
-            p = path.join(SKILL_DIRS.builtin, f);
-            type = 'builtin';
-            if (!await fs.pathExists(p)) {
-                return res.status(404).json({ error: 'Skill not found' });
-            }
+        if (match) {
+            // Re-read file just to be safe/fresh? Or rely on match?
+            // match.content is available
+            res.json(match);
+        } else {
+            res.status(404).json({ error: 'Skill not found' });
         }
-
-        const content = await fs.readFile(p, 'utf8');
-        res.json({ ...parseSkill(content, f, type), raw: content });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -127,6 +102,7 @@ router.post('/', async (req, res) => {
         let targetFile = filename;
         if (!targetFile) {
             // Extract name from content?
+            // We use the helper locally just for name extraction before file write
             const meta = parseSkill(content, 'temp', 'user');
             if (meta.name) targetFile = `${meta.name}.md`;
             else targetFile = `skill_${Date.now()}.md`;
@@ -141,7 +117,45 @@ router.post('/', async (req, res) => {
 
         const filePath = path.join(SKILL_DIRS.user, safeName);
         await fs.writeFile(filePath, content);
+
+        // Trigger explicit reload in service might be needed if fs.watch is slow?
+        // Service watches, so it should pick it up.
+
         res.json({ success: true, filename: safeName });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// POST /v1/skills/:name/enable
+router.post('/:name/enable', async (req, res) => {
+    try {
+        const { name } = req.params;
+        await req.agent.skillService.toggleSkill(name, true);
+        res.json({ success: true, enabled: true });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// POST /v1/skills/:name/disable
+router.post('/:name/disable', async (req, res) => {
+    try {
+        const { name } = req.params;
+        await req.agent.skillService.toggleSkill(name, false);
+        res.json({ success: true, enabled: false });
+    } catch (e) {
+        res.status(500).json({ error: e.message });
+    }
+});
+
+// POST /v1/skills/:name/secrets
+router.post('/:name/secrets', async (req, res) => {
+    try {
+        const { name } = req.params;
+        const { secrets } = req.body; // Expects object { KEY: "value" }
+        await req.agent.skillService.setSkillSecrets(name, secrets);
+        res.json({ success: true });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
@@ -165,7 +179,7 @@ router.delete('/:filename', async (req, res) => {
             // Check if it's builtin
             const builtinPath = path.join(SKILL_DIRS.builtin, f);
             if (await fs.pathExists(builtinPath)) {
-                return res.status(403).json({ error: 'Cannot delete built-in skills' });
+                return res.status(403).json({ error: 'Cannot delete built-in skills. Try disabling it instead.' });
             }
             res.status(404).json({ error: 'Skill not found' });
         }

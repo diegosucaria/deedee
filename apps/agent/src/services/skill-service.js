@@ -13,8 +13,53 @@ class SkillService {
 
     async init() {
         console.log('[SkillService] Initializing...');
+        await this.loadState();
         await this.loadSkills();
         this.watchSkills();
+    }
+
+    async loadState() {
+        this.stateFile = path.join(process.cwd(), 'data', 'skills-state.json');
+        try {
+            if (await fs.pathExists(this.stateFile)) {
+                this.state = await fs.readJson(this.stateFile);
+            } else {
+                this.state = {};
+            }
+        } catch (e) {
+            console.error('[SkillService] Failed to load state:', e);
+            this.state = {};
+        }
+    }
+
+    async saveState() {
+        try {
+            await fs.writeJson(this.stateFile, this.state, { spaces: 2 });
+        } catch (e) {
+            console.error('[SkillService] Failed to save state:', e);
+        }
+    }
+
+    getSkillState(name) {
+        if (!this.state[name]) {
+            this.state[name] = { enabled: true, secrets: {} };
+        }
+        return this.state[name];
+    }
+
+    async toggleSkill(name, enabled) {
+        const s = this.getSkillState(name);
+        s.enabled = enabled;
+        await this.saveState();
+        // Reload instructions cache logic handled in getGlobalInstructions dynamically
+        return s;
+    }
+
+    async setSkillSecrets(name, secrets) {
+        const s = this.getSkillState(name);
+        s.secrets = { ...s.secrets, ...secrets };
+        await this.saveState();
+        return s;
     }
 
     watchSkills() {
@@ -84,12 +129,49 @@ class SkillService {
             if (skill) {
                 // Validation: Check for duplicates or collisions?
                 // For now, Last Write Wins (User overrides Built-in if same name)
+
+                // Check Dependencies
+                skill.missingDependencies = this.checkDependencies(skill);
+
                 this.skills.set(skill.name, skill);
                 // console.log(`[SkillService] Loaded skill: ${skill.name}`);
             }
         } catch (err) {
             console.error(`[SkillService] Failed to parse ${filePath}:`, err);
         }
+    }
+
+    checkDependencies(skill) {
+        const missing = [];
+        if (skill.metadata && skill.metadata.requires) {
+            const reqs = skill.metadata.requires;
+
+            // Check Config (Env Vars or Agent Config)
+            if (reqs.config) {
+                reqs.config.forEach(key => {
+                    // Check env first
+                    if (process.env[key]) return;
+                    if (process.env[key.toUpperCase()]) return;
+
+                    // Check Agent Config
+                    // We assume agent.config is available or we check settings
+                    // For now, simple ENV check is robust enough for "slack.token" etc.
+                    missing.push(`Config: ${key}`);
+                });
+            }
+
+            // Check Tools (MCP)
+            if (reqs.tools) {
+                // We'd need access to the tool registry. availableTools is usually on agent.
+                // Assuming this.agent.tools is a Map or Object
+                if (this.agent.tools) {
+                    reqs.tools.forEach(tool => {
+                        if (!this.agent.tools[tool]) missing.push(`Tool: ${tool}`);
+                    });
+                }
+            }
+        }
+        return missing;
     }
 
     /**
@@ -131,6 +213,15 @@ class SkillService {
                     if (value === 'true') value = true;
                     if (value === 'false') value = false;
 
+                    // JSON parsing for metadata
+                    if (key === 'metadata' && value.startsWith('{')) {
+                        try {
+                            value = JSON.parse(value);
+                        } catch (e) {
+                            console.warn(`[SkillService] Failed to parse metadata JSON for ${filePath}`);
+                        }
+                    }
+
                     frontmatter[key] = value;
                 }
             }
@@ -170,8 +261,15 @@ class SkillService {
      * Returns the formatted prompt string to inject into the System Prompt.
      */
     getGlobalInstructions() {
+        // Enforce Enable/Disable State
         const activeSkills = Array.from(this.skills.values())
-            .filter(s => !s.disableModelInvocation);
+            .filter(s => {
+                if (s.disableModelInvocation) return false;
+                const state = this.getSkillState(s.name);
+                if (!state.enabled) return false;
+                if (s.missingDependencies && s.missingDependencies.length > 0) return false;
+                return true;
+            });
 
         if (activeSkills.length === 0) return '';
 
@@ -180,6 +278,7 @@ class SkillService {
             return `
 ### SKILL: ${skill.name}
 ${skill.description ? `> ${skill.description}` : ''}
+${skill.metadata && skill.metadata.emoji ? `Emoji: ${skill.metadata.emoji}` : ''}
 
 ${skill.instructions}
 --------------------------------------------------
@@ -193,19 +292,32 @@ ${skill.instructions}
 
     getSkillByCommand(cmd) {
         // 1. Direct Name Match
-        if (this.skills.has(cmd)) return this.skills.get(cmd);
+        if (this.skills.has(cmd)) {
+            const s = this.skills.get(cmd);
+            const state = this.getSkillState(s.name);
+            if (state.enabled) return s;
+        }
 
         // 2. Alias Match
         for (const skill of this.skills.values()) {
             if (skill.aliases && skill.aliases.includes(cmd)) {
-                return skill;
+                const state = this.getSkillState(skill.name);
+                if (state.enabled) return skill;
             }
         }
         return null;
     }
 
     getAllSkills() {
-        return Array.from(this.skills.values());
+        return Array.from(this.skills.values()).map(s => {
+            const state = this.getSkillState(s.name);
+            return {
+                ...s,
+                enabled: state.enabled,
+                secrets: Object.keys(state.secrets || {}), // Don't expose values
+                missingDependencies: s.missingDependencies
+            };
+        });
     }
 }
 

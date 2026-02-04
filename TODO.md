@@ -87,8 +87,8 @@
 - [x] **Contact Import**: Added Import CSV/WhatsApp feature to People page.
 - [x] **Validation**: Enhanced API validation for configuration keys.
 - [x] **Deduplication**: Fixed double tool execution bug in Agent.
-- [x] Smart Context: Increased WhatsApp History Limits (3x)
-- [x] Tone Matching: Impersonation Mode for 'User' Session
+- [x] **Smart Context**: Increased WhatsApp History Limits (3x)
+- [x] **Tone Matching**: Impersonation Mode for 'User' Session
 - [x] **Avatar Fallback**: Implemented automatic redirect to `ui-avatars.com` for missing profile pictures.
 - [x] **Database Stats**: Added Agent Database statistics card in System page (Size, Counts).
 - [x] **Mobile UX**: Optimized mobile layout for Chat and Live pages.
@@ -103,3 +103,8 @@
     - [x] **Session Repair**: Implemented Level 2 ("Surgical Strike") repair for stale WhatsApp sessions.
     - [x] **Dynamic Guardrails**: Replaced rigid regex with LLM-driven Relationship Context injection.
     - [x] **Bugfixes**: Fixed draft triggering regression and UI relationship persistence.
+- [x] **Skills Integration**:
+    - [x] **Dynamic Loading**: `SkillService` for hot-swappable Markdown skills.
+    - [x] **Slash Commands**: Routed `/commands` to skills via Agent logic.
+    - [x] **Skills UI**: Dashboard page for management, editing, and secrets.
+    - [x] **Compatibility**: Enhanced to match Moltbot spec (Metadata, Secrets, Toggles).

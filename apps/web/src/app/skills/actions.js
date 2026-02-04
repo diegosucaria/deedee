@@ -39,3 +39,29 @@ export async function deleteSkill(filename) {
         return { success: false, error: e.message };
     }
 }
+
+export async function toggleSkill(name, enabled) {
+    try {
+        const action = enabled ? 'enable' : 'disable';
+        await fetchAPI(`/v1/skills/${encodeURIComponent(name)}/${action}`, {
+            method: 'POST'
+        });
+        revalidatePath('/skills');
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+}
+
+export async function saveSkillSecrets(name, secrets) {
+    try {
+        await fetchAPI(`/v1/skills/${encodeURIComponent(name)}/secrets`, {
+            method: 'POST',
+            body: JSON.stringify({ secrets })
+        });
+        revalidatePath('/skills');
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+}
