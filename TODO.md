@@ -107,4 +107,4 @@
     - [x] **Dynamic Loading**: `SkillService` for hot-swappable Markdown skills.
     - [x] **Slash Commands**: Routed `/commands` to skills via Agent logic.
     - [x] **Skills UI**: Dashboard page for management, editing, and secrets.
-    - [x] **Compatibility**: Enhanced to match Moltbot spec (Metadata, Secrets, Toggles).
+    - [x] **Compatibility**: Enhanced allow Metadata, Secrets, Toggles.
