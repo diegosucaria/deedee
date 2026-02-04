@@ -254,12 +254,30 @@ class SQLiteStore {
     }
 
     getChatHistory(jid, limit = 50) {
-        const rows = this.db.prepare(`
+        let targetJid = jid;
+
+        // 1. Primary Query
+        let rows = this.db.prepare(`
             SELECT data FROM messages 
             WHERE remote_jid = ? 
             ORDER BY timestamp DESC 
             LIMIT ?
-        `).all(jid, limit);
+        `).all(targetJid, limit);
+
+        // 2. Smart Resolution (Retry if empty)
+        if (rows.length === 0 && targetJid.includes('@lid')) {
+            const contact = this.getContactByLid(targetJid);
+            if (contact && contact.id) {
+                console.log(`[SQLiteStore] History Auto-Resolve: LID ${targetJid} -> Phone ${contact.id}`);
+                targetJid = contact.id;
+                rows = this.db.prepare(`
+                    SELECT data FROM messages 
+                    WHERE remote_jid = ? 
+                    ORDER BY timestamp DESC 
+                    LIMIT ?
+                `).all(targetJid, limit);
+            }
+        }
 
         return rows.reverse().map(r => JSON.parse(r.data));
     }

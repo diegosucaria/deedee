@@ -197,10 +197,14 @@ class CommunicationExecutor extends BaseExecutor {
 
                 // Resolve Contact Alias First?
                 // Reuse alias resolution logic? For now, assume phone or resolving inside agent if tool caller did it.
-                // Or I can copy the resolution logic. Let's do simple cleaning first.
                 // Assuming contact is phone number or JID.
-                const cleanContact = contact.replace(/[^0-9]/g, '');
-                const jid = `${cleanContact}@s.whatsapp.net`;
+                let jid;
+                if (contact.includes('@')) {
+                    jid = contact;
+                } else {
+                    const cleanContact = contact.replace(/[^0-9]/g, '');
+                    jid = `${cleanContact}@s.whatsapp.net`;
+                }
 
                 try {
                     const interfacesUrl = process.env.INTERFACES_URL || 'http://interfaces:5000';

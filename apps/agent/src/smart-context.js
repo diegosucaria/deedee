@@ -33,6 +33,29 @@ class SmartContextManager {
 
         const recentHistory = this.db.getHistoryForChat(chatId, limit);
 
+        // INJECT TIMESTAMPS
+        // The model receives raw text history. To give it temporal awareness, 
+        // we explicitly prepend the timestamp to the message content.
+        const timestampedHistory = recentHistory.map(msg => {
+            if (msg.timestamp) {
+                const date = new Date(msg.timestamp);
+                // Format: [02/04 10:00]
+                const month = (date.getMonth() + 1).toString().padStart(2, '0');
+                const day = date.getDate().toString().padStart(2, '0');
+                const hours = date.getHours().toString().padStart(2, '0');
+                const mins = date.getMinutes().toString().padStart(2, '0');
+                const timeStr = `[${month}/${day} ${hours}:${mins}]`;
+
+                // Clone to avoid mutating shared state if any
+                const newMsg = { ...msg, parts: [...msg.parts] };
+                if (newMsg.parts.length > 0 && newMsg.parts[0].text) {
+                    newMsg.parts[0] = { ...newMsg.parts[0], text: `${timeStr} ${newMsg.parts[0].text}` };
+                }
+                return newMsg;
+            }
+            return msg;
+        });
+
         // 4. Inject Summary as System Message (or first user message)
         if (summary) {
             const summaryMsg = {
@@ -46,10 +69,10 @@ ${summary.content}
 --------------------------------------------------
 ` }]
             };
-            return [summaryMsg, ...recentHistory];
+            return [summaryMsg, ...timestampedHistory];
         }
 
-        return recentHistory;
+        return timestampedHistory;
     }
 
     async checkAndSummarize(chatId) {
