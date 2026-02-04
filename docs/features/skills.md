@@ -1,6 +1,6 @@
 # Skills System
 
-The Skills system allows Deedee to dynamically load behavioral instructions and slash commands from Markdown files. It is designed to be compatible with the OpenClaw AgentSkills specification.
+The Skills system allows Deedee to dynamically load behavioral instructions and slash commands from Markdown files. It is designed to be compatible with the AgentSkills specification.
 
 ## Directory Structure
 - **Built-in Skills**: `apps/agent/skills/` (Core capabilities shipped with the repo)

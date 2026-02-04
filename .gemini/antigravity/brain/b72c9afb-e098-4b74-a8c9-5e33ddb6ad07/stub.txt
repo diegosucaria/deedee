@@ -1,8 +1,0 @@
-feat(skills): implement dynamic skills system
-
-- Implemented `SkillService` in Agent to load/parse `SKILL.md` files.
-- Added `apps/web/src/app/skills` for skill management UI.
-- Added `apps/api/src/routes/skills.js` with secure CRUD endpoints.
-- Updated `CommandHandler` to support skill slash commands and aliases.
-- Implemented `fs.watch` for live skill reloading.
-- Documented feature in `docs/features/skills.md`.
