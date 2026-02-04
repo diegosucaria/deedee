@@ -265,11 +265,30 @@ class SQLiteStore {
         `).all(targetJid, limit);
 
         // 2. Smart Resolution (Retry if empty)
-        if (rows.length === 0 && targetJid.includes('@lid')) {
-            const contact = this.getContactByLid(targetJid);
-            if (contact && contact.id) {
-                console.log(`[SQLiteStore] History Auto-Resolve: LID ${targetJid} -> Phone ${contact.id}`);
-                targetJid = contact.id;
+
+        if (rows.length === 0) {
+            let resolvedJid = null;
+
+            // Case A: Explicit LID (@lid)
+            if (targetJid.includes('@lid')) {
+                const contact = this.getContactByLid(targetJid);
+                if (contact && contact.id) resolvedJid = contact.id;
+            }
+            // Case B: Digits only or Wrong Domain (e.g. LID_NUMBER@s.whatsapp.net)
+            else {
+                // Heuristic: LIDs are usually 15 digits (longer than phone numbers which are ~10-13)
+                const digits = targetJid.split('@')[0].replace(/[^0-9]/g, '');
+                if (digits.length > 14) {
+                    // Try constructing valid LID
+                    const potentialLid = `${digits}@lid`;
+                    const contact = this.getContactByLid(potentialLid);
+                    if (contact && contact.id) resolvedJid = contact.id;
+                }
+            }
+
+            if (resolvedJid) {
+                console.log(`[SQLiteStore] History Auto-Resolve: ${targetJid} -> ${resolvedJid}`);
+                targetJid = resolvedJid;
                 rows = this.db.prepare(`
                     SELECT data FROM messages 
                     WHERE remote_jid = ? 
