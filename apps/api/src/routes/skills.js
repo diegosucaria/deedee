@@ -55,13 +55,47 @@ function parseSkill(content, fileName, type) {
     };
 }
 
-// GET /v1/skills - List all skills (Consolidated via Agent Service)
+// GET /v1/skills - List all skills
 router.get('/', async (req, res) => {
     try {
-        if (!req.agent || !req.agent.skillService) {
-            return res.status(503).json({ error: 'Agent SkillService not available' });
+        const skills = [];
+        const stateFile = path.join(process.cwd(), 'data', 'skills-state.json');
+        let state = {};
+
+        // Load State
+        if (await fs.pathExists(stateFile)) {
+            try {
+                state = await fs.readJson(stateFile);
+            } catch (e) {
+                console.warn('Failed to load skills-state.json', e);
+            }
         }
-        const skills = req.agent.skillService.getAllSkills();
+
+        // 1. Scan Built-in
+        if (await fs.pathExists(SKILL_DIRS.builtin)) {
+            const files = await fs.readdir(SKILL_DIRS.builtin);
+            for (const f of files) {
+                if (f.endsWith('.md')) {
+                    const content = await fs.readFile(path.join(SKILL_DIRS.builtin, f), 'utf8');
+                    skills.push(parseSkillWithState(content, f, 'builtin', state));
+                }
+            }
+        }
+
+        // 2. Scan User (data/skills)
+        if (await fs.pathExists(SKILL_DIRS.user)) {
+            const files = await fs.readdir(SKILL_DIRS.user);
+            for (const f of files) {
+                if (f.endsWith('.md')) {
+                    const content = await fs.readFile(path.join(SKILL_DIRS.user, f), 'utf8');
+                    // Override builtin if same name? 
+                    // Client can handle dedupe or we do it here.
+                    // For now, push all and let client decide (or filter by name map)
+                    skills.push(parseSkillWithState(content, f, 'user', state));
+                }
+            }
+        }
+
         res.json(skills);
     } catch (e) {
         console.error('List Skills Error:', e);
@@ -69,47 +103,71 @@ router.get('/', async (req, res) => {
     }
 });
 
+// Helper to merge state
+function parseSkillWithState(content, filename, type, state) {
+    const skill = parseSkill(content, filename, type);
+    const sState = state[skill.name] || {};
+
+    // Basic Dependency Check (Env Vars only, since we can't check Tools from API)
+    const missingDependencies = [];
+    if (skill.metadata && skill.metadata.requires && skill.metadata.requires.config) {
+        skill.metadata.requires.config.forEach(key => {
+            if (!process.env[key] && !process.env[key.toUpperCase()]) {
+                missingDependencies.push(`Config: ${key}`);
+            }
+        });
+    }
+
+    return {
+        ...skill,
+        enabled: sState.enabled !== false, // Default true if not in state
+        secrets: Object.keys(sState.secrets || {}),
+        missingDependencies
+    };
+}
+
 // GET /v1/skills/:filename
 router.get('/:filename', async (req, res) => {
     try {
         const f = req.params.filename;
-        const skills = req.agent.skillService.getAllSkills();
-        // Since getAllSkills returns object with metadata, we search by fileName or name
-        const match = skills.find(s => s.fileName === f || s.name === f.replace('.md', ''));
+        let p = path.join(SKILL_DIRS.user, f);
+        let type = 'user';
 
-        if (match) {
-            // Re-read file just to be safe/fresh? Or rely on match?
-            // match.content is available
-            res.json(match);
-        } else {
-            res.status(404).json({ error: 'Skill not found' });
+        if (!await fs.pathExists(p)) {
+            p = path.join(SKILL_DIRS.builtin, f);
+            type = 'builtin';
+            if (!await fs.pathExists(p)) {
+                return res.status(404).json({ error: 'Skill not found' });
+            }
         }
+
+        const content = await fs.readFile(p, 'utf8');
+        const stateFile = path.join(process.cwd(), 'data', 'skills-state.json');
+        let state = {};
+        if (await fs.pathExists(stateFile)) state = await fs.readJson(stateFile);
+
+        res.json({ ...parseSkillWithState(content, f, type, state), raw: content });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
 });
 
-// POST /v1/skills - Create/Update
+// POST /v1/skills - Create/Update (Keep as is, but ensure state is preserved/init)
 router.post('/', async (req, res) => {
     try {
         const { filename, content } = req.body;
         if (!content) return res.status(400).json({ error: 'Content required' });
 
-        // Ensure dir exists
         await fs.ensureDir(SKILL_DIRS.user);
 
-        // Determine filename
         let targetFile = filename;
         if (!targetFile) {
-            // Extract name from content?
-            // We use the helper locally just for name extraction before file write
             const meta = parseSkill(content, 'temp', 'user');
             if (meta.name) targetFile = `${meta.name}.md`;
             else targetFile = `skill_${Date.now()}.md`;
         }
         if (!targetFile.endsWith('.md')) targetFile += '.md';
 
-        // Sanitize filename - STRICT
         const safeName = path.basename(targetFile);
         if (safeName !== targetFile && targetFile.includes(path.sep)) {
             return res.status(400).json({ error: 'Invalid filename' });
@@ -117,21 +175,31 @@ router.post('/', async (req, res) => {
 
         const filePath = path.join(SKILL_DIRS.user, safeName);
         await fs.writeFile(filePath, content);
-
-        // Trigger explicit reload in service might be needed if fs.watch is slow?
-        // Service watches, so it should pick it up.
-
         res.json({ success: true, filename: safeName });
     } catch (e) {
         res.status(500).json({ error: e.message });
     }
 });
 
+// Shared State Helper
+async function updateSkillState(name, updateFn) {
+    const stateFile = path.join(process.cwd(), 'data', 'skills-state.json');
+    let state = {};
+    try {
+        if (await fs.pathExists(stateFile)) state = await fs.readJson(stateFile);
+    } catch (e) { }
+
+    if (!state[name]) state[name] = { enabled: true, secrets: {} };
+
+    updateFn(state[name]);
+
+    await fs.writeJson(stateFile, state, { spaces: 2 });
+}
+
 // POST /v1/skills/:name/enable
 router.post('/:name/enable', async (req, res) => {
     try {
-        const { name } = req.params;
-        await req.agent.skillService.toggleSkill(name, true);
+        await updateSkillState(req.params.name, (s) => s.enabled = true);
         res.json({ success: true, enabled: true });
     } catch (e) {
         res.status(500).json({ error: e.message });
@@ -141,8 +209,7 @@ router.post('/:name/enable', async (req, res) => {
 // POST /v1/skills/:name/disable
 router.post('/:name/disable', async (req, res) => {
     try {
-        const { name } = req.params;
-        await req.agent.skillService.toggleSkill(name, false);
+        await updateSkillState(req.params.name, (s) => s.enabled = false);
         res.json({ success: true, enabled: false });
     } catch (e) {
         res.status(500).json({ error: e.message });
@@ -152,9 +219,10 @@ router.post('/:name/disable', async (req, res) => {
 // POST /v1/skills/:name/secrets
 router.post('/:name/secrets', async (req, res) => {
     try {
-        const { name } = req.params;
-        const { secrets } = req.body; // Expects object { KEY: "value" }
-        await req.agent.skillService.setSkillSecrets(name, secrets);
+        const { secrets } = req.body;
+        await updateSkillState(req.params.name, (s) => {
+            s.secrets = { ...s.secrets, ...secrets };
+        });
         res.json({ success: true });
     } catch (e) {
         res.status(500).json({ error: e.message });
