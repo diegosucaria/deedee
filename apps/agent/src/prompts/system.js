@@ -7,7 +7,7 @@
  * @returns {string} The system instruction.
  */
 function getSystemInstruction(dateString, activeGoals, facts, options = { codingMode: false, vaultContext: null }) {
-        const { codingMode, vaultContext } = options;
+        const { codingMode, vaultContext, skillsContext } = options;
 
         const BASE_PROMPT = `
             You are Deedee, a helpful and capable AI assistant.
@@ -112,6 +112,10 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
     `;
 
         let instruction = BASE_PROMPT + THINKING_PROTOCOL;
+
+        if (skillsContext) {
+                instruction += `\n\nACTIVE SKILLS:\nThe following are specialized behavioral modules you have loaded. Adopt these personas or follow these procedures when triggered by the relevant context.\n${skillsContext}\n`;
+        }
 
         if (codingMode) {
                 instruction += CODING_PROMPT;

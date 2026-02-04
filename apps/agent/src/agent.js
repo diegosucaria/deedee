@@ -30,6 +30,7 @@ const { ConfigService } = require('./services/config-service');
 const { RagService } = require('./services/rag-service');
 const { GSuiteService } = require('./services/gsuite-service');
 const { DJService } = require('./services/dj-service');
+const { SkillService } = require('./services/skill-service');
 
 
 
@@ -77,6 +78,7 @@ class Agent {
     this.ragService = new RagService(this);
     this.djService = new DJService(this);
     this.impersonationService = new ImpersonationService(this);
+    this.skillService = new SkillService(this);
 
     // In-Memory Settings Cache
     this.settings = {};
@@ -166,6 +168,9 @@ class Agent {
 
     // Ensure System Maintenance Jobs
     this.scheduler.ensureSystemJobs();
+
+    // Initialize Skills
+    await this.skillService.init();
 
     // Check Goals
     const pendingGoals = this.db.getPendingGoals();
@@ -831,7 +836,9 @@ class Agent {
         const timeZone = process.env.TZ || 'America/Argentina/Buenos_Aires';
         const timeString = new Date().toLocaleString('en-US', { timeZone, timeZoneName: 'short' }) + ` (${timeZone})`;
 
-        let grokSystemPrompt = getSystemInstruction(timeString, activeGoals, facts, { codingMode: true, vaultContext });
+        // Use latest skill context
+        const skillsContext = this.skillService.getGlobalInstructions();
+        let grokSystemPrompt = getSystemInstruction(timeString, activeGoals, facts, { codingMode: true, vaultContext, skillsContext });
 
         // Add Tool Manifest since Grok can't see definitions natively yet
         grokSystemPrompt += `\n\n**AVAILABLE TOOLS (You cannot execute them directly, but you know they exist):**\n` +
@@ -1036,11 +1043,13 @@ class Agent {
       const timeZone = process.env.TZ || 'America/Argentina/Buenos_Aires';
       const timeString = new Date().toLocaleString('en-US', { timeZone, timeZoneName: 'short' }) + ` (${timeZone})`;
 
+      // Use latest skill context
+      const skillsContext = this.skillService.getGlobalInstructions();
       let systemInstruction = getSystemInstruction(
         timeString,
         activeGoals,
         facts,
-        { codingMode: true, vaultContext } // Coding mode enabled by default for now, could be dynamic
+        { codingMode: true, vaultContext, skillsContext } // Coding mode enabled by default for now, could be dynamic
       );
       // --- TONE MATCHING (Impersonation Mode) ---
       // If we are acting on behalf of the user (whatsapp:user), we must sound like them.

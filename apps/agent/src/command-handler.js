@@ -285,6 +285,34 @@ class CommandHandler {
             return true;
         }
 
+        // --- SKILL DISPATCH ---
+        if (this.agent && this.agent.skillService) {
+            const skillCmd = cmd.substring(1); // Remove leading slash
+            const skill = this.agent.skillService.getSkillByCommand(skillCmd);
+
+            if (skill && skill.userInvocable) {
+                console.log(`[CommandHandler] Dispatching to Skill: ${skill.name}`);
+
+                // 1. Tool Dispatch
+                if (skill['command-dispatch'] === 'tool' && skill['command-tool']) {
+                    const toolName = skill['command-tool'];
+                    const toolArgs = {
+                        command: args.join(' '),
+                        commandName: cmd,
+                        skillName: skill.name
+                    };
+
+                    // Return action for Agent to execute
+                    return { type: 'EXECUTE_PENDING', action: { name: toolName, args: toolArgs } };
+                }
+
+                // 2. Behavioral/Persona Skill (No Tool)
+                // Just acknowledge activation. The prompt is likely already in System Prompt (if !disableModelInvocation).
+                await this.sendReply(chatId, message.source, `✅ Skill **${skill.name}** is active.\n_${skill.description || 'Custom behavior loaded.'}_`);
+                return true;
+            }
+        }
+
         // Unknown command
         await this.sendReply(chatId, message.source, `Unknown command: ${content}`);
         return true;
