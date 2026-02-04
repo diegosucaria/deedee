@@ -1135,6 +1135,16 @@ class WhatsAppService {
                 const msgRows = this.store.db.prepare("SELECT DISTINCT remote_jid FROM messages WHERE remote_jid LIKE ? AND remote_jid NOT LIKE '%@lid'").all(`%${suffix}%`);
                 msgRows.forEach(r => candidateJids.add(r.remote_jid));
             }
+
+            // [FIX] Check for Malformed LID (Wrong domain but long number)
+            // LIDs are usually 15 digits, phone numbers are usually <14 (even with country code)
+            if (inputDigits.length > 14) {
+                const potentialLid = `${inputDigits}@lid`;
+                candidateJids.add(potentialLid);
+                // Resolve to phone via DB
+                const row = this.store.db.prepare('SELECT id FROM contacts WHERE lid = ?').get(potentialLid);
+                if (row && row.id) candidateJids.add(row.id);
+            }
         }
 
         // 3. Expand to include linked LIDs/IDs
