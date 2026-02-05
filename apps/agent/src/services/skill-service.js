@@ -369,12 +369,25 @@ class SkillService {
         if (activeSkills.length === 0) return '';
 
         return activeSkills.map(skill => {
-            // Replace {baseDir} if needed (future proofing)
+            const state = this.getSkillState(skill.name);
+            const secrets = state.secrets || {};
+            const secretKeys = Object.keys(secrets);
+
+            let secretsBlock = '';
+            if (secretKeys.length > 0) {
+                secretsBlock = `
+> [!IMPORTANT]
+> **CONFIGURATION / SECRETS**:
+> The following sensitive values have been injected into your context for this skill. Use them ONLY when necessary.
+${secretKeys.map(k => `> - ${k}: "${secrets[k]}"`).join('\n')}
+`;
+            }
+
             return `
 ### SKILL: ${skill.name}
 ${skill.description ? `> ${skill.description}` : ''}
 ${skill.metadata && skill.metadata.emoji ? `Emoji: ${skill.metadata.emoji}` : ''}
-
+${secretsBlock}
 ${skill.instructions}
 --------------------------------------------------
 `;
