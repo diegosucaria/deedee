@@ -70,7 +70,7 @@ COPY packages/plex-mcp-server ./packages/plex-mcp-server
 
 # Pre-install MCP Servers
 RUN uv pip install -r packages/plex-mcp-server/requirements.txt
-RUN uv pip install ha-mcp
+RUN uv pip install ha-mcp youtube-transcript-api
 
 # Copy built node_modules and app source
 COPY --from=builder /app/node_modules ./node_modules

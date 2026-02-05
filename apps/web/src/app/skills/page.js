@@ -143,7 +143,7 @@ export default function SkillsPage() {
                                             "text-[10px] px-1.5 py-0.5 rounded w-fit",
                                             skill.type === 'builtin' ? "bg-zinc-800 text-zinc-400" : "bg-emerald-900/30 text-emerald-400 border border-emerald-900/50"
                                         )}>
-                                            {skill.type.toUpperCase()}
+                                            {(skill.type || 'USER').toUpperCase()}
                                         </span>
                                         {skill.missingDependencies?.length > 0 && (
                                             <span className="flex items-center gap-1 text-[10px] bg-red-900/20 text-red-400 border border-red-900/40 px-1.5 py-0.5 rounded cursor-help" title={skill.missingDependencies.join(', ')}>
