@@ -13,6 +13,7 @@ class SkillService {
 
     async init() {
         console.log('[SkillService] Initializing...');
+        console.log(`[SkillService] CWD: ${process.cwd()}`);
         await this.loadState();
         await this.loadSkills();
         this.watchSkills();
@@ -119,6 +120,7 @@ class SkillService {
     }
 
     async scanDir(dir) {
+        console.log(`[SkillService] Scanning directory: ${dir}`);
         const items = await fs.readdir(dir);
         for (const item of items) {
             const fullPath = path.join(dir, item);
@@ -128,24 +130,17 @@ class SkillService {
                 // Check if directory contains SKILL.md
                 const skillMd = path.join(fullPath, 'SKILL.md');
                 if (await fs.pathExists(skillMd)) {
+                    console.log(`[SkillService] Found SKILL.md in folder: ${fullPath}`);
                     await this.loadSkill(skillMd);
                 } else {
-                    // Recurse? Or just support 1 level deep? 
-                    // OpenClaw seems to be 1 level deep (skills/name/SKILL.md).
-                    // Let's recurse to be safe/flexible.
                     await this.scanDir(fullPath);
                 }
             } else if (item.endsWith('.md')) {
-                // Root level .md file
-                // Avoid loading SKILL.md if we already handled it via directory check?
-                // Actually the directory check looks for specific file.
-                // If we possess a recursive scan, we might double load if we not careful.
                 if (item === 'SKILL.md') {
-                    // Should have been handled by parent dir check, 
-                    // OR we are in a subfolder loop.
+                    // Should have been handled by parent dir check
                     await this.loadSkill(fullPath);
                 } else {
-                    // Classic flat file
+                    console.log(`[SkillService] Found flat skill: ${fullPath}`);
                     await this.loadSkill(fullPath);
                 }
             }
