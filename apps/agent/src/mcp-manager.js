@@ -213,13 +213,41 @@ class MCPManager {
                 } else {
                     // Default: Stdio Transport
                     // Robust CWD Resolution: Relative to config directory, not process.cwd()
+                    // Robust Command: Sanitize absolute paths that might be invalid in this environment
+                    let command = serverConfig.command;
+                    if (command === '/usr/local/bin/node' || command === '/usr/bin/node') command = 'node';
+                    if (command === '/usr/bin/python3' || command === '/usr/local/bin/python3') command = 'python3';
+                    if (command === 'node') command = process.execPath; // Use current runtime
+
+                    // Robust CWD Resolution
                     const configDir = path.dirname(this.configPath);
-                    const resolvedCwd = serverConfig.cwd
+                    let resolvedCwd = serverConfig.cwd
                         ? path.resolve(configDir, serverConfig.cwd)
                         : configDir;
 
-                    // Robust Command: Use current node executable if 'node' is specified
-                    const command = serverConfig.command === 'node' ? process.execPath : serverConfig.command;
+                    // Fix: usage of relative paths 'no longer works' if the config file was moved to /app/data
+                    // Strategy: If resolvedCwd doesn't exist, try resolving relative to process.cwd() or common roots
+                    if (!fs.existsSync(resolvedCwd)) {
+                        console.warn(`[MCP] CWD ${resolvedCwd} not found. Attempting auto-repair...`);
+
+                        // Try 1: Relative to process.cwd() (The Agent working directory)
+                        const candidate1 = path.resolve(process.cwd(), serverConfig.cwd);
+
+                        // Try 2: Hardcoded Docker Path (Fix for "../../packages" becoming "/packages")
+                        // If we are in /app/apps/agent, then ../../packages is /app/packages.
+                        // But configDir might be /app/data.
+                        const candidate2 = path.resolve('/app/packages', path.basename(serverConfig.cwd));
+
+                        if (fs.existsSync(candidate1)) {
+                            console.log(`[MCP] Auto-repaired CWD to: ${candidate1}`);
+                            resolvedCwd = candidate1;
+                        } else if (fs.existsSync(candidate2)) {
+                            console.log(`[MCP] Auto-repaired CWD to: ${candidate2}`);
+                            resolvedCwd = candidate2;
+                        } else {
+                            console.warn(`[MCP] Failed to repair CWD. Spawning might fail.`);
+                        }
+                    }
 
                     console.log(`[MCP] Spawning ${name}: cmd=${command}, cwd=${resolvedCwd}`);
 

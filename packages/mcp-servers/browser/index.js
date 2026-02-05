@@ -374,11 +374,16 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             // 1. Inject Labels (Set-of-Mark)
             // simplified script to label interactive elements
             const labels = await p.evaluate(() => {
-                const interactives = Array.from(document.querySelectorAll('button, a, input, [role="button"]'));
+                const interactives = Array.from(document.querySelectorAll('button, a, input, select, textarea, [role="button"], [role="link"], [role="menuitem"], [role="option"], [onclick]'));
                 // Filter visible
                 const visible = interactives.filter(el => {
                     const rect = el.getBoundingClientRect();
+                    const style = window.getComputedStyle(el);
+                    // Add generic cursor pointer check for missing elements
+                    const isClickable = style.cursor === 'pointer' || el.onclick != null || ['BUTTON', 'A', 'INPUT', 'SELECT', 'TEXTAREA'].includes(el.tagName);
+
                     return rect.width > 0 && rect.height > 0 &&
+                        style.visibility !== 'hidden' && style.display !== 'none' &&
                         rect.top >= 0 && rect.left >= 0 &&
                         rect.bottom <= window.innerHeight && rect.right <= window.innerWidth;
                 });
@@ -905,14 +910,35 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
                 const text = args.text;
 
                 // Try scrolling first
-                try {
-                    const loc = p.locator(selector).first();
-                    await loc.scrollIntoViewIfNeeded({ timeout: 2000 });
-                } catch (ignore) { }
+                // Special Case: "input:focus" - Verify focus before trying to type
+                if (selector === 'input:focus') {
+                    const isFocused = await p.evaluate(() => {
+                        const el = document.activeElement;
+                        return el && el !== document.body && el !== document.documentElement;
+                    });
+                    if (!isFocused) {
+                        console.warn("[Browser] No element focused. Typing globally via keyboard as fallback.");
+                        await p.keyboard.type(text);
+                        return { content: [{ type: "text", text: `Typed "${text}" globally (no specific input focused).` }] };
+                    }
+                }
 
-                // Standard Fill (Best for standard inputs)
-                await p.fill(selector, text, { timeout: 30000 });
-                return { content: [{ type: "text", text: `Typed "${text}" into ${selector} (via fill)` }] };
+                // Standard Type/Fill with faster timeout + Keyboard Fallback
+                try {
+                    await p.type(selector, text, { timeout: 5000 }); // Try specific element first
+                    return { content: [{ type: "text", text: `Typed "${text}" into ${selector}` }] };
+                } catch (typeErr) {
+                    console.warn(`[Browser] Specific type failed on "${selector}", falling back to global keyboard. Error: ${typeErr.message}`);
+                    // This handles cases where the element selector is valid but maybe covered or not "fillable" but receives key events
+                    if (selector === 'input:focus') {
+                        await p.keyboard.type(text);
+                    } else {
+                        // Try focusing explicitly then typing globally
+                        try { await p.locator(selector).click({ timeout: 2000, force: true }); } catch (ignore) { }
+                        await p.keyboard.type(text);
+                    }
+                    return { content: [{ type: "text", text: `Typed "${text}" using keyboard fallback (selector issue).` }] };
+                }
 
             } catch (e) {
                 console.log(`[Browser] Standard fill failed for ${args.selector}: ${e.message}. Retrying with advanced fallback...`);
