@@ -1,18 +1,14 @@
 const express = require('express');
 const router = express.Router();
+const axios = require('axios');
 
 // GET /v1/mcp - List servers (Proxy to Agent)
 router.get('/', async (req, res) => {
     try {
         const agentUrl = process.env.AGENT_URL || 'http://agent:3000';
-        const fetch = (await import('node-fetch')).default;
 
-        const response = await fetch(`${agentUrl}/internal/mcp/config`);
-        if (!response.ok) {
-            throw new Error(`Agent returned ${response.status}`);
-        }
-
-        const config = await response.json();
+        const response = await axios.get(`${agentUrl}/internal/mcp/config`);
+        const config = response.data;
 
         // Security: Mask Secrets
         const sanitized = {};
@@ -28,7 +24,7 @@ router.get('/', async (req, res) => {
         }
         res.json(sanitized);
     } catch (error) {
-        console.error('[API] Failed to fetch MCP config from Agent:', error);
+        console.error('[API] Failed to fetch MCP config from Agent:', error.message);
         res.status(500).json({ error: 'Failed to fetch configuration', details: error.message });
     }
 });
@@ -42,12 +38,10 @@ router.post('/', async (req, res) => {
 
         // 1. Fetch current config
         const agentUrl = process.env.AGENT_URL || 'http://agent:3000';
-        const fetch = (await import('node-fetch')).default;
-
         let config = {};
         try {
-            const getRes = await fetch(`${agentUrl}/internal/mcp/config`);
-            if (getRes.ok) config = await getRes.json();
+            const getRes = await axios.get(`${agentUrl}/internal/mcp/config`);
+            config = getRes.data;
         } catch (e) {
             console.warn('[API] Could not fetch existing config, starting fresh');
         }
@@ -75,13 +69,7 @@ router.post('/', async (req, res) => {
         config[name] = newEntry;
 
         // 3. Save back to Agent
-        const saveRes = await fetch(`${agentUrl}/internal/mcp/config`, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify(config)
-        });
-
-        if (!saveRes.ok) throw new Error('Failed to save config to Agent');
+        await axios.post(`${agentUrl}/internal/mcp/config`, config);
 
         res.json({ success: true, config: newEntry });
     } catch (error) {
@@ -96,24 +84,22 @@ router.delete('/:name', async (req, res) => {
         if (!name) return res.status(400).json({ error: "Name required" });
 
         const agentUrl = process.env.AGENT_URL || 'http://agent:3000';
-        const fetch = (await import('node-fetch')).default;
 
         // 1. Fetch
         let config = {};
-        const getRes = await fetch(`${agentUrl}/internal/mcp/config`);
-        if (getRes.ok) config = await getRes.json();
+        try {
+            const getRes = await axios.get(`${agentUrl}/internal/mcp/config`);
+            config = getRes.data;
+        } catch (e) {
+            return res.status(500).json({ error: "Could not fetch config from agent" });
+        }
 
         // 2. Delete
         if (config[name]) {
             delete config[name];
 
             // 3. Save
-            const saveRes = await fetch(`${agentUrl}/internal/mcp/config`, {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify(config)
-            });
-            if (!saveRes.ok) throw new Error('Failed to save config to Agent');
+            await axios.post(`${agentUrl}/internal/mcp/config`, config);
         }
 
         res.json({ success: true });
