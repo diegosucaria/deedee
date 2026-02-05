@@ -98,7 +98,11 @@ export default function SkillsPage() {
         setCurrentSkill(skill);
         // We don't have values, only keys. But user wants to set them.
         // We'll just show an empty box or hint.
-        setSecretKeys('{\n  "API_KEY": ""\n}');
+        if (skill.secrets && Object.keys(skill.secrets).length > 0) {
+            setSecretKeys(JSON.stringify(skill.secrets, null, 2));
+        } else {
+            setSecretKeys('{\n  "API_KEY": ""\n}');
+        }
         setSecretsOpen(true);
     };
 
