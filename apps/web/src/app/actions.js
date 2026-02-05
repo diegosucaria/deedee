@@ -428,11 +428,57 @@ export async function getWhatsAppContacts(session, query) {
 // --- MCP & Tools ---
 export async function getMCPStatus() {
     try {
-        const res = await fetchAPI('/v1/mcp/status');
-        return res.servers || [];
+        // API now returns Object { name: config }
+        // We want array [{ name, status, type }]
+        // Note: Real "status" (connected/disconnected) logic is complex without proxying Agent.
+        // For now, assume "configured" means we can list it. 
+        // Ideally we'd query Agent for runtime status.
+        // Let's defer runtime status improvements and just list configured servers.
+        const config = await fetchAPI('/v1/mcp');
+
+        // Transform to array
+        return Object.entries(config).map(([name, cfg]) => ({
+            name,
+            status: cfg.disabled ? 'disabled' : 'enabled', // Simple status
+            type: cfg.transport
+        }));
     } catch (error) {
         console.error('getMCPStatus Error:', error);
         return [];
+    }
+}
+
+export async function addMCPServer(prevState, formData) {
+    try {
+        const name = formData.get('name');
+        const url = formData.get('url');
+        const token = formData.get('token');
+
+        if (!name || !url) return { success: false, error: 'Name and URL required' };
+
+        await fetchAPI('/v1/mcp', {
+            method: 'POST',
+            body: JSON.stringify({
+                name,
+                transport: 'sse',
+                url,
+                token
+            })
+        });
+        revalidatePath('/brain');
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+}
+
+export async function deleteMCPServer(name) {
+    try {
+        await fetchAPI(`/v1/mcp/${encodeURIComponent(name)}`, { method: 'DELETE' });
+        revalidatePath('/brain');
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: e.message };
     }
 }
 

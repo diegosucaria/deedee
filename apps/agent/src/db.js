@@ -41,8 +41,10 @@ class AgentDB {
     this.db.pragma('journal_mode = WAL');
 
     // Handle graceful shutdown
-    process.on('SIGINT', () => this.close());
-    process.on('SIGTERM', () => this.close());
+    // Handle graceful shutdown
+    // REMOVED: Managed by Agent/Server lifecycle to prevent premature closure
+    // process.on('SIGINT', () => this.close());
+    // process.on('SIGTERM', () => this.close());
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS messages (

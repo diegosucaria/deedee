@@ -142,14 +142,14 @@ if (agent) {
   // Mount Modular Routers
   app.use('/internal/skills', createSkillsRouter(agent));
   app.use('/internal/settings', createSettingsRouter(agent));
-  app.use('/internal/watchers', createWatchersRouter(agent)); 
-  app.use('/internal/people', createPeopleRouter(agent)); 
-  app.use('/v1/chat', createFilesRouter(agent)); 
-  app.use('/internal', createInternalRouter(agent)); 
+  app.use('/internal/watchers', createWatchersRouter(agent));
+  app.use('/internal/people', createPeopleRouter(agent));
+  app.use('/v1/chat', createFilesRouter(agent));
+  app.use('/internal', createInternalRouter(agent));
   app.use('/v1/vaults', createVaultRouter(agent));
   app.use('/internal/dj', createDjRouter(agent));
   app.use('/v1/autopilot', createAutopilotRouter(agent));
-  app.use('/', createToolRouter(agent)); 
+  app.use('/', createToolRouter(agent));
 }
 
 app.post('/chat', async (req, res) => {
@@ -206,10 +206,48 @@ app.post('/chat', async (req, res) => {
   }
 });
 
+// Internal Management Endpoints
+app.post('/internal/mcp/reload', async (req, res) => {
+  if (!agent) return res.status(503).json({ error: 'Agent not initialized' });
+  try {
+    console.log('[Server] Reloading MCP Config...');
+    if (agent.mcpManager) {
+      await agent.mcpManager.init();
+      // Also refresh skills as they depend on tools
+      // await agent.skillService.refreshTools(); // If needed? Agent usually refreshes tools on next turn? 
+      // Ideally we should tell agent to refresh its tool definitions for the Gemini model.
+      // But mcpManager.init() updates the cache.
+      // Agent.getTools() calls mcpManager.getTools().
+      // So next turn should pick it up.
+      res.json({ success: true });
+    } else {
+      res.status(500).json({ error: 'MCP Manager not found on Agent' });
+    }
+  } catch (e) {
+    console.error('[Server] Failed to reload MCP:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
 if (require.main === module) {
-  app.listen(port, '0.0.0.0', () => {
+  const server = app.listen(port, '0.0.0.0', () => {
     console.log(`Agent listening at http://0.0.0.0:${port}`);
   });
+
+  // Graceful Shutdown
+  const shutdown = async () => {
+    console.log('[Server] Shutting down...');
+    if (agent) {
+      await agent.stop();
+    }
+    server.close(() => {
+      console.log('[Server] HTTP server closed.');
+      process.exit(0);
+    });
+  };
+
+  process.on('SIGINT', shutdown);
+  process.on('SIGTERM', shutdown);
 }
 
 module.exports = { app, agent };

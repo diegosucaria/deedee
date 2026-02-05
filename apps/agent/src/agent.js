@@ -114,6 +114,7 @@ class Agent {
   }
 
   async stop() {
+    this.isStopped = true;
     console.log('[Agent] Stopping...');
     if (this.scheduler) {
       await this.scheduler.stop();
@@ -131,6 +132,7 @@ class Agent {
   }
 
   async start() {
+    this.isStopped = false;
     console.log('Agent starting...');
 
     // 1. Initialize the unified Client (Dynamic Import for ESM)
@@ -240,6 +242,12 @@ class Agent {
       if (chatId && status) {
         this.impersonationService.handlePresenceUpdate(chatId, status);
       }
+      return;
+    }
+
+    if (this.isStopped) {
+      console.warn('[Agent] Received message while stopped. Ignoring.');
+      // Optionally reply with 503 or just ignore
       return;
     }
 

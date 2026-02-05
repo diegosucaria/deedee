@@ -4,6 +4,7 @@ volumes:
   repo-data:
   agent-data: # For SQLite DB
   interfaces-data: # For WhatsApp Sessions
+  tailscale-data: # For Tailscale State
 
 services:
   agent:

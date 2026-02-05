@@ -31,16 +31,18 @@ app.use('/v1/whatsapp', require('./whatsapp'));
 app.use('/v1/live', require('./live'));
 app.use('/v1/vaults', require('./vaults'));
 app.use('/v1/people', require('./routes/people'));
-app.use('/v1/settings', require('./routes/settings')); 
-app.use('/v1/config', require('./routes/config')); 
-app.use('/v1/aliases', require('./routes/aliases')); 
-app.use('/v1/goals', require('./routes/goals')); 
-app.use('/v1/facts', require('./routes/facts')); 
-app.use('/v1/backups', require('./routes/backups')); 
-app.use('/v1/dj', require('./routes/dj')); 
-app.use('/v1/autopilot', require('./routes/autopilot')); 
-app.use('/v1/skills', require('./routes/skills')); 
-app.use('/v1/browser-secrets', require('./routes/secrets')); 
+app.use('/v1/settings', require('./routes/settings'));
+app.use('/v1/config', require('./routes/config'));
+app.use('/v1/aliases', require('./routes/aliases'));
+app.use('/v1/goals', require('./routes/goals'));
+app.use('/v1/facts', require('./routes/facts'));
+app.use('/v1/backups', require('./routes/backups'));
+app.use('/v1/dj', require('./routes/dj'));
+app.use('/v1/autopilot', require('./routes/autopilot'));
+app.use('/v1/skills', require('./routes/skills'));
+app.use('/v1/skills', require('./routes/skills'));
+app.use('/v1/browser-secrets', require('./routes/secrets'));
+app.use('/v1/mcp', require('./routes/mcp'));
 
 // BETTER: Add to apps/api/src/dashboard.js if it proxies to agent.
 const http = require('http');
