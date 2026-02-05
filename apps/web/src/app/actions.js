@@ -478,7 +478,17 @@ export async function deleteMCPServer(name) {
         revalidatePath('/brain');
         return { success: true };
     } catch (e) {
-        return { success: false, error: e.message };
+        return { error: e.message || 'Failed to delete server' };
+    }
+}
+
+export async function reloadMCPServers() {
+    try {
+        await fetchAPI(`/v1/mcp/reload`, { method: 'POST' });
+        revalidatePath('/brain');
+        return { success: true };
+    } catch (e) {
+        return { error: e.message || 'Failed to reload servers' };
     }
 }
 

@@ -108,4 +108,16 @@ router.delete('/:name', async (req, res) => {
     }
 });
 
+// POST /v1/mcp/reload - Force reload of MCP connections
+router.post('/reload', async (req, res) => {
+    try {
+        const agentUrl = process.env.AGENT_URL || 'http://agent:3000';
+        await axios.post(`${agentUrl}/internal/mcp/reload`);
+        res.json({ success: true });
+    } catch (error) {
+        console.error('[API] Failed to reload MCP:', error.message);
+        res.status(500).json({ error: error.message });
+    }
+});
+
 module.exports = router;

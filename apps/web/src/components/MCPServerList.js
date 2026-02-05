@@ -1,15 +1,42 @@
 'use client';
 
 import { useState } from 'react';
-import { Server, Wifi, WifiOff, Plus, Trash2, X, Loader2 } from 'lucide-react';
+import { Server, Wifi, WifiOff, Plus, Trash2, X, Loader2, RotateCw } from 'lucide-react';
 import clsx from 'clsx';
-import { addMCPServer, deleteMCPServer } from '@/app/actions';
+import { addMCPServer, deleteMCPServer, reloadMCPServers } from '@/app/actions';
 
-export default function MCPServerList({ servers = [] }) {
-    const [showAdd, setShowAdd] = useState(false);
+export default function MCPServerList({ servers = {} }) {
+    const [isModalOpen, setIsModalOpen] = useState(false);
+    const [isReloading, setIsReloading] = useState(false);
+
+    const handleReload = async () => {
+        setIsReloading(true);
+        try {
+            await reloadMCPServers();
+        } catch (e) {
+            console.error(e);
+        } finally {
+            setIsReloading(false);
+        }
+    };
 
     return (
         <div className="space-y-4">
+            <div className="flex items-center justify-between">
+                <div>
+                    <h2 className="text-xl font-semibold text-white">Connected Servers</h2>
+                    <p className="text-zinc-400 text-sm">External tool providers and their connection status.</p>
+                </div>
+                <button
+                    onClick={handleReload}
+                    disabled={isReloading}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg border border-zinc-800 text-zinc-300 hover:bg-zinc-800 text-sm font-medium disabled:opacity-50 transition-colors"
+                >
+                    {isReloading ? <Loader2 className="h-4 w-4 animate-spin" /> : <RotateCw className="h-4 w-4" />}
+                    Reload
+                </button>
+            </div>
+
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
                 {servers.map((server) => (
                     <ServerCard key={server.name} server={server} />
