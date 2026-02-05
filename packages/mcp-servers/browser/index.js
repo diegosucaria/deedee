@@ -518,44 +518,57 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
                 // 5. Click by finding the element with that index
                 // 5. Click by finding the element with that unique ID (more robust than index regeneration)
-                await p.evaluate(async (index) => {
-                    const targetSelector = `[data-agent-label-id="agent-label-${index}"]`;
-                    const target = document.querySelector(targetSelector);
+                // 5. Native Click using Playwright
+                // We've verified the element exists and is labeled.
+                const targetSelector = `[data-agent-label-id="agent-label-${targetParams.labelIndex}"]`;
 
-                    if (target) {
-                        // VISUAL DEBUGGING: Show where we are clicking
-                        const rect = target.getBoundingClientRect();
+                // VISUAL DEBUGGING (Optional: we can keep it, but it adds delay)
+                await p.evaluate((selector) => {
+                    const el = document.querySelector(selector);
+                    if (el) {
+                        // Highlight
+                        const rect = el.getBoundingClientRect();
                         const cursor = document.createElement('div');
+                        cursor.id = 'agent-cursor';
                         cursor.style.position = 'fixed';
-                        cursor.style.left = (rect.left + rect.width / 2 - 10) + 'px'; // Center
+                        cursor.style.left = (rect.left + rect.width / 2 - 10) + 'px';
                         cursor.style.top = (rect.top + rect.height / 2 - 10) + 'px';
                         cursor.style.width = '20px';
                         cursor.style.height = '20px';
                         cursor.style.borderRadius = '50%';
-                        cursor.style.backgroundColor = 'rgba(255, 0, 0, 0.7)'; // Red
+                        cursor.style.backgroundColor = 'rgba(255, 0, 0, 0.7)';
                         cursor.style.border = '2px solid white';
                         cursor.style.boxShadow = '0 0 15px rgba(255, 0, 0, 0.8)';
-                        cursor.style.zIndex = '2147483647'; // Max z-index
-                        cursor.style.pointerEvents = 'none';
-                        cursor.style.transition = 'all 0.3s ease-out';
-
+                        cursor.style.zIndex = '2147483647';
                         document.body.appendChild(cursor);
-
-                        // Pause to let the user see the target (and for the UI to settle)
-                        await new Promise(r => setTimeout(r, 1000));
-
-                        target.click();
-
-                        // Cleanup cursor
-                        cursor.remove();
-
-                        // Cleanup data attributes? Maybe leave them for inspection or overwrite next time.
-                    } else {
-                        // Fallback: If for some reason attribute is gone, try to find by index again (risky but better than failing)
-                        // console.warn('Attribute target failed, falling back to index...');
-                        throw new Error(`Element with label ${index} not found (DOM changed or attribute lost)`);
                     }
-                }, targetParams.labelIndex);
+                }, targetSelector);
+
+                // Wait for user to see
+                await new Promise(r => setTimeout(r, 600));
+
+                try {
+                    // Try scrolling to it first
+                    const loc = p.locator(targetSelector).first();
+                    await loc.scrollIntoViewIfNeeded({ timeout: 2000 });
+
+                    // Native Click
+                    // Force=true ensures it clicks even if our own 'agent-cursor' overlay is technically on top.
+                    await loc.click({ force: true, timeout: 5000 });
+                } catch (clickErr) {
+                    console.error("Native click failed:", clickErr);
+                    // Fallback to JS Click if native fails
+                    await p.evaluate((selector) => {
+                        const el = document.querySelector(selector);
+                        if (el) el.click();
+                    }, targetSelector);
+                }
+
+                // Cleanup Cursor
+                await p.evaluate(() => {
+                    const cursor = document.getElementById('agent-cursor');
+                    if (cursor) cursor.remove();
+                });
 
                 return {
                     content: [{ type: "text", text: `Clicked label ${targetParams.labelIndex} ("${description}")` }],
