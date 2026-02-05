@@ -51,7 +51,7 @@ class Agent {
     this.router = new Router(config.googleApiKey);
 
     // MCP Manager
-    this.mcp = new MCPManager();
+    this.mcp = new MCPManager(path.join(dataDir, 'mcp_config.json'));
 
     // Tools Setup
     this.gsuite = new GSuiteService(this);

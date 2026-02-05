@@ -213,18 +213,44 @@ app.post('/internal/mcp/reload', async (req, res) => {
     console.log('[Server] Reloading MCP Config...');
     if (agent.mcpManager) {
       await agent.mcpManager.init();
-      // Also refresh skills as they depend on tools
-      // await agent.skillService.refreshTools(); // If needed? Agent usually refreshes tools on next turn? 
-      // Ideally we should tell agent to refresh its tool definitions for the Gemini model.
-      // But mcpManager.init() updates the cache.
-      // Agent.getTools() calls mcpManager.getTools().
-      // So next turn should pick it up.
+      res.json({ success: true });
+    } else if (agent.mcp) {
+      await agent.mcp.init();
       res.json({ success: true });
     } else {
       res.status(500).json({ error: 'MCP Manager not found on Agent' });
     }
   } catch (e) {
     console.error('[Server] Failed to reload MCP:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// Internal MCP Config Management (Proxy Target)
+app.get('/internal/mcp/config', async (req, res) => {
+  if (!agent || !agent.mcp) return res.status(503).json({ error: 'Agent/MCP not ready' });
+  try {
+    const fs = require('fs');
+    if (fs.existsSync(agent.mcp.configPath)) {
+      res.json(JSON.parse(fs.readFileSync(agent.mcp.configPath, 'utf8')));
+    } else {
+      res.json({});
+    }
+  } catch (e) {
+    res.status(500).json({ error: e.message });
+  }
+});
+
+app.post('/internal/mcp/config', async (req, res) => {
+  if (!agent || !agent.mcp) return res.status(503).json({ error: 'Agent/MCP not ready' });
+  try {
+    const config = req.body;
+    const fs = require('fs');
+    fs.writeFileSync(agent.mcp.configPath, JSON.stringify(config, null, 2));
+    // Reload
+    await agent.mcp.init();
+    res.json({ success: true });
+  } catch (e) {
     res.status(500).json({ error: e.message });
   }
 });

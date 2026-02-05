@@ -66,12 +66,72 @@ class MCPManager {
     }
 
     async init() {
-        if (!fs.existsSync(this.configPath)) {
-            console.warn(`[MCP] Config not found at ${this.configPath}. Skipping.`);
-            return;
+        // Close existing connections to prevent leaks during reload
+        if (this.clients.size > 0) {
+            await this.close();
         }
 
-        const config = JSON.parse(fs.readFileSync(this.configPath, 'utf-8'));
+        // Robust Merge Logic
+        let userConfig = {};
+
+        // 1. Load User Config (Persistent)
+        if (fs.existsSync(this.configPath)) {
+            try {
+                userConfig = JSON.parse(fs.readFileSync(this.configPath, 'utf-8'));
+            } catch (e) {
+                console.error(`[MCP] Failed to parse user config at ${this.configPath}:`, e.message);
+                // Backup corrupt file?
+                try { fs.copyFileSync(this.configPath, `${this.configPath}.bak`); } catch (ex) { }
+            }
+        }
+
+        // 2. Load Default Config (Image/Repo)
+        let defaultConfig = {};
+        const candidates = [
+            path.resolve(__dirname, '../mcp_config.json'), // Relative to src
+            path.resolve('/app/mcp_config.json'),          // Docker root
+            path.resolve(process.cwd(), 'mcp_config.json') // Current working directory
+        ];
+
+        for (const candidate of candidates) {
+            if (fs.existsSync(candidate)) {
+                try {
+                    defaultConfig = JSON.parse(fs.readFileSync(candidate, 'utf-8'));
+                    // console.log(`[MCP] Loaded default config from ${candidate}`);
+                    break;
+                } catch (e) {
+                    console.warn(`[MCP] Failed to parse default config at ${candidate}:`, e.message);
+                }
+            }
+        }
+
+        // 3. Merge: Default + User (User overrides Default)
+        // We want to ensure any NEW servers in Default appear in User
+        // But if User deleted a Default server, we might re-add it? 
+        // For now, simpler is better: "Ensure all default keys exist".
+        let dirty = false;
+
+        // A. Copy Defaults if missing
+        for (const [key, val] of Object.entries(defaultConfig)) {
+            if (!userConfig[key]) {
+                console.log(`[MCP] Merging new default server: ${key}`);
+                userConfig[key] = val;
+                dirty = true;
+            }
+        }
+
+        // 4. Save if changed (or if file didn't exist)
+        if (dirty || !fs.existsSync(this.configPath)) {
+            try {
+                fs.writeFileSync(this.configPath, JSON.stringify(userConfig, null, 2));
+                console.log(`[MCP] Updated persistent config at ${this.configPath}`);
+            } catch (e) {
+                console.error(`[MCP] Failed to save merged config:`, e.message);
+            }
+        }
+
+        // Use the merged (or loaded) config
+        const config = userConfig;
 
         for (const [name, serverConfig] of Object.entries(config)) {
             if (serverConfig.disabled) continue;

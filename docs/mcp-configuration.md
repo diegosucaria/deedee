@@ -1,84 +1,36 @@
-# How to Configure MCP Servers
+# MCP Server Configuration
 
 Deedee uses the Model Context Protocol (MCP) to connect to external tools and services.
 
 ## Overview
-- **Internal Tools**: Core tools like File System and Git run inside the Agent process (`apps/agent`).
-- **External Tools**: Additional capabilities run as separate MCP Servers, managed by the `MCPManager`.
+- **Internal Tools**: Core tools (FileSystem, Git) run inside the Agent process.
+- **External Tools**: Additional capabilities run as separate MCP Servers (e.g., Mac Bridge, Home Assistant).
+- **Persistence**: Configuration is stored in `data/mcp_config.json` (inside the `agent-data` volume) and persists across updates.
 
-## Configuration
-The agent looks for a configuration file at `apps/agent/mcp_config.json`.
+## Management UI
+The easiest way to manage servers is via the **Brain > Tools & MCP** page in the web dashboard.
 
-### Structure
-```json
-{
-  "server-name": {
-    "command": "executable",
-    "args": ["arg1", "arg2"],
-    "env": {
-      "VAR_NAME": "value",
-      "SECRET": "${ENV_VAR_NAME}" 
-    },
-    "disabled": false
-  }
-}
-```
+### Adding a Server
+1.  Go to `Settings` (GEAR ICON) -> `Tools & MCP`.
+2.  Click **"Connect New Server"**.
+3.  Enter the Name (e.g., `mac-bridge`).
+4.  Enter the URL (e.g., `http://100.x.y.z:3000/sse`) or Command details.
+5.  (Optional) Enter an Auth Token.
 
-- **`command`**: The executable to run (e.g., `npx`, `python`).
-- **`args`**: Array of arguments.
-- **`env`**: Environment variables to pass to the server. You can reference system environment variables using `${VAR_NAME}` syntax.
-- **`disabled`**: Set to `true` to disable the server.
+The Agent will automatically reload and connect to the new server.
 
-## Examples
+## Mac Bridge Integration
+To control your Mac (Apps, Mouse, Keyboard) from Deedee:
 
-### 1. Home Assistant
-To enable Home Assistant integration:
+1.  **Run Mac Bridge**: Follow instructions in `apps/mac-bridge/README.md`.
+2.  **Get Tailscale IP**: Ensure both Pi and Mac are on Tailscale.
+3.  **Add to Deedee**:
+    - **Name**: `mac-bridge`
+    - **URL**: `http://<MAC_TAILSCALE_IP>:3000/sse`
+    - **Token**: The one you set in `.env` (`BRIDGE_TOKEN`).
 
-3.  **Edit `apps/agent/mcp_config.json`**:
-    ```json
-    {
-      "homeassistant": {
-        "command": "uvx",
-        "args": ["ha-mcp"],
-        "env": {
-          "HOMEASSISTANT_URL": "${HA_URL}",
-          "HOMEASSISTANT_TOKEN": "${HA_TOKEN}"
-        },
-        "disabled": false
-      }
-    }
-    ```
-    *Note*: The `ha-mcp` server acts as a standard API client and does not require server-side integration in Home Assistant. Ensure `HA_URL` and `HA_TOKEN` are set in your environment.
+## Manual Configuration (Advanced)
+You can still manually edit `mcp_config.json` if you have shell access, but the UI is recommended.
 
-### 2. Node-RED
-```json
-{
-  "node-red": {
-    "command": "node",
-    "args": ["index.js"],
-    "cwd": "../../packages/node-red-mcp",
-    "env": {
-      "NODE_RED_URL": "${NODE_RED_URL}",
-      "NODE_RED_USERNAME": "${NODE_RED_USERNAME}",
-      "NODE_RED_PASSWORD": "${NODE_RED_PASSWORD}"
-    },
-    "disabled": false
-  }
-}
-```
-
-### 3. PostgreSQL
-```json
-{
-  "postgres": {
-    "command": "npx",
-    "args": ["-y", "@modelcontextprotocol/server-postgres", "postgresql://user:password@localhost/db"],
-    "disabled": false
-  }
-}
-```
-
-## Adding New Servers
-1.  Find an MCP Server (e.g., on NPM or GitHub).
-2.  Add its config to `mcp_config.json`.
-3.  Restart the Agent (`docker-compose restart agent` or let Supervisor handle it if updated via git).
+### Default Servers
+The system comes with default configurations (Home Assistant, Plex, Node-RED) that are automatically merged into your configuration on startup.
