@@ -44,7 +44,7 @@ export default function MCPServerList({ servers = {} }) {
 
                 {/* Add New Button Card */}
                 <button
-                    onClick={() => setShowAdd(true)}
+                    onClick={() => setIsModalOpen(true)}
                     className="flex flex-col items-center justify-center gap-2 h-32 border border-zinc-800 border-dashed rounded-lg text-zinc-500 hover:text-indigo-400 hover:border-indigo-500/50 hover:bg-zinc-900/50 transition-all font-medium text-sm"
                 >
                     <Plus className="h-6 w-6" />
@@ -52,7 +52,7 @@ export default function MCPServerList({ servers = {} }) {
                 </button>
             </div>
 
-            {showAdd && <AddServerModal onClose={() => setShowAdd(false)} />}
+            {isModalOpen && <AddServerModal onClose={() => setIsModalOpen(false)} />}
         </div>
     );
 }
