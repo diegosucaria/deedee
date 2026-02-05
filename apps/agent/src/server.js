@@ -123,6 +123,7 @@ app.post('/webhook', (req, res) => {
 const { createInternalRouter } = require('./routes/internal');
 const { createLiveRouter } = require('./routes/live');
 const { createWatchersRouter } = require('./routes/watchers'); // NEW
+const { createSkillsRouter } = require('./routes/skills'); // NEW
 const { createToolRouter } = require('./routes/tools');
 const { createSettingsRouter } = require('./routes/settings');
 const createFilesRouter = require('./routes/files');
@@ -139,15 +140,16 @@ app.use('/health', createHealthRouter(agent));
 
 if (agent) {
   // Mount Modular Routers
+  app.use('/internal/skills', createSkillsRouter(agent));
   app.use('/internal/settings', createSettingsRouter(agent));
-  app.use('/internal/watchers', createWatchersRouter(agent)); // NEW
-  app.use('/internal/people', createPeopleRouter(agent)); // Mount People Router
-  app.use('/v1/chat', createFilesRouter(agent)); // Mounted at /v1/chat so POST /v1/chat/:id/files works
-  app.use('/internal', createInternalRouter(agent)); // Internal Router (Protected)
+  app.use('/internal/watchers', createWatchersRouter(agent)); 
+  app.use('/internal/people', createPeopleRouter(agent)); 
+  app.use('/v1/chat', createFilesRouter(agent)); 
+  app.use('/internal', createInternalRouter(agent)); 
   app.use('/v1/vaults', createVaultRouter(agent));
   app.use('/internal/dj', createDjRouter(agent));
-  app.use('/v1/autopilot', createAutopilotRouter(agent)); // Mount Autopilot Router
-  app.use('/', createToolRouter(agent)); // Mounts at root because it handles /tools/execute AND /internal/tools
+  app.use('/v1/autopilot', createAutopilotRouter(agent));
+  app.use('/', createToolRouter(agent)); 
 }
 
 app.post('/chat', async (req, res) => {
