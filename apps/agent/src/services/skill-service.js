@@ -247,7 +247,8 @@ class SkillService {
         let fmStartFound = false;
 
         for (let i = 0; i < lines.length; i++) {
-            const line = lines[i].trim();
+            const rawLine = lines[i].replace(/\r$/, ''); // Remove CR if present
+            const line = rawLine.trim();
 
             // Check for delimiter
             if (line === '---') {
@@ -265,25 +266,58 @@ class SkillService {
 
             if (inFrontmatter) {
                 // Parse "key: value"
-                const match = line.match(/^([a-zA-Z0-9-_]+):\s*(.*)$/);
+                // Valid top-level keys must not have leading whitespace in YAML (usually)
+                // But our naive logic used 'trim()', so we must be careful.
+                // If we use rawLine, 'match' will FAIL for indented lines, which is GOOD.
+                const match = rawLine.match(/^([a-zA-Z0-9-_]+):\s*(.*)$/);
+                const indentMatch = rawLine.match(/^(\s+)([a-zA-Z0-9-_]+):\s*(.*)$/);
+
                 if (match) {
                     const key = match[1];
                     let value = match[2];
+
+                    if (key === 'metadata') {
+                        if (!frontmatter.metadata) frontmatter.metadata = {};
+                        // Check if inline JSON
+                        if (value.startsWith('{')) {
+                            try {
+                                frontmatter.metadata = JSON.parse(value);
+                            } catch (e) {
+                                console.warn(`[SkillService] Failed to parse metadata JSON for ${filePath}`);
+                            }
+                        }
+                        continue; // Expected following lines to be indented
+                    }
 
                     // Basic boolean/tool parsing
                     if (value === 'true') value = true;
                     if (value === 'false') value = false;
 
-                    // JSON parsing for metadata
-                    if (key === 'metadata' && value.startsWith('{')) {
-                        try {
-                            value = JSON.parse(value);
-                        } catch (e) {
-                            console.warn(`[SkillService] Failed to parse metadata JSON for ${filePath}`);
-                        }
-                    }
-
                     frontmatter[key] = value;
+                } else if (indentMatch) {
+                    // Handle indentation (Metadata children)
+                    const indent = indentMatch[1];
+                    const key = indentMatch[2];
+                    let value = indentMatch[3];
+
+                    // Heuristic: If we are inside metadata block (implied by previous key being metadata or indentation)
+                    // Simple logic: If indentation is 2 spaces, it's metadata child. If 4 spaces, it's requires child.
+                    if (!frontmatter.metadata) frontmatter.metadata = {};
+
+                    if (indent.length === 2) {
+                        if (key === 'requires') {
+                            if (!frontmatter.metadata.requires) frontmatter.metadata.requires = {};
+                        } else {
+                            frontmatter.metadata[key] = value;
+                        }
+                    } else if (indent.length === 4 && frontmatter.metadata.requires) {
+                        // requires children (bins, tools, config)
+                        // Value might be ["val"] or [val]
+                        if (value.startsWith('[')) {
+                            value = value.slice(1, -1).split(',').map(s => s.trim().replace(/['"]/g, ''));
+                        }
+                        frontmatter.metadata.requires[key] = value;
+                    }
                 }
             }
         }
