@@ -1573,6 +1573,38 @@ IF you are asked to draft a message for the user, or if you are replying via the
 
 
   async _executeTool(executionName, args, message, sendCallback, usageCallback = null) {
+    // RESOLVE SECRETS (Variable Substitution)
+    // If an argument is "$SECRET_KEY", replace it with the actual value from SkillService.
+    if (this.skillService) {
+      const allSecrets = this.skillService.getAllEnabledSecrets();
+
+      const resolveSecrets = (obj) => {
+        if (typeof obj === 'string' && obj.startsWith('$')) {
+          const key = obj.slice(1);
+          if (allSecrets[key]) {
+            // console.log(`[Agent] Resolved secret variable: ${key}`);
+            return allSecrets[key];
+          }
+        }
+        if (typeof obj === 'object' && obj !== null) {
+          // Handle Arrays
+          if (Array.isArray(obj)) {
+            return obj.map(item => resolveSecrets(item));
+          }
+          // Handle Objects
+          const newObj = {};
+          for (const k in obj) {
+            newObj[k] = resolveSecrets(obj[k]);
+          }
+          return newObj;
+        }
+        return obj;
+      };
+
+      // Clone and resolve
+      args = resolveSecrets(JSON.parse(JSON.stringify(args)));
+    }
+
     // --- INTERNAL DB TOOLS ---
     if (executionName === 'rememberFact') {
       this.db.setKey(args.key, args.value);

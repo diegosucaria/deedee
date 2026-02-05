@@ -379,8 +379,10 @@ class SkillService {
                 secretsBlock = `
 > [!IMPORTANT]
 > **CONFIGURATION / SECRETS**:
-> The following sensitive values have been injected into your context for this skill. Use them ONLY when necessary.
-${secretKeys.map(k => `> - ${k}: "${secrets[k]}"`).join('\n')}
+> The following sensitive values are available.
+> **SECURITY RULE**: DO NOT output the actual values. The system will inject them.
+> Instead, when calling tools (especially browser tools), use the Variable Name:
+${secretKeys.map(k => `> - ${k}: Use variable "$${k}"`).join('\n')}
 `;
             }
 
@@ -393,6 +395,17 @@ ${skill.instructions}
 --------------------------------------------------
 `;
         }).join('\n');
+    }
+
+    getAllEnabledSecrets() {
+        const allSecrets = {};
+        for (const skill of this.skills.values()) {
+            const state = this.getSkillState(skill.name);
+            if (state.enabled && state.secrets) {
+                Object.assign(allSecrets, state.secrets);
+            }
+        }
+        return allSecrets;
     }
 
     getSkill(name) {
