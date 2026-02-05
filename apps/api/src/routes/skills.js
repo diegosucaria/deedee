@@ -5,9 +5,19 @@ const path = require('path');
 const crypto = require('crypto');
 
 // Paths (Mirrors Agent Config)
+const getRootDir = () => {
+    const cwd = process.cwd();
+    if (cwd.endsWith(path.join('apps', 'agent')) || cwd.endsWith(path.join('apps', 'api'))) {
+        return path.resolve(cwd, '..', '..');
+    }
+    return cwd;
+};
+
+const ROOT_DIR = getRootDir();
+
 const SKILL_DIRS = {
-    builtin: path.join(process.cwd(), 'apps', 'agent', 'skills'),
-    user: path.join(process.cwd(), 'data', 'skills')
+    builtin: path.join(ROOT_DIR, 'apps', 'agent', 'skills'),
+    user: path.join(ROOT_DIR, 'data', 'skills')
 };
 
 // Helper: Parse Frontmatter (Duplicated from Agent SkillService for now)
@@ -98,7 +108,7 @@ async function scanSkillsDir(dir) {
 router.get('/', async (req, res) => {
     try {
         const skills = [];
-        const stateFile = path.join(process.cwd(), 'data', 'skills-state.json');
+        const stateFile = path.join(ROOT_DIR, 'data', 'skills-state.json');
         let state = {};
 
         // Load State
@@ -270,7 +280,7 @@ router.get('/:filename(*)', async (req, res) => {
         }
 
         const content = await fs.readFile(p, 'utf8');
-        const stateFile = path.join(process.cwd(), 'data', 'skills-state.json');
+        const stateFile = path.join(ROOT_DIR, 'data', 'skills-state.json');
         let state = {};
         if (await fs.pathExists(stateFile)) state = await fs.readJson(stateFile);
 
@@ -315,7 +325,7 @@ router.post('/', async (req, res) => {
 
 // Shared State Helper
 async function updateSkillState(name, updateFn) {
-    const stateFile = path.join(process.cwd(), 'data', 'skills-state.json');
+    const stateFile = path.join(ROOT_DIR, 'data', 'skills-state.json');
     let state = {};
     try {
         if (await fs.pathExists(stateFile)) state = await fs.readJson(stateFile);

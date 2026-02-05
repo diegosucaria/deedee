@@ -1,5 +1,6 @@
 
 const { createAssistantMessage } = require('@deedee/shared/src/types');
+const fs = require('fs-extra');
 const crypto = require('crypto');
 // const { GSuiteTools } = require('@deedee/mcp-servers/src/gsuite/index');
 const { LocalTools } = require('@deedee/mcp-servers/src/local/index');
@@ -171,6 +172,34 @@ class Agent {
 
     // Initialize Skills
     await this.skillService.init();
+
+    // --- DEBUG: Dump System Prompt ---
+    try {
+      const skillsContext = this.skillService.getGlobalInstructions();
+      // Mock data for snapshot to show full potential size
+      const dumpPrompt = getSystemInstruction(
+        new Date().toISOString(),
+        "No active goals (snapshot)",
+        "No facts (snapshot)",
+        { codingMode: true, skillsContext }
+      );
+
+      const snapshot = {
+        event: "SYSTEM_PROMPT_SNAPSHOT",
+        timestamp: new Date().toISOString(),
+        stats: {
+          characterCount: dumpPrompt.length,
+          estimatedTokens: Math.ceil(dumpPrompt.length / 4)
+        },
+        content: dumpPrompt
+      };
+
+      // Log as JSON string for automatic collapsing in log viewers
+      console.log(JSON.stringify(snapshot));
+
+    } catch (e) {
+      console.warn('[Agent] Failed to dump system prompt:', e);
+    }
 
     // Check Goals
     const pendingGoals = this.db.getPendingGoals();

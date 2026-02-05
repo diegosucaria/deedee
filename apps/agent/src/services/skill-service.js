@@ -5,9 +5,22 @@ class SkillService {
     constructor(agent) {
         this.agent = agent;
         this.skills = new Map(); // name -> skill object
+
+        // Detect Project Root
+        // If running from /app/apps/agent (Docker), we need to go up 2 levels
+        // If running from /app (Monorepo root), we are fine.
+        const cwd = process.cwd();
+        let rootDir = cwd;
+        if (cwd.endsWith(path.join('apps', 'agent')) || cwd.endsWith(path.join('apps', 'api'))) {
+            rootDir = path.resolve(cwd, '..', '..');
+        }
+
+        console.log(`[SkillService] Root Dir detected: ${rootDir}`);
+        this.rootDir = rootDir;
+
         this.skillDirs = [
-            path.join(process.cwd(), 'apps', 'agent', 'skills'), // Built-in
-            path.join(process.cwd(), 'data', 'skills')          // User-defined
+            path.join(rootDir, 'apps', 'agent', 'skills'), // Built-in
+            path.join(rootDir, 'data', 'skills')          // User-defined
         ];
     }
 
@@ -20,7 +33,7 @@ class SkillService {
     }
 
     async loadState() {
-        this.stateFile = path.join(process.cwd(), 'data', 'skills-state.json');
+        this.stateFile = path.join(this.rootDir, 'data', 'skills-state.json');
         try {
             if (await fs.pathExists(this.stateFile)) {
                 this.state = await fs.readJson(this.stateFile);
