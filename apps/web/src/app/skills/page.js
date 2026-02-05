@@ -1,13 +1,15 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Zap, Plus, Trash2, Edit, Save, X, Power, Key, AlertTriangle } from 'lucide-react';
+import { Zap, Plus, Trash2, Edit, Save, X, Power, Key, AlertTriangle, Eye } from 'lucide-react';
+import { getSkills, saveSkill, deleteSkill, toggleSkill, saveSkillSecrets, getSkill } from './actions';
+import { useSocket } from '@/hooks/useSocket';
 import { clsx } from 'clsx';
-import { getSkills, saveSkill, deleteSkill, toggleSkill, saveSkillSecrets } from './actions';
 
 export default function SkillsPage() {
     const [skills, setSkills] = useState([]);
     const [loading, setLoading] = useState(true);
+    const { socket } = useSocket();
 
     // Editor State
     const [editorOpen, setEditorOpen] = useState(false);
@@ -21,7 +23,12 @@ export default function SkillsPage() {
 
     useEffect(() => {
         fetchSkills();
-    }, []);
+
+        if (socket) {
+            socket.on('skills:update', fetchSkills);
+            return () => socket.off('skills:update', fetchSkills);
+        }
+    }, [socket]);
 
     const fetchSkills = async () => {
         try {
@@ -34,11 +41,20 @@ export default function SkillsPage() {
         }
     };
 
-    const handleEdit = (skill) => {
-        setCurrentSkill(skill);
-        setEditFilename(skill.fileName);
-        setEditContent(skill.content || '');
-        setEditorOpen(true);
+    const handleEdit = async (skill) => {
+        setLoading(true);
+        try {
+            // Fetch full details (content/raw)
+            const fullSkill = await getSkill(skill.fileName || skill.name);
+            setCurrentSkill(fullSkill);
+            setEditFilename(fullSkill.fileName || fullSkill.name);
+            setEditContent(fullSkill.raw || fullSkill.content || '');
+            setEditorOpen(true);
+        } catch (e) {
+            alert('Failed to load skill details');
+        } finally {
+            setLoading(false);
+        }
     };
 
     const handleCreate = () => {
@@ -157,7 +173,7 @@ export default function SkillsPage() {
                                 <button
                                     onClick={() => handleToggle(skill)}
                                     className={clsx(
-                                        "p-1.5 rounded-lg transition-colors",
+                                        "p-2 rounded-lg transition-colors",
                                         skill.enabled ? "text-green-400 hover:bg-green-900/20" : "text-zinc-600 hover:text-zinc-400 hover:bg-zinc-800"
                                     )}
                                     title={skill.enabled ? "Disable Skill" : "Enable Skill"}
@@ -182,7 +198,7 @@ export default function SkillsPage() {
                                 <div className="flex gap-1">
                                     <button
                                         onClick={() => openSecrets(skill)}
-                                        className={clsx("p-1.5 rounded-lg transition-colors",
+                                        className={clsx("p-2 rounded-lg transition-colors",
                                             skill.secrets?.length > 0 ? "text-yellow-500 hover:bg-yellow-900/20" : "text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
                                         )}
                                         title="Manage Secrets"
@@ -191,16 +207,15 @@ export default function SkillsPage() {
                                     </button>
                                     <button
                                         onClick={() => handleEdit(skill)}
-                                        className="p-1.5 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors"
-                                        title="Edit"
-                                        disabled={skill.type === 'builtin'} // Allow viewing code?
+                                        className="p-2 text-zinc-400 hover:text-white hover:bg-zinc-800 rounded-lg transition-colors"
+                                        title={skill.type === 'builtin' ? "View Code" : "Edit"}
                                     >
-                                        <Edit className="h-4 w-4" />
+                                        {skill.type === 'builtin' ? <Eye className="h-4 w-4" /> : <Edit className="h-4 w-4" />}
                                     </button>
                                     {skill.type === 'user' && (
                                         <button
                                             onClick={() => handleDelete(skill.fileName)}
-                                            className="p-1.5 text-zinc-400 hover:text-red-400 hover:bg-zinc-800 rounded-lg transition-colors"
+                                            className="p-2 text-zinc-400 hover:text-red-400 hover:bg-zinc-800 rounded-lg transition-colors"
                                             title="Delete"
                                         >
                                             <Trash2 className="h-4 w-4" />

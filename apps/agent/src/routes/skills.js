@@ -82,7 +82,7 @@ const createSkillsRouter = (agent) => {
         try {
             const { secrets } = req.body;
             const name = req.params.name;
-            await agent.skillService.updateSecrets(name, secrets);
+            await agent.skillService.setSkillSecrets(name, secrets);
             res.json({ success: true });
         } catch (error) {
             res.status(500).json({ error: error.message });

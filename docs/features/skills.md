@@ -1,42 +1,47 @@
 # Skills System
 
-The Skills system allows Deedee to dynamically load behavioral instructions and slash commands from Markdown files. It is designed to be compatible with the AgentSkills specification.
+The Skills System allows Deedee to dynamically extend its capabilities using Markdown files.
 
-## Directory Structure
-- **Built-in Skills**: `apps/agent/skills/` (Core capabilities shipped with the repo)
-- **User Skills**: `data/skills/` (User-defined skills, persisted across updates)
+## Architecture
 
-## Skill Format (`SKILL.md`)
-Skills use Markdown with YAML frontmatter.
+*   **Definition**: Skills are defined in `data/skills/*.md` or built-in `apps/agent/skills/*.md`.
+*   **Format**: Markdown with YAML frontmatter.
+*   **Loading**: `SkillService` watches these directories and hot-reloads skills on change.
+*   **Execution**: The Agent parses `instructions` and injects them into the System Prompt.
+
+## Features
+
+*   **Metadata**: Supports `emoji`, `description`, and `requires` (dependencies).
+*   **Dependencies**: Can check for Environment Variables (`config`), MCP Tools (`tools`), or System Binaries (`bins`).
+*   **Secrets**: Secrets (API Keys) are stored securely in `data/skills-state.json`. Manage them via the UI.
+*   **Live Updates**: Changes to skill files or state are broadcasted to the Web UI via Socket.io.
+
+## Creating a Skill
+
+Create a file `data/skills/my-skill.md`:
 
 ```markdown
 ---
-name: pirate
-description: Speak like a pirate
-user-invocable: true
-command-alias: ['arrr', 'matey']
+name: my-skill
+description: Does something cool
+metadata:
+  emoji: 🚀
+  requires:
+    bins: [ffmpeg]
 ---
 
 # Instructions
-You are now Blackbeard. Always answer in a pirate accent.
-Use terms like "Ahoy", "Matey", and "Yarr".
+
+You can now do cool things...
 ```
 
-## Features
-1.  **Dynamic Prompt Injection**: Active skills are injected into the System Prompt.
-2.  **Slash Commands**: 
-    - `/pirate` (derived from `name`) activates the skill.
-    - `/arrr` (derived from `command-alias`) also activates the skill.
-3.  **Tool Dispatch**: Skills can map directly to MCP tools.
-    ```yaml
-    command-dispatch: tool
-    command-tool: browser_navigate
-    ```
-4.  **Live Reload**: The Agent watches `data/skills` and reloads skills automatically when files change.
+## API
+
+*   `GET /v1/skills` - List skills
+*   `POST /v1/skills/:name/toggle` - Enable/Disable
+*   `POST /v1/skills/:name/secrets` - Set secrets
 
 ## Security
-- **Strict Filename Validation**: The API prevents directory traversal attacks when creating/deleting skills.
-- **Fail-Safe Loading**: Malformed skill files are skipped without crashing the agent.
 
-## Management
-Manage skills via the Dashboard at `/skills`.
+*   Secrets are stored in `data/skills-state.json`. Ensure this file is backed up and secure.
+*   `user-invocable: false` prevents users from triggering the skill directly if needed.

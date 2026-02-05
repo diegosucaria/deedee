@@ -109,6 +109,11 @@ class SkillService {
                 }
             }
         }
+
+        // Notify Interface (Live Updates)
+        if (this.agent.interface) {
+            this.agent.interface.broadcast('skills:update', { action: 'reload', filename });
+        }
     }
 
     async loadSkills() {
@@ -207,6 +212,23 @@ class SkillService {
                     reqs.tools.forEach(tool => {
                         if (!this.agent.tools[tool]) missing.push(`Tool: ${tool}`);
                     });
+                }
+            }
+
+            // Check Binaries (System Commands)
+            if (reqs.bins) {
+                try {
+                    const { execSync } = require('child_process');
+                    reqs.bins.forEach(bin => {
+                        try {
+                            // 'command -v' is standard POSIX
+                            execSync(`command -v ${bin}`, { stdio: 'ignore' });
+                        } catch (e) {
+                            missing.push(`Binary: ${bin}`);
+                        }
+                    });
+                } catch (e) {
+                    console.warn('[SkillService] Failed to check binaries:', e);
                 }
             }
         }

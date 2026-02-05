@@ -65,3 +65,14 @@ export async function saveSkillSecrets(name, secrets) {
         return { success: false, error: e.message };
     }
 }
+
+export async function getSkill(name) {
+    try {
+        const safeName = encodeURIComponent(name);
+        const skill = await fetchAPI(`/v1/skills/${safeName}`);
+        return skill;
+    } catch (e) {
+        console.error('getSkill failed:', e);
+        throw e;
+    }
+}
