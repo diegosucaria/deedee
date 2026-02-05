@@ -107,18 +107,49 @@ class SkillService {
                     continue;
                 }
 
-                const files = await fs.readdir(dir);
-                for (const file of files) {
-                    if (file.endsWith('.md')) {
-                        await this.loadSkill(path.join(dir, file));
-                    }
-                }
+                // Recursive Scan
+                await this.scanDir(dir);
+
             } catch (err) {
                 console.error(`[SkillService] Error loading skills from ${dir}:`, err);
             }
         }
 
         console.log(`[SkillService] Loaded ${this.skills.size} skills.`);
+    }
+
+    async scanDir(dir) {
+        const items = await fs.readdir(dir);
+        for (const item of items) {
+            const fullPath = path.join(dir, item);
+            const stat = await fs.stat(fullPath);
+
+            if (stat.isDirectory()) {
+                // Check if directory contains SKILL.md
+                const skillMd = path.join(fullPath, 'SKILL.md');
+                if (await fs.pathExists(skillMd)) {
+                    await this.loadSkill(skillMd);
+                } else {
+                    // Recurse? Or just support 1 level deep? 
+                    // OpenClaw seems to be 1 level deep (skills/name/SKILL.md).
+                    // Let's recurse to be safe/flexible.
+                    await this.scanDir(fullPath);
+                }
+            } else if (item.endsWith('.md')) {
+                // Root level .md file
+                // Avoid loading SKILL.md if we already handled it via directory check?
+                // Actually the directory check looks for specific file.
+                // If we possess a recursive scan, we might double load if we not careful.
+                if (item === 'SKILL.md') {
+                    // Should have been handled by parent dir check, 
+                    // OR we are in a subfolder loop.
+                    await this.loadSkill(fullPath);
+                } else {
+                    // Classic flat file
+                    await this.loadSkill(fullPath);
+                }
+            }
+        }
     }
 
     async loadSkill(filePath) {
