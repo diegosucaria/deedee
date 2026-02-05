@@ -888,23 +888,45 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
 
         if (name === "browser_type") {
             try {
+                const selector = args.selector;
+                const text = args.text;
+
                 // Try scrolling first
                 try {
-                    const loc = p.locator(args.selector).first();
+                    const loc = p.locator(selector).first();
                     await loc.scrollIntoViewIfNeeded({ timeout: 2000 });
                 } catch (ignore) { }
 
-                await p.fill(args.selector, args.text, { timeout: 30000 });
+                // Standard Fill (Best for standard inputs)
+                await p.fill(selector, text, { timeout: 30000 });
+                return { content: [{ type: "text", text: `Typed "${text}" into ${selector} (via fill)` }] };
+
             } catch (e) {
-                console.log(`[Browser] Standard fill failed for ${args.selector}: ${e.message}. Retrying with type/press...`);
+                console.log(`[Browser] Standard fill failed for ${args.selector}: ${e.message}. Retrying with advanced fallback...`);
                 try {
+                    // Fallback: Aggressive manual typing
+                    // 1. Click to focus
                     await p.click(args.selector, { timeout: 3000, force: true });
-                    await p.keyboard.type(args.text);
+
+                    // 2. Clear (Cmd+A, Backspace)
+                    try {
+                        const isMac = process.platform === 'darwin'; // Server-side platform
+                        const modifier = isMac ? 'Meta' : 'Control';
+                        await p.press(args.selector, `${modifier}+A`);
+                        await p.press(args.selector, 'Backspace');
+                    } catch (clearErr) { /* ignore clearing errors */ }
+
+                    // 3. Type Sequentially (triggers generic key events)
+                    // Note: 'delay' helps with strict anti-bot or fast-rendering inputs
+                    await p.pressSequentially(args.selector, args.text, { delay: 100 });
+
+                    // 4. Press Enter if likely needed? No, that's dangerous.
+
+                    return { content: [{ type: "text", text: `Typed "${args.text}" into ${args.selector} (via sequential fallback)` }] };
                 } catch (e2) {
                     throw new Error(`Failed to type into "${args.selector}": ${e.message}`);
                 }
             }
-            return { content: [{ type: "text", text: `Typed into ${args.selector}` }] };
         }
 
         // browser_save_secret implementation removed
