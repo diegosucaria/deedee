@@ -123,7 +123,8 @@ services:
       - TS_USERSPACE=false
       - TS_SOCKS5_SERVER=:1055
     volumes:
-      - /var/lib/tailscale:/var/lib/tailscale
+      - tailscale-data:/var/lib/tailscale
+    devices:
       - /dev/net/tun:/dev/net/tun
     cap_add:
       - NET_ADMIN
