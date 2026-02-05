@@ -345,6 +345,7 @@ class SkillService {
             ...frontmatter,
             aliases: frontmatter.aliases || [],
             instructions: bodyLines.join('\n').trim(),
+            content: fileContent, // Store raw content for viewing/editing
             filePath,
             // Defaults
             userInvocable: frontmatter['user-invocable'] !== false, // Default true

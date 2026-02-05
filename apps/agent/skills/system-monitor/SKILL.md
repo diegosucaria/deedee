@@ -19,6 +19,12 @@ You can check the health and status of the server/device you are running on (Ras
 - **CPU Load**: `top -b -n 1 | head -n 20` (Batch mode, top 20 lines)
 - **Uptime**: `uptime`
 
+### Temperature (Raspberry Pi)
+- **CPU Temp**: `cat /sys/class/thermal/thermal_zone0/temp`
+  - *Note*: Value is in millidegrees. Divide by 1000 to get Celsius (e.g., 45000 -> 45°C).
+  - *Alternative*: `vcgencmd measure_temp` (if available).
+
+
 ### Storage
 - **Disk Usage**: `df -h` (Human readable)
 
