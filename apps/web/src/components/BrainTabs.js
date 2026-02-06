@@ -88,8 +88,6 @@ export default function BrainTabs({ goals, facts, aliases, tools, servers }) {
                 {activeTab === 'tools' && (
                     <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
                         <div className="mb-8">
-                            <h2 className="text-xl font-semibold text-white mb-1">MCP Servers</h2>
-                            <p className="text-zinc-400 text-sm mb-4">External tool providers and their connection status.</p>
                             <MCPServerList servers={servers} />
                         </div>
 
