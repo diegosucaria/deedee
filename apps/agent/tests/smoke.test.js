@@ -21,6 +21,7 @@ jest.mock('../src/db', () => ({
     saveScheduledJob: jest.fn(),
     deleteScheduledJob: jest.fn(),
     checkLimit: jest.fn().mockReturnValue(0),
+    deleteMessagesFrom: jest.fn(),
     logUsage: jest.fn(),
     logMetric: jest.fn(),
     deleteJobState: jest.fn(), // Added

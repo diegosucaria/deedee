@@ -21,6 +21,7 @@ jest.mock('../src/db', () => ({
         searchMessages: jest.fn().mockReturnValue([]),
         deleteJobState: jest.fn(),
         getKey: jest.fn(),
+        deleteMessagesFrom: jest.fn(),
         getAllAgentSettings: jest.fn().mockReturnValue({}),
         close: jest.fn()
     }))

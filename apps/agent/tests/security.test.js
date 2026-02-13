@@ -30,6 +30,7 @@ jest.mock('../src/db', () => ({
         deleteJobState: jest.fn(),
         getHistoryForChat: jest.fn().mockReturnValue([]), // Added
         deleteMessagesSince: jest.fn(), // Added
+        deleteMessagesFrom: jest.fn(),
         getLatestSummary: jest.fn().mockReturnValue(null), // Added
         getFactsFormatted: jest.fn().mockReturnValue(""), // Added
         getAllAgentSettings: jest.fn().mockReturnValue({}),

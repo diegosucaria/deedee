@@ -33,6 +33,7 @@ const { GSuiteService } = require('./services/gsuite-service');
 const { DJService } = require('./services/dj-service');
 const { SkillService } = require('./services/skill-service');
 const { MemoryPruningService } = require('./services/memory-pruning');
+const { DreamService } = require('./services/dream-service');
 
 
 
@@ -68,7 +69,7 @@ class Agent {
     this.activeTopics = new Map(); // Store active vault topics per chatId
     // Initialize Command Handler
     this.commandHandler = new CommandHandler(this.db, this.interface, this.confirmationManager, this.stopFlags, this);
-    this.rateLimiter = new RateLimiter(this);
+    this.rateLimiter = new RateLimiter(this.db);
 
     this.scheduler = new Scheduler(this);
 
@@ -1556,7 +1557,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
       const chatId = message.metadata?.chatId;
       if (chatId && message.timestamp) {
         console.warn(`[Agent] Performing Auto-Rollback for chat ${chatId} since ${message.timestamp}`);
-        this.db.deleteMessagesSince(chatId, message.timestamp);
+        this.db.deleteMessagesFrom(chatId, message.timestamp);
       }
 
       const errReply = createAssistantMessage(`Error: ${error.message} (Automatic Rollback performed)`);

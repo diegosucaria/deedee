@@ -14,6 +14,7 @@ jest.mock('../src/db', () => ({
         logTokenUsage: jest.fn(),
         getAllFacts: jest.fn().mockReturnValue([]),
         getFactsFormatted: jest.fn().mockReturnValue(''), // Added
+        deleteMessagesFrom: jest.fn(),
         getKey: jest.fn(),
         close: jest.fn()
     }))

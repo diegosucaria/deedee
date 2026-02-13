@@ -941,23 +941,23 @@ class AgentDB {
 
   // --- Rate Limiting ---
   logUsage() {
-    this.db.prepare('INSERT INTO usage_logs DEFAULT VALUES').run();
+    this.db.prepare('INSERT INTO usage_logs (timestamp) VALUES (CURRENT_TIMESTAMP)').run();
   }
 
-  checkLimit(windowHours) {
+  checkLimit(hours) {
     const stmt = this.db.prepare(`
-      SELECT COUNT(*) as count FROM usage_logs 
+      SELECT COUNT(*) as count 
+      FROM usage_logs 
       WHERE timestamp > datetime('now', '-' || ? || ' hours')
-      `);
-    const result = stmt.get(windowHours);
-    return result ? result.count : 0;
+    `);
+    return stmt.get(hours).count;
   }
 
   logTokenUsage({ model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost, tag }) {
     const stmt = this.db.prepare(`
       INSERT INTO token_usage(model, prompt_tokens, candidate_tokens, total_tokens, chat_id, estimated_cost, tag)
       VALUES(?, ?, ?, ?, ?, ?, ?)
-        `);
+    `);
     stmt.run(model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost, tag || null);
   }
 
@@ -970,7 +970,7 @@ class AgentDB {
     const stmt = this.db.prepare(`
       INSERT INTO dj_vinyls(id, artist, title, label, catalog_number, cover_image_url, bpm, key, tracks, meta)
       VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `);
+    `);
     stmt.run(id, vinyl.artist, vinyl.title, vinyl.label, vinyl.catalogNumber, vinyl.coverImageUrl, vinyl.bpm, vinyl.key, tracksStr, metaStr);
     return id;
   }
@@ -1004,7 +1004,7 @@ class AgentDB {
       OR label LIKE ?
       OR catalog_number LIKE ?
       ORDER BY created_at DESC
-      `);
+    `);
     return stmt.all(wildcard, wildcard, wildcard, wildcard).map(row => ({
       ...row,
       tracks: JSON.parse(row.tracks),
@@ -1018,7 +1018,7 @@ class AgentDB {
     const stmt = this.db.prepare(`
         SELECT timestamp, role, content FROM messages 
         WHERE content LIKE ? OR parts LIKE ?
-      ORDER BY timestamp DESC
+        ORDER BY timestamp DESC
         LIMIT ?
         `);
     const likeQuery = `% ${query} % `;
@@ -1030,7 +1030,7 @@ class AgentDB {
     const stmt = this.db.prepare(`
         SELECT role, content, timestamp FROM messages
         WHERE date(timestamp) = ?
-      ORDER BY timestamp ASC
+        ORDER BY timestamp ASC
       `);
     return stmt.all(dateStr);
   }
@@ -1041,7 +1041,7 @@ class AgentDB {
     this.db.prepare(`
       INSERT INTO summaries(chat_id, content, range_start, range_end, original_tokens, summary_tokens)
       VALUES(?, ?, ?, ?, ?, ?)
-        `).run(chatId, content, rangeStart, rangeEnd, originalTokens, summaryTokens);
+    `).run(chatId, content, rangeStart, rangeEnd, originalTokens, summaryTokens);
   }
 
   getLatestSummary(chatId) {
@@ -1050,7 +1050,7 @@ class AgentDB {
       WHERE chat_id = ?
       ORDER BY created_at DESC 
       LIMIT 1
-      `).get(chatId);
+    `).get(chatId);
   }
 
   getSummaries(limit = 20) {
@@ -1058,7 +1058,7 @@ class AgentDB {
         SELECT * FROM summaries
         ORDER BY created_at DESC
         LIMIT ?
-        `).all(limit);
+      `).all(limit);
   }
 
   getSummaryStats() {
@@ -1068,7 +1068,7 @@ class AgentDB {
       SUM(original_tokens) as original,
       SUM(summary_tokens) as summary
       FROM summaries
-      `).get();
+  `).get();
 
     return {
       totalCount: stats.count || 0,
@@ -1092,7 +1092,7 @@ class AgentDB {
       WHERE chat_id = ?
       ORDER BY timestamp DESC 
       LIMIT ?
-        `);
+    `);
 
     const rows = stmt.all(chatId, limit).reverse(); // Reverse to get chronological order
 
@@ -1140,8 +1140,8 @@ class AgentDB {
       const stmt = this.db.prepare(`
          UPDATE goals SET status = 'failed' 
          WHERE status = 'pending' AND metadata LIKE ?
-      `);
-      stmt.run(`%${chatId}%`);
+  `);
+      stmt.run(`% ${chatId}% `);
       console.log(`[DB] Failed pending goals for chat ${chatId}`);
     } else {
       console.warn(`[DB] clearGoals called without chatId, no action taken.`);
@@ -1153,7 +1153,7 @@ class AgentDB {
     const stmt = this.db.prepare(`
       INSERT INTO entity_aliases(alias, entity_id) VALUES(?, ?)
       ON CONFLICT(alias) DO UPDATE SET entity_id = excluded.entity_id
-      `);
+  `);
     stmt.run(alias.toLowerCase(), entityId);
   }
 
@@ -1207,7 +1207,7 @@ class AgentDB {
       SELECT strftime('%Y-%m-%dT%H:%M:%SZ', timestamp) as timestamp, value, type, metadata FROM metrics 
       WHERE type IN ('latency_router', 'latency_model', 'latency_e2e') 
       ORDER BY timestamp DESC LIMIT ?
-      `);
+  `);
     return stmt.all(limit).reverse();
   }
 
@@ -1216,21 +1216,21 @@ class AgentDB {
       SELECT strftime('%Y-%m-%dT%H:%M:%SZ', timestamp) as timestamp, estimated_cost, total_tokens, model 
       FROM token_usage 
       ORDER BY timestamp DESC LIMIT ?
-      `);
+    `);
     return stmt.all(limit).reverse();
   }
 
   getDailyCostTrend(limit = 7) {
     const stmt = this.db.prepare(`
       SELECT
-    date(timestamp, 'localtime') as date,
+        date(timestamp, 'localtime') as date,
       SUM(estimated_cost) as cost,
       SUM(total_tokens) as tokens 
       FROM token_usage 
       GROUP BY date(timestamp, 'localtime') 
       ORDER BY date(timestamp, 'localtime') DESC
-    LIMIT ?
-      `);
+      LIMIT ?
+  `);
     return stmt.all(limit).reverse();
   }
 
@@ -1238,13 +1238,13 @@ class AgentDB {
     // Total tokens today
     const todayQuery = this.db.prepare(`
       SELECT
-    SUM(prompt_tokens) as prompt,
-      SUM(candidate_tokens) as candidate,
-      SUM(total_tokens) as total,
-      SUM(estimated_cost) as cost
+        SUM(prompt_tokens) as prompt,
+        SUM(candidate_tokens) as candidate,
+        SUM(total_tokens) as total,
+        SUM(estimated_cost) as cost
       FROM token_usage 
       WHERE date(timestamp, 'localtime') = date('now', 'localtime')
-      `).get();
+    `).get();
 
     return {
       today: {
@@ -1263,7 +1263,7 @@ class AgentDB {
         FROM metrics 
         WHERE type = 'latency_e2e' 
         AND timestamp > datetime('now', '-24 hours')
-      `).get();
+    `).get();
 
     return {
       avg24h: Math.round(avgQuery?.avg_latency || 0)
@@ -1320,7 +1320,7 @@ class AgentDB {
         SELECT AVG(total_tokens) as avg_tokens 
         FROM token_usage 
         WHERE timestamp > datetime('now', '-7 days')
-      `).get().avg_tokens || 0;
+  `).get().avg_tokens || 0;
 
     return {
       sizeBytes,
@@ -1350,7 +1350,7 @@ class AgentDB {
   logJobExecution(jobName, status, output, durationMs) {
     this.db.prepare(`
       INSERT INTO job_logs(job_name, status, output, duration_ms)
-    VALUES(?, ?, ?, ?)
+      VALUES(?, ?, ?, ?)
     `).run(jobName, status, output ? String(output) : null, durationMs);
   }
 
@@ -1396,7 +1396,7 @@ class AgentDB {
     const info = this.db.prepare(`
       DELETE FROM job_logs 
       WHERE timestamp < datetime('now', '-' || ? || ' days')
-      `).run(retentionDays);
+  `).run(retentionDays);
     console.log(`[DB] Cleaned up ${info.changes} old job logs.`);
     return info.changes;
   }
@@ -1405,7 +1405,7 @@ class AgentDB {
     const info = this.db.prepare(`
       DELETE FROM metrics 
       WHERE timestamp < datetime('now', '-' || ? || ' days')
-      `).run(retentionDays);
+  `).run(retentionDays);
     console.log(`[DB] Cleaned up ${info.changes} old metrics.`);
     return info.changes;
   }
@@ -1414,7 +1414,7 @@ class AgentDB {
     const info = this.db.prepare(`
       DELETE FROM token_usage 
       WHERE timestamp < datetime('now', '-' || ? || ' days')
-      `).run(retentionDays);
+  `).run(retentionDays);
     console.log(`[DB] Cleaned up ${info.changes} old token usage logs.`);
     return info.changes;
   }
@@ -1441,7 +1441,7 @@ class AgentDB {
     const stmt = this.db.prepare(`
       INSERT INTO agent_settings(key, value, category) VALUES(?, ?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, category = excluded.category, updated_at = CURRENT_TIMESTAMP
-      `);
+  `);
     stmt.run(key, valStr, category);
   }
 
