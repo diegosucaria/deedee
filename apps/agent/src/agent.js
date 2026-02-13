@@ -68,7 +68,7 @@ class Agent {
     this.activeTopics = new Map(); // Store active vault topics per chatId
     // Initialize Command Handler
     this.commandHandler = new CommandHandler(this.db, this.interface, this.confirmationManager, this.stopFlags, this);
-    this.rateLimiter = new RateLimiter(this.db);
+    this.rateLimiter = new RateLimiter(this);
 
     this.scheduler = new Scheduler(this);
 
@@ -82,6 +82,7 @@ class Agent {
     this.impersonationService = new ImpersonationService(this);
     this.skillService = new SkillService(this);
     this.memoryPruning = new MemoryPruningService(this);
+    this.dreamService = new DreamService(this);
 
     // In-Memory Settings Cache
     this.settings = {};

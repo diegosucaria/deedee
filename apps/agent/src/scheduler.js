@@ -451,6 +451,24 @@ class Scheduler {
                 payload: { task: sysJob.task, isSystem: true }
             });
         }
+
+        // NIGHTLY DREAMING
+        // Run at 4:30 AM daily, after pruning.
+        this.scheduleJob('nightly_dream', '30 4 * * *', async () => {
+            console.log('[Scheduler] Agent is entering REM sleep...');
+            try {
+                // Determine if we dream (handled by service)
+                const result = await this.agent.dreamService.dream();
+                if (result.dreamed) {
+                    this.logJobExecution('nightly_dream', 'success', `Dreamt: ${result.type}`);
+                } else {
+                    this.logJobExecution('nightly_dream', 'skipped', result.reason);
+                }
+            } catch (error) {
+                console.error('[Scheduler] Nightly dream failed:', error);
+                this.logJobExecution('nightly_dream', 'failure', error.message);
+            }
+        }, { persist: true });
     }
 
     /**
