@@ -42,7 +42,7 @@ class Agent {
     this.client = null;   // Will be init in start()
 
     // Persistence
-    this.db = new AgentDB();
+    this.db = config.db || new AgentDB();
     // Fallback for tests where dbPath might be undefined due to mocking
     const dataDir = this.db.dbPath ? path.dirname(this.db.dbPath) : path.join(process.cwd(), 'data');
     this.smartContext = new SmartContextManager(this.db, this.client); // Client is null here, need to set later
@@ -479,7 +479,8 @@ class Agent {
    * @param {function} sendCallback - Async function(reply) to handle responses
    * @param {function} onProgress - Optional async function(status) to report progress
    */
-  async processMessage(message, sendCallback, onProgress = async () => { }) {
+  async processMessage(message, originalSendCallback, onProgress = async () => { }) {
+    let activeSendCallback = originalSendCallback;
     const reportProgress = async (status) => {
       try { await onProgress(status); } catch (e) { /* ignore */ }
     };
@@ -592,7 +593,7 @@ class Agent {
         const pong = createAssistantMessage('PONG');
         pong.source = 'system';
         // Skip DB Save
-        await sendCallback(pong);
+        await activeSendCallback(pong);
         executionSummary.replies.push(pong);
         return executionSummary;
       }
@@ -610,7 +611,7 @@ class Agent {
         // ... (existing slash command logic) ...
         const action = commandResult.action;
         console.log(`[Agent] User confirmed action: ${action.name}`);
-        const result = await this._executeTool(action.name, action.args, message, sendCallback, (model, pTokens, cTokens) => {
+        const result = await this._executeTool(action.name, action.args, message, activeSendCallback, (model, pTokens, cTokens) => {
           const cost = calculateCost(model, pTokens, cTokens);
           this.db.logTokenUsage({
             model, promptTokens: pTokens, candidateTokens: cTokens,
@@ -624,7 +625,7 @@ class Agent {
         const reply = createAssistantMessage(`Action **${action.name}** executed.\nResult: \`\`\`json\n${JSON.stringify(result, null, 2).substring(0, 500)}\n\`\`\``);
         reply.metadata = { chatId };
         reply.source = message.source;
-        await sendCallback(reply);
+        await activeSendCallback(reply);
         executionSummary.replies.push(reply);
         return executionSummary;
       } else if (commandResult === true) {
@@ -654,9 +655,6 @@ class Agent {
             const wClean = w.contact_string.replace(/[^0-9]/g, '');
             const msgClean = contactString.replace(/[^0-9]/g, '');
 
-            // DEBUG WATCHER
-            // console.log(`[Watcher Debug] Checking ${w.name} (${wClean}) against Incoming (${msgClean})`);
-
             if (wClean.length >= 8 && msgClean.length >= 8) {
               // Match last 8 digits (reduced from 9 to be safer for varying area codes)
               // 8 digits usually covers the number without area code in many places, or at least substantial overlap.
@@ -673,7 +671,6 @@ class Agent {
                 isContactMatch = true;
               }
 
-              // console.log(`[Watcher Debug] Match Result: ${isContactMatch}`);
             }
 
             // 2. Fallback to direct string inclusion (handles names or shorter numbers)
@@ -690,7 +687,7 @@ class Agent {
           if (isContactMatch) {
             // Check Condition
             // Simple 'contains' logic for now
-            if (w.condition === '*' || w.condition.toLowerCase() === 'any') {
+            if (w.condition === '*' || w.condition.toLowerCase() === 'any' || w.condition.toLowerCase() === 'all') {
               triggeredWatcher = w;
               break;
             } else if (w.condition.startsWith('contains')) {
@@ -761,16 +758,40 @@ class Agent {
           // But we keep the original message in DB for history?
           // "Passive Mode" logic above saved it.
           // If it IS triggered, we proceed.
-          // But we shouldn't just run the generic router on the original message "Hey dinner?", 
-          // the agent won't know what to do with it for ME.
-          // The INSTRUCTION is what the agent should do.
 
-          // Hijack the message content for the Agent's internal processing
-          // BUT ensure we save the original message correctly first?
           this.db.saveMessage(message);
 
+          // HIJACK SEND CALLBACK FOR WATCHER: Suppress/Redirect replies
+          console.log('[Agent] WATCHER DETECTED. Hijacking activeSendCallback.');
+          const upstreamCallback = activeSendCallback;
+          activeSendCallback = async (reply) => {
+            // 1. Log suppression
+            console.log(`[Agent] WATCHER SUPPRESSION: Intercepted reply to ${contactString} (triggered by watcher).`);
+            console.log(`[Agent] Content:`, reply.content);
+
+            // 2. Redirect to Admin? (Optional - fetch adminId from config)
+            const adminChatId = this.settings.admin_chat_id;
+            console.log(`[Agent] Admin Chat ID setting: ${adminChatId}`);
+
+            if (adminChatId && reply.content) {
+              console.log(`[Agent] Redirecting suppressed reply to ADMIN (${adminChatId})`);
+              const adminReply = { ...reply, metadata: { ...reply.metadata, chatId: adminChatId } };
+              // Prefix to explain context
+              adminReply.content = `[WATCHER: ${contactString}]\n${reply.content}`;
+
+              console.log('Upstream callback identity check:', !!upstreamCallback.mock, upstreamCallback.name);
+              await upstreamCallback(adminReply);
+              console.log('Upstream called.');
+            } else {
+              console.log(`[Agent] Suppressed reply (No admin_chat_id configured).`);
+            }
+
+            // 3. Do NOT send to original sender.
+          };
+          console.log('[Agent] activeSendCallback has been replaced.');
+
           // Create a pseudo-message for the Agent to ACT on
-          message.content = `SYSTEM_WATCHER_ALERT: A message from ${contactString} ("${message.content}") matched watcher conditions. \nINSTRUCTION: ${triggeredWatcher.instruction}`;
+          message.content = `SYSTEM_WATCHER_ALERT: A message from ${contactString} ("${message.content}") matched watcher conditions. \nINSTRUCTION: ${triggeredWatcher.instruction} \n\nIMPORTANT: DO NOT REPLY TO THE SENDER directly. They are a contact, not the user. \n- If you need to send them a message, use the 'sendMessage' tool explicitly.\n- If you need to confirm the action, just say "Done" and I will redirect it to the Admin.`;
           message.role = 'user'; // Treat as a command from me
           // Proceed to normal flow...
         }
@@ -852,7 +873,7 @@ class Agent {
 
         if (!this.xaiClient) {
           const errReply = createAssistantMessage('System: Grok is not configured. Please set API Key in Settings.');
-          await sendCallback(errReply);
+          await activeSendCallback(errReply);
           return executionSummary;
         }
 
@@ -903,7 +924,7 @@ class Agent {
         reply.source = message.source;
         reply.metadata = { model: targetModel, chatId };
 
-        await sendCallback(reply);
+        await activeSendCallback(reply);
         executionSummary.replies.push(reply);
 
         // Save to DB
@@ -922,7 +943,7 @@ class Agent {
           prompt = message.parts.map(p => p.text).join(' ');
         }
 
-        const toolResult = await this._executeTool('generateImage', { prompt: prompt }, message, sendCallback, (model, pTokens, cTokens) => {
+        const toolResult = await this._executeTool('generateImage', { prompt: prompt }, message, activeSendCallback, (model, pTokens, cTokens) => {
           // Image gen usually flat cost or different metric, but if we had tokens we'd track here.
           // For now, no-op or specific image cost logic if needed.
         });
@@ -932,7 +953,7 @@ class Agent {
         const reply = createAssistantMessage('Image generated.');
         reply.metadata = { chatId: message.metadata?.chatId };
         reply.source = message.source;
-        await sendCallback(reply);
+        await activeSendCallback(reply);
         executionSummary.replies.push(reply);
 
         // --- HISTORY INJECTION [FIX] ---
@@ -1233,7 +1254,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
         // CHECK STOP FLAG
         if (this.stopFlags.has(chatId) || this.stopFlags.has('GLOBAL_STOP')) {
           console.log(`[Agent] Stop flag detected for chat ${chatId}. Breaking loop.`);
-          await sendCallback(createAssistantMessage('🛑 Execution stopped by user.'));
+          await activeSendCallback(createAssistantMessage('🛑 Execution stopped by user.'));
           this.stopFlags.delete(chatId);
           // Do NOT delete GLOBAL_STOP here, so it hits other concurrent loops.
           // It will be cleared on next user input.
@@ -1243,7 +1264,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
         loopCount++;
         if (loopCount > MAX_LOOPS) {
           console.warn(`[Agent] Max tool loop limit reached (${MAX_LOOPS}). Breaking.`);
-          await sendCallback(createAssistantMessage('I am stuck in a loop. Stopping now.'));
+          await activeSendCallback(createAssistantMessage('I am stuck in a loop. Stopping now.'));
           break;
         }
 
@@ -1254,7 +1275,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
             const updateMsg = createAssistantMessage(`Still working... (${thinkText})`);
             updateMsg.metadata = { chatId: message.metadata?.chatId };
             updateMsg.source = message.source;
-            await sendCallback(updateMsg).catch(err => console.error('[Agent] Failed to send update msg:', err));
+            await activeSendCallback(updateMsg).catch(err => console.error('[Agent] Failed to send update msg:', err));
           }
         }
 
@@ -1296,7 +1317,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
             const thinkingMsg = createAssistantMessage(`Thinking... (${thinkText})`);
             thinkingMsg.metadata = { chatId: message.metadata?.chatId };
             thinkingMsg.source = message.source;
-            await sendCallback(thinkingMsg).catch(err => console.error('[Agent] Failed to send thinking msg:', err));
+            await activeSendCallback(thinkingMsg).catch(err => console.error('[Agent] Failed to send thinking msg:', err));
           }
         }, 2500);
 
@@ -1320,12 +1341,12 @@ IF you are asked to draft a message for the user, or if you are replying via the
               const confirmMsg = createAssistantMessage(`🛑 **Safety Check**: I want to execute \`${executionName}\`.\n\nArgs: \`${JSON.stringify(call.args)}\`\n\n${guard.message}\n\nReply **/confirm** to proceed or **/cancel** to stop.`);
               confirmMsg.metadata = { chatId: message.metadata?.chatId };
               confirmMsg.source = message.source;
-              await sendCallback(confirmMsg).catch(console.error);
+              await activeSendCallback(confirmMsg).catch(console.error);
 
               toolResult = { info: `Action PAUSED. ${guard.message} User must confirm.` };
             } else {
               // Execute normally
-              toolResult = await this._executeTool(executionName, call.args, message, sendCallback, (model, pTokens, cTokens) => {
+              toolResult = await this._executeTool(executionName, call.args, message, activeSendCallback, (model, pTokens, cTokens) => {
                 const cost = calculateCost(model, pTokens, cTokens);
                 e2eCost += cost;
                 e2eTokens += (pTokens + cTokens);
@@ -1466,9 +1487,9 @@ IF you are asked to draft a message for the user, or if you are replying via the
       if (typeof response.text === 'function') {
         try {
           text = response.text();
+          console.log(`[Agent] Extracted text: "${text}"`);
         } catch (e) {
-          // Sometimes text() throws if candidate safety blocked
-          console.warn('[Agent] response.text() threw:', e.message);
+          console.warn('[Agent] Could not extract text from response:', e);
         }
       } else if (response.text) {
         text = response.text;
@@ -1502,7 +1523,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
             console.log('[Agent] Suppressing final text response because audio was sent.');
             // We saved it to DB above, but we do NOT send it to interface to avoid double notification.
           } else {
-            await sendCallback(reply);
+            await activeSendCallback(reply);
           }
 
           executionSummary.replies.push(reply);
@@ -1525,7 +1546,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
             // Save implicit reply
             this.db.saveMessage(reply);
 
-            await sendCallback(reply);
+            await activeSendCallback(reply);
             executionSummary.replies.push(reply);
           }
         } else {
@@ -1535,7 +1556,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
           reply.metadata = { chatId: message.metadata?.chatId };
           reply.source = message.source;
           this.db.saveMessage(reply); // Persist error so it appears in history
-          await sendCallback(reply);
+          await activeSendCallback(reply);
           executionSummary.replies.push(reply);
         }
       }
@@ -1553,7 +1574,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
       errReply.metadata = { chatId: message.metadata?.chatId };
       errReply.source = message.source;
       try {
-        await sendCallback(errReply);
+        await activeSendCallback(errReply);
       } catch (sendErr) {
         console.error('[Agent] Failed to send error reply to user:', sendErr.message);
       }

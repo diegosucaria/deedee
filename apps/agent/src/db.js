@@ -920,12 +920,9 @@ class AgentDB {
   }
 
   getWatchers(status = 'active') {
-    const stmt = this.db.prepare(`
-        SELECT * FROM watchers 
-        WHERE status = ? 
-        ORDER BY created_at DESC
-    `);
-    return stmt.all(status);
+    const watchers = this.db.prepare('SELECT * FROM watchers WHERE status = ?').all(status);
+    console.log(`[DB] getWatchers('${status}') returned ${watchers.length} rows.`);
+    return watchers;
   }
 
   getAllWatchers() {
@@ -947,7 +944,7 @@ class AgentDB {
     if (fields.length === 0) return;
     args.push(id);
 
-    const sql = `UPDATE watchers SET ${fields.join(', ')} WHERE id = ?`;
+    const sql = `UPDATE watchers SET ${fields.join(', ')} WHERE id = ? `;
     this.db.prepare(sql).run(...args);
   }
 
@@ -964,16 +961,16 @@ class AgentDB {
     const stmt = this.db.prepare(`
       SELECT COUNT(*) as count FROM usage_logs 
       WHERE timestamp > datetime('now', '-' || ? || ' hours')
-    `);
+      `);
     const result = stmt.get(windowHours);
     return result ? result.count : 0;
   }
 
   logTokenUsage({ model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost, tag }) {
     const stmt = this.db.prepare(`
-      INSERT INTO token_usage (model, prompt_tokens, candidate_tokens, total_tokens, chat_id, estimated_cost, tag)
-      VALUES (?, ?, ?, ?, ?, ?, ?)
-    `);
+      INSERT INTO token_usage(model, prompt_tokens, candidate_tokens, total_tokens, chat_id, estimated_cost, tag)
+      VALUES(?, ?, ?, ?, ?, ?, ?)
+        `);
     stmt.run(model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost, tag || null);
   }
 
@@ -984,9 +981,9 @@ class AgentDB {
     const metaStr = vinyl.meta ? JSON.stringify(vinyl.meta) : '{}';
 
     const stmt = this.db.prepare(`
-      INSERT INTO dj_vinyls (id, artist, title, label, catalog_number, cover_image_url, bpm, key, tracks, meta)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `);
+      INSERT INTO dj_vinyls(id, artist, title, label, catalog_number, cover_image_url, bpm, key, tracks, meta)
+      VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `);
     stmt.run(id, vinyl.artist, vinyl.title, vinyl.label, vinyl.catalogNumber, vinyl.coverImageUrl, vinyl.bpm, vinyl.key, tracksStr, metaStr);
     return id;
   }
@@ -1012,15 +1009,15 @@ class AgentDB {
 
   searchVinyls(query) {
     if (!query) return [];
-    const wildcard = `%${query}%`;
+    const wildcard = `% ${query} % `;
     const stmt = this.db.prepare(`
       SELECT * FROM dj_vinyls 
-      WHERE artist LIKE ? 
-      OR title LIKE ? 
-      OR label LIKE ? 
+      WHERE artist LIKE ?
+      OR title LIKE ?
+      OR label LIKE ?
       OR catalog_number LIKE ?
       ORDER BY created_at DESC
-    `);
+      `);
     return stmt.all(wildcard, wildcard, wildcard, wildcard).map(row => ({
       ...row,
       tracks: JSON.parse(row.tracks),
@@ -1034,10 +1031,10 @@ class AgentDB {
     const stmt = this.db.prepare(`
         SELECT timestamp, role, content FROM messages 
         WHERE content LIKE ? OR parts LIKE ?
-        ORDER BY timestamp DESC
+      ORDER BY timestamp DESC
         LIMIT ?
-    `);
-    const likeQuery = `%${query}%`;
+        `);
+    const likeQuery = `% ${query} % `;
     return stmt.all(likeQuery, likeQuery, limit);
   }
 
@@ -1046,7 +1043,7 @@ class AgentDB {
     const stmt = this.db.prepare(`
         SELECT role, content, timestamp FROM messages
         WHERE date(timestamp) = ?
-        ORDER BY timestamp ASC
+      ORDER BY timestamp ASC
       `);
     return stmt.all(dateStr);
   }
@@ -1055,18 +1052,18 @@ class AgentDB {
 
   saveSummary(chatId, content, rangeStart, rangeEnd, originalTokens = 0, summaryTokens = 0) {
     this.db.prepare(`
-      INSERT INTO summaries (chat_id, content, range_start, range_end, original_tokens, summary_tokens)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(chatId, content, rangeStart, rangeEnd, originalTokens, summaryTokens);
+      INSERT INTO summaries(chat_id, content, range_start, range_end, original_tokens, summary_tokens)
+      VALUES(?, ?, ?, ?, ?, ?)
+        `).run(chatId, content, rangeStart, rangeEnd, originalTokens, summaryTokens);
   }
 
   getLatestSummary(chatId) {
     return this.db.prepare(`
       SELECT * FROM summaries 
-      WHERE chat_id = ? 
+      WHERE chat_id = ?
       ORDER BY created_at DESC 
       LIMIT 1
-    `).get(chatId);
+      `).get(chatId);
   }
 
   getSummaries(limit = 20) {
@@ -1074,17 +1071,17 @@ class AgentDB {
         SELECT * FROM summaries
         ORDER BY created_at DESC
         LIMIT ?
-    `).all(limit);
+        `).all(limit);
   }
 
   getSummaryStats() {
     const stats = this.db.prepare(`
       SELECT 
-        COUNT(*) as count, 
-        SUM(original_tokens) as original, 
-        SUM(summary_tokens) as summary
+        COUNT(*) as count,
+      SUM(original_tokens) as original,
+      SUM(summary_tokens) as summary
       FROM summaries
-    `).get();
+      `).get();
 
     return {
       totalCount: stats.count || 0,
@@ -1105,10 +1102,10 @@ class AgentDB {
     // Get last N messages for this chat
     const stmt = this.db.prepare(`
       SELECT role, content, metadata FROM messages 
-      WHERE chat_id = ? 
+      WHERE chat_id = ?
       ORDER BY timestamp DESC 
       LIMIT ?
-    `);
+        `);
 
     const rows = stmt.all(chatId, limit).reverse(); // Reverse to get chronological order
 
@@ -1159,7 +1156,7 @@ class AgentDB {
     if (!chatId || !timestamp) return;
     const stmt = this.db.prepare('DELETE FROM messages WHERE chat_id = ? AND timestamp >= ?');
     const info = stmt.run(chatId, timestamp);
-    console.log(`[DB] Rolled back ${info.changes} messages in chat ${chatId} since ${timestamp}`);
+    console.log(`[DB] Rolled back ${info.changes} messages in chat ${chatId} since ${timestamp} `);
   }
 
   clearGoals(chatId) {
@@ -1173,8 +1170,8 @@ class AgentDB {
       const stmt = this.db.prepare(`
          UPDATE goals SET status = 'failed' 
          WHERE status = 'pending' AND metadata LIKE ?
-       `);
-      stmt.run(`%${chatId}%`);
+      `);
+      stmt.run(`% ${chatId}% `);
       console.log(`[DB] Failed pending goals for chat ${chatId}`);
     } else {
       // If no chatId, fail ALL pending? Safer to require chatId.
@@ -1185,9 +1182,9 @@ class AgentDB {
   // --- Smart Home Entity Memory ---
   saveDeviceAlias(alias, entityId) {
     const stmt = this.db.prepare(`
-      INSERT INTO entity_aliases (alias, entity_id) VALUES (?, ?)
+      INSERT INTO entity_aliases(alias, entity_id) VALUES(?, ?)
       ON CONFLICT(alias) DO UPDATE SET entity_id = excluded.entity_id
-    `);
+      `);
     stmt.run(alias.toLowerCase(), entityId);
   }
 
@@ -1241,7 +1238,7 @@ class AgentDB {
       SELECT strftime('%Y-%m-%dT%H:%M:%SZ', timestamp) as timestamp, value, type, metadata FROM metrics 
       WHERE type IN ('latency_router', 'latency_model', 'latency_e2e') 
       ORDER BY timestamp DESC LIMIT ?
-    `);
+      `);
     return stmt.all(limit).reverse();
   }
 
@@ -1250,35 +1247,35 @@ class AgentDB {
       SELECT strftime('%Y-%m-%dT%H:%M:%SZ', timestamp) as timestamp, estimated_cost, total_tokens, model 
       FROM token_usage 
       ORDER BY timestamp DESC LIMIT ?
-    `);
+      `);
     return stmt.all(limit).reverse();
   }
 
   getDailyCostTrend(limit = 7) {
     const stmt = this.db.prepare(`
-      SELECT 
-        date(timestamp, 'localtime') as date, 
-        SUM(estimated_cost) as cost, 
-        SUM(total_tokens) as tokens 
+      SELECT
+    date(timestamp, 'localtime') as date,
+      SUM(estimated_cost) as cost,
+      SUM(total_tokens) as tokens 
       FROM token_usage 
       GROUP BY date(timestamp, 'localtime') 
-      ORDER BY date(timestamp, 'localtime') DESC 
-      LIMIT ?
-    `);
+      ORDER BY date(timestamp, 'localtime') DESC
+    LIMIT ?
+      `);
     return stmt.all(limit).reverse();
   }
 
   getTokenUsageStats() {
     // Total tokens today
     const todayQuery = this.db.prepare(`
-      SELECT 
-        SUM(prompt_tokens) as prompt, 
-        SUM(candidate_tokens) as candidate, 
-        SUM(total_tokens) as total,
-        SUM(estimated_cost) as cost
+      SELECT
+    SUM(prompt_tokens) as prompt,
+      SUM(candidate_tokens) as candidate,
+      SUM(total_tokens) as total,
+      SUM(estimated_cost) as cost
       FROM token_usage 
       WHERE date(timestamp, 'localtime') = date('now', 'localtime')
-    `).get();
+      `).get();
 
     return {
       today: {
@@ -1312,7 +1309,7 @@ class AgentDB {
     const tableCounts = {};
     for (const t of tables) {
       try {
-        tableCounts[t] = this.db.prepare(`SELECT COUNT(*) as count FROM ${t}`).get().count;
+        tableCounts[t] = this.db.prepare(`SELECT COUNT(*) as count FROM ${t} `).get().count;
       } catch (e) { tableCounts[t] = 0; }
     }
 
@@ -1354,7 +1351,7 @@ class AgentDB {
         SELECT AVG(total_tokens) as avg_tokens 
         FROM token_usage 
         WHERE timestamp > datetime('now', '-7 days')
-    `).get().avg_tokens || 0;
+      `).get().avg_tokens || 0;
 
     return {
       sizeBytes,
@@ -1383,8 +1380,8 @@ class AgentDB {
   // --- Job Logs ---
   logJobExecution(jobName, status, output, durationMs) {
     this.db.prepare(`
-      INSERT INTO job_logs (job_name, status, output, duration_ms)
-      VALUES (?, ?, ?, ?)
+      INSERT INTO job_logs(job_name, status, output, duration_ms)
+    VALUES(?, ?, ?, ?)
     `).run(jobName, status, output ? String(output) : null, durationMs);
   }
 
@@ -1400,7 +1397,7 @@ class AgentDB {
     }
 
     // Get Total Count
-    const countQuery = `SELECT COUNT(*) as count FROM job_logs${jobName ? ' WHERE job_name = ?' : ''}`;
+    const countQuery = `SELECT COUNT(*) as count FROM job_logs${jobName ? ' WHERE job_name = ?' : ''} `;
     const total = this.db.prepare(countQuery).get(...countParams).count;
 
     query += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
@@ -1413,7 +1410,7 @@ class AgentDB {
   deleteJobLogs(ids) {
     if (!ids || ids.length === 0) return 0;
     const placeholders = ids.map(() => '?').join(',');
-    const stmt = this.db.prepare(`DELETE FROM job_logs WHERE id IN (${placeholders})`);
+    const stmt = this.db.prepare(`DELETE FROM job_logs WHERE id IN(${placeholders})`);
     const info = stmt.run(...ids);
     console.log(`[DB] Deleted ${info.changes} job logs.`);
     return info.changes;
@@ -1430,7 +1427,7 @@ class AgentDB {
     const info = this.db.prepare(`
       DELETE FROM job_logs 
       WHERE timestamp < datetime('now', '-' || ? || ' days')
-    `).run(retentionDays);
+      `).run(retentionDays);
     console.log(`[DB] Cleaned up ${info.changes} old job logs.`);
     return info.changes;
   }
@@ -1439,7 +1436,7 @@ class AgentDB {
     const info = this.db.prepare(`
       DELETE FROM metrics 
       WHERE timestamp < datetime('now', '-' || ? || ' days')
-    `).run(retentionDays);
+      `).run(retentionDays);
     console.log(`[DB] Cleaned up ${info.changes} old metrics.`);
     return info.changes;
   }
@@ -1448,7 +1445,7 @@ class AgentDB {
     const info = this.db.prepare(`
       DELETE FROM token_usage 
       WHERE timestamp < datetime('now', '-' || ? || ' days')
-    `).run(retentionDays);
+      `).run(retentionDays);
     console.log(`[DB] Cleaned up ${info.changes} old token usage logs.`);
     return info.changes;
   }
@@ -1473,9 +1470,9 @@ class AgentDB {
   setAgentSetting(key, value, category = 'general') {
     const valStr = JSON.stringify(value);
     const stmt = this.db.prepare(`
-      INSERT INTO agent_settings (key, value, category) VALUES (?, ?, ?)
+      INSERT INTO agent_settings(key, value, category) VALUES(?, ?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, category = excluded.category, updated_at = CURRENT_TIMESTAMP
-    `);
+      `);
     stmt.run(key, valStr, category);
   }
 
@@ -1503,12 +1500,12 @@ class AgentDB {
    * @returns {object} Stats of migrated records
    */
   migrateSessionId(oldId, newId) {
-    console.log(`[DB] Migrating session ${oldId} -> ${newId}`);
+    console.log(`[DB] Migrating session ${oldId} -> ${newId} `);
 
     // Check if new ID already exists (Collision check)
     const existing = this.getSession(newId);
     if (existing) {
-      throw new Error(`Target session ID ${newId} already exists. Cannot migrate.`);
+      throw new Error(`Target session ID ${newId} already exists.Cannot migrate.`);
     }
 
     const stats = { messages: 0, summaries: 0, token_usage: 0, session: 0 };
@@ -1536,7 +1533,7 @@ class AgentDB {
     });
 
     transaction();
-    console.log(`[DB] Migration complete:`, stats);
+    console.log(`[DB] Migration complete: `, stats);
     return stats;
   }
 }

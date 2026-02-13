@@ -11,14 +11,19 @@ describe('Message Watchers & Passive Mode', () => {
     let agent;
     let db;
     let tmpDir;
+    let mockInterface; // Added for the new Agent constructor signature
 
     beforeAll(() => {
         tmpDir = path.join(__dirname, 'tmp_watchers_test');
         if (!fs.existsSync(tmpDir)) fs.mkdirSync(tmpDir);
-        db = new AgentDB(tmpDir);
-        agent = new Agent(db);
-        // Mock Tool Execution to track calls
-        agent._executeTool = jest.fn().mockResolvedValue('Tool Executed');
+        db = new AgentDB(tmpDir); // Use fresh DB
+        mockInterface = new WhatsAppService(); // Initialize mock interface
+        agent = new Agent({ interface: mockInterface, db: db }); // Pass db to Agent constructor
+        // Mock Generation to avoid API calls
+        agent._generateStream = jest.fn().mockResolvedValue({
+            candidates: [{ content: { role: 'model', parts: [{ text: 'Mock Response' }] } }],
+            text: () => 'Mock Response' // Add helper method used by some paths in agent.js
+        });
     });
 
     afterAll(() => {
@@ -33,6 +38,9 @@ describe('Message Watchers & Passive Mode', () => {
     });
 
     it('should IGNORE messages in passive mode (whatsapp:user) if no watcher matches', async () => {
+        // Setup Spy
+        const toolSpy = jest.spyOn(agent, '_executeTool');
+
         const message = {
             id: 'msg_1',
             role: 'user',
@@ -48,14 +56,17 @@ describe('Message Watchers & Passive Mode', () => {
         // It might call saveMessage depending on config.
 
         // Verify _executeTool was NOT called (no LLM invocation)
-        expect(agent._executeTool).not.toHaveBeenCalled();
+        expect(toolSpy).not.toHaveBeenCalled();
     });
 
-    it('should TRIGGER a watcher if condition matches', async () => {
+    it('should TRIGGER a watcher but SUPPRESS direct reply to contact', async () => {
         // Create a watcher
+        const watcherName = 'Test Watcher';
+        const contact = '1234567890';
+
         db.createWatcher({
-            name: 'Test Watcher',
-            contactString: '1234567890',
+            name: watcherName,
+            contactString: contact,
             condition: "contains 'hello'",
             instruction: "Reply 'Confirmed'",
             status: 'active'
@@ -64,28 +75,71 @@ describe('Message Watchers & Passive Mode', () => {
         const message = {
             id: 'msg_2',
             role: 'user',
-            content: 'Oh Hello there', // Matches 'hello' case-insensitive usually
+            content: 'Oh Hello there',
             source: 'whatsapp:user',
-            metadata: { phoneNumber: '1234567890' }
+            metadata: { phoneNumber: contact, chatId: `${contact}@s.whatsapp.net` }
         };
 
-        // We need to spy on runInstruction or similar?
-        // In agent.js, if triggeredWatcher:
-        // message.content = `[WATCHER TRIGGERED: ${triggeredWatcher.name}] ${triggeredWatcher.instruction}\nContext: ${message.content}`;
-        // source = 'whatsapp:assistant'; // Switch to active mode
+        // Mock sendCallback
+        const sendCallback = jest.fn();
 
-        // The Agent then proceeds to process this *modified* message as a normal command.
-        // So we expect the Agent to process it. _executeTool might be called if the instruction implies a tool, or just LLM reply.
-        // Since we don't mock the LLM here fully, checking the "switch" logic is harder without mocking `generateResponse`.
+        // EXECUTE
+        await agent.processMessage(message, sendCallback);
 
-        // Let's rely on the fact that existing tests mock the LLM or we can inspect the internal state if possible.
-        // Alternatively, verify the agent DOES NOT exit early.
+        // EXPECTATIONS:
+        // 1. sendCallback should NOT be called with a reply to the original user
+        // OR if called, it should be the REDIRECTED one.
 
-        // BUT wait, `agent.processMessage` calls `this.model.generateContent` which needs mocking if we go deep.
-        // Let's just mock `generateResponse` or `runParams`.
+        expect(sendCallback).not.toHaveBeenCalled();
+    });
 
-        // Let's assume the agent uses `this.ai` or similar.
-        // agent.js uses `this.model` (Gemini). We should mock that.
+    it('should REDIRECT watcher reply to Admin if configured', async () => {
+        // Setup Admin
+        const adminId = 'admin_123';
+        agent.settings = { admin_chat_id: adminId };
+
+        const contact = '9876543210';
+        db.createWatcher({
+            name: 'Redirect Watcher',
+            contactString: contact,
+            condition: "all", // any
+            instruction: "Say done",
+            status: 'active'
+        });
+
+        const message = {
+            id: 'msg_3',
+            role: 'user',
+            content: 'Ping',
+            source: 'whatsapp:user', // Passive
+            metadata: { phoneNumber: contact, chatId: `${contact}@s.whatsapp.net` }
+        };
+
+        const sendCallback = jest.fn();
+
+        // Mock _generateStream or similar to force a "Done" response from the "model"? 
+        // Or just rely on the fact that processMessage tries to run.
+        // Since we don't mock the Model generation fully here, `processMessage` might fail or return empty.
+        // We need to Mock `agent.model` or `agent.generateResponse`.
+
+        // Let's Spy on `originalSendCallback` inside the hijacked one? Hard to do.
+        // We can simply check if `sendCallback` was called with the modified chatId.
+
+        // BUT, `processMessage` needs to actually generate a reply for `sendCallback` to be hit.
+        // In this test environment, `this.client` is likely real or failing if not mocked properly?
+        // agent.js: `if (!this.client) ...`
+
+        // We need to Mock `_generateStream` to return a fake response "Done".
+        agent._generateStream = jest.fn().mockResolvedValue({
+            candidates: [{ content: { role: 'model', parts: [{ text: 'Done' }] } }]
+        });
+
+        await agent.processMessage(message, sendCallback);
+
+        expect(sendCallback).toHaveBeenCalled();
+        const callArgs = sendCallback.mock.calls[0][0];
+        expect(callArgs.metadata.chatId).toBe(adminId);
+        expect(callArgs.content).toContain(`[WATCHER: ${contact}]`);
     });
 
     // Validating specific regex logic from agent.js
