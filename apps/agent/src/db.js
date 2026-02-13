@@ -533,8 +533,7 @@ class AgentDB {
       AND id NOT LIKE 'api_city_image_%'
       AND id NOT LIKE 'sys_%' -- Exclude system internal sessions
       AND id LIKE '%-%' -- Keep only UUIDs (Web sessions), filters out numeric Telegram IDs
-      AND id NOT LIKE '%@%' -- Filter out WhatsApp IDs just in case
-      AND id NOT LIKE '%@%' -- Filter out WhatsApp IDs just in case
+      AND id NOT LIKE '%@%' -- Filter out WhatsApp IDs
       ORDER BY is_pinned DESC, updated_at DESC 
       LIMIT ? OFFSET ?
     `).all(limit, offset);
@@ -594,8 +593,6 @@ class AgentDB {
       this.db.prepare('DELETE FROM token_usage WHERE chat_id = ?').run(id);
       this.db.prepare('DELETE FROM chat_sessions WHERE id = ?').run(id);
     });
-    deleteSession();
-    console.log(`[DB] Deleted session ${id} and all related data.`);
     deleteSession();
     console.log(`[DB] Deleted session ${id} and all related data.`);
   }
@@ -689,7 +686,7 @@ class AgentDB {
     const forkTx = this.db.transaction(() => {
       for (const msg of messagesToCopy) {
         // New Message ID to avoid PK conflict if we ever merge? 
-        // Actually keeping same ID is bad practice if copying. New ID is safer.
+        // Generate a new ID for the copy to avoid conflicts
         const newMsgId = crypto.randomUUID();
         insertStmt.run(newMsgId, msg.role, msg.content, msg.parts, msg.source, newSessionId, msg.cost, msg.token_count, msg.timestamp, msg.metadata);
       }
@@ -774,17 +771,7 @@ class AgentDB {
     this.db.prepare('DELETE FROM summaries').run();
   }
 
-  clearGoals(chatId) {
-    if (chatId) {
-      // Filter by metadata if possible, but goals schema relies on metadata JSON string.
-      // Simple implementation: Mark all pending as failed? Or just delete?
-      // Logic in handler says resets pending goals using metadata check... but handler called clearGoals(chatId).
-      // Let's implement robustly or stick to simple.
-      this.db.prepare("UPDATE goals SET status = 'failed' WHERE status = 'pending'").run();
-    } else {
-      this.db.prepare("UPDATE goals SET status = 'failed' WHERE status = 'pending'").run();
-    }
-  }
+  // clearGoals is defined below in the "Reset Commands" section (scoped by chatId via metadata match)
 
   clearHistoryBySource(sourcePrefix) {
     const pattern = `${sourcePrefix}%`;
@@ -866,7 +853,7 @@ class AgentDB {
     const stmt = this.db.prepare('SELECT key, value, updated_at FROM kv_store WHERE key LIKE ? ORDER BY updated_at DESC');
     return stmt.all(prefix).map(row => {
       // Strip prefix for cleaner API response? Or keep full key?
-      // Let's strip prefix for easier reading: "status" instead of "job:weather:status"
+      // Strip job name prefix for cleaner output (e.g. "status" instead of "job:weather:status")
       const cleanKey = row.key.replace(`job:${jobName}:`, '');
       try {
         return { key: cleanKey, value: JSON.parse(row.value), updatedAt: row.updated_at };
@@ -1139,18 +1126,7 @@ class AgentDB {
   }
 
   // --- Reset Commands ---
-  clearHistory(chatId) {
-    if (!chatId) return;
-    const stmt = this.db.prepare('DELETE FROM messages WHERE chat_id = ?');
-    stmt.run(chatId);
-    console.log(`[DB] Cleared history for chat ${chatId}`);
-  }
-
-  clearAllHistory() {
-    this.db.exec('DELETE FROM messages');
-    this.db.exec('DELETE FROM chat_sessions');
-    console.log(`[DB] Cleared ALL history and sessions.`);
-  }
+  // clearHistory and clearAllHistory are defined above (L759/L766) with full cascade logic
 
   deleteMessagesSince(chatId, timestamp) {
     if (!chatId || !timestamp) return;
@@ -1160,22 +1136,15 @@ class AgentDB {
   }
 
   clearGoals(chatId) {
-    // Fail all pending goals associated with this chat or globally if no metadata check?
-    // We filter by metadata like '%"chatId": "xyz"%' 
-    // SQLite's JSON support is basic, usually via string match if JSON1 ext not loaded.
-    // AgentDB init loaded nothing special, so string match is safest for now.
-
     if (chatId) {
-      // Safe-ish string match for chatId in metadata
       const stmt = this.db.prepare(`
          UPDATE goals SET status = 'failed' 
          WHERE status = 'pending' AND metadata LIKE ?
       `);
-      stmt.run(`% ${chatId}% `);
+      stmt.run(`%${chatId}%`);
       console.log(`[DB] Failed pending goals for chat ${chatId}`);
     } else {
-      // If no chatId, fail ALL pending? Safer to require chatId.
-      console.warn(`[DB] clearGoals called without chatId.`);
+      console.warn(`[DB] clearGoals called without chatId, no action taken.`);
     }
   }
 
@@ -1231,7 +1200,7 @@ class AgentDB {
 
   getLatencyTrend(limit = 100) {
     // Get avg latency per hour? Or just raw points for graph?
-    // Let's get raw points for now: timestamp, value, type
+    // Return raw data points: timestamp, value, type
     // SQLite stores UTC strings by default, but returning them as-is makes JS treat them as local.
     // Force 'Z' suffix to ensure ISO 8601 UTC interpretation.
     const stmt = this.db.prepare(`

@@ -28,7 +28,7 @@ function createLiveRouter(agent) {
         // Live usually expects "models/" prefix? Or just the name? 
         // Checking doc: "models/gemini-2.0-flash-exp"
         // Our config service returns "gemini-2.0-flash-exp".
-        // Let's prepend it for safety if the frontend expects it.
+        // Prepend "models/" prefix as required by the Live API
         const modelName = config.getModel('LIVE');
         const model = `models/${modelName}`;
         res.json({ model });

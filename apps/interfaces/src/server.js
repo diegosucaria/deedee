@@ -7,10 +7,11 @@ const axios = require('axios');
 
 const app = express();
 const server = http.createServer(app);
+const corsOrigin = process.env.CORS_ORIGIN || '*';
 const io = new Server(server, {
   maxHttpBufferSize: 5e7, // 50MB
   cors: {
-    origin: "*", // Adjust for production
+    origin: corsOrigin === '*' ? '*' : corsOrigin.split(',').map(s => s.trim()),
     methods: ["GET", "POST"]
   }
 });

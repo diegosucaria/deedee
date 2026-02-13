@@ -164,12 +164,7 @@ class TelegramService {
           // Bold: **text** -> <b>text</b>
           part = part.replace(/\*\*(.+?)\*\*/g, '<b>$1</b>');
 
-          // Italic: *text* -> <i>text</i> (Basic check, might clash with bold if not careful, but bold is handled)
-          // We use a lookaround or just assume simple usage. 
-          // Let's use a simpler regex that requires non-star boundary to avoid messing with remaining **
-          // Actually, since we replaced ** already, single * is safe?
-          // But valid * might be part of ** if we missed it?
-          // Let's replace *text* -> <i>text</i>
+          // Italic: *text* -> <i>text</i> (safe since ** was already replaced above)
           part = part.replace(/\*([^\*]+?)\*/g, '<i>$1</i>');
 
           // Inline Code: `text` -> <code>text</code>

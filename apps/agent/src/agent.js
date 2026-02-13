@@ -32,6 +32,7 @@ const { RagService } = require('./services/rag-service');
 const { GSuiteService } = require('./services/gsuite-service');
 const { DJService } = require('./services/dj-service');
 const { SkillService } = require('./services/skill-service');
+const { MemoryPruningService } = require('./services/memory-pruning');
 
 
 
@@ -80,6 +81,7 @@ class Agent {
     this.djService = new DJService(this);
     this.impersonationService = new ImpersonationService(this);
     this.skillService = new SkillService(this);
+    this.memoryPruning = new MemoryPruningService(this);
 
     // In-Memory Settings Cache
     this.settings = {};
@@ -291,7 +293,7 @@ class Agent {
       } else if (Array.isArray(payload)) {
         // Function response array - The SDK expects { role: 'user', parts: [...] } or { role: 'function', parts: [...] }
         // For Gemini v1beta/v2, function responses are sent as 'function' role or 'user' role with functionResponse parts.
-        // Let's default to binding it to the parts of a 'user' message if not specified.
+        // Default: bind array payload as parts of a 'user' message
         normalizedMessage.parts = payload;
       } else if (typeof payload === 'object') {
         // Try to salvage object input (e.g. from tool output or malformed request)
@@ -565,16 +567,12 @@ class Agent {
         // 1. User message contains a file (or attachment)
         // 2. We are in a generic context (vaultId is 'none' or undefined)
         // 3. It's a relatively new session (msgCount < 5) to avoid re-analyzing old stuff? Or always?
-        // Let's do it for any NEW user message that has attachments.
+        // Auto-analyze any NEW user message with non-audio attachments (PDFs, images, text)
 
         // Suppress for Passive Mode
         if (message.parts && message.role === 'user' && !isPassiveMode) {
           const attachment = message.parts.find(p => p.inlineData && !p.inlineData.mimeType.startsWith('audio/') && !p.inlineData.mimeType.startsWith('image/'));
-          // Or maybe we treat images as potentially vault-worthy too (receipts, medical scans)?
-          // Let's broaden to "any non-audio" for now, or specific PDF focus?
-          // User mentioned "PDFs to act on them... blood.pdf". 
-          // Let's classify anything that looks substantive. PDF, Text, Images.
-          // Exclude Audio (Voice Notes).
+          // Classify anything substantive (PDF, Text, Images) but exclude audio (voice notes)
 
           const candidatePart = message.parts.find(p =>
             p.inlineData && !p.inlineData.mimeType.startsWith('audio/')
@@ -663,7 +661,7 @@ class Agent {
               // 3515517678 is 10 digits.
               // 93515517678 is 11 digits.
               // If we compare last 8: 515517678 vs ...
-              // Actually, simply using endsWith might be safer if we assume one is a suffix of the other?
+              // Use endsWith for suffix matching (handles country code prefix differences)
 
               if (msgClean.endsWith(wClean) || wClean.endsWith(msgClean)) {
                 isContactMatch = true;
@@ -736,7 +734,7 @@ class Agent {
             // console.log(`[Agent Debug] Delegating to Autopilot for ${contactString}. Session=${message.metadata?.session}`); // Verbose
             // Delegate entirely to service (Handles Status Check, Buffering, Deboucing, Drafting)
             // We await it, but the service mainly sets a timer returning immediately unless it processes buffer.
-            // Actually handleMessage returns void immediately after setting timer.
+            // handleMessage sets a debounce timer and returns immediately
             this.impersonationService.handleMessage(chatId, message, contactString);
           } catch (e) {
             console.error('[Agent] Autopilot failed:', e.message);
@@ -748,9 +746,7 @@ class Agent {
         if (triggeredWatcher) {
           console.log(`[Agent] Watcher TRIGGERED! ID: ${triggeredWatcher.id}, Instruction: "${triggeredWatcher.instruction}"`);
 
-          // Mark triggered? Or keep active? Usually one-off? Let's keep active for now unless instruction says "stop watching"
-          // Actually, usually you want to be notified once per event.
-          // Let's update last_triggered_at
+          // Watchers stay active across triggers; update last trigger timestamp
           this.db.updateWatcher(triggeredWatcher.id, { lastTriggeredAt: new Date().toISOString() });
 
           // Construct System Alert to force Agent Action
@@ -811,13 +807,7 @@ class Agent {
 
       // If (c), we saved it inside the block.
       // If (b) or (a), we need to save it.
-      // Let's rely on a deduplication check inside saveMessage (it uses uuid/id) or just check if it was processed?
-      // Actually `db.saveMessage` generates an ID if one doesn't exist.
-      // `createAssistantMessage` etc creates IDs. `createUserMessage` creates IDs.
-      // The `message` object has an ID.
-      // `saveMessage` does `INSERT OR IGNORE` usually?
-      // Let's check `db.saveMessage` implementation using `view_file` if unsure.
-      // Assuming it's safe to call execution path logic.
+      // saveMessage uses INSERT with generated UUID — safe to call without deduplication concern
 
       if (!message.source?.startsWith('whatsapp:user')) {
         this.db.saveMessage(message);
@@ -911,10 +901,8 @@ class Agent {
         const stream = await this._generateStreamGrok(this.xaiClient, targetModel, message.content, history, chatId);
 
         // Handle stream and callback similar to _generateStream but adapted
-        // Actually _generateStreamGrok should probably return a standard response object or stream?
-        // Let's make _generateStreamGrok handle the stream and broadcasting directly, 
-        // OR return a generator compat with processMessage?
-        // processMessage expects `candidates` object.
+        // _generateStreamGrok handles streaming and broadcasting directly
+        // processMessage expects a `candidates` object format
 
         // _generateStreamGrok will handle broadcasting internally and return full text for saving db.
 

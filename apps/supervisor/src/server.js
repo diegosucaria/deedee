@@ -43,7 +43,7 @@ app.use(express.json());
 // Security: Simple Token Auth
 app.use((req, res, next) => {
   // Skip auth for health checks or internal metrics if needed?
-  // Let's protect everything except /health
+  // Protect all routes except /health
   if (req.path === '/health') return next();
 
   const token = req.headers['x-supervisor-token'];

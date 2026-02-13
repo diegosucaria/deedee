@@ -40,7 +40,6 @@ app.use('/v1/backups', require('./routes/backups'));
 app.use('/v1/dj', require('./routes/dj'));
 app.use('/v1/autopilot', require('./routes/autopilot'));
 app.use('/v1/skills', require('./routes/skills'));
-app.use('/v1/skills', require('./routes/skills'));
 app.use('/v1/browser-secrets', require('./routes/secrets'));
 app.use('/v1/mcp', require('./routes/mcp'));
 

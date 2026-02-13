@@ -102,7 +102,6 @@ class Scheduler {
         }
 
         this.jobs[name] = job;
-        this.jobs[name] = job;
         this.jobs[name].metadata = {
             name,
             cronExpression,
@@ -344,6 +343,12 @@ class Scheduler {
                 cron: '0 3 * * *', // 3 AM
                 task: 'Scan vaults and ingest missing files into RAG.',
                 silent: true
+            },
+            {
+                name: 'nightly_memory_pruning',
+                cron: '0 4 * * *', // 4 AM
+                task: 'Prune stale or obsolete facts from memory.',
+                silent: true
             }
         ];
 
@@ -389,6 +394,22 @@ class Scheduler {
                         }
                     } else {
                         return { error: 'RAG Service or Vaults not available' };
+                    }
+                }
+
+                // Nightly Memory Pruning
+                if (sysJob.name === 'nightly_memory_pruning') {
+                    if (this.agent.memoryPruning) {
+                        try {
+                            console.log('[Scheduler] Starting Nightly Memory Pruning...');
+                            const result = await this.agent.memoryPruning.prune();
+                            return result;
+                        } catch (e) {
+                            console.error('[Scheduler] Memory Pruning Failed:', e);
+                            throw e;
+                        }
+                    } else {
+                        return { error: 'MemoryPruning Service not available' };
                     }
                 }
 

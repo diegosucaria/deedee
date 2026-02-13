@@ -38,12 +38,8 @@ class DJExecutor {
 
     async recommend_vinyl({ current_track }) {
         try {
-            // Pass chatId from metadata if we can get it? 
-            // ToolExecutor passes (name, args, message, ...)
-            // But here args are destructured. 
-            // We might need to change signature or access it differently if we want to log tokens correctly with chatId.
-            // For now, let's pass a placeholder or fix ToolExecutor call.
-            // Actually, ToolExecutor calls `executor[toolName](args)`. 
+            // ToolExecutor calls executor[toolName](args) — chatId not available here
+            // TODO: Pass chatId from ToolExecutor for proper token logging
 
             const recommendation = await this.djService.recommendVinyl(current_track, 'system_tool_call');
             return recommendation;

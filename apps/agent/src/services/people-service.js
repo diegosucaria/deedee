@@ -48,7 +48,7 @@ class PeopleService {
             if (existingIdentifiers.has(phone)) continue;
 
             // Skip if we haven't reached offset yet regarding *valid* new candidates
-            // Actually, offset usually applies to the raw list, but here we want "next 5 suggestions".
+            // Offset applies to the suggestion list for pagination
             // So we should count valid candidates.
 
             // Re-fetching contact info to check name/notify

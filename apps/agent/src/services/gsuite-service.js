@@ -34,7 +34,7 @@ class GSuiteService {
         try {
             // Re-use logic or access raw DB?
             // AgentDB usually exposes specific methods.
-            // Let's assume we can query `agent_settings`
+            // Query agent_settings table directly (no public getSetting helper in AgentDB)
             const row = this.agent.db.db.prepare("SELECT value FROM agent_settings WHERE key = ?").get('google_tokens');
             if (row) {
                 tokensData = JSON.parse(row.value);

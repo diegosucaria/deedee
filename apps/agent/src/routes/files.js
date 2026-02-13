@@ -10,7 +10,7 @@ const storage = multer.diskStorage({
         // We use a temporary staging area or direct to data/uploads
         // Plan says: data/uploads/{chatId}
         // But we don't know chatId in the middleware setup easily unless we pass it.
-        // Let's use a temp global dir and move it in the handler to ensure safety.
+        // Use a temp staging directory; handler moves to final {chatId} location
         const uploadDir = path.join(process.cwd(), 'data', 'uploads', 'temp');
         if (!fs.existsSync(uploadDir)) {
             fs.mkdirSync(uploadDir, { recursive: true });
@@ -50,11 +50,8 @@ module.exports = (agent) => {
             const targetPath = path.join(targetDir, file.originalname); // Restoring original name? 
             // Better to keep the safe unique name OR original name?
             // User spec: "keep some metadata and add some smart title... original filename"
-            // Let's use original name if it doesn't exist, else append counter.
-
-            // Simple approach: Use the generated unique filename, but store original name in metadata
-            // Actually, for "files.js", we usually want to refer to them by a stable path.
-            // Let's move the temp file to the final destination.
+            // Keep the sanitized unique filename; original name stored in response metadata
+            // Move the temp file to the final destination
 
             const finalFilename = file.filename; // Uses the sanitized unique name
             const finalPath = path.join(targetDir, finalFilename);

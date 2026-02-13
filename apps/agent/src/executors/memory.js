@@ -1,4 +1,5 @@
 const { BaseExecutor } = require('./base');
+const { getConsolidationPrompt } = require('../prompts/memory');
 
 class MemoryExecutor extends BaseExecutor {
     async execute(name, args, context) {
@@ -24,26 +25,7 @@ class MemoryExecutor extends BaseExecutor {
                 const modelName = agent.configService.getModel('FLASH');
                 const logText = messages.map(m => `[${m.timestamp}] ${m.role}: ${m.content}`).join('\n');
 
-                const summaryReq = `You are a Memory Consolidation System.
-                Analyze the following chat logs from ${date}.
-                
-                Produce a JSON object with two fields:
-                1. "summary": A concise bullet-point journal entry of what happened, tasks completed, and context.
-                2. "facts": An array of { key, value } objects representing NEW durable facts, preferences, or critical information learned about the user.
-                   - Keys should be snake_case (e.g. user_project_name, favorite_color).
-                   - Values should be concise strings.
-                   - STRICTLY EXCLUDE:
-                     - Information derived purely from transcripts, YouTube summaries, or web scrapes (unless the user explicitly confirms or claims it).
-                     - General world knowledge or trivia (e.g. "Spaceships use fuel X").
-                     - Temporary context (e.g. "User is currently looking at file Y").
-                   - INCLUDE ONLY:
-                     - User preferences (diet, tools, workflow).
-                     - User relationships (names, roles).
-                     - Long-term project states or goals.
-                     - Explicit instructions ("Remember that I...").
-                
-                Logs:
-                ${logText}`;
+                const summaryReq = getConsolidationPrompt(date, logText);
 
                 try {
                     const response = await client.models.generateContent({

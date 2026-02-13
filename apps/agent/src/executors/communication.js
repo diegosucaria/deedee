@@ -149,9 +149,7 @@ class CommunicationExecutor extends BaseExecutor {
                     console.log(`[CommunicationExecutor] Sending to ${cleanTo} (${svc}): "${content}"`);
                     await this.services.interface.send(payload);
 
-                    // Mark as verified if successful (implicit trust if we sent it successfully? No, keep explicit above)
-                    // Actually, if we just sent it, we should probably mark it verified to avoid asking again?
-                    // Logic above handles it for 'force'. If it was already verified, no need.
+                    // Verification handled above: 'force' marks verified, already-verified contacts skip check
 
                 } else {
                     throw new Error('Interface service not available');

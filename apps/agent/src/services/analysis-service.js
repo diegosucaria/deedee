@@ -68,18 +68,7 @@ class AnalysisService {
                 }
             });
 
-            const text = result.json();
-            // SDK v1.x result.json() returns the object directly if MIME is application/json?
-            // Or we parse text()?
-            // result.text() returns string JSON. 
-            // Docs say `responseMimeType: 'application/json'` returns text that is JSON.
-            // But SDK might have helper.
-            // Safe bet: JSON.parse(result.text())
-            // Wait, previous code used result directly? No, it was inside agent.js but I didn't see the parsing logic in the snippet.
-            // I'll assume JSON.parse(result.text()) is standard.
-
-            // Actually, newer SDK might parse valid JSON automatically if schema is provided?
-            // Let's stick to parsing text.
+            // Parse JSON from response text (SDK may return raw text even with responseMimeType set)
             let analysis;
             try {
                 let text = '';

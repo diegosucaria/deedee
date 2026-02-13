@@ -116,7 +116,7 @@ class RagService {
         }
 
         // Chunking (Simple sliding window or paragraph based)
-        // Let's use paragraph + overlap
+        // Paragraph-based chunking with overlap
         const chunks = this._chunkText(text, 1000, 200);
 
         // Insert Document if new
@@ -271,7 +271,7 @@ class RagService {
 
         // 2. Keyword Search (FTS5) - BM25
         // FTS5 rank is negative (lower is better), so we need to inverse/normalize it?
-        // Actually FTS5 `rank` function returns score. 
+        // FTS5 rank is negative (lower = better relevance)
         // Simple approach: SELECT *, rank FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY rank
         // But matching constraint is tricky with joins if we need to filter by Vault.
         // We can select document_ids first?
@@ -285,7 +285,7 @@ class RagService {
         // We inserted into chunks_fts. Rowid might not match chunks.id unless we forced it?
         // We didn't force ROWID. 
         // But we stored `document_id` and `chunk_index`. This forms a unique composite key.
-        // Let's create a lookup map from the vector phase: `${document_id}_${chunk_index}` -> chunk.id
+        // Map (document_id, chunk_index) composite key → chunks.id for FTS↔vector correlation
         const chunkLookup = new Map();
         allChunks.forEach(c => chunkLookup.set(`${c.document_id}_${c.chunk_index}`, c.id));
 
@@ -302,7 +302,7 @@ class RagService {
                 `).all(`"${sanitizedQuery}"`); // simple phrase search?
 
                 // Normalize Rank: FTS rank is arbitrary magnitude. 
-                // Let's just give a flat boost of 1.0 to any FTS match, or 1.0/rank?
+                // Apply flat +0.3 boost for keyword matches
                 // Simpler: If it matches keyword, boost score by +0.3
                 keywordResults.forEach(res => {
                     const key = `${res.document_id}_${res.chunk_index}`;
@@ -370,14 +370,7 @@ class RagService {
             // Or properties directly. Checking docs logic. usually it is inside 'config' object or direct. 
             // In REST: "taskType": "..."
             // In SDK: usually top level options or config.
-            // Let's assume top level `config` object inside the params.
-            // Correct usage for @google/genai v0.2+:
-            // client.models.embedContent({
-            //   model: ...,
-            //   contents: ...,
-            //   config: { task_type: ... } // snake_case likely for API mapping
-            // })
-            // Actually recent SDKs map camelCase to snake_case.
+            // @google/genai SDK maps camelCase to snake_case for the API
 
             const result = await this.agent.client.models.embedContent({
                 model: modelName,

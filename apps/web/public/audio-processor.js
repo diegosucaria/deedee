@@ -15,7 +15,7 @@ class AudioRecorderProcessor extends AudioWorkletProcessor {
             const channelData = input[0];
 
             // Downsample / Process logic if needed, but for now passing float stream
-            // Actually we send this back to main thread to convert to PCM16
+            // Send raw samples to main thread for PCM16 conversion
             this.port.postMessage(channelData);
         }
         return true;

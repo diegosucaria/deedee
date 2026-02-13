@@ -75,7 +75,7 @@ module.exports = (agent) => {
             if (wiki === null && files.length === 0) {
                 // Verify if directory actually exists or if it's just empty
                 // For now, if both fail, we assume 404 or empty.
-                // Let's assume 200 but empty if valid folder Check is hard without direct FS access here.
+                // Return 200 with empty data if vault directory exists but is empty
                 // But listVaultFiles returns [] if error/empty.
             }
 

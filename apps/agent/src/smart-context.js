@@ -28,7 +28,7 @@ class SmartContextManager {
         const limit = modelType === 'FLASH' ? 20 : 50;
 
         // If summary exists, we might want to fetch fewer, or only those after summary.created_at?
-        // Actually, db.getHistoryForChat creates a "sliding window". 
+        // db.getHistoryForChat uses a sliding window; summary acts as long-term memory injection
         // We should just fetch the limit. The summary acts as the "Long Term Memory" injection.
 
         const recentHistory = this.db.getHistoryForChat(chatId, limit);
@@ -80,7 +80,7 @@ ${summary.content}
         // Better: Check raw text length of last 50 messages.
         // Fast estimation: 4 chars ~= 1 token.
 
-        // Let's get "deep" history to see if it's huge.
+        // Fetch extended history to estimate token count
         const deepHistory = this.db.getHistoryForChat(chatId, 100);
         if (deepHistory.length < 20) return; // Too short to summarize
 

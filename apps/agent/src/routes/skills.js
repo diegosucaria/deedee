@@ -24,7 +24,7 @@ const createSkillsRouter = (agent) => {
                     secrets: state.secrets,
                     // UI expects 'filePath' for editing. Since we are proxying, this path is relative to Agent container.
                     // This might be tricky if UI tries to save it back differently, but saving goes via API->Agent too?
-                    // Let's assume just passing back what we have is fine.
+                    // Paths are relative to Agent container (proxied through API)
                 };
             });
             res.json(skills);
@@ -46,7 +46,7 @@ const createSkillsRouter = (agent) => {
 
             // We might need to reload or read the file content if strictly needed for editing? 
             // The loaded skill object already has 'content' (raw markdown) if _parseSkill kept it.
-            // Let's check _parseSkill. Yes, it has `content`.
+            // The parsed skill object already has 'content' (raw markdown)
 
             let state = {};
             if (agent.skillService.state && agent.skillService.state[name]) {

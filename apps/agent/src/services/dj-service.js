@@ -131,7 +131,7 @@ class DJService {
         // Or just save what we have if search is expensive.
         // Requirement says: "Search: googleSearch -> Discogs release..."
 
-        // Let's defer rigorous search to keep latency down, OR do a quick search.
+        // Skip deep search to keep latency low
         // For now, we trust Vision + Basic metadata.
 
         // 2. Image Persistence
@@ -242,7 +242,7 @@ class DJService {
         // For now, let's read the index or a few recent files?
         // Or searchMemory?
 
-        // Let's assume we pass the prompt to the model with "Knowledge"
+        // Pass the prompt to the model with contextual knowledge
 
         const proModelName = process.env.WORKER_PRO || 'gemini-1.5-pro-latest';
         const model = this.agent.client.getGenerativeModel({ model: proModelName });

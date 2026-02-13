@@ -698,8 +698,7 @@ Return a SINGLE, concise rule (max 10 words).
                 console.log(`[Impersonation] Learned Rule: "${rule}"`);
 
                 // 2. Append to Contact Style Profile
-                // We append it as a "Learned Preference" block or just a bullet?
-                // Let's verify if we have a current profile.
+                // Append as a learned preference bullet to existing profile
                 let currentProfile = this.getContactStyle(chatId) || "";
 
                 // Avoid duplicates if simple
