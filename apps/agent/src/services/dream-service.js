@@ -20,7 +20,15 @@ class DreamService {
 
         // 1. Gather Context
         // A. Recent Logs (Journal)
-        const journal = await this.agent.journal.getTodayJournal();
+        // If executing before 6 AM, assume we are dreaming about "Yesterday"
+        const now = new Date();
+        const targetDate = new Date(now);
+        if (now.getHours() < 6) {
+            targetDate.setDate(now.getDate() - 1);
+            console.log(`[Dream] Early morning detected (${now.getHours()}h). Dreaming about yesterday (${targetDate.toISOString().split('T')[0]}).`);
+        }
+
+        const journal = await this.agent.journal.getParsedJournal(targetDate);
         const recentLogs = journal ? journal.interactions.slice(-10).map(i => `[${i.timestamp}] ${i.content}`).join('\n') : "";
 
         // B. Random Fragments (Memory)

@@ -72,7 +72,7 @@ async function run() {
     };
 
     const mockJournal = {
-        getTodayJournal: async () => ({
+        getParsedJournal: async (date) => ({
             interactions: [
                 { timestamp: '10:00', content: 'User asked about the weather.' },
                 { timestamp: '20:00', content: 'User is coding.' }

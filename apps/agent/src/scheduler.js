@@ -460,13 +460,13 @@ class Scheduler {
                 // Determine if we dream (handled by service)
                 const result = await this.agent.dreamService.dream();
                 if (result.dreamed) {
-                    this.logJobExecution('nightly_dream', 'success', `Dreamt: ${result.type}`);
+                    if (this.agent.db) this.agent.db.logJobExecution('nightly_dream', 'success', `Dreamt: ${result.type}`);
                 } else {
-                    this.logJobExecution('nightly_dream', 'skipped', result.reason);
+                    if (this.agent.db) this.agent.db.logJobExecution('nightly_dream', 'skipped', result.reason);
                 }
             } catch (error) {
                 console.error('[Scheduler] Nightly dream failed:', error);
-                this.logJobExecution('nightly_dream', 'failure', error.message);
+                if (this.agent.db) this.agent.db.logJobExecution('nightly_dream', 'failure', error.message);
             }
         }, { persist: true });
     }

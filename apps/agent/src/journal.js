@@ -41,6 +41,37 @@ class JournalManager {
         fs.appendFileSync(filePath, logEntry, 'utf8');
         return filePath;
     }
+
+    getParsedJournal(dateInput = new Date()) {
+        let dateStr;
+        if (typeof dateInput === 'string') {
+            dateStr = dateInput;
+        } else {
+            const YYYY = dateInput.getFullYear();
+            const MM = String(dateInput.getMonth() + 1).padStart(2, '0');
+            const DD = String(dateInput.getDate()).padStart(2, '0');
+            dateStr = `${YYYY}-${MM}-${DD}`;
+        }
+        const content = this.read(dateStr);
+
+        if (!content) return null;
+
+        // Parse simplistic structure for now
+        // Assuming lines start with "- [HH:MM] "
+        const interactions = content.split('\n')
+            .filter(line => line.trim().startsWith('- ['))
+            .map(line => {
+                const match = line.match(/-\s*\[(\d{2}:\d{2})\]\s*(.*)/);
+                if (match) {
+                    return { timestamp: match[1], content: match[2] };
+                }
+                return null;
+            })
+            .filter(Boolean);
+
+        return { date: dateStr, interactions };
+    }
+
     read(date) {
         // date: YYYY-MM-DD
         const filename = `${date}.md`;
