@@ -40,9 +40,9 @@ async def user_search_users(search_term: str = None) -> str:
             # Search for users that match the search term
             found_users = []
             for user in all_users:
-                username = user.username.lower() if hasattr(user, 'username') else ''
-                email = user.email.lower() if hasattr(user, 'email') else ''
-                title = user.title.lower() if hasattr(user, 'title') else ''
+                username = user.username.lower() if user.username else ''
+                email = user.email.lower() if hasattr(user, 'email') and user.email else ''
+                title = user.title.lower() if hasattr(user, 'title') and user.title else ''
                 
                 if (search_term.lower() in username or 
                     search_term.lower() in email or 
@@ -123,8 +123,8 @@ async def user_get_info(username: str = PLEX_USERNAME) -> str:
         # Get account associated with the token
         account = plex.myPlexAccount()
         
-        # Check if the username is the owner
-        if username == account.username:
+        # Check if the username is the owner or not provided (default to owner)
+        if not username or username == account.username:
             result = {
                 "role": "Owner",
                 "username": account.username,
@@ -212,7 +212,7 @@ async def user_get_on_deck(username: str = PLEX_USERNAME) -> str:
         plex = connect_to_plex()
         
         # Try to switch to the user account to get their specific on-deck items
-        if username.lower() == plex.myPlexAccount().username.lower():
+        if not username or username.lower() == plex.myPlexAccount().username.lower():
             # This is the main account, use server directly
             on_deck_items = plex.library.onDeck()
         else:
@@ -312,7 +312,7 @@ async def user_get_watch_history(username: str = PLEX_USERNAME, limit: int = 10,
             attempt += 1
             
             # For the main account owner
-            if username.lower() == account.username.lower():
+            if not username or username.lower() == account.username.lower():
                 history_items = plex.history(maxresults=current_search_limit)
             else:
                 # For a different user, find them in shared users
@@ -480,10 +480,10 @@ async def user_get_statistics(time_period: str = "last_24_hours", username: str 
             account = plex.myPlexAccount()
             
             # Check if the username matches the owner
-            if username.lower() == account.username.lower():
+            if not username or username.lower() == account.username.lower():
                 # Find the owner's account ID in the account list
                 for acc in account_list:
-                    if acc.get('name').lower() == username.lower():
+                    if acc.get('name').lower() == account.username.lower():
                         target_account_id = acc.get('id')
                         break
             else:
