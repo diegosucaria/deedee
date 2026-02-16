@@ -114,7 +114,10 @@ function createInternalRouter(agent) {
         if (!agent.scheduler) return res.status(503).json({ error: 'Scheduler not ready' });
         try {
             const jobs = Object.values(agent.scheduler.jobs)
-                .filter(j => !j.metadata?.payload?.isSystem) // Hide system jobs
+                .filter(j => {
+                    if (req.query.includeSystem === 'true') return true;
+                    return !j.metadata?.payload?.isSystem;
+                }) // Hide system jobs unless requested
                 .map(j => ({
                     name: j.metadata?.name || 'unknown',
                     cron: j.metadata?.cronExpression || 'unknown',

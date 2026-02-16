@@ -4,9 +4,10 @@ import { fetchAPI } from '@/lib/api';
 import { revalidatePath } from 'next/cache';
 
 // --- Tasks ---
-export async function getTasks() {
+export async function getTasks(includeSystem = false) {
     try {
-        return await fetchAPI('/v1/tasks');
+        const query = includeSystem ? '?includeSystem=true' : '';
+        return await fetchAPI(`/v1/tasks${query}`);
     } catch (error) {
         console.error('getTasks Error:', error);
         return { jobs: [] };

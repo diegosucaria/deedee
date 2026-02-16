@@ -6,7 +6,7 @@ import { Clock, Play, Trash2, RefreshCw, CalendarOff, Edit, Plus } from 'lucide-
 import CreateTaskForm from './CreateTaskForm';
 import cronstrue from 'cronstrue';
 
-export default function ActiveJobsTable({ onViewHistory }) {
+export default function ActiveJobsTable({ onViewHistory, systemOnly = false }) {
     const [jobs, setJobs] = useState([]);
     const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState(null);
@@ -17,8 +17,15 @@ export default function ActiveJobsTable({ onViewHistory }) {
     const loadJobs = async () => {
         setLoading(true);
         try {
-            const data = await getTasks();
-            setJobs(data.jobs || []);
+            const data = await getTasks(systemOnly); // Pass systemOnly flag
+            // Filter based on the prop to ensuring we show correct list
+            // API returns both if includeSystem=true, so we filter depending on systemOnly prop
+            const allJobs = data.jobs || [];
+            const filtered = systemOnly
+                ? allJobs.filter(j => j.isSystem)
+                : allJobs.filter(j => !j.isSystem);
+
+            setJobs(filtered);
         } catch (err) {
             console.error('Failed to load tasks:', err);
         } finally {
@@ -30,7 +37,7 @@ export default function ActiveJobsTable({ onViewHistory }) {
         loadJobs();
         const interval = setInterval(loadJobs, 15000); // Poll every 15s
         return () => clearInterval(interval);
-    }, []);
+    }, [systemOnly]);
 
     const toggleSelection = (name) => {
         const next = new Set(selectedNames);
@@ -118,8 +125,8 @@ export default function ActiveJobsTable({ onViewHistory }) {
             <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
                 <div className="flex items-center gap-4">
                     <h3 className="text-lg font-semibold text-zinc-300 flex items-center gap-2">
-                        <Clock className="w-5 h-5 text-sky-400" />
-                        Active Scheduled Jobs
+                        <Clock className={`w-5 h-5 ${systemOnly ? 'text-amber-400' : 'text-sky-400'}`} />
+                        {systemOnly ? 'System Jobs' : 'Active Scheduled Jobs'}
                     </h3>
                     <button
                         onClick={onViewHistory}
@@ -131,7 +138,7 @@ export default function ActiveJobsTable({ onViewHistory }) {
                 </div>
 
                 <div className="flex gap-2">
-                    {selectedNames.size > 0 && (
+                    {!systemOnly && selectedNames.size > 0 && (
                         <button
                             onClick={handleBulkDelete}
                             disabled={deleting}
@@ -141,13 +148,15 @@ export default function ActiveJobsTable({ onViewHistory }) {
                             Delete ({selectedNames.size})
                         </button>
                     )}
-                    <button
-                        onClick={() => setEditingJob({})}
-                        className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-2"
-                    >
-                        <Plus className="w-4 h-4" />
-                        New Schedule
-                    </button>
+                    {!systemOnly && (
+                        <button
+                            onClick={() => setEditingJob({})}
+                            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-2"
+                        >
+                            <Plus className="w-4 h-4" />
+                            New Schedule
+                        </button>
+                    )}
                     <button
                         onClick={loadJobs}
                         className="p-2 hover:bg-zinc-800 rounded-lg text-zinc-400 hover:text-white transition-colors"
@@ -176,14 +185,16 @@ export default function ActiveJobsTable({ onViewHistory }) {
                 <table className="w-full text-sm text-left">
                     <thead className="bg-zinc-950 text-zinc-500 uppercase text-xs">
                         <tr>
-                            <th className="px-4 py-3 w-[40px]">
-                                <input
-                                    type="checkbox"
-                                    className="rounded border-zinc-700 bg-zinc-900"
-                                    checked={jobs.length > 0 && selectedNames.size === jobs.length}
-                                    onChange={toggleAll}
-                                />
-                            </th>
+                            {!systemOnly && (
+                                <th className="px-4 py-3 w-[40px]">
+                                    <input
+                                        type="checkbox"
+                                        className="rounded border-zinc-700 bg-zinc-900"
+                                        checked={jobs.length > 0 && selectedNames.size === jobs.length}
+                                        onChange={toggleAll}
+                                    />
+                                </th>
+                            )}
                             <th className="px-2 py-3">Job Name</th>
                             <th className="px-2 py-3">Schedule / Type</th>
                             <th className="px-2 py-3">Task</th>
@@ -195,21 +206,23 @@ export default function ActiveJobsTable({ onViewHistory }) {
                     <tbody className="divide-y divide-zinc-800">
                         {jobs.length === 0 ? (
                             <tr>
-                                <td colSpan={7} className="px-4 py-8 text-center text-zinc-500">
+                                <td colSpan={systemOnly ? 6 : 7} className="px-4 py-8 text-center text-zinc-500">
                                     No active jobs found.
                                 </td>
                             </tr>
                         ) : (
                             jobs.map((job) => (
                                 <tr key={job.name} className={`hover:bg-zinc-800/50 transition-colors group ${selectedNames.has(job.name) ? 'bg-indigo-500/5 hover:bg-indigo-500/10' : ''}`}>
-                                    <td className="px-4 py-4">
-                                        <input
-                                            type="checkbox"
-                                            className="rounded border-zinc-700 bg-zinc-900"
-                                            checked={selectedNames.has(job.name)}
-                                            onChange={() => toggleSelection(job.name)}
-                                        />
-                                    </td>
+                                    {!systemOnly && (
+                                        <td className="px-4 py-4">
+                                            <input
+                                                type="checkbox"
+                                                className="rounded border-zinc-700 bg-zinc-900"
+                                                checked={selectedNames.has(job.name)}
+                                                onChange={() => toggleSelection(job.name)}
+                                            />
+                                        </td>
+                                    )}
                                     <td className="px-4 py-4 font-mono text-zinc-300">
                                         {job.name}
                                         {job.isSystem && (
@@ -273,23 +286,25 @@ export default function ActiveJobsTable({ onViewHistory }) {
                                             >
                                                 <Play className="w-4 h-4" />
                                             </button>
-                                            <button
-                                                onClick={() => setEditingJob(job)}
-                                                disabled={actionLoading === job.name || job.isSystem}
-                                                className="p-1.5 hover:bg-zinc-700/50 rounded text-indigo-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
-                                                title={job.isSystem ? "Cannot edit system jobs" : "Edit Job"}
-                                            >
-                                                <Edit className="w-4 h-4" />
-                                            </button>
-                                            {!job.isSystem && (
-                                                <button
-                                                    onClick={() => handleCancel(job.name)}
-                                                    disabled={actionLoading === job.name}
-                                                    className="p-1.5 hover:bg-zinc-700/50 rounded text-red-400 transition-colors disabled:opacity-50"
-                                                    title="Cancel Job"
-                                                >
-                                                    <Trash2 className="w-4 h-4" />
-                                                </button>
+                                            {!systemOnly && (
+                                                <>
+                                                    <button
+                                                        onClick={() => setEditingJob(job)}
+                                                        disabled={actionLoading === job.name || job.isSystem}
+                                                        className="p-1.5 hover:bg-zinc-700/50 rounded text-indigo-400 transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                                                        title={job.isSystem ? "Cannot edit system jobs" : "Edit Job"}
+                                                    >
+                                                        <Edit className="w-4 h-4" />
+                                                    </button>
+                                                    <button
+                                                        onClick={() => handleCancel(job.name)}
+                                                        disabled={actionLoading === job.name}
+                                                        className="p-1.5 hover:bg-zinc-700/50 rounded text-red-400 transition-colors disabled:opacity-50"
+                                                        title="Cancel Job"
+                                                    >
+                                                        <Trash2 className="w-4 h-4" />
+                                                    </button>
+                                                </>
                                             )}
                                         </div>
                                     </td>
