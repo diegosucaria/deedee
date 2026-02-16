@@ -29,6 +29,7 @@ router.get('/stats/usage', (req, res) => proxyRequest(req, res, 'GET', '/interna
 router.get('/stats/cost-trend', (req, res) => proxyRequest(req, res, 'GET', '/internal/stats/cost-trend'));
 router.get('/stats/daily-cost', (req, res) => proxyRequest(req, res, 'GET', '/internal/stats/daily-cost'));
 router.post('/cleanup', (req, res) => proxyRequest(req, res, 'POST', '/internal/cleanup'));
+router.put('/journal/:date', (req, res) => proxyRequest(req, res, 'PUT', `/internal/journal/${req.params.date}`, req.body));
 router.delete('/journal/:date', (req, res) => proxyRequest(req, res, 'DELETE', `/internal/journal/${req.params.date}`));
 
 // Logs

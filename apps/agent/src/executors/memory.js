@@ -23,7 +23,41 @@ class MemoryExecutor extends BaseExecutor {
                 // Summarize using Gemini Flash
                 const { agent } = this.services;
                 const modelName = agent.configService.getModel('FLASH');
-                const logText = messages.map(m => `[${m.timestamp}] ${m.role}: ${m.content}`).join('\n');
+                // Cache for contact names to avoid repeated DB lookups
+                const contactCache = new Map();
+
+                const logText = messages.map(m => {
+                    let sender = m.role;
+
+                    // If it's a user message, try to resolve the name
+                    if (m.role === 'user' && m.metadata) {
+                        try {
+                            const meta = JSON.parse(m.metadata);
+                            const phone = meta.phoneNumber || meta.contactId;
+
+                            if (phone) {
+                                if (!contactCache.has(phone)) {
+                                    // Try to resolve name
+                                    const person = db.getPerson(phone);
+                                    if (person && person.name) {
+                                        contactCache.set(phone, `${person.name} (${phone})`);
+                                    } else {
+                                        // Fallback to pushname/notify if available in meta? Use raw phone
+                                        contactCache.set(phone, phone);
+                                    }
+                                }
+                                sender = contactCache.get(phone);
+                            }
+                        } catch (e) {
+                            // ignore metadata parse error
+                        }
+                    } else if (m.role === 'model' || m.role === 'assistant') {
+                        sender = 'Me (Agent)';
+                    }
+
+
+                    return `[${m.timestamp}] ${sender}: ${m.content}`;
+                }).join('\n');
 
                 const summaryReq = getConsolidationPrompt(date, logText);
 

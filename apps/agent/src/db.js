@@ -1028,7 +1028,7 @@ class AgentDB {
   getMessagesByDate(dateStr) {
     // dateStr format YYYY-MM-DD
     const stmt = this.db.prepare(`
-        SELECT role, content, timestamp FROM messages
+        SELECT role, content, timestamp, source, metadata FROM messages
         WHERE date(timestamp) = ?
         ORDER BY timestamp ASC
       `);
