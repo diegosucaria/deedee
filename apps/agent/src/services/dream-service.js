@@ -13,7 +13,7 @@ class DreamService {
         // 30% chance to dream
         if (!force && Math.random() > 0.3) {
             console.log('[Dream] Not dreaming tonight.');
-            return;
+            return { dreamed: false, reason: 'Chance check failed' };
         }
 
         console.log('[Dream] Starting dream sequence...');
@@ -49,35 +49,44 @@ class DreamService {
                 console.log('[Dream] Fetching Plex context...');
 
                 // 1. Watch History (Last 3 items)
-                const historyResult = await this.agent.mcp.callTool('user_get_watch_history', { limit: 3 });
                 let historyText = "";
-                if (historyResult && historyResult.output) {
-                    try {
+                try {
+                    const historyResult = await this.agent.mcp.callTool('user_get_watch_history', { limit: 3 });
+                    console.log('[Dream] Watch History Result:', historyResult ? JSON.stringify(historyResult).substring(0, 100) + '...' : 'null');
+
+                    if (historyResult && historyResult.output) {
                         const historyData = JSON.parse(historyResult.output);
                         if (historyData.items && historyData.items.length > 0) {
                             historyText = "Recently Watched:\n" + historyData.items.map(i => `- ${i.title} (${i.type})`).join('\n');
+                        } else {
+                            console.log('[Dream] No items in history.');
                         }
-                    } catch (e) {
-                        // ignore parse error
                     }
+                } catch (e) {
+                    console.warn('[Dream] Failed to get watch history:', e.message);
                 }
 
                 // 2. On Deck (Currently watching)
-                const onDeckResult = await this.agent.mcp.callTool('user_get_on_deck', {});
                 let onDeckText = "";
-                if (onDeckResult && onDeckResult.output) {
-                    try {
+                try {
+                    const onDeckResult = await this.agent.mcp.callTool('user_get_on_deck', {});
+                    console.log('[Dream] On Deck Result:', onDeckResult ? JSON.stringify(onDeckResult).substring(0, 100) + '...' : 'null');
+
+                    if (onDeckResult && onDeckResult.output) {
                         const onDeckData = JSON.parse(onDeckResult.output);
                         if (onDeckData.items && onDeckData.items.length > 0) {
                             // Pick top 2
                             onDeckText = "Currently Bingeing:\n" + onDeckData.items.slice(0, 2).map(i => `- ${i.title} (${i.type})`).join('\n');
+                        } else {
+                            console.log('[Dream] No items on deck.');
                         }
-                    } catch (e) {
-                        // ignore parse error
                     }
+                } catch (e) {
+                    console.warn('[Dream] Failed to get On Deck:', e.message);
                 }
 
                 plexContext = [historyText, onDeckText].filter(Boolean).join('\n\n');
+                console.log('[Dream] Plex Context Summary:\n', plexContext || '(Empty)');
             }
         } catch (error) {
             console.warn('[Dream] Failed to fetch Plex context:', error.message);
@@ -101,11 +110,11 @@ class DreamService {
             dreamContent = JSON.parse(jsonStr);
         } catch (e) {
             console.error('[Dream] Failed to generate dream:', e);
-            return;
+            return { dreamed: false, reason: 'Generation failed' };
         }
 
         // 3. Output (Text or Audio)
-        if (!dreamContent || !dreamContent.content) return;
+        if (!dreamContent || !dreamContent.content) return { dreamed: false, reason: 'No dream content generated' };
 
         console.log(`[Dream] Generated (${dreamContent.type}): ${dreamContent.content}`);
 
@@ -116,7 +125,7 @@ class DreamService {
 
         if (!ownerPhone) {
             console.warn('[Dream] No owner phone to send dream to.');
-            return;
+            return { dreamed: false, reason: 'No owner phone configured' };
         }
 
         // Format JID
@@ -127,6 +136,8 @@ class DreamService {
         } else {
             await this.sendTextDream(jid, dreamContent.content);
         }
+
+        return { dreamed: true, type: dreamContent.type };
     }
 
     getSetting(key, defaultValue) {
@@ -147,6 +158,9 @@ class DreamService {
     }
 
     async sendAudioDream(to, text) {
+        // Send Intro Text First
+        await this.sendTextDream(to, "😴 I had a weird dream last night...");
+
         // TTS Logic
         const modelName = this.agent.configService.getModel('TTS'); // 'gemini-1.5-flash-8b' or similar usually supports TTS? 
         // Actually typically we use a specific model or the same model with AUDIO modality.

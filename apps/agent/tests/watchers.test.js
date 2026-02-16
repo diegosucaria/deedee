@@ -24,6 +24,10 @@ describe('Message Watchers & Passive Mode', () => {
             candidates: [{ content: { role: 'model', parts: [{ text: 'Mock Response' }] } }],
             text: () => 'Mock Response' // Add helper method used by some paths in agent.js
         });
+        // Mock Router to avoid 5s timeout
+        agent.router = {
+            route: jest.fn().mockResolvedValue({ model: 'FLASH', toolMode: 'STANDARD' })
+        };
     });
 
     afterAll(() => {

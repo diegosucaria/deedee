@@ -349,6 +349,12 @@ class Scheduler {
                 cron: '0 4 * * *', // 4 AM
                 task: 'Prune stale or obsolete facts from memory.',
                 silent: true
+            },
+            {
+                name: 'nightly_dream',
+                cron: '30 4 * * *', // 4:30 AM
+                task: 'Enter REM sleep and dream based on recent memories and Plex activity.',
+                silent: true
             }
         ];
 
@@ -413,6 +419,28 @@ class Scheduler {
                     }
                 }
 
+                // Nightly Dreaming
+                if (sysJob.name === 'nightly_dream') {
+                    if (this.agent.dreamService) {
+                        console.log('[Scheduler] Agent is entering REM sleep...');
+                        try {
+                            const result = await this.agent.dreamService.dream();
+                            if (result.dreamed) {
+                                if (this.agent.db) this.agent.db.logJobExecution('nightly_dream', 'success', `Dreamt: ${result.type}`);
+                            } else {
+                                if (this.agent.db) this.agent.db.logJobExecution('nightly_dream', 'skipped', result.reason);
+                            }
+                            return result;
+                        } catch (error) {
+                            console.error('[Scheduler] Nightly dream failed:', error);
+                            if (this.agent.db) this.agent.db.logJobExecution('nightly_dream', 'failure', error.message);
+                            throw error;
+                        }
+                    } else {
+                        return { error: 'DreamService not available' };
+                    }
+                }
+
                 // Nightly Consolidation + Maintenance
                 if (sysJob.name === 'nightly_consolidation') {
                     // Also run log cleanup
@@ -452,23 +480,6 @@ class Scheduler {
             });
         }
 
-        // NIGHTLY DREAMING
-        // Run at 4:30 AM daily, after pruning.
-        this.scheduleJob('nightly_dream', '30 4 * * *', async () => {
-            console.log('[Scheduler] Agent is entering REM sleep...');
-            try {
-                // Determine if we dream (handled by service)
-                const result = await this.agent.dreamService.dream();
-                if (result.dreamed) {
-                    if (this.agent.db) this.agent.db.logJobExecution('nightly_dream', 'success', `Dreamt: ${result.type}`);
-                } else {
-                    if (this.agent.db) this.agent.db.logJobExecution('nightly_dream', 'skipped', result.reason);
-                }
-            } catch (error) {
-                console.error('[Scheduler] Nightly dream failed:', error);
-                if (this.agent.db) this.agent.db.logJobExecution('nightly_dream', 'failure', error.message);
-            }
-        }, { persist: true });
     }
 
     /**
