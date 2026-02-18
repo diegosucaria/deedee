@@ -57,6 +57,8 @@ You are working on **Deedee**, a personal, self-improving AI agent designed to r
 - **TODO Updates**: You MUST update `TODO.md` automatically at the end of every chat turn if a task was completed or the status changed. Do not wait for the user to ask.
 46: - **Context Updates**: Update `GEMINI.md` if new architectural decisions or secrets are introduced.
 47: - **Offer to Commit**: After finishing a requested feature or significant task, you **MUST** offer to commit the changes to git with a descriptive message. Do not wait for the user to ask.
+- **Dependency Integrity**: Do not downgrade libraries to fix API mismatches. Always investigate and adapt to the newer version's API first. We prefer using the latest stable versions.
+
 
 ## 📂 Navigation & Codebase Map
 

@@ -108,9 +108,21 @@ class RagService {
         const ext = path.extname(filepath).toLowerCase();
 
         if (ext === '.pdf') {
-            const pdf = require('pdf-parse');
-            const data = await pdf(buffer);
-            text = data.text;
+            let parser;
+            try {
+                const { PDFParse } = require('pdf-parse');
+                // v2 API: new PDFParse({ data: buffer })
+                parser = new PDFParse({ data: buffer });
+                const data = await parser.getText();
+                text = data.text;
+            } catch (pdfErr) {
+                console.error(`[RAG] Failed to parse PDF ${filename}:`, pdfErr);
+                throw pdfErr;
+            } finally {
+                if (parser) {
+                    await parser.destroy();
+                }
+            }
         } else {
             text = buffer.toString('utf-8');
         }
