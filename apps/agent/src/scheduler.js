@@ -425,15 +425,9 @@ class Scheduler {
                         console.log('[Scheduler] Agent is entering REM sleep...');
                         try {
                             const result = await this.agent.dreamService.dream();
-                            if (result.dreamed) {
-                                if (this.agent.db) this.agent.db.logJobExecution('nightly_dream', 'success', `Dreamt: ${result.type}`);
-                            } else {
-                                if (this.agent.db) this.agent.db.logJobExecution('nightly_dream', 'skipped', result.reason);
-                            }
                             return result;
                         } catch (error) {
                             console.error('[Scheduler] Nightly dream failed:', error);
-                            if (this.agent.db) this.agent.db.logJobExecution('nightly_dream', 'failure', error.message);
                             throw error;
                         }
                     } else {

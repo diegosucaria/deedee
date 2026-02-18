@@ -102,9 +102,10 @@ class MemoryExecutor extends BaseExecutor {
                             await agent.ragService.ingestDocument(memoryPath, 'memory');
                         }
 
+                        const summaryStr = typeof data.summary === 'string' ? data.summary : String(data.summary);
                         return {
                             success: true,
-                            summary_preview: data.summary.substring(0, 100) + '...',
+                            summary_preview: summaryStr.substring(0, 100) + '...',
                             facts_learned: factsAdded
                         };
                     } else {
