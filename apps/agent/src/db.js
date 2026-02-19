@@ -1040,9 +1040,10 @@ class AgentDB {
 
   getMessagesByDate(dateStr) {
     // dateStr format YYYY-MM-DD
+    // Compare against Local Time date of the timestamp
     const stmt = this.db.prepare(`
         SELECT role, content, timestamp, source, metadata FROM messages
-        WHERE date(timestamp) = ?
+        WHERE date(timestamp, 'localtime') = ?
         ORDER BY timestamp ASC
       `);
     return stmt.all(dateStr);
@@ -1520,19 +1521,21 @@ class AgentDB {
   }
   // --- Sub-Agents ---
 
-  createSubAgent({ id, parentChatId, task, model }) {
+  createSubAgent({ id, parentChatId, task, model, createdAt }) {
     this.db.prepare(`
       INSERT INTO subagents (id, parent_chat_id, task, model, status, created_at)
-      VALUES (?, ?, ?, ?, 'running', datetime('now'))
-    `).run(id, parentChatId, task, model || 'FLASH');
+      VALUES (?, ?, ?, ?, 'running', ?)
+    `).run(id, parentChatId, task, model || 'FLASH', createdAt || new Date().toISOString());
   }
 
-  updateSubAgent(id, { status, result, error }) {
-    const updates = ['completed_at = datetime(\'now\')'];
-    const args = [];
+  updateSubAgent(id, { status, result, error, completedAt }) {
+    const updates = ['completed_at = ?'];
+    const args = [completedAt || new Date().toISOString()];
+
     if (status) { updates.push('status = ?'); args.push(status); }
     if (result !== undefined) { updates.push('result = ?'); args.push(typeof result === 'string' ? result : JSON.stringify(result)); }
     if (error !== undefined) { updates.push('error = ?'); args.push(error); }
+
     args.push(id);
     this.db.prepare(`UPDATE subagents SET ${updates.join(', ')} WHERE id = ?`).run(...args);
   }

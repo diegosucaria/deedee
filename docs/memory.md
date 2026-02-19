@@ -38,6 +38,9 @@ Deedee uses a local SQLite database to maintain state across restarts. This ensu
     - `readJournal(date)`: Read a specific day.
     - `searchJournal(query)`: Semantic/Text search across all entries.
 - **Automation**: `nightly_consolidation` job summarizes chat logs into the journal at midnight.
+- **Manual Trigger**:
+    - `/consolidate`: Consolidate "Yesterday" (Local Time) immediately.
+    - `/consolidate YYYY-MM-DD`: Consolidate a specific date.
 
 ### 5. Social Memory (People)
 - **Table**: `people`

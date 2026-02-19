@@ -13,7 +13,15 @@ class MemoryExecutor extends BaseExecutor {
             }
 
             case 'consolidateMemory': {
-                const date = args.date || new Date(Date.now() - 86400000).toISOString().split('T')[0];
+                // Use Local Time for "Yesterday" calculation
+                let date = args.date;
+                if (!date) {
+                    const d = new Date(Date.now() - 86400000); // 24h ago
+                    const year = d.getFullYear();
+                    const month = String(d.getMonth() + 1).padStart(2, '0');
+                    const day = String(d.getDate()).padStart(2, '0');
+                    date = `${year}-${month}-${day}`;
+                }
                 const messages = db.getMessagesByDate(date);
 
                 if (!messages || messages.length === 0) {

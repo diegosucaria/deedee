@@ -178,6 +178,18 @@ Deedee comes equipped with a suite of tools, both internal and via MCP.
 
 ---
 
+## 💬 Chat Commands
+
+Deedee supports slash commands for quick actions:
+
+- `/consolidate [date]`: Manually trigger daily journal consolidation. Defaults to yesterday.
+- `/clear`: Clear context of current chat.
+- `/stop`: Stop all current execution loops.
+- `/reset_goals`: Reset pending goals for current chat.
+- `/summaries`: View recent context summaries.
+
+---
+
 ## 🤖 Telegram & WhatsApp Setup
 
 Deedee supports both Telegram and WhatsApp (via Baileys).

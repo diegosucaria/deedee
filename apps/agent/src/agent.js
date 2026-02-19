@@ -514,6 +514,9 @@ class Agent {
 
       const chatId = message.metadata?.chatId;
       const isSubAgent = !!message.metadata?.isSubAgent;
+      const taskId = message.metadata?.taskId;
+      // Dynamic Log Prefix
+      const logPrefix = isSubAgent ? `[SubAgent ${taskId || '?'}]` : '[Agent]';
 
       // Ensure Session Exists (Multi-Threaded Chat Support)
       if (chatId) {
@@ -526,13 +529,13 @@ class Agent {
 
         // Log Location on New Session
         // DEBUG: Log all metadata to see what's happening
-        // console.log(`[Agent] Metadata for ${chatId}:`, JSON.stringify(message.metadata));
+        // console.log(`${logPrefix} Metadata for ${chatId}:`, JSON.stringify(message.metadata));
 
         if (msgCount === 0 && !isPassiveMode) {
           if (message.metadata?.location) {
-            console.log(`[Agent] New Session ${chatId} started from location: ${message.metadata.location}`);
+            console.log(`${logPrefix} New Session ${chatId} started from location: ${message.metadata.location}`);
           } else {
-            console.log(`[Agent] New Session ${chatId} started. (No location data in metadata)`);
+            console.log(`${logPrefix} New Session ${chatId} started. (No location data in metadata)`);
           }
         }
 
@@ -540,10 +543,10 @@ class Agent {
         if (message.metadata?.vaultId) {
           if (message.metadata.vaultId === 'none') {
             this.activeTopics.delete(chatId);
-            console.log(`[Agent] Chat ${chatId} exited vault context.`);
+            console.log(`${logPrefix} Chat ${chatId} exited vault context.`);
           } else {
             this.activeTopics.set(chatId, message.metadata.vaultId);
-            console.log(`[Agent] Chat ${chatId} switched to vault context: ${message.metadata.vaultId}`);
+            console.log(`${logPrefix} Chat ${chatId} switched to vault context: ${message.metadata.vaultId}`);
           }
         }
 
@@ -551,7 +554,7 @@ class Agent {
         const hasContent = message.content || (message.parts && message.parts.length > 0);
 
         if (msgCount === 0 && hasContent && message.role === 'user' && !isPassiveMode && !isSubAgent) {
-          console.log(`[Agent] Triggering Auto-Title for ${chatId}. MsgCount: ${msgCount}`);
+          console.log(`${logPrefix} Triggering Auto-Title for ${chatId}. MsgCount: ${msgCount}`);
 
           let titleContext = message.content;
           if (!titleContext && message.parts) {
@@ -561,10 +564,10 @@ class Agent {
 
           // Don't await - run in background
           this.titleService.autoTitleSession(chatId, titleContext).catch(err => {
-            console.error(`[Agent] Auto-Title CRASHED for ${chatId}:`, err);
+            console.error(`${logPrefix} Auto-Title CRASHED for ${chatId}:`, err);
           });
         } else {
-          // if (msgCount === 0) console.log(`[Agent] Skipped Auto-Title. HasContent: ${!!hasContent}, Role: ${message.role}`);
+          // if (msgCount === 0) console.log(`${logPrefix} Skipped Auto-Title. HasContent: ${!!hasContent}, Role: ${message.role}`);
         }
 
         // --- SMART FILE ANALYSIS ---
@@ -613,7 +616,7 @@ class Agent {
       if (typeof commandResult === 'object' && commandResult.type === 'EXECUTE_PENDING') {
         // ... (existing slash command logic) ...
         const action = commandResult.action;
-        console.log(`[Agent] User confirmed action: ${action.name}`);
+        console.log(`${logPrefix} User confirmed action: ${action.name}`);
         const result = await this._executeTool(action.name, action.args, message, activeSendCallback, (model, pTokens, cTokens) => {
           const cost = calculateCost(model, pTokens, cTokens);
           this.db.logTokenUsage({
@@ -732,7 +735,7 @@ class Agent {
             this.db.saveMessage(safeMessage);
           }
           // Log suppressed per user request
-          // console.log(`[Agent] Passive Mode (whatsapp:user): Message from ${contactString} saved. No watcher triggered. Ignoring.`);
+          // console.log(`${logPrefix} Passive Mode (whatsapp:user): Message from ${contactString} saved. No watcher triggered. Ignoring.`);
 
           // --- AUTOPILOT LOGIC ---
           // --- AUTOPILOT LOGIC (Buffering & Drafting) ---
@@ -750,7 +753,7 @@ class Agent {
         }
 
         if (triggeredWatcher) {
-          console.log(`[Agent] Watcher TRIGGERED! ID: ${triggeredWatcher.id}, Instruction: "${triggeredWatcher.instruction}"`);
+          console.log(`${logPrefix} Watcher TRIGGERED! ID: ${triggeredWatcher.id}, Instruction: "${triggeredWatcher.instruction}"`);
 
           // Watchers stay active across triggers; update last trigger timestamp
           this.db.updateWatcher(triggeredWatcher.id, { lastTriggeredAt: new Date().toISOString() });
@@ -768,15 +771,15 @@ class Agent {
           const upstreamCallback = activeSendCallback;
           activeSendCallback = async (reply) => {
             // 1. Log suppression
-            console.log(`[Agent] WATCHER SUPPRESSION: Intercepted reply to ${contactString} (triggered by watcher).`);
-            console.log(`[Agent] Content:`, reply.content);
+            console.log(`${logPrefix} WATCHER SUPPRESSION: Intercepted reply to ${contactString} (triggered by watcher).`);
+            console.log(`${logPrefix} Content:`, reply.content);
 
             // 2. Redirect to Admin? (Optional - fetch adminId from config)
             const adminChatId = this.settings.admin_chat_id;
-            console.log(`[Agent] Admin Chat ID setting: ${adminChatId}`);
+            console.log(`${logPrefix} Admin Chat ID setting: ${adminChatId}`);
 
             if (adminChatId && reply.content) {
-              console.log(`[Agent] Redirecting suppressed reply to ADMIN (${adminChatId})`);
+              console.log(`${logPrefix} Redirecting suppressed reply to ADMIN (${adminChatId})`);
               const adminReply = { ...reply, metadata: { ...reply.metadata, chatId: adminChatId } };
               // Prefix to explain context
               adminReply.content = `[WATCHER: ${contactString}]\n${reply.content}`;
@@ -785,7 +788,7 @@ class Agent {
               await upstreamCallback(adminReply);
               console.log('Upstream called.');
             } else {
-              console.log(`[Agent] Suppressed reply (No admin_chat_id configured).`);
+              console.log(`${logPrefix} Suppressed reply (No admin_chat_id configured).`);
             }
 
             // 3. Do NOT send to original sender.
@@ -824,7 +827,7 @@ class Agent {
       // --- ROUTING ---
       let e2eCost = 0; // Track total cost for this request
       let e2eTokens = 0; // Track total tokens
-      console.time('[Agent] Router Duration');
+      console.time(`${logPrefix} Router Duration`);
       const routerStart = Date.now();
 
       // Get brief history for context (last 3 messages)
@@ -842,15 +845,15 @@ class Agent {
       // Pass the primary content or parts to router
       const decision = await this.router.route(message.parts || message.content, routingHistory, lastModel, timeSinceLastModel, message.source);
       const routerDuration = Date.now() - routerStart;
-      console.timeEnd('[Agent] Router Duration');
+      console.timeEnd(`${logPrefix} Router Duration`);
 
       this.db.logMetric('latency_router', routerDuration, { model: decision.model, chatId, runId });
-      console.log(`[Agent] Routing to: ${decision.model}`);
+      console.log(`${logPrefix} Routing to: ${decision.model}`);
 
       // --- GROK / EXTERNAL MODEL OVERRIDE ---
       if (message.metadata?.model && message.metadata.model.startsWith('grok')) {
         const targetModel = message.metadata.model;
-        console.log(`[Agent] Routing Override: Using ${targetModel}`);
+        console.log(`${logPrefix} Routing Override: Using ${targetModel}`);
 
         // JIT Init for xAI if key exists but client doesn't
         if (!this.xaiClient && this.settings['provider:xai']?.apiKey) {
@@ -873,7 +876,7 @@ class Agent {
           return executionSummary;
         }
 
-        await reportProgress(`Thinking (${targetModel})...`);
+        await reportProgress(`Thinking(${targetModel})...`);
         const history = this.db.getHistoryForChat(chatId, 20); // Static window for now
 
         // --- PREPARE SYSTEM PROMPT FOR GROK ---
@@ -895,11 +898,11 @@ class Agent {
         let grokSystemPrompt = getSystemInstruction(timeString, activeGoals, facts, { codingMode: true, vaultContext, skillsContext });
 
         // Add Tool Manifest since Grok can't see definitions natively yet
-        grokSystemPrompt += `\n\n**AVAILABLE TOOLS (You cannot execute them directly, but you know they exist):**\n` +
+        grokSystemPrompt += `\n\n ** AVAILABLE TOOLS(You cannot execute them directly, but you know they exist):**\n` +
           `- googleSearch: Search the web.\n` +
           `- replyWithAudio: Speak to the user.\n` +
-          `- rememberFact/getFact: Memory.\n` +
-          `- addGoal/completeGoal: Task tracking.\n` +
+          `- rememberFact / getFact: Memory.\n` +
+          `- addGoal / completeGoal: Task tracking.\n` +
           `- Smart Home: Control lights, vacuum, etc.\n`;
 
         this.currentSystemPrompt = grokSystemPrompt;
@@ -989,8 +992,8 @@ class Agent {
         ? this.configService.getModel('FLASH')
         : this.configService.getModel('PRO');
 
-      console.log(`[Agent] Routing to Model: ${selectedModel}`);
-      await reportProgress(`Thinking (${selectedModel})...`);
+      console.log(`${logPrefix} Routing to Model: ${selectedModel}`);
+      await reportProgress(`Thinking(${selectedModel})...`);
 
       // --- EXPERIMENTAL: Adaptive Context Window ---
       // Flash models (simple tasks) need less context. Pro models (reasoning) need more.
@@ -998,10 +1001,13 @@ class Agent {
 
       // --- HYDRATION ---
       const historyLimit = (decision.model === 'FLASH' || decision.model === 'IMAGE') ? 10 : 50;
-      console.log(`[Agent] Fetching history (Smart Context) for model: ${decision.model}`);
+      console.log(`${logPrefix} Fetching history(Smart Context) for model: ${decision.model} `);
 
       // --- HYDRATION (Smart Context) ---
       const history = await this.smartContext.getContext(chatId, decision.model);
+
+      const historyChars = JSON.stringify(history).length;
+      console.log(`${logPrefix} [Context] History loaded: ${history.length} messages.Size: ~${historyChars} chars(~${Math.round(historyChars / 4)} tokens).`);
 
       // --- TOOLS MERGE ---
       const mcpTools = await this.mcp.getTools();
@@ -1078,21 +1084,21 @@ class Agent {
         geminiTools = [{ googleSearch: {} }];
       } else {
         // Standard Function Calling (includes 'googleSearch' polyfill if needed)
-        console.log(`[Agent] Mode: STANDARD (Function Calling) - Enforced for ${decision.toolMode}`);
+        console.log(`${logPrefix} Mode: STANDARD(Function Calling) - Enforced for ${decision.toolMode}`);
         // const toolNames = allTools.map(t => t.name).join(', ');
-        // console.log(`[Agent] Available Tools for Model: [${toolNames}]`);
+        // console.log(`${ logPrefix } Available Tools for Model: [${ toolNames }]`);
         geminiTools = [{ functionDeclarations: allTools }];
       }
 
       // Build System Instruction
       const pendingGoals = this.db.getPendingGoals()
-        .map(g => `- [${g.id}] ${g.description}`)
+        .map(g => `- [${g.id}] ${g.description} `)
         .join('\n            ');
 
       // Fetch Memory/Facts
       const contextQuery = message.content || (message.parts ? message.parts.map(p => p.text).join(' ') : '');
       const facts = this.db.getFactsFormatted(contextQuery);
-      const activeGoals = this.db.getPendingGoals().map(g => `- [${g.id}] ${g.description}`).join('\n');
+      const activeGoals = this.db.getPendingGoals().map(g => `- [${g.id}] ${g.description} `).join('\n');
 
       // Fetch Vault Context if active
       let vaultContext = null;
@@ -1101,7 +1107,7 @@ class Agent {
         try {
           vaultContext = await this.vaults.readVaultPage(activeTopic, 'index.md');
         } catch (e) {
-          console.warn(`[Agent] Failed to read vault context for ${activeTopic}:`, e);
+          console.warn(`${logPrefix} Failed to read vault context for ${activeTopic}: `, e);
         }
       }
 
@@ -1117,16 +1123,18 @@ class Agent {
         facts,
         { codingMode: true, vaultContext, skillsContext } // Coding mode enabled by default for now, could be dynamic
       );
+
+      console.log(`${logPrefix} [Context] System Instruction Size: ~${systemInstruction.length} chars(~${Math.round(systemInstruction.length / 4)} tokens).`);
       // --- TONE MATCHING (Impersonation Mode) ---
       // If we are acting on behalf of the user (whatsapp:user), we must sound like them.
       // We add this instruction globally so the Agent knows how to behave if asked to "act as me" or use the 'user' session.
       systemInstruction += `\n
-\n=== IMPERSONATION & TONE MATCHING ===
-IF you are asked to draft a message for the user, or if you are replying via the 'user' (whatsapp:user) session:
-1. **Analyze History**: Look at the user's previous messages in the chat history.
-2. **Match Tone**: Mimic their style, brevity, capitalization (lowercase?), and emoji usage.
-3. **Be Natural**: Do not sound like an AI. Use "I", not "Deedee".
-================================
+      \n === IMPERSONATION & TONE MATCHING ===
+        IF you are asked to draft a message for the user, or if you are replying via the 'user'(whatsapp: user) session:
+      1. ** Analyze History **: Look at the user's previous messages in the chat history.
+      2. ** Match Tone **: Mimic their style, brevity, capitalization(lowercase ?), and emoji usage.
+3. ** Be Natural **: Do not sound like an AI.Use "I", not "Deedee".
+--------------------------------
 `;
 
 
@@ -1215,9 +1223,9 @@ IF you are asked to draft a message for the user, or if you are replying via the
             break; // Valid response
           }
 
-          console.warn(`[Agent] Empty response detected (FinishReason: ${firstCandidate?.finishReason}). Retrying...`);
+          console.warn(`${logPrefix} Empty response detected (FinishReason: ${firstCandidate?.finishReason}). Retrying...`);
         } catch (e) {
-          console.warn(`[Agent] Model request failed: ${e.message}. Retrying...`);
+          console.warn(`${logPrefix} Model request failed: ${e.message}. Retrying...`);
           // DEBUG: Log full object if possible
           if (response) {
             console.log('[Agent] Full Response Object:', JSON.stringify(response, null, 2));
@@ -1261,7 +1269,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
       while (functionCalls && functionCalls.length > 0) {
         // CHECK STOP FLAG
         if (this.stopFlags.has(chatId) || this.stopFlags.has('GLOBAL_STOP')) {
-          console.log(`[Agent] Stop flag detected for chat ${chatId}. Breaking loop.`);
+          console.log(`${logPrefix} Stop flag detected for chat ${chatId}. Breaking loop.`);
           await activeSendCallback(createAssistantMessage('🛑 Execution stopped by user.'));
           this.stopFlags.delete(chatId);
           // Do NOT delete GLOBAL_STOP here, so it hits other concurrent loops.
@@ -1271,7 +1279,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
 
         loopCount++;
         if (loopCount > MAX_LOOPS) {
-          console.warn(`[Agent] Max tool loop limit reached (${MAX_LOOPS}). Breaking.`);
+          console.warn(`${logPrefix} Max tool loop limit reached (${MAX_LOOPS}). Breaking.`);
           await activeSendCallback(createAssistantMessage('I am stuck in a loop. Stopping now.'));
           break;
         }
@@ -1308,12 +1316,12 @@ IF you are asked to draft a message for the user, or if you are replying via the
             seenCalls.add(signature);
             uniqueCalls.push(call);
           } else {
-            console.warn(`[Agent] Dropped duplicate tool call: ${call.name}`);
+            console.warn(`${logPrefix} Dropped duplicate tool call: ${call.name}`);
           }
         }
         functionCalls = uniqueCalls;
 
-        console.log(`[Agent] Processing ${functionCalls.length} tool calls in parallel.`);
+        console.log(`${logPrefix} Processing ${functionCalls.length} tool calls in parallel.`);
         // console.log(JSON.stringify(functionCalls)); // PREVENT SPAM
         const toolNames = functionCalls.map(c => (c.name || '').replace('default_api:', '')).join(', ');
         await reportProgress(`Executing ${functionCalls.length} tools: ${toolNames}...`);
@@ -1342,7 +1350,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
             // SENSITIVE GUARD CHECK
             const guard = this.confirmationManager.check(executionName, call.args);
             if (guard.requiresConfirmation) {
-              console.log(`[Agent] Action ${executionName} requires confirmation.`);
+              console.log(`${logPrefix} Action ${executionName} requires confirmation.`);
               this.confirmationManager.store(message.metadata?.chatId, executionName, call.args);
 
               // Notify user specifically
@@ -1367,7 +1375,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
               });
             }
           } catch (toolErr) {
-            console.warn(`[Agent] Tool execution failed (${executionName}): ${toolErr.message}`);
+            console.warn(`${logPrefix} Tool execution failed (${executionName}): ${toolErr.message}`);
             toolResult = { error: `Tool execution failed: ${toolErr.message}` };
           }
 
@@ -1392,12 +1400,15 @@ IF you are asked to draft a message for the user, or if you are replying via the
 
           // Log (Truncated only if string is too long, prevent pollution. Objects kept for collapsing)
           let logResult;
+          const resultStr = JSON.stringify(result);
+          const resultLen = resultStr.length;
+
           if (typeof result === 'string' && result.length > 1000) {
             logResult = result.substring(0, 200) + '... [TRUNCATED STRING]';
           } else {
-            logResult = JSON.stringify(result);
+            logResult = resultStr; // JSON.stringify(result);
           }
-          console.log(`Tool Result (${executionName}):`, logResult);
+          console.log(`${logPrefix} Tool Result (${executionName}): ~${resultLen} chars. Content:`, logResult);
 
           // Sanitize for DB AND Model to prevent Context Pollution
           let dbToolResult = result;
@@ -1417,7 +1428,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
 
           // FIX: Ensure response is not empty to avoid SDK errors (ContentUnion is required)
           if (apiResponse && typeof apiResponse === 'object' && Object.keys(apiResponse).length === 0) {
-            console.warn(`[Agent] Tool ${call.name} returned empty object. Injecting fallback.`);
+            console.warn(`${logPrefix} Tool ${call.name} returned empty object. Injecting fallback.`);
             apiResponse = { info: "Tool executed successfully but returned no output." };
           }
 
@@ -1485,7 +1496,7 @@ IF you are asked to draft a message for the user, or if you are replying via the
           });
         }
 
-        // Re-check for recursive function calls 
+        // Re-check for recursive function calls
         functionCalls = getFunctionCalls(response);
       }
 

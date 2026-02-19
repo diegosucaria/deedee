@@ -28,11 +28,13 @@ class SubAgentService {
         this.agent.db.ensureSession(chatId, 'subagent');
 
         // Record in DB
+        const createdAt = new Date().toISOString();
         this.agent.db.createSubAgent({
             id: taskId,
             parentChatId,
             task: task.slice(0, 500),
             model: selectedModel,
+            createdAt
         });
 
         console.log(`[SubAgent] Spawning ${taskId}: "${task.slice(0, 80)}..." (model=${selectedModel}, timeout=${timeout}m, wait=${!!waitForResult})`);
@@ -76,7 +78,8 @@ class SubAgentService {
                 ]);
 
                 const result = replies.join('\n').trim() || 'Task completed (no text output).';
-                this.agent.db.updateSubAgent(taskId, { status: 'completed', result });
+                const completedAt = new Date().toISOString();
+                this.agent.db.updateSubAgent(taskId, { status: 'completed', result, completedAt });
                 console.log(`[SubAgent] ${taskId} completed. Result length: ${result.length}`);
                 this._broadcast(taskId, 'completed');
                 return result;
@@ -85,11 +88,13 @@ class SubAgentService {
                 const partial = replies.join('\n').trim();
                 const status = isTimeout ? 'timeout' : 'failed';
                 const error = isTimeout ? `Timed out after ${timeout} minutes` : err.message;
+                const completedAt = new Date().toISOString();
 
                 this.agent.db.updateSubAgent(taskId, {
                     status,
                     result: partial || null,
                     error,
+                    completedAt
                 });
                 console.error(`[SubAgent] ${taskId} ${status}: ${error}`);
                 this._broadcast(taskId, status);

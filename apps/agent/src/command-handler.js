@@ -124,6 +124,24 @@ class CommandHandler {
             return true;
         }
 
+        if (cmd === '/consolidate') {
+            const dateArg = args[0];
+            const instruction = dateArg
+                ? `Running consolidation for date: ${dateArg}...`
+                : `Running consolidation for yesterday...`;
+
+            await this.sendReply(chatId, message.source, instruction);
+
+            // Return action for Agent to execute
+            return {
+                type: 'EXECUTE_PENDING',
+                action: {
+                    name: 'consolidateMemory',
+                    args: { date: dateArg } // If undefined, tool defaults to yesterday
+                }
+            };
+        }
+
         if (cmd === '/simulate_watcher') {
             const phone = args[0];
             const text = args.slice(1).join(' ');
