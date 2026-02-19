@@ -426,6 +426,50 @@ export async function getWhatsAppContacts(session, query) {
 }
 
 
+// --- Slack Actions ---
+
+export async function getSlackStatus() {
+    try {
+        return await fetchAPI('/v1/slack/status');
+    } catch (error) {
+        console.warn('getSlackStatus Error:', error.message);
+        return { connected: false };
+    }
+}
+
+export async function saveSlackCredentials(xoxc, xoxd) {
+    try {
+        const res = await fetchAPI('/v1/slack/credentials', {
+            method: 'POST',
+            body: JSON.stringify({ xoxc, xoxd })
+        });
+        return { success: true, ...res };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function testSlackCredentials(xoxc, xoxd) {
+    try {
+        const res = await fetchAPI('/v1/slack/credentials', {
+            method: 'POST',
+            body: JSON.stringify({ xoxc, xoxd, test: true })
+        });
+        return { success: true, ...res };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function deleteSlackCredentials() {
+    try {
+        await fetchAPI('/v1/slack/credentials', { method: 'DELETE' });
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 // --- MCP & Tools ---
 export async function getMCPStatus() {
     try {

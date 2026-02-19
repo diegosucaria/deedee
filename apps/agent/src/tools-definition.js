@@ -668,6 +668,44 @@ const toolDefinitions = [
           },
           required: ["current_track"]
         }
+      },
+      // Slack Integration
+      {
+        name: "searchSlack",
+        description: "Search Slack messages across channels and DMs for specific keywords or topics. Use this for 'What did we discuss about X on Slack?' queries.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            query: { type: "STRING", description: "The search query (e.g. 'project deployment', 'from:diego budget')." },
+            limit: { type: "NUMBER", description: "Optional. Max results (default 10, max 50)." }
+          },
+          required: ["query"]
+        }
+      },
+      {
+        name: "readSlackHistory",
+        description: "Read recent message history from a Slack channel or DM. Use this to catch up on a conversation.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            channel: { type: "STRING", description: "Channel name (e.g. '#general', '#dev') or channel ID." },
+            limit: { type: "NUMBER", description: "Optional. Number of messages to retrieve (default 20, max 100)." }
+          },
+          required: ["channel"]
+        }
+      },
+      {
+        name: "sendSlackMessage",
+        description: "Send a message to a Slack channel or DM as the user. Use this to reply to Slack conversations or send new messages.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            channel: { type: "STRING", description: "Channel ID or name where to send the message." },
+            text: { type: "STRING", description: "The message content to send." },
+            thread_ts: { type: "STRING", description: "Optional. Thread timestamp to reply in a thread." }
+          },
+          required: ["channel", "text"]
+        }
       }
     ]
   }

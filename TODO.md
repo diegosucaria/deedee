@@ -59,9 +59,9 @@
 
 ### Interfaces
 - [ ] **Automated Message Intros**: Add "I am DeeDee" introduction to automated/scheduler messages sent as User.
-- [ ] **Voice Interface**: Real-time Gemini Live API integration (Web).
-- [ ] **Chat Sessions**: Persistent history, threads, and management UI (ChatGPT-style).
-- [ ] **Slack**: Native app integration (currently just webhooks).
+- [x] **Voice Interface**: Real-time Gemini Live API integration (Web).
+- [x] **Chat Sessions**: Persistent history, threads, and management UI (ChatGPT-style).
+- [x] **Slack**: Cookie-based integration (xoxc/xoxd) with RTM WebSocket + polling fallback.
 
 ### Intelligence
 - [ ] **Vector Memory**: Migrate from SQLite Regex search to Embeddings/Vector Store (pgvector/Chroma).
@@ -108,3 +108,8 @@
     - [x] **Slash Commands**: Routed `/commands` to skills via Agent logic.
     - [x] **Skills UI**: Dashboard page for management, editing, and secrets.
     - [x] **Compatibility**: Enhanced allow Metadata, Secrets, Toggles.
+- [x] **Slack Integration (Feb 2026)**:
+    - [x] **SlackService**: RTM WebSocket + polling fallback, AES-256-GCM encrypted token storage.
+    - [x] **Agent Tools**: `searchSlack`, `readSlackHistory`, `sendSlackMessage`.
+    - [x] **Settings UI**: SlackSettings component with test/connect/disconnect flow.
+    - [x] **Security**: Passive message handling (watcher-gated), all endpoints behind API auth.

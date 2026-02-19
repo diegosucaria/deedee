@@ -1,8 +1,9 @@
 'use client';
 
 import { useState } from 'react';
-import { MessageSquare, Send } from 'lucide-react';
+import { MessageSquare, Send, Hash } from 'lucide-react';
 import WhatsAppSettings from './WhatsAppSettings';
+import SlackSettings from './SlackSettings';
 
 export default function InterfacesClient() {
     const [activeTab, setActiveTab] = useState('whatsapp');
@@ -43,12 +44,25 @@ export default function InterfacesClient() {
                             <span>Telegram</span>
                         </div>
                     </button>
+                    <button
+                        onClick={() => setActiveTab('slack')}
+                        className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'slack'
+                            ? 'bg-zinc-800 text-white shadow-sm'
+                            : 'text-zinc-500 hover:text-zinc-300'
+                            }`}
+                    >
+                        <div className="flex items-center space-x-2">
+                            <Hash size={16} />
+                            <span>Slack</span>
+                        </div>
+                    </button>
                 </div>
 
                 {/* Content */}
                 <div className="bg-zinc-900 rounded-xl border border-zinc-800 min-h-[400px]">
                     {activeTab === 'whatsapp' && <div className="p-6"><WhatsAppSettings /></div>}
                     {activeTab === 'telegram' && <TelegramInfo />}
+                    {activeTab === 'slack' && <div className="p-6"><SlackSettings /></div>}
                 </div>
             </div>
         </div>

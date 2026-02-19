@@ -3,6 +3,7 @@ const http = require('http');
 const express = require('express');
 const { TelegramService } = require('./telegram');
 const { WhatsAppService } = require('./whatsapp');
+const { SlackService } = require('./slack');
 const axios = require('axios');
 
 const app = express();
@@ -157,6 +158,10 @@ if (!isWhatsAppDisabled) {
   console.log('[Interfaces] WhatsApp explicitly disabled.');
 }
 
+// Slack Init
+let slack = new SlackService(agentUrl);
+slack.start().catch(err => console.error('[Interfaces] Slack init error:', err.message));
+
 // Authentication Middleware
 const authMiddleware = (req, res, next) => {
   // Skip auth for health check
@@ -177,6 +182,7 @@ app.get('/health', (req, res) => {
     services: {
       telegram: !!telegram,
       whatsapp: Object.keys(whatsappSessions).length > 0,
+      slack: slack?.getStatus()?.connected || false,
       socket: true
     }
   });
@@ -352,6 +358,64 @@ app.post('/whatsapp/repair', async (req, res) => {
   }
 });
 
+// --- SLACK ENDPOINTS ---
+app.get('/slack/status', (req, res) => {
+  res.json(slack?.getStatus() || { connected: false });
+});
+
+app.post('/slack/credentials', async (req, res) => {
+  try {
+    const { xoxc, xoxd, test } = req.body;
+    if (!xoxc || !xoxd) return res.status(400).json({ error: 'Missing xoxc or xoxd token' });
+
+    if (test) {
+      // Test mode: validate without saving
+      const tempSlack = new SlackService(agentUrl);
+      tempSlack.xoxc = xoxc;
+      tempSlack.xoxd = xoxd;
+      const auth = await tempSlack._api('auth.test');
+      return res.json({ success: true, team: auth.team, user: auth.user });
+    }
+
+    const result = await slack.setCredentials(xoxc, xoxd);
+    io.emit('slack:status', slack.getStatus());
+    res.json({ success: true, ...result });
+  } catch (err) {
+    console.error('[Interfaces] Slack credentials error:', err.message);
+    res.status(400).json({ error: err.message });
+  }
+});
+
+app.delete('/slack/credentials', (req, res) => {
+  slack.clearCredentials();
+  io.emit('slack:status', slack.getStatus());
+  res.json({ success: true });
+});
+
+app.get('/slack/search', async (req, res) => {
+  try {
+    const { query, limit } = req.query;
+    if (!query) return res.status(400).json({ error: 'Missing query parameter' });
+    const results = await slack.search(query, parseInt(limit) || 10);
+    res.json({ results });
+  } catch (err) {
+    console.error('[Interfaces] Slack search error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/slack/history', async (req, res) => {
+  try {
+    const { channel, limit } = req.query;
+    if (!channel) return res.status(400).json({ error: 'Missing channel parameter' });
+    const messages = await slack.getHistory(channel, parseInt(limit) || 20);
+    res.json({ messages });
+  } catch (err) {
+    console.error('[Interfaces] Slack history error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Endpoint for Agent to send messages out
 app.post('/send', async (req, res) => {
   try {
@@ -437,6 +501,13 @@ app.post('/send', async (req, res) => {
       const options = { type: type || 'text' };
       await finalService.sendMessage(metadata.chatId, content, options);
 
+      return res.json({ success: true });
+    }
+
+    if (source === 'slack') {
+      if (!slack?.connected) throw new Error('Slack not connected');
+      if (!metadata?.chatId) throw new Error('Missing chatId in metadata for Slack message');
+      await slack.sendMessage(metadata.chatId, content, { thread_ts: metadata.thread_ts });
       return res.json({ success: true });
     }
 

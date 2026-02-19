@@ -633,11 +633,11 @@ class Agent {
         return executionSummary;
       }
 
-      // --- WATCHER LOGIC (Enhanced WhatsApp Intelligence) ---
-      // Security: whatsapp:user is PASSIVE (ignored) unless it triggers a watcher.
-      if (message.source?.startsWith('whatsapp')) {
-        const isUserSession = message.source === 'whatsapp:user'; // Messages from friends to ME
-        const contactString = message.metadata?.phoneNumber || message.metadata?.chatId;
+      // --- WATCHER LOGIC (Enhanced WhatsApp/Slack Intelligence) ---
+      // Security: whatsapp:user and slack are PASSIVE (ignored) unless a watcher triggers.
+      if (message.source?.startsWith('whatsapp') || message.source === 'slack') {
+        const isUserSession = message.source === 'whatsapp:user' || message.source === 'slack';
+        const contactString = message.metadata?.phoneNumber || message.metadata?.slackUserName || message.metadata?.chatId;
         const groupName = message.metadata?.groupName;
         const msgContent = message.content?.toLowerCase() || '';
 

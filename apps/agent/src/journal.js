@@ -29,8 +29,11 @@ class JournalManager {
 
     log(content) {
         const now = new Date();
-        // YYYY-MM-DD
-        const dateStr = now.toISOString().split('T')[0];
+        // Use local time consistently (getParsedJournal also uses local time)
+        const YYYY = now.getFullYear();
+        const MM = String(now.getMonth() + 1).padStart(2, '0');
+        const DD = String(now.getDate()).padStart(2, '0');
+        const dateStr = `${YYYY}-${MM}-${DD}`;
         const timeStr = now.toTimeString().split(' ')[0].substring(0, 5); // HH:MM
 
         const filename = `${dateStr}.md`;
