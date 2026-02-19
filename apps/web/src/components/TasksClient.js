@@ -1,12 +1,12 @@
 'use client';
 
-import { useState, useCallback } from 'react';
-import { RefreshCw, ClipboardList, Clock } from 'lucide-react';
+import { useCallback } from 'react';
+import { RefreshCw, ClipboardList } from 'lucide-react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
-import CreateTaskForm from '@/components/CreateTaskForm';
 import JobLogsTable from '@/components/JobLogsTable';
 import ActiveJobsTable from '@/components/ActiveJobsTable';
 import WatchersTable from '@/components/WatchersTable';
+import SubAgentsTable from '@/components/SubAgentsTable';
 
 export default function TasksClient() {
     const router = useRouter();
@@ -43,6 +43,13 @@ export default function TasksClient() {
                 >
                     Message Watchers
                     {activeTab === 'watchers' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-indigo-500" />}
+                </button>
+                <button
+                    onClick={() => setActiveTab('subagents')}
+                    className={`pb-2 px-1 text-sm font-medium transition-colors relative whitespace-nowrap flex items-center gap-2 ${activeTab === 'subagents' ? 'text-violet-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                >
+                    Sub-Agents
+                    {activeTab === 'subagents' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-violet-500" />}
                 </button>
                 <button
                     onClick={() => setActiveTab('system')}
@@ -88,6 +95,12 @@ export default function TasksClient() {
             {activeTab === 'watchers' && (
                 <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
                     <WatchersTable />
+                </div>
+            )}
+
+            {activeTab === 'subagents' && (
+                <div className="animate-in fade-in slide-in-from-bottom-2 duration-500">
+                    <SubAgentsTable />
                 </div>
             )}
         </div>

@@ -203,6 +203,18 @@ class AgentDB {
         meta TEXT,   -- JSON (Year, Genre, Discogs Link)
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
+
+      CREATE TABLE IF NOT EXISTS subagents (
+        id TEXT PRIMARY KEY,
+        parent_chat_id TEXT NOT NULL,
+        task TEXT NOT NULL,
+        status TEXT DEFAULT 'running',
+        model TEXT,
+        result TEXT,
+        error TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        completed_at TEXT
+      );
     `);
 
     // Migration: Add watchers table if missing (idempotent via create table if not exists, but for updates just in case)
@@ -532,6 +544,7 @@ class AgentDB {
       AND id NOT LIKE 'scheduled_%'
       AND id NOT LIKE 'api_city_image_%'
       AND id NOT LIKE 'sys_%' -- Exclude system internal sessions
+      AND id NOT LIKE 'subagent-%' -- Exclude sub-agent sessions
       AND id LIKE '%-%' -- Keep only UUIDs (Web sessions), filters out numeric Telegram IDs
       AND id NOT LIKE '%@%' -- Filter out WhatsApp IDs
       ORDER BY is_pinned DESC, updated_at DESC 
@@ -1504,6 +1517,54 @@ class AgentDB {
     transaction();
     console.log(`[DB] Migration complete: `, stats);
     return stats;
+  }
+  // --- Sub-Agents ---
+
+  createSubAgent({ id, parentChatId, task, model }) {
+    this.db.prepare(`
+      INSERT INTO subagents (id, parent_chat_id, task, model, status, created_at)
+      VALUES (?, ?, ?, ?, 'running', datetime('now'))
+    `).run(id, parentChatId, task, model || 'FLASH');
+  }
+
+  updateSubAgent(id, { status, result, error }) {
+    const updates = ['completed_at = datetime(\'now\')'];
+    const args = [];
+    if (status) { updates.push('status = ?'); args.push(status); }
+    if (result !== undefined) { updates.push('result = ?'); args.push(typeof result === 'string' ? result : JSON.stringify(result)); }
+    if (error !== undefined) { updates.push('error = ?'); args.push(error); }
+    args.push(id);
+    this.db.prepare(`UPDATE subagents SET ${updates.join(', ')} WHERE id = ?`).run(...args);
+  }
+
+  getSubAgent(id) {
+    return this.db.prepare('SELECT * FROM subagents WHERE id = ?').get(id);
+  }
+
+  listSubAgents(parentChatId) {
+    if (parentChatId) {
+      return this.db.prepare('SELECT * FROM subagents WHERE parent_chat_id = ? ORDER BY created_at DESC').all(parentChatId);
+    }
+    return this.db.prepare('SELECT * FROM subagents ORDER BY created_at DESC LIMIT 50').all();
+  }
+
+  cleanupSubAgents() {
+    // Archive completed sub-agent sessions older than 24h
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    const rows = this.db.prepare(`
+      SELECT id FROM subagents WHERE status != 'running' AND completed_at < ?
+    `).all(cutoff);
+
+    let cleaned = 0;
+    for (const row of rows) {
+      const chatId = `subagent-${row.id}`;
+      try {
+        this.deleteSession(chatId);
+      } catch (e) { /* session may not exist */ }
+      this.db.prepare('DELETE FROM subagents WHERE id = ?').run(row.id);
+      cleaned++;
+    }
+    return { cleaned };
   }
 }
 

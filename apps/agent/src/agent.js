@@ -34,6 +34,7 @@ const { DJService } = require('./services/dj-service');
 const { SkillService } = require('./services/skill-service');
 const { MemoryPruningService } = require('./services/memory-pruning');
 const { DreamService } = require('./services/dream-service');
+const { SubAgentService } = require('./services/subagent-service');
 
 
 
@@ -84,6 +85,7 @@ class Agent {
     this.skillService = new SkillService(this);
     this.memoryPruning = new MemoryPruningService(this);
     this.dreamService = new DreamService(this);
+    this.subAgentService = new SubAgentService(this);
 
     // In-Memory Settings Cache
     this.settings = {};
@@ -511,6 +513,7 @@ class Agent {
       this.smartContext.client = this.client; // Ensure client is available for summarization
 
       const chatId = message.metadata?.chatId;
+      const isSubAgent = !!message.metadata?.isSubAgent;
 
       // Ensure Session Exists (Multi-Threaded Chat Support)
       if (chatId) {
@@ -547,7 +550,7 @@ class Agent {
         // Auto-Title Trigger (Background)
         const hasContent = message.content || (message.parts && message.parts.length > 0);
 
-        if (msgCount === 0 && hasContent && message.role === 'user' && !isPassiveMode) {
+        if (msgCount === 0 && hasContent && message.role === 'user' && !isPassiveMode && !isSubAgent) {
           console.log(`[Agent] Triggering Auto-Title for ${chatId}. MsgCount: ${msgCount}`);
 
           let titleContext = message.content;
@@ -572,7 +575,7 @@ class Agent {
         // Auto-analyze any NEW user message with non-audio attachments (PDFs, images, text)
 
         // Suppress for Passive Mode
-        if (message.parts && message.role === 'user' && !isPassiveMode) {
+        if (message.parts && message.role === 'user' && !isPassiveMode && !isSubAgent) {
           const attachment = message.parts.find(p => p.inlineData && !p.inlineData.mimeType.startsWith('audio/') && !p.inlineData.mimeType.startsWith('image/'));
           // Classify anything substantive (PDF, Text, Images) but exclude audio (voice notes)
 
@@ -635,7 +638,8 @@ class Agent {
 
       // --- WATCHER LOGIC (Enhanced WhatsApp/Slack Intelligence) ---
       // Security: whatsapp:user and slack are PASSIVE (ignored) unless a watcher triggers.
-      if (message.source?.startsWith('whatsapp') || message.source === 'slack') {
+      // Sub-agents skip watcher logic entirely.
+      if (!isSubAgent && (message.source?.startsWith('whatsapp') || message.source === 'slack')) {
         const isUserSession = message.source === 'whatsapp:user' || message.source === 'slack';
         const contactString = message.metadata?.phoneNumber || message.metadata?.slackUserName || message.metadata?.chatId;
         const groupName = message.metadata?.groupName;
@@ -796,7 +800,7 @@ class Agent {
       }
 
       // 2. Rate Limiting
-      if (!(await this.rateLimiter.check(message, this.interface))) {
+      if (!(await this.rateLimiter.check(message, this.interface)) && !isSubAgent) {
         return executionSummary;
       }
 
@@ -1009,8 +1013,22 @@ class Agent {
         parameters: t.parameters
       }));
 
+      // Flatten all internal tool declarations from toolDefinitions array
+      let internalTools = toolDefinitions.flatMap(td => td.functionDeclarations || []);
+
+      // Sub-agent tool filtering: restrict to allowed tools if specified
+      if (message.metadata?.isSubAgent && message.metadata?.allowedTools) {
+        const allowed = new Set(message.metadata.allowedTools);
+        internalTools = internalTools.filter(t => allowed.has(t.name));
+      }
+
+      // Sub-agents cannot spawn other sub-agents (remove from available tools)
+      if (message.metadata?.isSubAgent) {
+        internalTools = internalTools.filter(t => t.name !== 'spawnAgent');
+      }
+
       const allTools = [
-        ...toolDefinitions[0].functionDeclarations, // Internal tools
+        ...internalTools,
         ...externalTools
       ];
 

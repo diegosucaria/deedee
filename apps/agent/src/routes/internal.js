@@ -615,6 +615,32 @@ function createInternalRouter(agent) {
             res.json({ state });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
+    // --- Sub-Agents ---
+    router.get('/subagents', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const parentChatId = req.query.parentChatId || null;
+            const tasks = agent.db.listSubAgents(parentChatId);
+            res.json({ tasks });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.get('/subagents/:id', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const task = agent.db.getSubAgent(req.params.id);
+            if (!task) return res.status(404).json({ error: 'Sub-agent task not found' });
+            res.json(task);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.post('/subagents/cleanup', (req, res) => {
+        if (!agent.subAgentService) return res.status(503).json({ error: 'Sub-agent service not ready' });
+        try {
+            const result = agent.subAgentService.cleanup();
+            res.json({ success: true, ...result });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
 
     return router;
 }

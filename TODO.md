@@ -66,7 +66,7 @@
 ### Intelligence
 - [ ] **Vector Memory**: Migrate from SQLite Regex search to Embeddings/Vector Store (pgvector/Chroma).
 - [x] **Local RAG**: Ability to ingest and index local PDFs/Docs for Life Vaults.
-- [ ] **Multi-Agent**: Spawning specialized sub-agents for research tasks.
+- [x] **Multi-Agent**: Spawning specialized sub-agents for parallel research tasks.
 
 ### Features
 - [x] **Vaults UI**: Integrated Markdown Editor, Inline File Viewer, and Vault-Context Chat Sidebar.
@@ -113,3 +113,8 @@
     - [x] **Agent Tools**: `searchSlack`, `readSlackHistory`, `sendSlackMessage`.
     - [x] **Settings UI**: SlackSettings component with test/connect/disconnect flow.
     - [x] **Security**: Passive message handling (watcher-gated), all endpoints behind API auth.
+- [x] **Multi-Agent (Feb 2026)**:
+    - [x] **SubAgentService**: Spawn isolated sub-agents with timeout (10m max), concurrency limits (3 max), and depth guard.
+    - [x] **Agent Tools**: `spawnAgent`, `getAgentResult`, `listAgentTasks`.
+    - [x] **Live UI**: Sub-Agents tab in Tasks page with socket-based real-time updates.
+    - [x] **Safety**: Tool allowlisting, session isolation (`subagent-*`), `FLASH` model default.

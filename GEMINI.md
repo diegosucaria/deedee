@@ -66,9 +66,17 @@ You are working on **Deedee**, a personal, self-improving AI agent designed to r
 - **`apps/agent/src/`**: The Core Agent.
   - `agent.js`: Main entry point (Gemini Client, Router, MCP).
   - `tools-definition.js`: All tool schemas (read this to understand capabilities).
-  - `executors/`: Logic for each tool (e.g., `gsuite.js`, `scheduler.js`).
-  - `services/`: Specialized modules (`date-awareness`, `people-service`).
+  - `executors/`: Logic for each tool (e.g., `gsuite.js`, `scheduler.js`, `subagent.js`).
+  - `services/`: Specialized modules (`date-awareness`, `people-service`, `subagent-service`).
   - `prompts/`: System instructions.
+
+### Multi-Agent System
+- **`SubAgentService`** (`services/subagent-service.js`): Spawns isolated child agents.
+  - Max 3 concurrent, 10-minute timeout, depth=1 (no recursive spawning).
+  - Sessions prefixed `subagent-*` are auto-hidden from sidebar.
+  - Tools: `spawnAgent`, `getAgentResult`, `listAgentTasks`.
+  - Socket event `subagent:update` broadcast on status change.
+  - Sub-agent metadata flag: `message.metadata.isSubAgent` skips auto-title, watchers, file analysis, and rate limiting.
 
 ### Integration (Where we talk to the world)
 - **`apps/interfaces/src/`**: Connectors & API.

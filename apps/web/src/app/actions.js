@@ -1254,3 +1254,23 @@ export async function repairWhatsAppSession(session) {
         return { success: true };
     } catch (e) { return { success: false, error: e.message }; }
 }
+
+// --- Sub-Agents ---
+export async function getSubAgentTasks() {
+    try {
+        return await fetchAPI('/v1/subagents');
+    } catch (error) {
+        console.error('getSubAgentTasks Error:', error);
+        return { tasks: [] };
+    }
+}
+
+export async function cleanupSubAgentTasks() {
+    try {
+        const result = await fetchAPI('/v1/subagents/cleanup', { method: 'POST' });
+        revalidatePath('/tasks');
+        return result;
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}

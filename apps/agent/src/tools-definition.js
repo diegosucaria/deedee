@@ -708,6 +708,50 @@ const toolDefinitions = [
         }
       }
     ]
+  },
+  // --- Sub-Agent Tools ---
+  {
+    functionDeclarations: [
+      {
+        name: "spawnAgent",
+        description: "Spawn a sub-agent to perform a specific task independently. The sub-agent runs in an isolated session with its own context and can use tools. Use this for tasks that can run in parallel or require focused execution. Returns a task ID for async tracking, or the result directly if waitForResult is true.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            task: { type: "STRING", description: "Clear, specific task description for the sub-agent." },
+            model: { type: "STRING", description: "Optional model override: 'FLASH' (default, fast/cheap) or 'PRO' (complex reasoning)." },
+            tools: {
+              type: "ARRAY",
+              items: { type: "STRING" },
+              description: "Optional allowlist of tool names the sub-agent can use. Default: all tools."
+            },
+            timeoutMinutes: { type: "NUMBER", description: "Max execution time in minutes (default: 3, max: 10)." },
+            waitForResult: { type: "BOOLEAN", description: "If true, block until the sub-agent completes and return the result directly. Default: false (async)." }
+          },
+          required: ["task"]
+        }
+      },
+      {
+        name: "getAgentResult",
+        description: "Check the status and result of a previously spawned sub-agent task.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            taskId: { type: "STRING", description: "The task ID returned by spawnAgent." }
+          },
+          required: ["taskId"]
+        }
+      },
+      {
+        name: "listAgentTasks",
+        description: "List all active and recent sub-agent tasks for the current session.",
+        parameters: {
+          type: "OBJECT",
+          properties: {},
+          required: []
+        }
+      }
+    ]
   }
 ];
 

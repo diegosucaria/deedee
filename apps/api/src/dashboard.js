@@ -88,4 +88,9 @@ router.get('/settings', (req, res) => proxyRequest(req, res, 'GET', '/internal/s
 router.post('/settings', (req, res) => proxyRequest(req, res, 'POST', '/internal/settings', req.body));
 router.post('/settings/tts/preview', (req, res) => proxyRequest(req, res, 'POST', '/internal/settings/tts/preview', req.body));
 
+// Sub-Agents
+router.get('/subagents', (req, res) => proxyRequest(req, res, 'GET', '/internal/subagents'));
+router.get('/subagents/:id', (req, res) => proxyRequest(req, res, 'GET', `/internal/subagents/${encodeURIComponent(req.params.id)}`));
+router.post('/subagents/cleanup', (req, res) => proxyRequest(req, res, 'POST', '/internal/subagents/cleanup'));
+
 module.exports = router;
