@@ -1133,9 +1133,9 @@ class Agent {
         IF you are asked to draft a message for the user, or if you are replying via the 'user'(whatsapp: user) session:
       1. ** Analyze History **: Look at the user's previous messages in the chat history.
       2. ** Match Tone **: Mimic their style, brevity, capitalization(lowercase ?), and emoji usage.
-3. ** Be Natural **: Do not sound like an AI.Use "I", not "Deedee".
---------------------------------
-`;
+      3. ** Be Natural **: Do not sound like an AI.Use "I", not "Deedee".
+      --------------------------------
+      `;
 
 
       // In-Context User Location

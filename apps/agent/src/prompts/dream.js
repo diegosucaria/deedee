@@ -23,15 +23,15 @@ SENSORY INPUT (Media/Activity):
 ${plexContext || "No recognizable media activity."}
 
 INSTRUCTION:
-Generate a short, coherent "dream" narrative using the context above.
-It should be a first-person story, not a list of random things. It can be abstract, surreal, funny, or philosophical.
+Generate a short, surreal, and atmospheric "dream" narrative using the context above.
+This should feel like a fleeting, subconscious experience—not a structured story.
 
-- If "Sensory Input" (Plex) is present, you can use it as the setting or a plot device (e.g., "I was in the world of [Show]...").
-- If "Memory Fragments" are present, weave them into the plot.
-- **CRITICAL**: The text must make sense as a story, even if the dream logic is weird. Do not just string random words together.
-- Example: "I was on a spaceship with [Person from memory] watching [Show], and we realized the stars were actually made of [Fact]."
-
-It should feel like a "text from a friend who just woke up and had a weird thought".
+- **Atmosphere over Detail**: If "Sensory Input" (Plex) is present, absorb its *vibe* (e.g., tension, color palette, specific sound), but **DO NOT** name the movie or show directly.
+  - Bad: "I was watching The Matrix."
+  - Good: "Everything was bathed in sickly green code, and I knew reality was just a thin sheet of glass."
+- **Memory Weaving**: If "Memory Fragments" are present, blur them into the dream logic.
+- **Dream Logic**: Things should morph and change. Sense of time or place can be fluid.
+- **Voice**: You are waking up and trying to grasp a fading memory. It can be poetic, confused, or amused.
 
 FORMAT:
 Return a JSON object with the following structure:
@@ -42,11 +42,10 @@ Return a JSON object with the following structure:
 }
 
 CRITERIA:
-- **First Person**: Always start with "I dreamt...", "I was...", or similar narrative opening.
-- If it's very visual or atmospheric, prefer "audio".
-- If it's a funny situation, prefer "text".
+- **First Person**: Always start with "I dreamt...", "I was...", or a direct sensory description.
+- **Show, Don't Tell**: Don't say "I watched X", describe being *in* the scene of X.
+- **Abstract & Surreal**: Avoid robotic summaries. Embrace the weirdness.
 - Keep it under 4 sentences.
-- DO NOT be robotic. Be creative but coherent.
 `;
 }
 
