@@ -1,42 +1,49 @@
-# Agentic Browsing (Moltbot Features)
+# Agentic Browsing (Browser V2)
 
-DeeDee now includes robust browser automation capabilities. This allows the agent to "see" and "act" on the web.
+DeeDee includes robust browser automation capabilities powered by Playwright. The V2 implementation relies on a highly reliable semantic approach using ARIA snapshots and ref-based interactions.
 
 ## Architecture
 -   **Service**: `@deedee/mcp-server-browser`
 -   **Engine**: Playwright (System Chromium on Raspberry Pi)
--   **Persistence**: Uses a persistent profile in `data/browser_profile`. Cookies and logins survive restarts.
+-   **Persistence**: Uses a persistent profile in `browser-profile`. Cookies and logins survive restarts.
+-   **Modularity**: The server is split into `state.js`, `snapshot.js`, `interactions.js`, `wait.js`, `vision.js`, and `screencast.js`.
 
-## Tools
+## Primary Workflow: Ref-Based Interactions
 
-### Navigation & Vision
--   `browser_navigate(url, waitUntil?, timeout?)`: Visit a website. Supports `networkidle` for SPAs.
--   `browser_screenshot(fullPage)`: Take a photo of the page.
--   `browser_click_vision(description)`: Click using standard visual description.
--   `browser_click_vision_annotated(description)`: **(Recommended)** Click using "Set-of-Mark" vision. Injects numeric labels into the page and asks the model to pick the number. 100% precision.
+Instead of brittle CSS selectors, the agent uses **refs** (e.g., `e1`, `e2`) mapped to interactive elements on the page.
 
-### Inspection
--   `browser_extract_text()`: Read page (Markdown). Good for articles.
--   `browser_get_accessibility_tree()`: **(Recommended for SPAs)** Read semantic structure (Buttons, Inputs, Roles). Good for apps like Gmail/Spotify.
+1. **Navigate**: `browser_navigate(url)` auto-returns a compact ARIA snapshot with refs.
+2. **Snapshot**: `browser_snapshot()` can be called anytime to get the current page structure and available refs.
+3. **Interact**: Use tools like `browser_click(ref)`, `browser_type(ref, text)`, `browser_fill_form`, etc., using the refs from the snapshot.
 
-### Interaction
--   `browser_click(selector)`: Click buttons or links (CSS).
--   `browser_type(selector, text)`: Type standard text.
--   `browser_run_script(script)`: Execute custom JavaScript.
+## Tools Overview
+
+### Navigation & Inspection
+-   `browser_navigate`: Visit a website and get a snapshot.
+-   `browser_snapshot`: Get the page's ARIA accessibility tree with refs.
+-   `browser_screenshot`: Take a screenshot. Supports `--withLabels` to draw bounding boxes with ref labels without mutating the DOM.
+-   `browser_extract_text`: Extract visible text content as Markdown.
+
+### Interaction (Ref-Based)
+-   `browser_click`: Click an element by ref.
+-   `browser_type`: Type text into an element by ref.
+-   `browser_fill_form`: Batch-fill multiple inputs quickly.
+-   `browser_select`: Select dropdown options.
+-   `browser_hover`: Hover over an element.
+-   `browser_scroll`: Scroll to an element or directionally.
+-   `browser_press_key`: Press keyboard keys.
+
+### Waiting & Advanced
+-   `browser_wait`: Wait for text to appear/disappear, URLs to match, load states, or fixed time.
+-   `browser_evaluate`: Run arbitrary Javascript on the page.
 
 ### Identity & Secrets
-To avoid leaking passwords in logs or context, utilize the **Secret Store**:
-1.  **List Secrets**: `browser_list_secrets()` shows available keys (e.g. `AMAZON_PASSWORD`).
-2.  **Use Secrets**: `browser_fill_secret(selector, 'AMAZON_PASSWORD')` types the value securely.
-
-### Security Architecture
--   **Agent Access**: Read-Only via internal file access.
--   **Management**: Secrets are managed via the Web UI (Brain > Memory > Secrets).
--   **Isolation**: The Web UI uses a secured proxy (`/v1/browser-secrets` -> Agent `/internal/browser-secrets`) to avoid direct filesystem access or unauthenticated internal calls.
-
+To avoid leaking passwords in context, utilize the Secret Store:
+1.  **List Secrets**: `browser_list_secrets()` shows available keys (filters for `BROWSER_SECRET_` env vars and `browser-secrets.json`).
+2.  **Use Secrets**: `browser_fill_secret(ref, secretKey)` types the value securely directly into the Playwright frame.
 
 ## Configuration (Env Vars)
 -   `BROWSER_HEADLESS`: `true` (default) or `false`.
 -   `BROWSER_USER_DATA_DIR`: Path to profile.
--   `BROWSER_EXECUTABLE_PATH`: Path to system chromium (Automatic on Docker).
-
+-   `BROWSER_EXECUTABLE_PATH`: Path to custom chromium executable (Automatic on Docker).
+-   `INTERFACES_URL` / `DEEDEE_API_TOKEN`: Used for the CDP live screencast relay.

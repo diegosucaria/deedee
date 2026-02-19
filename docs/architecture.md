@@ -110,9 +110,9 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 ### 6. MCP Servers (`packages/mcp-servers`)
 - **Role**: Tool Providers.
 - **MCP Servers**: Standardized tools.
-    - **Browser**: Agentic web browsing via Playwright. **NEW**: Supports Real-Time CDP Streaming (JPEG, 15fps) via Socket Relay to Interfaces.
-    - **Memory**: Knowledge graph.lendar (OAuth).
-    - **Plex**: Media library search and playback status (Python-based).
+    - **Browser**: Agentic web browsing via Playwright using ARIA Snapshot + Ref-Based Interactions. Supports Real-Time CDP Streaming (JPEG) via Socket Relay to Interfaces.
+    - **Memory**: Knowledge graph.
+    - **GSuite**: Google Calendar and Email (OAuth).
     - **Plex**: Media library search and playback status (Python-based).
     - **Home Assistant**: Control smart home devices (`ha-mcp`). Active.
 

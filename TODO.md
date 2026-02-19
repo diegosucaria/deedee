@@ -52,6 +52,7 @@
     - [x] **Message Watchers**: Passive monitoring of 'user' session with conditional triggers.
     - [x] **Dual Session Logic**: 'Assistant' (Strict) vs 'User' (Passive/Mirror).
     - [x] **Conversation Tools**: `listConversations`, `readChatHistory`.
+- [x] **Agentic Browser V2**: ARIA Snapshot + Ref-based interactions (replaces CSS selectors/vision click). 16 tools, modular `src/` architecture.
 
 ---
 

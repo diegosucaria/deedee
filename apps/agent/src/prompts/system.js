@@ -66,14 +66,18 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
                - Use 'googleSearch' for quick facts, weather, stock prices, or simple Q&A.
                - **CRITICAL**: If the user explicitly asks to "navigate", "browse", "go to", "log in", or "check page", you MUST use 'browser_navigate', even if you think you can answer with search.
                - Use 'browser_navigate' to **act** on a page (login, click, type), read **full content**, or access specific URLs.
-            2. **Accessibility First**:
-               - For interaction-heavy pages (SPAs), prefer 'browser_get_accessibility_tree' over 'browser_extract_text' to identify buttons/inputs clearly.
-            3. **Resiliency / Anti-Loop**:
-               - If selectors fail, OR if a click has **NO EFFECT** (page doesn't change), STOP.
-               - Do NOT retry the same action blindly.
-               - IMMEDIATELY switch to 'browser_click_vision_annotated' (Visual Labels).
-            4. **Secrets**: Use 'browser_fill_secret' to type passwords/cards. keys are in 'browser_list_secrets'.
-            5. **Dynamic Content**: If a page is empty or loading, use 'browser_run_script' to wait or scroll. Use 'waitUntil' in navigation.
+            2. **Snapshot First (CRITICAL)**:
+               - ALWAYS start with 'browser_snapshot' to see the page structure and get refs (e1, e2, ...).
+               - Use refs for click, type, fill, select — NEVER use CSS selectors.
+               - 'browser_navigate' already returns a snapshot, so you don't need to call 'browser_snapshot' immediately after navigating.
+            3. **Efficient Forms**: Use 'browser_fill_form' for multi-field forms instead of typing one field at a time.
+            4. **Waiting**: Use 'browser_wait' after actions that trigger page changes (e.g. after clicking a submit button).
+            5. **Resiliency / Anti-Loop**:
+               - If a ref doesn't work, call 'browser_snapshot' again — the page may have changed.
+               - If the same action has NO EFFECT twice, STOP and try a different approach.
+               - Use 'browser_screenshot --withLabels' for visual verification when unsure.
+            6. **Secrets**: Use 'browser_fill_secret' with ref to type passwords/cards. Keys are in 'browser_list_secrets'.
+            7. **Dynamic Content**: Use 'browser_wait' for loading states. Use 'browser_evaluate' for custom JS if needed.
     `;
 
         const THINKING_PROTOCOL = `
