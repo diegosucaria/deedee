@@ -1308,11 +1308,12 @@ class Agent {
 
         // PARALLEL EXECUTION STRATEGY
         // FIX: Deduplicate tool calls (Model might hallucinate duplicates)
+        // EXCEPTION: Browser tools are allowed to have duplicates (e.g. pressing ArrowDown twice)
         const uniqueCalls = [];
         const seenCalls = new Set();
         for (const call of functionCalls) {
           const signature = `${call.name}:${JSON.stringify(call.args)}`;
-          if (!seenCalls.has(signature)) {
+          if (!seenCalls.has(signature) || call.name?.includes('browser_')) {
             seenCalls.add(signature);
             uniqueCalls.push(call);
           } else {
@@ -1321,7 +1322,12 @@ class Agent {
         }
         functionCalls = uniqueCalls;
 
-        console.log(`${logPrefix} Processing ${functionCalls.length} tool calls in parallel.`);
+        const hasBrowserTools = functionCalls.some(c => c.name && c.name.includes('browser_'));
+        if (hasBrowserTools) {
+          console.log(`${logPrefix} Processing ${functionCalls.length} tool calls sequentially (browser interactions).`);
+        } else {
+          console.log(`${logPrefix} Processing ${functionCalls.length} tool calls in parallel.`);
+        }
         // console.log(JSON.stringify(functionCalls)); // PREVENT SPAM
         const toolNames = functionCalls.map(c => (c.name || '').replace('default_api:', '')).join(', ');
         await reportProgress(`Executing ${functionCalls.length} tools: ${toolNames}...`);
@@ -1338,7 +1344,7 @@ class Agent {
         }, 2500);
 
         // 2. Execute All Tools
-        const toolPromises = functionCalls.map(async (call) => {
+        const executeToolCall = async (call) => {
           let executionName = call.name;
           // Sanitize Tool Name
           if (executionName && executionName.startsWith('default_api:')) {
@@ -1384,10 +1390,20 @@ class Agent {
           }
 
           return { call, executionName, result: toolResult };
-        });
+        };
 
-        // Wait for all tools
-        const results = await Promise.all(toolPromises);
+        let results = [];
+        if (hasBrowserTools) {
+          // Sequential execution for UI reliability
+          for (const call of functionCalls) {
+            results.push(await executeToolCall(call));
+          }
+        } else {
+          // Parallel execution for speed
+          const toolPromises = functionCalls.map(executeToolCall);
+          results = await Promise.all(toolPromises);
+        }
+
         clearTimeout(thinkTimer);
 
         // 3. Process Results & Build Response
