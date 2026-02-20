@@ -20,11 +20,12 @@ Instead of brittle CSS selectors, the agent uses **refs** (e.g., `e1`, `e2`) map
 
 ### Navigation & Inspection
 -   `browser_navigate`: Visit a website and get a snapshot.
--   `browser_snapshot`: Get the page's ARIA accessibility tree with refs.
+-   `browser_snapshot`: Get the page's ARIA accessibility tree with refs. Supports interacting inside iframes via `frameSelector`.
 -   `browser_screenshot`: Take a screenshot. Supports `--withLabels` to draw bounding boxes with ref labels without mutating the DOM.
 -   `browser_extract_text`: Extract visible text content as Markdown.
 
 ### Interaction (Ref-Based)
+All interaction tools support optional `timeoutMs` to handle slow SPAs, and `frameSelector` to interact with cross-origin iframes.
 -   `browser_click`: Click an element by ref.
 -   `browser_type`: Type text into an element by ref.
 -   `browser_fill_form`: Batch-fill multiple inputs quickly.
@@ -32,6 +33,7 @@ Instead of brittle CSS selectors, the agent uses **refs** (e.g., `e1`, `e2`) map
 -   `browser_hover`: Hover over an element.
 -   `browser_scroll`: Scroll to an element or directionally.
 -   `browser_press_key`: Press keyboard keys.
+-   `browser_drag`: Drag an element to another by their refs.
 
 ### Waiting & Advanced
 -   `browser_wait`: Wait for text to appear/disappear, URLs to match, load states, or fixed time.
@@ -41,6 +43,11 @@ Instead of brittle CSS selectors, the agent uses **refs** (e.g., `e1`, `e2`) map
 To avoid leaking passwords in context, utilize the Secret Store:
 1.  **List Secrets**: `browser_list_secrets()` shows available keys (filters for `BROWSER_SECRET_` env vars and `browser-secrets.json`).
 2.  **Use Secrets**: `browser_fill_secret(ref, secretKey)` types the value securely directly into the Playwright frame.
+
+## Resilience & Stability (V2.1)
+-   **AI-Friendly Errors**: If Playwright fails due to an element being intercepted (e.g., covered by a modal) or timing out, the MCP server intercepts the crash and returns an actionable error message to the agent instead of throwing an unhandled exception.
+-   **Snapshot Truncation**: To protect LLM memory limits, `browser_snapshot` output is capped at 20,000 characters.
+-   **Iframe Tunneling**: Elements inside cross-origin iframes (like Captchas or Stripe checkouts) can be accessed seamlessly by passing `frameSelector` to snapshot and interaction tools.
 
 ## Configuration (Env Vars)
 -   `BROWSER_HEADLESS`: `true` (default) or `false`.

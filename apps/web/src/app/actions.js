@@ -1274,3 +1274,48 @@ export async function cleanupSubAgentTasks() {
         return { success: false, error: error.message };
     }
 }
+
+// --- GSuite / Google Workspace ---
+
+export async function getGSuiteAccounts() {
+    try {
+        const res = await fetchAPI('/v1/gsuite/accounts');
+        return res.accounts || [];
+    } catch (error) {
+        console.error('getGSuiteAccounts Error:', error);
+        return [];
+    }
+}
+
+export async function getGSuiteAuthUrl() {
+    try {
+        const res = await fetchAPI('/v1/gsuite/auth-url', { method: 'POST' });
+        return res;
+    } catch (error) {
+        return { error: error.message };
+    }
+}
+
+export async function authenticateGSuite(code) {
+    try {
+        const res = await fetchAPI('/v1/gsuite/auth', {
+            method: 'POST',
+            body: JSON.stringify({ code })
+        });
+        return { success: true, ...res };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function disconnectGSuite(email) {
+    try {
+        const res = await fetchAPI('/v1/gsuite/disconnect', {
+            method: 'POST',
+            body: JSON.stringify({ email })
+        });
+        return { success: true, ...res };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}

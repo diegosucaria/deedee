@@ -29,6 +29,7 @@ app.use('/v1/briefing', briefingRouter);
 app.use('/v1/city-image', cityImageRouter);
 app.use('/v1/whatsapp', require('./whatsapp'));
 app.use('/v1/slack', require('./slack'));
+app.use('/v1/gsuite', require('./gsuite'));
 app.use('/v1/live', require('./live'));
 app.use('/v1/vaults', require('./vaults'));
 app.use('/v1/people', require('./routes/people'));

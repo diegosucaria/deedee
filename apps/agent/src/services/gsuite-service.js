@@ -51,6 +51,13 @@ class GSuiteService {
                 const auth = new google.auth.OAuth2(clientId, clientSecret, redirectUri);
                 auth.setCredentials(account.tokens);
                 auth._label = account.label; // Assign label to instance
+
+                // Keep tokens fresh in DB when they automatically refresh
+                auth.on('tokens', (tokens) => {
+                    this._updateTokensInDB(account.email, tokens);
+                    console.log(`[GSuite] Automatically refreshed and saved tokens for ${account.email}`);
+                });
+
                 this.clients.set(account.email, auth);
                 console.log(`[GSuite] Loaded client for ${account.email} ${account.label ? `(${account.label})` : ''}`);
             }
@@ -108,6 +115,13 @@ class GSuiteService {
             // Reload memory
             const authWithLabel = auth;
             authWithLabel._label = label;
+
+            // Keep tokens fresh in DB when they automatically refresh
+            authWithLabel.on('tokens', (newTokens) => {
+                this._updateTokensInDB(email, newTokens);
+                console.log(`[GSuite] Automatically refreshed and saved tokens for ${email}`);
+            });
+
             this.clients.set(email, authWithLabel);
 
             this.ready = true;
@@ -159,6 +173,46 @@ class GSuiteService {
         stmt.run('google_tokens', JSON.stringify(data));
     }
 
+    _updateTokensInDB(email, newTokens) {
+        let currentTokens = this._getTokensFromDB();
+        const existingIndex = currentTokens.findIndex(t => t.email === email);
+        if (existingIndex >= 0) {
+            // Merge with existing. newTokens might not contain the refresh_token if it hasn't changed
+            currentTokens[existingIndex].tokens = {
+                ...currentTokens[existingIndex].tokens,
+                ...newTokens
+            };
+            this._saveTokensToDB(currentTokens);
+        }
+    }
+
+    async disconnectAccount(email) {
+        let tokens = this._getTokensFromDB();
+        const existingIndex = tokens.findIndex(t => t.email === email);
+
+        if (existingIndex >= 0) {
+            // Remove from DB
+            tokens.splice(existingIndex, 1);
+            this._saveTokensToDB(tokens);
+
+            // Remove from memory
+            this.clients.delete(email);
+
+            return `Successfully disconnected ${email}`;
+        }
+
+        return `${email} not found.`;
+    }
+
+    async getAccountsStatus() {
+        const tokens = this._getTokensFromDB();
+        return tokens.map(t => ({
+            email: t.email,
+            label: t.label,
+            hasRefreshToken: !!t.tokens.refresh_token
+        }));
+    }
+
     async listEvents({ timeMin, timeMax, maxResults = 10 }) {
         if (!this.ready || this.clients.size === 0) return 'No Google accounts connected. Use /google_auth to login.';
 
@@ -188,8 +242,14 @@ class GSuiteService {
             } catch (e) {
                 console.warn(`[GSuite] Failed to list events for ${email}:`, e.message);
                 if (e.message.includes('invalid_grant')) {
-                    // Token expired/revoked?
-                    // Could handle refresh or warn user
+                    console.warn(`[GSuite] Token permanently revoked/expired for ${email}. Disconnecting...`);
+                    await this.disconnectAccount(email);
+                    allEvents.push({
+                        summary: `[ACTION REQUIRED] Google account ${email} was disconnected (invalid_grant). Needs re-authentication.`,
+                        start: { dateTime: new Date().toISOString() },
+                        _account: 'System',
+                        _me: 'system'
+                    });
                 }
             }
         }

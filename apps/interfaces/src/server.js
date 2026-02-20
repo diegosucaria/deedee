@@ -416,6 +416,47 @@ app.get('/slack/history', async (req, res) => {
   }
 });
 
+// --- GSUITE ENDPOINTS ---
+app.get('/gsuite/accounts', async (req, res) => {
+  try {
+    const response = await axios.get(`${agentUrl}/internal/gsuite/accounts`);
+    res.json(response.data);
+  } catch (err) {
+    console.error('[Interfaces] GSuite accounts error:', err.message);
+    res.status(502).json({ error: 'Backend unavailable' });
+  }
+});
+
+app.post('/gsuite/auth-url', async (req, res) => {
+  try {
+    const response = await axios.post(`${agentUrl}/internal/gsuite/auth-url`);
+    res.json(response.data);
+  } catch (err) {
+    console.error('[Interfaces] GSuite auth-url error:', err.message);
+    res.status(502).json({ error: 'Backend unavailable' });
+  }
+});
+
+app.post('/gsuite/auth', async (req, res) => {
+  try {
+    const response = await axios.post(`${agentUrl}/internal/gsuite/auth`, req.body);
+    res.json(response.data);
+  } catch (err) {
+    console.error('[Interfaces] GSuite auth error:', err.message);
+    res.status(502).json({ error: 'Backend unavailable' });
+  }
+});
+
+app.post('/gsuite/disconnect', async (req, res) => {
+  try {
+    const response = await axios.post(`${agentUrl}/internal/gsuite/disconnect`, req.body);
+    res.json(response.data);
+  } catch (err) {
+    console.error('[Interfaces] GSuite disconnect error:', err.message);
+    res.status(502).json({ error: 'Backend unavailable' });
+  }
+});
+
 // Endpoint for Agent to send messages out
 app.post('/send', async (req, res) => {
   try {

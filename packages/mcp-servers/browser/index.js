@@ -21,9 +21,12 @@ const fs = require("fs");
 const { execSync } = require('child_process');
 
 // V2 Modules
-const { getPageSnapshot } = require('./src/snapshot');
-const { refLocator, clearRefs } = require('./src/state');
-const { handleClick, handleType, handleFillForm, handleSelect, handleHover, handleScroll, handlePressKey } = require('./src/interactions');
+const { getPageSnapshot } = require('./src/snapshot.js');
+const {
+    handleClick, handleType, handleFillForm, handleSelect,
+    handleHover, handleScroll, handlePressKey, handleDrag
+} = require('./src/interactions.js');
+const { clearRefs, refLocator } = require('./src/state.js');
 const { handleWait } = require('./src/wait');
 const { screenshotWithLabels } = require('./src/vision');
 const { initScreencast } = require('./src/screencast');
@@ -170,6 +173,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     properties: {
                         interactiveOnly: { type: "boolean", description: "Only show interactive elements (buttons, inputs, links). Default: false" },
                         compact: { type: "boolean", description: "Prune branches without interactive elements. Default: true" },
+                        frameSelector: { type: "string", description: "Optional iframe to inspect (e.g. 'iframe[title=\"Payment\"]')" },
                     },
                 },
             },
@@ -200,6 +204,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         ref: { type: "string", description: "Element ref from snapshot (e.g. 'e1', 'e2')" },
                         doubleClick: { type: "boolean", description: "Double-click instead of single click" },
                         button: { type: "string", enum: ["left", "right", "middle"], description: "Mouse button. Default: left" },
+                        frameSelector: { type: "string", description: "Optional iframe selector" },
+                        timeoutMs: { type: "number", description: "Max time to wait in ms (500-60000)" },
                     },
                     required: ["ref"],
                 },
@@ -214,6 +220,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                         text: { type: "string", description: "Text to type" },
                         submit: { type: "boolean", description: "Press Enter after typing" },
                         slowly: { type: "boolean", description: "Type character by character (for autocomplete fields)" },
+                        frameSelector: { type: "string", description: "Optional iframe selector" },
+                        timeoutMs: { type: "number", description: "Max time to wait in ms" },
                     },
                     required: ["ref", "text"],
                 },
@@ -237,6 +245,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                                 required: ["ref", "value"],
                             },
                         },
+                        frameSelector: { type: "string", description: "Optional iframe selector if fields are inside an iframe" },
+                        timeoutMs: { type: "number", description: "Max time to wait in ms per field" },
                     },
                     required: ["fields"],
                 },
@@ -255,6 +265,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                             ],
                             description: "Value(s) to select",
                         },
+                        frameSelector: { type: "string", description: "Optional iframe selector" },
+                        timeoutMs: { type: "number", description: "Max time to wait in ms" },
                     },
                     required: ["ref", "values"],
                 },
@@ -266,6 +278,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     type: "object",
                     properties: {
                         key: { type: "string", description: "Key to press (e.g. 'Enter', 'Tab', 'Escape', 'ArrowDown')" },
+                        timeoutMs: { type: "number", description: "Max time to wait in ms" },
                     },
                     required: ["key"],
                 },
@@ -277,8 +290,24 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     type: "object",
                     properties: {
                         ref: { type: "string", description: "Element ref to hover" },
+                        frameSelector: { type: "string", description: "Optional iframe selector" },
+                        timeoutMs: { type: "number", description: "Max time to wait in ms" },
                     },
                     required: ["ref"],
+                },
+            },
+            {
+                name: "browser_drag",
+                description: "Drag an element to another element by refs.",
+                inputSchema: {
+                    type: "object",
+                    properties: {
+                        startRef: { type: "string", description: "Ref of the element to drag (e.g. 'e1')" },
+                        endRef: { type: "string", description: "Ref of the destination element (e.g. 'e2')" },
+                        frameSelector: { type: "string", description: "Optional iframe selector" },
+                        timeoutMs: { type: "number", description: "Max time to wait in ms" },
+                    },
+                    required: ["startRef", "endRef"],
                 },
             },
             {
@@ -289,6 +318,8 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     properties: {
                         ref: { type: "string", description: "Element ref to scroll into view (optional)" },
                         direction: { type: "string", enum: ["up", "down", "left", "right"], description: "Scroll direction if no ref (default: down)" },
+                        frameSelector: { type: "string", description: "Optional iframe selector" },
+                        timeoutMs: { type: "number", description: "Max time to wait in ms" },
                     },
                 },
             },
@@ -382,6 +413,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const { snapshot, refs, url, title } = await getPageSnapshot(p, {
                 interactiveOnly: args.interactiveOnly,
                 compact: args.compact,
+                frameSelector: args.frameSelector,
             });
             const refCount = Object.keys(refs).length;
 
@@ -477,6 +509,14 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
         if (name === "browser_press_key") {
             const result = await handlePressKey(p, args);
             return { content: [{ type: "text", text: result.message }] };
+        }
+
+        if (name === "browser_drag") {
+            const result = await handleDrag(p, args);
+            return {
+                content: [{ type: "text", text: result.message }],
+                isError: !result.success,
+            };
         }
 
         // --- Wait ---

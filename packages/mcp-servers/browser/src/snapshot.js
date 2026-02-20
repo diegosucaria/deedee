@@ -287,13 +287,30 @@ function renderTree(tree, depth = 0) {
  * @param {Object} options
  * @param {boolean} options.interactiveOnly - Only show interactive elements
  * @param {boolean} options.compact - Prune empty branches (default: true)
+ * @param {string} [options.frameSelector] - Optional iframe to inspect
+ * @param {number} [options.maxChars=20000] - Truncate output to prevent context blowout
  * @returns {{ snapshot: string, refs: Object, url: string, title: string }}
  */
 async function getPageSnapshot(page, options = {}) {
     const compact = options.compact !== false;
+    const maxChars = options.maxChars || 20000;
+    const frameSelector = (options.frameSelector || '').trim();
 
-    // Use Playwright's ariaSnapshot (≥1.49)
-    const ariaText = await page.locator('body').ariaSnapshot();
+    let ariaText = '';
+    const root = frameSelector ? page.frameLocator(frameSelector).locator('body') : page.locator('body');
+
+    try {
+        // Use Playwright's ariaSnapshot (≥1.49)
+        ariaText = await root.ariaSnapshot();
+    } catch (err) {
+        console.warn(`[BrowserV2] ariaSnapshot failed (frameSelector: "${frameSelector}"):`, err.message);
+        return {
+            snapshot: `Failed to capture snapshot. ${err.message}`,
+            refs: {},
+            url: page.url(),
+            title: await page.title().catch(() => '')
+        };
+    }
 
     // Parse into tree
     let tree = parseAriaSnapshot(ariaText);
@@ -307,10 +324,15 @@ async function getPageSnapshot(page, options = {}) {
     }
 
     // Render to text
-    const snapshot = renderTree(tree);
+    let snapshot = renderTree(tree);
+
+    // Truncate if it exceeds maxChars
+    if (snapshot.length > maxChars) {
+        snapshot = snapshot.slice(0, maxChars) + '\n\n[...TRUNCATED - page too large]';
+    }
 
     const url = page.url();
-    const title = await page.title();
+    const title = await page.title().catch(() => '');
 
     // Store refs for subsequent tool calls
     storeRefs(refs, url);

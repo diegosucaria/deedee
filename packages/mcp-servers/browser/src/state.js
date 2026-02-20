@@ -46,9 +46,10 @@ function clearRefs() {
  *
  * @param {import('playwright').Page} page
  * @param {string} ref - e.g. "e1", "e2"
+ * @param {string} [frameSelector] - e.g. "iframe[title='Stripe']"
  * @returns {import('playwright').Locator}
  */
-function refLocator(page, ref) {
+function refLocator(page, ref, frameSelector = '') {
     const info = currentRefs[ref];
     if (!info) {
         const available = Object.keys(currentRefs).slice(0, 10).join(', ');
@@ -58,11 +59,13 @@ function refLocator(page, ref) {
         );
     }
 
+    const root = frameSelector ? page.frameLocator(frameSelector) : page;
+
     let locator;
     if (info.name) {
-        locator = page.getByRole(info.role, { name: info.name, exact: true });
+        locator = root.getByRole(info.role, { name: info.name, exact: true });
     } else {
-        locator = page.getByRole(info.role);
+        locator = root.getByRole(info.role);
     }
 
     return info.nth !== undefined ? locator.nth(info.nth) : locator;

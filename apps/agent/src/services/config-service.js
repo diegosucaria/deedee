@@ -14,6 +14,7 @@ const CONSTANTS = {
         'gemini-2.5-flash': { threshold: 128000, tier1: { input: 0.30, output: 0.60 }, tier2: { input: 1.0, output: 2.5 } },
         'gemini-2.0-flash-exp': { threshold: 128000, tier1: { input: 0.15, output: 0.60 }, tier2: { input: 0.30, output: 1.20 } },
         'gemini-3-pro-preview': { threshold: 200000, tier1: { input: 2.00, output: 12.00 }, tier2: { input: 4.00, output: 18.00 } },
+        'gemini-3.1-pro-preview': { threshold: 200000, tier1: { input: 2.00, output: 12.00 }, tier2: { input: 4.00, output: 18.00 } },
         'gemini-2.5-pro': { threshold: 200000, tier1: { input: 2.00, output: 12.00 }, tier2: { input: 4.00, output: 18.00 } },
         'FLASH_DEFAULT': { threshold: 128000, tier1: { input: 0.15, output: 0.60 }, tier2: { input: 0.30, output: 1.20 } },
         'PRO_DEFAULT': { threshold: 200000, tier1: { input: 2.00, output: 12.00 }, tier2: { input: 4.00, output: 18.00 } }

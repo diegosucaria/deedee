@@ -7,6 +7,7 @@ jest.mock('googleapis', () => {
         generateAuthUrl: jest.fn(),
         getToken: jest.fn(),
         setCredentials: jest.fn(),
+        on: jest.fn(),
     };
 
     // Mock class constructor

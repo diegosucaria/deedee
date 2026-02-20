@@ -41,7 +41,7 @@ describe('Interactions', () => {
     describe('handleClick', () => {
         test('should click by ref', async () => {
             const result = await handleClick(mockPage, { ref: 'e1' });
-            expect(refLocator).toHaveBeenCalledWith(mockPage, 'e1');
+            expect(refLocator).toHaveBeenCalledWith(mockPage, 'e1', undefined);
             expect(mockLocator.click).toHaveBeenCalled();
             expect(result.success).toBe(true);
         });
@@ -94,7 +94,9 @@ describe('Interactions', () => {
         });
 
         test('should error on missing fields array', async () => {
-            await expect(handleFillForm(mockPage, {})).rejects.toThrow(/fields must be an array/);
+            const result = await handleFillForm(mockPage, {});
+            expect(result.success).toBe(false);
+            expect(result.message).toMatch(/fields must be an array/);
         });
     });
 

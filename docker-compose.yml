@@ -23,7 +23,7 @@ services:
       - ROUTER_MODEL=gemini-2.5-flash-lite
       # - WORKER_FLASH=gemini-3-flash-preview
       - WORKER_FLASH=gemini-2.5-flash # using this one bc it supports googleSearch grounding. (preview models don't)
-      - WORKER_PRO=gemini-3-pro-preview
+      - WORKER_PRO=gemini-3.1-pro-preview
       - GEMINI_TTS_MODEL=gemini-2.5-flash-preview-tts
       - GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview
       - WORKER_GOOGLE_SEARCH=gemini-2.5-pro
