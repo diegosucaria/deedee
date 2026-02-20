@@ -99,17 +99,36 @@ class SlackService {
         if (!res.url) throw new Error('RTM did not return a WebSocket URL');
 
         return new Promise((resolve, reject) => {
-            this.ws = new WebSocket(res.url);
+            const wsOptions = {
+                headers: {
+                    'Cookie': `d=${this.xoxd}`,
+                    'User-Agent': 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36'
+                }
+            };
+            this.ws = new WebSocket(res.url, wsOptions);
 
             this.ws.on('open', () => {
                 console.log('[Slack] RTM WebSocket connected.');
                 this.connected = true;
+
+                // Keep-alive ping every 10 seconds for RTM stability
+                this.pingInterval = setInterval(() => {
+                    if (this.ws && this.ws.readyState === WebSocket.OPEN) {
+                        this.ws.send(JSON.stringify({ id: Date.now(), type: 'ping' }));
+                    }
+                }, 10000);
+
                 resolve();
             });
 
             this.ws.on('message', (rawData) => {
                 try {
                     const event = JSON.parse(rawData.toString());
+                    // Respond to server requested pings just in case
+                    if (event.type === 'ping') {
+                        this.ws.send(JSON.stringify({ type: 'pong', reply_to: event.id }));
+                        return;
+                    }
                     if (event.type === 'message' && !event.subtype && event.user !== this.workspace?.userId) {
                         this._handleMessage(event);
                     }
@@ -118,9 +137,14 @@ class SlackService {
                 }
             });
 
-            this.ws.on('close', (code) => {
-                console.warn(`[Slack] RTM closed (code: ${code}). Reconnecting in 5s...`);
+            this.ws.on('close', (code, reason) => {
+                const reasonStr = reason ? reason.toString() : 'No reason provided';
+                console.warn(`[Slack] RTM closed (code: ${code}, reason: ${reasonStr}). Reconnecting in 5s...`);
                 this.connected = false;
+                if (this.pingInterval) {
+                    clearInterval(this.pingInterval);
+                    this.pingInterval = null;
+                }
                 setTimeout(() => {
                     if (this.xoxc) this._connectRTM().catch(() => this._startPolling());
                 }, 5000);
