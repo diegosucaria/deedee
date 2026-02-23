@@ -16,11 +16,17 @@ class MemoryExecutor extends BaseExecutor {
                 // Use Local Time for "Yesterday" calculation
                 let date = args.date;
                 if (!date) {
-                    const d = new Date(Date.now() - 86400000); // 24h ago
-                    const year = d.getFullYear();
-                    const month = String(d.getMonth() + 1).padStart(2, '0');
-                    const day = String(d.getDate()).padStart(2, '0');
-                    date = `${year}-${month}-${day}`;
+                    const yesterday = new Date(Date.now() - 86400000); // 24h ago
+
+                    // Force rigorous timezone parsing to avoid Docker TZ drift or boundary issues
+                    const formatter = new Intl.DateTimeFormat('en-CA', {
+                        timeZone: process.env.TZ || 'America/Argentina/Buenos_Aires',
+                        year: 'numeric',
+                        month: '2-digit',
+                        day: '2-digit'
+                    });
+
+                    date = formatter.format(yesterday);
                 }
                 const messages = db.getMessagesByDate(date);
 
