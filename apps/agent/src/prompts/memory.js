@@ -5,9 +5,9 @@
  * @param {string} currentDate - YYYY-MM-DD
  */
 function getMemoryPruningPrompt(facts, currentDate) {
-    const factsList = facts.map(f => `- ${f.key}: ${JSON.stringify(f.value)}`).join('\n');
+  const factsList = facts.map(f => `- ${f.key}: ${JSON.stringify(f.value)}`).join('\n');
 
-    return `
+  return `
 You are a Memory Pruning System for a personal AI assistant.
 Your goal is to identify "stale" or "obsolete" facts from the user's long-term memory that should be DELETED to keep the database clean.
 
@@ -48,7 +48,7 @@ Example Output:
  * Included here for reference/updates.
  */
 function getConsolidationPrompt(date, logText) {
-    return `
+  return `
 You are a Memory Consolidation System.
 Analyze the following chat logs from ${date}.
 
@@ -63,9 +63,11 @@ Produce a JSON object with two fields:
      - Example: 'user_favorite_food', 'user_wifi_password'.
 
    - STRICTLY EXCLUDE:
+     - Meta-commentary about the consolidation process (e.g. NEVER write "Logs from X date have been consolidated").
      - Information derived purely from transcripts, YouTube summaries, or web scrapes (unless the user explicitly confirms or claims it).
      - General world knowledge or trivia.
      - Temporary context (e.g. "User is currently looking at file Y") UNLESS it is substantial enough to remember for a few days.
+     - If the logs only contain media messages (images, audio, video) without textual context, summarize the interactions briefly (e.g. "Exchanged media with X") but DO NOT invent details.
 
 Logs:
 ${logText}
