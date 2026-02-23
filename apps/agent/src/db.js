@@ -1039,14 +1039,52 @@ class AgentDB {
   }
 
   getMessagesByDate(dateStr) {
+    // 1. Get Agent.db Messages
     // dateStr format YYYY-MM-DD
     // Compare against Local Time date of the timestamp
     const stmt = this.db.prepare(`
         SELECT role, content, timestamp, source, metadata FROM messages
         WHERE date(timestamp, 'localtime') = ?
-        ORDER BY timestamp ASC
       `);
-    return stmt.all(dateStr);
+    const agentMessages = stmt.all(dateStr);
+
+    // 2. Safely get WhatsApp User Messages
+    let whatsappMessages = [];
+    const whatsappDbPath = path.join(path.dirname(this.dbPath), 'messages_user.db');
+    if (fs.existsSync(whatsappDbPath)) {
+      try {
+        const waDb = new Database(whatsappDbPath, { readonly: true });
+
+        // Convert YYYY-MM-DD to unix timestamps for start and end of that day (Localtime)
+        // A simple way is to use SQLite date formatting in the query itself since the timestamp column in msg.db is unix seconds
+        // Exclude group messages (where remote_jid ends with '@g.us')
+        const waStmt = waDb.prepare(`
+          SELECT 
+            CASE WHEN from_me = 1 THEN 'assistant' ELSE 'user' END as role,
+            content,
+            datetime(timestamp, 'unixepoch') as timestamp,
+            'whatsapp:user' as source,
+            json_object('chatId', remote_jid, 'session', 'user') as metadata
+          FROM messages
+          WHERE date(datetime(timestamp, 'unixepoch'), 'localtime') = ?
+            AND content IS NOT NULL
+            AND content != ''
+            AND remote_jid NOT LIKE '%@g.us'
+        `);
+        whatsappMessages = waStmt.all(dateStr);
+        waDb.close();
+      } catch (e) {
+        console.error(`[DB] Failed to fetch WhatsApp messages for consolidation:`, e.message);
+      }
+    }
+
+    // 3. Merge and Sort
+    const allMessages = [...agentMessages, ...whatsappMessages];
+
+    // Sort by Date (ascending)
+    allMessages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
+
+    return allMessages;
   }
 
 

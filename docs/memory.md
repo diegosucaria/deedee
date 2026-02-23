@@ -4,7 +4,8 @@
 DeeDee uses a multi-tiered memory architecture to maintain state, context, and long-term knowledge across restarts and interactions. The core of this system relies on a local SQLite database, augmented by Markdown files for journaling and an integrated RAG (Retrieval-Augmented Generation) vault for semantic search.
 
 ## Database Location
-- **Path**: `/app/data/agent.db` (or local `data/agent.db`)
+- **Agent Built-in Memory**: `/app/data/agent.db` (or local `data/agent.db`).
+- **WhatsApp Dedicated Memory**: `/app/data/messages_user.db` and `/app/data/messages_assistant.db` (Baileys/SQLite split architecture).
 - **Volume**: `agent-data` (Docker volume, preserved across container rebuilds).
 
 ## Core Architecture Diagram

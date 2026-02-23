@@ -95,8 +95,9 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - **Telegram**: Long-Polling Bot. Supports Global Stop (`/stop`) and Audio Messages.
     - **WhatsApp**:
         - **Dual Session Architecture**: Runs two concurrent Baileys sockets:
-            1.  **Assistant Session**: The bot account (Listens & Replies).
-            2.  **User Session**: The linked user account (Acts on behalf of User).
+            1.  **Assistant Session**: The bot account (Listens & Replies). Uses `messages_assistant.db`.
+            2.  **User Session**: The linked user account (Acts on behalf of User). Uses `messages_user.db`.
+        - **Data Handling**: WhatsApp messages are stored in their own localized SQLite databases (`messages_*.db`) rather than directly in `agent.db` for performance and sync stability. The Agent merges these datasets during tasks like memory consolidation.
         - **Features**: Syncs contacts, sends text/audio/images, supports "Contact Search".
     - **Internal Webhook**: Legacy ingress for async messages.
 
