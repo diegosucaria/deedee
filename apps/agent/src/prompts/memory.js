@@ -60,12 +60,14 @@ Produce a JSON object with two fields:
      - Format: 'key_name_on_YYYY-MM-DD'
      - Example: 'user_dinner_plans_on_2024-10-22', 'flight_status_on_2024-11-01'.
    - **PERMANENT FACTS**: For enduring preferences, relationships, or traits, keep the key simple (NO date suffix).
-     - Example: 'user_favorite_food', 'user_wifi_password'.
+     - Example: 'user_favorite_food', 'user_wifi_password', 'relationship_brother_name'.
 
-   - Output your summary directly as a list of bullet points. Start immediately with the bullets.
-   - DO NOT include introductory or concluding sentences. Do NOT mention "logs" or "consolidation".
-   - Write purely about what happened (e.g. "We discussed plans for tomorrow" or "User sent media files").
-   - Omit any general world knowledge, trivia, or temporary context that doesn't matter next week.
+   - SYNTHESIS RULES:
+     - Output your summary directly as a list of bullet points. Start immediately with the bullets.
+     - You are an advanced reasoning model. Do not just blindly summarize; understand the actual life-state of the user based on these logs.
+     - DO NOT include introductory or concluding sentences. Do NOT mention "logs" or "consolidation".
+     - Write purely about what happened (e.g. "User met with [Name]" or "User was feeling tired").
+     - Omit any general world knowledge, trivia, or temporary context that doesn't matter next week.
 
 Logs:
 ${logText}

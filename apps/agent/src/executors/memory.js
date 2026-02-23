@@ -34,9 +34,9 @@ class MemoryExecutor extends BaseExecutor {
                     return { info: `No messages found for ${date}.` };
                 }
 
-                // Summarize using Gemini Flash
+                // Summarize using Gemini Pro for advanced reasoning
                 const { agent } = this.services;
-                const modelName = agent.configService.getModel('FLASH');
+                const modelName = agent.configService.getModel('PRO');
                 // Cache for contact names to avoid repeated DB lookups
                 const contactCache = new Map();
 

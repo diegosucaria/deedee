@@ -45,5 +45,18 @@ module.exports = function (agent) {
         }
     });
 
+    router.put('/accounts/:email/label', async (req, res) => {
+        try {
+            const { email } = req.params;
+            const { label } = req.body;
+            if (!email) return res.status(400).json({ error: 'Missing email' });
+
+            const result = await agent.gsuite.setAccountLabel(email, label);
+            res.json({ result });
+        } catch (error) {
+            res.status(500).json({ error: error.message });
+        }
+    });
+
     return router;
 };

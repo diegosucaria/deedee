@@ -22,8 +22,8 @@ class MemoryPruningService {
         const currentDate = new Date().toISOString().split('T')[0];
         const prompt = getMemoryPruningPrompt(facts, currentDate);
 
-        // 3. Call LLM (Flash is sufficient and cheaper)
-        const modelName = this.agent.configService.getModel('FLASH');
+        // 3. Call LLM 
+        const modelName = this.agent.configService.getModel('PRO');
 
         try {
             const response = await this.agent.client.models.generateContent({

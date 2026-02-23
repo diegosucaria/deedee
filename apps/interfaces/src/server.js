@@ -427,6 +427,18 @@ app.get('/gsuite/accounts', async (req, res) => {
   }
 });
 
+app.put('/gsuite/accounts/:email/label', async (req, res) => {
+  try {
+    const { email } = req.params;
+    const { label } = req.body;
+    const response = await axios.put(`${agentUrl}/internal/gsuite/accounts/${encodeURIComponent(email)}/label`, { label });
+    res.json(response.data);
+  } catch (err) {
+    console.error('[Interfaces] GSuite label update error:', err.message);
+    res.status(502).json({ error: 'Backend unavailable' });
+  }
+});
+
 app.post('/gsuite/auth-url', async (req, res) => {
   try {
     const response = await axios.post(`${agentUrl}/internal/gsuite/auth-url`);

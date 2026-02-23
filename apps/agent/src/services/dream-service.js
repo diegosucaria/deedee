@@ -95,7 +95,7 @@ class DreamService {
 
         // 2. Generate Dream Content
         const prompt = getDreamPrompt(recentLogs, randomFacts, plexContext);
-        const modelName = this.agent.configService.getModel('FLASH');
+        const modelName = this.agent.configService.getModel('PRO');
 
         let dreamContent = null;
         try {

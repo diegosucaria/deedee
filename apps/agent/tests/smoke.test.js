@@ -32,8 +32,6 @@ jest.mock('../src/db', () => ({
     getFactsFormatted: jest.fn().mockReturnValue(''), // Added
     saveSummary: jest.fn(),
     getLatestSummary: jest.fn().mockReturnValue(null),
-    saveSummary: jest.fn(),
-    getLatestSummary: jest.fn().mockReturnValue(null),
     searchMessages: jest.fn().mockReturnValue([]), // Added for searchHistory tool
     countMessages: jest.fn().mockReturnValue(0), // Added for Passive Mode test
     ensureSession: jest.fn(),
