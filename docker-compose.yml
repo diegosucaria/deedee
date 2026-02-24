@@ -32,6 +32,7 @@ services:
     volumes:
       - repo-data:/app/source
       - agent-data:/app/data
+      - interfaces-data:/app/interfaces-data:ro
     networks:
       - deedee-net
     restart: always

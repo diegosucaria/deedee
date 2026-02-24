@@ -1053,8 +1053,13 @@ class AgentDB {
     }
 
     // 2. Safely get WhatsApp User Messages
+    // The WhatsApp DB lives in the interfaces container's volume.
+    // In Docker (Balena), it's mounted at /app/interfaces-data/messages_user.db (read-only).
+    // In local dev, it may be in the same directory as agent.db.
     let whatsappMessages = [];
-    const whatsappDbPath = path.join(path.dirname(this.dbPath), 'messages_user.db');
+    const interfacesDataPath = path.join('/app', 'interfaces-data', 'messages_user.db');
+    const localFallbackPath = path.join(path.dirname(this.dbPath), 'messages_user.db');
+    const whatsappDbPath = fs.existsSync(interfacesDataPath) ? interfacesDataPath : localFallbackPath;
     console.log(`[DB] WhatsApp DB path: ${whatsappDbPath} | exists: ${fs.existsSync(whatsappDbPath)}`);
     if (fs.existsSync(whatsappDbPath)) {
       try {
