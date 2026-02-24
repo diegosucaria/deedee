@@ -497,7 +497,7 @@ class WhatsAppService {
             // makeInMemoryStore removed.
 
             // ... inside connect ...
-            const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay, downloadMediaMessage } = await this._importBaileys();
+            const { default: makeWASocket, useMultiFileAuthState, DisconnectReason, delay, downloadMediaMessage, fetchLatestBaileysVersion } = await this._importBaileys();
             this.downloadMediaMessage = downloadMediaMessage;
 
             // Initialize Store
@@ -511,12 +511,15 @@ class WhatsAppService {
             // (Previous code removed)
 
             const { state, saveCreds } = await useMultiFileAuthState(this.authFolder);
+            const { version, isLatest } = await fetchLatestBaileysVersion();
+            console.log(`${this.logPrefix} using WA v${version.join('.')}, isLatest: ${isLatest}`);
 
             // Protocol Self-Healing (Issue #2135 Fix)
             // 1. Retry Cache: Tracks how many times a message ID has been requested for retry
             this.msgRetryCounterCache = this.msgRetryCounterCache || new Map();
 
             this.sock = makeWASocket({
+                version,
                 auth: state,
                 defaultQueryTimeoutMs: undefined, // endless
                 connectTimeoutMs: 180000, // 3 minutes
