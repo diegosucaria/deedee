@@ -51,38 +51,62 @@ class MemoryExecutor extends BaseExecutor {
                 // Cache for contact names to avoid repeated DB lookups
                 const contactCache = new Map();
 
-                const logText = messages.map(m => {
+                // Helper: extract phone number from metadata
+                const resolvePhone = (meta) => {
+                    // Agent DB messages use phoneNumber or contactId
+                    if (meta.phoneNumber || meta.contactId) return meta.phoneNumber || meta.contactId;
+                    // WhatsApp messages use chatId (e.g. 5491130579025@s.whatsapp.net)
+                    if (meta.chatId) return meta.chatId.replace(/@.*$/, '');
+                    return null;
+                };
+
+                // Helper: resolve a phone to a display name
+                const resolveName = (phone) => {
+                    if (!phone) return null;
+                    if (!contactCache.has(phone)) {
+                        const person = db.getPerson(phone);
+                        contactCache.set(phone, person?.name ? person.name : phone);
+                    }
+                    return contactCache.get(phone);
+                };
+
+                // Group messages by conversation (chatId or session)
+                const chatGroups = new Map(); // chatKey -> [messages]
+                for (const m of messages) {
+                    let chatKey = 'agent'; // default for agent DB messages
                     let sender = m.role;
 
-                    // If it's a user message, try to resolve the name
-                    if (m.role === 'user' && m.metadata) {
+                    if (m.metadata) {
                         try {
                             const meta = JSON.parse(m.metadata);
-                            const phone = meta.phoneNumber || meta.contactId;
-
+                            const phone = resolvePhone(meta);
                             if (phone) {
-                                if (!contactCache.has(phone)) {
-                                    // Try to resolve name
-                                    const person = db.getPerson(phone);
-                                    if (person && person.name) {
-                                        contactCache.set(phone, `${person.name} (${phone})`);
-                                    } else {
-                                        // Fallback to pushname/notify if available in meta? Use raw phone
-                                        contactCache.set(phone, phone);
-                                    }
+                                chatKey = phone;
+                                if (m.role === 'user') {
+                                    sender = resolveName(phone) || phone;
                                 }
-                                sender = contactCache.get(phone);
                             }
-                        } catch (e) {
-                            // ignore metadata parse error
-                        }
-                    } else if (m.role === 'model' || m.role === 'assistant') {
-                        sender = 'Me (Agent)';
+                        } catch (e) { /* ignore */ }
                     }
 
+                    if (m.role === 'model' || m.role === 'assistant') {
+                        sender = 'Diego (via Agent)';
+                    }
 
-                    return `[${m.timestamp}] ${sender}: ${m.content}`;
-                }).join('\n');
+                    if (!chatGroups.has(chatKey)) chatGroups.set(chatKey, []);
+                    chatGroups.get(chatKey).push(`[${m.timestamp}] ${sender}: ${m.content}`);
+                }
+
+                // Build logText with chat headers for clarity
+                const logSections = [];
+                for (const [chatKey, lines] of chatGroups) {
+                    const contactName = resolveName(chatKey);
+                    const header = chatKey === 'agent'
+                        ? '--- System / Agent Messages ---'
+                        : `--- Conversation with ${contactName || chatKey} ---`;
+                    logSections.push(`${header}\n${lines.join('\n')}`);
+                }
+                const logText = logSections.join('\n\n');
 
                 const summaryReq = getConsolidationPrompt(date, logText);
 
