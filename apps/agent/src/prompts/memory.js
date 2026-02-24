@@ -49,12 +49,7 @@ Example Output:
  */
 function getConsolidationPrompt(date, logText) {
   return `
-You are a Memory Consolidation System for a personal AI assistant named "DeeDee".
-The user's name is "Diego". Messages labeled "Me" are from Diego (the user/owner).
-All other named senders are contacts Diego was chatting with.
-
-CRITICAL: NEVER overwrite the following fact keys: user_name, agent_name. These are system-managed.
-
+You are a Memory Consolidation System.
 Analyze the following chat logs from ${date}.
 
 Produce a JSON object with two fields:

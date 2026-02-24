@@ -164,21 +164,31 @@ class MemoryExecutor extends BaseExecutor {
                     }
 
                     if (data && data.summary) {
-                        // 1. Log Journal
-                        this.services.journal.log(`## Daily Summary (${date})\n${data.summary}`);
+                        // 1. Log Journal & Ingest into RAG
+                        const journalPath = this.services.journal.log(`## Daily Summary (${date})\n${data.summary}`);
+                        try {
+                            await agent.ragService.ingestDocument(journalPath, 'journal');
+                        } catch (e) {
+                            console.warn(`[Consolidation] Journal RAG ingestion failed: ${e.message}`);
+                        }
 
-                        // 2. Save Facts to DB
+                        // 2. Save Facts to DB (skip protected system keys)
+                        const PROTECTED_KEYS = new Set(['user_name', 'agent_name']);
                         let factsAdded = 0;
                         if (data.facts && Array.isArray(data.facts)) {
                             for (const f of data.facts) {
                                 if (f.key && f.value) {
+                                    if (PROTECTED_KEYS.has(f.key)) {
+                                        console.log(`[Consolidation] Skipping protected key: ${f.key}`);
+                                        continue;
+                                    }
                                     db.setKey(f.key, f.value);
                                     factsAdded++;
                                 }
                             }
                         }
 
-                        // 3. Sync & Ingest
+                        // 3. Sync & Ingest MEMORY.md
                         if (factsAdded > 0) {
                             const allFacts = db.getAllFacts();
                             const memoryPath = await this.services.journal.syncFactsToMemory(allFacts);

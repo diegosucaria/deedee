@@ -393,6 +393,12 @@ class Scheduler {
                         try {
                             console.log('[Scheduler] Starting Nightly RAG Scan...');
                             await this.agent.ragService.scanAndIngest(this.agent.vaults.vaultsDir);
+
+                            // Also scan and embed journal entries
+                            if (this.agent.journal) {
+                                await this.agent.ragService.scanJournals(this.agent.journal.journalDir);
+                            }
+
                             return { success: true };
                         } catch (e) {
                             console.error('[Scheduler] RAG Scan Failed:', e);

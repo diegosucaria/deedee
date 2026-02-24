@@ -257,6 +257,38 @@ class RagService {
         }
     }
 
+    /**
+     * Scan journal directory and ingest daily summaries into RAG.
+     * Skips files under 200 chars (system-only noise like "No messages found").
+     */
+    async scanJournals(journalDir) {
+        if (!fs.existsSync(journalDir)) {
+            console.log(`[RAG] Journal directory not found: ${journalDir}`);
+            return;
+        }
+
+        const files = fs.readdirSync(journalDir).filter(f => f.endsWith('.md'));
+        let ingested = 0;
+        let skipped = 0;
+
+        for (const file of files) {
+            const filePath = path.join(journalDir, file);
+            try {
+                const content = fs.readFileSync(filePath, 'utf8');
+                if (content.length < 200) {
+                    skipped++;
+                    continue; // Skip noise-only days
+                }
+                await this.ingestDocument(filePath, 'journal');
+                ingested++;
+            } catch (e) {
+                console.error(`[RAG] Failed to ingest journal ${file}:`, e.message);
+            }
+        }
+
+        console.log(`[RAG] Journal scan complete. ${ingested} ingested, ${skipped} skipped (too short).`);
+    }
+
     async search(query, vaultId = null, limit = 5) {
         console.log(`[RAG] Hybrid Searching for: "${query}" (Vault: ${vaultId || 'Global'})`);
         const queryEmbedding = await this._getEmbedding(query, 'RETRIEVAL_QUERY');
