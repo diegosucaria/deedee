@@ -28,7 +28,18 @@ class MemoryExecutor extends BaseExecutor {
 
                     date = formatter.format(yesterday);
                 }
+
+                console.log(`[Consolidation] Target date: ${date} | TZ: ${process.env.TZ} | Now (UTC): ${new Date().toISOString()}`);
+
                 const messages = db.getMessagesByDate(date);
+
+                // Diagnostic: count messages by source
+                const sourceCounts = {};
+                (messages || []).forEach(m => {
+                    const src = m.source || 'agent';
+                    sourceCounts[src] = (sourceCounts[src] || 0) + 1;
+                });
+                console.log(`[Consolidation] Messages found: ${messages?.length || 0} | By source: ${JSON.stringify(sourceCounts)}`);
 
                 if (!messages || messages.length === 0) {
                     return { info: `No messages found for ${date}.` };
@@ -74,6 +85,11 @@ class MemoryExecutor extends BaseExecutor {
                 }).join('\n');
 
                 const summaryReq = getConsolidationPrompt(date, logText);
+
+                // Diagnostic: preview of what the LLM will see
+                const previewLines = logText.split('\n').slice(0, 5);
+                console.log(`[Consolidation] LogText preview (first 5 lines):\n${previewLines.join('\n')}`);
+                console.log(`[Consolidation] Total logText length: ${logText.length} chars`);
 
                 try {
                     const response = await client.models.generateContent({

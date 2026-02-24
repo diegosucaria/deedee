@@ -1047,10 +1047,15 @@ class AgentDB {
         WHERE date(timestamp, 'localtime') = ?
       `);
     const agentMessages = stmt.all(dateStr);
+    console.log(`[DB] getMessagesByDate(${dateStr}): Agent DB returned ${agentMessages.length} messages`);
+    if (agentMessages.length > 0) {
+      console.log(`[DB]   Agent preview: "${(agentMessages[0].content || '').substring(0, 80)}..." (source: ${agentMessages[0].source})`);
+    }
 
     // 2. Safely get WhatsApp User Messages
     let whatsappMessages = [];
     const whatsappDbPath = path.join(path.dirname(this.dbPath), 'messages_user.db');
+    console.log(`[DB] WhatsApp DB path: ${whatsappDbPath} | exists: ${fs.existsSync(whatsappDbPath)}`);
     if (fs.existsSync(whatsappDbPath)) {
       try {
         const waDb = new Database(whatsappDbPath, { readonly: true });
@@ -1072,6 +1077,22 @@ class AgentDB {
             AND remote_jid NOT LIKE '%@g.us'
         `);
         whatsappMessages = waStmt.all(dateStr);
+        console.log(`[DB] getMessagesByDate(${dateStr}): WhatsApp DB returned ${whatsappMessages.length} messages`);
+        if (whatsappMessages.length > 0) {
+          console.log(`[DB]   WA preview: "${(whatsappMessages[0].content || '').substring(0, 80)}..."`);
+        }
+
+        // Diagnostic: also check total raw count for that date without filters
+        const debugStmt = waDb.prepare(`
+          SELECT COUNT(*) as cnt, 
+                 MIN(datetime(timestamp, 'unixepoch')) as earliest,
+                 MAX(datetime(timestamp, 'unixepoch')) as latest
+          FROM messages 
+          WHERE date(datetime(timestamp, 'unixepoch'), 'localtime') = ?
+        `);
+        const debugRow = debugStmt.get(dateStr);
+        console.log(`[DB]   WA total (incl. groups, empty): ${debugRow.cnt} | range: ${debugRow.earliest} - ${debugRow.latest}`);
+
         waDb.close();
       } catch (e) {
         console.error(`[DB] Failed to fetch WhatsApp messages for consolidation:`, e.message);
