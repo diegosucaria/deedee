@@ -115,7 +115,7 @@ class MemoryExecutor extends BaseExecutor {
                     }
 
                     if (m.role === 'model' || m.role === 'assistant') {
-                        sender = 'Diego (via Agent)';
+                        sender = 'Me';
                     }
 
                     if (!chatGroups.has(chatKey)) chatGroups.set(chatKey, { lines: [], notifyName });
