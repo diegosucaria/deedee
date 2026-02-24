@@ -1319,3 +1319,16 @@ export async function disconnectGSuite(email) {
         return { success: false, error: error.message };
     }
 }
+
+export async function updateGSuiteAccountLabel(email, label) {
+    try {
+        const res = await fetchAPI(`/v1/gsuite/accounts/${encodeURIComponent(email)}/label`, {
+            method: 'PUT',
+            body: JSON.stringify({ label })
+        });
+        revalidatePath('/settings');
+        return { success: true, ...res };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}

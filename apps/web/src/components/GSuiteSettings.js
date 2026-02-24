@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { Calendar, RefreshCw, LogOut, CheckCircle2, AlertCircle, Plus, ExternalLink } from 'lucide-react';
-import { getGSuiteAccounts, getGSuiteAuthUrl, authenticateGSuite, disconnectGSuite } from '../app/actions';
+import { Calendar, RefreshCw, LogOut, CheckCircle2, AlertCircle, Plus, ExternalLink, Edit2, Check, X } from 'lucide-react';
+import { getGSuiteAccounts, getGSuiteAuthUrl, authenticateGSuite, disconnectGSuite, updateGSuiteAccountLabel } from '../app/actions';
 
 export default function GSuiteSettings() {
     const [accounts, setAccounts] = useState([]);
@@ -11,6 +11,8 @@ export default function GSuiteSettings() {
     const [authCode, setAuthCode] = useState('');
     const [isAuthenticating, setIsAuthenticating] = useState(false);
     const [error, setError] = useState(null);
+    const [editingLabel, setEditingLabel] = useState(null);
+    const [editLabelValue, setEditLabelValue] = useState('');
 
     useEffect(() => {
         loadData();
@@ -75,6 +77,18 @@ export default function GSuiteSettings() {
         setLoading(false);
     };
 
+    const handleSaveLabel = async (email) => {
+        setLoading(true);
+        try {
+            await updateGSuiteAccountLabel(email, editLabelValue.trim());
+            setEditingLabel(null);
+            await loadData();
+        } catch (e) {
+            setError(e.message);
+        }
+        setLoading(false);
+    };
+
     return (
         <div className="space-y-6">
             <div className="flex items-center justify-between">
@@ -122,9 +136,36 @@ export default function GSuiteSettings() {
                                                 <AlertCircle className="w-3 h-3" /> Temporary Session
                                             </span>
                                         )}
-                                        {acc.label && (
-                                            <span className="text-xs text-zinc-400 bg-zinc-800 px-2 py-0.5 rounded border border-zinc-700">
-                                                Label: {acc.label}
+                                        {editingLabel === acc.email ? (
+                                            <div className="flex items-center gap-1 bg-zinc-800 rounded px-1 py-0.5 border border-indigo-500/50">
+                                                <input
+                                                    type="text"
+                                                    value={editLabelValue}
+                                                    onChange={(e) => setEditLabelValue(e.target.value)}
+                                                    onKeyDown={(e) => {
+                                                        if (e.key === 'Enter') handleSaveLabel(acc.email);
+                                                        if (e.key === 'Escape') setEditingLabel(null);
+                                                    }}
+                                                    className="w-24 text-xs bg-transparent text-white focus:outline-none px-1"
+                                                    autoFocus
+                                                />
+                                                <button onClick={() => handleSaveLabel(acc.email)} className="text-green-400 hover:text-green-300 p-0.5 transition-colors">
+                                                    <Check className="w-3 h-3" />
+                                                </button>
+                                                <button onClick={() => setEditingLabel(null)} className="text-zinc-400 hover:text-zinc-300 p-0.5 transition-colors">
+                                                    <X className="w-3 h-3" />
+                                                </button>
+                                            </div>
+                                        ) : (
+                                            <span className="flex items-center gap-1 text-xs text-zinc-400 bg-zinc-800 px-2 py-0.5 rounded border border-zinc-700 group cursor-pointer hover:bg-zinc-700 hover:text-zinc-300 transition-colors"
+                                                onClick={() => {
+                                                    setEditingLabel(acc.email);
+                                                    setEditLabelValue(acc.label || '');
+                                                }}
+                                                title="Click to set or edit label"
+                                            >
+                                                <span>Label: {acc.label || 'None'}</span>
+                                                <Edit2 className="w-3 h-3 opacity-0 group-hover:opacity-100 transition-opacity" />
                                             </span>
                                         )}
                                     </div>

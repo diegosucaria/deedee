@@ -62,6 +62,13 @@ Produce a JSON object with two fields:
    - **PERMANENT FACTS**: For enduring preferences, relationships, or traits, keep the key simple (NO date suffix).
      - Example: 'user_favorite_food', 'user_wifi_password', 'relationship_brother_name'.
 
+   - STRICTLY EXCLUDE:
+     - Meta-commentary about the consolidation process (e.g. NEVER write "Logs from X date have been consolidated").
+     - Information derived purely from transcripts, YouTube summaries, or web scrapes (unless the user explicitly confirms or claims it).
+     - General world knowledge or trivia.
+     - Temporary context (e.g. "User is currently looking at file Y") UNLESS it is substantial enough to remember for a few days.
+     - If the logs only contain media messages (images, audio, video) without textual context, summarize the interactions briefly (e.g. "Exchanged media with X") but DO NOT invent details.
+   
    - SYNTHESIS RULES:
      - Output your summary directly as a list of bullet points. Start immediately with the bullets.
      - You are an advanced reasoning model. Do not just blindly summarize; understand the actual life-state of the user based on these logs.

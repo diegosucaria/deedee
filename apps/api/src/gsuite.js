@@ -27,5 +27,6 @@ router.get('/accounts', (req, res) => proxyRequest(req, res, 'GET', '/gsuite/acc
 router.post('/auth-url', (req, res) => proxyRequest(req, res, 'POST', '/gsuite/auth-url', req.body));
 router.post('/auth', (req, res) => proxyRequest(req, res, 'POST', '/gsuite/auth', req.body));
 router.post('/disconnect', (req, res) => proxyRequest(req, res, 'POST', '/gsuite/disconnect', req.body));
+router.put('/accounts/:email/label', (req, res) => proxyRequest(req, res, 'PUT', `/gsuite/accounts/${encodeURIComponent(req.params.email)}/label`, req.body));
 
 module.exports = router;

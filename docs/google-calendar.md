@@ -62,8 +62,14 @@ Repeat the process above for a **different** Google Account. Deedee stores token
 ## 4. Features & Commands
 
 ### Managing Calendars
-Deedee supports multiple calendars (e.g. Personal, Work).
+Deedee supports multiple calendars (e.g. Personal, Work). You can manage these in two ways:
 
+**Via Web Dashboard:**
+- Navigate to **Settings** > **Interfaces** > **Google**.
+- Click on an existing label (or "None") next to a connected account to edit it inline.
+- Press **Enter** or click the green checkmark to save.
+
+**Via Chat Commands:**
 -   `/list_calendars`: Lists all connected accounts with their index.
 -   `/label_calendar <index|email> <label>`: Assigns a label to a calendar.
     -   Labels are useful for organization.
