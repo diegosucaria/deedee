@@ -61,13 +61,14 @@ describe('Memory Tools', () => {
         } catch (e) { }
     });
 
-    test('searchMemory should query DB', async () => {
+    test('searchMemory should query DB and RAG', async () => {
         db.searchMessages = jest.fn().mockReturnValue([{ content: 'found it' }]);
 
         const result = await executor.execute('searchMemory', { query: 'test' }, {});
 
         expect(db.searchMessages).toHaveBeenCalledWith('test', 10);
-        expect(result.results).toHaveLength(1);
+        expect(result.chat_history).toHaveLength(1);
+        expect(result.knowledge).toBeDefined();
     });
 
     test('consolidateMemory should summarize messages', async () => {

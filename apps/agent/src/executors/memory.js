@@ -8,8 +8,33 @@ class MemoryExecutor extends BaseExecutor {
 
         switch (name) {
             case 'searchMemory': {
-                const results = db.searchMessages(args.query, args.limit || 10);
-                return { results };
+                const query = args.query;
+                const limit = args.limit || 10;
+
+                // 1. Chat history (SQLite full-text)
+                const chatResults = db.searchMessages(query, limit);
+
+                // 2. RAG (journal + memory vaults — semantic + keyword hybrid)
+                const { agent } = this.services;
+                let ragResults = [];
+                if (agent?.ragService) {
+                    try {
+                        const raw = await agent.ragService.search(query, null, limit);
+                        ragResults = raw.map(r => ({
+                            content: r.content,
+                            source: `RAG:${r.vault_id || 'global'}`,
+                            filename: r.filename,
+                            score: r.score
+                        }));
+                    } catch (e) {
+                        console.warn(`[searchMemory] RAG search failed: ${e.message}`);
+                    }
+                }
+
+                return {
+                    chat_history: chatResults,
+                    knowledge: ragResults
+                };
             }
 
             case 'consolidateMemory': {

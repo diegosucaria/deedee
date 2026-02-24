@@ -48,7 +48,7 @@ const toolDefinitions = [
       },
       {
         name: "searchMemory",
-        description: "Search past conversation history for specific keywords. Use this for 'What did I do yesterday?' or finding old context.",
+        description: "Search the agent's full memory: chat history, daily journal summaries, durable facts, and vault documents. Use this for 'What did I do last Tuesday?', 'When did I talk to X about Y?', or recalling any past information.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -600,7 +600,7 @@ const toolDefinitions = [
       // Local RAG
       {
         name: "searchDocuments",
-        description: "Search indexed documents (PDFs, text) for relevant information using semantic search.",
+        description: "Search indexed vault documents (PDFs, text files) using semantic search. Use this for finding specific information from uploaded files.",
         parameters: {
           type: "OBJECT",
           properties: {
