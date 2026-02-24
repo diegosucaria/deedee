@@ -61,29 +61,54 @@ class MemoryExecutor extends BaseExecutor {
                 };
 
                 // Helper: resolve a phone to a display name
-                const resolveName = (phone) => {
+                // Follows the autopilot's proven 3-step fallback chain:
+                //   1. db.getPerson(rawId) — matches by ID or phone column
+                //   2. db.getPerson(strippedPhone) — strips @s.whatsapp.net suffix
+                //   3. notifyName from WhatsApp contacts table (push name)
+                const resolveName = (phone, notifyName) => {
                     if (!phone) return null;
-                    if (!contactCache.has(phone)) {
-                        const person = db.getPerson(phone);
-                        contactCache.set(phone, person?.name ? person.name : phone);
+                    if (contactCache.has(phone)) return contactCache.get(phone);
+
+                    // Step 1: Try People DB with raw phone
+                    let person = db.getPerson(phone);
+
+                    // Step 2: If raw phone had @suffix, try stripped version
+                    if (!person && phone.includes('@')) {
+                        person = db.getPerson(phone.split('@')[0]);
                     }
-                    return contactCache.get(phone);
+
+                    if (person?.name) {
+                        contactCache.set(phone, person.name);
+                        return person.name;
+                    }
+
+                    // Step 3: Fallback to WhatsApp push name (notifyName)
+                    if (notifyName) {
+                        contactCache.set(phone, notifyName);
+                        return notifyName;
+                    }
+
+                    // Last resort: raw phone number
+                    contactCache.set(phone, phone);
+                    return phone;
                 };
 
                 // Group messages by conversation (chatId or session)
-                const chatGroups = new Map(); // chatKey -> [messages]
+                const chatGroups = new Map(); // chatKey -> { lines: [], notifyName }
                 for (const m of messages) {
                     let chatKey = 'agent'; // default for agent DB messages
                     let sender = m.role;
+                    let notifyName = null;
 
                     if (m.metadata) {
                         try {
                             const meta = JSON.parse(m.metadata);
                             const phone = resolvePhone(meta);
+                            notifyName = meta.notifyName || null;
                             if (phone) {
                                 chatKey = phone;
                                 if (m.role === 'user') {
-                                    sender = resolveName(phone) || phone;
+                                    sender = resolveName(phone, notifyName);
                                 }
                             }
                         } catch (e) { /* ignore */ }
@@ -93,18 +118,22 @@ class MemoryExecutor extends BaseExecutor {
                         sender = 'Diego (via Agent)';
                     }
 
-                    if (!chatGroups.has(chatKey)) chatGroups.set(chatKey, []);
-                    chatGroups.get(chatKey).push(`[${m.timestamp}] ${sender}: ${m.content}`);
+                    if (!chatGroups.has(chatKey)) chatGroups.set(chatKey, { lines: [], notifyName });
+                    // Keep the best notifyName we've seen for this chat
+                    if (notifyName && !chatGroups.get(chatKey).notifyName) {
+                        chatGroups.get(chatKey).notifyName = notifyName;
+                    }
+                    chatGroups.get(chatKey).lines.push(`[${m.timestamp}] ${sender}: ${m.content}`);
                 }
 
                 // Build logText with chat headers for clarity
                 const logSections = [];
-                for (const [chatKey, lines] of chatGroups) {
-                    const contactName = resolveName(chatKey);
+                for (const [chatKey, group] of chatGroups) {
+                    const contactName = resolveName(chatKey, group.notifyName);
                     const header = chatKey === 'agent'
                         ? '--- System / Agent Messages ---'
                         : `--- Conversation with ${contactName || chatKey} ---`;
-                    logSections.push(`${header}\n${lines.join('\n')}`);
+                    logSections.push(`${header}\n${group.lines.join('\n')}`);
                 }
                 const logText = logSections.join('\n\n');
 

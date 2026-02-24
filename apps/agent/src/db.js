@@ -1070,16 +1070,21 @@ class AgentDB {
         // Exclude group messages (where remote_jid ends with '@g.us')
         const waStmt = waDb.prepare(`
           SELECT 
-            CASE WHEN from_me = 1 THEN 'assistant' ELSE 'user' END as role,
-            content,
-            datetime(timestamp, 'unixepoch') as timestamp,
+            CASE WHEN m.from_me = 1 THEN 'assistant' ELSE 'user' END as role,
+            m.content,
+            datetime(m.timestamp, 'unixepoch') as timestamp,
             'whatsapp:user' as source,
-            json_object('chatId', remote_jid, 'session', 'user') as metadata
-          FROM messages
-          WHERE date(datetime(timestamp, 'unixepoch'), 'localtime') = ?
-            AND content IS NOT NULL
-            AND content != ''
-            AND remote_jid NOT LIKE '%@g.us'
+            json_object(
+              'chatId', m.remote_jid,
+              'session', 'user',
+              'notifyName', COALESCE(c.notify, c.name)
+            ) as metadata
+          FROM messages m
+          LEFT JOIN contacts c ON c.id = m.remote_jid
+          WHERE date(datetime(m.timestamp, 'unixepoch'), 'localtime') = ?
+            AND m.content IS NOT NULL
+            AND m.content != ''
+            AND m.remote_jid NOT LIKE '%@g.us'
         `);
         whatsappMessages = waStmt.all(dateStr);
         console.log(`[DB] getMessagesByDate(${dateStr}): WhatsApp DB returned ${whatsappMessages.length} messages`);
