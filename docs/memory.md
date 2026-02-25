@@ -52,7 +52,6 @@ DeeDee uses a multi-tiered memory architecture to maintain state, context, and l
 - **Table**: `kv_store`
 - **Content**: Key-value pairs for long-term storage (preferences, relationships, settings)
 - **Agent Access**: `rememberFact(key, value)`, `getFact(key)`
-- **Protected Keys**: `user_name`, `agent_name` cannot be overwritten by consolidation
 - **RAG Sync**: Facts are synced to `data/MEMORY.md` and embedded into RAG (vault: `memory`)
 - **Pruning**: Nightly job uses Gemini to cull stale/obsolete facts, backed up to `data/pruned_memories.json`
 

@@ -714,7 +714,7 @@ const toolDefinitions = [
     functionDeclarations: [
       {
         name: "spawnAgent",
-        description: "Spawn a sub-agent to perform a specific task independently. The sub-agent runs in an isolated session with its own context and can use tools. Use this for tasks that can run in parallel or require focused execution. Returns a task ID for async tracking, or the result directly if waitForResult is true.",
+        description: "Spawn a sub-agent to perform a specific task independently. The sub-agent runs in an isolated session with its own context and can use tools. Use this for tasks that can run in parallel or require focused execution. By default, this BLOCKS until the sub-agent completes and returns the result directly. Set waitForResult to false ONLY for fire-and-forget tasks where you do not need the result (e.g., sending a notification, background cleanup).",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -726,7 +726,7 @@ const toolDefinitions = [
               description: "Optional allowlist of tool names the sub-agent can use. Default: all tools."
             },
             timeoutMinutes: { type: "NUMBER", description: "Max execution time in minutes (default: 3, max: 10)." },
-            waitForResult: { type: "BOOLEAN", description: "If true, block until the sub-agent completes and return the result directly. Default: false (async)." }
+            waitForResult: { type: "BOOLEAN", description: "Default: true (blocks until done). Set to false ONLY for fire-and-forget tasks where you don't need the result." }
           },
           required: ["task"]
         }
