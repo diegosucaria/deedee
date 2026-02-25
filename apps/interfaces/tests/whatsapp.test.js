@@ -32,10 +32,12 @@ describe('WhatsAppService Unit Tests', () => {
             default: jest.fn(() => ({
                 ev: { on: jest.fn() },
                 sendMessage: jest.fn(),
+                sendPresenceUpdate: jest.fn(),
                 logout: jest.fn(),
                 readMessages: jest.fn()
             })),
             useMultiFileAuthState: jest.fn(() => ({ state: {}, saveCreds: jest.fn() })),
+            fetchLatestBaileysVersion: jest.fn().mockResolvedValue({ version: [2, 3000, 0], isLatest: true }),
             DisconnectReason: { loggedOut: 401 },
             delay: jest.fn(),
             downloadMediaMessage: jest.fn().mockResolvedValue(Buffer.from('mockbuffer')),
