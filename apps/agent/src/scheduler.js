@@ -188,7 +188,7 @@ class Scheduler {
                     try {
                         await this.agent.processMessage({
                             role: 'user',
-                            content: `Scheduled Task: ${payload.task}\n\n[SYSTEM: This is a recurring job. To track changes between runs, use 'getJobState' to check previous data and 'saveJobState' to save new data.]`,
+                            content: `Scheduled Task: ${payload.task}\n\n[SYSTEM: This is a recurring job. To track changes between runs, use 'getJobState' to check previous data and 'saveJobState' to save new data. IMPORTANT: If the result of this task is "nothing to report" or "no action needed", prefix your ENTIRE response with the tag [SILENT] (e.g. "[SILENT] No commitments found."). This prevents unnecessary notifications to the user. Only omit [SILENT] when you have genuinely actionable or interesting information to share.]`,
                             source: msgSource,
                             metadata: msgMeta
                         }, async (reply) => {
@@ -259,6 +259,21 @@ class Scheduler {
                                 const taskLower = payload.task.toLowerCase();
                                 let shouldNotify = false;
                                 let notificationText = null;
+
+                                // 0. Check for [SILENT] tag from agent (Highest Priority)
+                                // If the agent prefixed its response with [SILENT], it means
+                                // there's nothing actionable to report. Suppress notification.
+                                if (result && result.text) {
+                                    const text = result.text;
+
+                                    if (text.startsWith('[SILENT]') || text.startsWith('[silent]')) {
+                                        console.log(`[Scheduler] Smart Notification: Agent signaled [SILENT]. Suppressing notification.`);
+                                        // Strip the [SILENT] tag from the result for clean logging
+                                        result.text = text.replace(/^\[SILENT\]\s*/i, '').trim();
+                                        // Skip notification entirely
+                                        return result;
+                                    }
+                                }
 
                                 // 1. Check Explicit Instructions (High Priority)
                                 if (taskLower.startsWith('remind') || taskLower.startsWith('alert') || taskLower.startsWith('notify') || taskLower.startsWith('tell me')) {
