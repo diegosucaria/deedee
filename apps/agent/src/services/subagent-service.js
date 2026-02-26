@@ -6,7 +6,7 @@ class SubAgentService {
         this.running = new Map(); // taskId → { promise, controller, replies }
         this.MAX_CONCURRENT = 3;
         this.MAX_TIMEOUT_MINUTES = 10;
-        this.DEFAULT_TIMEOUT_MINUTES = 3;
+        this.DEFAULT_TIMEOUT_MINUTES = 6;
     }
 
     /**

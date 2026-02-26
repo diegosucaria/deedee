@@ -725,7 +725,7 @@ const toolDefinitions = [
               items: { type: "STRING" },
               description: "Optional allowlist of tool names the sub-agent can use. Default: all tools."
             },
-            timeoutMinutes: { type: "NUMBER", description: "Max execution time in minutes (default: 3, max: 10)." },
+            timeoutMinutes: { type: "NUMBER", description: "Max execution time in minutes (default: 6, max: 10)." },
             waitForResult: { type: "BOOLEAN", description: "Default: true (blocks until done). Set to false ONLY for fire-and-forget tasks where you don't need the result." }
           },
           required: ["task"]
