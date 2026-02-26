@@ -528,8 +528,9 @@ class Scheduler {
     async stop() {
         console.log('[Scheduler] Stopping all jobs...');
         for (const name in this.jobs) {
-            this.cancelJob(name);
+            this.jobs[name].cancel(); // Cancel in memory only, preserve in DB
         }
+        this.jobs = {};
         // node-schedule graceful shutdown
         await schedule.gracefulShutdown();
     }
