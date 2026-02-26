@@ -465,6 +465,26 @@ export default function ChatSessionPage({ params }) {
                 });
             });
 
+            // ERROR HANDLER
+            newSocket.on('agent:error', (data) => {
+                if (!isMounted) return;
+                console.error('[Chat] Agent error:', data.message);
+                setIsWaiting(false);
+                setThinkingStatus('');
+                setMessages((prev) => {
+                    // Remove any in-progress streaming message
+                    const cleaned = prev.filter(m => m.isFinal !== false || m.role !== 'assistant');
+                    return [...cleaned, {
+                        role: 'assistant',
+                        content: `⚠️ **Error:** ${data.message || 'Something went wrong.'}\n\nPlease try sending your message again.`,
+                        type: 'text',
+                        timestamp: data.timestamp || new Date().toISOString(),
+                        isFinal: true,
+                        isError: true
+                    }];
+                });
+            });
+
             if (isMounted) setSocket(newSocket);
         };
 

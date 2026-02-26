@@ -123,7 +123,14 @@ io.on("connection", (socket) => {
 
     } catch (err) {
       console.error('[Interfaces] Socket Forward Error:', err.message);
-      socket.emit("error", { message: "Failed to forward to agent" });
+      const errorMessage = err.response?.data?.error || err.message || 'Failed to process message';
+      const targetChatId = data.chatId || socket.id;
+      // Emit structured error to the frontend
+      socket.emit('agent:error', {
+        chatId: targetChatId,
+        message: errorMessage,
+        timestamp: new Date().toISOString()
+      });
     }
   });
 

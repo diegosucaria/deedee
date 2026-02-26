@@ -1605,7 +1605,18 @@ class Agent {
         this.db.deleteMessagesFrom(chatId, message.timestamp);
       }
 
-      const errReply = createAssistantMessage(`Error: ${error.message} (Automatic Rollback performed)`);
+      // Build user-friendly error message
+      let userMessage = error.message || 'An unexpected error occurred.';
+      const errStr = error.message || '';
+      if (errStr.includes('503') || errStr.includes('UNAVAILABLE') || errStr.includes('high demand')) {
+        userMessage = 'The AI model is currently experiencing high demand. Please try again in a moment.';
+      } else if (errStr.includes('429') || errStr.includes('RATE_LIMIT') || errStr.includes('quota')) {
+        userMessage = 'Rate limit reached. Please wait a moment before sending another message.';
+      } else if (errStr.includes('ContentUnion')) {
+        userMessage = 'A temporary processing error occurred. Please try again.';
+      }
+
+      const errReply = createAssistantMessage(`⚠️ ${userMessage}`);
       errReply.metadata = { chatId: message.metadata?.chatId };
       errReply.source = message.source;
       try {
