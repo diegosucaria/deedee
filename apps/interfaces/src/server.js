@@ -509,11 +509,9 @@ app.post('/send', async (req, res) => {
         return res.json({ success: true });
       }
 
-      if (telegram && defaultTelegramId) {
-        await telegram.sendMessage(defaultTelegramId, `📅 *Scheduled Task Update*\n\n${content}`);
-      } else {
-        console.log(`[Interfaces] Scheduler output: ${content}`);
-      }
+      // External notifications are handled by Smart Notification logic in scheduler.js
+      // We only log here to console
+      console.log(`[Interfaces] Scheduler output: ${content}`);
       return res.json({ success: true });
     }
 
