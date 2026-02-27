@@ -231,8 +231,13 @@ export default function ChatSidebar({ sessions = [] }) {
             <Link
                 key={session.id}
                 href={`/chat/${session.id}`}
+                onClick={() => {
+                    if (window.innerWidth < 768) {
+                        toggleSidebar();
+                    }
+                }}
                 className={clsx(
-                    "group flex items-center rounded-lg py-2 text-sm transition-colors relative mx-2",
+                    "group flex flex-1 items-center rounded-lg py-2 text-sm transition-colors relative mx-2",
                     activeId === session.id
                         ? "bg-zinc-800 text-white"
                         : "text-zinc-400 hover:bg-zinc-800/50 hover:text-zinc-200",
@@ -248,7 +253,7 @@ export default function ChatSidebar({ sessions = [] }) {
                 {!isCollapsed && (
                     <div
                         onClick={(e) => e.stopPropagation()}
-                        className="flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-900/80 rounded-md backdrop-blur-sm absolute right-2 top-1/2 -translate-y-1/2 shadow-lg"
+                        className="hidden md:flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-900/80 rounded-md backdrop-blur-sm absolute right-2 top-1/2 -translate-y-1/2 shadow-lg"
                     >
                         <button
                             onClick={(e) => togglePin(e, session)}
@@ -296,11 +301,11 @@ export default function ChatSidebar({ sessions = [] }) {
                     // Mobile: Fixed position, slide-out logic
                     "fixed inset-y-0 left-16 z-40 md:static",
                     isCollapsed
-                        ? "-translate-x-full w-0 md:translate-x-0 md:w-16 md:cursor-pointer" // Hidden on mobile, Rail on Desktop
-                        : "translate-x-0 w-64" // Visible on both
+                        ? "-translate-x-[150%] px-0 w-0 md:translate-x-0 md:w-16 md:cursor-pointer" // Hidden on mobile, Rail on Desktop
+                        : "translate-x-0 w-[calc(100vw-4rem)] md:w-64" // Visible on both
                 )}
             >
-                <div className={clsx("p-4 flex flex-col gap-3", isCollapsed ? "items-center" : "")}>
+                <div className={clsx("p-4 flex flex-col gap-3", isCollapsed ? "hidden md:flex md:items-center" : "")}>
                     <button
                         onClick={(e) => {
                             e.stopPropagation(); // Prevent double-toggle from container
