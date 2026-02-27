@@ -241,89 +241,15 @@ class Scheduler {
                 continue;
             }
 
-            // Schedule without re-persisting
             // We need to wrap the callback to include smart notification logic if it's an agent instruction
             if (taskType === 'agent_instruction' && payload.task) {
                 const originalCallback = callback;
                 callback = async () => {
                     const result = await originalCallback();
-
-                    // --- SMART NOTIFICATION LOGIC ---
-                    try {
-                        if (this.agent.interface && this.agent.settings) {
-                            const settings = this.agent.settings;
-                            const ownerPhone = settings.owner_phone;
-                            const channel = settings.notification_channel || 'whatsapp';
-
-                            if (ownerPhone) {
-                                const taskLower = payload.task.toLowerCase();
-                                let shouldNotify = false;
-                                let notificationText = null;
-
-                                // 0. Check for [SILENT] tag from agent (Highest Priority)
-                                // If the agent prefixed its response with [SILENT], it means
-                                // there's nothing actionable to report. Suppress notification.
-                                if (result && result.text) {
-                                    const text = result.text;
-
-                                    if (text.startsWith('[SILENT]') || text.startsWith('[silent]')) {
-                                        console.log(`[Scheduler] Smart Notification: Agent signaled [SILENT]. Suppressing notification.`);
-                                        // Strip the [SILENT] tag from the result for clean logging
-                                        result.text = text.replace(/^\[SILENT\]\s*/i, '').trim();
-                                        // Skip notification entirely
-                                        return result;
-                                    }
-                                }
-
-                                // 1. Check Explicit Instructions (High Priority)
-                                if (taskLower.startsWith('remind') || taskLower.startsWith('alert') || taskLower.startsWith('notify') || taskLower.startsWith('tell me')) {
-                                    shouldNotify = true;
-                                }
-
-                                // 2. Check Output Content (Medium Priority)
-                                if (result && result.text) {
-                                    const text = result.text;
-                                    const textLower = text.toLowerCase();
-
-                                    // Explicit address
-                                    if (textLower.includes('diego,') || textLower.includes('alert:') || textLower.includes('warning:')) {
-                                        shouldNotify = true;
-                                    }
-
-                                    // 3. Smart Silence Heuristic
-                                    // If we haven't decided to notify yet, check if we should effectively be silent
-                                    // If it's a pure action ("turn on", "backup") and success, we default to silent
-                                    const isAction = taskLower.startsWith('turn') || taskLower.startsWith('run') || taskLower.startsWith('backup');
-
-                                    // If it's NOT an action, and we have text, we generally notify (informational queries)
-                                    // e.g. "What is the Bitcoin price?" -> We want the answer.
-                                    if (!shouldNotify && !isAction) {
-                                        shouldNotify = true;
-                                    }
-
-                                    notificationText = text;
-                                }
-
-                                if (shouldNotify && notificationText) {
-                                    console.log(`[Scheduler] Smart Notification: Pushing to ${channel}...`);
-                                    await this.agent.interface.send({
-                                        to: ownerPhone,
-                                        platform: channel,
-                                        content: notificationText,
-                                        isNotification: true
-                                    });
-                                } else {
-                                    console.log(`[Scheduler] Smart Notification: Silent (Reason: Action=${!!payload.task.match(/^(turn|run|backup)/i)}, Explicit=${!!payload.task.match(/^(remind|alert|notify)/i)})`);
-                                }
-                            }
-                        }
-                    } catch (err) {
-                        console.error('[Scheduler] Smart Notification Failed:', err);
-                    }
-
-                    return result;
+                    return await this._processSmartNotification(result, payload);
                 };
             }
+
 
             this.scheduleJob(name, cronExpression, callback, {
                 persist: false,
@@ -334,6 +260,73 @@ class Scheduler {
             });
         }
         console.log(`[Scheduler] Loaded ${Object.keys(this.jobs).length} jobs from DB.`);
+    }
+
+    async _processSmartNotification(result, payload, forceSilent = false) {
+        if (forceSilent) return result;
+
+        try {
+            if (this.agent.interface && this.agent.settings) {
+                const settings = this.agent.settings;
+                const ownerPhone = settings.owner_phone;
+                const channel = settings.notification_channel || 'whatsapp';
+
+                if (ownerPhone) {
+                    const taskLower = (payload.task || '').toLowerCase();
+                    let shouldNotify = false;
+                    let notificationText = null;
+
+                    // 0. Check for [SILENT] tag from agent (Highest Priority)
+                    if (result && result.text) {
+                        const text = result.text;
+
+                        if (text.startsWith('[SILENT]') || text.startsWith('[silent]')) {
+                            console.log(`[Scheduler] Smart Notification: Agent signaled [SILENT]. Suppressing notification.`);
+                            result.text = text.replace(/^\[SILENT\]\s*/i, '').trim();
+                            return result;
+                        }
+                    }
+
+                    // 1. Check Explicit Instructions (High Priority)
+                    if (taskLower.startsWith('remind') || taskLower.startsWith('alert') || taskLower.startsWith('notify') || taskLower.startsWith('tell me')) {
+                        shouldNotify = true;
+                    }
+
+                    // 2. Check Output Content (Medium Priority)
+                    if (result && result.text) {
+                        const text = result.text;
+                        const textLower = text.toLowerCase();
+
+                        if (textLower.includes('diego,') || textLower.includes('alert:') || textLower.includes('warning:')) {
+                            shouldNotify = true;
+                        }
+
+                        const isAction = taskLower.startsWith('turn') || taskLower.startsWith('run') || taskLower.startsWith('backup');
+                        if (!shouldNotify && !isAction) {
+                            shouldNotify = true;
+                        }
+
+                        notificationText = text;
+                    }
+
+                    if (shouldNotify && notificationText) {
+                        console.log(`[Scheduler] Smart Notification: Pushing to ${channel}...`);
+                        await this.agent.interface.send({
+                            to: ownerPhone,
+                            platform: channel,
+                            content: notificationText,
+                            isNotification: true
+                        });
+                    } else {
+                        console.log(`[Scheduler] Smart Notification: Silent (Reason: Action=${!!taskLower.match(/^(turn|run|backup)/i)}, Explicit=${!!taskLower.match(/^(remind|alert|notify)/i)})`);
+                    }
+                }
+            }
+        } catch (err) {
+            console.error('[Scheduler] Smart Notification Failed:', err);
+        }
+
+        return result;
     }
 
     /**
@@ -486,22 +479,25 @@ class Scheduler {
                     console.log('[Scheduler] Proactive loop ACTIVATED this hour! Waking up Agent...');
                 }
 
-                let executionResult = null;
                 await this.agent.processMessage({
                     role: 'user',
                     content: `System Maintenance: ${sysJob.task} `,
                     source: 'scheduler',
                     metadata: { chatId: `system_${sysJob.name}_${Date.now()} ` }
                 }, async (reply) => {
-                    // Fire and forget response ONLY if not silent
-                    if (this.agent.interface && !sysJob.silent) {
-                        await this.agent.interface.send(reply);
+                    // Update executionResult as the stream progresses, storing the latest full text
+                    // reply can be { text: '...', toolCalls: [...] }. We care about the final text.
+                    if (!executionResult) {
+                        executionResult = reply;
+                    } else if (reply.text) {
+                        executionResult.text = (executionResult.text || '') + '\n' + reply.text;
+                    } else if (reply.toolCall) {
+                        // ignore intermediate tool call markers from updating text
                     }
-                    // Capture reply for logging
-                    if (!executionResult) executionResult = reply;
-                    else if (reply.text) executionResult.text = (executionResult.text || '') + '\n' + reply.text;
                 });
-                return executionResult; // Return for logging
+
+                // Now safely pass the final result through the Notification Logic!
+                return await this._processSmartNotification(executionResult, { task: sysJob.task }, sysJob.silent);
             };
 
             this.scheduleJob(sysJob.name, sysJob.cron, callback, {
