@@ -367,7 +367,7 @@ class Scheduler {
             {
                 name: 'proactive_thought',
                 cron: '0 * * * *', // Every hour
-                task: `[PROACTIVE LOOP] You have free time. Review your recent context, including latest chats and WhatsApp messages. If you want to do background research based on them, do it. If you want to talk to your owner, output a message. Otherwise, output ONLY [SILENT]. DO NOT message third parties.`,
+                task: `[PROACTIVE LOOP] You have free time. Review your recent context, including latest chats and WhatsApp messages. If you want to do background research based on them, do it. If you want to talk to your owner, output a message. IMPORTANT: Check the current time. If it is late at night/sleeping hours, DO NOT output a message (use [SILENT] instead) to avoid waking the user up for non-critical things. Otherwise, output ONLY [SILENT] if no action is needed. DO NOT message third parties.`,
                 silent: false
             }
         ];

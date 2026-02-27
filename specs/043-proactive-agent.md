@@ -17,8 +17,9 @@ Implement a recurring, probabilistic background loop where the Agent has "free t
 3.  **Safety & Boundaries**:
     *   The Agent must be explicitly restricted from taking disruptive unauthorized actions during its free time.
     *   **Primary Restriction**: The Agent MUST NOT initiate contact with third parties (e.g., via WhatsApp, Email) without explicit prior user consent for that specific interaction.
+    *   **Time Awareness**: The Agent MUST check the current time and effectively mute itself (using `[SILENT]`) during late night or usual sleeping hours to avoid waking the user up with non-critical notifications.
     *   **Permitted Actions**:
-        *   Sending a message to the OWNER (`[SILENT]` suppression logic applies if no message is needed).
+        *   Sending a message to the OWNER (`[SILENT]` suppression logic applies if no message is needed or if they are sleeping).
         *   Reviewing memories/journals.
         *   Performing background research (web searches) related to active interests.
         *   Checking the weather or schedule for the user to provide a timely update.
