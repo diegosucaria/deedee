@@ -370,6 +370,12 @@ class Scheduler {
                 cron: '30 4 * * *', // 4:30 AM
                 task: 'Enter REM sleep and dream based on recent memories and Plex activity.',
                 silent: true
+            },
+            {
+                name: 'proactive_thought',
+                cron: '0 * * * *', // Every hour
+                task: `[PROACTIVE LOOP] You have free time. Review your recent context, including latest chats and WhatsApp messages. If you want to do background research based on them, do it. If you want to talk to your owner, output a message. Otherwise, output ONLY [SILENT]. DO NOT message third parties.`,
+                silent: false
             }
         ];
 
@@ -468,6 +474,16 @@ class Scheduler {
                     } catch (e) {
                         console.error('[Scheduler] Log cleanup failed:', e);
                     }
+                }
+
+                // Proactive Thought (Probabilistic execution)
+                if (sysJob.name === 'proactive_thought') {
+                    // 20% chance to run every hour
+                    if (Math.random() >= 0.20) {
+                        console.log('[Scheduler] Proactive loop skipped this hour (RNG).');
+                        return { success: true, skipped: true };
+                    }
+                    console.log('[Scheduler] Proactive loop ACTIVATED this hour! Waking up Agent...');
                 }
 
                 let executionResult = null;
