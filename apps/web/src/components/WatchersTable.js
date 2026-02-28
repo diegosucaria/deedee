@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { getWatchers, deleteWatcher, toggleWatcher } from '@/app/actions';
 import { Eye, Trash2, RefreshCw, Edit, Plus, Power, Activity } from 'lucide-react';
 import CreateWatcherForm from './CreateWatcherForm';
+import io from 'socket.io-client';
 
 export default function WatchersTable() {
     const [watchers, setWatchers] = useState([]);
@@ -25,9 +26,22 @@ export default function WatchersTable() {
 
     useEffect(() => {
         loadWatchers();
-        // Poll less frequently than tasks
         const interval = setInterval(loadWatchers, 30000);
-        return () => clearInterval(interval);
+
+        const socket = io(undefined, {
+            transports: ['websocket', 'polling'],
+            path: '/socket.io'
+        });
+
+        socket.on('watcher:update', () => {
+            console.log('Received watcher:update, refreshing list...');
+            loadWatchers();
+        });
+
+        return () => {
+            clearInterval(interval);
+            socket.disconnect();
+        };
     }, []);
 
     const handleDelete = async (id, name) => {
@@ -45,7 +59,7 @@ export default function WatchersTable() {
 
     const handleToggle = async (watcher) => {
         const newStatus = watcher.status === 'active' ? 'paused' : 'active';
-        setActionLoading(watcher.id);
+        setActionLoading(watcher.id + '_toggle');
         try {
             await toggleWatcher(watcher.id, newStatus);
             await loadWatchers();
@@ -117,23 +131,20 @@ export default function WatchersTable() {
                         {watchers.length === 0 ? (
                             <tr>
                                 <td colSpan={6} className="px-4 py-8 text-center text-zinc-500">
-                                    No active watchers found. Create one to monitor generic WhatsApp messages.
+                                    No watchers found. Create one to monitor WhatsApp messages.
                                 </td>
                             </tr>
                         ) : (
                             watchers.map((watcher) => (
-                                <tr key={watcher.id} className="hover:bg-zinc-800/50 transition-colors">
+                                <tr key={watcher.id} className={`hover:bg-zinc-800/50 transition-colors ${watcher.status !== 'active' ? 'opacity-60 grayscale-[50%]' : ''}`}>
                                     <td className="px-4 py-4">
                                         <button
                                             onClick={() => handleToggle(watcher)}
-                                            disabled={actionLoading === watcher.id}
-                                            className={`flex items-center gap-1.5 px-2 py-1 rounded-full text-[10px] uppercase font-bold transition-all ${watcher.status === 'active'
-                                                    ? 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20 hover:bg-emerald-500/20'
-                                                    : 'bg-zinc-700/20 text-zinc-500 border border-zinc-700/30 hover:bg-zinc-700/30'
-                                                }`}
+                                            disabled={actionLoading === watcher.id + '_toggle'}
+                                            className={`px-2 py-1 rounded transition-colors disabled:opacity-50 text-[10px] uppercase font-bold tracking-wider ${watcher.status === 'active' ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20'}`}
+                                            title={watcher.status === 'active' ? "Pause Watcher" : "Resume Watcher"}
                                         >
-                                            <Power className="w-3 h-3" />
-                                            {watcher.status}
+                                            {watcher.status === 'active' ? 'ON' : 'OFF'}
                                         </button>
                                     </td>
                                     <td className="px-4 py-4 font-medium text-zinc-300">

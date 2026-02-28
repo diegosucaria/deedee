@@ -7,7 +7,7 @@ function createWatchersRouter(agent) {
     router.get('/', (req, res) => {
         try {
             const status = req.query.status || 'active';
-            const watchers = agent.db.getWatchers(status);
+            const watchers = status === 'all' ? agent.db.getAllWatchers() : agent.db.getWatchers(status);
 
             // Enrich with person details if possible?
             // Not strictly necessary for MVP, front-end can fetch people list or we do a join in SQL.

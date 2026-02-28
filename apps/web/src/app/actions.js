@@ -1027,7 +1027,7 @@ export async function triggerSmartLearn(offset = 0, limit = 5) {
 // --- Watchers ---
 export async function getWatchers() {
     try {
-        const res = await fetchAPI('/v1/config/watchers');
+        const res = await fetchAPI('/v1/config/watchers?status=all');
         return res.watchers || [];
     } catch (e) {
         console.error('getWatchers Error:', e);
