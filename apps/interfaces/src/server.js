@@ -504,7 +504,7 @@ app.post('/send', async (req, res) => {
     }
 
     // SCHEDULER (Internal)
-    if (source === 'scheduler') {
+    if (source === 'scheduler' && !req.body.isNotification) {
       if (content.startsWith('Thinking...') || content.startsWith('Action **')) {
         return res.json({ success: true });
       }
@@ -515,7 +515,10 @@ app.post('/send', async (req, res) => {
       return res.json({ success: true });
     }
 
-    if (source === 'telegram' && telegram) {
+    // Treat 'scheduler' as the target platform if it's an explicit notification
+    const actualSource = req.body.isNotification && source === 'scheduler' && req.body.platform ? req.body.platform : source;
+
+    if (actualSource === 'telegram' && telegram) {
       if (!metadata || !metadata.chatId) {
         throw new Error('Missing chatId in metadata for Telegram message');
       }
@@ -531,7 +534,7 @@ app.post('/send', async (req, res) => {
       return res.json({ success: true });
     }
 
-    if (source === 'whatsapp') {
+    if (actualSource === 'whatsapp') {
       // Determine which session to use
       // metadata.session should be 'assistant' or 'user' if set by tool
       // Default to 'assistant' if not specified, OR if coming from a reply to 'assistant' session?
@@ -562,14 +565,14 @@ app.post('/send', async (req, res) => {
       return res.json({ success: true });
     }
 
-    if (source === 'slack') {
+    if (actualSource === 'slack') {
       if (!slack?.connected) throw new Error('Slack not connected');
       if (!metadata?.chatId) throw new Error('Missing chatId in metadata for Slack message');
       await slack.sendMessage(metadata.chatId, content, { thread_ts: metadata.thread_ts });
       return res.json({ success: true });
     }
 
-    res.status(400).json({ error: `Unsupported source or service not enabled: ${source}` });
+    res.status(400).json({ error: `Unsupported source or service not enabled: ${actualSource}` });
 
   } catch (error) {
     console.error('[Interfaces] Send Error:', error);

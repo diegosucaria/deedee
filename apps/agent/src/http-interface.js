@@ -63,7 +63,8 @@ class HttpInterface extends EventEmitter {
         source: finalSource,
         content: content,
         metadata: metadata,
-        type: type
+        type: type,
+        isNotification: message.isNotification
       }, {
         headers: {
           'Authorization': `Bearer ${this.apiToken}`
