@@ -333,8 +333,12 @@ class Scheduler {
                         const text = result.text;
 
                         if (text.startsWith('[SILENT]') || text.startsWith('[silent]')) {
+                            const reasoning = text.replace(/^\[SILENT\]\s*/i, '').trim();
                             console.log(`[Scheduler] Smart Notification: Agent signaled [SILENT]. Suppressing notification.`);
-                            result.text = text.replace(/^\[SILENT\]\s*/i, '').trim();
+                            console.log(`[Scheduler] Agent reasoning: ${reasoning.substring(0, 200)}`);
+                            result.text = reasoning;
+                            result.decision = 'silent';
+                            result.decisionReason = 'Agent signaled [SILENT]';
                             return result;
                         }
                     }
@@ -368,6 +372,10 @@ class Scheduler {
 
                     if (shouldNotify && notificationText) {
                         console.log(`[Scheduler] Smart Notification: Pushing to ${channel}...`);
+                        if (result) {
+                            result.decision = 'notified';
+                            result.decisionReason = `Sent via ${channel}`;
+                        }
                         await this.agent.interface.send({
                             source: 'scheduler',
                             content: notificationText,
@@ -379,7 +387,12 @@ class Scheduler {
                             isNotification: true
                         });
                     } else {
-                        console.log(`[Scheduler] Smart Notification: Silent (Reason: Action=${!!taskLower.match(/^(turn|run|backup)/i)}, Explicit=${!!taskLower.match(/^(remind|alert|notify)/i)})`);
+                        const silentReason = !result?.text ? 'No output text' : `Action=${!!taskLower.match(/^(turn|run|backup)/i)}, Explicit=${!!taskLower.match(/^(remind|alert|notify)/i)}`;
+                        console.log(`[Scheduler] Smart Notification: Silent (Reason: ${silentReason})`);
+                        if (result) {
+                            result.decision = 'silent';
+                            result.decisionReason = silentReason;
+                        }
                     }
                 }
             }
