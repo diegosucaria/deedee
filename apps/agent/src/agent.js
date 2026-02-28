@@ -553,7 +553,7 @@ class Agent {
         // Auto-Title Trigger (Background)
         const hasContent = message.content || (message.parts && message.parts.length > 0);
 
-        if (msgCount === 0 && hasContent && message.role === 'user' && !isPassiveMode && !isSubAgent) {
+        if (msgCount === 0 && hasContent && message.role === 'user' && !isPassiveMode && !isSubAgent && message.source !== 'scheduler') {
           console.log(`${logPrefix} Triggering Auto-Title for ${chatId}. MsgCount: ${msgCount}`);
 
           let titleContext = message.content;
