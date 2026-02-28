@@ -5,6 +5,7 @@ import { getTasks, runTask, cancelTask, toggleTask } from '@/app/actions';
 import { Clock, Play, Trash2, RefreshCw, CalendarOff, Edit, Plus } from 'lucide-react';
 import CreateTaskForm from './CreateTaskForm';
 import cronstrue from 'cronstrue';
+import io from 'socket.io-client';
 
 export default function ActiveJobsTable({ onViewHistory, systemOnly = false }) {
     const [jobs, setJobs] = useState([]);
@@ -36,7 +37,21 @@ export default function ActiveJobsTable({ onViewHistory, systemOnly = false }) {
     useEffect(() => {
         loadJobs();
         const interval = setInterval(loadJobs, 15000); // Poll every 15s
-        return () => clearInterval(interval);
+
+        const socket = io(undefined, {
+            transports: ['websocket', 'polling'],
+            path: '/socket.io'
+        });
+
+        socket.on('jobs:update', () => {
+            console.log('Received jobs:update, refreshing list...');
+            loadJobs();
+        });
+
+        return () => {
+            clearInterval(interval);
+            socket.disconnect();
+        };
     }, [systemOnly]);
 
     const toggleSelection = (name) => {

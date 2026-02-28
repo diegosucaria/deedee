@@ -111,6 +111,7 @@
     - [x] **Skills UI**: Dashboard page for management, editing, and secrets.
     - [x] **Compatibility**: Enhanced allow Metadata, Secrets, Toggles.
 - [x] **Scheduler Routing Fix (Feb 2026)**: Fixed HTTP payload mismatch (`platform` missing) causing 400 errors during Smart Notifications routing.
+- [x] **Job Toggles (Feb 2026)**: Added capabilities to pause and resume system and user jobs efficiently. Integrated with UX/UI WebSockets live updates.
 - [x] **Slack Integration (Feb 2026)**:
     - [x] **SlackService**: RTM WebSocket + polling fallback, AES-256-GCM encrypted token storage.
     - [x] **Agent Tools**: `searchSlack`, `readSlackHistory`, `sendSlackMessage`.

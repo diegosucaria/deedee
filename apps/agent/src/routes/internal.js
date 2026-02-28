@@ -141,6 +141,11 @@ function createInternalRouter(agent) {
                 return res.status(403).json({ error: 'Cannot cancel system jobs' });
             }
             agent.scheduler.cancelJob(id);
+
+            if (agent.interface) {
+                agent.interface.broadcast('jobs:update', { action: 'cancel', id });
+            }
+
             res.json({ success: true });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
@@ -202,6 +207,10 @@ function createInternalRouter(agent) {
                 expiresAt: expiresAt || null,
                 oneOff: !!isOneOff
             });
+
+            if (agent.interface) {
+                agent.interface.broadcast('jobs:update', { action: 'create', name });
+            }
 
             res.json({ success: true });
         } catch (e) { res.status(500).json({ error: e.message }); }

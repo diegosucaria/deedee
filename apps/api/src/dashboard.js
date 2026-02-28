@@ -46,6 +46,7 @@ router.delete('/facts/:key', (req, res) => proxyRequest(req, res, 'DELETE', `/in
 router.get('/tasks', (req, res) => proxyRequest(req, res, 'GET', '/internal/tasks'));
 router.post('/tasks', (req, res) => proxyRequest(req, res, 'POST', '/internal/scheduler', req.body));
 router.post('/tasks/:id/cancel', (req, res) => proxyRequest(req, res, 'POST', `/internal/tasks/${req.params.id}/cancel`));
+router.post('/tasks/:id/toggle', (req, res) => proxyRequest(req, res, 'POST', `/internal/tasks/${req.params.id}/toggle`, req.body));
 router.post('/tasks/:id/run', (req, res) => proxyRequest(req, res, 'POST', `/internal/tasks/${req.params.id}/run`));
 
 // History
