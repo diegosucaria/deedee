@@ -330,9 +330,13 @@ class Scheduler {
                     if (shouldNotify && notificationText) {
                         console.log(`[Scheduler] Smart Notification: Pushing to ${channel}...`);
                         await this.agent.interface.send({
-                            to: ownerPhone,
-                            platform: channel,
+                            source: 'scheduler',
                             content: notificationText,
+                            type: 'text',
+                            metadata: {
+                                chatId: ownerPhone
+                            },
+                            platform: channel, // Used by server.js to route from scheduler
                             isNotification: true
                         });
                     } else {
