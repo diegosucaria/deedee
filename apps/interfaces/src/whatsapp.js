@@ -922,17 +922,20 @@ class WhatsAppService {
         if (!this.sock) throw new Error(`${this.logPrefix} WhatsApp not initialized`);
 
         try {
+            // Ensure target JID exists and has a domain
+            const targetJid = toJid.includes('@') ? toJid : `${toJid}@s.whatsapp.net`;
+
             const type = options.type || 'text';
-            console.log(`${this.logPrefix} Sending ${type} to ${toJid}`);
+            console.log(`${this.logPrefix} Sending ${type} to ${targetJid}`);
 
             if (type === 'text') {
-                await this.sock.sendMessage(toJid, { text: content });
+                await this.sock.sendMessage(targetJid, { text: content });
             } else if (type === 'audio') {
                 const buffer = Buffer.from(content, 'base64');
-                await this.sock.sendMessage(toJid, { audio: buffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
+                await this.sock.sendMessage(targetJid, { audio: buffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
             } else if (type === 'image') {
                 const buffer = Buffer.from(content, 'base64');
-                await this.sock.sendMessage(toJid, { image: buffer });
+                await this.sock.sendMessage(targetJid, { image: buffer });
             }
 
         } catch (e) {

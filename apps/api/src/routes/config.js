@@ -32,6 +32,8 @@ router.use('/settings', (req, res) => {
 router.get('/watchers', (req, res) => proxyToAgent(req, res, 'GET', '/internal/watchers', null));
 router.post('/watchers', (req, res) => proxyToAgent(req, res, 'POST', '/internal/watchers', req.body));
 
+router.put('/watchers/:id', (req, res) => proxyToAgent(req, res, 'PUT', `/internal/watchers/${req.params.id}`, req.body));
+
 router.delete('/watchers/:id', async (req, res) => {
     try {
         await axios.delete(`${AGENT_URL}/internal/watchers/${req.params.id}`);
