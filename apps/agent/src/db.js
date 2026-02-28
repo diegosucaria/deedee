@@ -1034,7 +1034,7 @@ class AgentDB {
 
   searchVinyls(query) {
     if (!query) return [];
-    const wildcard = `% ${query} % `;
+    const wildcard = `%${query}%`;
     const stmt = this.db.prepare(`
       SELECT * FROM dj_vinyls 
       WHERE artist LIKE ?

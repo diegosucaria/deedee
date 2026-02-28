@@ -45,7 +45,13 @@ const createDjRouter = (agent) => {
     router.put('/vinyls/:id', async (req, res) => {
         try {
             const { id } = req.params;
+            if (!id || id.trim().length === 0) {
+                return res.status(400).json({ error: 'Missing vinyl ID' });
+            }
             const fields = req.body;
+            if (!fields || typeof fields !== 'object' || Object.keys(fields).length === 0) {
+                return res.status(400).json({ error: 'Request body must contain fields to update' });
+            }
             const updated = agent.db.updateVinyl(id, fields);
             if (updated) {
                 const vinyl = agent.db.getVinyl(id);
