@@ -6,6 +6,9 @@ const path = require('path');
 const mockAgent = {
     db: {
         addVinyl: jest.fn().mockReturnValue('vinyl_123'),
+        findVinylByArtistTitle: jest.fn().mockReturnValue(null),
+        getVinyl: jest.fn().mockReturnValue(null),
+        updateVinyl: jest.fn().mockReturnValue(true),
         getVinyls: jest.fn().mockReturnValue([]),
         logTokenUsage: jest.fn()
     },
@@ -127,5 +130,23 @@ describe('DJService', () => {
 
         expect(result).toBe("Recommendation: Track A - B");
         expect(mockAgent.db.logTokenUsage).toHaveBeenCalledWith(expect.objectContaining({ tag: 'dj_mode' }));
+    });
+
+    test('should detect duplicate and merge instead of inserting', async () => {
+        const existingVinyl = {
+            id: 'existing_456', artist: 'Test Artist', title: 'Test Title',
+            label: 'Old Label', catalog_number: 'OLD-001',
+            cover_image_url: '/vinyl_covers/old.jpg',
+            tracks: [], meta: { genre: 'Techno', enrichmentConfidence: 0.5 }
+        };
+        mockAgent.db.findVinylByArtistTitle.mockReturnValue(existingVinyl);
+        mockAgent.db.getVinyl.mockReturnValue({ ...existingVinyl, meta: { genre: 'House', enrichmentConfidence: 0.9 } });
+
+        const result = await djService.ingestVinyl('/path/to/image.jpg');
+
+        expect(mockAgent.db.findVinylByArtistTitle).toHaveBeenCalledWith('Test Artist', 'Test Title');
+        expect(mockAgent.db.addVinyl).not.toHaveBeenCalled();
+        expect(mockAgent.db.updateVinyl).toHaveBeenCalledWith('existing_456', expect.any(Object));
+        expect(result[0]._merged).toBe(true);
     });
 });

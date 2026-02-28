@@ -997,6 +997,21 @@ class AgentDB {
     return id;
   }
 
+  findVinylByArtistTitle(artist, title) {
+    if (!artist || !title) return null;
+    const stmt = this.db.prepare(`
+      SELECT * FROM dj_vinyls
+      WHERE LOWER(artist) = LOWER(?) AND LOWER(title) = LOWER(?)
+      LIMIT 1
+    `);
+    const row = stmt.get(artist.trim(), title.trim());
+    if (row) {
+      row.tracks = JSON.parse(row.tracks);
+      row.meta = JSON.parse(row.meta);
+    }
+    return row || null;
+  }
+
   getVinyl(id) {
     const stmt = this.db.prepare('SELECT * FROM dj_vinyls WHERE id = ?');
     const row = stmt.get(id);

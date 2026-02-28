@@ -210,6 +210,31 @@ class DJService {
             }
         };
 
+        // 4. Duplicate detection — check if vinyl with same artist+title exists
+        const existing = this.db.findVinylByArtistTitle(vinyl.artist, vinyl.title);
+        if (existing) {
+            console.log(`[DJService] Duplicate found: "${vinyl.artist} - ${vinyl.title}" (id: ${existing.id}). Merging.`);
+            // Merge: keep existing data, upgrade with better enrichment
+            const mergedFields = {
+                label: vinyl.label || existing.label,
+                catalog_number: vinyl.catalogNumber || existing.catalog_number,
+                cover_image_url: coverUrl !== '/vinyl_covers/default.png' ? coverUrl : existing.cover_image_url,
+                tracks: vinyl.tracks.length > 0 ? vinyl.tracks : existing.tracks,
+                meta: {
+                    ...existing.meta,
+                    ...vinyl.meta,
+                    // Keep higher confidence
+                    enrichmentConfidence: Math.max(vinyl.meta.enrichmentConfidence || 0, existing.meta?.enrichmentConfidence || 0)
+                }
+            };
+            this.db.updateVinyl(existing.id, mergedFields);
+            const updated = this.db.getVinyl(existing.id);
+            if (this.agent.interface && this.agent.interface.broadcast) {
+                this.agent.interface.broadcast('dj:vinyl:update', updated);
+            }
+            return { ...updated, _merged: true };
+        }
+
         const id = this.db.addVinyl(vinyl);
 
         // Broadcast Update for UI
