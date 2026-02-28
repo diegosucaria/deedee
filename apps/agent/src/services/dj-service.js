@@ -287,7 +287,6 @@ IMPORTANT RULES:
 Respond ONLY with valid JSON.` }]
                 }],
                 config: {
-                    responseMimeType: 'application/json',
                     tools: [{ googleSearch: {} }]
                 }
             });
