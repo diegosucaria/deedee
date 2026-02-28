@@ -124,6 +124,7 @@ function createInternalRouter(agent) {
                     task: j.metadata?.payload?.task || '',
                     isSystem: j.metadata?.payload?.isSystem || false,
                     isOneOff: j.metadata?.payload?.isOneOff || false,
+                    enabled: j.metadata?.enabled !== false,
                     expiresAt: j.metadata?.expiresAt || null,
                     nextInvocation: j.nextInvocation()
                 }));
@@ -140,6 +141,20 @@ function createInternalRouter(agent) {
                 return res.status(403).json({ error: 'Cannot cancel system jobs' });
             }
             agent.scheduler.cancelJob(id);
+            res.json({ success: true });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.post('/tasks/:id/toggle', (req, res) => {
+        if (!agent.scheduler) return res.status(503).json({ error: 'Scheduler not ready' });
+        try {
+            const { id } = req.params;
+            const { enabled } = req.body;
+
+            const success = agent.scheduler.toggleJob(id, enabled);
+            if (!success) {
+                return res.status(404).json({ error: 'Job not found or failed to toggle' });
+            }
             res.json({ success: true });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });

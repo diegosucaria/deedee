@@ -25,6 +25,20 @@ export async function cancelTask(name) {
     }
 }
 
+export async function toggleTask(name, enabled) {
+    try {
+        const encodedName = encodeURIComponent(name);
+        await fetchAPI(`/v1/tasks/${encodedName}/toggle`, {
+            method: 'POST',
+            body: JSON.stringify({ enabled })
+        });
+        revalidatePath('/tasks');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function runTask(name) {
     try {
         const encodedName = encodeURIComponent(name);

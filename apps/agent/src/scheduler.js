@@ -106,12 +106,18 @@ class Scheduler {
             name,
             cronExpression,
             createdAt: new Date(),
-            expiresAt: options.expiresAt
+            expiresAt: options.expiresAt,
+            enabled: options.enabled !== false
         }; // cronExpression here might be ISO string
 
         // Ensure payload is stored in memory for API access
         this.jobs[name].metadata.payload = options.payload || {};
         if (options.oneOff) this.jobs[name].metadata.payload.isOneOff = true;
+
+        if (options.enabled === false) {
+            job.cancel();
+            console.log(`[Scheduler] Job '${name}' loaded but implicitly paused (enabled: false).`);
+        }
 
         if (options.persist) {
             this.agent.db.saveScheduledJob({
@@ -119,7 +125,8 @@ class Scheduler {
                 cronExpression: typeof cronExpression === 'string' ? cronExpression : cronExpression.toISOString(),
                 taskType: options.taskType || 'custom',
                 payload: { ...options.payload, isOneOff: !!options.oneOff },
-                expiresAt: options.expiresAt
+                expiresAt: options.expiresAt,
+                enabled: options.enabled !== false
             });
         }
         console.log(`[Scheduler] Job '${name}' scheduled. OneOff: ${!!options.oneOff}`);
@@ -137,11 +144,42 @@ class Scheduler {
         }
     }
 
+    toggleJob(name, enabled) {
+        const job = this.jobs[name];
+        if (!job) {
+            console.error(`[Scheduler] Cannot toggle unknown job: ${name}`);
+            return false;
+        }
+
+        job.metadata.enabled = !!enabled;
+
+        if (enabled) {
+            // Reschedule it to activate it
+            const rule = job.metadata.payload?.isOneOff ? new Date(job.metadata.cronExpression) : job.metadata.cronExpression;
+            job.reschedule(rule);
+        } else {
+            job.cancel();
+        }
+
+        if (this.agent.db) {
+            this.agent.db.saveScheduledJob({
+                name,
+                cronExpression: typeof job.metadata.cronExpression === 'string' ? job.metadata.cronExpression : job.metadata.cronExpression.toISOString(),
+                taskType: job.metadata.payload?.taskType || 'custom',
+                payload: job.metadata.payload,
+                expiresAt: job.metadata.expiresAt,
+                enabled: !!enabled
+            });
+        }
+        console.log(`[Scheduler] Job '${name}' toggled. Enabled: ${!!enabled}`);
+        return true;
+    }
+
     async loadJobs() {
         console.log('[Scheduler] Loading persisted jobs...');
         const jobs = this.agent.db.getScheduledJobs();
         for (const jobData of jobs) {
-            const { name, cronExpression, taskType, payload, expiresAt } = jobData;
+            const { name, cronExpression, taskType, payload, expiresAt, enabled } = jobData;
 
             // Load-time Expiration Check
             if (expiresAt) {
@@ -266,6 +304,7 @@ class Scheduler {
                 taskType,
                 payload,
                 expiresAt,
+                enabled, // Restore correct memory stat without persisting a DB write immediately
                 oneOff: isOneOff // IMPORTANT: Pass this so scheduleJob handles it as Date object
             });
         }
@@ -395,6 +434,11 @@ class Scheduler {
         ];
 
         console.log('[Scheduler] Verifying system jobs...');
+
+        const persistedJobs = this.agent.db ? this.agent.db.getScheduledJobs() : [];
+        const persistedStates = {};
+        persistedJobs.forEach(j => { persistedStates[j.name] = j; });
+
         for (const sysJob of SYSTEM_JOBS) {
             console.log(`[Scheduler] Ensuring system job '${sysJob.name}'...`);
 
@@ -403,6 +447,9 @@ class Scheduler {
             if (this.jobs[sysJob.name]) {
                 this.cancelJob(sysJob.name);
             }
+
+            const existing = persistedStates[sysJob.name];
+            const isEnabled = existing && 'enabled' in existing ? existing.enabled : true;
 
             // Use the standard scheduleJob logic which handles the callback wrapper
             // We manually construct the instruction wrapper to match 'agent_instruction' type
@@ -525,6 +572,7 @@ class Scheduler {
 
             this.scheduleJob(sysJob.name, sysJob.cron, callback, {
                 persist: true, // Persist so they show up in DB listing if needed, though mostly for consistent ID
+                enabled: isEnabled,
                 taskType: 'agent_instruction',
                 payload: { task: sysJob.task, isSystem: true }
             });

@@ -37,6 +37,31 @@ describe('HttpInterface', () => {
         consoleSpy.mockRestore();
     });
 
+    test('send() should include platform and isNotification in payload', async () => {
+        axios.post.mockResolvedValue({ data: {} });
+        const consoleSpy = jest.spyOn(console, 'log').mockImplementation(() => { });
+
+        await httpInterface.send({
+            source: 'scheduler',
+            content: 'notification text',
+            isNotification: true,
+            platform: 'whatsapp',
+            metadata: { chatId: '123' }
+        });
+
+        expect(axios.post).toHaveBeenCalledWith(
+            `${mockUrl}/send`,
+            expect.objectContaining({
+                source: 'scheduler',
+                content: 'notification text',
+                isNotification: true,
+                platform: 'whatsapp'
+            }),
+            expect.anything()
+        );
+        consoleSpy.mockRestore();
+    });
+
     test('sendProgress() should include Authorization header', async () => {
         axios.post.mockResolvedValue({ data: {} });
 

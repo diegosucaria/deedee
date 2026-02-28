@@ -78,6 +78,7 @@ class AgentDB {
         task_type TEXT NOT NULL, -- e.g. 'function_call', 'script'
         payload TEXT, -- JSON args
         expires_at DATETIME,
+        enabled INTEGER DEFAULT 1,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -250,6 +251,11 @@ class AgentDB {
       this.db.exec("ALTER TABLE summaries ADD COLUMN summary_tokens INTEGER");
     } catch (err) { }
 
+    // Migration: Add enabled column to scheduled_jobs
+    try {
+      this.db.exec("ALTER TABLE scheduled_jobs ADD COLUMN enabled INTEGER DEFAULT 1");
+    } catch (err) { }
+
     // Migration: Add cost/token_count to messages
     try {
       this.db.exec("ALTER TABLE messages ADD COLUMN cost REAL");
@@ -301,16 +307,18 @@ class AgentDB {
   // --- Scheduled Jobs ---
   saveScheduledJob(job) {
     const payloadStr = JSON.stringify(job.payload || {});
+    const enabledVal = job.enabled !== false ? 1 : 0;
     const stmt = this.db.prepare(`
-      INSERT INTO scheduled_jobs (name, cron_expression, task_type, payload, expires_at) 
-      VALUES (?, ?, ?, ?, ?) 
+      INSERT INTO scheduled_jobs (name, cron_expression, task_type, payload, expires_at, enabled) 
+      VALUES (?, ?, ?, ?, ?, ?) 
       ON CONFLICT(name) DO UPDATE SET 
         cron_expression=excluded.cron_expression, 
         task_type=excluded.task_type, 
         payload=excluded.payload,
-        expires_at=excluded.expires_at
+        expires_at=excluded.expires_at,
+        enabled=excluded.enabled
     `);
-    stmt.run(job.name, job.cronExpression, job.taskType || 'function_call', payloadStr, job.expiresAt || null);
+    stmt.run(job.name, job.cronExpression, job.taskType || 'function_call', payloadStr, job.expiresAt || null, enabledVal);
   }
 
   getScheduledJobs() {
@@ -321,6 +329,7 @@ class AgentDB {
       taskType: row.task_type,
       payload: row.payload ? JSON.parse(row.payload) : {},
       expiresAt: row.expires_at,
+      enabled: row.enabled === 1,
       createdAt: row.created_at
     }));
   }

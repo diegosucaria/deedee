@@ -110,6 +110,7 @@
     - [x] **Slash Commands**: Routed `/commands` to skills via Agent logic.
     - [x] **Skills UI**: Dashboard page for management, editing, and secrets.
     - [x] **Compatibility**: Enhanced allow Metadata, Secrets, Toggles.
+- [x] **Scheduler Routing Fix (Feb 2026)**: Fixed HTTP payload mismatch (`platform` missing) causing 400 errors during Smart Notifications routing.
 - [x] **Slack Integration (Feb 2026)**:
     - [x] **SlackService**: RTM WebSocket + polling fallback, AES-256-GCM encrypted token storage.
     - [x] **Agent Tools**: `searchSlack`, `readSlackHistory`, `sendSlackMessage`.

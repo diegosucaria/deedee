@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { getTasks, runTask, cancelTask } from '@/app/actions';
+import { getTasks, runTask, cancelTask, toggleTask } from '@/app/actions';
 import { Clock, Play, Trash2, RefreshCw, CalendarOff, Edit, Plus } from 'lucide-react';
 import CreateTaskForm from './CreateTaskForm';
 import cronstrue from 'cronstrue';
@@ -73,6 +73,18 @@ export default function ActiveJobsTable({ onViewHistory, systemOnly = false }) {
             await loadJobs();
         } catch (err) {
             console.error('Failed to cancel job:', err);
+        } finally {
+            setActionLoading(null);
+        }
+    };
+
+    const handleToggle = async (name, currentState) => {
+        setActionLoading(name + '_toggle');
+        try {
+            await toggleTask(name, !currentState);
+            await loadJobs();
+        } catch (err) {
+            console.error('Failed to toggle job:', err);
         } finally {
             setActionLoading(null);
         }
@@ -212,7 +224,7 @@ export default function ActiveJobsTable({ onViewHistory, systemOnly = false }) {
                             </tr>
                         ) : (
                             jobs.map((job) => (
-                                <tr key={job.name} className={`hover:bg-zinc-800/50 transition-colors group ${selectedNames.has(job.name) ? 'bg-indigo-500/5 hover:bg-indigo-500/10' : ''}`}>
+                                <tr key={job.name} className={`hover:bg-zinc-800/50 transition-colors group ${selectedNames.has(job.name) ? 'bg-indigo-500/5 hover:bg-indigo-500/10' : ''} ${!job.enabled ? 'opacity-60 grayscale-[50%]' : ''}`}>
                                     {!systemOnly && (
                                         <td className="px-4 py-4">
                                             <input
@@ -279,8 +291,16 @@ export default function ActiveJobsTable({ onViewHistory, systemOnly = false }) {
                                     <td className="px-3 py-4 text-right">
                                         <div className="flex items-center justify-end gap-2">
                                             <button
+                                                onClick={() => handleToggle(job.name, job.enabled)}
+                                                disabled={actionLoading === job.name + '_toggle'}
+                                                className={`px-2 py-1 rounded transition-colors disabled:opacity-50 text-[10px] uppercase font-bold tracking-wider mr-1 ${job.enabled ? 'bg-emerald-500/10 text-emerald-400 hover:bg-emerald-500/20 border border-emerald-500/20' : 'bg-red-500/10 text-red-400 hover:bg-red-500/20 border border-red-500/20'}`}
+                                                title={job.enabled ? "Disable Job" : "Enable Job"}
+                                            >
+                                                {job.enabled ? 'ON' : 'OFF'}
+                                            </button>
+                                            <button
                                                 onClick={() => handleRun(job.name)}
-                                                disabled={actionLoading === job.name}
+                                                disabled={actionLoading === job.name || !job.enabled}
                                                 className="p-1.5 hover:bg-zinc-700/50 rounded text-emerald-400 transition-colors disabled:opacity-50"
                                                 title="Run Now"
                                             >

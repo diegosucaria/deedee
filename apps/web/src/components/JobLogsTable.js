@@ -229,7 +229,7 @@ export default function JobLogsTable() {
                                         {log.duration_ms}ms
                                     </td>
                                     <td className="px-6 py-4 align-top text-right text-zinc-500 text-xs whitespace-nowrap">
-                                        {new Date(log.timestamp).toLocaleString(undefined, {
+                                        {new Date(log.timestamp.endsWith('Z') ? log.timestamp : log.timestamp + 'Z').toLocaleString(undefined, {
                                             month: 'short', day: 'numeric',
                                             hour: '2-digit', minute: '2-digit'
                                         })}
