@@ -202,6 +202,7 @@ class DJService {
                 source: 'vision',
                 genre: enriched.genre || '',
                 year: enriched.year || '',
+                rpm: enriched.rpm || 0,
                 discogsUrl: enriched.discogsUrl || '',
                 beatportUrl: enriched.beatportUrl || '',
                 style: enriched.style || '',
@@ -242,8 +243,9 @@ Return JSON with:
   "genre": "string",
   "style": "string (subgenre)",
   "year": number,
+  "rpm": number (vinyl RPM speed: 33, 45, or 78),
   "tracks": [
-    { "position": "A1", "title": "Track Name", "bpm": number, "key": "string (e.g. Am, Cm, F#m)" }
+    { "position": "A1", "title": "Track Name", "bpm": number, "key": "string in Camelot notation (e.g. 8A, 11B, 1A)" }
   ],
   "discogsUrl": "URL or empty",
   "beatportUrl": "URL or empty",
@@ -252,8 +254,12 @@ Return JSON with:
   "catalogNumber": "string",
   "confidence": number between 0 and 1 indicating how confident you are that this is the correct record
 }
-IMPORTANT: BPM and key are PER TRACK, not per vinyl. Each track in the tracklist should have its own BPM and key.
-If you cannot find exact data, provide your best estimate and set confidence accordingly. Respond ONLY with valid JSON.` }]
+IMPORTANT RULES:
+- BPM and key are PER TRACK, not per vinyl. Each track must have its own BPM and key.
+- Use CAMELOT key notation (1A through 12B), NOT traditional notation (Am, Cm, etc.).
+- RPM is the vinyl playback speed (33 for LP, 45 for single/EP, 78 for shellac).
+- If you cannot find exact data, provide your best estimate and set confidence accordingly.
+Respond ONLY with valid JSON.` }]
                 }],
                 config: {
                     responseMimeType: 'application/json',
