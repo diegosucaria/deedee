@@ -42,4 +42,21 @@ router.post('/vinyls/upload', async (req, res) => {
     }
 });
 
+// PUT /v1/dj/vinyls/:id
+// Maps to Agent: PUT /internal/dj/vinyls/:id
+router.put('/vinyls/:id', async (req, res) => {
+    try {
+        const url = `${AGENT_URL}/internal/dj/vinyls/${encodeURIComponent(req.params.id)}`;
+        const response = await axios.put(url, req.body, {
+            headers: { 'Content-Type': 'application/json' }
+        });
+        res.json(response.data);
+    } catch (error) {
+        console.error('[API] DJ Update Proxy Error:', error.message);
+        const status = error.response ? error.response.status : 502;
+        const data = error.response ? error.response.data : { error: 'Agent unavailable' };
+        res.status(status).json(data);
+    }
+});
+
 module.exports = router;

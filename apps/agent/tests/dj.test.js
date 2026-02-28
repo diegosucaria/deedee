@@ -97,12 +97,13 @@ describe('DJService', () => {
         expect(result[0].artist).toBe("Test Artist");
     });
 
-    test('should enrich metadata with BPM, key, genre', async () => {
+    test('should enrich metadata with genre and confidence', async () => {
         const result = await djService.ingestVinyl('/path/to/image.jpg');
 
         expect(djService._enrichMetadata).toHaveBeenCalledWith("Test Artist", "Test Title", "Test Label");
-        expect(result[0].bpm).toBe(128);
-        expect(result[0].key).toBe('Am');
+        // BPM is per-track, not per-vinyl
+        expect(result[0].bpm).toBe(0);
+        expect(result[0].meta.enrichmentConfidence).toBeDefined();
     });
 
     test('recommendVinyl should handle empty crate', async () => {

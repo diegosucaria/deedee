@@ -1016,6 +1016,22 @@ class AgentDB {
     }));
   }
 
+  updateVinyl(id, fields) {
+    const allowed = ['artist', 'title', 'label', 'catalog_number', 'cover_image_url', 'bpm', 'key', 'tracks', 'meta'];
+    const sets = [];
+    const values = [];
+    for (const [k, v] of Object.entries(fields)) {
+      const col = k === 'catalogNumber' ? 'catalog_number' : k === 'coverImageUrl' ? 'cover_image_url' : k;
+      if (!allowed.includes(col)) continue;
+      sets.push(`${col} = ?`);
+      values.push(col === 'tracks' || col === 'meta' ? JSON.stringify(v) : v);
+    }
+    if (sets.length === 0) return false;
+    values.push(id);
+    this.db.prepare(`UPDATE dj_vinyls SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    return true;
+  }
+
   searchVinyls(query) {
     if (!query) return [];
     const wildcard = `% ${query} % `;

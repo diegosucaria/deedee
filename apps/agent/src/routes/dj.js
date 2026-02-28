@@ -41,6 +41,27 @@ const createDjRouter = (agent) => {
         }
     });
 
+    // PUT /vinyls/:id - Update vinyl fields
+    router.put('/vinyls/:id', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const fields = req.body;
+            const updated = agent.db.updateVinyl(id, fields);
+            if (updated) {
+                const vinyl = agent.db.getVinyl(id);
+                if (agent.interface && agent.interface.broadcast) {
+                    agent.interface.broadcast('dj:vinyl:update', vinyl);
+                }
+                res.json({ success: true, vinyl });
+            } else {
+                res.status(404).json({ error: 'Vinyl not found or no fields to update' });
+            }
+        } catch (error) {
+            console.error('[DJRouter] Update error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
     // Serve Vinyl Covers (Internal)
     // Uses 'data' dir (volume)
     const dataDir = require('path').join(process.cwd(), 'data/vinyl_covers');

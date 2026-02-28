@@ -133,7 +133,7 @@ class DJService {
     }
 
     async _enrichAndSave(rawItem, imageSource = null) {
-        // 1. Image Persistence
+        // 1. Save uploaded photo as initial cover
         let coverUrl = '/vinyl_covers/default.png';
         const dataDir = path.join(process.cwd(), 'data/vinyl_covers');
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
@@ -143,11 +143,9 @@ class DJService {
             const filePath = path.join(dataDir, filename);
 
             if (typeof imageSource === 'string' && imageSource.startsWith('/')) {
-                // File path
                 fs.copyFileSync(imageSource, filePath);
                 coverUrl = `/vinyl_covers/${filename}`;
             } else if (imageSource.base64) {
-                // Base64 data
                 fs.writeFileSync(filePath, Buffer.from(imageSource.base64, 'base64'));
                 coverUrl = `/vinyl_covers/${filename}`;
             }
@@ -161,22 +159,53 @@ class DJService {
             console.warn('[DJService] Metadata enrichment failed:', e.message);
         }
 
+        // 3. Try to download cover art from Discogs (overrides uploaded photo)
+        if (enriched.coverArtUrl && enriched.coverArtUrl.startsWith('http')) {
+            try {
+                const https = require('https');
+                const http = require('http');
+                const coverFilename = `${crypto.randomUUID()}.jpg`;
+                const coverPath = path.join(dataDir, coverFilename);
+                const mod = enriched.coverArtUrl.startsWith('https') ? https : http;
+                await new Promise((resolve) => {
+                    const req = mod.get(enriched.coverArtUrl, { headers: { 'User-Agent': 'DeeDee/1.0' } }, (res) => {
+                        if (res.statusCode === 200) {
+                            const fileStream = fs.createWriteStream(coverPath);
+                            res.pipe(fileStream);
+                            fileStream.on('finish', () => { fileStream.close(); resolve(); });
+                        } else {
+                            resolve();
+                        }
+                    });
+                    req.on('error', () => resolve());
+                    req.setTimeout(5000, () => { req.destroy(); resolve(); });
+                });
+                if (fs.existsSync(coverPath) && fs.statSync(coverPath).size > 1000) {
+                    coverUrl = `/vinyl_covers/${coverFilename}`;
+                    console.log(`[DJService] Downloaded cover art from: ${enriched.coverArtUrl}`);
+                }
+            } catch (e) {
+                console.warn('[DJService] Cover art download failed:', e.message);
+            }
+        }
+
         const vinyl = {
             artist: rawItem.artist,
             title: rawItem.title,
             label: rawItem.label || enriched.label || '',
             catalogNumber: rawItem.catalog_number || enriched.catalogNumber || '',
             coverImageUrl: coverUrl,
-            bpm: enriched.bpm || 0,
-            key: enriched.key || '',
-            tracks: rawItem.tracklist || enriched.tracks || [],
+            bpm: 0,
+            key: '',
+            tracks: this._normalizeTracks(rawItem.tracklist, enriched.tracks),
             meta: {
                 source: 'vision',
                 genre: enriched.genre || '',
                 year: enriched.year || '',
                 discogsUrl: enriched.discogsUrl || '',
                 beatportUrl: enriched.beatportUrl || '',
-                style: enriched.style || ''
+                style: enriched.style || '',
+                enrichmentConfidence: enriched.confidence || 0
             }
         };
 
@@ -206,7 +235,25 @@ class DJService {
                 model: modelName,
                 contents: [{
                     role: 'user',
-                    parts: [{ text: `Look up this vinyl record: "${query}". Find on Discogs or Beatport. Return JSON with: { "bpm": number, "key": "string (e.g. Am, Cm, F#m)", "genre": "string", "style": "string (subgenre)", "year": number, "tracks": ["A1 - Track Name", "B1 - Track Name"], "discogsUrl": "URL or empty", "beatportUrl": "URL or empty", "label": "string", "catalogNumber": "string" }. If you cannot find exact data, provide your best estimate based on the artist/label. Respond ONLY with valid JSON.` }]
+                    parts: [{
+                        text: `Look up this vinyl record: "${query}". Find on Discogs or Beatport.
+Return JSON with:
+{
+  "genre": "string",
+  "style": "string (subgenre)",
+  "year": number,
+  "tracks": [
+    { "position": "A1", "title": "Track Name", "bpm": number, "key": "string (e.g. Am, Cm, F#m)" }
+  ],
+  "discogsUrl": "URL or empty",
+  "beatportUrl": "URL or empty",
+  "coverArtUrl": "Direct image URL of the vinyl cover from Discogs or empty",
+  "label": "string",
+  "catalogNumber": "string",
+  "confidence": number between 0 and 1 indicating how confident you are that this is the correct record
+}
+IMPORTANT: BPM and key are PER TRACK, not per vinyl. Each track in the tracklist should have its own BPM and key.
+If you cannot find exact data, provide your best estimate and set confidence accordingly. Respond ONLY with valid JSON.` }]
                 }],
                 config: {
                     responseMimeType: 'application/json',
@@ -226,7 +273,7 @@ class DJService {
             if (text) {
                 const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
                 const data = JSON.parse(cleaned);
-                console.log(`[DJService] Enriched: BPM=${data.bpm}, Key=${data.key}, Genre=${data.genre}, Year=${data.year}`);
+                console.log(`[DJService] Enriched: Genre=${data.genre}, Year=${data.year}, Tracks=${data.tracks?.length || 0}, Confidence=${data.confidence}`);
                 return data;
             }
         } catch (e) {
@@ -234,6 +281,35 @@ class DJService {
         }
 
         return {};
+    }
+
+    /**
+     * Normalize tracks: merge vision-extracted strings with enriched objects.
+     * Output: [{ position, title, bpm, key }]
+     */
+    _normalizeTracks(visionTracks, enrichedTracks) {
+        // Prefer enriched (structured objects with bpm/key)
+        if (enrichedTracks && Array.isArray(enrichedTracks) && enrichedTracks.length > 0) {
+            // If enriched tracks are already objects, use them
+            if (typeof enrichedTracks[0] === 'object') return enrichedTracks;
+            // If they're strings, convert
+            return enrichedTracks.map((t, i) => {
+                if (typeof t === 'string') {
+                    return { position: `${i + 1}`, title: t, bpm: 0, key: '' };
+                }
+                return t;
+            });
+        }
+        // Fall back to vision strings
+        if (visionTracks && Array.isArray(visionTracks) && visionTracks.length > 0) {
+            return visionTracks.map((t, i) => {
+                if (typeof t === 'string') {
+                    return { position: `${i + 1}`, title: t, bpm: 0, key: '' };
+                }
+                return t;
+            });
+        }
+        return [];
     }
 
     async _prepareImagePart(imageInput) {

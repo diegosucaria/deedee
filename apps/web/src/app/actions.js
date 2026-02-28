@@ -572,6 +572,18 @@ export async function uploadVinylPhoto(base64Data, mimeType) {
     }
 }
 
+export async function updateVinyl(id, fields) {
+    try {
+        const data = await fetchAPI(`/v1/dj/vinyls/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            body: JSON.stringify(fields)
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function rewindChat(chatId, messageId) {
     console.log('[DEBUG] rewindChat Action:', { chatId, messageId });
     try {
