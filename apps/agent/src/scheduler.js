@@ -196,9 +196,19 @@ class Scheduler {
                                 await this.agent.interface.send(reply);
                             }
                             // Capture reply for logging
-                            if (!executionResult) executionResult = reply;
-                            else if (reply.text) executionResult.text = (executionResult.text || '') + '\n' + reply.text;
+                            if (!executionResult) {
+                                executionResult = reply;
+                            } else if (reply.content) {
+                                executionResult.text = (executionResult.text || '') + '\n' + reply.content;
+                            }
+                            // Always ensure the latest text is tracked
+                            if (reply.content) executionResult.text = reply.content;
                         });
+
+                        // Ensure result has a string text property
+                        if (!executionResult) executionResult = { text: '' };
+                        if (typeof executionResult.text !== 'string') executionResult.text = String(executionResult.content || executionResult.text || '');
+
                         return executionResult;
 
                     } catch (error) {
@@ -267,9 +277,12 @@ class Scheduler {
 
         try {
             if (this.agent.interface && this.agent.settings) {
-                const settings = this.agent.settings;
+                // Refresh settings directly from DB just to be safe
+                const settings = this.agent.db.getAllAgentSettings();
                 const ownerPhone = settings.owner_phone;
                 const channel = settings.notification_channel || 'whatsapp';
+
+                console.log(`[Scheduler] Smart Notification Evaluation - Phone: ${ownerPhone ? ownerPhone : 'MISSING'}, Channel: ${channel}`);
 
                 if (ownerPhone) {
                     const taskLower = (payload.task || '').toLowerCase();
@@ -301,10 +314,15 @@ class Scheduler {
                             shouldNotify = true;
                         }
 
-                        const isAction = taskLower.startsWith('turn') || taskLower.startsWith('run') || taskLower.startsWith('backup');
+                        const isAction = taskLower.match(/^(turn|run|backup)/i) !== null;
+
+                        // If it's NOT an action and we haven't decided it's NOT worthy yet, we notify by default.
+                        // Actions are quiet by default unless explicitly asked to alert.
                         if (!shouldNotify && !isAction) {
                             shouldNotify = true;
                         }
+
+                        console.log(`[Scheduler] Evaluated Output Content: isAction=${isAction}, shouldNotify=${shouldNotify}`);
 
                         notificationText = text;
                     }
