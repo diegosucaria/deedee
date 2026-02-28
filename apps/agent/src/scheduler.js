@@ -556,7 +556,7 @@ class Scheduler {
                 // Proactive Thought (Probabilistic execution)
                 if (sysJob.name === 'proactive_thought') {
                     // 20% chance to run every hour
-                    if (Math.random() >= 0.20) {
+                    if (Math.random() >= 0.35) {
                         console.log('[Scheduler] Proactive loop skipped this hour (RNG).');
                         return { success: true, skipped: true };
                     }
