@@ -211,7 +211,9 @@ class Scheduler {
             }
 
             let callback;
-            if (taskType === 'agent_instruction' && payload.task) {
+            if (payload && payload.task) {
+                // Any job with a task string is treated as an agent instruction
+                // (handles legacy 'custom', 'function_call', and 'agent_instruction' types)
                 // Reconstruct agent instruction callback
                 callback = async () => {
                     console.log(`[Scheduler] Executing persisted task: ${payload.task} (Retry: ${payload.retryCount || 0})`);
