@@ -3,6 +3,9 @@ const express = require('express');
 const createDjRouter = (agent) => {
     const router = express.Router();
 
+    // Increase body size limit for image uploads (10MB)
+    router.use(express.json({ limit: '10mb' }));
+
     // GET /vinyls
     router.get('/vinyls', async (req, res) => {
         try {
@@ -13,6 +16,27 @@ const createDjRouter = (agent) => {
             res.json(vinyls);
         } catch (error) {
             console.error('[DJRouter] Error fetching vinyls:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    // POST /vinyls/upload - Upload vinyl photo for analysis
+    router.post('/vinyls/upload', async (req, res) => {
+        try {
+            const { image, mimeType } = req.body;
+            if (!image) {
+                return res.status(400).json({ error: 'Missing image data (base64)' });
+            }
+
+            if (!agent.djService) {
+                return res.status(503).json({ error: 'DJ Service not available' });
+            }
+
+            console.log('[DJRouter] Processing vinyl upload...');
+            const results = await agent.djService.ingestVinylFromBase64(image, mimeType || 'image/jpeg');
+            res.json({ success: true, vinyls: results });
+        } catch (error) {
+            console.error('[DJRouter] Upload error:', error);
             res.status(500).json({ error: error.message });
         }
     });

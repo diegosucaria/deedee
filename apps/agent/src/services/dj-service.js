@@ -1,13 +1,14 @@
 const fs = require('fs');
 const path = require('path');
-const axios = require('axios');
 const crypto = require('crypto');
+const { ConfigService } = require('./config-service');
 
 class DJService {
     constructor(agent) {
         this.agent = agent;
         this.db = agent.db;
         this.vaults = agent.vaults;
+        this.config = new ConfigService();
         this.mcp = agent.mcp; // Access to MCP tools if needed, or we use agent's toolExecutor logic? 
         // We can use agent.client (Gemini) directly for intelligence?
         // agent.toolExecutor.services.client is populated at runtime, but we might want direct access if passed in constructor?
@@ -35,19 +36,29 @@ class DJService {
      */
     async ingestVinyl(imageInput, type = 'auto') {
         console.log(`[DJService] Ingesting Vinyl from image... Type: ${type}`);
-
-        // 1. Prepare Image for Gemini
-        // If it's a URL/File, read it to base64? 
-        // Agent helper `this.agent.client` is available? No, client is init in `start()`. 
-        // But `this.agent.client` should be accessible if service is called after start.
         if (!this.agent.client) throw new Error('Gemini Client not initialized');
 
-        // Load Image Data for Vision
         const imagePart = await this._prepareImagePart(imageInput);
+        const imageSource = typeof imageInput === 'string' && imageInput.startsWith('/') ? imageInput : null;
+        return this._analyzeAndIngest(imagePart, imageSource);
+    }
 
-        // 2. Vision Analysis (WORKER_PRO)
-        const proModelName = process.env.WORKER_PRO || 'gemini-1.5-pro-latest';
-        const model = this.agent.client.getGenerativeModel({ model: proModelName });
+    /**
+     * Ingest from base64 data (used by analysis-service and web upload).
+     */
+    async ingestVinylFromBase64(base64Data, mimeType = 'image/jpeg') {
+        console.log('[DJService] Ingesting Vinyl from base64 data...');
+        if (!this.agent.client) throw new Error('Gemini Client not initialized');
+
+        const imagePart = { inlineData: { data: base64Data, mimeType } };
+        return this._analyzeAndIngest(imagePart, { base64: base64Data, mimeType });
+    }
+
+    /**
+     * Shared analysis pipeline for both file and base64 inputs.
+     */
+    async _analyzeAndIngest(imagePart, imageSource = null) {
+        const modelName = this.config.getModel('FLASH');
 
         const prompt = `
       Analyze this image for a DJ Vinyl Collection.
@@ -76,27 +87,28 @@ class DJService {
       Respond ONLY with JSON.
     `;
 
-        const result = await model.generateContent([prompt, imagePart]);
-        const responseText = result.response.text();
+        const result = await this.agent.client.models.generateContent({
+            model: modelName,
+            contents: [{
+                role: 'user',
+                parts: [imagePart, { text: prompt }]
+            }],
+            config: {
+                responseMimeType: 'application/json'
+            }
+        });
 
-        // Log Cost with Tag
-        // We need to calculate tokens roughly or use usageMetadata if available
-        const usage = result.response.usageMetadata;
-        if (usage) {
-            this.db.logTokenUsage({
-                model: proModelName,
-                promptTokens: usage.promptTokenCount,
-                candidateTokens: usage.candidatesTokenCount,
-                totalTokens: usage.totalTokenCount,
-                chatId: 'system_dj_ingest',
-                estimatedCost: 0, // TODO: Calc cost
-                tag: 'dj_mode'
-            });
-        }
+        let responseText = '';
+        try {
+            if (typeof result.text === 'function') responseText = result.text();
+            else if (result.text) responseText = result.text;
+            else if (result.candidates?.[0]?.content?.parts) {
+                responseText = result.candidates[0].content.parts.map(p => p.text).join('');
+            }
+        } catch (e) { /* ignore */ }
 
         let data;
         try {
-            // Clean markdown if present
             const jsonStr = responseText.replace(/```json/g, '').replace(/```/g, '').trim();
             data = JSON.parse(jsonStr);
         } catch (e) {
@@ -104,65 +116,68 @@ class DJService {
             throw new Error('Failed to parse vinyl information from image.');
         }
 
-        // 3. Process Data
         const ingested = [];
-
         if (data.type === 'receipt') {
-            // For each item, verify confidence?
-            // For now, we search Discogs for details to fill in blanks
             for (const item of data.items) {
                 if (item.confidence > 0.6) {
-                    const vinyl = await this._enrichAndSave(item);
+                    const vinyl = await this._enrichAndSave(item, imageSource);
                     ingested.push(vinyl);
                 }
             }
         } else {
-            // Single Cover
-            const vinyl = await this._enrichAndSave(data, imageInput);
+            const vinyl = await this._enrichAndSave(data, imageSource);
             ingested.push(vinyl);
         }
 
         return ingested;
     }
 
-    async _enrichAndSave(rawItem, originalImage = null) {
-        // 1. Search (Mock Discogs via Google Search for now, or real if we had tool)
-        // We can use the agent's `googleSearch` tool logic?
-        // Or just save what we have if search is expensive.
-        // Requirement says: "Search: googleSearch -> Discogs release..."
-
-        // Skip deep search to keep latency low
-        // For now, we trust Vision + Basic metadata.
-
-        // 2. Image Persistence
+    async _enrichAndSave(rawItem, imageSource = null) {
+        // 1. Image Persistence
         let coverUrl = '/vinyl_covers/default.png';
-        if (originalImage) {
-            // Save local copy to persistent volume
-            const filename = `${crypto.randomUUID()}.jpg`;
-            // Uses 'data' dir which is mounted volume in Docker
-            const dataDir = path.join(process.cwd(), 'data/vinyl_covers');
-            if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+        const dataDir = path.join(process.cwd(), 'data/vinyl_covers');
+        if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
+        if (imageSource) {
+            const filename = `${crypto.randomUUID()}.jpg`;
             const filePath = path.join(dataDir, filename);
 
-            // Write file
-            if (originalImage.startsWith('/')) {
-                fs.copyFileSync(originalImage, filePath);
-                // Frontend route handler will proxy this
+            if (typeof imageSource === 'string' && imageSource.startsWith('/')) {
+                // File path
+                fs.copyFileSync(imageSource, filePath);
+                coverUrl = `/vinyl_covers/${filename}`;
+            } else if (imageSource.base64) {
+                // Base64 data
+                fs.writeFileSync(filePath, Buffer.from(imageSource.base64, 'base64'));
                 coverUrl = `/vinyl_covers/${filename}`;
             }
+        }
+
+        // 2. Metadata Enrichment via Google Search
+        let enriched = {};
+        try {
+            enriched = await this._enrichMetadata(rawItem.artist, rawItem.title, rawItem.label);
+        } catch (e) {
+            console.warn('[DJService] Metadata enrichment failed:', e.message);
         }
 
         const vinyl = {
             artist: rawItem.artist,
             title: rawItem.title,
-            label: rawItem.label,
-            catalogNumber: rawItem.catalog_number,
-            coverImageUrl: rawItem.cover_image_url || coverUrl, // Vision might have extracted a URL if it was a screenshot? Unlikely.
-            bpm: 0, // TODO: Analyze?
-            key: '',
-            tracks: rawItem.tracklist || [],
-            meta: { source: 'vision' }
+            label: rawItem.label || enriched.label || '',
+            catalogNumber: rawItem.catalog_number || enriched.catalogNumber || '',
+            coverImageUrl: coverUrl,
+            bpm: enriched.bpm || 0,
+            key: enriched.key || '',
+            tracks: rawItem.tracklist || enriched.tracks || [],
+            meta: {
+                source: 'vision',
+                genre: enriched.genre || '',
+                year: enriched.year || '',
+                discogsUrl: enriched.discogsUrl || '',
+                beatportUrl: enriched.beatportUrl || '',
+                style: enriched.style || ''
+            }
         };
 
         const id = this.db.addVinyl(vinyl);
@@ -175,20 +190,64 @@ class DJService {
         return { ...vinyl, id };
     }
 
+    /**
+     * Enrich vinyl metadata using Google Search grounding.
+     * Looks up BPM, key, genre, year from Discogs/Beatport.
+     */
+    async _enrichMetadata(artist, title, label) {
+        if (!artist && !title) return {};
+
+        const modelName = this.config.getModel('FLASH');
+        const query = `${artist || ''} - ${title || ''} ${label ? `(${label})` : ''}`;
+        console.log(`[DJService] Enriching metadata for: ${query}`);
+
+        try {
+            const result = await this.agent.client.models.generateContent({
+                model: modelName,
+                contents: [{
+                    role: 'user',
+                    parts: [{ text: `Look up this vinyl record: "${query}". Find on Discogs or Beatport. Return JSON with: { "bpm": number, "key": "string (e.g. Am, Cm, F#m)", "genre": "string", "style": "string (subgenre)", "year": number, "tracks": ["A1 - Track Name", "B1 - Track Name"], "discogsUrl": "URL or empty", "beatportUrl": "URL or empty", "label": "string", "catalogNumber": "string" }. If you cannot find exact data, provide your best estimate based on the artist/label. Respond ONLY with valid JSON.` }]
+                }],
+                config: {
+                    responseMimeType: 'application/json',
+                    tools: [{ googleSearch: {} }]
+                }
+            });
+
+            let text = '';
+            try {
+                if (typeof result.text === 'function') text = result.text();
+                else if (result.text) text = result.text;
+                else if (result.candidates?.[0]?.content?.parts) {
+                    text = result.candidates[0].content.parts.map(p => p.text).filter(Boolean).join('');
+                }
+            } catch (e) { /* ignore */ }
+
+            if (text) {
+                const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
+                const data = JSON.parse(cleaned);
+                console.log(`[DJService] Enriched: BPM=${data.bpm}, Key=${data.key}, Genre=${data.genre}, Year=${data.year}`);
+                return data;
+            }
+        } catch (e) {
+            console.warn('[DJService] Search enrichment failed:', e.message);
+        }
+
+        return {};
+    }
+
     async _prepareImagePart(imageInput) {
-        // Basic implementation for file paths
-        if (fs.existsSync(imageInput)) {
+        // File paths
+        if (typeof imageInput === 'string' && fs.existsSync(imageInput)) {
             const mimeType = imageInput.endsWith('.png') ? 'image/png' : 'image/jpeg';
             const data = fs.readFileSync(imageInput).toString('base64');
-            return {
-                inlineData: {
-                    data,
-                    mimeType
-                }
-            };
+            return { inlineData: { data, mimeType } };
         }
-        // TODO: Handle URLs / Base64 strings
-        throw new Error('Image input format not supported (only local paths for now)');
+        // Base64 object { base64, mimeType }
+        if (imageInput && imageInput.base64) {
+            return { inlineData: { data: imageInput.base64, mimeType: imageInput.mimeType || 'image/jpeg' } };
+        }
+        throw new Error('Image input format not supported');
     }
 
     /**

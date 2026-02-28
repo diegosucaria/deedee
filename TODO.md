@@ -113,6 +113,7 @@
 - [x] **Scheduler Routing Fix (Feb 2026)**: Fixed HTTP payload mismatch (`platform` missing) causing 400 errors during Smart Notifications routing.
 - [x] **Job Toggles (Feb 2026)**: Added capabilities to pause and resume system and user jobs efficiently. Integrated with UX/UI WebSockets live updates.
 - [x] **Watcher Toggles (Feb 2026)**: Enable/disable message watchers from the dashboard with ON/OFF toggle, row dimming, and socket.io live sync.
+- [x] **Vinyl DJ Crate Upgrade (Feb 2026)**: Fixed `addNote` crash, added direct photo upload from DJ Crate page, Google Search metadata enrichment (BPM, key, genre, year, Discogs/Beatport), enriched UI cards.
 - [x] **Slack Integration (Feb 2026)**:
     - [x] **SlackService**: RTM WebSocket + polling fallback, AES-256-GCM encrypted token storage.
     - [x] **Agent Tools**: `searchSlack`, `readSlackHistory`, `sendSlackMessage`.

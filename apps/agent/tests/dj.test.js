@@ -1,4 +1,5 @@
 const { DJService } = require('../src/services/dj-service');
+const fs = require('fs');
 const path = require('path');
 
 // Mock dependencies
@@ -13,17 +14,37 @@ const mockAgent = {
         createVault: jest.fn(),
         updateVaultPage: jest.fn()
     },
+    interface: { broadcast: jest.fn() },
     client: {
+        models: {
+            generateContent: jest.fn().mockResolvedValue({
+                text: JSON.stringify({
+                    type: 'cover',
+                    artist: "Test Artist",
+                    title: "Test Title",
+                    label: "Test Label",
+                    confidence: 0.9
+                }),
+                candidates: [{
+                    content: {
+                        parts: [{
+                            text: JSON.stringify({
+                                type: 'cover',
+                                artist: "Test Artist",
+                                title: "Test Title",
+                                label: "Test Label",
+                                confidence: 0.9
+                            })
+                        }]
+                    }
+                }]
+            })
+        },
+        // Legacy compat for recommendVinyl (still uses getGenerativeModel)
         getGenerativeModel: jest.fn().mockReturnValue({
             generateContent: jest.fn().mockResolvedValue({
                 response: {
-                    text: () => JSON.stringify({
-                        type: 'cover',
-                        artist: "Test Artist",
-                        title: "Test Title",
-                        label: "Test Label",
-                        confidence: 0.9
-                    }),
+                    text: () => "Recommendation: Track A - B",
                     usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 10, totalTokenCount: 20 }
                 }
             })
@@ -37,11 +58,16 @@ describe('DJService', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         djService = new DJService(mockAgent);
-        // Mock internal methods to avoid FS calls for images
+        // Mock _prepareImagePart to avoid FS calls
         djService._prepareImagePart = jest.fn().mockResolvedValue({ inlineData: { data: 'base64', mimeType: 'image/jpeg' } });
-        djService._enrichAndSave = jest.fn().mockImplementation((item) => {
-            return { ...item, id: 'vinyl_123' };
+        // Mock _enrichMetadata to avoid real Gemini calls
+        djService._enrichMetadata = jest.fn().mockResolvedValue({
+            bpm: 128, key: 'Am', genre: 'House', year: 2024
         });
+        // Mock FS operations to prevent real file writes
+        jest.spyOn(fs, 'copyFileSync').mockImplementation(() => { });
+        jest.spyOn(fs, 'writeFileSync').mockImplementation(() => { });
+        jest.spyOn(fs, 'mkdirSync').mockImplementation(() => { });
     });
 
     test('should initialize and create vault if missing', async () => {
@@ -58,9 +84,25 @@ describe('DJService', () => {
         const result = await djService.ingestVinyl('/path/to/image.jpg');
 
         expect(djService._prepareImagePart).toHaveBeenCalledWith('/path/to/image.jpg');
-        expect(mockAgent.client.getGenerativeModel).toHaveBeenCalled();
+        expect(mockAgent.client.models.generateContent).toHaveBeenCalled();
         expect(result).toHaveLength(1);
         expect(result[0].artist).toBe("Test Artist");
+    });
+
+    test('ingestVinylFromBase64 should process base64 image', async () => {
+        const result = await djService.ingestVinylFromBase64('abc123base64', 'image/jpeg');
+
+        expect(mockAgent.client.models.generateContent).toHaveBeenCalled();
+        expect(result).toHaveLength(1);
+        expect(result[0].artist).toBe("Test Artist");
+    });
+
+    test('should enrich metadata with BPM, key, genre', async () => {
+        const result = await djService.ingestVinyl('/path/to/image.jpg');
+
+        expect(djService._enrichMetadata).toHaveBeenCalledWith("Test Artist", "Test Title", "Test Label");
+        expect(result[0].bpm).toBe(128);
+        expect(result[0].key).toBe('Am');
     });
 
     test('recommendVinyl should handle empty crate', async () => {
@@ -72,7 +114,6 @@ describe('DJService', () => {
     test('recommendVinyl should call model if crate has items', async () => {
         mockAgent.db.getVinyls.mockReturnValue([{ artist: 'A', title: 'B' }]);
 
-        // Mock specific response for recommendation
         const mockModel = mockAgent.client.getGenerativeModel();
         mockModel.generateContent.mockResolvedValueOnce({
             response: {

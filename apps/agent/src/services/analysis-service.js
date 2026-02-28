@@ -98,21 +98,22 @@ class AnalysisService {
 
             // Action
             if (analysis.vaultId && analysis.vaultId !== 'null' && analysis.vaultId !== 'none') {
-                // Auto-Store? Or Suggest?
-                // For now, just Log/Memory
-                // Ideally we add to the Vault directly.
                 console.log(`[AnalysisService] Identified Vault: ${analysis.vaultId}`);
 
-                // Store in Vault Notes
-                await this.agent.vaults.addNote(analysis.vaultId, `Analyzed File: ${analysis.summary}`);
-
-                // Notify User
-                /*
-                const reply = createAssistantMessage(`📂 I filed that document into your **${analysis.vaultId}** vault.\nSummary: ${analysis.summary}`);
-                reply.metadata = { chatId };
-                this.agent.interface.send(reply); // Async send
-                */
-                // We don't have easy async send back without context.
+                // Route vinyl/DJ images to the DJ Service for proper cataloguing
+                if (analysis.vaultId === 'dj_history' && this.agent.djService) {
+                    try {
+                        console.log('[AnalysisService] Routing to DJService.ingestVinyl()...');
+                        const results = await this.agent.djService.ingestVinylFromBase64(data, mimeType);
+                        console.log(`[AnalysisService] DJ ingestion complete: ${results.length} vinyls added.`);
+                    } catch (djErr) {
+                        console.error('[AnalysisService] DJ ingestion failed:', djErr.message);
+                    }
+                } else {
+                    // Store in Vault Notes for non-DJ vaults
+                    const filename = `analysis_${Date.now()}.md`;
+                    await this.agent.vaults.updateVaultPage(analysis.vaultId, filename, `# Analyzed File\n\n${analysis.summary}`);
+                }
             }
 
         } catch (e) {

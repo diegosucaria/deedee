@@ -560,6 +560,18 @@ export async function getVinylCrate(limit = 50, offset = 0) {
     }
 }
 
+export async function uploadVinylPhoto(base64Data, mimeType) {
+    try {
+        const data = await fetchAPI('/v1/dj/vinyls/upload', {
+            method: 'POST',
+            body: JSON.stringify({ image: base64Data, mimeType })
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function rewindChat(chatId, messageId) {
     console.log('[DEBUG] rewindChat Action:', { chatId, messageId });
     try {
