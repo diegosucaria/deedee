@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { getVinylCrate, uploadVinylPhoto, updateVinyl } from '../actions';
+import { getVinylCrate, uploadVinylPhoto, updateVinyl, deleteVinyl as deleteVinylAction } from '../actions';
 import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
-import { Upload, Disc3, Music, ExternalLink, Loader2, Search, X, AlertTriangle, Check, Pencil } from 'lucide-react';
+import { Upload, Disc3, Music, ExternalLink, Loader2, Search, X, AlertTriangle, Check, Pencil, Trash2 } from 'lucide-react';
 
 export default function DJCratePage() {
     const [vinyls, setVinyls] = useState([]);
@@ -35,6 +35,10 @@ export default function DJCratePage() {
                 if (idx >= 0) { const u = [...prev]; u[idx] = v; return u; }
                 return [v, ...prev];
             });
+        });
+        socket.on('dj:vinyl:delete', ({ id }) => {
+            setVinyls((prev) => prev.filter(v => v.id !== id));
+            setSelectedVinyl((sel) => sel?.id === id ? null : sel);
         });
         return () => socket.disconnect();
     }, []);
@@ -115,6 +119,17 @@ export default function DJCratePage() {
         const t = [...(editFields.tracks || [])];
         t[idx] = { ...t[idx], [field]: field === 'bpm' ? Number(value) || 0 : value };
         setEditFields({ ...editFields, tracks: t });
+    };
+
+    const handleDelete = async () => {
+        if (!selectedVinyl) return;
+        if (!confirm(`Delete "${selectedVinyl.artist} - ${selectedVinyl.title}"? This will also remove the cover image.`)) return;
+        const result = await deleteVinylAction(selectedVinyl.id);
+        if (result.success) {
+            setVinyls((prev) => prev.filter(v => v.id !== selectedVinyl.id));
+            setSelectedVinyl(null);
+            setEditing(false);
+        }
     };
 
     return (
@@ -274,6 +289,7 @@ export default function DJCratePage() {
                                 vinyl={selectedVinyl} editing={editing} editFields={editFields} saving={saving}
                                 onClose={() => { setSelectedVinyl(null); setEditing(false); }}
                                 onEdit={startEditing} onSave={handleSave} onCancel={() => setEditing(false)}
+                                onDelete={handleDelete}
                                 setEditFields={setEditFields} updateTrackField={updateTrackField}
                                 parseMeta={parseMeta} parseTracks={parseTracks} getConfidenceInfo={getConfidenceInfo}
                             />
@@ -285,7 +301,7 @@ export default function DJCratePage() {
     );
 }
 
-function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit, onSave, onCancel, setEditFields, updateTrackField, parseMeta, parseTracks, getConfidenceInfo }) {
+function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit, onSave, onCancel, onDelete, setEditFields, updateTrackField, parseMeta, parseTracks, getConfidenceInfo }) {
     const meta = parseMeta(vinyl);
     const tracks = parseTracks(vinyl);
     const conf = meta.enrichmentConfidence || 0;
@@ -356,9 +372,14 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                     {!editing && (
-                        <button onClick={onEdit} className="p-2 rounded-lg hover:bg-zinc-800 text-muted-foreground hover:text-foreground transition-colors" title="Edit">
-                            <Pencil className="w-4 h-4" />
-                        </button>
+                        <>
+                            <button onClick={onEdit} className="p-2 rounded-lg hover:bg-zinc-800 text-muted-foreground hover:text-foreground transition-colors" title="Edit">
+                                <Pencil className="w-4 h-4" />
+                            </button>
+                            <button onClick={onDelete} className="p-2 rounded-lg hover:bg-red-900/30 text-muted-foreground hover:text-red-400 transition-colors" title="Delete">
+                                <Trash2 className="w-4 h-4" />
+                            </button>
+                        </>
                     )}
                     <button onClick={onClose} className="p-2 rounded-lg hover:bg-zinc-800 text-muted-foreground hover:text-foreground transition-colors">
                         <X className="w-4 h-4" />

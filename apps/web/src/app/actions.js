@@ -584,6 +584,17 @@ export async function updateVinyl(id, fields) {
     }
 }
 
+export async function deleteVinyl(id) {
+    try {
+        const data = await fetchAPI(`/v1/dj/vinyls/${encodeURIComponent(id)}`, {
+            method: 'DELETE'
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function rewindChat(chatId, messageId) {
     console.log('[DEBUG] rewindChat Action:', { chatId, messageId });
     try {

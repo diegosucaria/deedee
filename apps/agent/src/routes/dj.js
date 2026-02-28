@@ -68,6 +68,28 @@ const createDjRouter = (agent) => {
         }
     });
 
+    // DELETE /vinyls/:id - Delete vinyl and its cover image
+    router.delete('/vinyls/:id', async (req, res) => {
+        try {
+            const { id } = req.params;
+            if (!id || id.trim().length === 0) {
+                return res.status(400).json({ error: 'Missing vinyl ID' });
+            }
+            const deleted = agent.db.deleteVinyl(id);
+            if (deleted) {
+                if (agent.interface && agent.interface.broadcast) {
+                    agent.interface.broadcast('dj:vinyl:delete', { id });
+                }
+                res.json({ success: true });
+            } else {
+                res.status(404).json({ error: 'Vinyl not found' });
+            }
+        } catch (error) {
+            console.error('[DJRouter] Delete error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
     // Serve Vinyl Covers (Internal)
     // Uses 'data' dir (volume)
     const dataDir = require('path').join(process.cwd(), 'data/vinyl_covers');

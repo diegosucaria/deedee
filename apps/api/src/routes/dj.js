@@ -59,4 +59,19 @@ router.put('/vinyls/:id', async (req, res) => {
     }
 });
 
+// DELETE /v1/dj/vinyls/:id
+// Maps to Agent: DELETE /internal/dj/vinyls/:id
+router.delete('/vinyls/:id', async (req, res) => {
+    try {
+        const url = `${AGENT_URL}/internal/dj/vinyls/${encodeURIComponent(req.params.id)}`;
+        const response = await axios.delete(url);
+        res.json(response.data);
+    } catch (error) {
+        console.error('[API] DJ Delete Proxy Error:', error.message);
+        const status = error.response ? error.response.status : 502;
+        const data = error.response ? error.response.data : { error: 'Agent unavailable' };
+        res.status(status).json(data);
+    }
+});
+
 module.exports = router;

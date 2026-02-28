@@ -1012,6 +1012,28 @@ class AgentDB {
     return row || null;
   }
 
+  deleteVinyl(id) {
+    // Get vinyl to find cover image path
+    const vinyl = this.getVinyl(id);
+    if (!vinyl) return false;
+
+    // Delete cover image file if it's not the default
+    if (vinyl.cover_image_url && vinyl.cover_image_url !== '/vinyl_covers/default.png') {
+      const fs = require('fs');
+      const path = require('path');
+      const filename = vinyl.cover_image_url.replace('/vinyl_covers/', '');
+      const filePath = path.join(process.cwd(), 'data/vinyl_covers', filename);
+      try {
+        if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
+      } catch (e) {
+        console.warn('[DB] Failed to delete cover image:', e.message);
+      }
+    }
+
+    this.db.prepare('DELETE FROM dj_vinyls WHERE id = ?').run(id);
+    return true;
+  }
+
   getVinyl(id) {
     const stmt = this.db.prepare('SELECT * FROM dj_vinyls WHERE id = ?');
     const row = stmt.get(id);
