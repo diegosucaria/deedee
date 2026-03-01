@@ -18,6 +18,7 @@ export default function DJCratePage() {
     const [saving, setSaving] = useState(false);
     const [viewMode, setViewMode] = useState('crate'); // 'crate' | 'tracks'
     const [sortConfig, setSortConfig] = useState({ key: 'bpm', dir: 'desc' });
+    const [enrichingVinyl, setEnrichingVinyl] = useState(null);
     const fileInputRef = useRef(null);
 
     async function loadCrate() {
@@ -41,6 +42,12 @@ export default function DJCratePage() {
         socket.on('dj:vinyl:delete', ({ id }) => {
             setVinyls((prev) => prev.filter(v => v.id !== id));
             setSelectedVinyl((sel) => sel?.id === id ? null : sel);
+        });
+        socket.on('dj:vinyl:enriching', (data) => {
+            setEnrichingVinyl(data);
+        });
+        socket.on('dj:vinyl:update', () => {
+            setEnrichingVinyl(null);
         });
         return () => socket.disconnect();
     }, []);
@@ -227,6 +234,17 @@ export default function DJCratePage() {
                     <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
                         className={`px-3 sm:px-4 py-2.5 rounded-lg text-xs sm:text-sm font-medium ${uploadStatus.startsWith('Error') ? 'bg-red-500/10 text-red-400 border border-red-500/20' : uploading ? 'bg-amber-500/10 text-amber-400 border border-amber-500/20' : 'bg-emerald-500/10 text-emerald-400 border border-emerald-500/20'}`}>
                         {uploadStatus}
+                    </motion.div>
+                )}
+            </AnimatePresence>
+
+            {/* Enrichment Status */}
+            <AnimatePresence>
+                {enrichingVinyl && (
+                    <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
+                        className="flex items-center gap-3 px-3 sm:px-4 py-2.5 rounded-lg text-xs sm:text-sm font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">
+                        <Loader2 className="w-4 h-4 animate-spin shrink-0" />
+                        <span>Enriching <strong>{enrichingVinyl.artist} - {enrichingVinyl.title}</strong> — searching Discogs, Beatport, decks.de, juno...</span>
                     </motion.div>
                 )}
             </AnimatePresence>
@@ -479,14 +497,9 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
                     {!editing && (
-                        <>
-                            <button onClick={onEdit} className="p-2 rounded-lg hover:bg-zinc-800 text-muted-foreground hover:text-foreground transition-colors" title="Edit">
-                                <Pencil className="w-4 h-4" />
-                            </button>
-                            <button onClick={onDelete} className="p-2 rounded-lg hover:bg-red-900/30 text-muted-foreground hover:text-red-400 transition-colors" title="Delete">
-                                <Trash2 className="w-4 h-4" />
-                            </button>
-                        </>
+                        <button onClick={onEdit} className="p-2 rounded-lg hover:bg-zinc-800 text-muted-foreground hover:text-foreground transition-colors" title="Edit">
+                            <Pencil className="w-4 h-4" />
+                        </button>
                     )}
                     <button onClick={onClose} className="p-2 rounded-lg hover:bg-zinc-800 text-muted-foreground hover:text-foreground transition-colors">
                         <X className="w-4 h-4" />
@@ -581,6 +594,17 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
                         className="flex items-center gap-2 px-3 sm:px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-all">
                         {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
                         Save
+                    </button>
+                </div>
+            )}
+
+            {/* Delete — separated from close/edit for safety */}
+            {!editing && (
+                <div className="pt-3 border-t border-zinc-700/30">
+                    <button onClick={onDelete}
+                        className="flex items-center gap-2 px-3 py-2 text-xs text-red-400/60 hover:text-red-400 hover:bg-red-900/20 rounded-lg transition-colors">
+                        <Trash2 className="w-3.5 h-3.5" />
+                        Delete this vinyl
                     </button>
                 </div>
             )}
