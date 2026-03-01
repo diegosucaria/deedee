@@ -19,10 +19,6 @@ const nextConfig = {
         source: '/api/:path*',
         destination: 'http://api:3001/:path*',
       },
-      {
-        source: '/vinyl_covers/:path*',
-        destination: 'http://api:3001/v1/dj/covers/:path*',
-      },
     ];
   },
 };

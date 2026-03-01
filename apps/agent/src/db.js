@@ -1022,7 +1022,7 @@ class AgentDB {
       const fs = require('fs');
       const path = require('path');
       const filename = vinyl.cover_image_url.replace('/vinyl_covers/', '');
-      const filePath = path.join(process.cwd(), 'data/vinyl_covers', filename);
+      const filePath = path.join(process.env.DATA_DIR || '/app/data', 'vinyl_covers', filename);
       try {
         if (fs.existsSync(filePath)) fs.unlinkSync(filePath);
       } catch (e) {

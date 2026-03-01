@@ -137,7 +137,7 @@ class DJService {
 
         // 1. Save uploaded photo as initial cover
         let coverUrl = '/vinyl_covers/default.png';
-        const dataDir = path.join(process.cwd(), 'data/vinyl_covers');
+        const dataDir = path.join(process.env.DATA_DIR || '/app/data', 'vinyl_covers');
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
         if (imageSource) {
