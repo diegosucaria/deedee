@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { getVinylCrate, uploadVinylPhoto, updateVinyl, deleteVinyl as deleteVinylAction } from '../actions';
 import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
-import { Upload, Disc3, Music, ExternalLink, Loader2, Search, X, AlertTriangle, Check, Pencil, Trash2 } from 'lucide-react';
+import { Upload, Disc3, Music, ExternalLink, Loader2, Search, X, AlertTriangle, Check, Pencil, Trash2, LayoutGrid, List, ArrowUpDown } from 'lucide-react';
 
 export default function DJCratePage() {
     const [vinyls, setVinyls] = useState([]);
@@ -16,6 +16,8 @@ export default function DJCratePage() {
     const [editing, setEditing] = useState(false);
     const [editFields, setEditFields] = useState({});
     const [saving, setSaving] = useState(false);
+    const [viewMode, setViewMode] = useState('crate'); // 'crate' | 'tracks'
+    const [sortConfig, setSortConfig] = useState({ key: 'bpm', dir: 'desc' });
     const fileInputRef = useRef(null);
 
     async function loadCrate() {
@@ -132,6 +134,43 @@ export default function DJCratePage() {
         }
     };
 
+    // Flatten all tracks from all (filtered) vinyls for the track view
+    const allTracks = filteredVinyls.flatMap((v) => {
+        const tracks = parseTracks(v);
+        const meta = parseMeta(v);
+        return tracks.map((t, i) => ({
+            ...t,
+            bpm: typeof t === 'string' ? 0 : (t.bpm || 0),
+            key: typeof t === 'string' ? '' : (t.key || ''),
+            title: typeof t === 'string' ? t : (t.title || ''),
+            position: typeof t === 'string' ? `${i + 1}` : (t.position || `${i + 1}`),
+            vinylArtist: v.artist,
+            vinylTitle: v.title,
+            vinylLabel: v.label,
+            vinylId: v.id,
+            genre: meta.genre || '',
+            vinyl: v
+        }));
+    });
+
+    // Sort tracks
+    const sortedTracks = [...allTracks].sort((a, b) => {
+        const { key, dir } = sortConfig;
+        let av = a[key], bv = b[key];
+        if (typeof av === 'string') av = av.toLowerCase();
+        if (typeof bv === 'string') bv = bv.toLowerCase();
+        if (av < bv) return dir === 'asc' ? -1 : 1;
+        if (av > bv) return dir === 'asc' ? 1 : -1;
+        return 0;
+    });
+
+    const toggleSort = (key) => {
+        setSortConfig((prev) => ({
+            key,
+            dir: prev.key === key && prev.dir === 'desc' ? 'asc' : 'desc'
+        }));
+    };
+
     return (
         <div className="p-4 sm:p-6 md:p-10 max-w-7xl mx-auto space-y-4 sm:space-y-6">
             {/* Header */}
@@ -154,17 +193,31 @@ export default function DJCratePage() {
                     </div>
                 </div>
 
-                {/* Search Bar */}
-                <div className="relative">
-                    <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                    <input type="text" placeholder="Search artist, title, label, genre..."
-                        value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
-                        className="w-full pl-10 pr-10 py-2 sm:py-2.5 bg-muted border border-zinc-700/50 rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/30 transition-all" />
-                    {searchQuery && (
-                        <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1">
-                            <X className="w-4 h-4" />
+                {/* Search + View Toggle */}
+                <div className="flex gap-2">
+                    <div className="relative flex-1">
+                        <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
+                        <input type="text" placeholder="Search artist, title, label, genre..."
+                            value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
+                            className="w-full pl-10 pr-10 py-2 sm:py-2.5 bg-muted border border-zinc-700/50 rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/30 transition-all" />
+                        {searchQuery && (
+                            <button onClick={() => setSearchQuery('')} className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground p-1">
+                                <X className="w-4 h-4" />
+                            </button>
+                        )}
+                    </div>
+                    <div className="flex rounded-lg border border-zinc-700/50 overflow-hidden shrink-0">
+                        <button onClick={() => setViewMode('crate')}
+                            className={`p-2.5 transition-colors ${viewMode === 'crate' ? 'bg-purple-600 text-white' : 'bg-muted text-muted-foreground hover:text-foreground'}`}
+                            title="Crate View">
+                            <LayoutGrid className="w-4 h-4" />
                         </button>
-                    )}
+                        <button onClick={() => setViewMode('tracks')}
+                            className={`p-2.5 transition-colors ${viewMode === 'tracks' ? 'bg-purple-600 text-white' : 'bg-muted text-muted-foreground hover:text-foreground'}`}
+                            title="Track View">
+                            <List className="w-4 h-4" />
+                        </button>
+                    </div>
                 </div>
             </div>
 
@@ -183,7 +236,7 @@ export default function DJCratePage() {
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4 md:gap-6 animate-pulse">
                     {[...Array(8)].map((_, i) => <div key={i} className="aspect-square bg-muted rounded-lg" />)}
                 </div>
-            ) : (
+            ) : viewMode === 'crate' ? (
                 <div className="grid grid-cols-2 sm:grid-cols-3 lg:grid-cols-4 xl:grid-cols-5 gap-3 sm:gap-4 md:gap-6">
                     {filteredVinyls.map((vinyl) => {
                         const meta = parseMeta(vinyl);
@@ -244,6 +297,60 @@ export default function DJCratePage() {
                             </motion.div>
                         );
                     })}
+                </div>
+            ) : (
+                /* === TRACK VIEW === */
+                <div className="bg-zinc-900/50 rounded-lg border border-zinc-700/30 overflow-x-auto">
+                    <table className="w-full text-sm min-w-[600px]">
+                        <thead>
+                            <tr className="text-[10px] sm:text-xs uppercase tracking-wider text-muted-foreground border-b border-zinc-700/30">
+                                <th className="px-3 py-2.5 text-left cursor-pointer hover:text-foreground select-none" onClick={() => toggleSort('title')}>
+                                    <span className="flex items-center gap-1">Track <ArrowUpDown className="w-3 h-3" /></span>
+                                </th>
+                                <th className="px-3 py-2.5 text-left cursor-pointer hover:text-foreground select-none" onClick={() => toggleSort('vinylArtist')}>
+                                    <span className="flex items-center gap-1">Artist <ArrowUpDown className="w-3 h-3" /></span>
+                                </th>
+                                <th className="px-3 py-2.5 text-left hidden sm:table-cell cursor-pointer hover:text-foreground select-none" onClick={() => toggleSort('vinylTitle')}>
+                                    <span className="flex items-center gap-1">Release <ArrowUpDown className="w-3 h-3" /></span>
+                                </th>
+                                <th className="px-3 py-2.5 text-right w-16 cursor-pointer hover:text-foreground select-none" onClick={() => toggleSort('bpm')}>
+                                    <span className="flex items-center justify-end gap-1">BPM <ArrowUpDown className="w-3 h-3" /></span>
+                                </th>
+                                <th className="px-3 py-2.5 text-right w-14 cursor-pointer hover:text-foreground select-none" onClick={() => toggleSort('key')}>
+                                    <span className="flex items-center justify-end gap-1">Key <ArrowUpDown className="w-3 h-3" /></span>
+                                </th>
+                                <th className="px-3 py-2.5 text-left hidden md:table-cell cursor-pointer hover:text-foreground select-none" onClick={() => toggleSort('genre')}>
+                                    <span className="flex items-center gap-1">Genre <ArrowUpDown className="w-3 h-3" /></span>
+                                </th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {sortedTracks.map((track, i) => (
+                                <tr key={`${track.vinylId}-${track.position}-${i}`}
+                                    className="border-b border-zinc-700/20 last:border-0 hover:bg-zinc-800/50 cursor-pointer transition-colors"
+                                    onClick={() => openDetail(track.vinyl)}>
+                                    <td className="px-3 py-2">
+                                        <div className="flex items-center gap-2">
+                                            <span className="text-[10px] font-mono text-muted-foreground w-5 shrink-0">{track.position}</span>
+                                            <span className="text-foreground truncate">{track.title}</span>
+                                        </div>
+                                    </td>
+                                    <td className="px-3 py-2 text-muted-foreground truncate">{track.vinylArtist}</td>
+                                    <td className="px-3 py-2 text-muted-foreground truncate hidden sm:table-cell">{track.vinylTitle}</td>
+                                    <td className="px-3 py-2 text-right font-mono">
+                                        {track.bpm > 0 ? <span className="text-purple-300">{track.bpm}</span> : <span className="text-zinc-600">{"\u2014"}</span>}
+                                    </td>
+                                    <td className="px-3 py-2 text-right font-mono">
+                                        {track.key ? <span className="text-indigo-300">{track.key}</span> : <span className="text-zinc-600">{"\u2014"}</span>}
+                                    </td>
+                                    <td className="px-3 py-2 text-amber-400/70 truncate hidden md:table-cell">{track.genre}</td>
+                                </tr>
+                            ))}
+                        </tbody>
+                    </table>
+                    {sortedTracks.length === 0 && (
+                        <div className="text-center py-8 text-muted-foreground text-sm">No tracks in your crate yet.</div>
+                    )}
                 </div>
             )}
 
