@@ -4,6 +4,20 @@ const router = express.Router();
 
 const AGENT_URL = process.env.AGENT_URL || 'http://agent:3000';
 
+// Proxy vinyl cover images (binary stream, not JSON)
+router.get('/covers/:filename', async (req, res) => {
+    try {
+        const url = `${AGENT_URL}/internal/dj/covers/${encodeURIComponent(req.params.filename)}`;
+        const response = await axios.get(url, { responseType: 'stream' });
+        res.set('Content-Type', response.headers['content-type'] || 'image/jpeg');
+        res.set('Cache-Control', 'public, max-age=86400');
+        response.data.pipe(res);
+    } catch (error) {
+        console.error('[API] DJ Cover Proxy Error:', error.message);
+        res.status(error.response?.status || 404).end();
+    }
+});
+
 // Helper for proxying
 const proxyRequest = async (req, res, method, path) => {
     try {
