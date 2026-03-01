@@ -223,11 +223,19 @@ class DJService {
             }
         };
 
-        // 4. Duplicate detection — check if vinyl with same artist+title exists
+        // 5. Per-track BPM/key cross-reference (parallel searches)
+        if (vinyl.tracks.length > 0 && vinyl.tracks.length <= 8) {
+            try {
+                vinyl.tracks = await this._enrichTrackDetails(vinyl.artist, vinyl.tracks);
+            } catch (e) {
+                console.warn('[DJService] Per-track enrichment failed:', e.message);
+            }
+        }
+
+        // 6. Duplicate detection — check if vinyl with same artist+title exists
         const existing = this.db.findVinylByArtistTitle(vinyl.artist, vinyl.title);
         if (existing) {
             console.log(`[DJService] Duplicate found: "${vinyl.artist} - ${vinyl.title}" (id: ${existing.id}). Merging.`);
-            // Merge: keep existing data, upgrade with better enrichment
             const mergedFields = {
                 label: vinyl.label || existing.label,
                 catalog_number: vinyl.catalogNumber || existing.catalog_number,
@@ -236,7 +244,6 @@ class DJService {
                 meta: {
                     ...existing.meta,
                     ...vinyl.meta,
-                    // Keep higher confidence
                     enrichmentConfidence: Math.max(vinyl.meta.enrichmentConfidence || 0, existing.meta?.enrichmentConfidence || 0)
                 }
             };
@@ -250,12 +257,101 @@ class DJService {
 
         const id = this.db.addVinyl(vinyl);
 
-        // Broadcast Update for UI
         if (this.agent.interface && this.agent.interface.broadcast) {
             this.agent.interface.broadcast('dj:vinyl:update', { ...vinyl, id });
         }
 
         return { ...vinyl, id };
+    }
+
+    /**
+     * Re-enrich an existing vinyl by ID — re-runs metadata + per-track search.
+     */
+    async reEnrich(vinylId) {
+        const vinyl = this.db.getVinyl(vinylId);
+        if (!vinyl) throw new Error(`Vinyl ${vinylId} not found`);
+
+        console.log(`[DJService] Re-enriching: ${vinyl.artist} - ${vinyl.title}`);
+
+        if (this.agent.interface && this.agent.interface.broadcast) {
+            this.agent.interface.broadcast('dj:vinyl:enriching', {
+                artist: vinyl.artist, title: vinyl.title, status: 'enriching'
+            });
+        }
+
+        let enriched = {};
+        try {
+            enriched = await this._enrichMetadata(vinyl.artist, vinyl.title, vinyl.label);
+        } catch (e) {
+            console.warn('[DJService] Re-enrichment metadata failed:', e.message);
+        }
+
+        let tracks = this._normalizeTracks(null, enriched.tracks || []);
+        // Fallback to existing tracks if enrichment returned none
+        if (tracks.length === 0) {
+            tracks = typeof vinyl.tracks === 'string' ? JSON.parse(vinyl.tracks) : vinyl.tracks;
+        }
+
+        // Per-track cross-reference
+        if (tracks.length > 0 && tracks.length <= 8) {
+            try {
+                tracks = await this._enrichTrackDetails(vinyl.artist, tracks);
+            } catch (e) {
+                console.warn('[DJService] Per-track re-enrichment failed:', e.message);
+            }
+        }
+
+        const updateFields = {
+            label: enriched.label || vinyl.label,
+            catalog_number: enriched.catalogNumber || vinyl.catalog_number,
+            tracks,
+            meta: {
+                ...(typeof vinyl.meta === 'string' ? JSON.parse(vinyl.meta) : vinyl.meta),
+                genre: enriched.genre || (typeof vinyl.meta === 'string' ? JSON.parse(vinyl.meta) : vinyl.meta).genre || '',
+                style: enriched.style || (typeof vinyl.meta === 'string' ? JSON.parse(vinyl.meta) : vinyl.meta).style || '',
+                year: enriched.year || (typeof vinyl.meta === 'string' ? JSON.parse(vinyl.meta) : vinyl.meta).year || '',
+                rpm: enriched.rpm || (typeof vinyl.meta === 'string' ? JSON.parse(vinyl.meta) : vinyl.meta).rpm || 0,
+                discogsUrl: enriched.discogsUrl || '',
+                beatportUrl: enriched.beatportUrl || '',
+                enrichmentConfidence: enriched.confidence || 0,
+                lastEnriched: new Date().toISOString()
+            }
+        };
+
+        // Try to download cover if we got a better one
+        if (enriched.coverArtUrl && enriched.coverArtUrl.startsWith('http')) {
+            try {
+                const https = require('https');
+                const dataDir = path.join(process.env.DATA_DIR || '/app/data', 'vinyl_covers');
+                if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+                const coverFilename = `${crypto.randomUUID()}.jpg`;
+                const coverPath = path.join(dataDir, coverFilename);
+                await new Promise((resolve, reject) => {
+                    https.get(enriched.coverArtUrl, { timeout: 10000 }, (response) => {
+                        if (response.statusCode >= 300) return reject(new Error(`HTTP ${response.statusCode}`));
+                        const stream = fs.createWriteStream(coverPath);
+                        response.pipe(stream);
+                        stream.on('finish', resolve);
+                        stream.on('error', reject);
+                    }).on('error', reject);
+                });
+                if (fs.existsSync(coverPath) && fs.statSync(coverPath).size > 1000) {
+                    updateFields.cover_image_url = `/vinyl_covers/${coverFilename}`;
+                }
+            } catch (e) {
+                console.warn('[DJService] Cover art download failed on re-enrich:', e.message);
+            }
+        }
+
+        this.db.updateVinyl(vinylId, updateFields);
+        const updated = this.db.getVinyl(vinylId);
+
+        if (this.agent.interface && this.agent.interface.broadcast) {
+            this.agent.interface.broadcast('dj:vinyl:update', updated);
+        }
+
+        console.log(`[DJService] Re-enrichment complete for: ${vinyl.artist} - ${vinyl.title}`);
+        return updated;
     }
 
     /**
@@ -380,6 +476,80 @@ Respond ONLY with valid JSON.` }]
             return visionTracks.map(normalize);
         }
         return [];
+    }
+
+    /**
+     * Per-track BPM/key enrichment — parallel searches to cross-reference bulk enrichment.
+     * Only searches tracks missing BPM or key.
+     */
+    async _enrichTrackDetails(artist, tracks) {
+        const tracksNeedingEnrichment = tracks.filter(t => !t.bpm || !t.key);
+        if (tracksNeedingEnrichment.length === 0) {
+            console.log('[DJService] All tracks already have BPM and key — skipping per-track search.');
+            return tracks;
+        }
+
+        console.log(`[DJService] Per-track enrichment: ${tracksNeedingEnrichment.length}/${tracks.length} tracks need BPM/key.`);
+        const modelName = this.config.getModel('FLASH');
+
+        const searchPromises = tracksNeedingEnrichment.map(track => {
+            const query = `${artist} - ${track.title}`;
+            return this.agent.client.models.generateContent({
+                model: modelName,
+                contents: [{
+                    role: 'user',
+                    parts: [{
+                        text: `Find the BPM and musical key for this track: "${query}".
+Search Beatport, Discogs, decks.de, and juno.co.uk for accurate data.
+Return ONLY JSON: { "bpm": number, "key": "Camelot notation (e.g. 8A, 11B)" }
+Use Camelot wheel notation (1A-12B), NOT traditional key names.
+If unsure, return { "bpm": 0, "key": "" }`
+                    }]
+                }],
+                config: { tools: [{ googleSearch: {} }] }
+            }).then(result => {
+                let text = '';
+                try {
+                    if (typeof result.text === 'function') text = result.text();
+                    else if (result.text) text = result.text;
+                } catch (e) { /* ignore */ }
+                if (!text) return { track, data: null };
+                try {
+                    const cleaned = text.replace(/```json/g, '').replace(/```/g, '').trim();
+                    const data = JSON.parse(cleaned);
+                    console.log(`[DJService]   Per-track result: ${track.title} => BPM: ${data.bpm}, Key: ${data.key}`);
+                    return { track, data };
+                } catch (e) {
+                    console.warn(`[DJService]   Per-track parse failed for ${track.title}: ${e.message}`);
+                    return { track, data: null };
+                }
+            }).catch(err => {
+                console.warn(`[DJService]   Per-track search failed for ${track.title}: ${err.message}`);
+                return { track, data: null };
+            });
+        });
+
+        const results = await Promise.allSettled(searchPromises);
+
+        // Build lookup: track title -> per-track data
+        const perTrackData = {};
+        results.forEach(r => {
+            if (r.status === 'fulfilled' && r.value.data) {
+                perTrackData[r.value.track.title] = r.value.data;
+            }
+        });
+
+        // Merge per-track data back
+        return tracks.map(t => {
+            const ptd = perTrackData[t.title];
+            if (!ptd) return t;
+            const merged = { ...t };
+            if ((!merged.bpm || merged.bpm === 0) && ptd.bpm > 0) merged.bpm = ptd.bpm;
+            if (!merged.key && ptd.key) {
+                merged.key = this._isCamelot(ptd.key) ? ptd.key : (this._toCamelot(ptd.key) || ptd.key);
+            }
+            return merged;
+        });
     }
 
     /** Check if a key string is already in Camelot notation */

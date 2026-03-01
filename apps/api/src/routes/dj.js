@@ -74,4 +74,18 @@ router.delete('/vinyls/:id', async (req, res) => {
     }
 });
 
+// POST /v1/dj/vinyls/:id/enrich
+router.post('/vinyls/:id/enrich', async (req, res) => {
+    try {
+        const url = `${AGENT_URL}/internal/dj/vinyls/${encodeURIComponent(req.params.id)}/enrich`;
+        const response = await axios.post(url);
+        res.json(response.data);
+    } catch (error) {
+        console.error('[API] DJ Re-enrich Proxy Error:', error.message);
+        const status = error.response ? error.response.status : 502;
+        const data = error.response ? error.response.data : { error: 'Agent unavailable' };
+        res.status(status).json(data);
+    }
+});
+
 module.exports = router;

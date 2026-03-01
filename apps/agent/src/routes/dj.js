@@ -90,6 +90,25 @@ const createDjRouter = (agent) => {
         }
     });
 
+    // POST /vinyls/:id/enrich - Re-enrich vinyl metadata
+    router.post('/vinyls/:id/enrich', async (req, res) => {
+        try {
+            const { id } = req.params;
+            if (!id || id.trim().length === 0) {
+                return res.status(400).json({ error: 'Missing vinyl ID' });
+            }
+            if (!agent.djService) {
+                return res.status(503).json({ error: 'DJ Service not available' });
+            }
+            console.log(`[DJRouter] Re-enriching vinyl: ${id}`);
+            const updated = await agent.djService.reEnrich(id);
+            res.json({ success: true, vinyl: updated });
+        } catch (error) {
+            console.error('[DJRouter] Re-enrich error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
     // Serve Vinyl Covers (Internal)
     // Uses 'data' dir (volume)
     const dataDir = require('path').join(process.env.DATA_DIR || '/app/data', 'vinyl_covers');

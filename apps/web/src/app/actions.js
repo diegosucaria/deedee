@@ -595,6 +595,17 @@ export async function deleteVinyl(id) {
     }
 }
 
+export async function reEnrichVinyl(id) {
+    try {
+        const data = await fetchAPI(`/v1/dj/vinyls/${encodeURIComponent(id)}/enrich`, {
+            method: 'POST'
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function rewindChat(chatId, messageId) {
     console.log('[DEBUG] rewindChat Action:', { chatId, messageId });
     try {

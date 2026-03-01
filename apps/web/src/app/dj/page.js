@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { getVinylCrate, uploadVinylPhoto, updateVinyl, deleteVinyl as deleteVinylAction } from '../actions';
+import { getVinylCrate, uploadVinylPhoto, updateVinyl, deleteVinyl as deleteVinylAction, reEnrichVinyl } from '../actions';
 import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
-import { Upload, Disc3, Music, ExternalLink, Loader2, Search, X, AlertTriangle, Check, Pencil, Trash2, LayoutGrid, List, ArrowUpDown } from 'lucide-react';
+import { Upload, Disc3, Music, ExternalLink, Loader2, Search, X, AlertTriangle, Check, Pencil, Trash2, LayoutGrid, List, ArrowUpDown, RefreshCw } from 'lucide-react';
 
 export default function DJCratePage() {
     const [vinyls, setVinyls] = useState([]);
@@ -19,6 +19,7 @@ export default function DJCratePage() {
     const [viewMode, setViewMode] = useState('crate'); // 'crate' | 'tracks'
     const [sortConfig, setSortConfig] = useState({ key: 'bpm', dir: 'desc' });
     const [enrichingVinyl, setEnrichingVinyl] = useState(null);
+    const [reEnriching, setReEnriching] = useState(false);
     const fileInputRef = useRef(null);
 
     async function loadCrate() {
@@ -141,6 +142,18 @@ export default function DJCratePage() {
         }
     };
 
+    const handleReEnrich = async () => {
+        if (!selectedVinyl) return;
+        setReEnriching(true);
+        try {
+            await reEnrichVinyl(selectedVinyl.id);
+            await loadCrate();
+        } catch (e) {
+            console.error('Re-enrich failed:', e);
+        }
+        setReEnriching(false);
+    };
+
     // Flatten all tracks from all (filtered) vinyls for the track view
     const allTracks = filteredVinyls.flatMap((v) => {
         const tracks = parseTracks(v);
@@ -201,10 +214,10 @@ export default function DJCratePage() {
                 </div>
 
                 {/* Search + View Toggle */}
-                <div className="flex gap-2">
-                    <div className="relative flex-1">
+                <div className="flex flex-wrap gap-2">
+                    <div className="relative flex-1 min-w-[140px]">
                         <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-muted-foreground" />
-                        <input type="text" placeholder="Search artist, title, label, genre..."
+                        <input type="text" placeholder="Search..."
                             value={searchQuery} onChange={(e) => setSearchQuery(e.target.value)}
                             className="w-full pl-10 pr-10 py-2 sm:py-2.5 bg-muted border border-zinc-700/50 rounded-lg text-sm text-foreground placeholder:text-muted-foreground focus:outline-none focus:border-purple-500/50 focus:ring-1 focus:ring-purple-500/30 transition-all" />
                         {searchQuery && (
@@ -415,6 +428,8 @@ export default function DJCratePage() {
                                 onClose={() => { setSelectedVinyl(null); setEditing(false); }}
                                 onEdit={startEditing} onSave={handleSave} onCancel={() => setEditing(false)}
                                 onDelete={handleDelete}
+                                onReEnrich={handleReEnrich}
+                                reEnriching={reEnriching}
                                 setEditFields={setEditFields} updateTrackField={updateTrackField}
                                 parseMeta={parseMeta} parseTracks={parseTracks} getConfidenceInfo={getConfidenceInfo}
                             />
@@ -426,7 +441,7 @@ export default function DJCratePage() {
     );
 }
 
-function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit, onSave, onCancel, onDelete, setEditFields, updateTrackField, parseMeta, parseTracks, getConfidenceInfo }) {
+function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit, onSave, onCancel, onDelete, onReEnrich, reEnriching, setEditFields, updateTrackField, parseMeta, parseTracks, getConfidenceInfo }) {
     const meta = parseMeta(vinyl);
     const tracks = parseTracks(vinyl);
     const conf = meta.enrichmentConfidence || 0;
@@ -598,13 +613,18 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
                 </div>
             )}
 
-            {/* Delete — separated from close/edit for safety */}
+            {/* Actions — separated from close/edit for safety */}
             {!editing && (
-                <div className="pt-3 border-t border-zinc-700/30">
+                <div className="flex items-center justify-between pt-3 border-t border-zinc-700/30">
+                    <button onClick={onReEnrich} disabled={reEnriching}
+                        className="flex items-center gap-2 px-3 py-2 text-xs text-purple-400/70 hover:text-purple-400 hover:bg-purple-900/20 disabled:opacity-50 rounded-lg transition-colors">
+                        {reEnriching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                        {reEnriching ? 'Enriching...' : 'Re-enrich metadata'}
+                    </button>
                     <button onClick={onDelete}
                         className="flex items-center gap-2 px-3 py-2 text-xs text-red-400/60 hover:text-red-400 hover:bg-red-900/20 rounded-lg transition-colors">
                         <Trash2 className="w-3.5 h-3.5" />
-                        Delete this vinyl
+                        Delete
                     </button>
                 </div>
             )}
