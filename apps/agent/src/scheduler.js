@@ -330,7 +330,18 @@ class Scheduler {
                     let shouldNotify = false;
                     let notificationText = null;
 
-                    // 0. Check for [SILENT] tag from agent (Highest Priority)
+                    // 0. Check for error messages — never send raw errors to user
+                    if (result && result.text) {
+                        const text = result.text;
+                        if (text.startsWith('⚠️') || text.includes('exception TypeError') || text.includes('fetch failed') || text.includes('ECONNRESET')) {
+                            console.log(`[Scheduler] Smart Notification: Suppressing error notification: ${text.substring(0, 100)}`);
+                            result.decision = 'silent';
+                            result.decisionReason = 'Error message suppressed';
+                            return result;
+                        }
+                    }
+
+                    // 1. Check for [SILENT] tag from agent (Highest Priority)
                     if (result && result.text) {
                         const text = result.text;
 

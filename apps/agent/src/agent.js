@@ -280,6 +280,30 @@ class Agent {
    * Helper to send message efficiently with streaming and token broadcasting
    */
   async _generateStream(session, payload, chatId, source) {
+    // Retry helper for transient network errors
+    const MAX_RETRIES = 2;
+    const _isRetryable = (err) => {
+      const msg = (err.message || '').toLowerCase();
+      return msg.includes('fetch failed') || msg.includes('econnreset') || msg.includes('etimedout') ||
+        msg.includes('socket hang up') || msg.includes('network') ||
+        err.status === 503 || err.status === 429 || err.statusCode === 503 || err.statusCode === 429;
+    };
+    const _retryCall = async (fn) => {
+      for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        try {
+          return await fn();
+        } catch (err) {
+          if (attempt < MAX_RETRIES && _isRetryable(err)) {
+            const delay = Math.pow(3, attempt + 1) * 1000; // 3s, 9s
+            console.warn(`[Agent] Retryable error (attempt ${attempt + 1}/${MAX_RETRIES}): ${err.message}. Retrying in ${delay}ms...`);
+            await new Promise(r => setTimeout(r, delay));
+          } else {
+            throw err;
+          }
+        }
+      }
+    };
+
     try {
       // SDK REQUIREMENT Check: Input Validation
       if (!payload) throw new Error('Payload cannot be empty.');
@@ -325,7 +349,7 @@ class Agent {
         console.log(`[Agent] Streaming request content type: ${typeof payload}`);
 
         // SDK Expects { message: ... } for sendMessageStream
-        const result = await session.sendMessageStream({ message: normalizedMessage });
+        const result = await _retryCall(() => session.sendMessageStream({ message: normalizedMessage }));
 
         // Handle both iterable result (new SDK) and result.stream (legacy/mock)
         const stream = result.stream || result;
@@ -409,13 +433,13 @@ class Agent {
         // Standard (WhatsApp/Telegram) - No stream
         // FIX: Use normalizedMessage here too!
         // SDK Expects { message: ... } for sendMessage in new SDK versions too, or strict types
-        const result = await session.sendMessage({ message: normalizedMessage });
+        const result = await _retryCall(() => session.sendMessage({ message: normalizedMessage }));
         let response = result.response;
         if (!response && result.candidates) response = result;
         return response;
       }
     } catch (e) {
-      console.error(`[Agent] sendMessage failed: ${e.message}`);
+      console.error(`[Agent] sendMessage failed after retries: ${e.message}`);
       // Fallback to standard if stream fails?
       if (source === 'web' && !e.message.includes('sendMessage')) {
         try {
