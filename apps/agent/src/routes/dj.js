@@ -111,7 +111,8 @@ const createDjRouter = (agent) => {
 
     // Serve Vinyl Covers (Internal)
     // Uses 'data' dir (volume)
-    const dataDir = require('path').join(process.env.DATA_DIR || require('path').join(process.cwd(), '.data'), 'vinyl_covers');
+    const defaultDataDir = process.env.NODE_ENV === 'production' ? '/app/data' : require('path').join(process.cwd(), '.data');
+    const dataDir = require('path').join(process.env.DATA_DIR || defaultDataDir, 'vinyl_covers');
     if (!require('fs').existsSync(dataDir)) require('fs').mkdirSync(dataDir, { recursive: true });
     router.use('/covers', express.static(dataDir));
 
