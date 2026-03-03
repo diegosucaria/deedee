@@ -111,7 +111,15 @@ const createDjRouter = (agent) => {
 
     // Serve Vinyl Covers (Internal)
     // Uses 'data' dir (volume)
-    const dataDir = require('path').join(process.env.DATA_DIR || '/app/data', 'vinyl_covers');
+    let baseDataDir = process.env.DATA_DIR;
+    if (!baseDataDir) {
+        if (require('fs').existsSync('/app') && process.platform !== 'darwin') {
+            baseDataDir = '/app/data';
+        } else {
+            baseDataDir = require('path').join(process.cwd(), 'data');
+        }
+    }
+    const dataDir = require('path').join(baseDataDir, 'vinyl_covers');
     if (!require('fs').existsSync(dataDir)) require('fs').mkdirSync(dataDir, { recursive: true });
     router.use('/covers', express.static(dataDir));
 
