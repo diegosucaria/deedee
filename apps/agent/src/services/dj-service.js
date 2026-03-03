@@ -137,8 +137,7 @@ class DJService {
 
         // 1. Save uploaded photo as initial cover
         let coverUrl = '/vinyl_covers/default.png';
-        const defaultDataDir = process.env.NODE_ENV === 'production' ? '/app/data' : path.join(process.cwd(), '.data');
-        const dataDir = path.join(process.env.DATA_DIR || defaultDataDir, 'vinyl_covers');
+        const dataDir = path.join(process.env.DATA_DIR || '/app/data', 'vinyl_covers');
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
         if (imageSource) {
@@ -323,8 +322,7 @@ class DJService {
         if (enriched.coverArtUrl && enriched.coverArtUrl.startsWith('http')) {
             try {
                 const https = require('https');
-                const defaultDataDir = process.env.NODE_ENV === 'production' ? '/app/data' : path.join(process.cwd(), '.data');
-                const dataDir = path.join(process.env.DATA_DIR || defaultDataDir, 'vinyl_covers');
+                const dataDir = path.join(process.env.DATA_DIR || '/app/data', 'vinyl_covers');
                 if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
                 const coverFilename = `${crypto.randomUUID()}.jpg`;
                 const coverPath = path.join(dataDir, coverFilename);
