@@ -249,7 +249,8 @@ class Scheduler {
                         if (!executionResult) executionResult = { text: '' };
                         if (typeof executionResult.text !== 'string') executionResult.text = String(executionResult.content || executionResult.text || '');
 
-                        return executionResult;
+                        // Process Smart Notification INSIDE the try/catch so errors fail the job
+                        return await this._processSmartNotification(executionResult, payload);
 
                     } catch (error) {
                         console.error(`[Scheduler] Task '${name}' failed:`, error.message);
@@ -290,16 +291,6 @@ class Scheduler {
                 console.warn(`[Scheduler] Unknown task type '${taskType}' for job '${name}'. Skipping.`);
                 continue;
             }
-
-            // We need to wrap the callback to include smart notification logic if it's an agent instruction
-            if (taskType === 'agent_instruction' && payload.task) {
-                const originalCallback = callback;
-                callback = async () => {
-                    const result = await originalCallback();
-                    return await this._processSmartNotification(result, payload);
-                };
-            }
-
 
             this.scheduleJob(name, cronExpression, callback, {
                 persist: false,
@@ -389,7 +380,7 @@ class Scheduler {
                             result.decision = 'notified';
                             result.decisionReason = `Sent via ${channel}`;
                         }
-                        await this.agent.interface.send({
+                        const sendResult = await this.agent.interface.send({
                             source: 'scheduler',
                             content: notificationText,
                             type: 'text',
@@ -399,6 +390,11 @@ class Scheduler {
                             platform: channel, // Used by server.js to route from scheduler
                             isNotification: true
                         });
+
+                        // If send() explicitly returns false (e.g. HttpInterface swallowed an error)
+                        if (sendResult === false) {
+                            throw new Error(`Failed to send smart notification to ${channel} for ${ownerPhone}`);
+                        }
                     } else {
                         const silentReason = !result?.text ? 'No output text' : `Action=${!!taskLower.match(/^(turn|run|backup)/i)}, Explicit=${!!taskLower.match(/^(remind|alert|notify)/i)}`;
                         console.log(`[Scheduler] Smart Notification: Silent (Reason: ${silentReason})`);
@@ -411,6 +407,8 @@ class Scheduler {
             }
         } catch (err) {
             console.error('[Scheduler] Smart Notification Failed:', err);
+            // Rethrow so the scheduler logs a failure and potentially retries, instead of silently passing
+            throw err;
         }
 
         return result;

@@ -38,8 +38,14 @@ describe('LocalTools', () => {
   });
 
   test('runShellCommand should block "vi"', async () => {
-    await expect(tools.runShellCommand('vi test.txt'))
-      .rejects.toThrow(/blocked/);
+    let error;
+    try {
+      await tools.runShellCommand('vi test.txt');
+    } catch (e) {
+      error = e;
+    }
+    expect(error).toBeDefined();
+    expect(error.message).toMatch(/blocked/);
   });
 
   test('runShellCommand should allow "rm" (YOLO Mode)', async () => {

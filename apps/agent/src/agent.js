@@ -280,10 +280,11 @@ class Agent {
    * Helper to send message efficiently with streaming and token broadcasting
    */
   async _generateStream(session, payload, chatId, source) {
-    // Retry helper for transient network errors
-    const MAX_RETRIES = 2;
+    // Retry helper for transient network errors (up to 5 retries with backoff)
+    const MAX_RETRIES = 5;
     const _isRetryable = (err) => {
       const msg = (err.message || '').toLowerCase();
+      // Only retry on network errors or 503/429
       return msg.includes('fetch failed') || msg.includes('econnreset') || msg.includes('etimedout') ||
         msg.includes('socket hang up') || msg.includes('network') ||
         err.status === 503 || err.status === 429 || err.statusCode === 503 || err.statusCode === 429;
@@ -291,10 +292,15 @@ class Agent {
     const _retryCall = async (fn) => {
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
         try {
-          return await fn();
+          // We add the Promise.race here instead to catch hangs on every attempt
+          const timeoutPromise = new Promise((_, reject) =>
+            setTimeout(() => reject(new Error('Model request timed out after 60 seconds (Possible SDK hang or 503)')), 60000)
+          );
+          return await Promise.race([fn(), timeoutPromise]);
         } catch (err) {
           if (attempt < MAX_RETRIES && _isRetryable(err)) {
-            const delay = Math.pow(3, attempt + 1) * 1000; // 3s, 9s
+            // Exponential backoff: 2s, 4s, 8s, 16s, 32s
+            const delay = Math.pow(2, attempt + 1) * 1000;
             console.warn(`[Agent] Retryable error (attempt ${attempt + 1}/${MAX_RETRIES}): ${err.message}. Retrying in ${delay}ms...`);
             await new Promise(r => setTimeout(r, delay));
           } else {
@@ -1632,7 +1638,7 @@ class Agent {
       // Build user-friendly error message
       let userMessage = error.message || 'An unexpected error occurred.';
       const errStr = error.message || '';
-      if (errStr.includes('503') || errStr.includes('UNAVAILABLE') || errStr.includes('high demand')) {
+      if (errStr.includes('503') || errStr.includes('UNAVAILABLE') || errStr.includes('high demand') || errStr.includes('timeout') || errStr.includes('timed out')) {
         userMessage = 'The AI model is currently experiencing high demand. Please try again in a moment.';
       } else if (errStr.includes('429') || errStr.includes('RATE_LIMIT') || errStr.includes('quota')) {
         userMessage = 'Rate limit reached. Please wait a moment before sending another message.';
