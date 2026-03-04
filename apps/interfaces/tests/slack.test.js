@@ -440,8 +440,8 @@ describe('SlackService Unit Tests', () => {
 
         await slack.search('test', 200);
 
-        const body = JSON.parse(mockFetch.mock.calls[0][1].body);
-        expect(body.count).toBe(50); // Clamped at 50
+        const body = Object.fromEntries(new URLSearchParams(mockFetch.mock.calls[0][1].body));
+        expect(body.count).toBe('50'); // Clamped at 50 (string from URLSearchParams)
     });
 
     test('search should return formatted results', async () => {

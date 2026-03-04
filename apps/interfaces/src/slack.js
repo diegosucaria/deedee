@@ -292,10 +292,20 @@ class SlackService {
     async getHistory(channelNameOrId, limit = 20) {
         let channelId = channelNameOrId;
 
-        // Resolve #channel-name to ID
-        if (channelNameOrId.startsWith('#') || (!channelNameOrId.startsWith('C') && !channelNameOrId.startsWith('D'))) {
+        // Resolve channel name or username to ID
+        if (channelNameOrId.startsWith('#')) {
+            // #channel-name → channel ID
             channelId = await this._resolveChannelName(channelNameOrId.replace(/^#/, ''));
             if (!channelId) return { error: `Channel "${channelNameOrId}" not found` };
+        } else if (!channelNameOrId.startsWith('C') && !channelNameOrId.startsWith('D')) {
+            // Try as username → DM channel ID
+            const cleanName = channelNameOrId.replace(/^@/, '');
+            channelId = await this._resolveUserToDM(cleanName);
+            if (!channelId) {
+                // Fallback: try as channel name
+                channelId = await this._resolveChannelName(cleanName);
+            }
+            if (!channelId) return { error: `User or channel "${channelNameOrId}" not found` };
         }
 
         const result = await this._api('conversations.history', {
@@ -382,14 +392,25 @@ class SlackService {
             throw new Error('Slack not configured (missing tokens)');
         }
 
+        const headers = {
+            'Authorization': `Bearer ${this.xoxc}`,
+            'Cookie': `d=${this.xoxd}`,
+        };
+
+        let fetchBody;
+        // search.* methods require form-urlencoded (they reject JSON)
+        if (method.startsWith('search.')) {
+            headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=utf-8';
+            fetchBody = new URLSearchParams(body).toString();
+        } else {
+            headers['Content-Type'] = 'application/json; charset=utf-8';
+            fetchBody = JSON.stringify(body);
+        }
+
         const res = await fetch(`${SLACK_API_BASE}/${method}`, {
             method: 'POST',
-            headers: {
-                'Authorization': `Bearer ${this.xoxc}`,
-                'Cookie': `d=${this.xoxd}`,
-                'Content-Type': 'application/json; charset=utf-8',
-            },
-            body: JSON.stringify(body),
+            headers,
+            body: fetchBody,
         });
 
         const data = await res.json();
@@ -460,6 +481,54 @@ class SlackService {
         } catch {
             return null;
         }
+    }
+
+    /**
+     * Resolve a username (display name or real name) to a DM channel ID.
+     * Searches users.list, then opens a conversation with the matched user.
+     */
+    async _resolveUserToDM(name) {
+        const nameLower = name.toLowerCase();
+
+        // Check cache first (userName → userId stored during message handling)
+        for (const [userId, cachedName] of this.userCache.entries()) {
+            if (cachedName.toLowerCase() === nameLower) {
+                try {
+                    const dm = await this._api('conversations.open', { users: userId });
+                    return dm.channel?.id || null;
+                } catch {
+                    return null;
+                }
+            }
+        }
+
+        // Search users.list for matching name
+        try {
+            let cursor;
+            do {
+                const res = await this._api('users.list', { limit: 200, cursor });
+                for (const user of res.members || []) {
+                    if (user.deleted || user.is_bot) continue;
+                    const displayName = (user.profile?.display_name || '').toLowerCase();
+                    const realName = (user.real_name || '').toLowerCase();
+                    const userName = (user.name || '').toLowerCase();
+
+                    if (displayName === nameLower || realName === nameLower || userName === nameLower ||
+                        realName.includes(nameLower) || displayName.includes(nameLower)) {
+                        // Cache for future lookups
+                        this.userCache.set(user.id, user.profile?.display_name || user.real_name || user.name);
+                        // Open DM
+                        const dm = await this._api('conversations.open', { users: user.id });
+                        return dm.channel?.id || null;
+                    }
+                }
+                cursor = res.response_metadata?.next_cursor;
+            } while (cursor);
+        } catch (err) {
+            console.warn(`[Slack] Failed to resolve user '${name}':`, err.message);
+        }
+
+        return null;
     }
 
     // --- Credential Encryption ---
