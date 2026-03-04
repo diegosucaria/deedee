@@ -757,7 +757,7 @@ class Agent {
                 // Initialize flash client specifically for low-latency extraction
                 const { GoogleGenAI } = await this._loadClientLibrary();
                 const genAI = new GoogleGenAI({ apiKey: this.config.googleApiKey });
-                const flashModel = 'gemini-2.5-flash';
+                const flashModel = process.env.WORKER_FLASH || 'gemini-2.5-flash';
 
                 for (const part of mediaParts) {
                   const isAudio = part.inlineData.mimeType.startsWith('audio/');
