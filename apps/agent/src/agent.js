@@ -674,12 +674,13 @@ class Agent {
       // Sub-agents skip watcher logic entirely.
       if (!isSubAgent && (message.source?.startsWith('whatsapp') || message.source === 'slack')) {
         const isUserSession = message.source === 'whatsapp:user' || message.source === 'slack';
+        const isFromMe = !!message.metadata?.fromMe;
         const contactString = message.metadata?.phoneNumber || message.metadata?.slackUserName || message.metadata?.chatId;
         const groupName = message.metadata?.groupName;
         const msgContent = message.content?.toLowerCase() || '';
 
-        // Fetch active watchers
-        const watchers = this.db.getWatchers('active');
+        // Fetch active watchers (skip for fromMe — outgoing media only needs extraction)
+        const watchers = isFromMe ? [] : this.db.getWatchers('active');
         let triggeredWatcher = null;
 
         for (const w of watchers) {
@@ -802,16 +803,13 @@ class Agent {
           // Log suppressed per user request
           // console.log(`${logPrefix} Passive Mode (whatsapp:user): Message from ${contactString} saved. No watcher triggered. Ignoring.`);
 
-          // --- AUTOPILOT LOGIC ---
-          // --- AUTOPILOT LOGIC (Buffering & Drafting) ---
-          try {
-            // console.log(`[Agent Debug] Delegating to Autopilot for ${contactString}. Session=${message.metadata?.session}`); // Verbose
-            // Delegate entirely to service (Handles Status Check, Buffering, Deboucing, Drafting)
-            // We await it, but the service mainly sets a timer returning immediately unless it processes buffer.
-            // handleMessage sets a debounce timer and returns immediately
-            this.impersonationService.handleMessage(chatId, message, contactString);
-          } catch (e) {
-            console.error('[Agent] Autopilot failed:', e.message);
+          // --- AUTOPILOT LOGIC (skip for fromMe — we don't want to draft replies to ourselves) ---
+          if (!isFromMe) {
+            try {
+              this.impersonationService.handleMessage(chatId, message, contactString);
+            } catch (e) {
+              console.error('[Agent] Autopilot failed:', e.message);
+            }
           }
 
           return executionSummary; // Exit early

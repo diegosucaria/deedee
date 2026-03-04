@@ -113,4 +113,42 @@ describe('Media Eager Extraction', () => {
         const savedParts = JSON.parse(savedMsg.parts);
         expect(savedParts[0].inlineData.data).toBe('[MEDIA_STRIPPED_PASSIVE]');
     });
+
+    test('Should extract fromMe media semantics and skip autopilot', async () => {
+        agent.settings = { save_passive_messages: true };
+        // Mock impersonation service to spy on it
+        const handleMessageSpy = jest.spyOn(agent.impersonationService, 'handleMessage');
+
+        const chatId = require('crypto').randomUUID() + '@s.whatsapp.net';
+        const message = {
+            role: 'user',
+            source: 'whatsapp:user', // Passive Mode
+            content: '',
+            metadata: { chatId, fromMe: true }, // fromMe flag
+            parts: [{
+                inlineData: {
+                    mimeType: 'image/jpeg',
+                    data: 'base64imagedata'
+                }
+            }]
+        };
+
+        await agent.processMessage(message, jest.fn());
+
+        // Check DB for saved message
+        const msgs = db.getHistory({ chatId });
+        expect(msgs.length).toBe(1);
+
+        const savedMsg = msgs[0];
+        // Content should have been enriched with image description
+        expect(savedMsg.content).toContain('[Image Description] Simulated extracted text');
+
+        // Parts should have been stripped
+        const savedParts = JSON.parse(savedMsg.parts);
+        expect(savedParts[0].inlineData.data).toBe('[MEDIA_STRIPPED_PASSIVE]');
+
+        // Autopilot should NOT have been called
+        expect(handleMessageSpy).not.toHaveBeenCalled();
+        handleMessageSpy.mockRestore();
+    });
 });

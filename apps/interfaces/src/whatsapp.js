@@ -765,7 +765,17 @@ class WhatsAppService {
             }
 
             const remoteJid = msg.key.remoteJid;
-            if (remoteJid === 'status@broadcast' || msg.key.fromMe) return;
+            if (remoteJid === 'status@broadcast') return;
+
+            // Allow fromMe MEDIA (audio/image) through for semantic extraction.
+            // Skip fromMe text messages (they don't need transcription).
+            let messageContent_peek = msg.message;
+            if (messageContent_peek?.ephemeralMessage) messageContent_peek = messageContent_peek.ephemeralMessage.message;
+            else if (messageContent_peek?.viewOnceMessage) messageContent_peek = messageContent_peek.viewOnceMessage.message;
+            else if (messageContent_peek?.viewOnceMessageV2) messageContent_peek = messageContent_peek.viewOnceMessageV2.message;
+
+            const isFromMeMedia = msg.key.fromMe && (!!messageContent_peek?.audioMessage || !!messageContent_peek?.imageMessage);
+            if (msg.key.fromMe && !isFromMeMedia) return;
 
             let phoneNumber = remoteJid.split('@')[0];
 
@@ -897,6 +907,7 @@ class WhatsAppService {
                 phoneNumber,
                 session: this.sessionId,
                 isGroup,
+                fromMe: !!msg.key.fromMe,
                 groupName: isGroup ? 'Unknown Group' : undefined // We could fetch subject if needed
             };
 
