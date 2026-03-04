@@ -207,6 +207,12 @@ class PeopleService {
             if (existingId) {
                 // Merge: add Slack identifier to existing person
                 const existing = this.agent.db.getPerson(existingId);
+                if (!existing) {
+                    // Person was in list but getPerson failed (edge case: deleted between ops or ID format mismatch)
+                    console.warn(`[People] Slack Sync: Could not re-fetch person ${existingId} for merge. Skipping.`);
+                    stats.skipped++;
+                    continue;
+                }
                 const identifiers = existing.identifiers || {};
                 identifiers.slack = user.id;
                 this.agent.db.updatePerson(existingId, { identifiers });
