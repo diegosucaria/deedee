@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Loader2, AlertCircle, Trash2, CheckCircle2, Hash, Eye, Search, Lock } from 'lucide-react';
+import { RefreshCw, Loader2, AlertCircle, Trash2, CheckCircle2, Hash, Eye, Search, Lock, MessageCircle } from 'lucide-react';
 import { getSlackStatus, saveSlackCredentials, testSlackCredentials, deleteSlackCredentials, getSlackChannels, getSlackMonitoredChannels, setSlackMonitoredChannels } from '../app/actions';
 
 export default function SlackSettings() {
@@ -96,7 +96,7 @@ export default function SlackSettings() {
         setMonitored(prev => {
             const exists = prev.find(m => m.id === ch.id);
             if (exists) return prev.filter(m => m.id !== ch.id);
-            return [...prev, { id: ch.id, name: ch.name }];
+            return [...prev, { id: ch.id, name: ch.name, isPrivate: ch.isPrivate, isIm: ch.isIm }];
         });
     };
 
@@ -196,7 +196,7 @@ export default function SlackSettings() {
                             <div className="flex flex-wrap gap-1.5">
                                 {monitored.map(ch => (
                                     <span key={ch.id} className="inline-flex items-center gap-1 text-xs bg-purple-500/15 text-purple-300 px-2 py-0.5 rounded-full border border-purple-500/20">
-                                        <Hash className="w-3 h-3" />
+                                        {ch.isIm ? <MessageCircle className="w-3 h-3" /> : ch.isPrivate ? <Lock className="w-3 h-3" /> : <Hash className="w-3 h-3" />}
                                         {ch.name}
                                     </span>
                                 ))}
@@ -237,18 +237,18 @@ export default function SlackSettings() {
                                                     key={ch.id}
                                                     onClick={() => toggleChannel(ch)}
                                                     className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-left transition-colors text-xs ${isMonitored
-                                                            ? 'bg-purple-500/15 text-purple-300 border border-purple-500/20'
-                                                            : 'hover:bg-zinc-800 text-zinc-400 border border-transparent'
+                                                        ? 'bg-purple-500/15 text-purple-300 border border-purple-500/20'
+                                                        : 'hover:bg-zinc-800 text-zinc-400 border border-transparent'
                                                         }`}
                                                 >
                                                     <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 border ${isMonitored
-                                                            ? 'bg-purple-600 border-purple-500'
-                                                            : 'border-zinc-600'
+                                                        ? 'bg-purple-600 border-purple-500'
+                                                        : 'border-zinc-600'
                                                         }`}>
                                                         {isMonitored && <CheckCircle2 className="w-3 h-3 text-white" />}
                                                     </div>
                                                     <div className="flex items-center gap-1 min-w-0 flex-1">
-                                                        {ch.isPrivate ? <Lock className="w-3 h-3 flex-shrink-0 text-zinc-500" /> : <Hash className="w-3 h-3 flex-shrink-0 text-zinc-500" />}
+                                                        {ch.isIm ? <MessageCircle className="w-3 h-3 flex-shrink-0 text-zinc-500" /> : ch.isPrivate ? <Lock className="w-3 h-3 flex-shrink-0 text-zinc-500" /> : <Hash className="w-3 h-3 flex-shrink-0 text-zinc-500" />}
                                                         <span className="font-medium truncate">{ch.name}</span>
                                                     </div>
                                                     {ch.purpose && (

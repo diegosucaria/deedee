@@ -295,30 +295,56 @@ class SlackService {
     }
 
     /**
-     * Get all workspace channels (public + private, excluding archived) for channel picker.
+     * Get all workspace channels (public + private + DMs, excluding archived) for channel picker.
+     * Uses form-urlencoded to ensure Slack returns private_channel type reliably.
      */
     async getChannels() {
+        if (!this.xoxc || !this.xoxd) {
+            throw new Error('Slack not configured (missing tokens)');
+        }
+
         const channels = [];
         let cursor;
         do {
-            const res = await this._api('conversations.list', {
-                types: 'public_channel,private_channel',
-                exclude_archived: true,
-                limit: 200,
-                cursor,
+            const params = new URLSearchParams({
+                types: 'public_channel,private_channel,mpim,im',
+                exclude_archived: 'true',
+                limit: '200',
             });
-            for (const ch of res.channels || []) {
+            if (cursor) params.set('cursor', cursor);
+
+            const res = await fetch(`https://slack.com/api/conversations.list`, {
+                method: 'POST',
+                headers: {
+                    'Authorization': `Bearer ${this.xoxc}`,
+                    'Cookie': `d=${this.xoxd}`,
+                    'Content-Type': 'application/x-www-form-urlencoded; charset=utf-8',
+                },
+                body: params.toString(),
+            });
+            const data = await res.json();
+            if (!data.ok) throw new Error(`Slack API conversations.list: ${data.error}`);
+
+            for (const ch of data.channels || []) {
+                // For IMs, resolve the user name
+                let name = ch.name;
+                if (ch.is_im && ch.user) {
+                    try { name = await this._resolveUser(ch.user); } catch (e) { name = ch.user; }
+                }
+
                 channels.push({
                     id: ch.id,
-                    name: ch.name,
+                    name: name || ch.id,
                     topic: ch.topic?.value || '',
                     purpose: ch.purpose?.value || '',
-                    isMember: ch.is_member || false,
-                    isPrivate: ch.is_private || false,
+                    isMember: ch.is_member || ch.is_im || false,
+                    isPrivate: ch.is_private || ch.is_mpim || false,
+                    isIm: ch.is_im || false,
+                    isMpim: ch.is_mpim || false,
                     numMembers: ch.num_members || 0,
                 });
             }
-            cursor = res.response_metadata?.next_cursor;
+            cursor = data.response_metadata?.next_cursor;
         } while (cursor);
         return channels;
     }
