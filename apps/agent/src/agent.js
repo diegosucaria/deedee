@@ -553,7 +553,7 @@ class Agent {
         const msgCount = this.db.countMessages(chatId);
 
         // PASSIVE MODE: Messages from 'whatsapp:user' (my text history) should not trigger active agent behaviors
-        const isPassiveMode = message.source === 'whatsapp:user';
+        const isPassiveMode = message.source === 'whatsapp:user' || message.source === 'slack';
 
         this.db.ensureSession(chatId, message.source);
 
@@ -884,7 +884,7 @@ class Agent {
       // If (b) or (a), we need to save it.
       // saveMessage uses INSERT with generated UUID — safe to call without deduplication concern
 
-      if (!message.source?.startsWith('whatsapp:user')) {
+      if (!message.source?.startsWith('whatsapp:user') && message.source !== 'slack') {
         this.db.saveMessage(message);
       }
 
