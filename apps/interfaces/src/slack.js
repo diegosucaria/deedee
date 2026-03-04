@@ -370,13 +370,19 @@ class SlackService {
         }));
     }
 
-    async getHistory(channelNameOrId, limit = 20) {
+    async getHistory(channelNameOrId, limit = 20, days_back = null) {
         let channelId = channelNameOrId;
 
-        // Resolve channel name or username to ID
-        if (channelNameOrId.startsWith('#')) {
-            // #channel-name → channel ID
-            channelId = await this._resolveChannelName(channelNameOrId.replace(/^#/, ''));
+        // Try exact cache first for speed (handles raw IDs)
+        if (!this.channelCache.has(channelNameOrId)) {
+            await this._refreshChannels(); // lazy load if missing
+        }
+
+        if (this.channelNameToId.has(channelNameOrId)) {
+            channelId = this.channelNameToId.get(channelNameOrId);
+        } else if (channelNameOrId.startsWith('#')) {
+            const cleanName = channelNameOrId.replace(/^#/, '');
+            channelId = await this._resolveChannelName(cleanName);
             if (!channelId) return { error: `Channel "${channelNameOrId}" not found` };
         } else if (!channelNameOrId.startsWith('C') && !channelNameOrId.startsWith('D')) {
             // Try as username → DM channel ID
@@ -389,10 +395,18 @@ class SlackService {
             if (!channelId) return { error: `User or channel "${channelNameOrId}" not found` };
         }
 
-        const result = await this._api('conversations.history', {
+        const params = {
             channel: channelId,
             limit: Math.min(limit, 100),
-        });
+        };
+
+        if (days_back) {
+            const oldestDate = new Date();
+            oldestDate.setDate(oldestDate.getDate() - days_back);
+            params.oldest = (oldestDate.getTime() / 1000).toString();
+        }
+
+        const result = await this._api('conversations.history', params);
 
         if (!result.messages) return [];
 

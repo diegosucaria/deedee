@@ -425,9 +425,13 @@ app.get('/slack/search', async (req, res) => {
 
 app.get('/slack/history', async (req, res) => {
   try {
-    const { channel, limit } = req.query;
+    const { channel, limit, days_back } = req.query;
     if (!channel) return res.status(400).json({ error: 'Missing channel parameter' });
-    const messages = await slack.getHistory(channel, parseInt(limit) || 20);
+    const messages = await slack.getHistory(
+      channel,
+      parseInt(limit) || 20,
+      days_back ? parseInt(days_back) : undefined
+    );
     res.json({ messages });
   } catch (err) {
     console.error('[Interfaces] Slack history error:', err.message);

@@ -672,12 +672,12 @@ const toolDefinitions = [
       // Slack Integration
       {
         name: "searchSlack",
-        description: "Search Slack messages across channels and DMs for specific keywords or topics. Use this for 'What did we discuss about X on Slack?' queries.",
+        description: "Search Slack messages across channels and DMs. You MUST use Slack's advanced search syntax to filter results efficiently and avoid hitting limits. Examples: 'from:@user', 'in:#channel', 'has:link', 'after:2024-01-01', or simply 'project deadline'. Do NOT just search for a generic name like 'Sean' multiple times; instead search 'from:@Sean' to find messages sent by him.",
         parameters: {
           type: "OBJECT",
           properties: {
-            query: { type: "STRING", description: "The search query (e.g. 'project deployment', 'from:diego budget')." },
-            limit: { type: "NUMBER", description: "Optional. Max results (default 10, max 50)." }
+            query: { type: "STRING", description: "The search query (e.g., 'launch plan in:#marketing from:@alice')" },
+            limit: { type: "NUMBER", description: "Max results (default 10, max 50)" }
           },
           required: ["query"]
         }
@@ -688,8 +688,9 @@ const toolDefinitions = [
         parameters: {
           type: "OBJECT",
           properties: {
-            channel: { type: "STRING", description: "Channel name (e.g. '#general', '#dev') or channel ID." },
-            limit: { type: "NUMBER", description: "Optional. Number of messages to retrieve (default 20, max 100)." }
+            channel: { type: "STRING", description: "The channel ID, channel name (e.g., 'general'), or username (e.g., 'alice') to read from." },
+            limit: { type: "NUMBER", description: "Max messages to retrieve (default 20, max 100)" },
+            days_back: { type: "NUMBER", description: "Only retrieve messages newer than this many days ago (default 7). Set to a higher number if you need older context." }
           },
           required: ["channel"]
         }

@@ -147,8 +147,8 @@ export default function SlackSettings() {
                         <button
                             onClick={toggleListening}
                             className={`p-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-colors ${status.listening
-                                    ? 'bg-purple-500/10 text-purple-400 border-purple-500/20 hover:bg-purple-500/20'
-                                    : 'bg-zinc-800 text-zinc-500 border-zinc-700 hover:bg-zinc-700'
+                                ? 'bg-purple-500/10 text-purple-400 border-purple-500/20 hover:bg-purple-500/20'
+                                : 'bg-zinc-800 text-zinc-500 border-zinc-700 hover:bg-zinc-700'
                                 }`}
                             title={status.listening ? "Agent is listening to messages" : "Agent is ignoring messages"}
                         >
@@ -221,13 +221,49 @@ export default function SlackSettings() {
 
                         {/* Current Monitored List */}
                         {monitored.length > 0 ? (
-                            <div className="flex flex-wrap gap-1.5">
-                                {monitored.map(ch => (
-                                    <span key={ch.id} className="inline-flex items-center gap-1 text-xs bg-purple-500/15 text-purple-300 px-2 py-0.5 rounded-full border border-purple-500/20">
-                                        {ch.isIm ? <MessageCircle className="w-3 h-3" /> : ch.isPrivate ? <Lock className="w-3 h-3" /> : <Hash className="w-3 h-3" />}
-                                        {ch.name}
-                                    </span>
-                                ))}
+                            <div className="space-y-2">
+                                {/* Channels */}
+                                {monitored.filter(ch => !ch.isIm && !ch.isMpim).length > 0 && (
+                                    <div>
+                                        <div className="text-[10px] text-zinc-500 font-medium mb-1 uppercase tracking-wider">Channels</div>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {monitored.filter(ch => !ch.isIm && !ch.isMpim).map(ch => (
+                                                <span key={ch.id} className="inline-flex items-center gap-1 text-xs bg-purple-500/15 text-purple-300 px-2 py-0.5 rounded-full border border-purple-500/20">
+                                                    {ch.isPrivate ? <Lock className="w-3 h-3" /> : <Hash className="w-3 h-3" />}
+                                                    {ch.name}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                                {/* Group DMs */}
+                                {monitored.filter(ch => ch.isMpim).length > 0 && (
+                                    <div>
+                                        <div className="text-[10px] text-zinc-500 font-medium mb-1 uppercase tracking-wider">Group DMs</div>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {monitored.filter(ch => ch.isMpim).map(ch => (
+                                                <span key={ch.id} className="inline-flex items-center gap-1 text-xs bg-purple-500/15 text-purple-300 px-2 py-0.5 rounded-full border border-purple-500/20">
+                                                    <MessageCircle className="w-3 h-3" />
+                                                    {ch.name}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
+                                {/* Direct Messages */}
+                                {monitored.filter(ch => ch.isIm).length > 0 && (
+                                    <div>
+                                        <div className="text-[10px] text-zinc-500 font-medium mb-1 uppercase tracking-wider">Direct Messages</div>
+                                        <div className="flex flex-wrap gap-1.5">
+                                            {monitored.filter(ch => ch.isIm).map(ch => (
+                                                <span key={ch.id} className="inline-flex items-center gap-1 text-xs bg-purple-500/15 text-purple-300 px-2 py-0.5 rounded-full border border-purple-500/20">
+                                                    <MessageCircle className="w-3 h-3" />
+                                                    {ch.name}
+                                                </span>
+                                            ))}
+                                        </div>
+                                    </div>
+                                )}
                             </div>
                         ) : (
                             <p className="text-xs text-zinc-600 italic">No channels monitored. Click Configure to select channels.</p>
@@ -249,7 +285,7 @@ export default function SlackSettings() {
                                 </div>
 
                                 {/* Channel List */}
-                                <div className="max-h-64 overflow-y-auto space-y-0.5 custom-scrollbar">
+                                <div className="max-h-64 overflow-y-auto space-y-4 custom-scrollbar pr-2">
                                     {loadingChannels ? (
                                         <div className="text-center py-4 text-zinc-500 text-xs">
                                             <Loader2 className="w-4 h-4 animate-spin mx-auto mb-1" />
@@ -258,36 +294,84 @@ export default function SlackSettings() {
                                     ) : filteredChannels.length === 0 ? (
                                         <div className="text-center py-4 text-zinc-600 text-xs">No channels found</div>
                                     ) : (
-                                        filteredChannels.map(ch => {
-                                            const isMonitored = monitored.some(m => m.id === ch.id);
-                                            return (
-                                                <button
-                                                    key={ch.id}
-                                                    onClick={() => toggleChannel(ch)}
-                                                    className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-left transition-colors text-xs ${isMonitored
-                                                        ? 'bg-purple-500/15 text-purple-300 border border-purple-500/20'
-                                                        : 'hover:bg-zinc-800 text-zinc-400 border border-transparent'
-                                                        }`}
-                                                >
-                                                    <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 border ${isMonitored
-                                                        ? 'bg-purple-600 border-purple-500'
-                                                        : 'border-zinc-600'
-                                                        }`}>
-                                                        {isMonitored && <CheckCircle2 className="w-3 h-3 text-white" />}
-                                                    </div>
-                                                    <div className="flex items-center gap-1 min-w-0 flex-1">
-                                                        {ch.isIm ? <MessageCircle className="w-3 h-3 flex-shrink-0 text-zinc-500" /> : ch.isPrivate ? <Lock className="w-3 h-3 flex-shrink-0 text-zinc-500" /> : <Hash className="w-3 h-3 flex-shrink-0 text-zinc-500" />}
-                                                        <span className="font-medium truncate">{ch.name}</span>
-                                                    </div>
-                                                    {ch.purpose && (
-                                                        <span className="text-[10px] text-zinc-600 truncate max-w-[120px] hidden sm:inline">{ch.purpose}</span>
-                                                    )}
-                                                    {!ch.isMember && (
-                                                        <span className="text-[9px] text-zinc-600 bg-zinc-800 px-1 rounded flex-shrink-0">not joined</span>
-                                                    )}
-                                                </button>
-                                            );
-                                        })
+                                        <>
+                                            {/* Channels Section */}
+                                            {filteredChannels.filter(ch => !ch.isIm && !ch.isMpim).length > 0 && (
+                                                <div className="space-y-0.5">
+                                                    <div className="text-[10px] text-zinc-500 font-medium mb-1 uppercase tracking-wider sticky top-0 bg-zinc-800/90 backdrop-blur pb-1 z-10">Channels</div>
+                                                    {filteredChannels.filter(ch => !ch.isIm && !ch.isMpim).map(ch => {
+                                                        const isMonitored = monitored.some(m => m.id === ch.id);
+                                                        return (
+                                                            <button
+                                                                key={ch.id}
+                                                                onClick={() => toggleChannel(ch)}
+                                                                className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-left transition-colors text-xs ${isMonitored ? 'bg-purple-500/15 text-purple-300 border border-purple-500/20' : 'hover:bg-zinc-800 text-zinc-400 border border-transparent'}`}
+                                                            >
+                                                                <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 border ${isMonitored ? 'bg-purple-600 border-purple-500' : 'border-zinc-600'}`}>
+                                                                    {isMonitored && <CheckCircle2 className="w-3 h-3 text-white" />}
+                                                                </div>
+                                                                <div className="flex items-center gap-1 min-w-0 flex-1">
+                                                                    {ch.isPrivate ? <Lock className="w-3 h-3 flex-shrink-0 text-zinc-500" /> : <Hash className="w-3 h-3 flex-shrink-0 text-zinc-500" />}
+                                                                    <span className="font-medium truncate">{ch.name}</span>
+                                                                </div>
+                                                                {ch.purpose && <span className="text-[10px] text-zinc-600 truncate max-w-[120px] hidden sm:inline">{ch.purpose}</span>}
+                                                                {!ch.isMember && <span className="text-[9px] text-zinc-600 bg-zinc-800 px-1 rounded flex-shrink-0">not joined</span>}
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+
+                                            {/* Group DMs Section */}
+                                            {filteredChannels.filter(ch => ch.isMpim).length > 0 && (
+                                                <div className="space-y-0.5">
+                                                    <div className="text-[10px] text-zinc-500 font-medium mb-1 mt-2 uppercase tracking-wider sticky top-0 bg-zinc-800/90 backdrop-blur pb-1 z-10">Group DMs</div>
+                                                    {filteredChannels.filter(ch => ch.isMpim).map(ch => {
+                                                        const isMonitored = monitored.some(m => m.id === ch.id);
+                                                        return (
+                                                            <button
+                                                                key={ch.id}
+                                                                onClick={() => toggleChannel(ch)}
+                                                                className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-left transition-colors text-xs ${isMonitored ? 'bg-purple-500/15 text-purple-300 border border-purple-500/20' : 'hover:bg-zinc-800 text-zinc-400 border border-transparent'}`}
+                                                            >
+                                                                <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 border ${isMonitored ? 'bg-purple-600 border-purple-500' : 'border-zinc-600'}`}>
+                                                                    {isMonitored && <CheckCircle2 className="w-3 h-3 text-white" />}
+                                                                </div>
+                                                                <div className="flex items-center gap-1 min-w-0 flex-1">
+                                                                    <MessageCircle className="w-3 h-3 flex-shrink-0 text-zinc-500" />
+                                                                    <span className="font-medium truncate">{ch.name}</span>
+                                                                </div>
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+
+                                            {/* Direct Messages Section */}
+                                            {filteredChannels.filter(ch => ch.isIm).length > 0 && (
+                                                <div className="space-y-0.5">
+                                                    <div className="text-[10px] text-zinc-500 font-medium mb-1 mt-2 uppercase tracking-wider sticky top-0 bg-zinc-800/90 backdrop-blur pb-1 z-10">Direct Messages</div>
+                                                    {filteredChannels.filter(ch => ch.isIm).map(ch => {
+                                                        const isMonitored = monitored.some(m => m.id === ch.id);
+                                                        return (
+                                                            <button
+                                                                key={ch.id}
+                                                                onClick={() => toggleChannel(ch)}
+                                                                className={`w-full flex items-center gap-2 px-2.5 py-1.5 rounded-md text-left transition-colors text-xs ${isMonitored ? 'bg-purple-500/15 text-purple-300 border border-purple-500/20' : 'hover:bg-zinc-800 text-zinc-400 border border-transparent'}`}
+                                                            >
+                                                                <div className={`w-4 h-4 rounded flex items-center justify-center flex-shrink-0 border ${isMonitored ? 'bg-purple-600 border-purple-500' : 'border-zinc-600'}`}>
+                                                                    {isMonitored && <CheckCircle2 className="w-3 h-3 text-white" />}
+                                                                </div>
+                                                                <div className="flex items-center gap-1 min-w-0 flex-1">
+                                                                    <MessageCircle className="w-3 h-3 flex-shrink-0 text-zinc-500" />
+                                                                    <span className="font-medium truncate">{ch.name}</span>
+                                                                </div>
+                                                            </button>
+                                                        );
+                                                    })}
+                                                </div>
+                                            )}
+                                        </>
                                     )}
                                 </div>
 
