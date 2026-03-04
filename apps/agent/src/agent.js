@@ -745,8 +745,43 @@ class Agent {
 
         if (isUserSession && !triggeredWatcher) {
           // PASSIVE MODE: Save to DB but DO NOT REPLY.
-          // OPTIMIZATION: Strip Media Data to save disk space
           const safeMessage = { ...message };
+
+          // Eager Semantic Extraction for Media (1:1 only)
+          if (safeMessage.parts && !groupName) { // Skip groups to save tokens
+            const mediaParts = safeMessage.parts.filter(p => p.inlineData && (p.inlineData.mimeType.startsWith('audio/') || p.inlineData.mimeType.startsWith('image/')));
+
+            if (mediaParts.length > 0) {
+              try {
+                // Initialize flash client specifically for low-latency extraction
+                const { GoogleGenAI } = await this._loadClientLibrary();
+                const genAI = new GoogleGenAI({ apiKey: this.config.googleApiKey });
+                const flashModel = 'gemini-2.5-flash';
+
+                for (const part of mediaParts) {
+                  const isAudio = part.inlineData.mimeType.startsWith('audio/');
+                  const prompt = isAudio ? "Transcribe this audio verbatim in the original language." : "Describe this image in detail concisely.";
+
+                  console.log(`${logPrefix} Eagerly extracting semantics for passive 1:1 ${isAudio ? 'audio' : 'image'}...`);
+                  const result = await genAI.models.generateContent({
+                    model: flashModel,
+                    contents: [{ role: 'user', parts: [part, { text: prompt }] }]
+                  });
+
+                  const text = result.text;
+                  if (text) {
+                    const tag = isAudio ? '[Voice Transcript]' : '[Image Description]';
+                    safeMessage.content = (safeMessage.content ? safeMessage.content + '\n' : '') + `${tag} ${text}`;
+                    console.log(`${logPrefix} Extracted semantics: ${tag} ${text.substring(0, 50)}...`);
+                  }
+                }
+              } catch (e) {
+                console.warn(`${logPrefix} Failed to eagerly extract media semantics:`, e.message);
+              }
+            }
+          }
+
+          // OPTIMIZATION: Strip Media Data to save disk space
           if (safeMessage.parts) {
             safeMessage.parts = safeMessage.parts.map(p => {
               if (p.inlineData) {

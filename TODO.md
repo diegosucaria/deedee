@@ -46,6 +46,7 @@
     - [x] **Native Modules**: Fixed `better-sqlite3` builds on Alpine.
     - [x] **Web Assets**: Updated Logos, Favicons, and Metadata.
 - [x] **WhatsApp Improvements**:
+    - [x] **Media Awareness**: Eager semantic extraction for audio/images in passive 1:1 mode to enrich Context & Sync Jobs.
     - [x] **Ghost Mode**: Disabled auto-read receipts.
     - [x] **Session Persistence**: Fixed Docker volume mounting.
     - [x] **LID Support**: Fixed blocking of Linked Identity messages.
