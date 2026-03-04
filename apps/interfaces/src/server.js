@@ -423,6 +423,17 @@ app.get('/slack/history', async (req, res) => {
   }
 });
 
+app.get('/slack/users', async (req, res) => {
+  try {
+    if (!slack?.connected) return res.status(400).json({ error: 'Slack not connected' });
+    const users = await slack.getWorkspaceUsers();
+    res.json(users);
+  } catch (err) {
+    console.error('[Interfaces] Slack users error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // --- GSUITE ENDPOINTS ---
 app.get('/gsuite/accounts', async (req, res) => {
   try {

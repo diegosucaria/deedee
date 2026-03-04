@@ -164,6 +164,77 @@ class PeopleService {
         return stats;
     }
 
+    async syncFromSlack() {
+        const existingPeople = this.agent.db.listPeople();
+        // Build lookup maps for dedup
+        const existingSlackIds = new Set();
+        const nameToPersonId = new Map(); // lowercase name → person ID (for merging identifiers)
+        for (const p of existingPeople) {
+            if (p.identifiers?.slack) existingSlackIds.add(p.identifiers.slack);
+            if (p.name) nameToPersonId.set(p.name.toLowerCase().trim(), p.id);
+        }
+
+        // Fetch workspace users from Interfaces
+        let slackUsers = [];
+        try {
+            const res = await axios.get(`${this.interfacesUrl}/slack/users`, {
+                headers: { 'Authorization': `Bearer ${process.env.DEEDEE_API_TOKEN}` }
+            });
+            slackUsers = res.data || [];
+        } catch (e) {
+            console.error('[People] Slack sync failed to fetch users:', e.message);
+            throw new Error('Failed to fetch Slack users. Is Slack connected?');
+        }
+
+        const stats = { added: 0, merged: 0, skipped: 0, total: slackUsers.length };
+
+        for (const user of slackUsers) {
+            if (!user.name || !user.id) {
+                stats.skipped++;
+                continue;
+            }
+
+            // Skip if already synced by Slack ID
+            if (existingSlackIds.has(user.id)) {
+                stats.skipped++;
+                continue;
+            }
+
+            // Check if person exists by name (merge identifiers)
+            const nameKey = user.name.toLowerCase().trim();
+            const existingId = nameToPersonId.get(nameKey);
+
+            if (existingId) {
+                // Merge: add Slack identifier to existing person
+                const existing = this.agent.db.getPerson(existingId);
+                const identifiers = existing.identifiers || {};
+                identifiers.slack = user.id;
+                this.agent.db.updatePerson(existingId, { identifiers });
+                existingSlackIds.add(user.id);
+                stats.merged++;
+                continue;
+            }
+
+            // Create new person
+            this.agent.db.createPerson({
+                name: user.name,
+                source: 'slack_sync',
+                relationship: user.title || 'coworker',
+                identifiers: { slack: user.id },
+                metadata: {
+                    synced_at: new Date().toISOString(),
+                    slack_display_name: user.displayName,
+                    slack_email: user.email,
+                }
+            });
+            existingSlackIds.add(user.id);
+            nameToPersonId.set(nameKey, user.id); // prevent name dupes within same batch
+            stats.added++;
+        }
+
+        return stats;
+    }
+
     async _analyzeCandidates(candidates) {
         if (!this.agent.client) return [];
 

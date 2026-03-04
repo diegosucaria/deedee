@@ -270,6 +270,30 @@ class SlackService {
 
     // --- Search & History (Agent Tool Support) ---
 
+    /**
+     * Get all workspace users (non-bot, non-deleted) for contact sync.
+     */
+    async getWorkspaceUsers() {
+        const users = [];
+        let cursor;
+        do {
+            const res = await this._api('users.list', { limit: 200, cursor });
+            for (const user of res.members || []) {
+                if (user.deleted || user.is_bot || user.id === 'USLACKBOT') continue;
+                users.push({
+                    id: user.id,
+                    name: user.real_name || user.name,
+                    displayName: user.profile?.display_name || '',
+                    email: user.profile?.email || '',
+                    title: user.profile?.title || '',
+                    avatar: user.profile?.image_72 || '',
+                });
+            }
+            cursor = res.response_metadata?.next_cursor;
+        } while (cursor);
+        return users;
+    }
+
     async search(query, limit = 10) {
         const result = await this._api('search.messages', {
             query,

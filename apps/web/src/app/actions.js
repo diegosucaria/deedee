@@ -1010,6 +1010,16 @@ export async function syncWhatsAppContacts() {
     }
 }
 
+export async function syncSlackContacts() {
+    try {
+        const res = await fetchAPI('/v1/people/sync/slack', { method: 'POST' });
+        revalidatePath('/people');
+        return { success: true, stats: res.stats };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+}
+
 export async function createPerson(prevState, formData) {
     try {
         const name = formData.get('name');

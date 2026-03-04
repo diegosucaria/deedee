@@ -129,6 +129,16 @@ const createPeopleRouter = (agent) => {
         }
     });
 
+    router.post('/sync/slack', async (req, res) => {
+        try {
+            const stats = await agent.peopleService.syncFromSlack();
+            res.json({ success: true, stats });
+        } catch (error) {
+            console.error('[People] Slack Sync Error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
     router.post('/learn', async (req, res) => {
         try {
             const { limit, offset } = req.body;

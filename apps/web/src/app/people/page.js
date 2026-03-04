@@ -3,7 +3,7 @@
 import { useState, useEffect } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { Plus, Search, Sparkles, UserPlus, RefreshCw } from 'lucide-react';
-import { getPeople, createPerson, updatePerson, deletePerson, syncWhatsAppContacts } from '@/app/actions';
+import { getPeople, createPerson, updatePerson, deletePerson, syncWhatsAppContacts, syncSlackContacts } from '@/app/actions';
 import { PersonCard } from '@/components/people/PersonCard';
 import { SmartLearnModal } from '@/components/people/SmartLearnModal';
 
@@ -17,6 +17,7 @@ export default function PeoplePage() {
 
     const [isSmartLearnOpen, setSmartLearnOpen] = useState(false);
     const [syncing, setSyncing] = useState(false);
+    const [syncingSlack, setSyncingSlack] = useState(false);
 
     // Edit/Create Modal State
     const [editingPerson, setEditingPerson] = useState(null);
@@ -55,6 +56,21 @@ export default function PeoplePage() {
             loadPeople();
         } else {
             alert('Failed to sync: ' + res.error);
+        }
+    };
+
+    const handleSlackSync = async () => {
+        setSyncingSlack(true);
+        const res = await syncSlackContacts();
+        setSyncingSlack(false);
+        if (res.success) {
+            const parts = [`Added ${res.stats.added}`];
+            if (res.stats.merged > 0) parts.push(`Merged ${res.stats.merged}`);
+            parts.push(`Skipped ${res.stats.skipped}`);
+            alert(`Slack Sync: ${parts.join(', ')}`);
+            loadPeople();
+        } else {
+            alert('Failed to sync Slack: ' + res.error);
         }
     };
 
@@ -111,6 +127,14 @@ export default function PeoplePage() {
                     >
                         <RefreshCw size={18} className={`text-green-500 ${syncing ? 'animate-spin' : ''}`} />
                         <span>{syncing ? 'Syncing...' : 'Sync WhatsApp'}</span>
+                    </button>
+                    <button
+                        onClick={handleSlackSync}
+                        disabled={syncingSlack}
+                        className="flex items-center space-x-2 px-4 py-2 rounded-md hover:bg-secondary/50 text-foreground transition-colors border border-transparent hover:border-primary/20 disabled:opacity-50"
+                    >
+                        <RefreshCw size={18} className={`text-purple-500 ${syncingSlack ? 'animate-spin' : ''}`} />
+                        <span>{syncingSlack ? 'Syncing...' : 'Sync Slack'}</span>
                     </button>
                     <button
                         onClick={() => setSmartLearnOpen(true)}
