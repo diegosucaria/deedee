@@ -123,6 +123,7 @@
     - [x] **Bug Fix (Mar 2026)**: Fixed `search.messages` (form-urlencoded), added username→DM resolution for `readSlackHistory`.
     - [x] **Passive Mode (Mar 2026)**: Slack messages no longer trigger auto-title, session creation, DB storage, or LLM routing.
     - [x] **Contact Sync (Mar 2026)**: `syncFromSlack()` with smart name-merge, purple "Sync Slack" button in People UI.
+    - [x] **Monitored Channels (Mar 2026)**: Channel picker UI in SlackSettings, `getSlackMonitoredChannels` agent tool, updated proactive_thought prompt for Slack scanning.
 - [x] **Multi-Agent (Feb 2026)**:
     - [x] **SubAgentService**: Spawn isolated sub-agents with timeout (10m max), concurrency limits (3 max), and depth guard.
     - [x] **Agent Tools**: `spawnAgent`, `getAgentResult`, `listAgentTasks`.
