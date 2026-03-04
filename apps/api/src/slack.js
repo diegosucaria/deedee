@@ -31,5 +31,6 @@ router.get('/search', (req, res) => proxyRequest(req, res, 'GET', '/slack/search
 router.get('/history', (req, res) => proxyRequest(req, res, 'GET', '/slack/history'));
 router.get('/channels', (req, res) => proxyRequest(req, res, 'GET', '/slack/channels'));
 router.get('/users', (req, res) => proxyRequest(req, res, 'GET', '/slack/users'));
+router.post('/listening', (req, res) => proxyRequest(req, res, 'POST', '/slack/listening', req.body));
 
 module.exports = router;

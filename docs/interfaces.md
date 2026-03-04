@@ -73,6 +73,7 @@ Deedee reads your Slack workspace using browser session tokens (xoxc/xoxd). This
 
 ### Features
 - **Passive Mode**: Incoming Slack messages do NOT trigger the agent. No auto-title, no session creation, no DB storage. Watchers still fire.
+- **Listening Toggle**: You can completely mute incoming Slack messages via the UI toggle (`POST /slack/listening`). When muted, even watchers won't fire and logs will be quiet.
 - **Search**: Agent can search Slack messages via `searchSlack` tool.
 - **History**: Agent can read channel/DM history via `readSlackHistory` tool.
 - **Send**: Agent can send messages via `sendSlackMessage` tool.

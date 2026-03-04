@@ -1,8 +1,8 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Loader2, AlertCircle, Trash2, CheckCircle2, Hash, Eye, Search, Lock, MessageCircle } from 'lucide-react';
-import { getSlackStatus, saveSlackCredentials, testSlackCredentials, deleteSlackCredentials, getSlackChannels, getSlackMonitoredChannels, setSlackMonitoredChannels } from '../app/actions';
+import { RefreshCw, Loader2, AlertCircle, Trash2, CheckCircle2, Hash, Eye, Search, Lock, MessageCircle, Volume2, VolumeX } from 'lucide-react';
+import { getSlackStatus, saveSlackCredentials, testSlackCredentials, deleteSlackCredentials, getSlackChannels, getSlackMonitoredChannels, setSlackMonitoredChannels, setSlackListening } from '../app/actions';
 
 export default function SlackSettings() {
     const [status, setStatus] = useState(null);
@@ -84,6 +84,21 @@ export default function SlackSettings() {
         setBusy(false);
     };
 
+    const toggleListening = async () => {
+        if (!status) return;
+        const newListening = !status.listening;
+
+        // Optimistic update
+        setStatus(prev => ({ ...prev, listening: newListening }));
+
+        const res = await setSlackListening(newListening);
+        if (!res.success) {
+            setError(res.error || 'Failed to toggle listening state');
+            // Revert on failure
+            setStatus(prev => ({ ...prev, listening: !newListening }));
+        }
+    };
+
     const loadChannels = async () => {
         setLoadingChannels(true);
         setChannelPickerOpen(true);
@@ -128,6 +143,19 @@ export default function SlackSettings() {
                     Slack
                 </h2>
                 <div className="flex items-center gap-2">
+                    {isConnected && (
+                        <button
+                            onClick={toggleListening}
+                            className={`p-1.5 rounded-lg border text-xs font-medium flex items-center gap-1.5 transition-colors ${status.listening
+                                    ? 'bg-purple-500/10 text-purple-400 border-purple-500/20 hover:bg-purple-500/20'
+                                    : 'bg-zinc-800 text-zinc-500 border-zinc-700 hover:bg-zinc-700'
+                                }`}
+                            title={status.listening ? "Agent is listening to messages" : "Agent is ignoring messages"}
+                        >
+                            {status.listening ? <Volume2 className="w-4 h-4" /> : <VolumeX className="w-4 h-4" />}
+                            {status.listening ? 'Listening' : 'Muted'}
+                        </button>
+                    )}
                     <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${isConnected
                         ? 'bg-green-500/10 text-green-400 border-green-500/20'
                         : 'bg-zinc-700/30 text-zinc-500 border-zinc-700/50'

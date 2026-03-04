@@ -331,6 +331,7 @@ describe('SlackService Unit Tests', () => {
 
         slack.xoxc = 'xoxc-test';
         slack.xoxd = 'xoxd-test';
+        slack.listening = true;
         slack.workspace = { userId: 'U001' };
 
         // Mock user/channel resolution
@@ -361,6 +362,7 @@ describe('SlackService Unit Tests', () => {
 
         slack.xoxc = 'xoxc-test';
         slack.xoxd = 'xoxd-test';
+        slack.listening = true;
         slack.workspace = { userId: 'U001' };
 
         slack.userCache.set('U123', 'Diego');
@@ -378,6 +380,7 @@ describe('SlackService Unit Tests', () => {
 
         slack.xoxc = 'xoxc-test';
         slack.xoxd = 'xoxd-test';
+        slack.listening = true;
         slack.workspace = { userId: 'U001' };
         slack.userCache.set('U123', 'User');
         slack.channelCache.set('C100', { name: 'dev', type: 'channel' });

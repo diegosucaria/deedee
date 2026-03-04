@@ -393,6 +393,18 @@ app.post('/slack/credentials', async (req, res) => {
   }
 });
 
+app.post('/slack/listening', (req, res) => {
+  try {
+    const { listening } = req.body;
+    slack.setListening(listening === true);
+    io.emit('slack:status', slack.getStatus());
+    res.json({ success: true, listening: slack.listening });
+  } catch (err) {
+    console.error('[Interfaces] Slack listening error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.delete('/slack/credentials', (req, res) => {
   slack.clearCredentials();
   io.emit('slack:status', slack.getStatus());

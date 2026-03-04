@@ -226,6 +226,8 @@ class SlackService {
     // --- Message Handling ---
 
     async _handleMessage(event) {
+        if (!this.listening) return; // Drop message completely if listener is disabled
+
         try {
             const userName = await this._resolveUser(event.user);
             const channelInfo = await this._resolveChannel(event.channel);
@@ -458,6 +460,7 @@ class SlackService {
             workspace: this.workspace?.team || null,
             user: this.workspace?.user || null,
             mode: this.ws ? 'rtm' : (this.pollInterval ? 'polling' : 'disconnected'),
+            listening: this.listening,
             tokenAge: this.credentialsSavedAt
                 ? Math.floor((Date.now() - new Date(this.credentialsSavedAt).getTime()) / 86400000) + ' days'
                 : null,
@@ -465,6 +468,23 @@ class SlackService {
     }
 
     // --- Slack Web API Client ---
+
+    setListening(listening) {
+        this.listening = listening;
+        try {
+            if (this.xoxc && this.xoxd) {
+                fs.writeFileSync(CREDENTIALS_FILE, JSON.stringify({
+                    xoxc: this.xoxc,
+                    xoxd_enc: this._encrypt(this.xoxd),
+                    savedAt: this.credentialsSavedAt,
+                    workspace: this.workspace,
+                    listening: this.listening
+                }, null, 2));
+            }
+        } catch (e) {
+            console.error('[Slack] Failed to save listening state:', e.message);
+        }
+    }
 
     async _api(method, body = {}) {
         if (!this.xoxc || !this.xoxd) {

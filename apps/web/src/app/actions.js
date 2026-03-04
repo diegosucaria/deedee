@@ -484,6 +484,18 @@ export async function deleteSlackCredentials() {
     }
 }
 
+export async function setSlackListening(listening) {
+    try {
+        const res = await fetchAPI('/v1/slack/listening', {
+            method: 'POST',
+            body: JSON.stringify({ listening })
+        });
+        return { success: true, ...res };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function getSlackChannels() {
     try {
         return await fetchAPI('/v1/slack/channels');
