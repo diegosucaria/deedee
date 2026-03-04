@@ -10,7 +10,9 @@ metadata:
 
 # System Monitoring
 
-You can check the health and status of the server/device you are running on (Raspberry Pi/Docker) using standard Linux commands.
+> **IMPORTANT**: This is a SKILL, not an MCP server. To run any command below, use the `local:runShellCommand` tool. Do NOT call `system-monitor:*` — that does not exist.
+
+You can check the health and status of the server/device you are running on (Raspberry Pi/Docker) using standard Linux commands via `local:runShellCommand`.
 
 ## Available Commands
 
