@@ -754,19 +754,22 @@ class Agent {
 
             if (mediaParts.length > 0) {
               try {
-                // Initialize flash client specifically for low-latency extraction
+                // Initialize lite client specifically for low-latency, low-cost extraction
                 const { GoogleGenAI } = await this._loadClientLibrary();
                 const genAI = new GoogleGenAI({ apiKey: this.config.googleApiKey });
-                const flashModel = process.env.WORKER_FLASH || 'gemini-2.5-flash';
+                const liteModel = process.env.WORKER_LITE || process.env.WORKER_FLASH || 'gemini-2.5-flash';
 
                 for (const part of mediaParts) {
                   const isAudio = part.inlineData.mimeType.startsWith('audio/');
                   const prompt = isAudio ? "Transcribe this audio verbatim in the original language." : "Describe this image in detail concisely.";
 
-                  console.log(`${logPrefix} Eagerly extracting semantics for passive 1:1 ${isAudio ? 'audio' : 'image'}...`);
+                  console.log(`${logPrefix} Eagerly extracting semantics for passive 1:1 ${isAudio ? 'audio' : 'image'} (model: ${liteModel})...`);
                   const result = await genAI.models.generateContent({
-                    model: flashModel,
-                    contents: [{ role: 'user', parts: [part, { text: prompt }] }]
+                    model: liteModel,
+                    contents: [{ role: 'user', parts: [part, { text: prompt }] }],
+                    config: {
+                      thinkingConfig: { thinkingLevel: 'MINIMAL' }
+                    }
                   });
 
                   const text = result.text;

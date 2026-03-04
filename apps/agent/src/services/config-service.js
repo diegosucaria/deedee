@@ -2,6 +2,7 @@
 const CONSTANTS = {
     MODELS: {
         FLASH: process.env.WORKER_FLASH || 'gemini-2.5-flash',
+        LITE: process.env.WORKER_LITE || 'gemini-3.1-flash-lite-preview',
         PRO: process.env.WORKER_PRO || 'gemini-3-pro-preview',
         IMAGE: process.env.GEMINI_IMAGE_MODEL || 'gemini-3-pro-image-preview',
         TTS: process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts',
@@ -13,10 +14,13 @@ const CONSTANTS = {
     PRICING: {
         'gemini-2.5-flash': { threshold: 128000, tier1: { input: 0.30, output: 0.60 }, tier2: { input: 1.0, output: 2.5 } },
         'gemini-2.0-flash-exp': { threshold: 128000, tier1: { input: 0.15, output: 0.60 }, tier2: { input: 0.30, output: 1.20 } },
+        'gemini-3-flash-preview': { threshold: 200000, tier1: { input: 0.50, output: 3.00 }, tier2: { input: 1.00, output: 6.00 } },
+        'gemini-3.1-flash-lite-preview': { threshold: 200000, tier1: { input: 0.25, output: 1.50 }, tier2: { input: 0.50, output: 3.00 } },
         'gemini-3-pro-preview': { threshold: 200000, tier1: { input: 2.00, output: 12.00 }, tier2: { input: 4.00, output: 18.00 } },
         'gemini-3.1-pro-preview': { threshold: 200000, tier1: { input: 2.00, output: 12.00 }, tier2: { input: 4.00, output: 18.00 } },
         'gemini-2.5-pro': { threshold: 200000, tier1: { input: 2.00, output: 12.00 }, tier2: { input: 4.00, output: 18.00 } },
         'FLASH_DEFAULT': { threshold: 128000, tier1: { input: 0.15, output: 0.60 }, tier2: { input: 0.30, output: 1.20 } },
+        'LITE_DEFAULT': { threshold: 200000, tier1: { input: 0.25, output: 1.50 }, tier2: { input: 0.50, output: 3.00 } },
         'PRO_DEFAULT': { threshold: 200000, tier1: { input: 2.00, output: 12.00 }, tier2: { input: 4.00, output: 18.00 } }
     }
 };
@@ -37,6 +41,7 @@ class ConfigService {
         if (!pricing) {
             const lower = model.toLowerCase();
             if (lower.includes('pro')) pricing = CONSTANTS.PRICING['PRO_DEFAULT'];
+            else if (lower.includes('lite')) pricing = CONSTANTS.PRICING['LITE_DEFAULT'];
             else pricing = CONSTANTS.PRICING['FLASH_DEFAULT'];
         }
 
@@ -51,3 +56,4 @@ class ConfigService {
 }
 
 module.exports = { ConfigService, CONSTANTS };
+
