@@ -7,7 +7,7 @@ metadata: {"moltbot":{"emoji":"🌤️","requires":{"bins":["curl"]}}}
 
 # Weather
 
-> **IMPORTANT**: This is a SKILL, not an MCP server. To run any command below, use the `local:runShellCommand` tool.
+> **IMPORTANT**: This is a SKILL, not an MCP server. To run any command below, use the `runShellCommand` tool.
 
 Two free services, no API keys needed.
 

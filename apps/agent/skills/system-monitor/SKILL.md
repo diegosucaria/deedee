@@ -10,9 +10,9 @@ metadata:
 
 # System Monitoring
 
-> **IMPORTANT**: This is a SKILL, not an MCP server. To run any command below, use the `local:runShellCommand` tool. Do NOT call `system-monitor:*` — that does not exist.
+> **IMPORTANT**: This is a SKILL, not an MCP server. To run any command below, use the `runShellCommand` tool. Do NOT call `system-monitor:*` — that does not exist.
 
-You can check the health and status of the server/device you are running on (Raspberry Pi/Docker) using standard Linux commands via `local:runShellCommand`.
+You can check the health and status of the server/device you are running on (Raspberry Pi/Docker) using standard Linux commands via `runShellCommand`.
 
 ## Available Commands
 
