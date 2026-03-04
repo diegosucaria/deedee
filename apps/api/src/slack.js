@@ -29,5 +29,7 @@ router.post('/credentials', (req, res) => proxyRequest(req, res, 'POST', '/slack
 router.delete('/credentials', (req, res) => proxyRequest(req, res, 'DELETE', '/slack/credentials'));
 router.get('/search', (req, res) => proxyRequest(req, res, 'GET', '/slack/search'));
 router.get('/history', (req, res) => proxyRequest(req, res, 'GET', '/slack/history'));
+router.get('/channels', (req, res) => proxyRequest(req, res, 'GET', '/slack/channels'));
+router.get('/users', (req, res) => proxyRequest(req, res, 'GET', '/slack/users'));
 
 module.exports = router;

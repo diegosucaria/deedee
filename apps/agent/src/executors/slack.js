@@ -83,7 +83,7 @@ class SlackExecutor extends BaseExecutor {
             case 'getSlackMonitoredChannels': {
                 console.log('[SlackExecutor] Getting monitored channels from settings');
                 try {
-                    const setting = context.agent?.db?.getAgentSetting('slack_monitored_channels');
+                    const setting = this.services.db?.getAgentSetting('slack_monitored_channels');
                     const channels = setting?.value || [];
                     return {
                         success: true,

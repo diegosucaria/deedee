@@ -58,6 +58,39 @@ Deedee connects via the standard Telegram Bot API (Long Polling).
 
 ---
 
+## 💬 Slack
+
+Deedee reads your Slack workspace using browser session tokens (xoxc/xoxd). This is a "cookie-based" integration that doesn't require installing a Slack App.
+
+### Setup
+1. Open Slack in your browser (not the desktop app).
+2. Get the `xoxc-` token from the browser console:
+   ```js
+   JSON.parse(localStorage.localConfig_v2).teams[Object.keys(JSON.parse(localStorage.localConfig_v2).teams)[0]].token
+   ```
+3. Get the `xoxd-` cookie from DevTools → Application → Cookies.
+4. Go to **Settings → Slack** in the web UI. Paste both tokens and click **Connect**.
+
+### Features
+- **Passive Mode**: Incoming Slack messages do NOT trigger the agent. No auto-title, no session creation, no DB storage. Watchers still fire.
+- **Search**: Agent can search Slack messages via `searchSlack` tool.
+- **History**: Agent can read channel/DM history via `readSlackHistory` tool.
+- **Send**: Agent can send messages via `sendSlackMessage` tool.
+- **Contact Sync**: Import Slack workspace users into the People database via the "Sync Slack" button on the People page.
+
+### Monitored Channels
+You can configure which Slack channels should be scanned by scheduled tasks (morning briefings, proactive thought):
+
+1. Go to **Settings → Slack → Configure** (only visible when connected).
+2. Search and select the channels you want monitored (checkboxes).
+3. Click **Save**. The setting is stored as `slack_monitored_channels` in agent settings.
+4. Scheduled tasks use the `getSlackMonitoredChannels` tool to know which channels to read.
+
+**Tip**: To include Slack in your morning briefing, add this to your task prompt:
+> "Also check Slack: use getSlackMonitoredChannels to get the list of channels, then readSlackHistory on each."
+
+---
+
 ## 🎙️ Gemini Live (Real-Time)
 Deedee supports the high-performance **Gemini Live API** for real-time, low-latency voice interaction.
 

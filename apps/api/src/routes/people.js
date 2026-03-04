@@ -44,9 +44,10 @@ router.get('/', (req, res) => proxyToAgent(req, res, 'GET', '', null));
 router.post('/', (req, res) => proxyToAgent(req, res, 'POST', '', req.body));
 router.post('/learn', (req, res) => proxyToAgent(req, res, 'POST', '/learn', req.body));
 router.post('/sync', (req, res) => proxyToAgent(req, res, 'POST', '/sync', req.body));
-router.get('/:id', (req, res) => proxyToAgent(req, res, 'GET', `/${req.params.id}`, null));
-router.put('/:id', (req, res) => proxyToAgent(req, res, 'PUT', `/${req.params.id}`, req.body));
-router.delete('/:id', (req, res) => proxyToAgent(req, res, 'DELETE', `/${req.params.id}`, null));
-router.get('/:id/avatar', (req, res) => proxyToAgent(req, res, 'GET', `/${req.params.id}/avatar`, null));
+router.post('/sync/slack', (req, res) => proxyToAgent(req, res, 'POST', '/sync/slack', req.body));
+router.get('/:id', (req, res) => proxyToAgent(req, res, 'GET', `/${encodeURIComponent(req.params.id)}`, null));
+router.put('/:id', (req, res) => proxyToAgent(req, res, 'PUT', `/${encodeURIComponent(req.params.id)}`, req.body));
+router.delete('/:id', (req, res) => proxyToAgent(req, res, 'DELETE', `/${encodeURIComponent(req.params.id)}`, null));
+router.get('/:id/avatar', (req, res) => proxyToAgent(req, res, 'GET', `/${encodeURIComponent(req.params.id)}/avatar`, null));
 
 module.exports = router;
