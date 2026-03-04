@@ -60,7 +60,7 @@ Deedee connects via the standard Telegram Bot API (Long Polling).
 
 ## 💬 Slack
 
-Deedee reads your Slack workspace using browser session tokens (xoxc/xoxd). This is a "cookie-based" integration that doesn't require installing a Slack App.
+Deedee reads your Slack workspaces using browser session tokens (xoxc/xoxd). This is a "cookie-based" integration that supports connecting **multiple workspaces** simultaneously.
 
 ### Setup
 1. Open Slack in your browser (not the desktop app).
@@ -69,18 +69,20 @@ Deedee reads your Slack workspace using browser session tokens (xoxc/xoxd). This
    JSON.parse(localStorage.localConfig_v2).teams[Object.keys(JSON.parse(localStorage.localConfig_v2).teams)[0]].token
    ```
 3. Get the `xoxd-` cookie from DevTools → Application → Cookies.
-4. Go to **Settings → Slack** in the web UI. Paste both tokens and click **Connect**.
+4. Go to **Settings → Slack** in the web UI. 
+5. Click **Connect New Workspace**, paste both tokens, give the workspace a name (e.g., "Work", "Community"), and click **Connect**.
+6. Repeat for as many workspaces as you need. Each connection has its own independent settings card.
 
 ### Features
 - **Passive Mode**: Incoming Slack messages do NOT trigger the agent. No auto-title, no session creation, no DB storage. Watchers still fire.
-- **Listening Toggle**: You can completely mute incoming Slack messages via the UI toggle (`POST /slack/listening`). When muted, even watchers won't fire and logs will be quiet.
-- **Search**: Agent can search Slack messages via `searchSlack` tool.
+- **Listening Toggle**: You can completely mute incoming Slack messages *per workspace* via the UI toggle (`POST /slack/listening`). When muted, even watchers won't fire and logs will be quiet.
+- **Search**: Agent can search Slack messages across a specific workspace via `searchSlack` tool.
 - **History**: Agent can read channel/DM history via `readSlackHistory` tool.
 - **Send**: Agent can send messages via `sendSlackMessage` tool.
-- **Contact Sync**: Import Slack workspace users into the People database via the "Sync Slack" button on the People page.
+- **Contact Sync**: Import Slack users from all connected workspaces into the People database via the "Sync Slack" button on the People page.
 
 ### Monitored Channels
-You can configure which Slack channels should be scanned by scheduled tasks (morning briefings, proactive thought):
+You can configure which Slack channels should be scanned *per workspace* by scheduled tasks (morning briefings, proactive thought):
 
 1. Go to **Settings → Slack → Configure** (only visible when connected).
 2. Search and select the channels you want monitored (checkboxes).

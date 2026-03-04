@@ -17,12 +17,12 @@ class SlackExecutor extends BaseExecutor {
 
         switch (name) {
             case 'searchSlack': {
-                const { query, limit } = args;
-                console.log(`[SlackExecutor] Searching Slack for "${query}"`);
+                const { query, limit, workspace } = args;
+                console.log(`[SlackExecutor] Searching Slack for "${query}" (workspace: ${workspace || 'all'})`);
 
                 try {
                     const res = await axios.get(`${interfacesUrl}/slack/search`, {
-                        params: { query: encodeURIComponent(query), limit: limit || 10 },
+                        params: { query: encodeURIComponent(query), limit: limit || 10, teamId: workspace },
                         headers,
                     });
                     return {
@@ -39,15 +39,16 @@ class SlackExecutor extends BaseExecutor {
             }
 
             case 'readSlackHistory': {
-                const { channel, limit, days_back } = args;
-                console.log(`[SlackExecutor] Reading Slack history for ${channel} (days_back: ${days_back || 7})`);
+                const { channel, limit, days_back, workspace } = args;
+                console.log(`[SlackExecutor] Reading Slack history for ${channel} (days_back: ${days_back || 7}, workspace: ${workspace || 'auto'})`);
 
                 try {
                     const res = await axios.get(`${interfacesUrl}/slack/history`, {
                         params: {
                             channel: encodeURIComponent(channel),
                             limit: limit || 20,
-                            days_back: days_back || 7
+                            days_back: days_back || 7,
+                            teamId: workspace
                         },
                         headers,
                     });
@@ -65,14 +66,14 @@ class SlackExecutor extends BaseExecutor {
             }
 
             case 'sendSlackMessage': {
-                const { channel, text, thread_ts } = args;
-                console.log(`[SlackExecutor] Sending Slack message to ${channel}`);
+                const { channel, text, thread_ts, workspace } = args;
+                console.log(`[SlackExecutor] Sending Slack message to ${channel} (workspace: ${workspace || 'auto'})`);
 
                 try {
                     const res = await axios.post(`${interfacesUrl}/send`, {
                         source: 'slack',
                         content: text,
-                        metadata: { chatId: channel, thread_ts },
+                        metadata: { chatId: channel, thread_ts, teamId: workspace },
                     }, { headers });
 
                     return { success: true, info: `Message sent to ${channel}` };

@@ -3,7 +3,7 @@ const http = require('http');
 const express = require('express');
 const { TelegramService } = require('./telegram');
 const { WhatsAppService } = require('./whatsapp');
-const { SlackService } = require('./slack');
+const { SlackManager, SlackService } = require('./slack');
 const axios = require('axios');
 
 const app = express();
@@ -166,7 +166,7 @@ if (!isWhatsAppDisabled) {
 }
 
 // Slack Init
-let slack = new SlackService(agentUrl);
+let slack = new SlackManager(agentUrl);
 slack.start().catch(err => console.error('[Interfaces] Slack init error:', err.message));
 
 // Authentication Middleware
@@ -367,7 +367,7 @@ app.post('/whatsapp/repair', async (req, res) => {
 
 // --- SLACK ENDPOINTS ---
 app.get('/slack/status', (req, res) => {
-  res.json(slack?.getStatus() || { connected: false });
+  res.json(slack?.getStatus() || []);
 });
 
 app.post('/slack/credentials', async (req, res) => {
@@ -376,17 +376,16 @@ app.post('/slack/credentials', async (req, res) => {
     if (!xoxc || !xoxd) return res.status(400).json({ error: 'Missing xoxc or xoxd token' });
 
     if (test) {
-      // Test mode: validate without saving
-      const tempSlack = new SlackService(agentUrl);
-      tempSlack.xoxc = xoxc;
-      tempSlack.xoxd = xoxd;
-      const auth = await tempSlack._api('auth.test');
-      return res.json({ success: true, team: auth.team, user: auth.user });
+      const tempSlack = new SlackService(agentUrl, { xoxc, xoxd });
+      await tempSlack.start();
+      if (!tempSlack.workspace) return res.status(400).json({ error: 'Invalid tokens' });
+      await tempSlack.stop();
+      return res.json({ success: true, team: tempSlack.workspace.team, user: tempSlack.workspace.user });
     }
 
-    const result = await slack.setCredentials(xoxc, xoxd);
+    const workspace = await slack.addConnection(xoxc, xoxd);
     io.emit('slack:status', slack.getStatus());
-    res.json({ success: true, ...result });
+    res.json({ success: true, workspace });
   } catch (err) {
     console.error('[Interfaces] Slack credentials error:', err.message);
     res.status(400).json({ error: err.message });
@@ -395,27 +394,32 @@ app.post('/slack/credentials', async (req, res) => {
 
 app.post('/slack/listening', (req, res) => {
   try {
-    const { listening } = req.body;
-    slack.setListening(listening === true);
+    const { teamId, listening } = req.body;
+    slack.setListening(teamId, listening === true);
     io.emit('slack:status', slack.getStatus());
-    res.json({ success: true, listening: slack.listening });
+    res.json({ success: true });
   } catch (err) {
     console.error('[Interfaces] Slack listening error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });
 
-app.delete('/slack/credentials', (req, res) => {
-  slack.clearCredentials();
-  io.emit('slack:status', slack.getStatus());
-  res.json({ success: true });
+app.delete('/slack/credentials/:teamId', async (req, res) => {
+  try {
+    await slack.removeConnection(req.params.teamId);
+    io.emit('slack:status', slack.getStatus());
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[Interfaces] Slack disconnect error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
 });
 
 app.get('/slack/search', async (req, res) => {
   try {
-    const { query, limit } = req.query;
+    const { query, limit, teamId } = req.query;
     if (!query) return res.status(400).json({ error: 'Missing query parameter' });
-    const results = await slack.search(query, parseInt(limit) || 10);
+    const results = await slack.search(query, parseInt(limit) || 10, teamId);
     res.json({ results });
   } catch (err) {
     console.error('[Interfaces] Slack search error:', err.message);
@@ -425,12 +429,13 @@ app.get('/slack/search', async (req, res) => {
 
 app.get('/slack/history', async (req, res) => {
   try {
-    const { channel, limit, days_back } = req.query;
+    const { channel, limit, days_back, teamId } = req.query;
     if (!channel) return res.status(400).json({ error: 'Missing channel parameter' });
     const messages = await slack.getHistory(
       channel,
       parseInt(limit) || 20,
-      days_back ? parseInt(days_back) : undefined
+      days_back ? parseInt(days_back) : undefined,
+      teamId
     );
     res.json({ messages });
   } catch (err) {
@@ -441,8 +446,10 @@ app.get('/slack/history', async (req, res) => {
 
 app.get('/slack/users', async (req, res) => {
   try {
-    if (!slack?.connected) return res.status(400).json({ error: 'Slack not connected' });
-    const users = await slack.getWorkspaceUsers();
+    const { teamId } = req.query;
+    const conn = slack.resolveConnection(teamId);
+    if (!conn.connected) return res.status(400).json({ error: 'Slack not connected' });
+    const users = await conn.getWorkspaceUsers();
     res.json(users);
   } catch (err) {
     console.error('[Interfaces] Slack users error:', err.message);
@@ -452,11 +459,35 @@ app.get('/slack/users', async (req, res) => {
 
 app.get('/slack/channels', async (req, res) => {
   try {
-    if (!slack?.connected) return res.status(400).json({ error: 'Slack not connected' });
-    const channels = await slack.getChannels();
+    const { teamId } = req.query;
+    const conn = slack.resolveConnection(teamId);
+    if (!conn.connected) return res.status(400).json({ error: 'Slack not connected' });
+    const channels = await conn.getChannels();
     res.json(channels);
   } catch (err) {
     console.error('[Interfaces] Slack channels error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/slack/monitored-channels', (req, res) => {
+  try {
+    const { teamId } = req.query;
+    res.json(slack.getMonitoredChannels(teamId));
+  } catch (err) {
+    console.error('[Interfaces] Slack get monitored channels error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/slack/monitored-channels', (req, res) => {
+  try {
+    const { teamId, channels } = req.body;
+    slack.setMonitoredChannels(teamId, channels);
+    io.emit('slack:status', slack.getStatus());
+    res.json({ success: true });
+  } catch (err) {
+    console.error('[Interfaces] Slack set monitored channels error:', err.message);
     res.status(500).json({ error: err.message });
   }
 });

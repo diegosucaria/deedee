@@ -475,20 +475,20 @@ export async function testSlackCredentials(xoxc, xoxd) {
     }
 }
 
-export async function deleteSlackCredentials() {
+export async function deleteSlackCredentials(teamId) {
     try {
-        await fetchAPI('/v1/slack/credentials', { method: 'DELETE' });
+        await fetchAPI(`/v1/slack/credentials/${encodeURIComponent(teamId)}`, { method: 'DELETE' });
         return { success: true };
     } catch (error) {
         return { success: false, error: error.message };
     }
 }
 
-export async function setSlackListening(listening) {
+export async function setSlackListening(teamId, listening) {
     try {
         const res = await fetchAPI('/v1/slack/listening', {
             method: 'POST',
-            body: JSON.stringify({ listening })
+            body: JSON.stringify({ teamId, listening })
         });
         return { success: true, ...res };
     } catch (error) {
@@ -496,30 +496,31 @@ export async function setSlackListening(listening) {
     }
 }
 
-export async function getSlackChannels() {
+export async function getSlackChannels(teamId) {
     try {
-        return await fetchAPI('/v1/slack/channels');
+        const query = teamId ? `?teamId=${encodeURIComponent(teamId)}` : '';
+        return await fetchAPI(`/v1/slack/channels${query}`);
     } catch (error) {
         console.error('getSlackChannels Error:', error.message);
         return [];
     }
 }
 
-export async function getSlackMonitoredChannels() {
+export async function getSlackMonitoredChannels(teamId) {
     try {
-        const settings = await fetchAPI('/v1/settings');
-        return settings.slack_monitored_channels || [];
+        const query = teamId ? `?teamId=${encodeURIComponent(teamId)}` : '';
+        return await fetchAPI(`/v1/slack/monitored-channels${query}`);
     } catch (error) {
         console.error('getSlackMonitoredChannels Error:', error.message);
         return [];
     }
 }
 
-export async function setSlackMonitoredChannels(channels) {
+export async function setSlackMonitoredChannels(teamId, channels) {
     try {
-        await fetchAPI('/v1/settings', {
+        await fetchAPI('/v1/slack/monitored-channels', {
             method: 'POST',
-            body: JSON.stringify({ key: 'slack_monitored_channels', value: channels, category: 'integrations' })
+            body: JSON.stringify({ teamId, channels })
         });
         return { success: true };
     } catch (error) {

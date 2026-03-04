@@ -26,11 +26,13 @@ const proxyRequest = async (req, res, method, path, data) => {
 
 router.get('/status', (req, res) => proxyRequest(req, res, 'GET', '/slack/status'));
 router.post('/credentials', (req, res) => proxyRequest(req, res, 'POST', '/slack/credentials', req.body));
-router.delete('/credentials', (req, res) => proxyRequest(req, res, 'DELETE', '/slack/credentials'));
+router.delete('/credentials/:teamId', (req, res) => proxyRequest(req, res, 'DELETE', `/slack/credentials/${req.params.teamId}`));
 router.get('/search', (req, res) => proxyRequest(req, res, 'GET', '/slack/search'));
 router.get('/history', (req, res) => proxyRequest(req, res, 'GET', '/slack/history'));
 router.get('/channels', (req, res) => proxyRequest(req, res, 'GET', '/slack/channels'));
 router.get('/users', (req, res) => proxyRequest(req, res, 'GET', '/slack/users'));
 router.post('/listening', (req, res) => proxyRequest(req, res, 'POST', '/slack/listening', req.body));
+router.get('/monitored-channels', (req, res) => proxyRequest(req, res, 'GET', '/slack/monitored-channels'));
+router.post('/monitored-channels', (req, res) => proxyRequest(req, res, 'POST', '/slack/monitored-channels', req.body));
 
 module.exports = router;
