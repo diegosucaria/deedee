@@ -294,6 +294,35 @@ class SlackService {
         return users;
     }
 
+    /**
+     * Get all workspace channels (public + private, excluding archived) for channel picker.
+     */
+    async getChannels() {
+        const channels = [];
+        let cursor;
+        do {
+            const res = await this._api('conversations.list', {
+                types: 'public_channel,private_channel',
+                exclude_archived: true,
+                limit: 200,
+                cursor,
+            });
+            for (const ch of res.channels || []) {
+                channels.push({
+                    id: ch.id,
+                    name: ch.name,
+                    topic: ch.topic?.value || '',
+                    purpose: ch.purpose?.value || '',
+                    isMember: ch.is_member || false,
+                    isPrivate: ch.is_private || false,
+                    numMembers: ch.num_members || 0,
+                });
+            }
+            cursor = res.response_metadata?.next_cursor;
+        } while (cursor);
+        return channels;
+    }
+
     async search(query, limit = 10) {
         const result = await this._api('search.messages', {
             query,

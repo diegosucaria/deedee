@@ -80,6 +80,24 @@ class SlackExecutor extends BaseExecutor {
                 }
             }
 
+            case 'getSlackMonitoredChannels': {
+                console.log('[SlackExecutor] Getting monitored channels from settings');
+                try {
+                    const setting = context.agent?.db?.getAgentSetting('slack_monitored_channels');
+                    const channels = setting?.value || [];
+                    return {
+                        success: true,
+                        channels,
+                        count: channels.length,
+                        hint: channels.length === 0
+                            ? 'No monitored channels configured. The user should set them in Settings > Slack.'
+                            : `Read history from these ${channels.length} channels to include in your briefing.`,
+                    };
+                } catch (err) {
+                    return { success: false, error: err.message };
+                }
+            }
+
             default:
                 return null; // Not our tool
         }

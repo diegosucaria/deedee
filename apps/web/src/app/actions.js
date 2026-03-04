@@ -484,6 +484,37 @@ export async function deleteSlackCredentials() {
     }
 }
 
+export async function getSlackChannels() {
+    try {
+        return await fetchAPI('/v1/slack/channels');
+    } catch (error) {
+        console.error('getSlackChannels Error:', error.message);
+        return [];
+    }
+}
+
+export async function getSlackMonitoredChannels() {
+    try {
+        const settings = await fetchAPI('/v1/settings');
+        return settings.slack_monitored_channels || [];
+    } catch (error) {
+        console.error('getSlackMonitoredChannels Error:', error.message);
+        return [];
+    }
+}
+
+export async function setSlackMonitoredChannels(channels) {
+    try {
+        await fetchAPI('/v1/settings', {
+            method: 'POST',
+            body: JSON.stringify({ key: 'slack_monitored_channels', value: channels, category: 'integrations' })
+        });
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 // --- MCP & Tools ---
 export async function getMCPStatus() {
     try {

@@ -706,6 +706,15 @@ const toolDefinitions = [
           },
           required: ["channel", "text"]
         }
+      },
+      {
+        name: "getSlackMonitoredChannels",
+        description: "Returns the list of Slack channels that the user has configured as 'monitored' for briefings and scheduled tasks. Use this at the start of any scheduled task that needs to scan Slack to know which channels to read. Returns channel IDs and names.",
+        parameters: {
+          type: "OBJECT",
+          properties: {},
+          required: []
+        }
       }
     ]
   },
