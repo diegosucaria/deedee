@@ -34,6 +34,7 @@ class SlackConnection {
     }
 
     async start() {
+        this.intentionallyStopped = false;
         try {
             await this._connect();
         } catch (err) {
@@ -42,6 +43,7 @@ class SlackConnection {
     }
 
     async stop() {
+        this.intentionallyStopped = true;
         this.connected = false;
         if (this.ws) {
             this.ws.close();
@@ -114,6 +116,7 @@ class SlackConnection {
             });
 
             this.ws.on('close', (code, reason) => {
+                if (this.intentionallyStopped) return;
                 const reasonStr = reason ? reason.toString() : 'No reason provided';
                 console.warn(`[Slack:${this.workspace?.team}] RTM closed (code: ${code}, reason: ${reasonStr}). Reconnecting in 5s...`);
                 this.connected = false;

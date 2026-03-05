@@ -447,7 +447,7 @@ export async function getSlackStatus() {
         return await fetchAPI('/v1/slack/status');
     } catch (error) {
         console.warn('getSlackStatus Error:', error.message);
-        return { connected: false };
+        return { connections: [] };
     }
 }
 

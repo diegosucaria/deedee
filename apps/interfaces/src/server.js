@@ -367,7 +367,7 @@ app.post('/whatsapp/repair', async (req, res) => {
 
 // --- SLACK ENDPOINTS ---
 app.get('/slack/status', (req, res) => {
-  res.json(slack?.getStatus() || []);
+  res.json({ connections: slack?.getStatus() || [] });
 });
 
 app.post('/slack/credentials', async (req, res) => {

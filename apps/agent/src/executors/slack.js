@@ -40,14 +40,14 @@ class SlackExecutor extends BaseExecutor {
 
             case 'readSlackHistory': {
                 const { channel, limit, days_back, workspace } = args;
-                console.log(`[SlackExecutor] Reading Slack history for ${channel} (days_back: ${days_back || 7}, workspace: ${workspace || 'auto'})`);
+                console.log(`[SlackExecutor] Reading Slack history for ${channel} (days_back: ${days_back || 2}, workspace: ${workspace || 'auto'})`);
 
                 try {
                     const res = await axios.get(`${interfacesUrl}/slack/history`, {
                         params: {
                             channel: encodeURIComponent(channel),
                             limit: limit || 20,
-                            days_back: days_back || 7,
+                            days_back: days_back || 2,
                             teamId: workspace
                         },
                         headers,

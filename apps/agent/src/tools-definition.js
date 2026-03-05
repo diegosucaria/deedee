@@ -691,7 +691,7 @@ const toolDefinitions = [
           properties: {
             channel: { type: "STRING", description: "The channel ID, channel name (e.g., 'general'), or username (e.g., 'alice') to read from." },
             limit: { type: "NUMBER", description: "Max messages to retrieve (default 20, max 100)" },
-            days_back: { type: "NUMBER", description: "Only retrieve messages newer than this many days ago (default 7). Set to a higher number if you need older context." },
+            days_back: { type: "NUMBER", description: "Only retrieve messages newer than this many days ago (default 2). Set to a higher number if you need older context." },
             workspace: { type: "STRING", description: "Optional. The specific workspace team ID to read from. If omitted, attempts to auto-resolve." }
           },
           required: ["channel"]
