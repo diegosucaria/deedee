@@ -14,11 +14,12 @@ class SubAgentExecutor extends BaseExecutor {
                     return { success: false, error: 'Sub-agent service not available.' };
                 }
 
-                // Depth guard: sub-agents cannot spawn sub-agents
-                if (context?.message?.metadata?.isSubAgent) {
+                // Depth guard: max 3 sub-agents deep
+                const currentDepth = context?.message?.metadata?.subAgentDepth || 0;
+                if (currentDepth >= 3) {
                     return {
                         success: false,
-                        error: 'Sub-agents cannot spawn other sub-agents (max depth = 1).'
+                        error: `Sub-agents cannot spawn deeper than 3 levels (current depth: ${currentDepth}).`
                     };
                 }
 
@@ -37,6 +38,7 @@ class SubAgentExecutor extends BaseExecutor {
                         timeoutMinutes,
                         parentChatId,
                         waitForResult,
+                        parentDepth: currentDepth,
                     });
                     return { success: true, ...result };
                 } catch (err) {

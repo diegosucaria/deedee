@@ -78,7 +78,7 @@ describe('SubAgentService', () => {
 
         it('should enforce concurrent limit', async () => {
             // Fill up the running map
-            for (let i = 0; i < 3; i++) {
+            for (let i = 0; i < 10; i++) {
                 service.running.set(`task-${i}`, {
                     promise: new Promise(() => { }),
                     controller: new AbortController(),

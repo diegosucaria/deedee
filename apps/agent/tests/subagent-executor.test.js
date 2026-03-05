@@ -52,11 +52,11 @@ describe('SubAgentExecutor', () => {
             const result = await executor.execute('spawnAgent', {
                 task: 'Nested task',
             }, {
-                message: { metadata: { chatId: 'subagent-x', isSubAgent: true } },
+                message: { metadata: { chatId: 'subagent-x', subAgentDepth: 3 } },
             });
 
             expect(result.success).toBe(false);
-            expect(result.error).toContain('max depth');
+            expect(result.error).toContain('deeper than 3 levels');
             expect(mockSubAgentService.spawn).not.toHaveBeenCalled();
         });
 

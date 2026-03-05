@@ -4,7 +4,7 @@ class SubAgentService {
     constructor(agent) {
         this.agent = agent;
         this.running = new Map(); // taskId → { promise, controller, replies }
-        this.MAX_CONCURRENT = 3;
+        this.MAX_CONCURRENT = 10;
         this.MAX_TIMEOUT_MINUTES = 10;
         this.DEFAULT_TIMEOUT_MINUTES = 6;
     }
@@ -13,7 +13,7 @@ class SubAgentService {
      * Spawn a sub-agent to perform a specific task.
      * @returns {string|object} taskId (async) or { taskId, result } (blocking)
      */
-    async spawn({ task, model, tools, timeoutMinutes, parentChatId, waitForResult = true }) {
+    async spawn({ task, model, tools, timeoutMinutes, parentChatId, waitForResult = true, parentDepth = 0 }) {
         // Concurrent limit
         if (this.running.size >= this.MAX_CONCURRENT) {
             throw new Error(`Max concurrent sub-agents reached (${this.MAX_CONCURRENT}). Wait for existing tasks to complete.`);
@@ -51,6 +51,7 @@ class SubAgentService {
                 isSubAgent: true,
                 allowedTools: tools || null,
                 modelOverride: selectedModel,
+                subAgentDepth: parentDepth + 1
             }
         };
 

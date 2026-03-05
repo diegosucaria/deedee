@@ -72,7 +72,7 @@ You are working on **Deedee**, a personal, self-improving AI agent designed to r
 
 ### Multi-Agent System
 - **`SubAgentService`** (`services/subagent-service.js`): Spawns isolated child agents.
-  - Max 3 concurrent, 10-minute timeout, depth=1 (no recursive spawning).
+  - Max 10 concurrent, 10-minute timeout, depth=3 (no recursive spawning).
   - Sessions prefixed `subagent-*` are auto-hidden from sidebar.
   - Tools: `spawnAgent`, `getAgentResult`, `listAgentTasks`.
   - Socket event `subagent:update` broadcast on status change.
