@@ -387,13 +387,42 @@ class SlackConnection {
             if (msg.user) uName = await this._resolveUser(msg.user);
             else if (msg.bot_id) uName = msg.username || 'bot';
 
+            // Add the main message
             messages.push({
                 user: uName,
                 text: msg.text,
                 timestamp: msg.ts,
                 teamId: this.workspace?.teamId,
-                teamName: this.workspace?.team
+                teamName: this.workspace?.team,
+                is_thread_reply: false
             });
+
+            // Fetch thread replies if there are any
+            if (msg.thread_ts && msg.reply_count && msg.reply_count > 0) {
+                try {
+                    const replies = await this._api('conversations.replies', { channel: channelId, ts: msg.thread_ts, limit: 50 });
+                    if (replies.messages) {
+                        // Skip the first message in the replies array because it's the parent message we already added
+                        const threadMsgs = replies.messages.slice(1);
+                        for (const rMsg of threadMsgs) {
+                            let rName = rMsg.user;
+                            if (rMsg.user) rName = await this._resolveUser(rMsg.user);
+                            else if (rMsg.bot_id) rName = rMsg.username || 'bot';
+
+                            messages.push({
+                                user: rName,
+                                text: rMsg.text,
+                                timestamp: rMsg.ts,
+                                teamId: this.workspace?.teamId,
+                                teamName: this.workspace?.team,
+                                is_thread_reply: true
+                            });
+                        }
+                    }
+                } catch (err) {
+                    console.warn(`[Slack] Failed to fetch thread replies for ${msg.ts}:`, err.message);
+                }
+            }
         }
         return messages;
     }
@@ -697,7 +726,8 @@ class SlackManager {
 
                         const formattedMsgs = messages.map(m => {
                             const time = new Date(parseFloat(m.timestamp) * 1000).toISOString().split('T')[1].substring(0, 5);
-                            return `[${time}] ${m.user}: ${m.text.replace(/\n/g, ' ')}`;
+                            const prefix = m.is_thread_reply ? '    ↳ [Thread Reply] ' : '';
+                            return `${prefix}[${time}] ${m.user}: ${m.text.replace(/\n/g, ' ')}`;
                         }).join('\n');
 
                         return `--- Workspace: ${workspaceName} | Channel: ${channelName} ---\n${formattedMsgs}`;
@@ -719,7 +749,19 @@ class SlackManager {
             return "No recent messages found in any monitored channels.";
         }
 
-        return allHistory.join('\n\n');
+        let headerContext = `--- BACKGROUND CONTEXT ---\n`;
+        // Grab authenticated users across workspaces
+        const usersContext = Array.from(this.connections.values())
+            .filter(c => c.connected && c.workspace?.user)
+            .map(c => `In workspace "${c.workspace?.team}", the authenticated user is: ${c.workspace?.user}`)
+            .join(' | ');
+
+        if (usersContext) {
+            headerContext += `You are acting on behalf of the following user: ${usersContext}\n`;
+            headerContext += `CRITICAL INSTRUCTION: When extracting tasks or objectives, you MUST only extract tasks or objectives assigned TO this user. Do NOT extract tasks assigned to other people. Also pay attention to thread replies (marked with ↳) to see if a question or task was already answered or completed.\n\n`;
+        }
+
+        return headerContext + allHistory.join('\n\n');
     }
 
     getStatus() {

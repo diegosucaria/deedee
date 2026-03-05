@@ -722,7 +722,7 @@ const toolDefinitions = [
       },
       {
         name: "readAllMonitoredSlackHistory",
-        description: "Reads the recent message history from ALL of the user's configured monitored Slack channels across all workspaces in a single optimized fetching call. Use this instead of manually calling readSlackHistory in a loop when you need to extract tasks, find mentions, or summarize the day. WARNING: The output will be very large. If you are spawning a sub-agent to use this tool to extract tasks, you MUST set `model: 'FLASH'` mapping it to use the Gemini Flash model to save costs and time.",
+        description: "Reads the recent message history from ALL of the user's configured monitored Slack channels across all workspaces in a single optimized fetching call. Use this instead of manually calling readSlackHistory in a loop when you need to extract tasks, find mentions, or summarize the day. WARNING: The output will be very large. If you are spawning a sub-agent to use this tool to extract tasks, you MUST set `model: 'FLASH'`. CRITICAL: When extracting tasks, you must distinguish between tasks assigned TO the user and tasks assigned to OTHERS. Only list tasks that the user is actually responsible for or explicitly tagged/asked to do.",
         parameters: {
           type: "OBJECT",
           properties: {
