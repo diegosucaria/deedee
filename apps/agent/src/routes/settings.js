@@ -123,7 +123,7 @@ function createSettingsRouter(agent) {
 
                 userConfig[`gws_${safeLabel}`] = {
                     command: "gws",
-                    args: ["mcp", "-s", "all"],
+                    args: ["mcp", "-s", "all", "--tool-mode", "compact"],
                     namespace: safeLabel,
                     env: {
                         "GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE": credsPath
