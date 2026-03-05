@@ -81,6 +81,69 @@ function createSettingsRouter(agent) {
     });
 
 
+    // POST /internal/settings/gws/upload
+    router.post('/gws/upload', async (req, res) => {
+        try {
+            const { label, credentials } = req.body;
+            if (!label || !credentials) {
+                return res.status(400).json({ error: 'Missing label or credentials' });
+            }
+
+            const safeLabel = encodeURIComponent(label.toLowerCase().replace(/[^a-z0-9]/g, '-'));
+
+            const fs = require('fs');
+            const path = require('path');
+
+            let dataDir = process.env.DATA_DIR || '/app/data';
+            if (!fs.existsSync(dataDir)) {
+                dataDir = path.resolve(__dirname, '../../../../data'); // Adjust if needed
+                if (!fs.existsSync(dataDir)) {
+                    fs.mkdirSync(dataDir, { recursive: true });
+                }
+            }
+
+            const credsPath = path.join(dataDir, `gws-credentials-${safeLabel}.json`);
+
+            let parsedCreds;
+            try {
+                parsedCreds = JSON.parse(credentials);
+            } catch (e) {
+                return res.status(400).json({ error: 'Invalid JSON credentials' });
+            }
+
+            fs.writeFileSync(credsPath, JSON.stringify(parsedCreds, null, 2));
+            console.log(`[Settings] Saved GWS credentials for ${label} to ${credsPath}`);
+
+            if (agent.mcp) {
+                const configPath = agent.mcp.configPath;
+                let userConfig = {};
+                if (fs.existsSync(configPath)) {
+                    try { userConfig = JSON.parse(fs.readFileSync(configPath, 'utf8')); } catch (e) { }
+                }
+
+                userConfig[`gws_${safeLabel}`] = {
+                    command: "gws",
+                    args: ["mcp", "-s", "all"],
+                    namespace: safeLabel,
+                    env: {
+                        "GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE": credsPath
+                    }
+                };
+
+                fs.writeFileSync(configPath, JSON.stringify(userConfig, null, 2));
+                console.log(`[Settings] Updated mcp_config.json with gws_${safeLabel}`);
+
+                // Trigger reload
+                agent.mcp.init().catch(e => console.error('[Settings] MCP reload failed:', e));
+            }
+
+            res.json({ success: true, message: `Configured GWS for ${label}` });
+        } catch (error) {
+            console.error('[Settings] GWS Upload Failed:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
     // POST /internal/settings/tts/preview
     // Body: { text: string, voice: string }
     router.post('/tts/preview', async (req, res) => {

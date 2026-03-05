@@ -14,56 +14,9 @@ class MCPManager {
 
     // ... (init method remains same)
 
-    async getTools() {
-        const allTools = [];
-        this.toolMap.clear(); // Refresh cache
+    // Duplicate getTools was here.
 
-        for (const [name, client] of this.clients.entries()) {
-            try {
-                const result = await client.listTools();
-                if (result && result.tools) {
-                    const mappedTools = result.tools.map(t => ({
-                        name: t.name,
-                        description: t.description,
-                        parameters: t.inputSchema // MCP uses 'inputSchema', Gemini uses 'parameters' (JSON Schema)
-                    }));
-
-                    // Store reference and populate cache
-                    mappedTools.forEach(t => {
-                        t.serverName = name;
-                        this.toolMap.set(t.name, { name, client });
-                    });
-
-                    allTools.push(...mappedTools);
-                }
-            } catch (err) {
-                console.error(`[MCP] Failed to list tools for ${name}:`, err);
-            }
-        }
-        return allTools;
-    }
-
-    async callTool(name, args) {
-        // Linear lookup removed. Using cache.
-        const owner = this.toolMap.get(name);
-
-        if (!owner) {
-            throw new Error(`Tool ${name} not found in any MCP server.`);
-        }
-
-        const result = await owner.client.callTool({
-            name: name,
-            arguments: args
-        });
-
-        // Let's return the simplified result
-        if (result.content && result.content.length > 0) {
-            // Return text content
-            const text = result.content.map(c => c.text).join('\n');
-            return { output: text };
-        }
-        return result;
-    }
+    // Duplicate getTools and callTool were here. Removed to avoid confusion with the bottom ones.
 
     async init() {
         // Close existing connections to prevent leaks during reload
@@ -132,6 +85,7 @@ class MCPManager {
 
         // Use the merged (or loaded) config
         const config = userConfig;
+        this.config = config;
 
         for (const [name, serverConfig] of Object.entries(config)) {
             if (serverConfig.disabled) continue;
@@ -285,10 +239,14 @@ class MCPManager {
 
         for (const [name, client] of this.clients.entries()) {
             try {
+                const namespace = this.config?.[name]?.namespace;
+                const prefix = namespace ? `${namespace}_` : '';
+
                 const result = await client.listTools();
                 if (result && result.tools) {
                     const mappedTools = result.tools.map(t => ({
-                        name: t.name,
+                        name: `${prefix}${t.name}`,
+                        originalName: t.name,
                         description: t.description,
                         parameters: t.inputSchema // MCP uses 'inputSchema', Gemini uses 'parameters' (JSON Schema)
                     }));
@@ -296,7 +254,7 @@ class MCPManager {
                     // Store reference and populate cache
                     mappedTools.forEach(t => {
                         t.serverName = name;
-                        this.toolMap.set(t.name, { name, client });
+                        this.toolMap.set(t.name, { name, client, originalName: t.originalName });
                     });
 
                     this.toolCache.push(...mappedTools);
@@ -359,10 +317,10 @@ class MCPManager {
             if (!retryOwner) {
                 throw new Error(`Tool ${name} not found in any MCP server.`);
             }
-            return await this._callClient(retryOwner.client, name, args);
+            return await this._callClient(retryOwner.client, retryOwner.originalName || name, args);
         }
 
-        return await this._callClient(owner.client, name, args);
+        return await this._callClient(owner.client, owner.originalName || name, args);
     }
 
     async _callClient(client, name, args) {

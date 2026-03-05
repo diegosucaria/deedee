@@ -392,6 +392,20 @@ export async function previewVoice(voice, text) {
     }
 }
 
+// --- GWS Auth Actions ---
+export async function uploadGWSCredentials(label, credentials) {
+    try {
+        const res = await fetchAPI('/v1/settings/gws/upload', {
+            method: 'POST',
+            body: JSON.stringify({ label, credentials })
+        });
+        revalidatePath('/settings');
+        return { success: true, ...res };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 // --- WhatsApp Actions ---
 
 export async function getWhatsAppStatus() {

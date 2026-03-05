@@ -4,7 +4,7 @@ import { useState } from 'react';
 import { MessageSquare, Send, Hash } from 'lucide-react';
 import WhatsAppSettings from './WhatsAppSettings';
 import SlackSettings from './SlackSettings';
-import GSuiteSettings from './GSuiteSettings';
+import GWSSettings from './GWSSettings';
 
 export default function InterfacesClient() {
     const [activeTab, setActiveTab] = useState('whatsapp');
@@ -58,8 +58,8 @@ export default function InterfacesClient() {
                         </div>
                     </button>
                     <button
-                        onClick={() => setActiveTab('gsuite')}
-                        className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'gsuite'
+                        onClick={() => setActiveTab('gws')}
+                        className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'gws'
                             ? 'bg-zinc-800 text-white shadow-sm'
                             : 'text-zinc-500 hover:text-zinc-300'
                             }`}
@@ -68,7 +68,7 @@ export default function InterfacesClient() {
                             <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
                                 <path d="M21.35,11.1H12.18V13.83H18.69C18.36,17.64 15.19,19.27 12.19,19.27C8.36,19.27 5,16.25 5,12C5,7.9 8.2,4.73 12.2,4.73C15.29,4.73 17.1,6.7 17.1,6.7L19,4.72C19,4.72 16.56,2 12.1,2C6.42,2 2.03,6.8 2.03,12C2.03,17.05 6.16,22 12.25,22C17.6,22 21.5,18.33 21.5,12.91C21.5,11.76 21.35,11.1 21.35,11.1V11.1Z" />
                             </svg>
-                            <span>Google</span>
+                            <span>Google Workspace</span>
                         </div>
                     </button>
                 </div>
@@ -78,7 +78,7 @@ export default function InterfacesClient() {
                     {activeTab === 'whatsapp' && <div className="p-6"><WhatsAppSettings /></div>}
                     {activeTab === 'telegram' && <TelegramInfo />}
                     {activeTab === 'slack' && <div className="p-6"><SlackSettings /></div>}
-                    {activeTab === 'gsuite' && <div className="p-6"><GSuiteSettings /></div>}
+                    {activeTab === 'gws' && <div className="p-6"><GWSSettings /></div>}
                 </div>
             </div>
         </div>

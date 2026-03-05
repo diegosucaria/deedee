@@ -99,47 +99,6 @@ const toolDefinitions = [
           required: ["id"]
         }
       },
-      // GSuite
-      {
-        name: "listEvents",
-        description: "List calendar events for a time range",
-        parameters: {
-          type: "OBJECT",
-          properties: {
-            timeMin: { type: "STRING" },
-            timeMax: { type: "STRING" },
-            maxResults: { type: "NUMBER" }
-          }
-        }
-      },
-      {
-        name: "createCalendarEvent",
-        description: "Create a new event in the Google Calendar. Use this when the user asks to schedule something.",
-        parameters: {
-          type: "OBJECT",
-          properties: {
-            summary: { type: "STRING", description: "Title of the event" },
-            startTime: { type: "STRING", description: "Start time in ISO 8601 format (e.g. '2025-10-22T09:00:00-03:00'). PREFER including offset." },
-            endTime: { type: "STRING", description: "End time in ISO 8601 format" },
-            timeZone: { type: "STRING", description: "Optional. IANA Timezone (e.g. 'America/Argentina/Buenos_Aires'). Defaults to user's local timezone (America/Argentina/Buenos_Aires) if not provided." },
-            description: { type: "STRING", description: "Optional description or notes for the event" }
-          },
-          required: ["summary", "startTime", "endTime"]
-        }
-      },
-      {
-        name: "sendEmail",
-        description: "Send an email",
-        parameters: {
-          type: "OBJECT",
-          properties: {
-            to: { type: "STRING" },
-            subject: { type: "STRING" },
-            body: { type: "STRING" }
-          },
-          required: ["to", "subject", "body"]
-        }
-      },
       // Local System
       {
         name: "readFile",

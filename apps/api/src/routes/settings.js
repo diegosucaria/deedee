@@ -20,5 +20,6 @@ const proxyToAgent = async (req, res, method, path, data) => {
 router.get('/', (req, res) => proxyToAgent(req, res, 'GET', '', null));
 router.post('/', (req, res) => proxyToAgent(req, res, 'POST', '', req.body));
 router.post('/tts/preview', (req, res) => proxyToAgent(req, res, 'POST', '/tts/preview', req.body));
+router.post('/gws/upload', (req, res) => proxyToAgent(req, res, 'POST', '/gws/upload', req.body));
 
 module.exports = router;

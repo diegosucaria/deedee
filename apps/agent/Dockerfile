@@ -53,6 +53,9 @@ RUN apk add --no-cache python3 py3-pip curl gcompat \
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:/root/.cargo/bin:$PATH"
 
+# Install Google Workspace CLI globally so `gws` command is instantly available
+RUN npm install -g @googleworkspace/cli
+
 # Playwright Config for Alpine/ARM
 ENV BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser
 ENV PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1

@@ -29,7 +29,6 @@ const { AnalysisService } = require('./services/analysis-service');
 const { TitleService } = require('./services/title-service');
 const { ConfigService } = require('./services/config-service');
 const { RagService } = require('./services/rag-service');
-const { GSuiteService } = require('./services/gsuite-service');
 const { DJService } = require('./services/dj-service');
 const { SkillService } = require('./services/skill-service');
 const { MemoryPruningService } = require('./services/memory-pruning');
@@ -57,7 +56,6 @@ class Agent {
     this.mcp = new MCPManager(path.join(dataDir, 'mcp_config.json'));
 
     // Tools Setup
-    this.gsuite = new GSuiteService(this);
     this.local = new LocalTools('/app/source');
     this.journal = new JournalManager();
     this.vaults = new VaultManager(dataDir); // Initialize Vaults with dynamic path
@@ -95,7 +93,6 @@ class Agent {
       journal: this.journal,
       vaults: this.vaults, // Pass Vaults to Executor
       scheduler: this.scheduler,
-      gsuite: this.gsuite,
       mcp: this.mcp,
       dj: this.djService,
       client: null, // Will be populated in processMessage

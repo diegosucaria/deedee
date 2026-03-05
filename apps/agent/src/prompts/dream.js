@@ -27,7 +27,7 @@ Generate a short, relatable, and slightly quirky "dream" narrative using the con
 This should feel like a very human, everyday dream—involving mundane anxieties, confusing social situations, or oddly specific practical problems—not a grand sci-fi narrative.
 
 - **Human Relatability over Philosophy**: Instead of exploring the cosmos or abstract concepts, the dream should be about relatable, awkward, or mundane human experiences (e.g., showing up to a meeting in pajamas, trying to organize files that keep turning into jelly, forgetting how to type).
-- **If "Sensory Input" (Plex) is present**: Incorporate its *vibe* into a mundane setting. 
+- **If "Sensory Input" (Plex) is present**: Incorporate its *vibe* or *theme* into a mundane setting. 
   - Bad: "I was floating in a matrix of green code."
   - Good: "I was stuck at a grocery checkout trying to pay with a handful of green code, but the cashier just stared at me."
 - **Memory Weaving**: If "Memory Fragments" are present, blend them into the ridiculous dream logic.
