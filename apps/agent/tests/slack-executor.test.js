@@ -96,7 +96,7 @@ describe('SlackExecutor', () => {
         expect(axios.get).toHaveBeenCalledWith(
             'http://interfaces:5000/slack/history',
             expect.objectContaining({
-                params: { channel: encodeURIComponent('#general'), limit: 20, days_back: 2 },
+                params: { channel: encodeURIComponent('#general'), limit: 20, days_back: 1 },
             })
         );
         expect(result.success).toBe(true);
