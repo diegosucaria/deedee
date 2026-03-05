@@ -726,9 +726,11 @@ class SlackManager {
                         const channelName = ch.name || ch.id;
 
                         const formattedMsgs = messages.map(m => {
-                            const time = new Date(parseFloat(m.timestamp) * 1000).toISOString().split('T')[1].substring(0, 5);
+                            const d = new Date(parseFloat(m.timestamp) * 1000);
+                            const dateStr = d.toLocaleDateString('en-US', { month: 'short', day: 'numeric', timeZone: 'America/Argentina/Buenos_Aires' });
+                            const timeStr = d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', hour12: false, timeZone: 'America/Argentina/Buenos_Aires' });
                             const prefix = m.is_thread_reply ? '    ↳ [Thread Reply] ' : '';
-                            return `${prefix}[${time}] ${m.user}: ${m.text.replace(/\n/g, ' ')}`;
+                            return `${prefix}[${dateStr} ${timeStr}] ${m.user}: ${m.text.replace(/\n/g, ' ')}`;
                         }).join('\n');
 
                         return `--- Workspace: ${workspaceName} | Channel: ${channelName} ---\n${formattedMsgs}`;
