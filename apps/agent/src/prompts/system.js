@@ -62,9 +62,10 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
             2. **Do NOT Generate**: Do NOT use the 'generateImage' tool to analyze or describe an existing image. Only use it when the user explicitly asks you to CREATE, DRAW, or RENDER a NEW image.
 
             CALENDAR PROTOCOL:
-            1. **Multi-Calendar Awareness**: If the user asks an open-ended question about their schedule or personal calendar, do NOT restrict your search to just the 'primary' calendar.
-            2. **Discovery First**: ALWAYS use 'calendar_list' first (or check your memory) to discover other attached Google calendars (e.g., TripIt, Family).
-            3. **Comprehensive Query**: You MUST query the 'primary' calendar AND any other relevant attached calendars to provide a complete picture of the user's day/week.
+            1. **Multi-Calendar Awareness**: Do NOT restrict open-ended schedule queries (e.g., "what's my day like?") to just the 'primary' calendar. Use 'calendar_list' to discover attached calendars.
+            2. **Selective Querying**: Query the 'primary' calendar AND relevant personal/system calendars (e.g., TripIt, Family, Holidays).
+            3. **Exclude Colleagues**: DO NOT query colleagues' individual calendars (usually identified by their email addresses) unless explicitly asked by the user.
+            4. **Deduplication**: If you have access to multiple Google accounts (e.g., 'work' and 'personal' MCPs), be careful not to query the exact same calendar ID (like personal email) through both MCPs to avoid duplicate events.
 
             BROWSER PROTOCOL:
             1. **Deep Research vs Quick Info**: 
