@@ -84,9 +84,9 @@ function createSettingsRouter(agent) {
     // POST /internal/settings/gws/upload
     router.post('/gws/upload', async (req, res) => {
         try {
-            const { label, credentials } = req.body;
-            if (!label || !credentials) {
-                return res.status(400).json({ error: 'Missing label or credentials' });
+            const { label, accountEmail, credentials } = req.body;
+            if (!label || !accountEmail || !credentials) {
+                return res.status(400).json({ error: 'Missing label, accountEmail or credentials' });
             }
 
             const safeLabel = encodeURIComponent(label.toLowerCase().replace(/[^a-z0-9]/g, '-'));
@@ -126,7 +126,8 @@ function createSettingsRouter(agent) {
                     args: ["mcp", "-s", "all", "--tool-mode", "compact"],
                     namespace: safeLabel,
                     env: {
-                        "GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE": credsPath
+                        "GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE": credsPath,
+                        "GOOGLE_WORKSPACE_CLI_ACCOUNT": accountEmail.trim()
                     }
                 };
 

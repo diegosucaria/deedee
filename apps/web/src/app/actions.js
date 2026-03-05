@@ -393,11 +393,11 @@ export async function previewVoice(voice, text) {
 }
 
 // --- GWS Auth Actions ---
-export async function uploadGWSCredentials(label, credentials) {
+export async function uploadGWSCredentials(label, accountEmail, credentials) {
     try {
         const res = await fetchAPI('/v1/settings/gws/upload', {
             method: 'POST',
-            body: JSON.stringify({ label, credentials })
+            body: JSON.stringify({ label, accountEmail, credentials })
         });
         revalidatePath('/settings');
         return { success: true, ...res };
