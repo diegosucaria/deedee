@@ -86,20 +86,43 @@ class SlackExecutor extends BaseExecutor {
             }
 
             case 'getSlackMonitoredChannels': {
-                console.log('[SlackExecutor] Getting monitored channels from settings');
+                console.log('[SlackExecutor] Getting monitored channels from Interfaces API');
                 try {
-                    const setting = this.services.db?.getAgentSetting('slack_monitored_channels');
-                    const channels = setting?.value || [];
+                    // 1. Get all connected workspaces
+                    const statusRes = await axios.get(`${interfacesUrl}/slack/status`, { headers });
+                    const connections = statusRes.data.connections || [];
+
+                    let allMonitored = [];
+
+                    // 2. Fetch monitored channels for each workspace
+                    for (const conn of connections) {
+                        if (!conn.connected) continue;
+
+                        const wsRes = await axios.get(`${interfacesUrl}/slack/monitored-channels`, {
+                            params: { teamId: conn.teamId },
+                            headers
+                        });
+
+                        const channels = wsRes.data || [];
+                        // Annotate with workspace ID so LLM knows how to query readSlackHistory
+                        const annotated = channels.map(ch => ({
+                            ...ch,
+                            workspace: conn.teamId,
+                            workspaceName: conn.teamName
+                        }));
+                        allMonitored = allMonitored.concat(annotated);
+                    }
+
                     return {
                         success: true,
-                        channels,
-                        count: channels.length,
-                        hint: channels.length === 0
+                        channels: allMonitored,
+                        count: allMonitored.length,
+                        hint: allMonitored.length === 0
                             ? 'No monitored channels configured. The user should set them in Settings > Slack.'
-                            : `Read history from these ${channels.length} channels to include in your briefing.`,
+                            : `Use 'readSlackHistory' on these ${allMonitored.length} channels (passing the specific 'workspace' ID) to extract tasks or summaries. DO NOT use searchSlack.`,
                     };
                 } catch (err) {
-                    return { success: false, error: err.message };
+                    return { success: false, error: err.response?.data?.error || err.message };
                 }
             }
 

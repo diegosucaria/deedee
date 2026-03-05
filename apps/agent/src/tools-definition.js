@@ -672,7 +672,7 @@ const toolDefinitions = [
       // Slack Integration
       {
         name: "searchSlack",
-        description: "Search Slack messages across channels and DMs. You MUST use Slack's advanced search syntax to filter results efficiently and avoid hitting limits. Examples: 'from:@user', 'in:#channel', 'has:link', 'after:2024-01-01', or simply 'project deadline'. Do NOT just search for a generic name like 'Sean' multiple times; instead search 'from:@Sean' to find messages sent by him.",
+        description: "Search Slack messages across channels and DMs. WARNING: If the user asks to summarize messages, find tasks for the day, or asks 'what happened yesterday', DO NOT use this tool. This tool is for SPECIFIC keyword lookups ONLY. Instead, use getSlackMonitoredChannels and readSlackHistory to scan their important conversations. You MUST use Slack's advanced search syntax to filter results efficiently and avoid hitting limits. Examples: 'from:@user', 'in:#channel', 'has:link', 'after:2024-01-01', or simply 'project deadline'. Do NOT just search for a generic name like 'Sean' multiple times; instead search 'from:@Sean'.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -685,14 +685,14 @@ const toolDefinitions = [
       },
       {
         name: "readSlackHistory",
-        description: "Read recent message history from a Slack channel or DM. Use this to catch up on a conversation.",
+        description: "Read recent message history from a Slack channel or DM. Use this as the PRIMARY tool to catch up on a conversation, extract summaries, or find 'tasks you need to do today' (by scanning recent history of monitored channels).",
         parameters: {
           type: "OBJECT",
           properties: {
             channel: { type: "STRING", description: "The channel ID, channel name (e.g., 'general'), or username (e.g., 'alice') to read from." },
             limit: { type: "NUMBER", description: "Max messages to retrieve (default 20, max 100)" },
             days_back: { type: "NUMBER", description: "Only retrieve messages newer than this many days ago (default 2). Set to a higher number if you need older context." },
-            workspace: { type: "STRING", description: "Optional. The specific workspace team ID to read from. If omitted, attempts to auto-resolve." }
+            workspace: { type: "STRING", description: "Optional. The specific workspace team ID to read from. Crucial if scanning channels from multiple workspaces." }
           },
           required: ["channel"]
         }
@@ -713,7 +713,7 @@ const toolDefinitions = [
       },
       {
         name: "getSlackMonitoredChannels",
-        description: "Returns the list of Slack channels that the user has configured as 'monitored' for briefings and scheduled tasks. Use this at the start of any scheduled task that needs to scan Slack to know which channels to read. Returns channel IDs and names.",
+        description: "Returns the list of Slack channels that the user has configured manually as 'monitored' for briefings and scheduled tasks. Use this FIRST when asked to find broadly what was discussed, what tasks are pending across Slack, or for daily summaries. Returns a list of objects containing channel ID, channel names, and their respective workspace IDs.",
         parameters: {
           type: "OBJECT",
           properties: {},
