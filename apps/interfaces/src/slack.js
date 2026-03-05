@@ -320,16 +320,18 @@ class SlackConnection {
         }
 
         const params = { channel: channelId, limit: Math.min(limit, 100) };
-        if (days_back) {
-            const oldest = Math.floor(Date.now() / 1000) - (days_back * 86400);
-            params.oldest = oldest.toString();
-        }
 
         const history = await this._api('conversations.history', params);
         if (!history.messages) return [];
 
+        let rawMessages = history.messages;
+        if (days_back) {
+            const oldest = Math.floor(Date.now() / 1000) - (days_back * 86400);
+            rawMessages = rawMessages.filter(m => parseFloat(m.ts) >= oldest);
+        }
+
         const messages = [];
-        for (const msg of history.messages.reverse()) {
+        for (const msg of rawMessages.reverse()) {
             let uName = msg.user;
             if (msg.user) uName = await this._resolveUser(msg.user);
             else if (msg.bot_id) uName = msg.username || 'bot';
