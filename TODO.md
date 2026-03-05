@@ -125,7 +125,7 @@
     - [x] **Contact Sync (Mar 2026)**: `syncFromSlack()` with smart name-merge, purple "Sync Slack" button in People UI.
     - [x] **Monitored Channels (Mar 2026)**: Channel picker UI in SlackSettings, `getSlackMonitoredChannels` agent tool, updated proactive_thought prompt for Slack scanning.
     - [x] **Multi-Workspace Support (Mar 2026)**: `SlackManager` handles multiple connections via UI cards. Independent settings and unified contact sync.
-    - [x] **UI Bugfixes (Mar 2026)**: Replaced three 3 Slack Channel search boxes with a single global filter, enabled name wrapping for long DMs or Groups, resolved Group DM real names, protected monitored channels data leak by passing `team_id` down to API.
+    - [x] **UI Bugfixes (Mar 2026)**: Replaced three 3 Slack Channel search boxes with a single global filter, enabled name wrapping for long DMs or Groups, resolved Group DM real names, protected monitored channels data leak by passing `team_id` down to API, and hidden inactive users from DM/MPIM groups.
 - [x] **Multi-Agent (Feb 2026)**:
     - [x] **SubAgentService**: Spawn isolated sub-agents with timeout (10m max), concurrency limits (3 max), and depth guard.
     - [x] **Agent Tools**: `spawnAgent`, `getAgentResult`, `listAgentTasks`.

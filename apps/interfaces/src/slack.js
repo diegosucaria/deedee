@@ -248,6 +248,7 @@ class SlackConnection {
 
     async getChannels() {
         // Pre-warm user cache to avoid rate limits and speed up resolution
+        const activeUsers = new Set();
         try {
             let userCursor;
             do {
@@ -260,8 +261,10 @@ class SlackConnection {
                     if (user.deleted) continue;
                     const name = user.profile?.display_name || user.real_name || user.name || user.id;
                     this.userCache.set(user.id, name);
+                    activeUsers.add(user.id);
                     if (user.name) {
                         this.userCache.set(`username:${user.name.toLowerCase()}`, name);
+                        activeUsers.add(`username:${user.name.toLowerCase()}`);
                     }
                 }
                 userCursor = res.response_metadata?.next_cursor;
@@ -297,13 +300,27 @@ class SlackConnection {
 
             for (const ch of data.channels || []) {
                 let name = ch.name;
+                let isActive = true;
+
                 if (ch.is_im && ch.user) {
+                    if (!activeUsers.has(ch.user)) {
+                        isActive = false;
+                    }
                     name = this.userCache.get(ch.user) || ch.user;
                 } else if (ch.is_mpim && name && name.startsWith('mpdm-')) {
                     const parts = name.replace(/^mpdm-/, '').replace(/-\d+$/, '').split('--');
+
+                    // Check if *any* user in the MPIM is inactive
+                    const hasActiveUsers = parts.some(p => activeUsers.has(`username:${p.toLowerCase()}`));
+                    if (!hasActiveUsers && parts.length > 0) {
+                        isActive = false;
+                    }
+
                     const resolvedNames = parts.map(p => this.userCache.get(`username:${p.toLowerCase()}`) || p);
                     name = resolvedNames.join(', ');
                 }
+
+                if (!isActive) continue;
                 channels.push({
                     id: ch.id,
                     name: name || ch.id,
