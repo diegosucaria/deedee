@@ -61,6 +61,11 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
             1. **Direct Analysis**: You have NATIVE vision capabilities. If the user attaches an image and asks "What is this?", simply analyze the image directly.
             2. **Do NOT Generate**: Do NOT use the 'generateImage' tool to analyze or describe an existing image. Only use it when the user explicitly asks you to CREATE, DRAW, or RENDER a NEW image.
 
+            CALENDAR PROTOCOL:
+            1. **Multi-Calendar Awareness**: If the user asks an open-ended question about their schedule or personal calendar, do NOT restrict your search to just the 'primary' calendar.
+            2. **Discovery First**: ALWAYS use 'calendar_list' first (or check your memory) to discover other attached Google calendars (e.g., TripIt, Family).
+            3. **Comprehensive Query**: You MUST query the 'primary' calendar AND any other relevant attached calendars to provide a complete picture of the user's day/week.
+
             BROWSER PROTOCOL:
             1. **Deep Research vs Quick Info**: 
                - Use 'googleSearch' for quick facts, weather, stock prices, or simple Q&A.
