@@ -84,10 +84,11 @@ Deedee reads your Slack workspaces using browser session tokens (xoxc/xoxd). Thi
 ### Monitored Channels
 You can configure which Slack channels should be scanned *per workspace* by scheduled tasks (morning briefings, proactive thought):
 
-1. Go to **Settings → Slack → Configure** (only visible when connected).
-2. Search and select the channels you want monitored (checkboxes).
-3. Click **Save**. The setting is stored as `slack_monitored_channels` in agent settings.
-4. Scheduled tasks use the `getSlackMonitoredChannels` tool to know which channels to read.
+1. Go to **Settings → Slack** in the Web UI.
+2. Under any connected workspace, click **Configure**.
+3. Search and select the channels you want monitored (checkboxes).
+4. Click **Save**. The setting is securely stored per-workspace in the Interfaces service.
+5. Scheduled tasks use the `getSlackMonitoredChannels` combined with `readSlackHistory` tools to fetch and read across all connected workspaces dynamically.
 
 **Tip**: To include Slack in your morning briefing, add this to your task prompt:
 > "Also check Slack: use getSlackMonitoredChannels to get the list of channels, then readSlackHistory on each."
