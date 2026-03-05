@@ -225,7 +225,11 @@ class SlackConnection {
         const users = [];
         let cursor;
         do {
-            const res = await this._api('users.list', { limit: 200, cursor });
+            const params = { limit: 200, cursor };
+            if (this.workspace && this.workspace.teamId) {
+                params.team_id = this.workspace.teamId;
+            }
+            const res = await this._api('users.list', params);
             for (const user of res.members || []) {
                 if (user.deleted || user.is_bot || user.id === 'USLACKBOT') continue;
                 users.push({
@@ -243,6 +247,29 @@ class SlackConnection {
     }
 
     async getChannels() {
+        // Pre-warm user cache to avoid rate limits and speed up resolution
+        try {
+            let userCursor;
+            do {
+                const params = { limit: 200, cursor: userCursor };
+                if (this.workspace && this.workspace.teamId) {
+                    params.team_id = this.workspace.teamId;
+                }
+                const res = await this._api('users.list', params);
+                for (const user of res.members || []) {
+                    if (user.deleted) continue;
+                    const name = user.profile?.display_name || user.real_name || user.name || user.id;
+                    this.userCache.set(user.id, name);
+                    if (user.name) {
+                        this.userCache.set(`username:${user.name.toLowerCase()}`, name);
+                    }
+                }
+                userCursor = res.response_metadata?.next_cursor;
+            } while (userCursor);
+        } catch (e) {
+            console.warn(`[Slack:${this.workspace?.team}] Failed to pre-warm user cache:`, e.message);
+        }
+
         const channels = [];
         let cursor;
         do {
@@ -251,6 +278,9 @@ class SlackConnection {
                 exclude_archived: 'true',
                 limit: '200',
             });
+            if (this.workspace && this.workspace.teamId) {
+                params.set('team_id', this.workspace.teamId);
+            }
             if (cursor) params.set('cursor', cursor);
 
             const res = await fetch(`${SLACK_API_BASE}/conversations.list`, {
@@ -268,7 +298,11 @@ class SlackConnection {
             for (const ch of data.channels || []) {
                 let name = ch.name;
                 if (ch.is_im && ch.user) {
-                    try { name = await this._resolveUser(ch.user); } catch (e) { name = ch.user; }
+                    name = this.userCache.get(ch.user) || ch.user;
+                } else if (ch.is_mpim && name && name.startsWith('mpdm-')) {
+                    const parts = name.replace(/^mpdm-/, '').replace(/-\d+$/, '').split('--');
+                    const resolvedNames = parts.map(p => this.userCache.get(`username:${p.toLowerCase()}`) || p);
+                    name = resolvedNames.join(', ');
                 }
                 channels.push({
                     id: ch.id,
@@ -433,7 +467,11 @@ class SlackConnection {
         try {
             let cursor;
             do {
-                const res = await this._api('users.list', { limit: 200, cursor });
+                const params = { limit: 200, cursor };
+                if (this.workspace && this.workspace.teamId) {
+                    params.team_id = this.workspace.teamId;
+                }
+                const res = await this._api('users.list', params);
                 for (const user of res.members || []) {
                     if (user.deleted || user.is_bot) continue;
                     const displayName = (user.profile?.display_name || '').toLowerCase();
