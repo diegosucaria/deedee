@@ -168,7 +168,13 @@ export default function SubAgentsTable() {
                                     {expandedId === task.id && (
                                         <tr key={`${task.id}-detail`}>
                                             <td colSpan={5} className="px-4 py-3 bg-zinc-950">
-                                                <div className="space-y-2">
+                                                <div className="space-y-4">
+                                                    <div>
+                                                        <span className="text-[10px] uppercase text-zinc-500 font-bold">Task</span>
+                                                        <pre className="mt-1 text-xs text-zinc-300 whitespace-pre-wrap bg-zinc-900/80 p-3 rounded-lg border border-zinc-800/80 overflow-y-auto max-h-32">
+                                                            {task.task}
+                                                        </pre>
+                                                    </div>
                                                     {task.result && (
                                                         <div>
                                                             <span className="text-[10px] uppercase text-zinc-500 font-bold">Result</span>

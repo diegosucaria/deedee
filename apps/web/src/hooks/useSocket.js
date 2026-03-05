@@ -33,6 +33,7 @@ export function useSocket() {
 
         // Set initial state
         if (socket.connected) {
+            // eslint-disable-next-line react-hooks/set-state-in-effect
             setIsConnected(true);
         }
 

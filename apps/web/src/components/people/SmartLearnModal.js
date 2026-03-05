@@ -138,7 +138,7 @@ export function SmartLearnModal({ isOpen, onClose, onLearned }) {
                         <div className="text-center py-8">
                             <Sparkles className="mx-auto w-12 h-12 text-primary/50 mb-4" />
                             <p className="text-muted-foreground mb-6">
-                                I can analyze your recent WhatsApp conversations to find people you know but haven't saved explicitly.
+                                I can analyze your recent WhatsApp conversations to find people you know but haven&apos;t saved explicitly.
                             </p>
                             <button onClick={startAnalysis} className="btn-primary w-full justify-center">
                                 Start Analysis
@@ -196,7 +196,7 @@ export function SmartLearnModal({ isOpen, onClose, onLearned }) {
                                             )}
 
                                             <p className="text-xs italic text-muted-foreground/70 mt-2 border-l-2 border-primary/20 pl-2">
-                                                "{c.reason}"
+                                                &quot;{c.reason}&quot;
                                             </p>
                                         </div>
                                     </div>
