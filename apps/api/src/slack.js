@@ -29,6 +29,7 @@ router.post('/credentials', (req, res) => proxyRequest(req, res, 'POST', '/slack
 router.delete('/credentials/:teamId', (req, res) => proxyRequest(req, res, 'DELETE', `/slack/credentials/${req.params.teamId}`));
 router.get('/search', (req, res) => proxyRequest(req, res, 'GET', '/slack/search'));
 router.get('/history', (req, res) => proxyRequest(req, res, 'GET', '/slack/history'));
+router.get('/history/monitored', (req, res) => proxyRequest(req, res, 'GET', '/slack/history/monitored'));
 router.get('/channels', (req, res) => proxyRequest(req, res, 'GET', '/slack/channels'));
 router.get('/users', (req, res) => proxyRequest(req, res, 'GET', '/slack/users'));
 router.post('/listening', (req, res) => proxyRequest(req, res, 'POST', '/slack/listening', req.body));

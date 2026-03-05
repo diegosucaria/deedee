@@ -713,10 +713,21 @@ const toolDefinitions = [
       },
       {
         name: "getSlackMonitoredChannels",
-        description: "Returns the list of Slack channels that the user has configured manually as 'monitored' for briefings and scheduled tasks. Use this FIRST when asked to find broadly what was discussed, what tasks are pending across Slack, or for daily summaries. Returns a list of objects containing channel ID, channel names, and their respective workspace IDs.",
+        description: "Returns the list of Slack channels that the user has configured manually as 'monitored' for briefings and scheduled tasks. Returns a list of objects containing channel ID, channel names, and their respective workspace IDs. WARNING: Do not fetch these channels to read them individually in a loop! Use `readAllMonitoredSlackHistory` to get the history for all monitored channels at once efficiently.",
         parameters: {
           type: "OBJECT",
           properties: {},
+          required: []
+        }
+      },
+      {
+        name: "readAllMonitoredSlackHistory",
+        description: "Reads the recent message history from ALL of the user's configured monitored Slack channels across all workspaces in a single optimized fetching call. Use this instead of manually calling readSlackHistory in a loop when you need to extract tasks, find mentions, or summarize the day. WARNING: The output will be very large. If you are spawning a sub-agent to use this tool to extract tasks, you MUST set `model: 'FLASH'` mapping it to use the Gemini Flash model to save costs and time.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            days_back: { type: "NUMBER", description: "Only retrieve messages newer than this many days ago (default 1)." }
+          },
           required: []
         }
       }

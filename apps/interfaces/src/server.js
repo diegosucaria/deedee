@@ -444,6 +444,17 @@ app.get('/slack/history', async (req, res) => {
   }
 });
 
+app.get('/slack/history/monitored', async (req, res) => {
+  try {
+    const { days_back } = req.query;
+    const historyText = await slack.getMonitoredChannelsHistory(days_back ? parseInt(days_back) : 1);
+    res.json({ text: historyText });
+  } catch (err) {
+    console.error('[Interfaces] Slack monitored history error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/slack/users', async (req, res) => {
   try {
     const { teamId } = req.query;

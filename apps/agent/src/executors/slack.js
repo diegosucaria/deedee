@@ -126,6 +126,28 @@ class SlackExecutor extends BaseExecutor {
                 }
             }
 
+            case 'readAllMonitoredSlackHistory': {
+                const { days_back } = args;
+                console.log(`[SlackExecutor] Reading ALL monitored Slack history (days_back: ${days_back || 1})`);
+
+                try {
+                    const res = await axios.get(`${interfacesUrl}/slack/history/monitored`, {
+                        params: { days_back: days_back || 1 },
+                        headers,
+                    });
+                    return {
+                        success: true,
+                        text: res.data.text,
+                        size_chars: res.data.text?.length || 0,
+                    };
+                } catch (err) {
+                    return {
+                        success: false,
+                        error: err.response?.data?.error || err.message,
+                    };
+                }
+            }
+
             default:
                 return null; // Not our tool
         }
