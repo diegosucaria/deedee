@@ -445,7 +445,8 @@ class SlackConnection {
             'Cookie': `d=${this.xoxd}`,
         };
         let fetchBody;
-        if (method.startsWith('search.')) {
+        const formMethods = ['users.info', 'conversations.replies'];
+        if (method.startsWith('search.') || formMethods.includes(method)) {
             headers['Content-Type'] = 'application/x-www-form-urlencoded; charset=utf-8';
             fetchBody = new URLSearchParams(body).toString();
         } else {
