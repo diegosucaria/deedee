@@ -273,11 +273,15 @@ class MCPManager {
 
                     // Store reference and populate cache
                     mappedTools.forEach(t => {
+                        // Deduplicate to avoid Gemini crashing on "Duplicate function declaration found"
+                        if (this.toolMap.has(t.name)) {
+                            console.warn(`[MCP] Warning: Duplicate tool name detected: ${t.name}. Skipping.`);
+                            return;
+                        }
                         t.serverName = name;
                         this.toolMap.set(t.name, { name, client, originalName: t.originalName });
+                        this.toolCache.push(t);
                     });
-
-                    this.toolCache.push(...mappedTools);
                 }
             } catch (err) {
                 console.error(`[MCP] Failed to list tools for ${name}:`, err);
