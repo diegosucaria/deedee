@@ -722,7 +722,7 @@ const toolDefinitions = [
       },
       {
         name: "readAllMonitoredSlackHistory",
-        description: "Reads the recent message history from ALL of the user's configured monitored Slack channels across all workspaces in a single optimized fetching call. Use this instead of manually calling readSlackHistory in a loop when you need to extract tasks, find mentions, or summarize the day. WARNING: The output will be very large. If you are spawning a sub-agent to use this tool to extract tasks, you MUST set `model: 'FLASH'`. CRITICAL: When extracting tasks, you must distinguish between tasks assigned TO the user and tasks assigned to OTHERS. Only list tasks that the user is actually responsible for or explicitly tagged/asked to do.",
+        description: "Reads the recent message history from ALL of the user's configured monitored Slack channels across all workspaces in a single optimized fetching call. Use this instead of manually calling readSlackHistory in a loop when you need to extract tasks, find mentions, or summarize the day. WARNING: The output will be very large. If you are spawning a sub-agent to use this tool to extract tasks, you MUST set `model: 'FLASH'`. CRITICAL: Because a task might be assigned in a DM but completed in a project channel, the FLASH sub-agent should simply extract a chronological summary of action items, discussions, and decisions PER CHANNEL. Do not prematurely discard tasks. The main PRO agent will use this comprehensive summary to deduce which tasks are genuinely still pending.",
         parameters: {
           type: "OBJECT",
           properties: {
