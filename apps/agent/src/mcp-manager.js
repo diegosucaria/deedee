@@ -244,12 +244,32 @@ class MCPManager {
 
                 const result = await client.listTools();
                 if (result && result.tools) {
-                    const mappedTools = result.tools.map(t => ({
-                        name: `${prefix}${t.name}`,
-                        originalName: t.name,
-                        description: t.description,
-                        parameters: t.inputSchema // MCP uses 'inputSchema', Gemini uses 'parameters' (JSON Schema)
-                    }));
+                    const mappedTools = result.tools.map(t => {
+                        let safeName = `${prefix}${t.name}`;
+
+                        // Sanitize to Gemini's allowed characters (a-z, A-Z, 0-9, _, ., :, -)
+                        safeName = safeName.replace(/[^a-zA-Z0-9_.\:\-]/g, '_');
+
+                        // Must start with a letter or underscore
+                        if (!/^[a-zA-Z_]/.test(safeName)) {
+                            safeName = '_' + safeName;
+                        }
+
+                        // Gemini allows max 64 characters
+                        if (safeName.length > 64) {
+                            const crypto = require('crypto');
+                            const hash = crypto.createHash('md5').update(t.name).digest('hex').substring(0, 8);
+                            // 64 total: 55 for truncated name + 1 for underscore + 8 for hash = 64
+                            safeName = safeName.substring(0, 55) + '_' + hash;
+                        }
+
+                        return {
+                            name: safeName,
+                            originalName: t.name,
+                            description: t.description,
+                            parameters: t.inputSchema // MCP uses 'inputSchema', Gemini uses 'parameters'
+                        };
+                    });
 
                     // Store reference and populate cache
                     mappedTools.forEach(t => {
