@@ -398,58 +398,6 @@ class SlackConnection {
         return messages;
     }
 
-    async getMonitoredChannelsHistory(days_back = 1) {
-        console.log(`[SlackManager] Fetching aggregated monitored channels history (days_back: ${days_back})`);
-
-        const allHistory = [];
-
-        // Process each connected workspace
-        for (const [teamId, conn] of this.connections) {
-            if (!conn.connected || !conn.monitoredChannels || conn.monitoredChannels.length === 0) continue;
-
-            console.log(`[SlackManager] Processing ${conn.monitoredChannels.length} monitored channels for team ${teamId}`);
-
-            // We batch them to avoid slamming the Slack API instantly, but faster than serial.
-            const BATCH_SIZE = 5;
-            for (let i = 0; i < conn.monitoredChannels.length; i += BATCH_SIZE) {
-                const batch = conn.monitoredChannels.slice(i, i + BATCH_SIZE);
-
-                const promises = batch.map(async (ch) => {
-                    try {
-                        const messages = await conn.getHistory(ch.id, 50, days_back); // fetch up to 50 msgs per channel
-                        if (messages.length === 0) return null;
-
-                        // Format tightly to save tokens. e.g. "[Workspace/General] User: text"
-                        const workspaceName = conn.workspace?.team || teamId;
-                        const channelName = ch.name || ch.id;
-
-                        const formattedMsgs = messages.map(m => {
-                            const time = new Date(parseFloat(m.timestamp) * 1000).toISOString().split('T')[1].substring(0, 5);
-                            return `[${time}] ${m.user}: ${m.text.replace(/\n/g, ' ')}`;
-                        }).join('\n');
-
-                        return `--- Workspace: ${workspaceName} | Channel: ${channelName} ---\n${formattedMsgs}`;
-                    } catch (err) {
-                        console.warn(`[SlackManager] Failed to fetch history for monitored channel ${ch.name} (${ch.id}):`, err.message);
-                        return null;
-                    }
-                });
-
-                const results = await Promise.all(promises);
-                const validResults = results.filter(Boolean);
-                if (validResults.length > 0) {
-                    allHistory.push(...validResults);
-                }
-            }
-        }
-
-        if (allHistory.length === 0) {
-            return "No recent messages found in any monitored channels.";
-        }
-
-        return allHistory.join('\n\n');
-    }
-
     getStatus() {
         return {
             teamId: this.workspace?.teamId,
@@ -645,10 +593,6 @@ class SlackManager {
 
     // --- Aggregated/Proxied API ---
 
-    getStatus() {
-        return Array.from(this.connections.values()).map(c => c.getStatus());
-    }
-
     setListening(teamId, listening) {
         const conn = this.resolveConnection(teamId);
         conn.listening = listening;
@@ -724,6 +668,62 @@ class SlackManager {
 
     async getChannels(teamId) {
         return await this.resolveConnection(teamId).getChannels();
+    }
+
+    async getMonitoredChannelsHistory(days_back = 1) {
+        console.log(`[SlackManager] Fetching aggregated monitored channels history (days_back: ${days_back})`);
+
+        const allHistory = [];
+
+        // Process each connected workspace
+        for (const [teamId, conn] of this.connections) {
+            if (!conn.connected || !conn.monitoredChannels || conn.monitoredChannels.length === 0) continue;
+
+            console.log(`[SlackManager] Processing ${conn.monitoredChannels.length} monitored channels for team ${teamId}`);
+
+            // We batch them to avoid slamming the Slack API instantly, but faster than serial.
+            const BATCH_SIZE = 5;
+            for (let i = 0; i < conn.monitoredChannels.length; i += BATCH_SIZE) {
+                const batch = conn.monitoredChannels.slice(i, i + BATCH_SIZE);
+
+                const promises = batch.map(async (ch) => {
+                    try {
+                        const messages = await conn.getHistory(ch.id, 50, days_back); // fetch up to 50 msgs per channel
+                        if (messages.length === 0) return null;
+
+                        // Format tightly to save tokens. e.g. "[Workspace/General] User: text"
+                        const workspaceName = conn.workspace?.team || teamId;
+                        const channelName = ch.name || ch.id;
+
+                        const formattedMsgs = messages.map(m => {
+                            const time = new Date(parseFloat(m.timestamp) * 1000).toISOString().split('T')[1].substring(0, 5);
+                            return `[${time}] ${m.user}: ${m.text.replace(/\n/g, ' ')}`;
+                        }).join('\n');
+
+                        return `--- Workspace: ${workspaceName} | Channel: ${channelName} ---\n${formattedMsgs}`;
+                    } catch (err) {
+                        console.warn(`[SlackManager] Failed to fetch history for monitored channel ${ch.name} (${ch.id}):`, err.message);
+                        return null;
+                    }
+                });
+
+                const results = await Promise.all(promises);
+                const validResults = results.filter(Boolean);
+                if (validResults.length > 0) {
+                    allHistory.push(...validResults);
+                }
+            }
+        }
+
+        if (allHistory.length === 0) {
+            return "No recent messages found in any monitored channels.";
+        }
+
+        return allHistory.join('\n\n');
+    }
+
+    getStatus() {
+        return Array.from(this.connections.values()).map(c => c.getStatus());
     }
 
     // --- Credential Encryption & Persistence ---
