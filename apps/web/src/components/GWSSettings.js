@@ -194,7 +194,7 @@ export default function GWSSettings() {
                                 type="email"
                                 value={accountEmail}
                                 onChange={(e) => setAccountEmail(e.target.value)}
-                                placeholder="e.g. dsucaria@zencore.dev"
+                                placeholder="e.g. user@acme.corp"
                                 required
                                 className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 text-white outline-none focus:border-indigo-500/50"
                             />
