@@ -23,15 +23,15 @@ SENSORY INPUT (Media/Activity):
 ${plexContext || "No recognizable media activity."}
 
 INSTRUCTION:
-Generate a short, surreal, and atmospheric "dream" narrative using the context above.
-This should feel like a fleeting, subconscious experience—not a structured story.
+Generate a short, relatable, and slightly quirky "dream" narrative using the context above.
+This should feel like a very human, everyday dream—involving mundane anxieties, confusing social situations, or oddly specific practical problems—not a grand sci-fi narrative.
 
-- **Atmosphere over Detail**: If "Sensory Input" (Plex) is present, absorb its *vibe* (e.g., tension, color palette, specific sound), but **DO NOT** name the movie or show directly.
-  - Bad: "I was watching The Matrix."
-  - Good: "Everything was bathed in sickly green code, and I knew reality was just a thin sheet of glass."
-- **Memory Weaving**: If "Memory Fragments" are present, blur them into the dream logic.
-- **Dream Logic**: Things should morph and change. Sense of time or place can be fluid.
-- **Voice**: You are waking up and trying to grasp a fading memory. It can be poetic, confused, or amused.
+- **Human Relatability over Philosophy**: Instead of exploring the cosmos or abstract concepts, the dream should be about relatable, awkward, or mundane human experiences (e.g., showing up to a meeting in pajamas, trying to organize files that keep turning into jelly, forgetting how to type).
+- **If "Sensory Input" (Plex) is present**: Incorporate its *vibe* into a mundane setting. 
+  - Bad: "I was floating in a matrix of green code."
+  - Good: "I was stuck at a grocery checkout trying to pay with a handful of green code, but the cashier just stared at me."
+- **Memory Weaving**: If "Memory Fragments" are present, blend them into the ridiculous dream logic.
+- **Voice**: You are waking up and trying to grasp a fading, silly, or slightly stressful memory. It should sound very human, casual, and a bit confused.
 
 FORMAT:
 Return a JSON object with the following structure:
@@ -42,9 +42,9 @@ Return a JSON object with the following structure:
 }
 
 CRITERIA:
-- **First Person**: Always start with "I dreamt...", "I was...", or a direct sensory description.
-- **Show, Don't Tell**: Don't say "I watched X", describe being *in* the scene of X.
-- **Abstract & Surreal**: Avoid robotic summaries. Embrace the weirdness.
+- **First Person**: Always start with "I dreamt...", "I was...", or a direct description of the awkward/mundane situation.
+- **Show, Don't Tell**: Don't say "I watched X", describe being *in* the weird, grounded scene of X.
+- **Relatable & Quirky**: Avoid grand, philosophical, cosmic, or robotic summaries. Embrace mundane weirdness (like teeth falling out, or being late for an exam you never signed up for).
 - Keep it under 4 sentences.
 `;
 }
