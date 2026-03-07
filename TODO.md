@@ -130,6 +130,6 @@
 - [x] **Multi-Agent (Feb 2026)**:
     - [x] **SubAgentService**: Spawn isolated sub-agents with timeout (10m max), concurrency limits (3 max), and depth guard.
     - [x] **Agent Tools**: `spawnAgent`, `getAgentResult`, `listAgentTasks`.
-    - [x] **Live UI**: Sub-Agents tab in Tasks page with socket-based real-time updates. Added ability to view the entire task prompt when expanding a row.
+    - [x] **Live UI**: Sub-Agents tab in Tasks page with socket-based real-time updates. Added ability to view the entire task prompt when expanding a row. Shows initiator/trigger source and start time.
     - [x] **Safety**: Tool allowlisting, session isolation (`subagent-*`), `FLASH` model default.
 - [x] **Google Workspace CLI Integration (Mar 2026)**: Replaced legacy OAuth mechanisms with `@googleworkspace/cli` native bindings. Supports multiple dynamic namespaces and local file uploads.

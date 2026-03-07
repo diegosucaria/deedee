@@ -54,7 +54,7 @@ RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:/root/.cargo/bin:$PATH"
 
 # Install Google Workspace CLI globally so `gws` command is instantly available
-RUN npm install -g @googleworkspace/cli@0.8.0
+RUN npm install -g @googleworkspace/cli@0.6.3
 
 # Playwright Config for Alpine/ARM
 ENV BROWSER_EXECUTABLE_PATH=/usr/bin/chromium-browser

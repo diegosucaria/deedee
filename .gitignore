@@ -12,3 +12,4 @@ node_modules.nosync
 apps/agent/tests/test_people.db
 .skills
 .agent
+.claude

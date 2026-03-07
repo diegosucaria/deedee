@@ -31,7 +31,7 @@ To control your Mac (Apps, Mouse, Keyboard) from Deedee:
 
 ## Google Workspace Integration
 
-DeeDee uses the [`@googleworkspace/cli`](https://github.com/googleworkspace/cli) MCP server (pinned to v0.8.0) to provide full access to Gmail, Calendar, Drive, Docs, Sheets, and more.
+DeeDee uses the [`@googleworkspace/cli`](https://github.com/googleworkspace/cli) MCP server (pinned to v0.6.3) to provide full access to Gmail, Calendar, Drive, Docs, Sheets, and more. Note: v0.7.0+ removed multi-account support and v0.8.0 removed the `mcp` command entirely.
 
 ### Authentication
 
