@@ -34,6 +34,7 @@ const { SkillService } = require('./services/skill-service');
 const { MemoryPruningService } = require('./services/memory-pruning');
 const { DreamService } = require('./services/dream-service');
 const { SubAgentService } = require('./services/subagent-service');
+const { ToolScoper } = require('./services/tool-scoper');
 
 
 
@@ -84,6 +85,7 @@ class Agent {
     this.memoryPruning = new MemoryPruningService(this);
     this.dreamService = new DreamService(this);
     this.subAgentService = new SubAgentService(this);
+    this.toolScoper = new ToolScoper(config.googleApiKey);
 
     // In-Memory Settings Cache
     this.settings = {};
@@ -890,27 +892,37 @@ class Agent {
       // --- ROUTING ---
       let e2eCost = 0; // Track total cost for this request
       let e2eTokens = 0; // Track total tokens
-      console.time(`${logPrefix} Router Duration`);
-      const routerStart = Date.now();
+      let decision;
 
-      // Get brief history for context (last 3 messages)
-      const routingHistory = this.db.getHistoryForChat(chatId, 3);
+      // forceModel bypass: skip router when model is explicitly set (e.g. scheduled jobs, sub-agents)
+      const forceModel = message.metadata?.forceModel;
+      if (forceModel && ['FLASH', 'LITE', 'PRO', 'IMAGE'].includes(forceModel.toUpperCase())) {
+        decision = { model: forceModel.toUpperCase(), toolMode: 'STANDARD', reason: `forceModel override (${forceModel})` };
+        console.log(`${logPrefix} Router BYPASSED — forceModel: ${decision.model}`);
+        this.db.logMetric('latency_router', 0, { model: decision.model, chatId, runId, bypassed: true });
+      } else {
+        console.time(`${logPrefix} Router Duration`);
+        const routerStart = Date.now();
 
-      // STICKY ROUTING: Check if we were using PRO recently
-      const lastModelMsg = routingHistory.find(m => m.role === 'model');
-      const lastModel = lastModelMsg?.metadata?.model;
-      const lastModelTimestamp = lastModelMsg?.timestamp; // Assumes timestamp is in ms or convertible
-      let timeSinceLastModel = 0;
-      if (lastModelTimestamp) {
-        timeSinceLastModel = Date.now() - new Date(lastModelTimestamp).getTime();
+        // Get brief history for context (last 3 messages)
+        const routingHistory = this.db.getHistoryForChat(chatId, 3);
+
+        // STICKY ROUTING: Check if we were using PRO recently
+        const lastModelMsg = routingHistory.find(m => m.role === 'model');
+        const lastModel = lastModelMsg?.metadata?.model;
+        const lastModelTimestamp = lastModelMsg?.timestamp;
+        let timeSinceLastModel = 0;
+        if (lastModelTimestamp) {
+          timeSinceLastModel = Date.now() - new Date(lastModelTimestamp).getTime();
+        }
+
+        // Pass the primary content or parts to router
+        decision = await this.router.route(message.parts || message.content, routingHistory, lastModel, timeSinceLastModel, message.source);
+        const routerDuration = Date.now() - routerStart;
+        console.timeEnd(`${logPrefix} Router Duration`);
+
+        this.db.logMetric('latency_router', routerDuration, { model: decision.model, chatId, runId });
       }
-
-      // Pass the primary content or parts to router
-      const decision = await this.router.route(message.parts || message.content, routingHistory, lastModel, timeSinceLastModel, message.source);
-      const routerDuration = Date.now() - routerStart;
-      console.timeEnd(`${logPrefix} Router Duration`);
-
-      this.db.logMetric('latency_router', routerDuration, { model: decision.model, chatId, runId });
       console.log(`${logPrefix} Routing to: ${decision.model}`);
 
       // --- GROK / EXTERNAL MODEL OVERRIDE ---
@@ -1053,7 +1065,9 @@ class Agent {
 
       const selectedModel = decision.model === 'FLASH'
         ? this.configService.getModel('FLASH')
-        : this.configService.getModel('PRO');
+        : decision.model === 'LITE'
+          ? this.configService.getModel('LITE')
+          : this.configService.getModel('PRO');
 
       console.log(`${logPrefix} Routing to Model: ${selectedModel}`);
       await reportProgress(`Thinking(${selectedModel})...`);
@@ -1076,14 +1090,16 @@ class Agent {
       const mcpTools = await this.mcp.getTools();
 
       // Transform MCP tools to Gemini Format if not already compliant
-      const externalTools = mcpTools.map(t => ({
+      let externalTools = mcpTools.map(t => ({
         name: t.name,
         description: t.description,
         parameters: t.parameters
       }));
 
       // Flatten all internal tool declarations from toolDefinitions array
-      let internalTools = toolDefinitions.flatMap(td => td.functionDeclarations || []);
+      // Strip 'category' field (used only for scoping, not part of Gemini schema)
+      let internalTools = toolDefinitions.flatMap(td => td.functionDeclarations || [])
+        .map(({ category, ...rest }) => rest);
 
       // Sub-agent tool filtering: restrict to allowed tools if specified
       if (message.metadata?.isSubAgent && message.metadata?.allowedTools) {
@@ -1094,6 +1110,14 @@ class Agent {
       // Sub-agents cannot spawn other sub-agents (remove from available tools)
       if (message.metadata?.isSubAgent) {
         internalTools = internalTools.filter(t => t.name !== 'spawnAgent');
+      }
+
+      // Scheduled job tool filtering: restrict to auto-scoped tools if available
+      if (message.source === 'scheduler' && message.metadata?.allowedTools) {
+        const allowed = new Set(message.metadata.allowedTools);
+        internalTools = internalTools.filter(t => allowed.has(t.name));
+        externalTools = externalTools.filter(t => allowed.has(t.name));
+        console.log(`${logPrefix} Scheduler tool scope applied: ${allowed.size} tools allowed (internal: ${internalTools.length}, external: ${externalTools.length})`);
       }
 
       const allTools = [

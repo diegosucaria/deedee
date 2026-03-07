@@ -6,6 +6,7 @@ const toolDefinitions = [
       // Memory / DB
       {
         name: "rememberFact",
+        category: "memory",
         description: "Save a fact or preference to long-term memory",
         parameters: {
           type: "OBJECT",
@@ -18,6 +19,7 @@ const toolDefinitions = [
       },
       {
         name: "saveJobState",
+        category: "scheduler",
         description: "Save a value to the persistent state of the current scheduled job. Use this to remember things between runs (e.g. 'last_weather_status'). ONLY works within a scheduled job.",
         parameters: {
           type: "OBJECT",
@@ -30,6 +32,7 @@ const toolDefinitions = [
       },
       {
         name: "getJobState",
+        category: "scheduler",
         description: "Retrieve a value from the persistent state of the current scheduled job. ONLY works within a scheduled job.",
         parameters: {
           type: "OBJECT",
@@ -39,6 +42,7 @@ const toolDefinitions = [
       },
       {
         name: "getFact",
+        category: "memory",
         description: "Retrieve a fact from long-term memory",
         parameters: {
           type: "OBJECT",
@@ -48,6 +52,7 @@ const toolDefinitions = [
       },
       {
         name: "searchMemory",
+        category: "memory",
         description: "Search the agent's full memory: chat history, daily journal summaries, durable facts, and vault documents. Use this for 'What did I do last Tuesday?', 'When did I talk to X about Y?', or recalling any past information.",
         parameters: {
           type: "OBJECT",
@@ -60,6 +65,7 @@ const toolDefinitions = [
       },
       {
         name: "searchHistory",
+        category: "memory",
         description: "Search specific details from the chat history. Use this when the Context Summary is too high-level and you need exact details (e.g. 'what was the code for X?').",
         parameters: {
           type: "OBJECT",
@@ -72,6 +78,7 @@ const toolDefinitions = [
       },
       {
         name: "consolidateMemory",
+        category: "memory",
         description: "Summarize a specific day's logs into a journal entry and optionally clear raw logs. Useful for nightly maintenance.",
         parameters: {
           type: "OBJECT",
@@ -83,6 +90,7 @@ const toolDefinitions = [
       },
       {
         name: "addGoal",
+        category: "goals",
         description: "Register a new high-level goal or task (e.g. 'Update code for PDF support')",
         parameters: {
           type: "OBJECT",
@@ -92,6 +100,7 @@ const toolDefinitions = [
       },
       {
         name: "completeGoal",
+        category: "goals",
         description: "Mark a goal as completed",
         parameters: {
           type: "OBJECT",
@@ -102,6 +111,7 @@ const toolDefinitions = [
       // Local System
       {
         name: "readFile",
+        category: "filesystem",
         description: "Read a file from the local system",
         parameters: {
           type: "OBJECT",
@@ -111,6 +121,7 @@ const toolDefinitions = [
       },
       {
         name: "writeFile",
+        category: "filesystem",
         description: "Write content to a file",
         parameters: {
           type: "OBJECT",
@@ -123,6 +134,7 @@ const toolDefinitions = [
       },
       {
         name: "listDirectory",
+        category: "filesystem",
         description: "List files in a directory",
         parameters: {
           type: "OBJECT",
@@ -132,6 +144,7 @@ const toolDefinitions = [
       },
       {
         name: "runShellCommand",
+        category: "filesystem",
         description: "Run a shell command",
         parameters: {
           type: "OBJECT",
@@ -141,6 +154,7 @@ const toolDefinitions = [
       },
       {
         name: "rollbackLastChange",
+        category: "filesystem",
         description: "Undoes the last code change made to the system using git revert. Use this if a recent update broke something.",
         parameters: {
           type: "OBJECT",
@@ -150,6 +164,7 @@ const toolDefinitions = [
       },
       {
         name: "pullLatestChanges",
+        category: "filesystem",
         description: "Updates the codebase by pulling the latest changes from the remote repository. IMPORTANT: Upon success, do NOT report 'I have pulled changes'. Proceed IMMEDIATELY to the next step (e.g., listDirectory, readFile).",
         parameters: {
           type: "OBJECT",
@@ -159,6 +174,7 @@ const toolDefinitions = [
       },
       {
         name: "commitAndPush",
+        category: "filesystem",
         description: "Commits and pushes changes to the remote repository. Automatically runs 'npm test' first and fails if tests do not pass.",
         parameters: {
           type: "OBJECT",
@@ -171,6 +187,7 @@ const toolDefinitions = [
       // Productivity
       {
         name: "logJournal",
+        category: "memory",
         description: "Log a note, idea, or todo to a daily markdown journal. Use this for 'Note to self', 'Remember to buy milk', etc.",
         parameters: {
           type: "OBJECT",
@@ -181,6 +198,7 @@ const toolDefinitions = [
       // Scheduler
       {
         name: "scheduleJob",
+        category: "scheduler",
         description: "Schedule a recurring task using cron syntax. The task must be a simple description that the agent will execute later.",
         parameters: {
           type: "OBJECT",
@@ -195,6 +213,7 @@ const toolDefinitions = [
       },
       {
         name: "listJobs",
+        category: "scheduler",
         description: "List all currently scheduled jobs with details (name, schedule, task description). Use this to find a job ID before cancelling or modifying it.",
         parameters: {
           type: "OBJECT",
@@ -204,6 +223,7 @@ const toolDefinitions = [
       },
       {
         name: "cancelJob",
+        category: "scheduler",
         description: "Cancel a scheduled job by name.",
         parameters: {
           type: "OBJECT",
@@ -213,6 +233,7 @@ const toolDefinitions = [
       },
       {
         name: "setReminder",
+        category: "scheduler",
         description: "Set a one-time reminder for a specific date/time. The agent will message the user with the reminder content at the specified time.",
         parameters: {
           type: "OBJECT",
@@ -225,6 +246,7 @@ const toolDefinitions = [
       },
       {
         name: "scheduleTask",
+        category: "scheduler",
         description: "Schedule a one-time instruction to be executed by the agent at a specific time. Use this for delayed actions like 'Turn off lights in 10 minutes' or 'Check status at 5pm'. The instruction will be processed as a command.",
         parameters: {
           type: "OBJECT",
@@ -238,6 +260,7 @@ const toolDefinitions = [
       // External Tools
       {
         name: "googleSearch",
+        category: "search",
         description: "Perform a Google Search for quick facts, weather, news, or simple Q&A. Do NOT use this for deep research, flight booking, or interacting with pages. For those, use 'browser_navigate'.",
         parameters: {
           type: "OBJECT",
@@ -250,6 +273,7 @@ const toolDefinitions = [
       // Image Generation
       {
         name: "generateImage",
+        category: "generative",
         description: "Create/Draw/Render a NEW image using Gemini 3 Pro. Returns a base64 string. Do NOT use this to analyze images.",
         parameters: {
           type: "OBJECT",
@@ -262,6 +286,7 @@ const toolDefinitions = [
       // Smart Home Memory
       {
         name: "lookupDevice",
+        category: "smarthome",
         description: "Check if the agent remembers a specific device alias (e.g., 'hallway light') and get its entity ID. usage: always call this BEFORE searching HA.",
         parameters: {
           type: "OBJECT",
@@ -271,6 +296,7 @@ const toolDefinitions = [
       },
       {
         name: "learnDevice",
+        category: "smarthome",
         description: "Teach the agent that a specific alias (e.g., 'hallway light') corresponds to an entity ID (e.g., 'light.hallway'). Call this after you successfully find a device via search.",
         parameters: {
           type: "OBJECT",
@@ -283,6 +309,7 @@ const toolDefinitions = [
       },
       {
         name: "listDeviceAliases",
+        category: "smarthome",
         description: "List all learned smart home device aliases.",
         parameters: {
           type: "OBJECT",
@@ -292,6 +319,7 @@ const toolDefinitions = [
       },
       {
         name: "deleteDeviceAlias",
+        category: "smarthome",
         description: "Remove a specific learned device alias mapping. Use this if an alias is incorrect.",
         parameters: {
           type: "OBJECT",
@@ -301,6 +329,7 @@ const toolDefinitions = [
       },
       {
         name: "sendMessage",
+        category: "communication",
         description: "Send a message to a specific user via WhatsApp or other services. Useful for initiating conversations, sending reminders to specific numbers, or replying with impersonation.",
         parameters: {
           type: "OBJECT",
@@ -317,6 +346,7 @@ const toolDefinitions = [
       },
       {
         name: "searchContacts",
+        category: "communication",
         description: "Search for a contact's phone number by name. Use this to find who to text. Returns a list of matches with names and phone numbers.",
         parameters: {
           type: "OBJECT",
@@ -330,6 +360,7 @@ const toolDefinitions = [
       // People Management
       {
         name: "listPeople",
+        category: "people",
         description: "List all known people/contacts in the database.",
         parameters: {
           type: "OBJECT",
@@ -343,6 +374,7 @@ const toolDefinitions = [
       },
       {
         name: "getPerson",
+        category: "people",
         description: "Get details of a specific person by ID or phone number.",
         parameters: {
           type: "OBJECT",
@@ -354,6 +386,7 @@ const toolDefinitions = [
       },
       {
         name: "searchPeople",
+        category: "people",
         description: "Fuzzy search people by name, relationship, or notes.",
         parameters: {
           type: "OBJECT",
@@ -365,6 +398,7 @@ const toolDefinitions = [
       },
       {
         name: "updatePerson",
+        category: "people",
         description: "Update details for a person.",
         parameters: {
           type: "OBJECT",
@@ -387,6 +421,7 @@ const toolDefinitions = [
       },
       {
         name: "deletePerson",
+        category: "people",
         description: "Delete a person from the database.",
         parameters: {
           type: "OBJECT",
@@ -399,6 +434,7 @@ const toolDefinitions = [
       // Watchers & WhatsApp Intelligence
       {
         name: "addWatcher",
+        category: "communication",
         description: "Register a new message watcher. The agent will silently monitor incoming messages and execute the instruction ONLY when the condition is met. Use this for 'Tell me when X happens' or 'If X replies, say Y'.",
         parameters: {
           type: "OBJECT",
@@ -412,6 +448,7 @@ const toolDefinitions = [
       },
       {
         name: "readChatHistory",
+        category: "communication",
         description: "Read the recent message history with a specific contact. Use this to catch up on a conversation or understand context before replying.",
         parameters: {
           type: "OBJECT",
@@ -425,6 +462,7 @@ const toolDefinitions = [
       },
       {
         name: "listConversations",
+        category: "communication",
         description: "List recent active conversations from WhatsApp. Use this to see who has messaged recently.",
         parameters: {
           type: "OBJECT",
@@ -438,6 +476,7 @@ const toolDefinitions = [
       // Audio / TTS
       {
         name: "replyWithAudio",
+        category: "generative",
         description: "Generate and send an audio response (text-to-speech) to the user using Gemini TTS. FAIL if the user did NOT explicitly request an audio/voice response. Do NOT use this for simple greetings.",
         parameters: {
           type: "OBJECT",
@@ -451,6 +490,7 @@ const toolDefinitions = [
       // Life Vaults
       {
         name: "createVault",
+        category: "vault",
         description: "Create a new Life Vault for a specific topic (e.g. 'health', 'finance').",
         parameters: {
           type: "OBJECT",
@@ -460,6 +500,7 @@ const toolDefinitions = [
       },
       {
         name: "deleteVault",
+        category: "vault",
         description: "Permanently delete a Life Vault and all its contents. Use with caution.",
         parameters: {
           type: "OBJECT",
@@ -469,6 +510,7 @@ const toolDefinitions = [
       },
       {
         name: "listVaults",
+        category: "vault",
         description: "List all existing Life Vaults and their stats.",
         parameters: {
           type: "OBJECT",
@@ -478,6 +520,7 @@ const toolDefinitions = [
       },
       {
         name: "addToVault",
+        category: "vault",
         description: "Add a file to a specific vault and update the wiki. THIS ALSO SWITCHES THE SESSION CONTEXT to that vault.",
         parameters: {
           type: "OBJECT",
@@ -491,6 +534,7 @@ const toolDefinitions = [
       },
       {
         name: "readVaultFile",
+        category: "vault",
         description: "Read a specific file from the active vault.",
         parameters: {
           type: "OBJECT",
@@ -503,6 +547,7 @@ const toolDefinitions = [
       },
       {
         name: "readVaultPage",
+        category: "vault",
         description: "Read a markdown page from a vault (defaults to index.md).",
         parameters: {
           type: "OBJECT",
@@ -515,6 +560,7 @@ const toolDefinitions = [
       },
       {
         name: "writeVaultPage",
+        category: "vault",
         description: "Create or Update a markdown page in a vault.",
         parameters: {
           type: "OBJECT",
@@ -528,6 +574,7 @@ const toolDefinitions = [
       },
       {
         name: "listVaultFiles",
+        category: "vault",
         description: "List raw files stored in a vault.",
         parameters: {
           type: "OBJECT",
@@ -537,6 +584,7 @@ const toolDefinitions = [
       },
       {
         name: "setSessionTopic",
+        category: "vault",
         description: "Manually switch the current chat session to focus on a specific Vault topic (e.g. 'health'). This loads the vault context.",
         parameters: {
           type: "OBJECT",
@@ -546,6 +594,7 @@ const toolDefinitions = [
       },
       {
         name: "saveNoteToVault",
+        category: "vault",
         description: "Save a text note or knowledge snippet to the active vault's wiki. Use this when the user says 'Save this to the vault' or 'Remember that...'.",
         parameters: {
           type: "OBJECT",
@@ -559,6 +608,7 @@ const toolDefinitions = [
       // Local RAG
       {
         name: "searchDocuments",
+        category: "rag",
         description: "Search indexed vault documents (PDFs, text files) using semantic search. Use this for finding specific information from uploaded files.",
         parameters: {
           type: "OBJECT",
@@ -570,6 +620,7 @@ const toolDefinitions = [
       },
       {
         name: "ingestDocument",
+        category: "rag",
         description: "Ingest a file (PDF or Text) into the semantic search index.",
         parameters: {
           type: "OBJECT",
@@ -582,6 +633,7 @@ const toolDefinitions = [
       // DJ Assistant
       {
         name: "add_vinyl",
+        category: "dj",
         description: "Add a vinyl record to the DJ Crate. Accepts an image (cover/label/receipt) or text.",
         parameters: {
           type: "OBJECT",
@@ -593,6 +645,7 @@ const toolDefinitions = [
       },
       {
         name: "recommend_vinyl",
+        category: "dj",
         description: "Get track recommendations strictly from the user's Vinyl Crate. Use this when the user is playing vinyls.",
         parameters: {
           type: "OBJECT",
@@ -604,6 +657,7 @@ const toolDefinitions = [
       },
       {
         name: "ingest_dj_history",
+        category: "dj",
         description: "Ingest a playlist history file into the DJ History Vault with context metadata.",
         parameters: {
           type: "OBJECT",
@@ -618,6 +672,7 @@ const toolDefinitions = [
       },
       {
         name: "recommend_digital",
+        category: "dj",
         description: "Get track recommendations from Global Knowledge + History Vault. Use this for digital sets.",
         parameters: {
           type: "OBJECT",
@@ -631,6 +686,7 @@ const toolDefinitions = [
       // Slack Integration
       {
         name: "searchSlack",
+        category: "slack",
         description: "Search Slack messages across channels and DMs. WARNING: If the user asks to summarize messages, find tasks for the day, or asks 'what happened yesterday', DO NOT use this tool. This tool is for SPECIFIC keyword lookups ONLY. Instead, use getSlackMonitoredChannels and readSlackHistory to scan their important conversations. You MUST use Slack's advanced search syntax to filter results efficiently and avoid hitting limits. Examples: 'from:@user', 'in:#channel', 'has:link', 'after:2024-01-01', or simply 'project deadline'. Do NOT just search for a generic name like 'Sean' multiple times; instead search 'from:@Sean'.",
         parameters: {
           type: "OBJECT",
@@ -644,6 +700,7 @@ const toolDefinitions = [
       },
       {
         name: "readSlackHistory",
+        category: "slack",
         description: "Read recent message history from a Slack channel or DM. Use this as the PRIMARY tool to catch up on a conversation, extract summaries, or find 'tasks you need to do today' (by scanning recent history of monitored channels).",
         parameters: {
           type: "OBJECT",
@@ -658,6 +715,7 @@ const toolDefinitions = [
       },
       {
         name: "sendSlackMessage",
+        category: "slack",
         description: "Send a message to a Slack channel or DM as the user. Use this to reply to Slack conversations or send new messages.",
         parameters: {
           type: "OBJECT",
@@ -672,6 +730,7 @@ const toolDefinitions = [
       },
       {
         name: "getSlackMonitoredChannels",
+        category: "slack",
         description: "Returns the list of Slack channels that the user has configured manually as 'monitored' for briefings and scheduled tasks. Returns a list of objects containing channel ID, channel names, and their respective workspace IDs. WARNING: Do not fetch these channels to read them individually in a loop! Use `readAllMonitoredSlackHistory` to get the history for all monitored channels at once efficiently.",
         parameters: {
           type: "OBJECT",
@@ -681,6 +740,7 @@ const toolDefinitions = [
       },
       {
         name: "readAllMonitoredSlackHistory",
+        category: "slack",
         description: "Reads the recent message history from ALL of the user's configured monitored Slack channels across all workspaces in a single optimized fetching call. Use this instead of manually calling readSlackHistory in a loop when you need to extract tasks, find mentions, or summarize the day. WARNING: The output will be very large. If you are spawning a sub-agent to use this tool to extract tasks, you MUST set `model: 'FLASH'`. CRITICAL: Because a task might be assigned in a DM but completed in a project channel, the FLASH sub-agent should simply extract a chronological summary of action items, discussions, and decisions PER CHANNEL. Do not prematurely discard tasks. The main PRO agent will use this comprehensive summary to deduce which tasks are genuinely still pending.",
         parameters: {
           type: "OBJECT",
@@ -697,6 +757,7 @@ const toolDefinitions = [
     functionDeclarations: [
       {
         name: "spawnAgent",
+        category: "subagent",
         description: "Spawn a sub-agent to perform a specific task independently. The sub-agent runs in an isolated session with its own context and can use tools. Use this for tasks that can run in parallel or require focused execution. By default, this BLOCKS until the sub-agent completes and returns the result directly. Set waitForResult to false ONLY for fire-and-forget tasks where you do not need the result (e.g., sending a notification, background cleanup).",
         parameters: {
           type: "OBJECT",
@@ -716,6 +777,7 @@ const toolDefinitions = [
       },
       {
         name: "getAgentResult",
+        category: "subagent",
         description: "Check the status and result of a previously spawned sub-agent task.",
         parameters: {
           type: "OBJECT",
@@ -727,6 +789,7 @@ const toolDefinitions = [
       },
       {
         name: "listAgentTasks",
+        category: "subagent",
         description: "List all active and recent sub-agent tasks for the current session.",
         parameters: {
           type: "OBJECT",

@@ -16,9 +16,9 @@
 -   **Library**: `node-schedule`.
 -   **Class**: `Scheduler` (in `apps/agent/src/scheduler.js`).
 -   **Tool**: `scheduleTask(cronExpression, taskDescription)`
-    -   *Note*: For v1, this tool might just save to DB. The `Scheduler` needs to load these on startup.
-    -   *Simplification*: The user said "no tasks will be scheduled for now", just "build the code".
-    -   **Approach**: We will build the `Scheduler` class that *can* run jobs. We will wire it up to `agent.js`. We will *not* add any default jobs yet.
+-   **Per-Job Model Selection**: Each job can specify a model (`FLASH`, `LITE`, `PRO`, or `auto`). When set, the router is bypassed via `forceModel`, saving one API call per execution.
+-   **Schedule Constraints**: Jobs support `weekdaysOnly` (Mon–Fri) and `daytimeOnly` (7am–10pm) flags that transform the cron expression on save.
+-   **Tool Auto-Scoping**: On job create/update, a `ToolScoper` service analyzes the prompt and determines which tool categories are needed, storing results as `payload.allowedTools` to reduce input tokens at runtime.
 
 ## 3. Morning Briefing API
 **Goal**: A dedicated endpoint for iOS Shortcuts to fetch a briefing.

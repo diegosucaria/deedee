@@ -56,13 +56,16 @@ export async function createTask(prevState, formData) {
         const task = formData.get('task');
         const expiresAt = formData.get('expiresAt');
         const isOneOff = formData.get('isOneOff') === 'true';
+        const model = formData.get('model') || 'auto';
+        const weekdaysOnly = formData.get('weekdaysOnly') === 'true';
+        const daytimeOnly = formData.get('daytimeOnly') === 'true';
 
         // Validation
         if (!name || !cron || !task) return { success: false, error: 'Missing required fields' };
 
         await fetchAPI('/v1/tasks', {
             method: 'POST',
-            body: JSON.stringify({ name, cron, task, expiresAt, isOneOff })
+            body: JSON.stringify({ name, cron, task, expiresAt, isOneOff, model, weekdaysOnly, daytimeOnly })
         });
         revalidatePath('/tasks');
         return { success: true };

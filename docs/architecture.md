@@ -10,11 +10,12 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 - **Framework**: LangChain or Google GenAI SDK
 - **Role**: The Brain.
 - **Capabilities**:
-    - **Multimodal Routing:** Intelligently routes requests to `GEMINI FLASH` (Tools/Speed) or `GEMINI PRO` (Reasoning/Coding).
+    - **Multimodal Routing:** Intelligently routes requests to `GEMINI FLASH` (Tools/Speed), `GEMINI LITE` (Ultra-cheap simple tasks), or `GEMINI PRO` (Reasoning/Coding). Supports `forceModel` bypass for scheduled jobs to skip the router call entirely.
     - **Native TTS:** Generates high-quality speech using Gemini 2.5 (`LINEAR16`, `WAV`) with multilingual support.
     - **Sticky Routing:** Maintains model context (PRO vs FLASH) for multi-turn conversations by tracking `lastModel` metadata, ensuring complex reasoning tasks aren't interrupted by short follow-ups.
     - **Tool Executor**: Decoupled tool handling using a modular `ToolExecutor` facade. Delegates to domain-specific executors:
         - `FileSystemExecutor`, `MemoryExecutor`, `SchedulerExecutor`, `SmartHomeExecutor`, `GSuiteExecutor`, `MediaExecutor`, `ProductivityExecutor`, `SubAgentExecutor`.
+    - **Tool Auto-Scoping**: Each tool definition includes a `category` field (e.g., `memory`, `slack`, `calendar_email`). A `ToolScoper` service uses a cheap LLM call to analyze scheduled job prompts on save, determining which tool categories are needed. At runtime, only relevant tools are included in the request, reducing input token costs. MCP tools are classified by namespace pattern.
     - **Multi-Agent**: Spawns isolated child agents (`SubAgentService`) for parallel tasks. Max 3 concurrent, 10-min timeout, depth=1.
     - **Optimization**:
         - **Smart Context**: Intelligent token management with auto-summarization (`gemini-2.5-flash`) and long-term memory via a `summaries` table.
@@ -83,6 +84,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - `GET /v1/subagents/:id`: Get sub-agent task detail.
     - `POST /v1/subagents/cleanup`: Cleanup completed sub-agent sessions.
 - **Auth**: Bearer Token (`DEEDEE_API_TOKEN`). All routes protected (except `/health`).
+- **Security**: All route parameters are encoded with `encodeURIComponent()` to prevent injection via crafted job names or IDs.
 - **Flow**: Client -> API -> Agent (Waits for full processing) -> API -> Client JSON Response.
 
 
