@@ -46,7 +46,20 @@ The Agent needs to be stateless and scalable. We will separate intent classifica
     5. `chat.sendMessage(msg.content)`
     6. Save result.
 
+### 2.3 Router Bypass (`forceModel`)
+- When `message.metadata.forceModel` is set to `FLASH`, `LITE`, `PRO`, or `IMAGE`, the Router call is **skipped entirely**.
+- This saves one API call per execution — critical for scheduled jobs that run multiple times daily.
+- The `forceModel` hint is set per-job via the web dashboard's model selector.
+
 ## 4. Models Configuration
-- `ROUTER_MODEL`: `gemini-2.0-flash-exp` (fallback if 3-flash-preview unavailable).
-- `WORKER_FLASH`: `gemini-2.0-flash-exp`.
-- `WORKER_PRO`: `gemini-exp-1206`.
+- `ROUTER_MODEL`: Configured via `ConfigService` (cheapest available model).
+- `WORKER_FLASH`: `gemini-2.5-flash` (or latest).
+- `WORKER_LITE`: `gemini-3.1-flash-lite-preview` (ultra-cheap for simple tasks).
+- `WORKER_PRO`: `gemini-3-pro-preview` (or latest).
+
+## 5. Tool Auto-Scoping
+- Scheduled jobs can have their tool set scoped automatically on save.
+- A `ToolScoper` service uses a cheap LLM call to classify the job prompt into tool categories (e.g., `slack`, `calendar_email`, `memory`).
+- At runtime, only the relevant tools are included in the request, reducing input tokens significantly.
+- Each internal tool has a `category` field in `tools-definition.js`. MCP tools are classified by namespace pattern.
+- If scoping fails, all tools are included (safe fallback).

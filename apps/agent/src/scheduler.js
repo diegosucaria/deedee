@@ -221,7 +221,9 @@ class Scheduler {
                     const msgSource = payload.targetSource || 'scheduler';
                     const msgMeta = {
                         chatId: payload.targetChatId || `scheduled_${name}_${Date.now()}`,
-                        jobName: name
+                        jobName: name,
+                        ...(payload.model ? { forceModel: payload.model } : {}),
+                        ...(payload.allowedTools ? { allowedTools: payload.allowedTools } : {})
                     };
 
                     let executionResult = null;
@@ -451,8 +453,17 @@ class Scheduler {
             },
             {
                 name: 'proactive_thought',
-                cron: '0 * * * *', // Every hour
-                task: `[PROACTIVE LOOP] You have free time. Review your recent context, including latest chats, emails, calendar events, WhatsApp messages, and Slack messages. CRITICAL: To save tokens on large outputs, you MUST use spawnAgent with model: 'FLASH' to fetch and summarize these sources (like using readAllMonitoredSlackHistory or searching emails), returning only a consolidated summary of new actionable items back to you. If you want to do background research based on them, do it. If you want to talk to your owner, output a message. IMPORTANT: Check the current time. If it is late at night/sleeping hours, DO NOT output a message (use [SILENT] instead) to avoid waking the user up for non-critical things. Additionally, check if you have already notified the user about a topic recently; DO NOT repeat yourself. Otherwise, output ONLY [SILENT] if no action is needed. DO NOT message third parties.`,
+                cron: '0 7-22 * * *', // Daytime only (7am-10pm), reduced from every hour
+                task: `[PROACTIVE LOOP] You have free time. Review your recent context across platforms.
+CRITICAL: Use spawnAgent(model: 'FLASH') to fetch and summarize each source:
+- Slack (readAllMonitoredSlackHistory) → format items as "[Slack #channel] Person Name: item"
+- Email/Calendar (GWS tools) → format items as "[Email] Sender: summary" or "[Calendar] Event: time"
+- WhatsApp → format items as "[WhatsApp] Contact Name: item"
+Use the FULL name as it appears on each platform. Never merge contacts across platforms.
+If you found something actionable or noteworthy, output a message to your owner.
+Check if you have already notified the user about this topic recently — do NOT repeat yourself.
+If nothing new or actionable, output ONLY [SILENT].
+DO NOT contact third parties.`,
                 silent: false
             }
         ];
@@ -564,8 +575,8 @@ class Scheduler {
 
                 // Proactive Thought (Probabilistic execution)
                 if (sysJob.name === 'proactive_thought') {
-                    // 20% chance to run every hour
-                    if (Math.random() >= 0.35) {
+                    // 20% chance to run each eligible hour (down from 35%)
+                    if (Math.random() >= 0.20) {
                         console.log('[Scheduler] Proactive loop skipped this hour (RNG).');
                         return { success: true, skipped: true };
                     }

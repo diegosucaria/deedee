@@ -126,7 +126,10 @@ function createInternalRouter(agent) {
                     isOneOff: j.metadata?.payload?.isOneOff || false,
                     enabled: j.metadata?.enabled !== false,
                     expiresAt: j.metadata?.expiresAt || null,
-                    nextInvocation: j.nextInvocation()
+                    nextInvocation: j.nextInvocation(),
+                    model: j.metadata?.payload?.model || 'auto',
+                    weekdaysOnly: j.metadata?.payload?.weekdaysOnly || false,
+                    daytimeOnly: j.metadata?.payload?.daytimeOnly || false
                 }));
             res.json({ jobs });
         } catch (e) { res.status(500).json({ error: e.message }); }
@@ -173,14 +176,34 @@ function createInternalRouter(agent) {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    router.post('/scheduler', (req, res) => {
+    router.post('/scheduler', async (req, res) => {
         if (!agent.scheduler) return res.status(503).json({ error: 'Scheduler not ready' });
         try {
-            const { name, cron, task, expiresAt, isOneOff } = req.body;
+            const { name, cron, task, expiresAt, isOneOff, model, weekdaysOnly, daytimeOnly } = req.body;
             const existingJob = agent.scheduler.jobs[name];
             if (existingJob && existingJob.metadata?.payload?.isSystem) {
                 return res.status(403).json({ error: 'Cannot modify system jobs' });
             }
+
+            // Auto-scope tools for this job prompt
+            let allowedTools = null;
+            try {
+                if (agent.toolScoper) {
+                    const mcpTools = await agent.mcp.getTools();
+                    allowedTools = await agent.toolScoper.scope(task, mcpTools);
+                    console.log(`[Scheduler] Auto-scoped ${allowedTools?.length || 0} tools for job '${name}'`);
+                }
+            } catch (e) {
+                console.warn(`[Scheduler] Tool scoping failed for '${name}', falling back to all tools:`, e.message);
+            }
+
+            const payload = {
+                task,
+                ...(model && model !== 'auto' ? { model: model.toUpperCase() } : {}),
+                ...(allowedTools ? { allowedTools } : {}),
+                ...(weekdaysOnly ? { weekdaysOnly: true } : {}),
+                ...(daytimeOnly ? { daytimeOnly: true } : {})
+            };
 
             const callback = async () => {
                 console.log(`[Scheduler] Executing task: ${task}`);
@@ -189,7 +212,11 @@ function createInternalRouter(agent) {
                     role: 'user',
                     content: `Scheduled Task: ${task}`,
                     source: 'scheduler',
-                    metadata: { chatId: `scheduled_${name}` }
+                    metadata: {
+                        chatId: `scheduled_${name}`,
+                        ...(payload.model ? { forceModel: payload.model } : {}),
+                        ...(payload.allowedTools ? { allowedTools: payload.allowedTools } : {})
+                    }
                 }, async (reply) => {
                     if (agent.interface) {
                         await agent.interface.send(reply);
@@ -203,7 +230,7 @@ function createInternalRouter(agent) {
             agent.scheduler.scheduleJob(name, cron, callback, {
                 persist: true,
                 taskType: 'agent_instruction',
-                payload: { task },
+                payload,
                 expiresAt: expiresAt || null,
                 oneOff: !!isOneOff
             });

@@ -6,10 +6,15 @@ Enable users to selectively pause and resume specific Jobs (both User generated 
 ## Requirements
 
 ### Backend / Core
-1. **DB Schema**: `scheduled_jobs` table requires an `enabled` column (Boolean / Integer default 1) to remember states across restarts.
+1. **DB Schema**: `scheduled_jobs` table requires:
+   - `enabled` column (Boolean / Integer default 1) to remember states across restarts.
+   - `model` column (TEXT, nullable) for per-job model override (`FLASH`, `LITE`, `PRO`, or `null` for auto-routing).
 2. **Backward Compatibility**: `ensureSystemJobs` sets default enabled state, but if a System Job was manually disabled by a user, that state MUST NOT be overwritten upon node initialization.
 3. **Execution Safety**: `node-schedule` Jobs where `enabled=false` must be explicitly cancelled, while retaining the payload locally inside memory `agent.scheduler.jobs[x]` so the UI can fetch and display them as paused.
 4. **API Endpoints**: Provide a `POST /v1/tasks/:name/toggle` route.
+5. **Per-Job Model Selection**: Jobs can specify a `model` field in their payload. When set, the router is bypassed (`forceModel`) and the specified model is used directly, saving one API call per execution.
+6. **Tool Auto-Scoping**: On job create/update, a lightweight LLM call (via `ToolScoper`) analyzes the job prompt and determines which tool categories are needed. Results are stored as `payload.allowedTools` and applied at runtime to reduce input tokens.
+7. **Schedule Constraints**: Jobs support `weekdaysOnly` (restricts cron day-of-week to Mon–Fri) and `daytimeOnly` (restricts cron hour to 7–22) flags. These transform the cron expression before saving.
 
 ### Frontend / Dashboard
 1. **Timezone Support**: Propagate `process.env.TZ` server-side down into `<TasksClient serverTz={...} />` and format `Date` components via `{ timeZone: serverTz }` to prevent timezone mismatch between browser and RPi.

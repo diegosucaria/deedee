@@ -17,6 +17,13 @@ const PRESETS = {
     'one_time': { label: 'One-Time Task', cron: '' },
 };
 
+const MODEL_OPTIONS = [
+    { value: 'auto', label: 'Auto (Router)' },
+    { value: 'FLASH', label: 'Flash' },
+    { value: 'LITE', label: 'Lite' },
+    { value: 'PRO', label: 'Pro' },
+];
+
 export default function CreateTaskForm({ onTaskCreated, initialValues = null, onCancel = null }) {
     const router = useRouter();
     const [state, formAction] = useFormState(createTask, initialState);
@@ -31,19 +38,14 @@ export default function CreateTaskForm({ onTaskCreated, initialValues = null, on
     };
 
     const [scheduleType, setScheduleType] = useState(getInitialScheduleType());
+    const [model, setModel] = useState(initialValues?.model || 'auto');
+    const [weekdaysOnly, setWeekdaysOnly] = useState(initialValues?.weekdaysOnly || false);
+    const [daytimeOnly, setDaytimeOnly] = useState(initialValues?.daytimeOnly || false);
 
     // Fix: For one-off jobs, use nextInvocation as the time, properly formatted
     const toLocalISOString = (dateStr) => {
         if (!dateStr) return '';
         const date = new Date(dateStr);
-        const offset = date.getTimezoneOffset() * 60000;
-        const localISOTime = (new Date(date - -offset)).toISOString().slice(0, 16); // Double negative to add
-        // Actually simpler: 
-        // return new Date(date.getTime() - (date.getTimezoneOffset() * 60000)).toISOString().slice(0, 16);
-        // Wait, getTimezoneOffset returns positive minutes for zones behind UTC (e.g. UTC-3 returns 180).
-        // So we need to SUBTRACT the offset to get "UTC" that looks like Local.
-        // Example: 10:00 Local (UTC-3) -> 13:00 UTC. Offset = 180.
-        // 13:00 UTC - 180min = 10:00 UTC. toISOString() -> 10:00. Correct.
         const localDate = new Date(date.getTime() - (date.getTimezoneOffset() * 60000));
         return localDate.toISOString().slice(0, 16);
     };
@@ -63,19 +65,28 @@ export default function CreateTaskForm({ onTaskCreated, initialValues = null, on
     const [customCron, setCustomCron] = useState(getInitialCron());
     const formRef = useRef(null);
 
-    // Reset form on success if needed
+    // Reset form on success — useFormState triggers re-render with success state,
+    // and the form reset must happen in response to that state change.
     useEffect(() => {
         if (state?.success) {
             if (!initialValues) {
                 formRef.current?.reset();
+                // eslint-disable-next-line react-hooks/set-state-in-effect -- form reset on useFormState success
                 setCustomCron('');
                 setScheduleType('custom');
+                setModel('auto');
+                setWeekdaysOnly(false);
+                setDaytimeOnly(false);
             }
             if (onTaskCreated) onTaskCreated();
         }
     }, [state, onTaskCreated, initialValues]);
 
     const isEditing = !!initialValues;
+    const isOneOff = scheduleType === 'one_time';
+
+    // Determine if the schedule has an explicit hour (daytime toggle not useful)
+    const hasExplicitHour = ['daily_morning', 'daily_evening'].includes(scheduleType);
 
     return (
         <div className="p-6 rounded-2xl border bg-zinc-900/50 border-zinc-800">
@@ -114,7 +125,29 @@ export default function CreateTaskForm({ onTaskCreated, initialValues = null, on
                             formData.set('isOneOff', 'true');
                         }
                     }
+                } else {
+                    // Apply weekdays/daytime transformations to the cron
+                    let cronValue = formData.get('cron');
+                    if (cronValue && !isOneOff) {
+                        const parts = cronValue.split(/\s+/);
+                        if (parts.length >= 5) {
+                            // Weekdays only: set day-of-week to 1-5
+                            if (weekdaysOnly) {
+                                parts[4] = '1-5';
+                            }
+                            // Daytime only: restrict hour to 7-22 (only if hour is wildcard *)
+                            if (daytimeOnly && parts[1] === '*') {
+                                parts[1] = '7-22';
+                            }
+                            formData.set('cron', parts.join(' '));
+                        }
+                    }
                 }
+
+                // Pass model and toggles
+                formData.set('model', model);
+                formData.set('weekdaysOnly', weekdaysOnly ? 'true' : 'false');
+                formData.set('daytimeOnly', daytimeOnly ? 'true' : 'false');
 
                 await formAction(formData);
             }} className="grid md:grid-cols-2 gap-4">
@@ -155,7 +188,7 @@ export default function CreateTaskForm({ onTaskCreated, initialValues = null, on
                                 type="datetime-local"
                                 name="cron_display"
                                 required
-                                value={customCron} // If one-off, this might be an ISO string from initialValues, needed conversion? No, input datetime-local needs YYYY-MM-DDThh:mm
+                                value={customCron}
                                 onChange={(e) => setCustomCron(e.target.value)}
                                 className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-mono text-sm"
                             />
@@ -180,6 +213,57 @@ export default function CreateTaskForm({ onTaskCreated, initialValues = null, on
                     </div>
                 </div>
 
+                {/* Schedule Modifiers: Weekdays + Daytime */}
+                {!isOneOff && (
+                    <div className="md:col-span-2 flex gap-4">
+                        <label className="flex items-center gap-2 cursor-pointer text-sm text-zinc-400 hover:text-zinc-200 transition-colors">
+                            <input
+                                type="checkbox"
+                                checked={weekdaysOnly}
+                                onChange={(e) => setWeekdaysOnly(e.target.checked)}
+                                className="w-4 h-4 rounded bg-black border-zinc-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0"
+                            />
+                            Weekdays only
+                        </label>
+                        {!hasExplicitHour && (
+                            <label className="flex items-center gap-2 cursor-pointer text-sm text-zinc-400 hover:text-zinc-200 transition-colors">
+                                <input
+                                    type="checkbox"
+                                    checked={daytimeOnly}
+                                    onChange={(e) => setDaytimeOnly(e.target.checked)}
+                                    className="w-4 h-4 rounded bg-black border-zinc-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0"
+                                />
+                                Daytime only (7am-10pm)
+                            </label>
+                        )}
+                    </div>
+                )}
+
+                {/* Model Selector */}
+                <div className="md:col-span-1">
+                    <label className="block text-xs text-zinc-500 mb-1 ml-1">Model</label>
+                    <select
+                        value={model}
+                        onChange={(e) => setModel(e.target.value)}
+                        className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all text-sm"
+                    >
+                        {MODEL_OPTIONS.map(opt => (
+                            <option key={opt.value} value={opt.value}>{opt.label}</option>
+                        ))}
+                    </select>
+                </div>
+
+                {/* Expiration */}
+                <div className="md:col-span-1">
+                    <label className="block text-xs text-zinc-500 mb-1 ml-1">Expiration (Optional)</label>
+                    <input
+                        type="datetime-local"
+                        name="expiresAt"
+                        defaultValue={initialValues?.expiresAt ? new Date(new Date(initialValues.expiresAt).getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16) : ''}
+                        className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-mono text-sm"
+                    />
+                </div>
+
                 <div className="md:col-span-2">
                     <label className="block text-xs text-zinc-500 mb-1 ml-1">Instruction</label>
                     <textarea
@@ -189,16 +273,6 @@ export default function CreateTaskForm({ onTaskCreated, initialValues = null, on
                         defaultValue={initialValues?.task}
                         rows={8}
                         className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all resize-y"
-                    />
-                </div>
-
-                <div className="md:col-span-2">
-                    <label className="block text-xs text-zinc-500 mb-1 ml-1">Expiration (Optional)</label>
-                    <input
-                        type="datetime-local"
-                        name="expiresAt"
-                        defaultValue={initialValues?.expiresAt ? new Date(new Date(initialValues.expiresAt).getTime() - (new Date().getTimezoneOffset() * 60000)).toISOString().slice(0, 16) : ''}
-                        className="w-full rounded-lg bg-black border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all font-mono text-sm"
                     />
                 </div>
 

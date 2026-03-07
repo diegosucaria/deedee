@@ -63,7 +63,7 @@ Open Telegram and message your bot:
 
 ## ✨ Features
 
-- **🧠 Dual-Brain Logic**: Routes fast queries to `Gemini 2.5 Flash` and complex tasks to `Gemini 3 Pro`.
+- **🧠 Multi-Brain Logic**: Routes queries to `Gemini Flash` (speed), `Gemini Lite` (ultra-cheap), or `Gemini Pro` (reasoning). Supports per-job model selection with router bypass.
 
 Everything is customizable via environment variables. Like which models to use.
   
@@ -158,7 +158,7 @@ Deedee comes equipped with a suite of tools, both internal and via MCP.
 -   **Memory**: `rememberFact`, `getFact`.
 -   **Goals**: `addGoal`, `completeGoal` (Track long-running tasks).
 -   **Journal**: `logJournal`, `readJournal`, `searchJournal` (Second Brain).
--   **Scheduling**: `scheduleJob` (Cron), `setReminder` (One-off).
+-   **Scheduling**: `scheduleJob` (Cron), `setReminder` (One-off). Per-job model selection (Auto/Flash/Lite/Pro), weekday-only and daytime-only constraints, auto-scoped tools.
 -   **Communication**: `replyWithAudio` (Native TTS), `sendEmail`.
 -   **Productivity**: `listEvents` (Calendar).
 -   **Life Vaults**: `createVault`, `addToVault` (Ingest files), `readVaultPage`, `listVaultFiles` (Local RAG enabled).

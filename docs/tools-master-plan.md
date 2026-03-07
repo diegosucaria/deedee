@@ -52,7 +52,37 @@ This document tracks the status of all tools available to the Deedee agent, thei
 | `ingestDocument` | RAG | Index local PDF/Doc for RAG | New `RAGExecutor` | Medium |
 | `createNotionPage` | Knowledge | Create page in Notion/Obsidian | New `KnowledgeExecutor` | Low |
 | `voiceClone` | Audio | TTS with custom voice (ElevenLabs) | Update `MediaExecutor` | Low |
-| `spawnAgent` | Multi-Agent | Spawn sub-agent for task | **Core Agent Logic** | Low |
+| `spawnAgent` | Multi-Agent | Spawn sub-agent for task | **Core Agent Logic** | ✅ Done |
+
+## 🔧 Tool Categories & Auto-Scoping
+
+Each tool in `tools-definition.js` has a `category` field used for automatic tool scoping of scheduled jobs:
+
+| Category | Description | Example Tools |
+|----------|-------------|---------------|
+| `memory` | Remember/recall facts, search history, journal | `rememberFact`, `searchMemory`, `consolidateMemory` |
+| `goals` | Goal tracking | `addGoal`, `completeGoal` |
+| `scheduler` | Job scheduling, state persistence | `scheduleJob`, `saveJobState`, `getJobState` |
+| `filesystem` | File I/O, shell commands, git | `readFile`, `writeFile`, `runShellCommand` |
+| `search` | Web search | `googleSearch` |
+| `generative` | Image generation, TTS | `generateImage`, `replyWithAudio` |
+| `smarthome` | Smart home device control | `lookupDevice`, `learnDevice` |
+| `communication` | WhatsApp, contacts, watchers | `sendMessage`, `searchContacts` |
+| `people` | People/contacts database | `listPeople`, `searchPeople` |
+| `vault` | Life Vaults document storage | `createVault`, `addToVault` |
+| `rag` | Semantic document search | `searchDocuments`, `ingestDocument` |
+| `dj` | DJ vinyl management | `addVinylRecord`, `getTrackRecommendations` |
+| `slack` | Slack messaging and history | `readAllMonitoredSlackHistory`, `sendSlackMessage` |
+| `subagent` | Sub-agent spawning | `spawnAgent` |
+
+**MCP tools** are classified by namespace pattern:
+- `*_gws_*` → `calendar_email` (Google Workspace)
+- `homeassistant` server → `smarthome_mcp`
+- `plex` server → `media`
+- `browser` server → `browser`
+- `node-red` server → `automation`
+
+**Auto-Scoping**: When a scheduled job is created or updated, the `ToolScoper` service (`apps/agent/src/services/tool-scoper.js`) makes a single cheap LLM call to classify which categories the job needs. Only tools from relevant categories are included at runtime, significantly reducing input token costs.
 
 ## ℹ️ Notes
 
