@@ -22,4 +22,10 @@ router.post('/', (req, res) => proxyToAgent(req, res, 'POST', '', req.body));
 router.post('/tts/preview', (req, res) => proxyToAgent(req, res, 'POST', '/tts/preview', req.body));
 router.post('/gws/upload', (req, res) => proxyToAgent(req, res, 'POST', '/gws/upload', req.body));
 
+// GWS OAuth routes
+router.post('/gws/oauth/client', (req, res) => proxyToAgent(req, res, 'POST', '/gws/oauth/client', req.body));
+router.get('/gws/oauth/client', (req, res) => proxyToAgent(req, res, 'GET', '/gws/oauth/client', null));
+router.get('/gws/oauth/url', (req, res) => proxyToAgent(req, res, 'GET', '/gws/oauth/url', null));
+router.post('/gws/oauth/exchange', (req, res) => proxyToAgent(req, res, 'POST', '/gws/oauth/exchange', req.body));
+
 module.exports = router;

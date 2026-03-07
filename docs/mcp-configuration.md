@@ -29,6 +29,36 @@ To control your Mac (Apps, Mouse, Keyboard) from Deedee:
     - **URL**: `http://<MAC_TAILSCALE_IP>:3000/sse`
     - **Token**: The one you set in `.env` (`BRIDGE_TOKEN`).
 
+## Google Workspace Integration
+
+DeeDee uses the [`@googleworkspace/cli`](https://github.com/googleworkspace/cli) MCP server (pinned to v0.8.0) to provide full access to Gmail, Calendar, Drive, Docs, Sheets, and more.
+
+### Authentication
+
+Two authentication methods are available:
+
+**Option A: One-Click OAuth (Recommended)**
+1. Create a **Web application** OAuth client in [Google Cloud Console](https://console.cloud.google.com/apis/credentials).
+2. Set the redirect URI to: `https://<your-deedee-domain>/api/auth/google/callback`
+3. Go to **Settings > Interfaces > Google Workspace** and upload the `client_secret.json` in the OAuth Client section.
+4. Click **Connect Workspace Account**, enter a label and email, then click **Sign in with Google**.
+5. To re-authenticate (e.g., after token expiry), click **Re-auth** on the account card.
+
+**Option B: Manual Upload (Fallback)**
+1. Authenticate locally: `gws auth login`
+2. Export credentials: `gws auth export --unmasked > credentials.json`
+3. Upload via **Settings > Interfaces > Google Workspace > Upload manually**.
+
+### Multi-Account Support
+
+Multiple Google accounts are supported simultaneously. Each account gets a namespace prefix (e.g., `work`, `personal`), and all MCP tools from that account are prefixed accordingly (e.g., `work_calendar_events_list`).
+
+### Credentials Storage
+
+- OAuth client config: `/app/data/gws-oauth-client.json`
+- Per-account credentials: `/app/data/gws-credentials-{label}.json`
+- MCP config entries: `data/mcp_config.json` (auto-managed)
+
 ## Manual Configuration (Advanced)
 You can still manually edit `mcp_config.json` if you have shell access, but the UI is recommended.
 

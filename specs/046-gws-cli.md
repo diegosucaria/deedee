@@ -14,13 +14,22 @@ The core challenge is that the `gws mcp` server handles authentication via stand
 3. **Agent UI Prompting:** We will update the Agent's system prompt (or skill) to understand that it has multiple GWS toolsets, distinguishing them by their namespace prefix to know which account it's operating on.
 
 ## 3. Authentication Strategy
-The new `gws` CLI supports a `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` environment variable. To avoid the complexity of maintaining our own OAuth app and token refresh cycles, we will rely entirely on the native `gws` authentication flow.
+The new `gws` CLI supports a `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` environment variable and accepts standard `authorized_user` credentials JSON (`{ type, client_id, client_secret, refresh_token }`).
 
-**Solution:**
-1. **Manual Login & Upload:** The user will authenticate locally using `gws auth login` and generate a `credentials.json` file.
-2. **Web UI Upload:** The DeeDee Web Dashboard will feature a settings section where the user can upload this `credentials.json` file and assign it a label (e.g., "Personal", "Work").
-3. **Secure Storage:** The backend will save the uploaded file to the persistent data directory (e.g., `/app/data/gws-credentials-personal.json`).
-4. **Dynamic MCP Config Update:** The backend will then dynamically modify `mcp_config.json` to inject a `gws` MCP server block. It will map the `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` environment variable for that specific subprocess to the newly saved JSON file.
+**Solution (Two Methods):**
+
+### Method A: One-Click OAuth (Primary)
+For environments where terminal access is inconvenient (e.g., RPi deployed via Balena):
+1. **One-time setup:** User creates a **Web application** OAuth client in Google Cloud Console, sets redirect URI to `https://<deedee-domain>/api/auth/google/callback`, and uploads the `client_secret.json` to DeeDee.
+2. **Daily re-auth:** User clicks "Re-auth" on the account card → Google consent → DeeDee exchanges the auth code for tokens server-side → writes the credentials file → reloads MCP. No terminal needed.
+3. **OAuth flow:** Next.js callback route (`/api/auth/google/callback`) receives Google's redirect, forwards the code to the Agent via the authenticated API (`/v1/settings/gws/oauth/exchange`), which exchanges it at `https://oauth2.googleapis.com/token` and writes the GWS CLI credentials file.
+4. **Security:** OAuth client credentials stored server-side only. All API routes behind Bearer token auth. Callback route behind IAP proxy.
+
+### Method B: Manual Upload (Fallback)
+1. **Manual Login & Upload:** The user authenticates locally using `gws auth login` and exports with `gws auth export --unmasked > credentials.json`.
+2. **Web UI Upload:** The DeeDee Web Dashboard settings section allows uploading this file with a label (e.g., "Personal", "Work").
+3. **Secure Storage:** The backend saves the uploaded file to the persistent data directory (e.g., `/app/data/gws-credentials-personal.json`).
+4. **Dynamic MCP Config Update:** The backend dynamically modifies `mcp_config.json` to inject a `gws` MCP server block with the `GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE` and `GOOGLE_WORKSPACE_CLI_ACCOUNT` environment variables.
 
 This approach is significantly cleaner and allows us to retire the old OAuth credentials and remove `GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_REDIRECT_URI` from the `.env` file.
 
