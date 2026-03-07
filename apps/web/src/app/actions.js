@@ -406,6 +406,37 @@ export async function uploadGWSCredentials(label, accountEmail, credentials) {
     }
 }
 
+export async function saveGWSAuthClient(clientData) {
+    try {
+        const res = await fetchAPI('/v1/settings/gws/oauth/client', {
+            method: 'POST',
+            body: JSON.stringify(clientData)
+        });
+        revalidatePath('/settings');
+        return { success: true, ...res };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function getGWSAuthClient() {
+    try {
+        return await fetchAPI('/v1/settings/gws/oauth/client');
+    } catch (error) {
+        console.error('getGWSAuthClient Error:', error);
+        return { configured: false };
+    }
+}
+
+export async function getGWSAuthURL(label, email) {
+    try {
+        const params = new URLSearchParams({ label, email });
+        return await fetchAPI(`/v1/settings/gws/oauth/url?${params.toString()}`);
+    } catch (error) {
+        return { error: error.message };
+    }
+}
+
 // --- WhatsApp Actions ---
 
 export async function getWhatsAppStatus() {
@@ -557,7 +588,8 @@ export async function getMCPStatus() {
         return Object.entries(config).map(([name, cfg]) => ({
             name,
             status: cfg.disabled ? 'disabled' : 'enabled', // Simple status
-            type: cfg.transport
+            type: cfg.transport,
+            email: cfg.env?.GOOGLE_WORKSPACE_CLI_ACCOUNT || null,
         }));
     } catch (error) {
         console.error('getMCPStatus Error:', error);
