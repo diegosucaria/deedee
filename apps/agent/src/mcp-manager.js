@@ -209,8 +209,27 @@ class MCPManager {
                         command: command,
                         args: serverConfig.args || [],
                         env: env,
-                        cwd: resolvedCwd
+                        cwd: resolvedCwd,
+                        stderr: 'pipe',
                     });
+
+                    // Capture stderr for diagnostics (useful when servers crash at startup)
+                    const stderrStream = transport.stderr;
+                    if (stderrStream) {
+                        let stderrBuf = '';
+                        stderrStream.on('data', (chunk) => {
+                            stderrBuf += chunk.toString();
+                            // Flush on newlines
+                            const lines = stderrBuf.split('\n');
+                            stderrBuf = lines.pop(); // keep incomplete line in buffer
+                            for (const line of lines) {
+                                if (line.trim()) console.error(`[MCP:${name}:stderr] ${line}`);
+                            }
+                        });
+                        stderrStream.on('end', () => {
+                            if (stderrBuf.trim()) console.error(`[MCP:${name}:stderr] ${stderrBuf}`);
+                        });
+                    }
                 }
 
                 const client = new Client({
