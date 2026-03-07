@@ -58,6 +58,17 @@ class ConfirmationManager {
                 message: '⚠️ Dangerous shell command detected (Remote Execution / System Modification). Confirmation required.'
             },
             {
+                condition: (name, args) => name === 'runShellCommand' && (
+                    // Direct database access — use proper tools instead
+                    /\.db\b/.test(args.command) ||
+                    /agent\.db/.test(args.command) ||
+                    /\bstrings\s+.*\/app\/data/i.test(args.command) ||
+                    // Interfaces volume contains credentials
+                    /\/app\/interfaces-data/i.test(args.command)
+                ),
+                message: '⚠️ Direct database/credentials access via shell is not allowed. Use the proper tools instead.'
+            },
+            {
                 condition: (name, args) => name === 'sendEmail' && !args.to.includes('@'), // loose check
                 message: '⚠️ Sending email requires confirmation (Safety Check).'
             },

@@ -644,6 +644,49 @@ const toolDefinitions = [
         }
       },
       {
+        name: "list_vinyls",
+        description: "List all vinyl records in the user's DJ Crate. Use this to see what records are available before building a set or making recommendations.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            limit: { type: "NUMBER", description: "Max records to return (default 50)." },
+            offset: { type: "NUMBER", description: "Offset for pagination (default 0)." }
+          },
+          required: []
+        }
+      },
+      {
+        name: "get_vinyl",
+        description: "Get full details of a single vinyl record from the DJ Crate by its ID, including all tracks with BPM and key.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            id: { type: "STRING", description: "The vinyl record ID." }
+          },
+          required: ["id"]
+        }
+      },
+      {
+        name: "search_vinyls",
+        description: "Search the DJ Crate for vinyl records matching a query. Searches across artist, title, label, and catalog number.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            query: { type: "STRING", description: "Search query (artist name, track title, label, etc.)." }
+          },
+          required: ["query"]
+        }
+      },
+      {
+        name: "list_crate_tracks",
+        description: "List ALL individual tracks/songs across all vinyls in the DJ Crate with BPM, key, and genre info. Use this when building a DJ set or finding what songs are available to play.",
+        parameters: {
+          type: "OBJECT",
+          properties: {},
+          required: []
+        }
+      },
+      {
         name: "recommend_vinyl",
         category: "dj",
         description: "Get track recommendations strictly from the user's Vinyl Crate. Use this when the user is playing vinyls.",

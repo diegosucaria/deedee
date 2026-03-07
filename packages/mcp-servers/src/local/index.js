@@ -6,7 +6,16 @@ const execAsync = util.promisify(exec);
 
 const BLOCKED_BINARIES = [
   'vi', 'nano', 'emacs', 'vim', 'top', 'htop', 'shutdown', 'init', 'halt',
-  'passwd', 'mkfs', 'fdisk', 'parted', 'dd', 'env', 'sudo', 'su'
+  'passwd', 'mkfs', 'fdisk', 'parted', 'dd', 'env', 'sudo', 'su',
+  'sqlite3'
+];
+
+// Patterns that indicate direct database access — use the proper tools instead
+const BLOCKED_PATTERNS = [
+  { regex: /\.db\b/, message: "Direct database file access is not allowed. Use the appropriate tools (list_vinyls, get_vinyl, search_vinyls, etc.) instead." },
+  { regex: /agent\.db/, message: "Direct access to agent.db is not allowed. Use the appropriate tools instead." },
+  { regex: /\bstrings\s+.*\/app\/data/i, message: "Raw binary extraction from data files is not allowed." },
+  { regex: /\/app\/interfaces-data/i, message: "Access to the interfaces data volume is not allowed. It contains credentials and session data." },
 ];
 
 class LocalTools {
@@ -63,6 +72,13 @@ class LocalTools {
 
     if (BLOCKED_BINARIES.includes(binaryName)) {
       throw new Error(`Command '${binaryName}' is blocked for security or stability reasons.`);
+    }
+
+    // Block commands that target database files directly
+    for (const pattern of BLOCKED_PATTERNS) {
+      if (pattern.regex.test(command)) {
+        throw new Error(pattern.message);
+      }
     }
 
     try {
