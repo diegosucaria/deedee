@@ -162,43 +162,22 @@ class DJService {
             });
         }
 
-        // 3. Metadata Enrichment via Google Search
+        // 3. Cascading metadata enrichment: Discogs → MusicBrainz → Gemini
         let enriched = {};
         try {
-            console.log('[DJService] Starting metadata enrichment...');
-            enriched = await this._enrichMetadata(rawItem.artist, rawItem.title, rawItem.label);
+            console.log('[DJService] Starting cascade enrichment...');
+            enriched = await this._cascadeEnrich(rawItem.artist, rawItem.title, rawItem.label, rawItem.catalog_number);
             console.log(`[DJService] Enrichment complete. Keys: ${Object.keys(enriched).join(', ')}`);
         } catch (e) {
             console.error('[DJService] Metadata enrichment failed:', e.message, e.stack?.split('\n').slice(0, 3).join('\n'));
         }
 
-        // 3. Try to download cover art from Discogs (overrides uploaded photo)
-        if (enriched.coverArtUrl && enriched.coverArtUrl.startsWith('http')) {
-            try {
-                const https = require('https');
-                const http = require('http');
-                const coverFilename = `${crypto.randomUUID()}.jpg`;
-                const coverPath = path.join(dataDir, coverFilename);
-                const mod = enriched.coverArtUrl.startsWith('https') ? https : http;
-                await new Promise((resolve) => {
-                    const req = mod.get(enriched.coverArtUrl, { headers: { 'User-Agent': 'DeeDee/1.0' } }, (res) => {
-                        if (res.statusCode === 200) {
-                            const fileStream = fs.createWriteStream(coverPath);
-                            res.pipe(fileStream);
-                            fileStream.on('finish', () => { fileStream.close(); resolve(); });
-                        } else {
-                            resolve();
-                        }
-                    });
-                    req.on('error', () => resolve());
-                    req.setTimeout(5000, () => { req.destroy(); resolve(); });
-                });
-                if (fs.existsSync(coverPath) && fs.statSync(coverPath).size > 1000) {
-                    coverUrl = `/vinyl_covers/${coverFilename}`;
-                    console.log(`[DJService] Downloaded cover art from: ${enriched.coverArtUrl}`);
-                }
-            } catch (e) {
-                console.warn('[DJService] Cover art download failed:', e.message);
+        // 4. Try to download cover art (with redirect support, multi-URL fallback)
+        const candidateUrls = enriched._coverArtUrls || (enriched.coverArtUrl ? [enriched.coverArtUrl] : []);
+        if (candidateUrls.length > 0) {
+            const downloadedCover = await this._downloadCoverArt(candidateUrls);
+            if (downloadedCover) {
+                coverUrl = downloadedCover;
             }
         }
 
@@ -281,7 +260,7 @@ class DJService {
 
         let enriched = {};
         try {
-            enriched = await this._enrichMetadata(vinyl.artist, vinyl.title, vinyl.label);
+            enriched = await this._cascadeEnrich(vinyl.artist, vinyl.title, vinyl.label, vinyl.catalog_number);
         } catch (e) {
             console.warn('[DJService] Re-enrichment metadata failed:', e.message);
         }
@@ -318,28 +297,12 @@ class DJService {
             }
         };
 
-        // Try to download cover if we got a better one
-        if (enriched.coverArtUrl && enriched.coverArtUrl.startsWith('http')) {
-            try {
-                const https = require('https');
-                const dataDir = path.join(process.env.DATA_DIR || '/app/data', 'vinyl_covers');
-                if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
-                const coverFilename = `${crypto.randomUUID()}.jpg`;
-                const coverPath = path.join(dataDir, coverFilename);
-                await new Promise((resolve, reject) => {
-                    https.get(enriched.coverArtUrl, { timeout: 10000 }, (response) => {
-                        if (response.statusCode >= 300) return reject(new Error(`HTTP ${response.statusCode}`));
-                        const stream = fs.createWriteStream(coverPath);
-                        response.pipe(stream);
-                        stream.on('finish', resolve);
-                        stream.on('error', reject);
-                    }).on('error', reject);
-                });
-                if (fs.existsSync(coverPath) && fs.statSync(coverPath).size > 1000) {
-                    updateFields.cover_image_url = `/vinyl_covers/${coverFilename}`;
-                }
-            } catch (e) {
-                console.warn('[DJService] Cover art download failed on re-enrich:', e.message);
+        // Try to download cover if we got a better one (with redirect support)
+        const candidateUrls = enriched._coverArtUrls || (enriched.coverArtUrl ? [enriched.coverArtUrl] : []);
+        if (candidateUrls.length > 0) {
+            const downloadedCover = await this._downloadCoverArt(candidateUrls);
+            if (downloadedCover) {
+                updateFields.cover_image_url = downloadedCover;
             }
         }
 
@@ -476,6 +439,389 @@ Respond ONLY with valid JSON.` }]
             return visionTracks.map(normalize);
         }
         return [];
+    }
+
+    // ─── Multi-Source Enrichment Pipeline ─────────────────────────────────
+
+    /** Get Discogs personal access token from env or agent settings */
+    _getDiscogsToken() {
+        if (process.env.DISCOGS_TOKEN) return process.env.DISCOGS_TOKEN;
+        try {
+            const setting = this.db.getAgentSetting('discogs_token');
+            if (setting?.value) return setting.value;
+        } catch (e) { /* ignore */ }
+        return null;
+    }
+
+    /** MusicBrainz rate limiting: max 1 request per second */
+    async _musicBrainzThrottle() {
+        const now = Date.now();
+        const elapsed = now - (this._lastMBCall || 0);
+        if (elapsed < 1100) await new Promise(r => setTimeout(r, 1100 - elapsed));
+        this._lastMBCall = Date.now();
+    }
+
+    /**
+     * Search Discogs API for release metadata, tracklist, and cover art.
+     * Cascading search: catno → artist+title → free-text.
+     */
+    async _searchDiscogs(artist, title, label, catalogNumber) {
+        const token = this._getDiscogsToken();
+        if (!token) {
+            console.log('[DJService] No Discogs token configured — skipping Discogs search.');
+            return null;
+        }
+
+        const axios = require('axios');
+        const headers = {
+            'Authorization': `Discogs token=${token}`,
+            'User-Agent': 'DeeDee/1.0'
+        };
+
+        // Cascading search strategies
+        const searches = [];
+        if (catalogNumber) {
+            searches.push({ catno: catalogNumber, type: 'release' });
+        }
+        if (artist && title) {
+            searches.push({ artist, release_title: title, type: 'release' });
+        }
+        if (artist || title) {
+            searches.push({ q: `${artist || ''} ${title || ''}`.trim(), type: 'release' });
+        }
+
+        let releaseId = null;
+        for (const params of searches) {
+            try {
+                console.log(`[DJService] Discogs search: ${JSON.stringify(params)}`);
+                const resp = await axios.get('https://api.discogs.com/database/search', {
+                    params, headers, timeout: 10000
+                });
+                if (resp.data?.results?.length > 0) {
+                    releaseId = resp.data.results[0].id;
+                    console.log(`[DJService] Discogs search hit: release ${releaseId} (${resp.data.results[0].title})`);
+                    break;
+                }
+            } catch (e) {
+                console.warn(`[DJService] Discogs search failed: ${e.message}`);
+            }
+        }
+
+        if (!releaseId) {
+            console.log('[DJService] Discogs: no results found.');
+            return null;
+        }
+
+        // Fetch full release detail
+        try {
+            const resp = await axios.get(`https://api.discogs.com/releases/${releaseId}`, {
+                headers, timeout: 10000
+            });
+            const r = resp.data;
+
+            // Extract RPM from formats
+            let rpm = 0;
+            if (r.formats) {
+                for (const fmt of r.formats) {
+                    const descs = (fmt.descriptions || []).join(' ').toLowerCase();
+                    if (descs.includes('45 rpm') || descs.includes('45rpm')) { rpm = 45; break; }
+                    if (descs.includes('33 rpm') || descs.includes('33rpm')) { rpm = 33; break; }
+                    if (descs.includes('78 rpm') || descs.includes('78rpm')) { rpm = 78; break; }
+                    // Also check format name
+                    if (fmt.name === '7"' || fmt.name === '10"') rpm = 45;
+                    if (fmt.name === '12"' || fmt.name === 'LP') rpm = 33;
+                }
+            }
+
+            // Collect cover art URLs (ordered by preference)
+            const coverArtUrls = [];
+            if (r.images?.length > 0) {
+                const primary = r.images.find(i => i.type === 'primary');
+                if (primary?.uri) coverArtUrls.push(primary.uri);
+                // Also add first secondary as fallback
+                const secondary = r.images.find(i => i.type === 'secondary');
+                if (secondary?.uri) coverArtUrls.push(secondary.uri);
+            }
+            // Discogs search result thumbnail as last resort
+            if (r.thumb) coverArtUrls.push(r.thumb);
+
+            const tracks = (r.tracklist || [])
+                .filter(t => t.type_ === 'track')
+                .map(t => ({
+                    position: t.position || '',
+                    title: t.title || '',
+                    bpm: 0,
+                    key: ''
+                }));
+
+            return {
+                genre: r.genres?.[0] || '',
+                style: r.styles?.[0] || '',
+                year: r.year || 0,
+                rpm,
+                tracks,
+                discogsUrl: r.uri || '',
+                beatportUrl: '',
+                coverArtUrl: coverArtUrls[0] || '',
+                _coverArtUrls: coverArtUrls,
+                label: r.labels?.[0]?.name || '',
+                catalogNumber: r.labels?.[0]?.catno || '',
+                confidence: 0.95,
+                _source: 'discogs'
+            };
+        } catch (e) {
+            console.warn(`[DJService] Discogs release fetch failed: ${e.message}`);
+            return null;
+        }
+    }
+
+    /**
+     * Search MusicBrainz for release metadata and Cover Art Archive for images.
+     */
+    async _searchMusicBrainz(artist, title, catalogNumber) {
+        const axios = require('axios');
+        const headers = {
+            'User-Agent': 'DeeDee/1.0 (dj-crate-enrichment)',
+            'Accept': 'application/json'
+        };
+
+        // Build Lucene query
+        let query;
+        if (catalogNumber) {
+            query = `catno:${catalogNumber}`;
+        } else if (artist && title) {
+            query = `artist:"${artist}" AND release:"${title}"`;
+        } else {
+            query = artist || title || '';
+        }
+
+        if (!query) return null;
+
+        // Search for release
+        let mbid = null;
+        try {
+            await this._musicBrainzThrottle();
+            console.log(`[DJService] MusicBrainz search: ${query}`);
+            const resp = await axios.get('https://musicbrainz.org/ws/2/release', {
+                params: { query, fmt: 'json', limit: 5 },
+                headers, timeout: 10000
+            });
+            if (resp.data?.releases?.length > 0) {
+                mbid = resp.data.releases[0].id;
+                console.log(`[DJService] MusicBrainz hit: ${mbid} (${resp.data.releases[0].title})`);
+            }
+        } catch (e) {
+            console.warn(`[DJService] MusicBrainz search failed: ${e.message}`);
+            return null;
+        }
+
+        if (!mbid) {
+            console.log('[DJService] MusicBrainz: no results found.');
+            return null;
+        }
+
+        // Fetch release detail with recordings
+        let tracks = [];
+        let releaseData = {};
+        try {
+            await this._musicBrainzThrottle();
+            const resp = await axios.get(`https://musicbrainz.org/ws/2/release/${mbid}`, {
+                params: { inc: 'recordings', fmt: 'json' },
+                headers, timeout: 10000
+            });
+            releaseData = resp.data;
+            if (releaseData.media) {
+                for (const medium of releaseData.media) {
+                    const side = medium.position || 1;
+                    for (const t of (medium.tracks || [])) {
+                        tracks.push({
+                            position: `${String.fromCharCode(64 + side)}${t.position || t.number}`,
+                            title: t.title || t.recording?.title || '',
+                            bpm: 0,
+                            key: ''
+                        });
+                    }
+                }
+            }
+        } catch (e) {
+            console.warn(`[DJService] MusicBrainz release detail failed: ${e.message}`);
+        }
+
+        // Fetch cover art from Cover Art Archive
+        let coverArtUrl = '';
+        const coverArtUrls = [];
+        try {
+            const resp = await axios.get(`https://coverartarchive.org/release/${mbid}`, {
+                timeout: 10000, headers: { 'User-Agent': 'DeeDee/1.0' }
+            });
+            if (resp.data?.images) {
+                const front = resp.data.images.find(i => i.front);
+                if (front) {
+                    coverArtUrl = front.thumbnails?.['500'] || front.thumbnails?.large || front.image || '';
+                    if (front.image) coverArtUrls.push(front.image);
+                    if (front.thumbnails?.['500']) coverArtUrls.push(front.thumbnails['500']);
+                    if (front.thumbnails?.large) coverArtUrls.push(front.thumbnails.large);
+                }
+            }
+        } catch (e) {
+            // Cover Art Archive often returns 404 — not all releases have art
+            if (e.response?.status !== 404) {
+                console.warn(`[DJService] Cover Art Archive failed: ${e.message}`);
+            }
+        }
+
+        const labelInfo = releaseData['label-info']?.[0];
+        return {
+            genre: '',  // MusicBrainz uses tags, not genres
+            style: '',
+            year: releaseData.date ? parseInt(releaseData.date.substring(0, 4)) || 0 : 0,
+            rpm: 0,
+            tracks,
+            discogsUrl: '',
+            beatportUrl: '',
+            coverArtUrl,
+            _coverArtUrls: coverArtUrls,
+            label: labelInfo?.label?.name || '',
+            catalogNumber: labelInfo?.['catalog-number'] || '',
+            confidence: 0.85,
+            _source: 'musicbrainz'
+        };
+    }
+
+    /**
+     * Download cover art with redirect following, trying multiple URLs in order.
+     * Returns local path like '/vinyl_covers/uuid.jpg' or null on failure.
+     */
+    async _downloadCoverArt(urls) {
+        if (!urls || urls.length === 0) return null;
+
+        const axios = require('axios');
+        const dataDir = path.join(process.env.DATA_DIR || '/app/data', 'vinyl_covers');
+        if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
+
+        for (const url of urls) {
+            if (!url || !url.startsWith('http')) continue;
+            try {
+                const response = await axios.get(url, {
+                    responseType: 'arraybuffer',
+                    timeout: 15000,
+                    maxRedirects: 5,
+                    headers: { 'User-Agent': 'DeeDee/1.0' },
+                    validateStatus: (status) => status === 200
+                });
+
+                const contentType = response.headers['content-type'] || '';
+                if (!contentType.startsWith('image/')) continue;
+
+                const buffer = Buffer.from(response.data);
+                if (buffer.length < 1000) continue;
+
+                const ext = contentType.includes('png') ? 'png' : 'jpg';
+                const filename = `${crypto.randomUUID()}.${ext}`;
+                const filePath = path.join(dataDir, filename);
+                fs.writeFileSync(filePath, buffer);
+
+                console.log(`[DJService] Cover art downloaded from: ${url} (${buffer.length} bytes)`);
+                return `/vinyl_covers/${filename}`;
+            } catch (e) {
+                console.warn(`[DJService] Cover download failed for ${url}: ${e.message}`);
+                continue;
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Merge two enrichment results, preferring primary for existing fields.
+     * Secondary fills gaps (empty fields, missing BPM/key on tracks).
+     */
+    _mergeEnrichmentResults(primary, secondary) {
+        const merged = { ...primary };
+
+        const scalarFields = ['genre', 'style', 'year', 'rpm', 'label', 'catalogNumber', 'discogsUrl', 'beatportUrl'];
+        for (const field of scalarFields) {
+            if (!merged[field] && secondary[field]) {
+                merged[field] = secondary[field];
+            }
+        }
+
+        if (!merged.coverArtUrl && secondary.coverArtUrl) {
+            merged.coverArtUrl = secondary.coverArtUrl;
+        }
+
+        // Merge cover art URL arrays
+        const primaryUrls = merged._coverArtUrls || (merged.coverArtUrl ? [merged.coverArtUrl] : []);
+        const secondaryUrls = secondary._coverArtUrls || (secondary.coverArtUrl ? [secondary.coverArtUrl] : []);
+        merged._coverArtUrls = [...new Set([...primaryUrls, ...secondaryUrls])];
+
+        // Merge track BPM/key from secondary into primary tracks
+        if (merged.tracks?.length > 0 && secondary.tracks?.length > 0) {
+            merged.tracks = merged.tracks.map(t => {
+                const match = secondary.tracks.find(st =>
+                    st.position === t.position ||
+                    st.title?.toLowerCase() === t.title?.toLowerCase()
+                );
+                if (match) {
+                    return {
+                        ...t,
+                        bpm: t.bpm || match.bpm || 0,
+                        key: t.key || match.key || ''
+                    };
+                }
+                return t;
+            });
+        } else if (!merged.tracks?.length && secondary.tracks?.length) {
+            merged.tracks = secondary.tracks;
+        }
+
+        merged.confidence = Math.max(merged.confidence || 0, secondary.confidence || 0);
+        return merged;
+    }
+
+    /**
+     * Cascading enrichment: Discogs → MusicBrainz → Gemini grounded search.
+     * Each tier fills gaps left by the previous.
+     */
+    async _cascadeEnrich(artist, title, label, catalogNumber) {
+        let result = null;
+
+        // Tier 1: Discogs API
+        try {
+            result = await this._searchDiscogs(artist, title, label, catalogNumber);
+            if (result) {
+                console.log(`[DJService] Cascade: Discogs matched (confidence: ${result.confidence})`);
+            }
+        } catch (e) {
+            console.warn('[DJService] Cascade: Discogs error:', e.message);
+        }
+
+        // Tier 2: MusicBrainz + Cover Art Archive (if Discogs missed or no cover)
+        if (!result || !result.coverArtUrl || !result.tracks?.length) {
+            try {
+                const mbResult = await this._searchMusicBrainz(artist, title, catalogNumber);
+                if (mbResult) {
+                    result = result ? this._mergeEnrichmentResults(result, mbResult) : mbResult;
+                    console.log(`[DJService] Cascade: MusicBrainz data merged`);
+                }
+            } catch (e) {
+                console.warn('[DJService] Cascade: MusicBrainz error:', e.message);
+            }
+        }
+
+        // Tier 3: Gemini grounded search (fills BPM/key and anything else missing)
+        if (!result || !result.tracks?.length || result.tracks.some(t => !t.bpm || !t.key) || !result.genre) {
+            try {
+                const geminiResult = await this._enrichMetadata(artist, title, label);
+                if (geminiResult && Object.keys(geminiResult).length > 0) {
+                    result = result ? this._mergeEnrichmentResults(result, geminiResult) : geminiResult;
+                    console.log(`[DJService] Cascade: Gemini data merged`);
+                }
+            } catch (e) {
+                console.warn('[DJService] Cascade: Gemini error:', e.message);
+            }
+        }
+
+        return result || {};
     }
 
     /**
