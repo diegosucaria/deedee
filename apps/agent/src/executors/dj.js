@@ -108,6 +108,7 @@ class DJExecutor {
                         key: t.key || null,
                         genre: v.meta?.genre || null,
                         style: v.meta?.style || null,
+                        speed: v.meta?.rpm || null,
                     });
                 }
             }
@@ -115,7 +116,7 @@ class DJExecutor {
             if (allTracks.length === 0) return "No tracks found in your vinyl crate. Records may not have track data yet.";
 
             const list = allTracks.map(t =>
-                `- ${t.artist} — ${t.title} (${t.position}) ${t.bpm ? '[' + t.bpm + ' BPM' : ''}${t.key ? ', ' + t.key : ''}${t.bpm ? ']' : ''} ${t.genre || ''}`
+                `- ${t.artist} — ${t.title} [${t.vinyl}] (${t.position}) ${t.bpm ? '[' + t.bpm + ' BPM' : ''}${t.key ? ', ' + t.key : ''}${t.bpm ? ']' : ''}${t.speed ? ' ' + t.speed + 'RPM' : ''} ${t.genre || ''}`
             ).join('\n');
 
             return `${allTracks.length} tracks available in your crate:\n${list}`;

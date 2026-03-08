@@ -679,7 +679,7 @@ const toolDefinitions = [
       },
       {
         name: "list_crate_tracks",
-        description: "List ALL individual tracks/songs across all vinyls in the DJ Crate with BPM, key, and genre info. Use this when building a DJ set or finding what songs are available to play.",
+        description: "List ALL individual tracks/songs across all vinyls in the DJ Crate with vinyl name, track position (e.g. A1, B1), BPM, key, genre, and vinyl speed (RPM). Use this when building a DJ set or finding what songs are available to play.",
         parameters: {
           type: "OBJECT",
           properties: {},
