@@ -7,8 +7,11 @@ Deedee includes a specialized **DJ Module** that acts as your Crate Digger and B
 1.  **Vinyl Ingestion ("Crate Digger")**:
     -   **Vision Powered**: Take a photo of a vinyl cover, center label, or receipt.
     -   **Auto-Tagging**: Extracts Artist, Title, Label, and Catalog Number via Gemini Vision.
-    -   **Metadata Enrichment**: Looks up BPM (per track), Key (Camelot notation), Genre, Year, RPM, and Discogs/Beatport URLs via Google Search grounding.
-    -   **Cover Art Download**: Downloads album cover from Discogs when available; falls back to uploaded photo.
+    -   **Multi-Source Enrichment**: Cascading metadata lookup through three tiers:
+        1.  **Discogs API** (primary) — structured tracklist, cover art, genre, year, label, RPM. Requires `DISCOGS_TOKEN` env var (free personal access token). Searches by catalog number first, then artist+title, then free-text.
+        2.  **MusicBrainz + Cover Art Archive** (secondary) — tracklist, high-res cover art. Free, no auth needed. Fills gaps if Discogs misses.
+        3.  **Gemini + Google Search grounding** (fallback) — BPM, key (Camelot notation), and any remaining metadata. Also provides per-track BPM/key enrichment for tracks still missing data.
+    -   **Cover Art Download**: Tries multiple image URLs from Discogs, Cover Art Archive, and Gemini with redirect handling; falls back to uploaded photo.
     -   **Confidence Tracking**: Enrichment results carry a confidence score (0–1) visible in the UI.
     -   **Persistence**: Saves to `dj_vinyls` table + cover image to `data/vinyl_covers/`.
     -   **Usage**: Send image via Chat, WhatsApp, or upload directly from the DJ Crate page.
@@ -80,6 +83,10 @@ All `/v1/dj/*` routes are protected by `authMiddleware` (Bearer Token: `DEEDEE_A
 -   **Images**: Stored in persistent volume `data/vinyl_covers/`, served by Agent at `/internal/dj/covers`.
 -   **Models**:
     -   **Vision Analysis**: `WORKER_FLASH` (Gemini Flash) for image parsing.
-    -   **Metadata Enrichment**: `WORKER_FLASH` with Google Search grounding.
+    -   **Metadata Enrichment**: Cascading pipeline — Discogs API → MusicBrainz/CAA → `WORKER_FLASH` with Google Search grounding (fallback for BPM/key).
     -   **Recommendation**: `WORKER_PRO` (Gemini Pro) for musical reasoning.
+-   **External APIs**:
+    -   **Discogs** (`DISCOGS_TOKEN`): Free, 60 req/min. Provides structured tracklist, cover art, genre, year, RPM.
+    -   **MusicBrainz**: Free, no auth, 1 req/sec rate limit. Provides tracklist and release metadata.
+    -   **Cover Art Archive**: Free, no auth. Provides high-res cover art linked to MusicBrainz releases.
 -   **Socket Events**: `dj:vinyl:update` broadcast on add/edit for real-time UI refresh.

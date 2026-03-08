@@ -62,9 +62,12 @@ Table designed **strictly** for the Vinyl Crate.
 ### 3.3 Tools & Logic
 
 #### `addVinyl(image)`
-1.  **Vision**: `Gemini Pro Vision` (Model defined in `WORKER_PRO` env var) -> Extract visual cues.
-2.  **Search**: `googleSearch` -> "Discogs release [Label] [Cat#]".
-3.  **Parse**: Extract Tracklist & Cover Art (save locally or URL).
+1.  **Vision**: `Gemini Flash` (Model defined in `WORKER_FLASH` env var) -> Extract Artist, Title, Label, Catalog Number, visible tracklist.
+2.  **Cascading Enrichment**:
+    1.  **Discogs API** (`DISCOGS_TOKEN`): Search by catalog number → artist+title → free-text. Fetches structured tracklist, cover art URLs, genre, year, RPM. Free tier, 60 req/min.
+    2.  **MusicBrainz + Cover Art Archive**: Secondary source for tracklist and high-res cover art. Free, no auth, 1 req/sec rate limit.
+    3.  **Gemini + Google Search grounding** (fallback): Fills BPM/key (Camelot notation) and any remaining gaps. Per-track parallel searches for tracks still missing BPM/key.
+3.  **Cover Art**: Downloads from multiple candidate URLs (Discogs images, Cover Art Archive, Gemini URLs) with HTTP redirect following. Falls back to uploaded photo.
 4.  **Save**: Insert into `dj_vinyls`.
 
 #### `ingestHistory(file, metadata)`
