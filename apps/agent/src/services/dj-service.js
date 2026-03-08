@@ -173,6 +173,8 @@ class DJService {
         }
 
         // 4. Try to download cover art (with redirect support, multi-URL fallback)
+        // Preserve original photo URL before overwriting
+        const originalCoverUrl = coverUrl !== '/vinyl_covers/default.png' ? coverUrl : null;
         const candidateUrls = enriched._coverArtUrls || (enriched.coverArtUrl ? [enriched.coverArtUrl] : []);
         if (candidateUrls.length > 0) {
             const downloadedCover = await this._downloadCoverArt(candidateUrls);
@@ -198,7 +200,8 @@ class DJService {
                 discogsUrl: enriched.discogsUrl || '',
                 beatportUrl: enriched.beatportUrl || '',
                 style: enriched.style || '',
-                enrichmentConfidence: enriched.confidence || 0
+                enrichmentConfidence: enriched.confidence || 0,
+                ...(originalCoverUrl && originalCoverUrl !== coverUrl ? { originalCoverUrl } : {})
             }
         };
 
@@ -223,7 +226,8 @@ class DJService {
                 meta: {
                     ...existing.meta,
                     ...vinyl.meta,
-                    enrichmentConfidence: Math.max(vinyl.meta.enrichmentConfidence || 0, existing.meta?.enrichmentConfidence || 0)
+                    enrichmentConfidence: Math.max(vinyl.meta.enrichmentConfidence || 0, existing.meta?.enrichmentConfidence || 0),
+                    originalCoverUrl: existing.meta?.originalCoverUrl || vinyl.meta?.originalCoverUrl || null
                 }
             };
             this.db.updateVinyl(existing.id, mergedFields);
@@ -296,6 +300,14 @@ class DJService {
                 lastEnriched: new Date().toISOString()
             }
         };
+
+        // Preserve original photo URL if not already saved
+        const existingMeta = typeof vinyl.meta === 'string' ? JSON.parse(vinyl.meta) : vinyl.meta;
+        if (!updateFields.meta.originalCoverUrl && !existingMeta?.originalCoverUrl && vinyl.cover_image_url && vinyl.cover_image_url !== '/vinyl_covers/default.png') {
+            updateFields.meta.originalCoverUrl = vinyl.cover_image_url;
+        } else if (existingMeta?.originalCoverUrl) {
+            updateFields.meta.originalCoverUrl = existingMeta.originalCoverUrl;
+        }
 
         // Try to download cover if we got a better one (with redirect support)
         const candidateUrls = enriched._coverArtUrls || (enriched.coverArtUrl ? [enriched.coverArtUrl] : []);
