@@ -462,8 +462,81 @@ Respond ONLY with valid JSON.` }]
     }
 
     /**
+     * Score a Discogs search result against expected artist/title/label/catno.
+     * Discogs results have title in "Artist - Release Title" format.
+     * Returns 0–1 where 1 is a perfect match.
+     */
+    _scoreDiscogsResult(result, expectedArtist, expectedTitle, expectedLabel, expectedCatno) {
+        const norm = (s) => (s || '').toLowerCase().replace(/[^a-z0-9]/g, ' ').replace(/\s+/g, ' ').trim();
+
+        // Split Discogs "Artist - Title" format
+        const fullTitle = result.title || '';
+        const dashIdx = fullTitle.indexOf(' - ');
+        const resultArtist = norm(dashIdx > -1 ? fullTitle.substring(0, dashIdx) : '');
+        const resultTitle = norm(dashIdx > -1 ? fullTitle.substring(dashIdx + 3) : fullTitle);
+        const resultFull = norm(fullTitle);
+
+        const expArtist = norm(expectedArtist);
+        const expTitle = norm(expectedTitle);
+
+        let score = 0;
+        let totalWeight = 0;
+
+        // --- Artist match (weight 0.35) ---
+        if (expArtist) {
+            totalWeight += 0.35;
+            if (resultArtist && (resultArtist.includes(expArtist) || expArtist.includes(resultArtist))) {
+                score += 0.35;
+            } else {
+                const artistWords = expArtist.split(' ').filter(w => w.length > 2);
+                if (artistWords.length > 0) {
+                    const matched = artistWords.filter(w => resultFull.includes(w)).length;
+                    score += 0.35 * (matched / artistWords.length);
+                }
+            }
+        }
+
+        // --- Title match (weight 0.35) ---
+        if (expTitle) {
+            totalWeight += 0.35;
+            if (resultTitle && (resultTitle.includes(expTitle) || expTitle.includes(resultTitle))) {
+                score += 0.35;
+            } else {
+                // Word-level partial match, ignore very short words
+                const titleWords = expTitle.split(' ').filter(w => w.length > 2);
+                if (titleWords.length > 0) {
+                    const matched = titleWords.filter(w => resultFull.includes(w)).length;
+                    score += 0.35 * (matched / titleWords.length);
+                }
+            }
+        }
+
+        // --- Label match (weight 0.15) ---
+        if (expectedLabel) {
+            totalWeight += 0.15;
+            const resultLabels = (Array.isArray(result.label) ? result.label : []).map(norm);
+            const expLabel = norm(expectedLabel);
+            if (resultLabels.some(l => l.includes(expLabel) || expLabel.includes(l))) {
+                score += 0.15;
+            }
+        }
+
+        // --- Catalog number match (weight 0.15) ---
+        if (expectedCatno) {
+            totalWeight += 0.15;
+            const resultCatno = norm(result.catno || '');
+            if (resultCatno && resultCatno === norm(expectedCatno)) {
+                score += 0.15;
+            }
+        }
+
+        return totalWeight > 0 ? score / totalWeight : 0;
+    }
+
+    /**
      * Search Discogs API for release metadata, tracklist, and cover art.
-     * Cascading search: catno → artist+title → free-text.
+     * Runs ALL search strategies (catno, artist+title, free-text), scores
+     * every candidate, and picks the best match above a minimum threshold.
      */
     async _searchDiscogs(artist, title, label, catalogNumber) {
         const token = this._getDiscogsToken();
@@ -478,7 +551,7 @@ Respond ONLY with valid JSON.` }]
             'User-Agent': 'DeeDee/1.0'
         };
 
-        // Cascading search strategies
+        // Build all search strategies
         const searches = [];
         if (catalogNumber) {
             searches.push({ catno: catalogNumber, type: 'release' });
@@ -490,7 +563,10 @@ Respond ONLY with valid JSON.` }]
             searches.push({ q: `${artist || ''} ${title || ''}`.trim(), type: 'release' });
         }
 
-        let releaseId = null;
+        // Collect candidates from ALL strategies instead of stopping at first hit
+        const candidates = [];
+        const seenIds = new Set();
+
         for (const params of searches) {
             try {
                 console.log(`[DJService] Discogs search: ${JSON.stringify(params)}`);
@@ -498,18 +574,39 @@ Respond ONLY with valid JSON.` }]
                     params, headers, timeout: 10000
                 });
                 if (resp.data?.results?.length > 0) {
-                    releaseId = resp.data.results[0].id;
-                    console.log(`[DJService] Discogs search hit: release ${releaseId} (${resp.data.results[0].title})`);
-                    break;
+                    // Score top 5 results from each strategy
+                    for (const result of resp.data.results.slice(0, 5)) {
+                        if (seenIds.has(result.id)) continue;
+                        seenIds.add(result.id);
+                        const score = this._scoreDiscogsResult(result, artist, title, label, catalogNumber);
+                        candidates.push({ result, score });
+                        console.log(`[DJService] Discogs candidate: ${result.title} (id: ${result.id}, score: ${score.toFixed(2)})`);
+                    }
                 }
             } catch (e) {
                 console.warn(`[DJService] Discogs search failed: ${e.message}`);
             }
         }
 
-        if (!releaseId) {
+        if (candidates.length === 0) {
             console.log('[DJService] Discogs: no results found.');
             return null;
+        }
+
+        // Pick best-scoring candidate
+        candidates.sort((a, b) => b.score - a.score);
+        const best = candidates[0];
+        const MIN_SCORE = 0.3;
+
+        if (best.score < MIN_SCORE) {
+            console.log(`[DJService] Discogs: best match "${best.result.title}" scored ${best.score.toFixed(2)} — below threshold ${MIN_SCORE}, rejecting.`);
+            return null;
+        }
+
+        const releaseId = best.result.id;
+        console.log(`[DJService] Discogs search hit: release ${releaseId} (${best.result.title}, score: ${best.score.toFixed(2)})`);
+        if (candidates.length > 1) {
+            console.log(`[DJService] Discogs runner-up: ${candidates[1].result.title} (id: ${candidates[1].result.id}, score: ${candidates[1].score.toFixed(2)})`);
         }
 
         // Fetch full release detail
