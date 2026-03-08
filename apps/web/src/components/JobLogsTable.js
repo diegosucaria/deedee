@@ -7,6 +7,18 @@ import LogContent from './LogContent';
 
 
 
+function formatDuration(ms) {
+    if (ms == null) return '—';
+    if (ms < 1000) return `${ms}ms`;
+    if (ms < 60000) return `${(ms / 1000).toFixed(1)}s`;
+    const mins = Math.floor(ms / 60000);
+    const secs = Math.round((ms % 60000) / 1000);
+    if (mins < 60) return secs > 0 ? `${mins}m ${secs}s` : `${mins}m`;
+    const hrs = Math.floor(mins / 60);
+    const remainMins = mins % 60;
+    return remainMins > 0 ? `${hrs}h ${remainMins}m` : `${hrs}h`;
+}
+
 export default function JobLogsTable() {
     const [logs, setLogs] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -226,7 +238,7 @@ export default function JobLogsTable() {
                                         <LogContent content={log.output} />
                                     </td>
                                     <td className="px-6 py-4 align-top text-right text-zinc-400 font-mono text-xs">
-                                        {log.duration_ms}ms
+                                        {formatDuration(log.duration_ms)}
                                     </td>
                                     <td className="px-6 py-4 align-top text-right text-zinc-500 text-xs whitespace-nowrap">
                                         {new Date(log.timestamp.endsWith('Z') ? log.timestamp : log.timestamp + 'Z').toLocaleString(undefined, {
