@@ -25,9 +25,11 @@ describe('Agent Health Check', () => {
             countMessages: jest.fn().mockReturnValue(0),
             getFactsFormatted: jest.fn().mockReturnValue(''),
             getKey: jest.fn(),
+            markStaleSubAgents: jest.fn().mockReturnValue(0),
             close: jest.fn()
         };
         agent.commandHandler = { handle: jest.fn().mockResolvedValue(false) };
+        agent._loadClientLibrary = jest.fn().mockResolvedValue({ GoogleGenAI: jest.fn().mockImplementation(() => ({})) });
         // Force fully valid MCP mock
         agent.mcp = { close: jest.fn().mockResolvedValue(), getTools: jest.fn().mockResolvedValue([]) };
     });
