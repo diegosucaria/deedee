@@ -1071,16 +1071,22 @@ class AgentDB {
 
   searchVinyls(query) {
     if (!query) return [];
-    const wildcard = `%${query}%`;
+    const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return [];
+    // Build WHERE clause: every token must match at least one field
+    const conditions = tokens.map(() =>
+      `(artist LIKE ? OR title LIKE ? OR label LIKE ? OR catalog_number LIKE ? OR tracks LIKE ?)`
+    ).join(' AND ');
+    const params = tokens.flatMap((t) => {
+      const w = `%${t}%`;
+      return [w, w, w, w, w];
+    });
     const stmt = this.db.prepare(`
-      SELECT * FROM dj_vinyls 
-      WHERE artist LIKE ?
-      OR title LIKE ?
-      OR label LIKE ?
-      OR catalog_number LIKE ?
+      SELECT * FROM dj_vinyls
+      WHERE ${conditions}
       ORDER BY created_at DESC
     `);
-    return stmt.all(wildcard, wildcard, wildcard, wildcard).map(row => ({
+    return stmt.all(...params).map(row => ({
       ...row,
       tracks: JSON.parse(row.tracks),
       meta: JSON.parse(row.meta)
