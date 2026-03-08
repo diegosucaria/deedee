@@ -93,11 +93,15 @@ export default function DJCratePage() {
 
     const filteredVinyls = searchQuery.trim()
         ? vinyls.filter((v) => {
-            const q = searchQuery.toLowerCase();
+            const tokens = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
             const m = parseMeta(v);
-            return v.artist?.toLowerCase().includes(q) || v.title?.toLowerCase().includes(q) ||
-                v.label?.toLowerCase().includes(q) || v.catalog_number?.toLowerCase().includes(q) ||
-                m.genre?.toLowerCase().includes(q) || m.style?.toLowerCase().includes(q);
+            const tracks = parseTracks(v);
+            const trackTitles = tracks.map((t) => (typeof t === 'string' ? t : (t.title || '')).toLowerCase()).join(' ');
+            const haystack = [
+                v.artist, v.title, v.label, v.catalog_number,
+                m.genre, m.style, trackTitles
+            ].map((s) => (s || '').toLowerCase()).join(' ');
+            return tokens.every((token) => haystack.includes(token));
         })
         : vinyls;
 
