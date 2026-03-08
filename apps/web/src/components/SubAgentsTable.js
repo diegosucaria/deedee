@@ -33,6 +33,25 @@ function getDuration(createdAt, completedAt) {
     return `${minutes}m ${remainingSec}s`;
 }
 
+function formatTriggerSource(parentId) {
+    if (!parentId) return 'Unknown';
+    if (parentId.startsWith('system_')) {
+        const parts = parentId.split('_');
+        parts.shift();
+        parts.pop();
+        return `System Job: ${parts.join('_')}`;
+    }
+    if (parentId.startsWith('scheduled_')) {
+        const parts = parentId.split('_');
+        parts.shift();
+        parts.pop();
+        return `Scheduled Job: ${parts.join('_')}`;
+    }
+    if (parentId.includes('@')) return `Chat: ${parentId.split('@')[0]}`;
+    if (parentId.length > 15) return `Chat: ${parentId.slice(0, 8)}…`;
+    return `Chat: ${parentId}`;
+}
+
 export default function SubAgentsTable() {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
@@ -141,7 +160,7 @@ export default function SubAgentsTable() {
                                             <div className="flex flex-col">
                                                 <span className="text-zinc-300 line-clamp-1">{task.task}</span>
                                                 <span className="text-[10px] text-zinc-600 font-mono mt-0.5">
-                                                    {task.id} • {task.parent_chat_id?.slice(0, 8)}…
+                                                    {task.id} • {formatTriggerSource(task.parent_chat_id)} • Started: {task.created_at ? new Date(task.created_at).toLocaleTimeString() : '-'}
                                                 </span>
                                             </div>
                                         </td>
