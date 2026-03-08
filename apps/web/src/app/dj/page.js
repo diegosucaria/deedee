@@ -306,7 +306,7 @@ export default function DJCratePage() {
                                             <div className="mt-1 text-[9px] text-white/60 w-full max-h-16 overflow-hidden space-y-0.5">
                                                 {tracks.slice(0, 3).map((t, i) => (
                                                     <div key={i} className="flex items-center justify-between gap-1 px-1">
-                                                        <span className="truncate"><Music className="w-2 h-2 inline mr-0.5" />{t.position || ''} {t.title || t}</span>
+                                                        <span className="truncate"><Music className="w-2 h-2 inline mr-0.5" />{t.position || ''} {typeof t === 'string' ? t : (t.title || '')}</span>
                                                         <span className="shrink-0 space-x-1">
                                                             {t.bpm > 0 && <span className="text-purple-300 font-mono">{t.bpm}</span>}
                                                             {t.key && <span className="text-indigo-300 font-mono">{t.key}</span>}
