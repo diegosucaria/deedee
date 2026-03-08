@@ -7,5 +7,8 @@ module.exports = {
         "/dist/",
         "/coverage/"
     ],
+    moduleNameMapper: {
+        "^bindings$": "<rootDir>/jest.setup.js"
+    },
     verbose: true
 };
