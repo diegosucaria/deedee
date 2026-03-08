@@ -1682,6 +1682,17 @@ class AgentDB {
     return this.db.prepare('SELECT * FROM subagents ORDER BY created_at DESC LIMIT 50').all();
   }
 
+  markStaleSubAgents() {
+    const result = this.db.prepare(`
+      UPDATE subagents
+      SET status = 'failed',
+          error = 'Process terminated unexpectedly',
+          completed_at = datetime('now')
+      WHERE status = 'running'
+    `).run();
+    return result.changes;
+  }
+
   cleanupSubAgents() {
     // Archive completed sub-agent sessions older than 24h
     const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();

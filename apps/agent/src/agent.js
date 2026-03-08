@@ -140,6 +140,12 @@ class Agent {
     this.isStopped = false;
     console.log('Agent starting...');
 
+    // Mark any sub-agents left as 'running' from a previous session as failed
+    const staleCount = this.db.markStaleSubAgents();
+    if (staleCount > 0) {
+      console.log(`[SubAgent] Marked ${staleCount} stale sub-agent(s) as failed from previous session.`);
+    }
+
     // 1. Initialize the unified Client (Dynamic Import for ESM)
     const { GoogleGenAI } = await this._loadClientLibrary();
     this.client = new GoogleGenAI({ apiKey: this.config.googleApiKey });
