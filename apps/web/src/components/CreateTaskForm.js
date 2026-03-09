@@ -250,90 +250,89 @@ export default function CreateTaskForm({ onTaskCreated, initialValues = null, on
                     </div>
                 </div>
 
-                {/* Cron AI Helper — only for custom schedule */}
-                {scheduleType === 'custom' && (
-                    <div className="md:col-span-2">
-                        <button
-                            type="button"
-                            onClick={() => setCronHelperOpen(!cronHelperOpen)}
-                            className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-indigo-400 transition-colors py-1 px-1 -ml-1 rounded"
-                        >
-                            <Sparkles className="w-3.5 h-3.5" />
-                            <span>Describe in plain English</span>
-                            {cronHelperOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
-                        </button>
-
-                        {cronHelperOpen && (
-                            <div className="mt-2 rounded-lg border border-zinc-800 bg-zinc-900/80 p-3 space-y-2">
-                                <div className="flex gap-2">
+                {/* Schedule Modifiers + Cron AI Helper */}
+                {!isOneOff && (
+                    <div className="md:col-span-2 flex items-center justify-between">
+                        <div className="flex gap-4">
+                            <label className="flex items-center gap-2 cursor-pointer text-sm text-zinc-400 hover:text-zinc-200 transition-colors">
+                                <input
+                                    type="checkbox"
+                                    checked={weekdaysOnly}
+                                    onChange={(e) => setWeekdaysOnly(e.target.checked)}
+                                    className="w-4 h-4 rounded bg-black border-zinc-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0"
+                                />
+                                Weekdays only
+                            </label>
+                            {!hasExplicitHour && (
+                                <label className="flex items-center gap-2 cursor-pointer text-sm text-zinc-400 hover:text-zinc-200 transition-colors">
                                     <input
-                                        type="text"
-                                        placeholder="e.g. every friday at 5pm"
-                                        value={cronHelperInput}
-                                        onChange={(e) => setCronHelperInput(e.target.value)}
-                                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCronHelper(); } }}
-                                        className="flex-1 rounded-lg bg-black border border-zinc-800 px-3 py-1.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                                        type="checkbox"
+                                        checked={daytimeOnly}
+                                        onChange={(e) => setDaytimeOnly(e.target.checked)}
+                                        className="w-4 h-4 rounded bg-black border-zinc-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0"
                                     />
-                                    <button
-                                        type="button"
-                                        onClick={handleCronHelper}
-                                        disabled={cronHelperLoading || !cronHelperInput.trim()}
-                                        className="rounded-lg bg-indigo-600/80 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 text-sm text-white transition-colors flex items-center gap-1.5"
-                                    >
-                                        {cronHelperLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                                        Parse
-                                    </button>
-                                </div>
-
-                                {cronHelperError && (
-                                    <p className="text-xs text-red-400">{cronHelperError}</p>
-                                )}
-
-                                {cronHelperResult && (
-                                    <div className="flex items-center justify-between gap-2 rounded-lg bg-black/60 border border-zinc-700 px-3 py-2">
-                                        <div className="min-w-0">
-                                            <span className="font-mono text-sm text-indigo-300">{cronHelperResult.cron}</span>
-                                            {cronHelperResult.description && (
-                                                <p className="text-xs text-zinc-500 truncate">{cronHelperResult.description}</p>
-                                            )}
-                                        </div>
-                                        <button
-                                            type="button"
-                                            onClick={applyCronResult}
-                                            className="shrink-0 flex items-center gap-1 rounded-md bg-indigo-600 hover:bg-indigo-500 px-2.5 py-1 text-xs text-white transition-colors"
-                                        >
-                                            <Check className="w-3 h-3" />
-                                            Use
-                                        </button>
-                                    </div>
-                                )}
-                            </div>
+                                    Daytime only (7am-10pm)
+                                </label>
+                            )}
+                        </div>
+                        {scheduleType === 'custom' && (
+                            <button
+                                type="button"
+                                onClick={() => setCronHelperOpen(!cronHelperOpen)}
+                                className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-indigo-400 transition-colors py-1 px-1 rounded"
+                            >
+                                <Sparkles className="w-3.5 h-3.5" />
+                                <span>Describe in plain English</span>
+                                {cronHelperOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                            </button>
                         )}
                     </div>
                 )}
 
-                {/* Schedule Modifiers: Weekdays + Daytime */}
-                {!isOneOff && (
-                    <div className="md:col-span-2 flex gap-4">
-                        <label className="flex items-center gap-2 cursor-pointer text-sm text-zinc-400 hover:text-zinc-200 transition-colors">
+                {/* Cron AI Helper expandable panel */}
+                {scheduleType === 'custom' && cronHelperOpen && (
+                    <div className="md:col-span-2 rounded-lg border border-zinc-800 bg-zinc-900/80 p-3 space-y-2">
+                        <div className="flex gap-2">
                             <input
-                                type="checkbox"
-                                checked={weekdaysOnly}
-                                onChange={(e) => setWeekdaysOnly(e.target.checked)}
-                                className="w-4 h-4 rounded bg-black border-zinc-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0"
+                                type="text"
+                                placeholder="e.g. every friday at 5pm"
+                                value={cronHelperInput}
+                                onChange={(e) => setCronHelperInput(e.target.value)}
+                                onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCronHelper(); } }}
+                                className="flex-1 rounded-lg bg-black border border-zinc-800 px-3 py-1.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
                             />
-                            Weekdays only
-                        </label>
-                        {!hasExplicitHour && (
-                            <label className="flex items-center gap-2 cursor-pointer text-sm text-zinc-400 hover:text-zinc-200 transition-colors">
-                                <input
-                                    type="checkbox"
-                                    checked={daytimeOnly}
-                                    onChange={(e) => setDaytimeOnly(e.target.checked)}
-                                    className="w-4 h-4 rounded bg-black border-zinc-700 text-indigo-500 focus:ring-indigo-500 focus:ring-offset-0"
-                                />
-                                Daytime only (7am-10pm)
-                            </label>
+                            <button
+                                type="button"
+                                onClick={handleCronHelper}
+                                disabled={cronHelperLoading || !cronHelperInput.trim()}
+                                className="rounded-lg bg-indigo-600/80 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 text-sm text-white transition-colors flex items-center gap-1.5"
+                            >
+                                {cronHelperLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                                Parse
+                            </button>
+                        </div>
+
+                        {cronHelperError && (
+                            <p className="text-xs text-red-400">{cronHelperError}</p>
+                        )}
+
+                        {cronHelperResult && (
+                            <div className="flex items-center justify-between gap-2 rounded-lg bg-black/60 border border-zinc-700 px-3 py-2">
+                                <div className="min-w-0">
+                                    <span className="font-mono text-sm text-indigo-300">{cronHelperResult.cron}</span>
+                                    {cronHelperResult.description && (
+                                        <p className="text-xs text-zinc-500 truncate">{cronHelperResult.description}</p>
+                                    )}
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={applyCronResult}
+                                    className="shrink-0 flex items-center gap-1 rounded-md bg-indigo-600 hover:bg-indigo-500 px-2.5 py-1 text-xs text-white transition-colors"
+                                >
+                                    <Check className="w-3 h-3" />
+                                    Use
+                                </button>
+                            </div>
                         )}
                     </div>
                 )}
