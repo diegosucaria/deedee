@@ -169,7 +169,7 @@ export default function DJCratePage() {
         setSaving(true);
         const result = await updateVinyl(selectedVinyl.id, editFields);
         if (result.success) {
-            await loadCrate();
+            await loadData();
             setSelectedVinyl(result.data?.vinyl || { ...selectedVinyl, ...editFields });
             setEditing(false);
         }
@@ -198,7 +198,7 @@ export default function DJCratePage() {
         setReEnriching(true);
         try {
             await reEnrichVinyl(selectedVinyl.id);
-            await loadCrate();
+            await loadData();
         } catch (e) {
             console.error('Re-enrich failed:', e);
         }
@@ -411,6 +411,10 @@ export default function DJCratePage() {
                                                         e.stopPropagation();
                                                         await addVinylToCrate(crate.id, vinyl.id);
                                                         setShowAddToCrateMenu(null);
+                                                        if (activeCrateId === crate.id) {
+                                                            const updated = await getCrateVinyls(crate.id);
+                                                            setCrateVinyls(updated);
+                                                        }
                                                     }}
                                                     className="w-full px-3 py-1.5 text-left text-xs text-muted-foreground hover:text-foreground hover:bg-zinc-800 transition-colors flex items-center gap-1.5">
                                                     {crate.icon && <span>{crate.icon}</span>}
@@ -591,7 +595,19 @@ export default function DJCratePage() {
                                 refreshingValue={refreshingValue}
                                 onRefreshValue={handleRefreshValue}
                                 crates={crates}
-                                onAddToCrate={async (crateId) => { await addVinylToCrate(crateId, selectedVinyl.id); }}
+                                onAddToCrate={async (crateId) => {
+                                    await addVinylToCrate(crateId, selectedVinyl.id);
+                                    if (activeCrateId === crateId) {
+                                        const updated = await getCrateVinyls(crateId);
+                                        setCrateVinyls(updated);
+                                    }
+                                }}
+                                activeCrateId={activeCrateId}
+                                onRemoveFromCrate={activeCrateId ? async () => {
+                                    await removeVinylFromCrate(activeCrateId, selectedVinyl.id);
+                                    const updated = await getCrateVinyls(activeCrateId);
+                                    setCrateVinyls(updated);
+                                } : null}
                                 setEditFields={setEditFields} updateTrackField={updateTrackField}
                                 parseMeta={parseMeta} parseTracks={parseTracks} getConfidenceInfo={getConfidenceInfo}
                             />
@@ -603,7 +619,7 @@ export default function DJCratePage() {
     );
 }
 
-function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit, onSave, onCancel, onDelete, onReEnrich, reEnriching, refreshingValue, onRefreshValue, crates, onAddToCrate, setEditFields, updateTrackField, parseMeta, parseTracks, getConfidenceInfo }) {
+function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit, onSave, onCancel, onDelete, onReEnrich, reEnriching, refreshingValue, onRefreshValue, crates, onAddToCrate, activeCrateId, onRemoveFromCrate, setEditFields, updateTrackField, parseMeta, parseTracks, getConfidenceInfo }) {
     const meta = parseMeta(vinyl);
     const tracks = parseTracks(vinyl);
     const conf = meta.enrichmentConfidence || 0;
@@ -870,6 +886,13 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
                                     </div>
                                 )}
                             </div>
+                        )}
+                        {onRemoveFromCrate && (
+                            <button onClick={async () => { await onRemoveFromCrate(); onClose(); }}
+                                className="flex items-center gap-2 px-3 py-2 text-xs text-orange-400/70 hover:text-orange-400 hover:bg-orange-900/20 rounded-lg transition-colors">
+                                <X className="w-3.5 h-3.5" />
+                                Remove from Crate
+                            </button>
                         )}
                     </div>
                     <button onClick={onDelete}

@@ -161,23 +161,41 @@ const createDjRouter = (agent) => {
     router.post('/crates', (req, res) => {
         try {
             const { name, type, rules, icon, color } = req.body;
-            if (!name) return res.status(400).json({ error: 'Missing name' });
-            const id = agent.db.addCrate({ name, type, rules, icon, color });
+            if (!name || typeof name !== 'string') return res.status(400).json({ error: 'Missing name' });
+            if (name.length > 100) return res.status(400).json({ error: 'Name too long (max 100 chars)' });
+            const validTypes = ['manual', 'smart'];
+            const crateType = validTypes.includes(type) ? type : 'manual';
+            if (rules && typeof rules !== 'object') return res.status(400).json({ error: 'Rules must be an object' });
+            const id = agent.db.addCrate({ name: name.trim(), type: crateType, rules, icon: icon ? String(icon).slice(0, 10) : null, color: color ? String(color).slice(0, 20) : null });
             res.json({ success: true, crate: agent.db.getCrate(id) });
         } catch (error) {
             console.error('[DJRouter] Create crate error:', error);
-            res.status(500).json({ error: error.message });
+            res.status(500).json({ error: 'Failed to create crate' });
         }
     });
 
     // PUT /crates/:id
     router.put('/crates/:id', (req, res) => {
         try {
-            agent.db.updateCrate(req.params.id, req.body);
+            const { name, type, rules, icon, color } = req.body;
+            const fields = {};
+            if (name !== undefined) {
+                if (typeof name !== 'string' || name.length > 100) return res.status(400).json({ error: 'Invalid name' });
+                fields.name = name.trim();
+            }
+            if (type !== undefined) {
+                const validTypes = ['manual', 'smart'];
+                if (!validTypes.includes(type)) return res.status(400).json({ error: 'Invalid type' });
+                fields.type = type;
+            }
+            if (rules !== undefined) fields.rules = rules;
+            if (icon !== undefined) fields.icon = icon ? String(icon).slice(0, 10) : null;
+            if (color !== undefined) fields.color = color ? String(color).slice(0, 20) : null;
+            agent.db.updateCrate(req.params.id, fields);
             res.json({ success: true, crate: agent.db.getCrate(req.params.id) });
         } catch (error) {
             console.error('[DJRouter] Update crate error:', error);
-            res.status(500).json({ error: error.message });
+            res.status(500).json({ error: 'Failed to update crate' });
         }
     });
 
@@ -188,7 +206,7 @@ const createDjRouter = (agent) => {
             res.json({ success: true });
         } catch (error) {
             console.error('[DJRouter] Delete crate error:', error);
-            res.status(500).json({ error: error.message });
+            res.status(500).json({ error: 'Failed to delete crate' });
         }
     });
 
@@ -199,7 +217,7 @@ const createDjRouter = (agent) => {
             res.json(vinyls);
         } catch (error) {
             console.error('[DJRouter] Get crate vinyls error:', error);
-            res.status(500).json({ error: error.message });
+            res.status(500).json({ error: 'Failed to get crate vinyls' });
         }
     });
 
@@ -210,7 +228,7 @@ const createDjRouter = (agent) => {
             res.json({ success: true });
         } catch (error) {
             console.error('[DJRouter] Add to crate error:', error);
-            res.status(500).json({ error: error.message });
+            res.status(500).json({ error: 'Failed to add vinyl to crate' });
         }
     });
 
@@ -221,7 +239,7 @@ const createDjRouter = (agent) => {
             res.json({ success: true });
         } catch (error) {
             console.error('[DJRouter] Remove from crate error:', error);
-            res.status(500).json({ error: error.message });
+            res.status(500).json({ error: 'Failed to remove vinyl from crate' });
         }
     });
 

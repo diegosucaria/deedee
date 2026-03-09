@@ -338,7 +338,7 @@ class DJService {
 
         if (this.agent.interface && this.agent.interface.broadcast) {
             this.agent.interface.broadcast('dj:vinyl:enriching', {
-                artist: vinyl.artist, title: vinyl.title, status: 'enriching'
+                id: vinylId, artist: vinyl.artist, title: vinyl.title, status: 'enriching'
             });
         }
 
@@ -393,7 +393,6 @@ class DJService {
         };
 
         // Preserve original photo URL if not already saved
-        const existingMeta = typeof vinyl.meta === 'string' ? JSON.parse(vinyl.meta) : vinyl.meta;
         if (!updateFields.meta.originalCoverUrl && !existingMeta?.originalCoverUrl && vinyl.cover_image_url && vinyl.cover_image_url !== '/vinyl_covers/default.png') {
             updateFields.meta.originalCoverUrl = vinyl.cover_image_url;
         } else if (existingMeta?.originalCoverUrl) {
