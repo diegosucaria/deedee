@@ -301,14 +301,24 @@ export default function DJCratePage() {
                     </button>
                 )}
                 {crates.map(crate => (
-                    <button key={crate.id}
-                        onClick={() => setActiveCrateId(crate.id)}
-                        onContextMenu={(e) => { e.preventDefault(); setEditingCrate(crate); setShowCrateModal(true); }}
-                        className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${activeCrateId === crate.id ? 'bg-purple-600 text-white border-purple-500' : 'bg-muted text-muted-foreground border-zinc-700/50 hover:text-foreground'}`}>
-                        {crate.icon && <span>{crate.icon}</span>}
-                        {crate.name}
-                        {crate.type === 'smart' && <Sparkles className="w-2.5 h-2.5 text-indigo-300/70" />}
-                    </button>
+                    <div key={crate.id} className="shrink-0 flex items-center gap-0">
+                        <button
+                            onClick={() => setActiveCrateId(crate.id)}
+                            onContextMenu={(e) => { e.preventDefault(); setEditingCrate(crate); setShowCrateModal(true); }}
+                            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors border ${activeCrateId === crate.id ? 'bg-purple-600 text-white border-purple-500 rounded-l-full' : 'bg-muted text-muted-foreground border-zinc-700/50 hover:text-foreground rounded-full'} ${activeCrateId === crate.id ? 'border-r-0' : ''}`}>
+                            {crate.icon && <span>{crate.icon}</span>}
+                            {crate.name}
+                            {crate.type === 'smart' && <Sparkles className="w-2.5 h-2.5 text-indigo-300/70" />}
+                        </button>
+                        {activeCrateId === crate.id && (
+                            <button
+                                onClick={(e) => { e.stopPropagation(); setEditingCrate(crate); setShowCrateModal(true); }}
+                                className="px-2 py-1.5 bg-purple-600 text-white border border-purple-500 border-l-0 rounded-r-full hover:bg-purple-500 transition-colors"
+                                title="Edit Crate">
+                                <Pencil className="w-3 h-3" />
+                            </button>
+                        )}
+                    </div>
                 ))}
                 <button onClick={() => { setEditingCrate(null); setShowCrateModal(true); }}
                     className="shrink-0 flex items-center gap-1.5 p-1.5 rounded-full border border-dashed border-zinc-700/50 text-muted-foreground hover:text-foreground hover:border-zinc-500 hover:bg-muted transition-colors"
@@ -413,8 +423,8 @@ export default function DJCratePage() {
                                                         await addVinylToCrate(crate.id, vinyl.id);
                                                         setShowAddToCrateMenu(null);
                                                         if (activeCrateId === crate.id) {
-                                                            const updated = await getCrateVinyls(crate.id);
-                                                            setCrateVinyls(updated);
+                                                            const res = await getCrateVinyls(crate.id);
+                                                            if (res.success) setCrateVinyls(res.data || []);
                                                         }
                                                     }}
                                                     className="w-full px-3 py-1.5 text-left text-xs text-muted-foreground hover:text-foreground hover:bg-zinc-800 transition-colors flex items-center gap-1.5">
@@ -599,15 +609,15 @@ export default function DJCratePage() {
                                 onAddToCrate={async (crateId) => {
                                     await addVinylToCrate(crateId, selectedVinyl.id);
                                     if (activeCrateId === crateId) {
-                                        const updated = await getCrateVinyls(crateId);
-                                        setCrateVinyls(updated);
+                                        const res = await getCrateVinyls(crateId);
+                                        if (res.success) setCrateVinyls(res.data || []);
                                     }
                                 }}
                                 activeCrateId={activeCrateId}
                                 onRemoveFromCrate={activeCrateId ? async () => {
                                     await removeVinylFromCrate(activeCrateId, selectedVinyl.id);
-                                    const updated = await getCrateVinyls(activeCrateId);
-                                    setCrateVinyls(updated);
+                                    const res = await getCrateVinyls(activeCrateId);
+                                    if (res.success) setCrateVinyls(res.data || []);
                                 } : null}
                                 setEditFields={setEditFields} updateTrackField={updateTrackField}
                                 parseMeta={parseMeta} parseTracks={parseTracks} getConfidenceInfo={getConfidenceInfo}
@@ -909,9 +919,9 @@ function CrateModal({ crate, vinyls, onClose, onSave, onDelete, parseMeta }) {
     const matchCount = type === 'smart' ? vinyls.filter(v => {
         const meta = parseMeta(v);
         const tracks = typeof v.tracks === 'string' ? JSON.parse(v.tracks || '[]') : (v.tracks || []);
-        if (rules.genre && meta.genre?.toLowerCase() !== rules.genre.toLowerCase()) return false;
-        if (rules.style && meta.style?.toLowerCase() !== rules.style.toLowerCase()) return false;
-        if (rules.label && v.label?.toLowerCase() !== rules.label.toLowerCase()) return false;
+        if (rules.genre && !meta.genre?.toLowerCase().includes(rules.genre.toLowerCase())) return false;
+        if (rules.style && !meta.style?.toLowerCase().includes(rules.style.toLowerCase())) return false;
+        if (rules.label && !v.label?.toLowerCase().includes(rules.label.toLowerCase())) return false;
         if (rules.rpm && meta.rpm && meta.rpm !== Number(rules.rpm)) return false;
         if (rules.yearMin && meta.year && meta.year < Number(rules.yearMin)) return false;
         if (rules.yearMax && meta.year && meta.year > Number(rules.yearMax)) return false;
