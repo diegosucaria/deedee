@@ -28,7 +28,8 @@ jest.mock('../src/db', () => ({
         getFactsFormatted: jest.fn().mockReturnValue(''),
         searchMessages: jest.fn().mockReturnValue([]),
         getKey: jest.fn(),
-        setKey: jest.fn()
+        setKey: jest.fn(),
+        markStaleSubAgents: jest.fn().mockReturnValue(0)
     }))
 }));
 

@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react';
 import { getVinylCrate, uploadVinylPhoto, updateVinyl, deleteVinyl as deleteVinylAction, reEnrichVinyl, retryEnrichVinyl, refreshVinylValue, getCrates, createCrate, updateCrate as updateCrateAction, deleteCrate as deleteCrateAction, getCrateVinyls, addVinylToCrate, removeVinylFromCrate } from '../actions';
 import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
-import { Upload, Disc3, Music, ExternalLink, Loader2, Search, X, AlertTriangle, Check, Pencil, Trash2, LayoutGrid, List, ArrowUpDown, RefreshCw, Plus, FolderPlus, TrendingUp, BookOpen, Sparkles } from 'lucide-react';
+import { Upload, Disc3, Music, ExternalLink, Loader2, Search, X, AlertTriangle, Check, Pencil, Trash2, LayoutGrid, List, ArrowUpDown, RefreshCw, Plus, FolderPlus, TrendingUp, BookOpen, Sparkles, Camera } from 'lucide-react';
 
 export default function DJCratePage() {
     const [vinyls, setVinyls] = useState([]);
@@ -140,11 +140,15 @@ export default function DJCratePage() {
 
     const filteredVinyls = searchQuery.trim()
         ? activeVinylPool.filter((v) => {
-            const q = searchQuery.toLowerCase();
+            const tokens = searchQuery.toLowerCase().split(/\s+/).filter(Boolean);
             const m = parseMeta(v);
-            return v.artist?.toLowerCase().includes(q) || v.title?.toLowerCase().includes(q) ||
-                v.label?.toLowerCase().includes(q) || v.catalog_number?.toLowerCase().includes(q) ||
-                m.genre?.toLowerCase().includes(q) || m.style?.toLowerCase().includes(q);
+            const tracks = parseTracks(v);
+            const trackTitles = tracks.map((t) => (typeof t === 'string' ? t : (t.title || '')).toLowerCase()).join(' ');
+            const haystack = [
+                v.artist, v.title, v.label, v.catalog_number,
+                m.genre, m.style, trackTitles
+            ].map((s) => (s || '').toLowerCase()).join(' ');
+            return tokens.every((token) => haystack.includes(token));
         })
         : activeVinylPool;
 
@@ -632,8 +636,16 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
             {/* Header */}
             <div className="flex items-start justify-between gap-3">
                 <div className="flex gap-3 sm:gap-4 items-start flex-1 min-w-0">
-                    <div className="w-20 h-20 sm:w-28 sm:h-28 rounded-lg overflow-hidden shrink-0 border border-zinc-700/50">
+                    <div className="w-20 h-20 sm:w-28 sm:h-28 rounded-lg overflow-hidden shrink-0 border border-zinc-700/50 relative group/cover">
                         <img src={vinyl.cover_image_url || '/vinyl_covers/default.png'} alt={vinyl.title} className="w-full h-full object-cover" />
+                        {meta.originalCoverUrl && meta.originalCoverUrl !== vinyl.cover_image_url && (
+                            <a href={meta.originalCoverUrl} target="_blank" rel="noopener"
+                                className="absolute bottom-1 right-1 p-1 rounded bg-black/70 text-zinc-300 hover:text-white hover:bg-black/90 transition-all opacity-0 group-hover/cover:opacity-100 sm:opacity-0 sm:group-hover/cover:opacity-100"
+                                title="View original photo"
+                                onClick={(e) => e.stopPropagation()}>
+                                <Camera className="w-3 h-3" />
+                            </a>
+                        )}
                     </div>
                     <div className="space-y-1 min-w-0 flex-1">
                         {editing ? (

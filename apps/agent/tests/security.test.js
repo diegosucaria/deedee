@@ -34,6 +34,7 @@ jest.mock('../src/db', () => ({
         getLatestSummary: jest.fn().mockReturnValue(null), // Added
         getFactsFormatted: jest.fn().mockReturnValue(""), // Added
         getAllAgentSettings: jest.fn().mockReturnValue({}),
+        markStaleSubAgents: jest.fn().mockReturnValue(0),
         close: jest.fn().mockResolvedValue()
     }))
 }));
