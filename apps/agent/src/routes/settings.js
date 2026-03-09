@@ -357,6 +357,60 @@ function createSettingsRouter(agent) {
         }
     });
 
+    // GET /internal/settings/gws/validate/:label — Check if GWS credentials are still valid
+    router.get('/gws/validate/:label', async (req, res) => {
+        try {
+            const { label } = req.params;
+            const fs = require('fs');
+            const path = require('path');
+            const safeLabel = encodeURIComponent(label.toLowerCase().replace(/[^a-z0-9]/g, '-'));
+            const credsPath = path.join(getDataDir(), `gws-credentials-${safeLabel}.json`);
+
+            if (!fs.existsSync(credsPath)) {
+                return res.json({ valid: false, error: 'credentials_missing' });
+            }
+
+            let creds;
+            try {
+                creds = JSON.parse(fs.readFileSync(credsPath, 'utf8'));
+            } catch (e) {
+                return res.json({ valid: false, error: 'credentials_corrupt' });
+            }
+
+            if (!creds.refresh_token || !creds.client_id || !creds.client_secret) {
+                return res.json({ valid: false, error: 'credentials_incomplete' });
+            }
+
+            // Try to exchange the refresh token for an access token
+            const tokenResponse = await fetch('https://oauth2.googleapis.com/token', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
+                body: new URLSearchParams({
+                    client_id: creds.client_id,
+                    client_secret: creds.client_secret,
+                    refresh_token: creds.refresh_token,
+                    grant_type: 'refresh_token',
+                }).toString(),
+            });
+
+            const tokenData = await tokenResponse.json();
+
+            if (!tokenResponse.ok || tokenData.error) {
+                console.warn(`[Settings] GWS token validation failed for ${label}:`, tokenData.error || tokenResponse.status);
+                return res.json({
+                    valid: false,
+                    error: tokenData.error || 'token_refresh_failed',
+                    errorDescription: tokenData.error_description || null,
+                });
+            }
+
+            res.json({ valid: true });
+        } catch (error) {
+            console.error('[Settings] GWS Validate Failed:', error);
+            res.json({ valid: false, error: 'validation_error' });
+        }
+    });
+
     // POST /internal/settings/tts/preview
     // Body: { text: string, voice: string }
     router.post('/tts/preview', async (req, res) => {

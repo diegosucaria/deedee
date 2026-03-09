@@ -42,7 +42,7 @@ Two authentication methods are available:
 2. Set the redirect URI to: `https://<your-deedee-domain>/api/auth/google/callback`
 3. Go to **Settings > Interfaces > Google Workspace** and upload the `client_secret.json` in the OAuth Client section.
 4. Click **Connect Workspace Account**, enter a label and email, then click **Sign in with Google**.
-5. To re-authenticate (e.g., after token expiry), click **Re-auth** on the account card.
+5. The UI automatically validates tokens on page load. If a token has expired, the account card shows an **Auth Expired** badge and a prominent **Re-connect** button to re-authenticate with one click.
 
 **Option B: Manual Upload (Fallback)**
 1. Authenticate locally: `gws auth login`
