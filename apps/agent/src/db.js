@@ -1192,9 +1192,9 @@ class AgentDB {
     return vinyls.filter(v => {
       const meta = v.meta || {};
       const tracks = v.tracks || [];
-      if (rules.genre && meta.genre?.toLowerCase() !== rules.genre.toLowerCase()) return false;
-      if (rules.style && meta.style?.toLowerCase() !== rules.style.toLowerCase()) return false;
-      if (rules.label && v.label?.toLowerCase() !== rules.label.toLowerCase()) return false;
+      if (rules.genre && !meta.genre?.toLowerCase().includes(rules.genre.toLowerCase())) return false;
+      if (rules.style && !meta.style?.toLowerCase().includes(rules.style.toLowerCase())) return false;
+      if (rules.label && !v.label?.toLowerCase().includes(rules.label.toLowerCase())) return false;
       if (rules.rpm && meta.rpm && meta.rpm !== rules.rpm) return false;
       if (rules.yearMin && meta.year && meta.year < rules.yearMin) return false;
       if (rules.yearMax && meta.year && meta.year > rules.yearMax) return false;
