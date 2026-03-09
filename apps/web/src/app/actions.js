@@ -440,6 +440,15 @@ export async function getGWSAuthURL(label, email) {
     }
 }
 
+export async function validateGWSAuth(label) {
+    try {
+        return await fetchAPI(`/v1/settings/gws/validate/${encodeURIComponent(label)}`);
+    } catch (error) {
+        console.error('validateGWSAuth Error:', error);
+        return { valid: false, error: 'network_error' };
+    }
+}
+
 // --- WhatsApp Actions ---
 
 export async function getWhatsAppStatus() {
