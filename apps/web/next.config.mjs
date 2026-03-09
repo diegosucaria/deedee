@@ -1,5 +1,13 @@
+import { dirname, resolve } from 'path';
+import { fileURLToPath } from 'url';
+
+const __dirname = dirname(fileURLToPath(import.meta.url));
+
 const nextConfig = {
   output: 'standalone',
+  turbopack: {
+    root: resolve(__dirname, '../..'),
+  },
   experimental: {
     serverActions: {
       bodySizeLimit: '10mb',
