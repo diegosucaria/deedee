@@ -301,24 +301,20 @@ export default function DJCratePage() {
                     </button>
                 )}
                 {crates.map(crate => (
-                    <div key={crate.id} className="shrink-0 flex items-center gap-0">
-                        <button
-                            onClick={() => setActiveCrateId(crate.id)}
-                            onContextMenu={(e) => { e.preventDefault(); setEditingCrate(crate); setShowCrateModal(true); }}
-                            className={`flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium transition-colors border ${activeCrateId === crate.id ? 'bg-purple-600 text-white border-purple-500 rounded-l-full' : 'bg-muted text-muted-foreground border-zinc-700/50 hover:text-foreground rounded-full'} ${activeCrateId === crate.id ? 'border-r-0' : ''}`}>
-                            {crate.icon && <span>{crate.icon}</span>}
-                            {crate.name}
-                            {crate.type === 'smart' && <Sparkles className="w-2.5 h-2.5 text-indigo-300/70" />}
-                        </button>
+                    <button key={crate.id}
+                        onClick={() => setActiveCrateId(crate.id)}
+                        onContextMenu={(e) => { e.preventDefault(); setEditingCrate(crate); setShowCrateModal(true); }}
+                        className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${activeCrateId === crate.id ? 'bg-purple-600 text-white border-purple-500' : 'bg-muted text-muted-foreground border-zinc-700/50 hover:text-foreground'}`}>
+                        {crate.icon && <span>{crate.icon}</span>}
+                        {crate.name}
+                        {crate.type === 'smart' && <Sparkles className="w-2.5 h-2.5 text-indigo-300/70" />}
                         {activeCrateId === crate.id && (
-                            <button
-                                onClick={(e) => { e.stopPropagation(); setEditingCrate(crate); setShowCrateModal(true); }}
-                                className="px-2 py-1.5 bg-purple-600 text-white border border-purple-500 border-l-0 rounded-r-full hover:bg-purple-500 transition-colors"
-                                title="Edit Crate">
-                                <Pencil className="w-3 h-3" />
-                            </button>
+                            <span onClick={(e) => { e.stopPropagation(); setEditingCrate(crate); setShowCrateModal(true); }}
+                                className="ml-0.5 p-0.5 rounded-full hover:bg-white/20 transition-colors" title="Edit Crate">
+                                <Pencil className="w-2.5 h-2.5" />
+                            </span>
                         )}
-                    </div>
+                    </button>
                 ))}
                 <button onClick={() => { setEditingCrate(null); setShowCrateModal(true); }}
                     className="shrink-0 flex items-center gap-1.5 p-1.5 rounded-full border border-dashed border-zinc-700/50 text-muted-foreground hover:text-foreground hover:border-zinc-500 hover:bg-muted transition-colors"
