@@ -9,6 +9,9 @@ data
 .last_boot_commit
 node_modules.nosync
 *.db
+*.db-shm
+*.db-wal
+*.db-journal
 apps/agent/tests/test_people.db
 .skills
 .agent
