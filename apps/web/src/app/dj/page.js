@@ -19,7 +19,6 @@ export default function DJCratePage() {
     const [viewMode, setViewMode] = useState('crate'); // 'crate' | 'tracks'
     const [sortConfig, setSortConfig] = useState({ key: 'bpm', dir: 'desc' });
     const [enrichingIds, setEnrichingIds] = useState(new Set());
-    const [reEnriching, setReEnriching] = useState(false);
     const [refreshingValue, setRefreshingValue] = useState(false);
     // Collections
     const [crates, setCrates] = useState([]);
@@ -195,14 +194,15 @@ export default function DJCratePage() {
 
     const handleReEnrich = async () => {
         if (!selectedVinyl) return;
-        setReEnriching(true);
+        const vinylId = selectedVinyl.id;
+        setEnrichingIds(prev => new Set(prev).add(vinylId));
         try {
-            await reEnrichVinyl(selectedVinyl.id);
+            await reEnrichVinyl(vinylId);
             await loadData();
         } catch (e) {
             console.error('Re-enrich failed:', e);
         }
-        setReEnriching(false);
+        setEnrichingIds(prev => { const next = new Set(prev); next.delete(vinylId); return next; });
     };
 
     // Flatten all tracks from all (filtered) vinyls for the track view
@@ -591,7 +591,7 @@ export default function DJCratePage() {
                                 onEdit={startEditing} onSave={handleSave} onCancel={() => setEditing(false)}
                                 onDelete={handleDelete}
                                 onReEnrich={handleReEnrich}
-                                reEnriching={reEnriching}
+                                reEnriching={enrichingIds.has(selectedVinyl?.id)}
                                 refreshingValue={refreshingValue}
                                 onRefreshValue={handleRefreshValue}
                                 crates={crates}
@@ -720,62 +720,6 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
                 <Field label="RPM" field="rpm" type="number" metaField />
             </div>
 
-            {/* Hidden Gems: Market Value */}
-            {meta.priceGuide && (
-                <div className="space-y-2">
-                    <div className="flex items-center justify-between">
-                        <h3 className="text-[10px] sm:text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                            <TrendingUp className="w-3 h-3 text-emerald-400" /> Market Value
-                        </h3>
-                        <button onClick={onRefreshValue} disabled={refreshingValue}
-                            className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors">
-                            {refreshingValue ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
-                            Refresh
-                        </button>
-                    </div>
-                    <div className="flex gap-3 bg-zinc-800/50 rounded-lg p-3 border border-zinc-700/30">
-                        <div className="text-center flex-1">
-                            <p className="text-emerald-400 font-mono text-sm font-semibold">{meta.priceGuide.currency} {meta.priceGuide.median?.toFixed(2)}</p>
-                            <p className="text-[10px] text-muted-foreground">Median</p>
-                        </div>
-                        <div className="text-center flex-1">
-                            <p className="text-zinc-400 font-mono text-sm">{meta.priceGuide.lowest?.toFixed(2)}</p>
-                            <p className="text-[10px] text-muted-foreground">Low</p>
-                        </div>
-                        <div className="text-center flex-1">
-                            <p className="text-zinc-400 font-mono text-sm">{meta.priceGuide.highest?.toFixed(2)}</p>
-                            <p className="text-[10px] text-muted-foreground">High</p>
-                        </div>
-                        <div className="text-center flex-1">
-                            <p className="text-zinc-400 font-mono text-sm">{meta.priceGuide.numForSale}</p>
-                            <p className="text-[10px] text-muted-foreground">Listings</p>
-                        </div>
-                    </div>
-                    {meta.priceGuide.lastChecked && (
-                        <p className="text-[9px] text-muted-foreground">Last checked {new Date(meta.priceGuide.lastChecked).toLocaleDateString()}</p>
-                    )}
-                </div>
-            )}
-
-            {/* Hidden Gems: History */}
-            {meta.history && (
-                <div className="space-y-2">
-                    <h3 className="text-[10px] sm:text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
-                        <BookOpen className="w-3 h-3 text-amber-400" /> About this Release
-                    </h3>
-                    <p className="text-xs text-muted-foreground leading-relaxed">{meta.history}</p>
-                </div>
-            )}
-
-            {/* Refresh Value button when no price data yet */}
-            {!meta.priceGuide && !meta.history && !isEnriching && !editing && (
-                <button onClick={onRefreshValue} disabled={refreshingValue}
-                    className="flex items-center gap-2 px-3 py-2 text-xs text-emerald-400/70 hover:text-emerald-400 hover:bg-emerald-900/20 disabled:opacity-50 rounded-lg transition-colors">
-                    {refreshingValue ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <TrendingUp className="w-3.5 h-3.5" />}
-                    {refreshingValue ? 'Fetching value...' : 'Check market value'}
-                </button>
-            )}
-
             {/* Tracklist */}
             <div className="space-y-2">
                 <h3 className="text-[10px] sm:text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
@@ -829,6 +773,46 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
                 )}
             </div>
 
+            {/* Hidden Gems: Market Value */}
+            {meta.priceGuide && (
+                <div className="space-y-2">
+                    <h3 className="text-[10px] sm:text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                        <TrendingUp className="w-3 h-3 text-emerald-400" /> Market Value
+                    </h3>
+                    <div className="flex gap-3 bg-zinc-800/50 rounded-lg p-3 border border-zinc-700/30">
+                        <div className="text-center flex-1">
+                            <p className="text-emerald-400 font-mono text-sm font-semibold">{meta.priceGuide.currency} {meta.priceGuide.median?.toFixed(2)}</p>
+                            <p className="text-[10px] text-muted-foreground">Median</p>
+                        </div>
+                        <div className="text-center flex-1">
+                            <p className="text-zinc-400 font-mono text-sm">{meta.priceGuide.lowest?.toFixed(2)}</p>
+                            <p className="text-[10px] text-muted-foreground">Low</p>
+                        </div>
+                        <div className="text-center flex-1">
+                            <p className="text-zinc-400 font-mono text-sm">{meta.priceGuide.highest?.toFixed(2)}</p>
+                            <p className="text-[10px] text-muted-foreground">High</p>
+                        </div>
+                        <div className="text-center flex-1">
+                            <p className="text-zinc-400 font-mono text-sm">{meta.priceGuide.numForSale}</p>
+                            <p className="text-[10px] text-muted-foreground">Listings</p>
+                        </div>
+                    </div>
+                    {meta.priceGuide.lastChecked && (
+                        <p className="text-[9px] text-muted-foreground">Last checked {new Date(meta.priceGuide.lastChecked).toLocaleDateString()}</p>
+                    )}
+                </div>
+            )}
+
+            {/* Hidden Gems: History */}
+            {meta.history && (
+                <div className="space-y-2">
+                    <h3 className="text-[10px] sm:text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                        <BookOpen className="w-3 h-3 text-amber-400" /> About this Release
+                    </h3>
+                    <p className="text-xs text-muted-foreground leading-relaxed">{meta.history}</p>
+                </div>
+            )}
+
             {/* External Links */}
             {(meta.discogsUrl || meta.beatportUrl) && (
                 <div className="flex gap-3">
@@ -865,6 +849,11 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
                             className="flex items-center gap-2 px-3 py-2 text-xs text-purple-400/70 hover:text-purple-400 hover:bg-purple-900/20 disabled:opacity-50 rounded-lg transition-colors">
                             {reEnriching || isEnriching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
                             {reEnriching || isEnriching ? 'Enriching...' : 'Re-enrich'}
+                        </button>
+                        <button onClick={onRefreshValue} disabled={refreshingValue || isEnriching}
+                            className="flex items-center gap-2 px-3 py-2 text-xs text-emerald-400/70 hover:text-emerald-400 hover:bg-emerald-900/20 disabled:opacity-50 rounded-lg transition-colors">
+                            {refreshingValue ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <TrendingUp className="w-3.5 h-3.5" />}
+                            {refreshingValue ? 'Fetching...' : (meta.priceGuide ? 'Refresh Value' : 'Check Value')}
                         </button>
                         {crates.filter(c => c.type === 'manual').length > 0 && (
                             <div className="relative">

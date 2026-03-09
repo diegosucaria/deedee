@@ -1006,11 +1006,16 @@ Respond ONLY with valid JSON.` }]
         for (const url of urls) {
             if (!url || !url.startsWith('http')) continue;
             try {
+                const headers = { 'User-Agent': 'DeeDee/1.0' };
+                if (url.includes('discogs.com')) {
+                    const token = this._getDiscogsToken();
+                    if (token) headers['Authorization'] = `Discogs token=${token}`;
+                }
                 const response = await axios.get(url, {
                     responseType: 'arraybuffer',
                     timeout: 15000,
                     maxRedirects: 5,
-                    headers: { 'User-Agent': 'DeeDee/1.0' },
+                    headers,
                     validateStatus: (status) => status === 200
                 });
 
