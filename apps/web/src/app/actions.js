@@ -74,6 +74,22 @@ export async function createTask(prevState, formData) {
     }
 }
 
+// --- Cron Helper ---
+export async function parseCron(text) {
+    try {
+        if (!text || typeof text !== 'string' || text.trim().length === 0) {
+            return { error: 'Please enter a schedule description' };
+        }
+        const result = await fetchAPI('/v1/cron-helper', {
+            method: 'POST',
+            body: JSON.stringify({ text: text.trim() })
+        });
+        return result;
+    } catch (error) {
+        return { error: error.message || 'Failed to parse schedule' };
+    }
+}
+
 // --- Goals ---
 export async function addGoal(prevState, formData) {
     try {

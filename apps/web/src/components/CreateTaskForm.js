@@ -1,8 +1,8 @@
 'use client';
 
 import { useFormState } from 'react-dom';
-import { createTask } from '@/app/actions';
-import { Plus, Save, X, CalendarOff } from 'lucide-react';
+import { createTask, parseCron } from '@/app/actions';
+import { Plus, Save, X, Sparkles, ChevronDown, ChevronUp, Loader2, Check } from 'lucide-react';
 import { useState, useRef, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 
@@ -63,6 +63,11 @@ export default function CreateTaskForm({ onTaskCreated, initialValues = null, on
     };
 
     const [customCron, setCustomCron] = useState(getInitialCron());
+    const [cronHelperOpen, setCronHelperOpen] = useState(false);
+    const [cronHelperInput, setCronHelperInput] = useState('');
+    const [cronHelperLoading, setCronHelperLoading] = useState(false);
+    const [cronHelperResult, setCronHelperResult] = useState(null);
+    const [cronHelperError, setCronHelperError] = useState(null);
     const formRef = useRef(null);
 
     // Reset form on success — useFormState triggers re-render with success state,
@@ -77,6 +82,10 @@ export default function CreateTaskForm({ onTaskCreated, initialValues = null, on
                 setModel('auto');
                 setWeekdaysOnly(false);
                 setDaytimeOnly(false);
+                setCronHelperOpen(false);
+                setCronHelperInput('');
+                setCronHelperResult(null);
+                setCronHelperError(null);
             }
             if (onTaskCreated) onTaskCreated();
         }
@@ -87,6 +96,34 @@ export default function CreateTaskForm({ onTaskCreated, initialValues = null, on
 
     // Determine if the schedule has an explicit hour (daytime toggle not useful)
     const hasExplicitHour = ['daily_morning', 'daily_evening'].includes(scheduleType);
+
+    const handleCronHelper = async () => {
+        if (!cronHelperInput.trim() || cronHelperLoading) return;
+        setCronHelperLoading(true);
+        setCronHelperResult(null);
+        setCronHelperError(null);
+        try {
+            const result = await parseCron(cronHelperInput);
+            if (result.error) {
+                setCronHelperError(result.error);
+            } else {
+                setCronHelperResult(result);
+            }
+        } catch {
+            setCronHelperError('Failed to parse schedule');
+        } finally {
+            setCronHelperLoading(false);
+        }
+    };
+
+    const applyCronResult = () => {
+        if (cronHelperResult?.cron) {
+            setCustomCron(cronHelperResult.cron);
+            setCronHelperResult(null);
+            setCronHelperInput('');
+            setCronHelperOpen(false);
+        }
+    };
 
     return (
         <div className="p-6 rounded-2xl border bg-zinc-900/50 border-zinc-800">
@@ -212,6 +249,68 @@ export default function CreateTaskForm({ onTaskCreated, initialValues = null, on
                         )}
                     </div>
                 </div>
+
+                {/* Cron AI Helper — only for custom schedule */}
+                {scheduleType === 'custom' && (
+                    <div className="md:col-span-2">
+                        <button
+                            type="button"
+                            onClick={() => setCronHelperOpen(!cronHelperOpen)}
+                            className="flex items-center gap-1.5 text-xs text-zinc-500 hover:text-indigo-400 transition-colors py-1 px-1 -ml-1 rounded"
+                        >
+                            <Sparkles className="w-3.5 h-3.5" />
+                            <span>Describe in plain English</span>
+                            {cronHelperOpen ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+                        </button>
+
+                        {cronHelperOpen && (
+                            <div className="mt-2 rounded-lg border border-zinc-800 bg-zinc-900/80 p-3 space-y-2">
+                                <div className="flex gap-2">
+                                    <input
+                                        type="text"
+                                        placeholder="e.g. every friday at 5pm"
+                                        value={cronHelperInput}
+                                        onChange={(e) => setCronHelperInput(e.target.value)}
+                                        onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); handleCronHelper(); } }}
+                                        className="flex-1 rounded-lg bg-black border border-zinc-800 px-3 py-1.5 text-sm text-white placeholder-zinc-600 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
+                                    />
+                                    <button
+                                        type="button"
+                                        onClick={handleCronHelper}
+                                        disabled={cronHelperLoading || !cronHelperInput.trim()}
+                                        className="rounded-lg bg-indigo-600/80 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed px-3 py-1.5 text-sm text-white transition-colors flex items-center gap-1.5"
+                                    >
+                                        {cronHelperLoading ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                                        Parse
+                                    </button>
+                                </div>
+
+                                {cronHelperError && (
+                                    <p className="text-xs text-red-400">{cronHelperError}</p>
+                                )}
+
+                                {cronHelperResult && (
+                                    <div className="flex items-center justify-between gap-2 rounded-lg bg-black/60 border border-zinc-700 px-3 py-2">
+                                        <div className="min-w-0">
+                                            <span className="font-mono text-sm text-indigo-300">{cronHelperResult.cron}</span>
+                                            {cronHelperResult.description && (
+                                                <p className="text-xs text-zinc-500 truncate">{cronHelperResult.description}</p>
+                                            )}
+                                        </div>
+                                        <button
+                                            type="button"
+                                            onClick={applyCronResult}
+                                            className="shrink-0 flex items-center gap-1 rounded-md bg-indigo-600 hover:bg-indigo-500 px-2.5 py-1 text-xs text-white transition-colors"
+                                        >
+                                            <Check className="w-3 h-3" />
+                                            Use
+                                        </button>
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
+                )}
 
                 {/* Schedule Modifiers: Weekdays + Daytime */}
                 {!isOneOff && (
