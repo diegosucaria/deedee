@@ -293,29 +293,30 @@ export default function DJCratePage() {
             </div>
 
             {/* Crate Strip */}
-            {crates.length > 0 && (
-                <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+            <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+                {crates.length > 0 && (
                     <button onClick={() => { setActiveCrateId(null); setCrateVinyls(null); }}
                         className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${activeCrateId === null ? 'bg-purple-600 text-white border-purple-500' : 'bg-muted text-muted-foreground border-zinc-700/50 hover:text-foreground'}`}>
                         All Vinyls <span className="ml-1.5 text-[10px] opacity-60">{vinyls.length}</span>
                     </button>
-                    {crates.map(crate => (
-                        <button key={crate.id}
-                            onClick={() => setActiveCrateId(crate.id)}
-                            onContextMenu={(e) => { e.preventDefault(); setEditingCrate(crate); setShowCrateModal(true); }}
-                            className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${activeCrateId === crate.id ? 'bg-purple-600 text-white border-purple-500' : 'bg-muted text-muted-foreground border-zinc-700/50 hover:text-foreground'}`}>
-                            {crate.icon && <span>{crate.icon}</span>}
-                            {crate.name}
-                            {crate.type === 'smart' && <Sparkles className="w-2.5 h-2.5 text-indigo-300/70" />}
-                        </button>
-                    ))}
-                    <button onClick={() => { setEditingCrate(null); setShowCrateModal(true); }}
-                        className="shrink-0 p-1.5 rounded-full border border-zinc-700/50 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
-                        title="Create Crate">
-                        <Plus className="w-3.5 h-3.5" />
+                )}
+                {crates.map(crate => (
+                    <button key={crate.id}
+                        onClick={() => setActiveCrateId(crate.id)}
+                        onContextMenu={(e) => { e.preventDefault(); setEditingCrate(crate); setShowCrateModal(true); }}
+                        className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${activeCrateId === crate.id ? 'bg-purple-600 text-white border-purple-500' : 'bg-muted text-muted-foreground border-zinc-700/50 hover:text-foreground'}`}>
+                        {crate.icon && <span>{crate.icon}</span>}
+                        {crate.name}
+                        {crate.type === 'smart' && <Sparkles className="w-2.5 h-2.5 text-indigo-300/70" />}
                     </button>
-                </div>
-            )}
+                ))}
+                <button onClick={() => { setEditingCrate(null); setShowCrateModal(true); }}
+                    className="shrink-0 flex items-center gap-1.5 p-1.5 rounded-full border border-dashed border-zinc-700/50 text-muted-foreground hover:text-foreground hover:border-zinc-500 hover:bg-muted transition-colors"
+                    title="Create Crate">
+                    <Plus className="w-3.5 h-3.5" />
+                    {crates.length === 0 && <span className="text-xs pr-1">New Crate</span>}
+                </button>
+            </div>
 
             {/* Upload Status */}
             <AnimatePresence>
