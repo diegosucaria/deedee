@@ -27,5 +27,6 @@ router.post('/gws/oauth/client', (req, res) => proxyToAgent(req, res, 'POST', '/
 router.get('/gws/oauth/client', (req, res) => proxyToAgent(req, res, 'GET', '/gws/oauth/client', null));
 router.get('/gws/oauth/url', (req, res) => proxyToAgent(req, res, 'GET', '/gws/oauth/url', null));
 router.post('/gws/oauth/exchange', (req, res) => proxyToAgent(req, res, 'POST', '/gws/oauth/exchange', req.body));
+router.get('/gws/validate/:label', (req, res) => proxyToAgent(req, res, 'GET', `/gws/validate/${encodeURIComponent(req.params.label)}`, null));
 
 module.exports = router;

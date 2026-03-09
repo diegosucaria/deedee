@@ -716,6 +716,87 @@ function createInternalRouter(agent) {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
+    // --- Cron Helper (Natural Language → Cron Expression) ---
+    router.post('/cron-helper', async (req, res) => {
+        try {
+            const { text } = req.body;
+            if (!text || typeof text !== 'string' || text.trim().length === 0) {
+                return res.status(400).json({ error: 'text is required' });
+            }
+
+            // Cap input length to prevent abuse
+            const input = text.trim().slice(0, 200);
+
+            const { ConfigService } = require('../services/config-service');
+            const config = new ConfigService();
+            const modelName = config.getModel('LITE');
+
+            const { GoogleGenAI } = await import('@google/genai');
+            const client = new GoogleGenAI({ apiKey: process.env.GOOGLE_API_KEY });
+
+            const prompt = `You convert natural language schedule descriptions into standard 5-field cron expressions (minute hour dayOfMonth month dayOfWeek).
+
+Rules:
+- Output ONLY valid JSON: {"cron": "<expression>", "description": "<human readable>"}
+- Use 24-hour time internally but describe in 12-hour format with AM/PM
+- Day of week: 0=Sunday, 1=Monday, ..., 6=Saturday
+- If the input is ambiguous, pick the most reasonable interpretation
+- If the input cannot be converted to a cron expression, return {"error": "Could not parse schedule"}
+
+Examples:
+"every friday at 5pm" → {"cron": "0 17 * * 5", "description": "Every Friday at 5:00 PM"}
+"weekdays at 9am" → {"cron": "0 9 * * 1-5", "description": "Weekdays at 9:00 AM"}
+"every hour" → {"cron": "0 * * * *", "description": "Every hour, on the hour"}
+"first day of every month at midnight" → {"cron": "0 0 1 * *", "description": "1st of every month at 12:00 AM"}
+
+Input: "${input.replace(/"/g, '\\"')}"`;
+
+            const response = await client.models.generateContent({
+                model: modelName,
+                contents: prompt,
+                config: {
+                    responseMimeType: 'application/json',
+                    temperature: 0.0,
+                }
+            });
+
+            let responseText = '';
+            if (typeof response.text === 'function') {
+                responseText = response.text();
+            } else if (response.text) {
+                responseText = response.text;
+            }
+
+            // Extract JSON from response
+            const firstBrace = responseText.indexOf('{');
+            const lastBrace = responseText.lastIndexOf('}');
+            if (firstBrace === -1 || lastBrace === -1) {
+                return res.status(422).json({ error: 'Could not parse schedule' });
+            }
+
+            const parsed = JSON.parse(responseText.substring(firstBrace, lastBrace + 1));
+
+            if (parsed.error) {
+                return res.status(422).json({ error: parsed.error });
+            }
+
+            if (!parsed.cron) {
+                return res.status(422).json({ error: 'Could not parse schedule' });
+            }
+
+            // Basic cron format validation (5 fields)
+            const fields = parsed.cron.trim().split(/\s+/);
+            if (fields.length !== 5) {
+                return res.status(422).json({ error: 'Invalid cron expression generated' });
+            }
+
+            res.json({ cron: parsed.cron.trim(), description: parsed.description || '' });
+        } catch (e) {
+            console.error('[CronHelper] Error:', e.message);
+            res.status(500).json({ error: 'Failed to parse schedule' });
+        }
+    });
+
     return router;
 }
 

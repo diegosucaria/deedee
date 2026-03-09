@@ -74,6 +74,22 @@ export async function createTask(prevState, formData) {
     }
 }
 
+// --- Cron Helper ---
+export async function parseCron(text) {
+    try {
+        if (!text || typeof text !== 'string' || text.trim().length === 0) {
+            return { error: 'Please enter a schedule description' };
+        }
+        const result = await fetchAPI('/v1/cron-helper', {
+            method: 'POST',
+            body: JSON.stringify({ text: text.trim() })
+        });
+        return result;
+    } catch (error) {
+        return { error: error.message || 'Failed to parse schedule' };
+    }
+}
+
 // --- Goals ---
 export async function addGoal(prevState, formData) {
     try {
@@ -454,6 +470,15 @@ export async function getGWSAuthURL(label, email) {
     }
 }
 
+export async function validateGWSAuth(label) {
+    try {
+        return await fetchAPI(`/v1/settings/gws/validate/${encodeURIComponent(label)}`);
+    } catch (error) {
+        console.error('validateGWSAuth Error:', error);
+        return { valid: false, error: 'network_error' };
+    }
+}
+
 // --- WhatsApp Actions ---
 
 export async function getWhatsAppStatus() {
@@ -706,6 +731,105 @@ export async function reEnrichVinyl(id) {
     try {
         const data = await fetchAPI(`/v1/dj/vinyls/${encodeURIComponent(id)}/enrich`, {
             method: 'POST'
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function retryEnrichVinyl(id) {
+    try {
+        const data = await fetchAPI(`/v1/dj/vinyls/${encodeURIComponent(id)}/retry-enrich`, {
+            method: 'POST'
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function refreshVinylValue(id) {
+    try {
+        const data = await fetchAPI(`/v1/dj/vinyls/${encodeURIComponent(id)}/value`, {
+            method: 'POST'
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function getCrates() {
+    try {
+        const data = await fetchAPI('/v1/dj/crates', { method: 'GET' });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function createCrate({ name, type, rules, icon, color }) {
+    try {
+        const data = await fetchAPI('/v1/dj/crates', {
+            method: 'POST',
+            body: JSON.stringify({ name, type, rules, icon, color })
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function updateCrate(id, fields) {
+    try {
+        const data = await fetchAPI(`/v1/dj/crates/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            body: JSON.stringify(fields)
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function deleteCrate(id) {
+    try {
+        const data = await fetchAPI(`/v1/dj/crates/${encodeURIComponent(id)}`, {
+            method: 'DELETE'
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function getCrateVinyls(crateId) {
+    try {
+        const data = await fetchAPI(`/v1/dj/crates/${encodeURIComponent(crateId)}/vinyls`, {
+            method: 'GET'
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function addVinylToCrate(crateId, vinylId) {
+    try {
+        const data = await fetchAPI(`/v1/dj/crates/${encodeURIComponent(crateId)}/vinyls/${encodeURIComponent(vinylId)}`, {
+            method: 'POST'
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function removeVinylFromCrate(crateId, vinylId) {
+    try {
+        const data = await fetchAPI(`/v1/dj/crates/${encodeURIComponent(crateId)}/vinyls/${encodeURIComponent(vinylId)}`, {
+            method: 'DELETE'
         });
         return { success: true, data };
     } catch (error) {

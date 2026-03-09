@@ -3,7 +3,7 @@
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
 import { Calendar, Upload, CheckCircle2, AlertCircle, Plus, X, Server, RefreshCw, KeyRound, ChevronDown, ChevronUp } from 'lucide-react';
-import { uploadGWSCredentials, getMCPStatus, deleteMCPServer, saveGWSAuthClient, getGWSAuthClient, getGWSAuthURL } from '../app/actions';
+import { uploadGWSCredentials, getMCPStatus, deleteMCPServer, saveGWSAuthClient, getGWSAuthClient, getGWSAuthURL, validateGWSAuth } from '../app/actions';
 
 export default function GWSSettings() {
     const searchParams = useSearchParams();
@@ -80,9 +80,23 @@ export default function GWSSettings() {
                     label: s.name.replace('gws_', ''),
                     status: s.status,
                     email: s.email || null,
+                    authValid: null, // unknown until validated
                 }));
             setAccounts(gwsServers);
             setOauthClient(clientStatus);
+
+            // Validate auth for each enabled account (in parallel, non-blocking)
+            const enabledServers = gwsServers.filter(s => s.status !== 'disabled');
+            if (enabledServers.length > 0) {
+                const validations = await Promise.all(
+                    enabledServers.map(s => validateGWSAuth(s.label))
+                );
+                setAccounts(prev => prev.map(acc => {
+                    const idx = enabledServers.findIndex(s => s.label === acc.label);
+                    if (idx === -1) return acc;
+                    return { ...acc, authValid: validations[idx].valid };
+                }));
+            }
         } catch (e) {
             console.error('Failed to load GWS data', e);
         }
@@ -341,52 +355,84 @@ export default function GWSSettings() {
             {/* Account Cards */}
             <div className="space-y-4">
                 {accounts.length > 0 ? (
-                    accounts.map((acc, idx) => (
-                        <div key={idx} className="bg-zinc-800/50 border border-zinc-700/50 rounded-lg p-4 flex items-center justify-between">
-                            <div className="flex items-center gap-4">
-                                <div className="h-10 w-10 bg-indigo-500/20 rounded-full flex items-center justify-center text-indigo-400 font-bold">
-                                    {acc.label.charAt(0).toUpperCase()}
-                                </div>
-                                <div>
-                                    <h3 className="font-medium text-zinc-200 capitalize">{acc.label} Workspace</h3>
-                                    {acc.email && <p className="text-xs text-zinc-500">{acc.email}</p>}
-                                    <div className="flex items-center gap-2 mt-1">
-                                        {acc.status === 'enabled' ? (
-                                            <span className="flex items-center gap-1 text-xs text-green-400 bg-green-400/10 px-2 py-0.5 rounded-full border border-green-400/20">
-                                                <CheckCircle2 className="w-3 h-3" /> Enabled
-                                            </span>
-                                        ) : (
-                                            <span className="flex items-center gap-1 text-xs text-red-400 bg-red-400/10 px-2 py-0.5 rounded-full border border-red-400/20">
-                                                <AlertCircle className="w-3 h-3" /> Disabled
-                                            </span>
+                    accounts.map((acc, idx) => {
+                        const isExpired = acc.authValid === false;
+                        const isChecking = acc.authValid === null && acc.status !== 'disabled';
+
+                        return (
+                            <div key={idx} className={`bg-zinc-800/50 border rounded-lg p-4 ${isExpired ? 'border-amber-500/50' : 'border-zinc-700/50'}`}>
+                                {/* Expired Banner */}
+                                {isExpired && oauthClient.configured && (
+                                    <div className="flex items-center justify-between bg-amber-500/10 border border-amber-500/20 rounded-lg px-4 py-2.5 mb-3 -mt-0.5">
+                                        <div className="flex items-center gap-2 text-amber-400 text-sm">
+                                            <AlertCircle className="w-4 h-4 shrink-0" />
+                                            <span>Authentication expired. Re-connect to restore access.</span>
+                                        </div>
+                                        <button
+                                            onClick={() => handleReAuth(acc)}
+                                            className="flex items-center gap-1.5 px-3 py-1.5 text-sm bg-amber-500 hover:bg-amber-400 text-black rounded-lg transition-colors font-medium shrink-0"
+                                        >
+                                            <RefreshCw className="w-3.5 h-3.5" />
+                                            Re-connect
+                                        </button>
+                                    </div>
+                                )}
+
+                                <div className="flex items-center justify-between">
+                                    <div className="flex items-center gap-4">
+                                        <div className={`h-10 w-10 rounded-full flex items-center justify-center font-bold ${isExpired ? 'bg-amber-500/20 text-amber-400' : 'bg-indigo-500/20 text-indigo-400'}`}>
+                                            {acc.label.charAt(0).toUpperCase()}
+                                        </div>
+                                        <div>
+                                            <h3 className="font-medium text-zinc-200 capitalize">{acc.label} Workspace</h3>
+                                            {acc.email && <p className="text-xs text-zinc-500">{acc.email}</p>}
+                                            <div className="flex items-center gap-2 mt-1">
+                                                {acc.status === 'disabled' ? (
+                                                    <span className="flex items-center gap-1 text-xs text-red-400 bg-red-400/10 px-2 py-0.5 rounded-full border border-red-400/20">
+                                                        <AlertCircle className="w-3 h-3" /> Disabled
+                                                    </span>
+                                                ) : isExpired ? (
+                                                    <span className="flex items-center gap-1 text-xs text-amber-400 bg-amber-400/10 px-2 py-0.5 rounded-full border border-amber-400/20">
+                                                        <AlertCircle className="w-3 h-3" /> Auth Expired
+                                                    </span>
+                                                ) : isChecking ? (
+                                                    <span className="flex items-center gap-1 text-xs text-zinc-400 bg-zinc-700/50 px-2 py-0.5 rounded-full border border-zinc-600/30">
+                                                        <RefreshCw className="w-3 h-3 animate-spin" /> Checking...
+                                                    </span>
+                                                ) : (
+                                                    <span className="flex items-center gap-1 text-xs text-green-400 bg-green-400/10 px-2 py-0.5 rounded-full border border-green-400/20">
+                                                        <CheckCircle2 className="w-3 h-3" /> Connected
+                                                    </span>
+                                                )}
+                                                <span className="flex items-center gap-1 text-xs text-zinc-400 bg-zinc-800 px-2 py-0.5 rounded border border-zinc-700">
+                                                    <Server className="w-3 h-3" /> MCP: {acc.name}
+                                                </span>
+                                            </div>
+                                        </div>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        {oauthClient.configured && !isExpired && (
+                                            <button
+                                                onClick={() => handleReAuth(acc)}
+                                                className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-indigo-400 hover:text-indigo-300 hover:bg-indigo-400/10 rounded-lg transition-colors font-medium border border-indigo-500/30"
+                                                title="Re-authenticate with Google"
+                                            >
+                                                <RefreshCw className="w-3.5 h-3.5" />
+                                                Re-auth
+                                            </button>
                                         )}
-                                        <span className="flex items-center gap-1 text-xs text-zinc-400 bg-zinc-800 px-2 py-0.5 rounded border border-zinc-700">
-                                            <Server className="w-3 h-3" /> MCP: {acc.name}
-                                        </span>
+                                        <button
+                                            onClick={() => handleDelete(acc.name)}
+                                            className="p-2 text-red-400 hover:text-red-300 hover:bg-red-400/10 rounded-lg transition-colors text-sm font-medium"
+                                            title="Disconnect"
+                                        >
+                                            Disconnect
+                                        </button>
                                     </div>
                                 </div>
                             </div>
-                            <div className="flex items-center gap-2">
-                                {oauthClient.configured && (
-                                    <button
-                                        onClick={() => handleReAuth(acc)}
-                                        className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-indigo-400 hover:text-indigo-300 hover:bg-indigo-400/10 rounded-lg transition-colors font-medium border border-indigo-500/30"
-                                        title="Re-authenticate with Google"
-                                    >
-                                        <RefreshCw className="w-3.5 h-3.5" />
-                                        Re-auth
-                                    </button>
-                                )}
-                                <button
-                                    onClick={() => handleDelete(acc.name)}
-                                    className="p-2 text-red-400 hover:text-red-300 hover:bg-red-400/10 rounded-lg transition-colors text-sm font-medium"
-                                    title="Disconnect"
-                                >
-                                    Disconnect
-                                </button>
-                            </div>
-                        </div>
-                    ))
+                        );
+                    })
                 ) : (
                     !loading && (
                         <div className="text-center py-8 text-zinc-500 border border-dashed border-zinc-800 rounded-lg bg-zinc-900/30">

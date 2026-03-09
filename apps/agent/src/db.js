@@ -205,6 +205,23 @@ class AgentDB {
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
+      CREATE TABLE IF NOT EXISTS dj_crates (
+        id TEXT PRIMARY KEY,
+        name TEXT NOT NULL,
+        type TEXT NOT NULL DEFAULT 'manual',
+        rules TEXT,
+        icon TEXT,
+        color TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS dj_crate_vinyls (
+        crate_id TEXT NOT NULL,
+        vinyl_id TEXT NOT NULL,
+        added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        PRIMARY KEY (crate_id, vinyl_id)
+      );
+
       CREATE TABLE IF NOT EXISTS subagents (
         id TEXT PRIMARY KEY,
         parent_chat_id TEXT NOT NULL,
@@ -326,6 +343,11 @@ class AgentDB {
     // Migration: Add pinned to kv_store (protect from auto-pruning)
     try {
       this.db.exec("ALTER TABLE kv_store ADD COLUMN pinned INTEGER DEFAULT 0");
+    } catch (err) { }
+
+    // Migration: Add enrichment_status to dj_vinyls
+    try {
+      this.db.exec("ALTER TABLE dj_vinyls ADD COLUMN enrichment_status TEXT DEFAULT 'complete'");
     } catch (err) { }
   }
 
@@ -1050,10 +1072,10 @@ class AgentDB {
     const metaStr = vinyl.meta ? JSON.stringify(vinyl.meta) : '{}';
 
     const stmt = this.db.prepare(`
-      INSERT INTO dj_vinyls(id, artist, title, label, catalog_number, cover_image_url, bpm, key, tracks, meta)
-      VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO dj_vinyls(id, artist, title, label, catalog_number, cover_image_url, bpm, key, tracks, meta, enrichment_status)
+      VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    stmt.run(id, vinyl.artist, vinyl.title, vinyl.label, vinyl.catalogNumber, vinyl.coverImageUrl, vinyl.bpm, vinyl.key, tracksStr, metaStr);
+    stmt.run(id, vinyl.artist, vinyl.title, vinyl.label, vinyl.catalogNumber, vinyl.coverImageUrl, vinyl.bpm, vinyl.key, tracksStr, metaStr, vinyl.enrichmentStatus || 'complete');
     return id;
   }
 
@@ -1114,7 +1136,7 @@ class AgentDB {
   }
 
   updateVinyl(id, fields) {
-    const allowed = ['artist', 'title', 'label', 'catalog_number', 'cover_image_url', 'bpm', 'key', 'tracks', 'meta'];
+    const allowed = ['artist', 'title', 'label', 'catalog_number', 'cover_image_url', 'bpm', 'key', 'tracks', 'meta', 'enrichment_status'];
     const sets = [];
     const values = [];
     for (const [k, v] of Object.entries(fields)) {
@@ -1151,6 +1173,103 @@ class AgentDB {
       tracks: JSON.parse(row.tracks),
       meta: JSON.parse(row.meta)
     }));
+  }
+
+  // --- DJ Crates ---
+  addCrate({ name, type = 'manual', rules = null, icon = null, color = null }) {
+    const id = crypto.randomUUID();
+    this.db.prepare(`
+      INSERT INTO dj_crates(id, name, type, rules, icon, color) VALUES(?, ?, ?, ?, ?, ?)
+    `).run(id, name, type, rules ? JSON.stringify(rules) : null, icon, color);
+    return id;
+  }
+
+  getCrate(id) {
+    const row = this.db.prepare('SELECT * FROM dj_crates WHERE id = ?').get(id);
+    if (row?.rules) row.rules = JSON.parse(row.rules);
+    return row || null;
+  }
+
+  getCrates() {
+    return this.db.prepare('SELECT * FROM dj_crates ORDER BY created_at ASC').all().map(row => {
+      if (row.rules) row.rules = JSON.parse(row.rules);
+      return row;
+    });
+  }
+
+  updateCrate(id, fields) {
+    const allowed = ['name', 'type', 'rules', 'icon', 'color'];
+    const sets = [], values = [];
+    for (const [k, v] of Object.entries(fields)) {
+      if (!allowed.includes(k)) continue;
+      sets.push(`${k} = ?`);
+      values.push(k === 'rules' && v ? JSON.stringify(v) : v);
+    }
+    if (sets.length === 0) return false;
+    values.push(id);
+    this.db.prepare(`UPDATE dj_crates SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    return true;
+  }
+
+  deleteCrate(id) {
+    this.db.prepare('DELETE FROM dj_crate_vinyls WHERE crate_id = ?').run(id);
+    this.db.prepare('DELETE FROM dj_crates WHERE id = ?').run(id);
+    return true;
+  }
+
+  addVinylToCrate(crateId, vinylId) {
+    this.db.prepare(`INSERT OR IGNORE INTO dj_crate_vinyls(crate_id, vinyl_id) VALUES(?, ?)`).run(crateId, vinylId);
+  }
+
+  removeVinylFromCrate(crateId, vinylId) {
+    this.db.prepare('DELETE FROM dj_crate_vinyls WHERE crate_id = ? AND vinyl_id = ?').run(crateId, vinylId);
+  }
+
+  getCrateVinyls(crateId) {
+    const crate = this.getCrate(crateId);
+    if (!crate) return [];
+
+    if (crate.type === 'manual') {
+      return this.db.prepare(`
+        SELECT v.* FROM dj_vinyls v
+        INNER JOIN dj_crate_vinyls cv ON cv.vinyl_id = v.id
+        WHERE cv.crate_id = ?
+        ORDER BY cv.added_at DESC
+      `).all(crateId).map(row => ({
+        ...row,
+        tracks: JSON.parse(row.tracks || '[]'),
+        meta: JSON.parse(row.meta || '{}')
+      }));
+    }
+
+    // Smart crate: evaluate rules against all vinyls
+    return this._evaluateSmartCrateRules(crate.rules);
+  }
+
+  _evaluateSmartCrateRules(rules) {
+    if (!rules) return this.getVinyls({ limit: 500 });
+    const vinyls = this.getVinyls({ limit: 500 });
+    return vinyls.filter(v => {
+      const meta = v.meta || {};
+      const tracks = v.tracks || [];
+      if (rules.genre && !meta.genre?.toLowerCase().includes(rules.genre.toLowerCase())) return false;
+      if (rules.style && !meta.style?.toLowerCase().includes(rules.style.toLowerCase())) return false;
+      if (rules.label && !v.label?.toLowerCase().includes(rules.label.toLowerCase())) return false;
+      if (rules.rpm && meta.rpm && meta.rpm !== rules.rpm) return false;
+      if (rules.yearMin && meta.year && meta.year < rules.yearMin) return false;
+      if (rules.yearMax && meta.year && meta.year > rules.yearMax) return false;
+      if (rules.bpmMin || rules.bpmMax) {
+        const hasMatch = tracks.some(t => {
+          const bpm = t.bpm || 0;
+          if (!bpm) return false;
+          if (rules.bpmMin && bpm < rules.bpmMin) return false;
+          if (rules.bpmMax && bpm > rules.bpmMax) return false;
+          return true;
+        });
+        if (!hasMatch) return false;
+      }
+      return true;
+    });
   }
 
   // --- Search & Consolidation ---

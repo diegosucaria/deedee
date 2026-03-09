@@ -9,7 +9,10 @@ const proxyRequest = async (req, res, method, path) => {
     try {
         const url = `${AGENT_URL}${path}`;
         const config = { method, url, params: req.query };
-
+        if (['POST', 'PUT', 'PATCH'].includes(method.toUpperCase()) && req.body) {
+            config.data = req.body;
+            config.headers = { 'Content-Type': 'application/json' };
+        }
         const response = await axios(config);
         res.json(response.data);
     } catch (error) {
@@ -87,5 +90,42 @@ router.post('/vinyls/:id/enrich', async (req, res) => {
         res.status(status).json(data);
     }
 });
+
+// POST /v1/dj/vinyls/:id/value
+router.post('/vinyls/:id/value', async (req, res) => {
+    try {
+        const url = `${AGENT_URL}/internal/dj/vinyls/${encodeURIComponent(req.params.id)}/value`;
+        const response = await axios.post(url);
+        res.json(response.data);
+    } catch (error) {
+        console.error('[API] DJ Refresh Value Proxy Error:', error.message);
+        const status = error.response ? error.response.status : 502;
+        const data = error.response ? error.response.data : { error: 'Agent unavailable' };
+        res.status(status).json(data);
+    }
+});
+
+// POST /v1/dj/vinyls/:id/retry-enrich
+router.post('/vinyls/:id/retry-enrich', async (req, res) => {
+    try {
+        const url = `${AGENT_URL}/internal/dj/vinyls/${encodeURIComponent(req.params.id)}/retry-enrich`;
+        const response = await axios.post(url);
+        res.json(response.data);
+    } catch (error) {
+        console.error('[API] DJ Retry Enrich Proxy Error:', error.message);
+        const status = error.response ? error.response.status : 502;
+        const data = error.response ? error.response.data : { error: 'Agent unavailable' };
+        res.status(status).json(data);
+    }
+});
+
+// --- Crate Routes ---
+router.get('/crates', (req, res) => proxyRequest(req, res, 'GET', '/internal/dj/crates'));
+router.post('/crates', (req, res) => proxyRequest(req, res, 'POST', '/internal/dj/crates'));
+router.put('/crates/:id', (req, res) => proxyRequest(req, res, 'PUT', `/internal/dj/crates/${encodeURIComponent(req.params.id)}`));
+router.delete('/crates/:id', (req, res) => proxyRequest(req, res, 'DELETE', `/internal/dj/crates/${encodeURIComponent(req.params.id)}`));
+router.get('/crates/:id/vinyls', (req, res) => proxyRequest(req, res, 'GET', `/internal/dj/crates/${encodeURIComponent(req.params.id)}/vinyls`));
+router.post('/crates/:id/vinyls/:vinylId', (req, res) => proxyRequest(req, res, 'POST', `/internal/dj/crates/${encodeURIComponent(req.params.id)}/vinyls/${encodeURIComponent(req.params.vinylId)}`));
+router.delete('/crates/:id/vinyls/:vinylId', (req, res) => proxyRequest(req, res, 'DELETE', `/internal/dj/crates/${encodeURIComponent(req.params.id)}/vinyls/${encodeURIComponent(req.params.vinylId)}`));
 
 module.exports = router;

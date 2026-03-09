@@ -66,6 +66,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - `GET /v1/briefing`: Generates a spoken morning briefing (text).
     - `GET /v1/city-image`: Generates a weather-aware city wallpaper (PNG).
     - `GET /v1/journal`, `/v1/tasks`, `/v1/facts`: Dashboard data endpoints.
+    - `POST /v1/cron-helper`: AI-powered natural language to cron expression converter (uses LITE model).
     - `GET /v1/goals`: Manage agent goals (CRUD).
     - `GET /v1/config`: Read/Write system configuration & env.
     - `POST /v1/settings`: Update runtime settings (updates DB + Cache).

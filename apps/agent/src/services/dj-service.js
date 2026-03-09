@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
+const axios = require('axios');
 const { ConfigService } = require('./config-service');
 
 class DJService {
@@ -120,20 +121,28 @@ class DJService {
         if (data.type === 'receipt') {
             for (const item of data.items) {
                 if (item.confidence > 0.6) {
-                    const vinyl = await this._enrichAndSave(item, imageSource);
-                    ingested.push(vinyl);
+                    const placeholder = await this._createPlaceholder(item, imageSource);
+                    this._runEnrichmentPipeline(placeholder.id, item, placeholder.coverUrl)
+                        .catch(err => console.error(`[DJService] Background enrichment failed for ${placeholder.id}:`, err.message));
+                    ingested.push(placeholder);
                 }
             }
         } else {
-            const vinyl = await this._enrichAndSave(data, imageSource);
-            ingested.push(vinyl);
+            const placeholder = await this._createPlaceholder(data, imageSource);
+            this._runEnrichmentPipeline(placeholder.id, data, placeholder.coverUrl)
+                .catch(err => console.error(`[DJService] Background enrichment failed for ${placeholder.id}:`, err.message));
+            ingested.push(placeholder);
         }
 
         return ingested;
     }
 
-    async _enrichAndSave(rawItem, imageSource = null) {
-        console.log(`[DJService] _enrichAndSave started for: ${rawItem.artist} - ${rawItem.title}`);
+    /**
+     * Create a placeholder vinyl record and return immediately.
+     * Saves the uploaded image, checks for duplicates, inserts a row with enrichment_status='enriching'.
+     */
+    async _createPlaceholder(rawItem, imageSource = null) {
+        console.log(`[DJService] Creating placeholder for: ${rawItem.artist} - ${rawItem.title}`);
 
         // 1. Save uploaded photo as initial cover
         let coverUrl = '/vinyl_covers/default.png';
@@ -147,52 +156,80 @@ class DJService {
             if (typeof imageSource === 'string' && imageSource.startsWith('/')) {
                 fs.copyFileSync(imageSource, filePath);
                 coverUrl = `/vinyl_covers/${filename}`;
-                console.log(`[DJService] Saved cover from file: ${coverUrl}`);
             } else if (imageSource.base64) {
                 fs.writeFileSync(filePath, Buffer.from(imageSource.base64, 'base64'));
                 coverUrl = `/vinyl_covers/${filename}`;
-                console.log(`[DJService] Saved cover from base64: ${coverUrl}`);
             }
         }
 
-        // 2. Broadcast enrichment status for UI
-        if (this.agent.interface && this.agent.interface.broadcast) {
-            this.agent.interface.broadcast('dj:vinyl:enriching', {
-                artist: rawItem.artist, title: rawItem.title, status: 'enriching'
-            });
-        }
-
-        // 3. Cascading metadata enrichment: Discogs → MusicBrainz → Gemini
-        let enriched = {};
-        try {
-            console.log('[DJService] Starting cascade enrichment...');
-            enriched = await this._cascadeEnrich(rawItem.artist, rawItem.title, rawItem.label, rawItem.catalog_number);
-            console.log(`[DJService] Enrichment complete. Keys: ${Object.keys(enriched).join(', ')}`);
-        } catch (e) {
-            console.error('[DJService] Metadata enrichment failed:', e.message, e.stack?.split('\n').slice(0, 3).join('\n'));
-        }
-
-        // 4. Try to download cover art (with redirect support, multi-URL fallback)
-        // Preserve original photo URL before overwriting
-        const originalCoverUrl = coverUrl !== '/vinyl_covers/default.png' ? coverUrl : null;
-        const candidateUrls = enriched._coverArtUrls || (enriched.coverArtUrl ? [enriched.coverArtUrl] : []);
-        if (candidateUrls.length > 0) {
-            const downloadedCover = await this._downloadCoverArt(candidateUrls);
-            if (downloadedCover) {
-                coverUrl = downloadedCover;
+        // 2. Duplicate detection — if exists, mark it as re-enriching
+        const existing = this.db.findVinylByArtistTitle(rawItem.artist, rawItem.title);
+        if (existing) {
+            console.log(`[DJService] Duplicate found: "${rawItem.artist} - ${rawItem.title}" (id: ${existing.id}). Will re-enrich.`);
+            this.db.updateVinyl(existing.id, { enrichment_status: 'enriching' });
+            if (this.agent.interface && this.agent.interface.broadcast) {
+                this.agent.interface.broadcast('dj:vinyl:enriching', {
+                    id: existing.id, artist: rawItem.artist, title: rawItem.title, status: 'enriching'
+                });
             }
+            return { ...existing, enrichment_status: 'enriching', coverUrl, _preExisting: true };
         }
 
+        // 3. Insert placeholder row
         const vinyl = {
-            artist: rawItem.artist,
-            title: rawItem.title,
-            label: rawItem.label || enriched.label || '',
-            catalogNumber: rawItem.catalog_number || enriched.catalogNumber || '',
+            artist: rawItem.artist || '',
+            title: rawItem.title || '',
+            label: rawItem.label || '',
+            catalogNumber: rawItem.catalog_number || '',
             coverImageUrl: coverUrl,
             bpm: 0,
             key: '',
-            tracks: this._normalizeTracks(rawItem.tracklist, enriched.tracks),
-            meta: {
+            tracks: [],
+            meta: { source: 'vision', enrichmentConfidence: 0 },
+            enrichmentStatus: 'enriching'
+        };
+
+        const id = this.db.addVinyl(vinyl);
+
+        if (this.agent.interface && this.agent.interface.broadcast) {
+            this.agent.interface.broadcast('dj:vinyl:enriching', {
+                id, artist: rawItem.artist, title: rawItem.title, status: 'enriching'
+            });
+            this.agent.interface.broadcast('dj:vinyl:update', { ...vinyl, id, enrichment_status: 'enriching' });
+        }
+
+        return { ...vinyl, id, enrichment_status: 'enriching', coverUrl };
+    }
+
+    /**
+     * Run the full enrichment pipeline in the background for a vinyl ID.
+     * On success: updates vinyl with enriched data and sets enrichment_status='complete'.
+     * On failure: sets enrichment_status='failed' and broadcasts.
+     */
+    async _runEnrichmentPipeline(vinylId, rawItem, initialCoverUrl) {
+        console.log(`[DJService] Starting enrichment pipeline for: ${rawItem.artist} - ${rawItem.title} (${vinylId})`);
+        let coverUrl = initialCoverUrl || '/vinyl_covers/default.png';
+
+        try {
+            // 1. Cascading metadata enrichment: Discogs → MusicBrainz → Gemini
+            let enriched = {};
+            try {
+                enriched = await this._cascadeEnrich(rawItem.artist, rawItem.title, rawItem.label, rawItem.catalog_number);
+                console.log(`[DJService] Enrichment complete for ${vinylId}. Keys: ${Object.keys(enriched).join(', ')}`);
+            } catch (e) {
+                console.error('[DJService] Metadata enrichment failed:', e.message);
+            }
+
+            // 2. Try to download cover art
+            const candidateUrls = enriched._coverArtUrls || (enriched.coverArtUrl ? [enriched.coverArtUrl] : []);
+            if (candidateUrls.length > 0) {
+                const downloadedCover = await this._downloadCoverArt(candidateUrls);
+                if (downloadedCover) coverUrl = downloadedCover;
+            }
+
+            // 3. Build enriched vinyl data
+            const tracks = this._normalizeTracks(rawItem.tracklist, enriched.tracks);
+            const meta = {
                 source: 'vision',
                 genre: enriched.genre || '',
                 year: enriched.year || '',
@@ -201,50 +238,93 @@ class DJService {
                 beatportUrl: enriched.beatportUrl || '',
                 style: enriched.style || '',
                 enrichmentConfidence: enriched.confidence || 0,
-                ...(originalCoverUrl && originalCoverUrl !== coverUrl ? { originalCoverUrl } : {})
-            }
-        };
-
-        // 5. Per-track BPM/key cross-reference (parallel searches)
-        if (vinyl.tracks.length > 0 && vinyl.tracks.length <= 8) {
-            try {
-                vinyl.tracks = await this._enrichTrackDetails(vinyl.artist, vinyl.tracks);
-            } catch (e) {
-                console.warn('[DJService] Per-track enrichment failed:', e.message);
-            }
-        }
-
-        // 6. Duplicate detection — check if vinyl with same artist+title exists
-        const existing = this.db.findVinylByArtistTitle(vinyl.artist, vinyl.title);
-        if (existing) {
-            console.log(`[DJService] Duplicate found: "${vinyl.artist} - ${vinyl.title}" (id: ${existing.id}). Merging.`);
-            const mergedFields = {
-                label: vinyl.label || existing.label,
-                catalog_number: vinyl.catalogNumber || existing.catalog_number,
-                cover_image_url: coverUrl !== '/vinyl_covers/default.png' ? coverUrl : existing.cover_image_url,
-                tracks: vinyl.tracks.length > 0 ? vinyl.tracks : existing.tracks,
-                meta: {
-                    ...existing.meta,
-                    ...vinyl.meta,
-                    enrichmentConfidence: Math.max(vinyl.meta.enrichmentConfidence || 0, existing.meta?.enrichmentConfidence || 0),
-                    originalCoverUrl: existing.meta?.originalCoverUrl || vinyl.meta?.originalCoverUrl || null
-                }
+                ...(initialCoverUrl && initialCoverUrl !== '/vinyl_covers/default.png' && initialCoverUrl !== coverUrl ? { originalCoverUrl: initialCoverUrl } : {})
             };
-            this.db.updateVinyl(existing.id, mergedFields);
-            const updated = this.db.getVinyl(existing.id);
+
+            // 4. Per-track BPM/key cross-reference
+            let finalTracks = tracks;
+            if (tracks.length > 0 && tracks.length <= 8) {
+                try {
+                    finalTracks = await this._enrichTrackDetails(rawItem.artist, tracks);
+                } catch (e) {
+                    console.warn('[DJService] Per-track enrichment failed:', e.message);
+                }
+            }
+
+            // 5. Hidden Gems: fetch price guide + generate history (parallel, non-fatal)
+            const discogsReleaseId = (enriched.discogsUrl || '').match(/\/release\/(\d+)/)?.[1] || null;
+            const [priceGuide, history] = await Promise.allSettled([
+                discogsReleaseId ? this._fetchPriceGuide(discogsReleaseId) : Promise.resolve(null),
+                this._generateHistory(rawItem.artist, rawItem.title, enriched.label || rawItem.label, enriched.year)
+            ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
+
+            // 6. Check if this was a duplicate (pre-existing vinyl)
+            const currentVinyl = this.db.getVinyl(vinylId);
+            const isPreExisting = currentVinyl && currentVinyl.created_at && currentVinyl.tracks?.length > 0;
+
+            const enrichedMeta = {
+                ...meta,
+                ...(priceGuide ? { priceGuide } : {}),
+                ...(history ? { history } : {})
+            };
+
+            const updateFields = {
+                label: rawItem.label || enriched.label || currentVinyl?.label || '',
+                catalog_number: rawItem.catalog_number || enriched.catalogNumber || currentVinyl?.catalog_number || '',
+                cover_image_url: coverUrl !== '/vinyl_covers/default.png' ? coverUrl : (currentVinyl?.cover_image_url || coverUrl),
+                tracks: finalTracks.length > 0 ? finalTracks : (currentVinyl?.tracks || []),
+                meta: isPreExisting ? {
+                    ...(currentVinyl.meta || {}),
+                    ...enrichedMeta,
+                    enrichmentConfidence: Math.max(enrichedMeta.enrichmentConfidence || 0, currentVinyl.meta?.enrichmentConfidence || 0)
+                } : enrichedMeta,
+                enrichment_status: 'complete'
+            };
+
+            this.db.updateVinyl(vinylId, updateFields);
+            const updated = this.db.getVinyl(vinylId);
+
             if (this.agent.interface && this.agent.interface.broadcast) {
                 this.agent.interface.broadcast('dj:vinyl:update', updated);
             }
-            return { ...updated, _merged: true };
+
+            console.log(`[DJService] Enrichment pipeline complete for: ${rawItem.artist} - ${rawItem.title} (${vinylId})`);
+            return updated;
+        } catch (error) {
+            console.error(`[DJService] Enrichment pipeline failed for ${vinylId}:`, error.message);
+            try {
+                this.db.updateVinyl(vinylId, { enrichment_status: 'failed' });
+                const failed = this.db.getVinyl(vinylId);
+                if (this.agent.interface && this.agent.interface.broadcast) {
+                    this.agent.interface.broadcast('dj:vinyl:update', failed);
+                }
+            } catch (e) {
+                console.error(`[DJService] Failed to update status for ${vinylId}:`, e.message);
+            }
+            throw error;
         }
+    }
 
-        const id = this.db.addVinyl(vinyl);
+    /**
+     * Retry enrichment for a failed vinyl — sets status to 'enriching' and runs pipeline in background.
+     */
+    async retryEnrich(vinylId) {
+        const vinyl = this.db.getVinyl(vinylId);
+        if (!vinyl) throw new Error(`Vinyl ${vinylId} not found`);
 
+        this.db.updateVinyl(vinylId, { enrichment_status: 'enriching' });
         if (this.agent.interface && this.agent.interface.broadcast) {
-            this.agent.interface.broadcast('dj:vinyl:update', { ...vinyl, id });
+            this.agent.interface.broadcast('dj:vinyl:enriching', {
+                id: vinylId, artist: vinyl.artist, title: vinyl.title, status: 'enriching'
+            });
+            this.agent.interface.broadcast('dj:vinyl:update', { ...vinyl, enrichment_status: 'enriching' });
         }
 
-        return { ...vinyl, id };
+        const rawItem = { artist: vinyl.artist, title: vinyl.title, label: vinyl.label, catalog_number: vinyl.catalog_number };
+        this._runEnrichmentPipeline(vinylId, rawItem, vinyl.cover_image_url)
+            .catch(err => console.error(`[DJService] Retry enrichment failed for ${vinylId}:`, err.message));
+
+        return { success: true, status: 'enriching' };
     }
 
     /**
@@ -258,7 +338,7 @@ class DJService {
 
         if (this.agent.interface && this.agent.interface.broadcast) {
             this.agent.interface.broadcast('dj:vinyl:enriching', {
-                artist: vinyl.artist, title: vinyl.title, status: 'enriching'
+                id: vinylId, artist: vinyl.artist, title: vinyl.title, status: 'enriching'
             });
         }
 
@@ -284,25 +364,35 @@ class DJService {
             }
         }
 
+        const existingMeta = typeof vinyl.meta === 'string' ? JSON.parse(vinyl.meta) : (vinyl.meta || {});
+
+        // Hidden Gems: fetch price guide + generate history (parallel, non-fatal)
+        const discogsReleaseId = (enriched.discogsUrl || existingMeta.discogsUrl || '').match(/\/release\/(\d+)/)?.[1] || null;
+        const [priceGuide, history] = await Promise.allSettled([
+            discogsReleaseId ? this._fetchPriceGuide(discogsReleaseId) : Promise.resolve(null),
+            this._generateHistory(vinyl.artist, vinyl.title, enriched.label || vinyl.label, enriched.year || existingMeta.year)
+        ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
+
         const updateFields = {
             label: enriched.label || vinyl.label,
             catalog_number: enriched.catalogNumber || vinyl.catalog_number,
             tracks,
             meta: {
-                ...(typeof vinyl.meta === 'string' ? JSON.parse(vinyl.meta) : vinyl.meta),
-                genre: enriched.genre || (typeof vinyl.meta === 'string' ? JSON.parse(vinyl.meta) : vinyl.meta).genre || '',
-                style: enriched.style || (typeof vinyl.meta === 'string' ? JSON.parse(vinyl.meta) : vinyl.meta).style || '',
-                year: enriched.year || (typeof vinyl.meta === 'string' ? JSON.parse(vinyl.meta) : vinyl.meta).year || '',
-                rpm: enriched.rpm || (typeof vinyl.meta === 'string' ? JSON.parse(vinyl.meta) : vinyl.meta).rpm || 0,
+                ...existingMeta,
+                genre: enriched.genre || existingMeta.genre || '',
+                style: enriched.style || existingMeta.style || '',
+                year: enriched.year || existingMeta.year || '',
+                rpm: enriched.rpm || existingMeta.rpm || 0,
                 discogsUrl: enriched.discogsUrl || '',
                 beatportUrl: enriched.beatportUrl || '',
                 enrichmentConfidence: enriched.confidence || 0,
+                ...(priceGuide ? { priceGuide } : (existingMeta.priceGuide ? { priceGuide: existingMeta.priceGuide } : {})),
+                ...(history ? { history } : (existingMeta.history ? { history: existingMeta.history } : {})),
                 lastEnriched: new Date().toISOString()
             }
         };
 
         // Preserve original photo URL if not already saved
-        const existingMeta = typeof vinyl.meta === 'string' ? JSON.parse(vinyl.meta) : vinyl.meta;
         if (!updateFields.meta.originalCoverUrl && !existingMeta?.originalCoverUrl && vinyl.cover_image_url && vinyl.cover_image_url !== '/vinyl_covers/default.png') {
             updateFields.meta.originalCoverUrl = vinyl.cover_image_url;
         } else if (existingMeta?.originalCoverUrl) {
@@ -474,6 +564,115 @@ Respond ONLY with valid JSON.` }]
     }
 
     /**
+     * Fetch price guide from Discogs marketplace API.
+     * Returns { median, lowest, highest, currency, numForSale, lastChecked } or null.
+     */
+    async _fetchPriceGuide(releaseId) {
+        const token = this._getDiscogsToken();
+        if (!token || !releaseId) return null;
+
+        try {
+            const resp = await axios.get(
+                `https://api.discogs.com/marketplace/price_suggestions/${releaseId}`,
+                {
+                    headers: {
+                        'Authorization': `Discogs token=${token}`,
+                        'User-Agent': 'DeeDee/1.0'
+                    },
+                    timeout: 10000
+                }
+            );
+
+            const conditions = resp.data;
+            const values = Object.values(conditions)
+                .map(c => c.value)
+                .filter(v => typeof v === 'number' && v > 0);
+
+            if (values.length === 0) return null;
+
+            values.sort((a, b) => a - b);
+            return {
+                median: parseFloat(values[Math.floor(values.length / 2)].toFixed(2)),
+                lowest: parseFloat(Math.min(...values).toFixed(2)),
+                highest: parseFloat(Math.max(...values).toFixed(2)),
+                currency: Object.values(conditions)[0]?.currency || 'USD',
+                numForSale: values.length,
+                lastChecked: new Date().toISOString()
+            };
+        } catch (e) {
+            if (e.response?.status !== 404) {
+                console.warn(`[DJService] Price guide fetch failed: ${e.message}`);
+            }
+            return null;
+        }
+    }
+
+    /**
+     * Generate a short history blurb about a vinyl release using Gemini + Google Search grounding.
+     */
+    async _generateHistory(artist, title, label, year) {
+        if (!artist && !title) return null;
+        try {
+            const modelName = this.config.getModel('FLASH');
+            const result = await this.agent.client.models.generateContent({
+                model: modelName,
+                contents: [{
+                    role: 'user',
+                    parts: [{
+                        text: `Write 2-3 sentences about the vinyl record "${artist || ''} - ${title || ''}"${label ? ` on ${label}` : ''}${year ? ` (${year})` : ''}. Cover: release significance, why it matters in its genre, and any notable context about the artist or label. Be specific and factual. Respond with plain text only, no markdown.`
+                    }]
+                }],
+                config: { tools: [{ googleSearch: {} }] }
+            });
+
+            let text = '';
+            try {
+                if (typeof result.text === 'function') text = result.text();
+                else if (result.text) text = result.text;
+            } catch (e) { /* ignore */ }
+
+            return text?.trim() || null;
+        } catch (e) {
+            console.warn(`[DJService] History generation failed: ${e.message}`);
+            return null;
+        }
+    }
+
+    /**
+     * Refresh just the price guide and history for a vinyl (no cascade re-enrichment).
+     */
+    async refreshValue(vinylId) {
+        const vinyl = this.db.getVinyl(vinylId);
+        if (!vinyl) throw new Error(`Vinyl ${vinylId} not found`);
+
+        const meta = typeof vinyl.meta === 'string' ? JSON.parse(vinyl.meta) : (vinyl.meta || {});
+        const discogsReleaseId = meta.discogsUrl
+            ? (meta.discogsUrl.match(/\/release\/(\d+)/) || [])[1]
+            : null;
+
+        const [priceGuide, history] = await Promise.allSettled([
+            discogsReleaseId ? this._fetchPriceGuide(discogsReleaseId) : Promise.resolve(null),
+            this._generateHistory(vinyl.artist, vinyl.title, vinyl.label, meta.year)
+        ]).then(results => results.map(r => r.status === 'fulfilled' ? r.value : null));
+
+        const updatedMeta = {
+            ...meta,
+            ...(priceGuide ? { priceGuide } : {}),
+            ...(history ? { history } : {}),
+            lastEnriched: new Date().toISOString()
+        };
+
+        this.db.updateVinyl(vinylId, { meta: updatedMeta });
+        const updated = this.db.getVinyl(vinylId);
+
+        if (this.agent.interface && this.agent.interface.broadcast) {
+            this.agent.interface.broadcast('dj:vinyl:update', updated);
+        }
+
+        return updated;
+    }
+
+    /**
      * Score a Discogs search result against expected artist/title/label/catno.
      * Discogs results have title in "Artist - Release Title" format.
      * Returns 0–1 where 1 is a perfect match.
@@ -514,7 +713,6 @@ Respond ONLY with valid JSON.` }]
             if (resultTitle && (resultTitle.includes(expTitle) || expTitle.includes(resultTitle))) {
                 score += 0.35;
             } else {
-                // Word-level partial match, ignore very short words
                 const titleWords = expTitle.split(' ').filter(w => w.length > 2);
                 if (titleWords.length > 0) {
                     const matched = titleWords.filter(w => resultFull.includes(w)).length;
@@ -557,7 +755,6 @@ Respond ONLY with valid JSON.` }]
             return null;
         }
 
-        const axios = require('axios');
         const headers = {
             'Authorization': `Discogs token=${token}`,
             'User-Agent': 'DeeDee/1.0'
@@ -688,7 +885,6 @@ Respond ONLY with valid JSON.` }]
      * Search MusicBrainz for release metadata and Cover Art Archive for images.
      */
     async _searchMusicBrainz(artist, title, catalogNumber) {
-        const axios = require('axios');
         const headers = {
             'User-Agent': 'DeeDee/1.0 (dj-crate-enrichment)',
             'Accept': 'application/json'
@@ -804,18 +1000,22 @@ Respond ONLY with valid JSON.` }]
     async _downloadCoverArt(urls) {
         if (!urls || urls.length === 0) return null;
 
-        const axios = require('axios');
         const dataDir = path.join(process.env.DATA_DIR || '/app/data', 'vinyl_covers');
         if (!fs.existsSync(dataDir)) fs.mkdirSync(dataDir, { recursive: true });
 
         for (const url of urls) {
             if (!url || !url.startsWith('http')) continue;
             try {
+                const headers = { 'User-Agent': 'DeeDee/1.0' };
+                if (url.includes('discogs.com')) {
+                    const token = this._getDiscogsToken();
+                    if (token) headers['Authorization'] = `Discogs token=${token}`;
+                }
                 const response = await axios.get(url, {
                     responseType: 'arraybuffer',
                     timeout: 15000,
                     maxRedirects: 5,
-                    headers: { 'User-Agent': 'DeeDee/1.0' },
+                    headers,
                     validateStatus: (status) => status === 200
                 });
 

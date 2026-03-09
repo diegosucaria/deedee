@@ -133,3 +133,10 @@
     - [x] **Live UI**: Sub-Agents tab in Tasks page with socket-based real-time updates. Added ability to view the entire task prompt when expanding a row. Shows initiator/trigger source and start time.
     - [x] **Safety**: Tool allowlisting, session isolation (`subagent-*`), `FLASH` model default.
 - [x] **Google Workspace CLI Integration (Mar 2026)**: Replaced legacy OAuth mechanisms with `@googleworkspace/cli` native bindings. Supports multiple dynamic namespaces and local file uploads.
+- [x] **DJ Crate V2 (Mar 2026)**:
+    - [x] **Non-blocking Enrichment**: Upload returns placeholder immediately; enrichment runs in background via fire-and-forget. Socket.io broadcasts progress (`dj:vinyl:enriching`, `dj:vinyl:update`). Retry failed enrichments.
+    - [x] **Hidden Gems**: Discogs marketplace price guide (median/low/high) + AI-generated release history blurbs via Gemini + Google Search grounding. Auto-fetched during enrichment, manual refresh via `/value` endpoint.
+    - [x] **Collections & Crates**: Manual and smart crate organization. Smart crates auto-filter by genre, style, year range, BPM range, label, RPM. Crate strip UI, add/remove from crate, crate modal with rule editor.
+    - [x] **Multi-token Search**: Search queries split by whitespace, all tokens must match across artist/title/label/genre/style/catalog.
+    - [x] **Discogs Result Scoring**: Ranked search results with format, year, and text similarity scoring.
+    - [x] **Original Photo Preservation**: Keeps original uploaded photo URL in meta when enrichment replaces cover art.
