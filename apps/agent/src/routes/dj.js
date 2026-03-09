@@ -109,6 +109,122 @@ const createDjRouter = (agent) => {
         }
     });
 
+    // POST /vinyls/:id/value - Refresh price guide + history only
+    router.post('/vinyls/:id/value', async (req, res) => {
+        try {
+            const { id } = req.params;
+            if (!id || id.trim().length === 0) {
+                return res.status(400).json({ error: 'Missing vinyl ID' });
+            }
+            if (!agent.djService) {
+                return res.status(503).json({ error: 'DJ Service not available' });
+            }
+            const updated = await agent.djService.refreshValue(id);
+            res.json({ success: true, vinyl: updated });
+        } catch (error) {
+            console.error('[DJRouter] Refresh value error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    // POST /vinyls/:id/retry-enrich - Retry failed enrichment (non-blocking)
+    router.post('/vinyls/:id/retry-enrich', async (req, res) => {
+        try {
+            const { id } = req.params;
+            if (!id || id.trim().length === 0) {
+                return res.status(400).json({ error: 'Missing vinyl ID' });
+            }
+            if (!agent.djService) {
+                return res.status(503).json({ error: 'DJ Service not available' });
+            }
+            const result = await agent.djService.retryEnrich(id);
+            res.json(result);
+        } catch (error) {
+            console.error('[DJRouter] Retry enrich error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    // --- Crate Routes ---
+
+    // GET /crates
+    router.get('/crates', (req, res) => {
+        try {
+            res.json(agent.db.getCrates());
+        } catch (error) {
+            console.error('[DJRouter] Error fetching crates:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    // POST /crates
+    router.post('/crates', (req, res) => {
+        try {
+            const { name, type, rules, icon, color } = req.body;
+            if (!name) return res.status(400).json({ error: 'Missing name' });
+            const id = agent.db.addCrate({ name, type, rules, icon, color });
+            res.json({ success: true, crate: agent.db.getCrate(id) });
+        } catch (error) {
+            console.error('[DJRouter] Create crate error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    // PUT /crates/:id
+    router.put('/crates/:id', (req, res) => {
+        try {
+            agent.db.updateCrate(req.params.id, req.body);
+            res.json({ success: true, crate: agent.db.getCrate(req.params.id) });
+        } catch (error) {
+            console.error('[DJRouter] Update crate error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    // DELETE /crates/:id
+    router.delete('/crates/:id', (req, res) => {
+        try {
+            agent.db.deleteCrate(req.params.id);
+            res.json({ success: true });
+        } catch (error) {
+            console.error('[DJRouter] Delete crate error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    // GET /crates/:id/vinyls
+    router.get('/crates/:id/vinyls', (req, res) => {
+        try {
+            const vinyls = agent.db.getCrateVinyls(req.params.id);
+            res.json(vinyls);
+        } catch (error) {
+            console.error('[DJRouter] Get crate vinyls error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    // POST /crates/:id/vinyls/:vinylId
+    router.post('/crates/:id/vinyls/:vinylId', (req, res) => {
+        try {
+            agent.db.addVinylToCrate(req.params.id, req.params.vinylId);
+            res.json({ success: true });
+        } catch (error) {
+            console.error('[DJRouter] Add to crate error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    // DELETE /crates/:id/vinyls/:vinylId
+    router.delete('/crates/:id/vinyls/:vinylId', (req, res) => {
+        try {
+            agent.db.removeVinylFromCrate(req.params.id, req.params.vinylId);
+            res.json({ success: true });
+        } catch (error) {
+            console.error('[DJRouter] Remove from crate error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
     // Serve Vinyl Covers (Internal)
     // Uses 'data' dir (volume)
     let baseDataDir = process.env.DATA_DIR;

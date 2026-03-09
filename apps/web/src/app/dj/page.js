@@ -1,10 +1,10 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-import { getVinylCrate, uploadVinylPhoto, updateVinyl, deleteVinyl as deleteVinylAction, reEnrichVinyl } from '../actions';
+import { getVinylCrate, uploadVinylPhoto, updateVinyl, deleteVinyl as deleteVinylAction, reEnrichVinyl, retryEnrichVinyl, refreshVinylValue, getCrates, createCrate, updateCrate as updateCrateAction, deleteCrate as deleteCrateAction, getCrateVinyls, addVinylToCrate, removeVinylFromCrate } from '../actions';
 import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
-import { Upload, Disc3, Music, ExternalLink, Loader2, Search, X, AlertTriangle, Check, Pencil, Trash2, LayoutGrid, List, ArrowUpDown, RefreshCw } from 'lucide-react';
+import { Upload, Disc3, Music, ExternalLink, Loader2, Search, X, AlertTriangle, Check, Pencil, Trash2, LayoutGrid, List, ArrowUpDown, RefreshCw, Plus, FolderPlus, TrendingUp, BookOpen, Sparkles } from 'lucide-react';
 
 export default function DJCratePage() {
     const [vinyls, setVinyls] = useState([]);
@@ -18,40 +18,59 @@ export default function DJCratePage() {
     const [saving, setSaving] = useState(false);
     const [viewMode, setViewMode] = useState('crate'); // 'crate' | 'tracks'
     const [sortConfig, setSortConfig] = useState({ key: 'bpm', dir: 'desc' });
-    const [enrichingVinyl, setEnrichingVinyl] = useState(null);
+    const [enrichingIds, setEnrichingIds] = useState(new Set());
     const [reEnriching, setReEnriching] = useState(false);
+    const [refreshingValue, setRefreshingValue] = useState(false);
+    // Collections
+    const [crates, setCrates] = useState([]);
+    const [activeCrateId, setActiveCrateId] = useState(null);
+    const [crateVinyls, setCrateVinyls] = useState(null);
+    const [showCrateModal, setShowCrateModal] = useState(false);
+    const [editingCrate, setEditingCrate] = useState(null);
+    const [showAddToCrateMenu, setShowAddToCrateMenu] = useState(null);
     const fileInputRef = useRef(null);
 
-    async function loadCrate() {
+    async function loadData() {
         setLoading(true);
-        const res = await getVinylCrate(200);
-        if (res.success) setVinyls(res.data || []);
+        const [vinylsRes, cratesRes] = await Promise.all([
+            getVinylCrate(200),
+            getCrates()
+        ]);
+        if (vinylsRes.success) setVinyls(vinylsRes.data || []);
         else setVinyls([]);
+        if (cratesRes.success) setCrates(cratesRes.data || []);
         setLoading(false);
     }
 
     useEffect(() => {
-        loadCrate();
+        loadData();
         const socket = io();
         socket.on('dj:vinyl:update', (v) => {
+            setEnrichingIds(prev => { const s = new Set(prev); s.delete(v.id); return s; });
             setVinyls((prev) => {
                 const idx = prev.findIndex(x => x.id === v.id);
                 if (idx >= 0) { const u = [...prev]; u[idx] = v; return u; }
                 return [v, ...prev];
             });
+            setSelectedVinyl(sel => sel?.id === v.id ? v : sel);
         });
         socket.on('dj:vinyl:delete', ({ id }) => {
             setVinyls((prev) => prev.filter(v => v.id !== id));
             setSelectedVinyl((sel) => sel?.id === id ? null : sel);
         });
         socket.on('dj:vinyl:enriching', (data) => {
-            setEnrichingVinyl(data);
-        });
-        socket.on('dj:vinyl:update', () => {
-            setEnrichingVinyl(null);
+            if (data.id) setEnrichingIds(prev => new Set([...prev, data.id]));
         });
         return () => socket.disconnect();
     }, []);
+
+    // Fetch crate vinyls when active crate changes
+    useEffect(() => {
+        if (!activeCrateId) { setCrateVinyls(null); return; }
+        getCrateVinyls(activeCrateId).then(res => {
+            if (res.success) setCrateVinyls(res.data || []);
+        });
+    }, [activeCrateId]);
 
     const handleFileSelect = async (e) => {
         const file = e.target.files?.[0];
@@ -65,11 +84,18 @@ export default function DJCratePage() {
                 reader.onerror = reject;
                 reader.readAsDataURL(file);
             });
-            setUploadStatus('Analyzing & enriching...');
+            setUploadStatus('Analyzing image...');
             const result = await uploadVinylPhoto(base64, file.type);
             if (result.success) {
-                setUploadStatus(`Added ${result.data.vinyls?.length || 0} vinyl(s)!`);
-                await loadCrate();
+                const newVinyls = result.data?.vinyls || [];
+                setUploadStatus(`Processing ${newVinyls.length} vinyl(s)...`);
+                // Optimistically add placeholders — Socket.io will update when enrichment completes
+                if (newVinyls.length > 0) {
+                    setVinyls(prev => [...newVinyls.filter(nv => !prev.find(p => p.id === nv.id)), ...prev.map(p => {
+                        const updated = newVinyls.find(nv => nv.id === p.id);
+                        return updated || p;
+                    })]);
+                }
             } else {
                 setUploadStatus(`Error: ${result.error}`);
             }
@@ -82,6 +108,25 @@ export default function DJCratePage() {
         }
     };
 
+    const handleRetryEnrich = async (vinylId) => {
+        await retryEnrichVinyl(vinylId);
+    };
+
+    const handleRefreshValue = async () => {
+        if (!selectedVinyl) return;
+        setRefreshingValue(true);
+        try {
+            const result = await refreshVinylValue(selectedVinyl.id);
+            if (result.success && result.data?.vinyl) {
+                setSelectedVinyl(result.data.vinyl);
+                setVinyls(prev => prev.map(v => v.id === selectedVinyl.id ? result.data.vinyl : v));
+            }
+        } catch (e) {
+            console.error('Refresh value failed:', e);
+        }
+        setRefreshingValue(false);
+    };
+
     const parseMeta = (v) => { try { return typeof v.meta === 'string' ? JSON.parse(v.meta) : (v.meta || {}); } catch { return {}; } };
     const parseTracks = (v) => { try { if (typeof v.tracks === 'string') return JSON.parse(v.tracks); return Array.isArray(v.tracks) ? v.tracks : []; } catch { return []; } };
 
@@ -91,15 +136,17 @@ export default function DJCratePage() {
         return { label: 'Low', color: 'text-red-400', bg: 'bg-red-500/10 border-red-500/20' };
     };
 
+    const activeVinylPool = crateVinyls !== null ? crateVinyls : vinyls;
+
     const filteredVinyls = searchQuery.trim()
-        ? vinyls.filter((v) => {
+        ? activeVinylPool.filter((v) => {
             const q = searchQuery.toLowerCase();
             const m = parseMeta(v);
             return v.artist?.toLowerCase().includes(q) || v.title?.toLowerCase().includes(q) ||
                 v.label?.toLowerCase().includes(q) || v.catalog_number?.toLowerCase().includes(q) ||
                 m.genre?.toLowerCase().includes(q) || m.style?.toLowerCase().includes(q);
         })
-        : vinyls;
+        : activeVinylPool;
 
     const openDetail = (v) => { setSelectedVinyl(v); setEditing(false); setEditFields({}); };
 
@@ -241,6 +288,31 @@ export default function DJCratePage() {
                 </div>
             </div>
 
+            {/* Crate Strip */}
+            {crates.length > 0 && (
+                <div className="flex items-center gap-2 overflow-x-auto pb-1 no-scrollbar">
+                    <button onClick={() => { setActiveCrateId(null); setCrateVinyls(null); }}
+                        className={`shrink-0 px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${activeCrateId === null ? 'bg-purple-600 text-white border-purple-500' : 'bg-muted text-muted-foreground border-zinc-700/50 hover:text-foreground'}`}>
+                        All Vinyls <span className="ml-1.5 text-[10px] opacity-60">{vinyls.length}</span>
+                    </button>
+                    {crates.map(crate => (
+                        <button key={crate.id}
+                            onClick={() => setActiveCrateId(crate.id)}
+                            onContextMenu={(e) => { e.preventDefault(); setEditingCrate(crate); setShowCrateModal(true); }}
+                            className={`shrink-0 flex items-center gap-1.5 px-3 py-1.5 rounded-full text-xs font-medium transition-colors border ${activeCrateId === crate.id ? 'bg-purple-600 text-white border-purple-500' : 'bg-muted text-muted-foreground border-zinc-700/50 hover:text-foreground'}`}>
+                            {crate.icon && <span>{crate.icon}</span>}
+                            {crate.name}
+                            {crate.type === 'smart' && <Sparkles className="w-2.5 h-2.5 text-indigo-300/70" />}
+                        </button>
+                    ))}
+                    <button onClick={() => { setEditingCrate(null); setShowCrateModal(true); }}
+                        className="shrink-0 p-1.5 rounded-full border border-zinc-700/50 text-muted-foreground hover:text-foreground hover:bg-muted transition-colors"
+                        title="Create Crate">
+                        <Plus className="w-3.5 h-3.5" />
+                    </button>
+                </div>
+            )}
+
             {/* Upload Status */}
             <AnimatePresence>
                 {uploadStatus && (
@@ -253,11 +325,11 @@ export default function DJCratePage() {
 
             {/* Enrichment Status */}
             <AnimatePresence>
-                {enrichingVinyl && (
+                {enrichingIds.size > 0 && (
                     <motion.div initial={{ opacity: 0, y: -10 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -10 }}
                         className="flex items-center gap-3 px-3 sm:px-4 py-2.5 rounded-lg text-xs sm:text-sm font-medium bg-purple-500/10 text-purple-400 border border-purple-500/20">
                         <Loader2 className="w-4 h-4 animate-spin shrink-0" />
-                        <span>Enriching <strong>{enrichingVinyl.artist} - {enrichingVinyl.title}</strong> — searching Discogs, Beatport, decks.de, juno...</span>
+                        <span>Enriching {enrichingIds.size} vinyl{enrichingIds.size > 1 ? 's' : ''} — searching Discogs, MusicBrainz, Beatport...</span>
                     </motion.div>
                 )}
             </AnimatePresence>
@@ -274,6 +346,8 @@ export default function DJCratePage() {
                         const tracks = parseTracks(vinyl);
                         const conf = meta.enrichmentConfidence || 0;
                         const confInfo = getConfidenceInfo(conf);
+                        const isEnriching = enrichingIds.has(vinyl.id) || vinyl.enrichment_status === 'enriching';
+                        const isFailed = vinyl.enrichment_status === 'failed';
 
                         return (
                             <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} key={vinyl.id}
@@ -281,10 +355,25 @@ export default function DJCratePage() {
                                 onClick={() => openDetail(vinyl)}>
                                 <div className="aspect-square relative overflow-hidden rounded-lg shadow-sm border border-zinc-700/50 bg-muted">
                                     <img src={vinyl.cover_image_url || '/vinyl_covers/default.png'} alt={vinyl.title}
-                                        className="object-cover w-full h-full transition-transform duration-300 group-hover:scale-105" loading="lazy" />
+                                        className={`object-cover w-full h-full transition-transform duration-300 group-hover:scale-105 ${isEnriching ? 'opacity-60' : ''}`} loading="lazy" />
+
+                                    {/* Enriching overlay */}
+                                    {isEnriching && (
+                                        <div className="absolute inset-0 bg-black/60 flex items-center justify-center rounded-lg">
+                                            <Loader2 className="w-6 h-6 animate-spin text-purple-400" />
+                                        </div>
+                                    )}
+
+                                    {/* Failed badge */}
+                                    {isFailed && (
+                                        <div className="absolute bottom-1 right-1 px-1.5 py-0.5 rounded bg-red-900/80 text-[9px] text-red-300 border border-red-700/50 cursor-pointer hover:bg-red-800/80 z-10"
+                                            onClick={(e) => { e.stopPropagation(); handleRetryEnrich(vinyl.id); }}>
+                                            Retry
+                                        </div>
+                                    )}
 
                                     {/* Confidence badge */}
-                                    {conf > 0 && conf < 0.8 && (
+                                    {!isEnriching && conf > 0 && conf < 0.8 && (
                                         <div className={`absolute top-1 right-1 px-1 py-0.5 rounded text-[8px] sm:text-[9px] font-medium border ${confInfo.bg} ${confInfo.color}`}>
                                             <AlertTriangle className="w-2 h-2 sm:w-2.5 sm:h-2.5 inline mr-0.5" />{confInfo.label}
                                         </div>
@@ -297,32 +386,64 @@ export default function DJCratePage() {
                                         </div>
                                     )}
 
+                                    {/* Add to Crate button — hidden on touch, shown on hover */}
+                                    {crates.filter(c => c.type === 'manual').length > 0 && !isEnriching && (
+                                        <button
+                                            onClick={(e) => { e.stopPropagation(); setShowAddToCrateMenu(showAddToCrateMenu === vinyl.id ? null : vinyl.id); }}
+                                            className="absolute top-1 right-1 p-1 rounded bg-zinc-900/70 text-white opacity-0 group-hover:opacity-100 transition-opacity hover:bg-purple-600/80 z-10"
+                                            style={conf > 0 && conf < 0.8 ? { right: '3.5rem' } : {}}
+                                            title="Add to Crate">
+                                            <FolderPlus className="w-3 h-3" />
+                                        </button>
+                                    )}
+
+                                    {/* Add to Crate dropdown */}
+                                    {showAddToCrateMenu === vinyl.id && (
+                                        <div className="absolute top-8 right-1 z-20 bg-zinc-900 border border-zinc-700/50 rounded-lg shadow-xl py-1 min-w-[120px]"
+                                            onClick={(e) => e.stopPropagation()}>
+                                            {crates.filter(c => c.type === 'manual').map(crate => (
+                                                <button key={crate.id}
+                                                    onClick={async (e) => {
+                                                        e.stopPropagation();
+                                                        await addVinylToCrate(crate.id, vinyl.id);
+                                                        setShowAddToCrateMenu(null);
+                                                    }}
+                                                    className="w-full px-3 py-1.5 text-left text-xs text-muted-foreground hover:text-foreground hover:bg-zinc-800 transition-colors flex items-center gap-1.5">
+                                                    {crate.icon && <span>{crate.icon}</span>}
+                                                    {crate.name}
+                                                </button>
+                                            ))}
+                                        </div>
+                                    )}
+
                                     {/* Hover overlay — hidden on touch */}
-                                    <div className="hidden sm:flex absolute inset-0 bg-black/75 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity flex-col items-center justify-center text-white p-3 text-center gap-1">
-                                        <p className="font-bold text-sm">{vinyl.title}</p>
-                                        <p className="text-xs text-white/80">{vinyl.artist}</p>
-                                        <p className="text-[10px] uppercase tracking-widest text-white/50">{vinyl.label}</p>
-                                        {tracks.length > 0 && (
-                                            <div className="mt-1 text-[9px] text-white/60 w-full max-h-16 overflow-hidden space-y-0.5">
-                                                {tracks.slice(0, 3).map((t, i) => (
-                                                    <div key={i} className="flex items-center justify-between gap-1 px-1">
-                                                        <span className="truncate"><Music className="w-2 h-2 inline mr-0.5" />{t.position || ''} {typeof t === 'string' ? t : (t.title || '')}</span>
-                                                        <span className="shrink-0 space-x-1">
-                                                            {t.bpm > 0 && <span className="text-purple-300 font-mono">{t.bpm}</span>}
-                                                            {t.key && <span className="text-indigo-300 font-mono">{t.key}</span>}
-                                                        </span>
-                                                    </div>
-                                                ))}
-                                                {tracks.length > 3 && <div>+{tracks.length - 3} more</div>}
-                                            </div>
-                                        )}
-                                        <p className="text-[10px] mt-1 text-purple-300/70">Tap to view</p>
-                                    </div>
+                                    {!isEnriching && (
+                                        <div className="hidden sm:flex absolute inset-0 bg-black/75 backdrop-blur-sm opacity-0 group-hover:opacity-100 transition-opacity flex-col items-center justify-center text-white p-3 text-center gap-1">
+                                            <p className="font-bold text-sm">{vinyl.title}</p>
+                                            <p className="text-xs text-white/80">{vinyl.artist}</p>
+                                            <p className="text-[10px] uppercase tracking-widest text-white/50">{vinyl.label}</p>
+                                            {tracks.length > 0 && (
+                                                <div className="mt-1 text-[9px] text-white/60 w-full max-h-16 overflow-hidden space-y-0.5">
+                                                    {tracks.slice(0, 3).map((t, i) => (
+                                                        <div key={i} className="flex items-center justify-between gap-1 px-1">
+                                                            <span className="truncate"><Music className="w-2 h-2 inline mr-0.5" />{t.position || ''} {typeof t === 'string' ? t : (t.title || '')}</span>
+                                                            <span className="shrink-0 space-x-1">
+                                                                {t.bpm > 0 && <span className="text-purple-300 font-mono">{t.bpm}</span>}
+                                                                {t.key && <span className="text-indigo-300 font-mono">{t.key}</span>}
+                                                            </span>
+                                                        </div>
+                                                    ))}
+                                                    {tracks.length > 3 && <div>+{tracks.length - 3} more</div>}
+                                                </div>
+                                            )}
+                                            <p className="text-[10px] mt-1 text-purple-300/70">Tap to view</p>
+                                        </div>
+                                    )}
                                 </div>
 
                                 <div className="space-y-0.5 min-w-0">
-                                    <h3 className="font-semibold text-xs sm:text-sm truncate">{vinyl.title}</h3>
-                                    <p className="text-[10px] sm:text-xs text-muted-foreground truncate">{vinyl.artist}</p>
+                                    <h3 className="font-semibold text-xs sm:text-sm truncate">{vinyl.title || 'Enriching...'}</h3>
+                                    <p className="text-[10px] sm:text-xs text-muted-foreground truncate">{vinyl.artist || ''}</p>
                                     {meta.genre && <p className="text-[9px] sm:text-[10px] text-amber-400/70 truncate">{meta.genre}</p>}
                                 </div>
                             </motion.div>
@@ -405,6 +526,39 @@ export default function DJCratePage() {
                 </div>
             )}
 
+            {/* Crate Modal */}
+            <AnimatePresence>
+                {showCrateModal && (
+                    <CrateModal
+                        crate={editingCrate}
+                        vinyls={vinyls}
+                        onClose={() => { setShowCrateModal(false); setEditingCrate(null); }}
+                        onSave={async (data) => {
+                            if (editingCrate) {
+                                await updateCrateAction(editingCrate.id, data);
+                            } else {
+                                await createCrate(data);
+                            }
+                            const res = await getCrates();
+                            if (res.success) setCrates(res.data || []);
+                            setShowCrateModal(false);
+                            setEditingCrate(null);
+                        }}
+                        onDelete={async () => {
+                            if (editingCrate) {
+                                await deleteCrateAction(editingCrate.id);
+                                if (activeCrateId === editingCrate.id) { setActiveCrateId(null); setCrateVinyls(null); }
+                                const res = await getCrates();
+                                if (res.success) setCrates(res.data || []);
+                            }
+                            setShowCrateModal(false);
+                            setEditingCrate(null);
+                        }}
+                        parseMeta={parseMeta}
+                    />
+                )}
+            </AnimatePresence>
+
             {/* Detail / Edit Modal */}
             <AnimatePresence>
                 {selectedVinyl && (
@@ -430,6 +584,10 @@ export default function DJCratePage() {
                                 onDelete={handleDelete}
                                 onReEnrich={handleReEnrich}
                                 reEnriching={reEnriching}
+                                refreshingValue={refreshingValue}
+                                onRefreshValue={handleRefreshValue}
+                                crates={crates}
+                                onAddToCrate={async (crateId) => { await addVinylToCrate(crateId, selectedVinyl.id); }}
                                 setEditFields={setEditFields} updateTrackField={updateTrackField}
                                 parseMeta={parseMeta} parseTracks={parseTracks} getConfidenceInfo={getConfidenceInfo}
                             />
@@ -441,11 +599,13 @@ export default function DJCratePage() {
     );
 }
 
-function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit, onSave, onCancel, onDelete, onReEnrich, reEnriching, setEditFields, updateTrackField, parseMeta, parseTracks, getConfidenceInfo }) {
+function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit, onSave, onCancel, onDelete, onReEnrich, reEnriching, refreshingValue, onRefreshValue, crates, onAddToCrate, setEditFields, updateTrackField, parseMeta, parseTracks, getConfidenceInfo }) {
     const meta = parseMeta(vinyl);
     const tracks = parseTracks(vinyl);
     const conf = meta.enrichmentConfidence || 0;
     const confInfo = getConfidenceInfo(conf);
+    const isEnriching = vinyl.enrichment_status === 'enriching';
+    const [showCrateMenu, setShowCrateMenu] = useState(false);
 
     const Field = ({ label, field, type = 'text', metaField = false }) => {
         const value = metaField ? (editFields.meta?.[field] ?? meta[field] ?? '') : (editFields[field] ?? vinyl[field] ?? '');
@@ -511,7 +671,7 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
                     </div>
                 </div>
                 <div className="flex items-center gap-1 shrink-0">
-                    {!editing && (
+                    {!editing && !isEnriching && (
                         <button onClick={onEdit} className="p-2 rounded-lg hover:bg-zinc-800 text-muted-foreground hover:text-foreground transition-colors" title="Edit">
                             <Pencil className="w-4 h-4" />
                         </button>
@@ -531,6 +691,62 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
                 <Field label="Year" field="year" type="number" metaField />
                 <Field label="RPM" field="rpm" type="number" metaField />
             </div>
+
+            {/* Hidden Gems: Market Value */}
+            {meta.priceGuide && (
+                <div className="space-y-2">
+                    <div className="flex items-center justify-between">
+                        <h3 className="text-[10px] sm:text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                            <TrendingUp className="w-3 h-3 text-emerald-400" /> Market Value
+                        </h3>
+                        <button onClick={onRefreshValue} disabled={refreshingValue}
+                            className="flex items-center gap-1 text-[10px] text-muted-foreground hover:text-foreground disabled:opacity-50 transition-colors">
+                            {refreshingValue ? <Loader2 className="w-3 h-3 animate-spin" /> : <RefreshCw className="w-3 h-3" />}
+                            Refresh
+                        </button>
+                    </div>
+                    <div className="flex gap-3 bg-zinc-800/50 rounded-lg p-3 border border-zinc-700/30">
+                        <div className="text-center flex-1">
+                            <p className="text-emerald-400 font-mono text-sm font-semibold">{meta.priceGuide.currency} {meta.priceGuide.median?.toFixed(2)}</p>
+                            <p className="text-[10px] text-muted-foreground">Median</p>
+                        </div>
+                        <div className="text-center flex-1">
+                            <p className="text-zinc-400 font-mono text-sm">{meta.priceGuide.lowest?.toFixed(2)}</p>
+                            <p className="text-[10px] text-muted-foreground">Low</p>
+                        </div>
+                        <div className="text-center flex-1">
+                            <p className="text-zinc-400 font-mono text-sm">{meta.priceGuide.highest?.toFixed(2)}</p>
+                            <p className="text-[10px] text-muted-foreground">High</p>
+                        </div>
+                        <div className="text-center flex-1">
+                            <p className="text-zinc-400 font-mono text-sm">{meta.priceGuide.numForSale}</p>
+                            <p className="text-[10px] text-muted-foreground">Listings</p>
+                        </div>
+                    </div>
+                    {meta.priceGuide.lastChecked && (
+                        <p className="text-[9px] text-muted-foreground">Last checked {new Date(meta.priceGuide.lastChecked).toLocaleDateString()}</p>
+                    )}
+                </div>
+            )}
+
+            {/* Hidden Gems: History */}
+            {meta.history && (
+                <div className="space-y-2">
+                    <h3 className="text-[10px] sm:text-xs text-muted-foreground uppercase tracking-wider flex items-center gap-1.5">
+                        <BookOpen className="w-3 h-3 text-amber-400" /> About this Release
+                    </h3>
+                    <p className="text-xs text-muted-foreground leading-relaxed">{meta.history}</p>
+                </div>
+            )}
+
+            {/* Refresh Value button when no price data yet */}
+            {!meta.priceGuide && !meta.history && !isEnriching && !editing && (
+                <button onClick={onRefreshValue} disabled={refreshingValue}
+                    className="flex items-center gap-2 px-3 py-2 text-xs text-emerald-400/70 hover:text-emerald-400 hover:bg-emerald-900/20 disabled:opacity-50 rounded-lg transition-colors">
+                    {refreshingValue ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <TrendingUp className="w-3.5 h-3.5" />}
+                    {refreshingValue ? 'Fetching value...' : 'Check market value'}
+                </button>
+            )}
 
             {/* Tracklist */}
             <div className="space-y-2">
@@ -616,11 +832,34 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
             {/* Actions — separated from close/edit for safety */}
             {!editing && (
                 <div className="flex items-center justify-between pt-3 border-t border-zinc-700/30">
-                    <button onClick={onReEnrich} disabled={reEnriching}
-                        className="flex items-center gap-2 px-3 py-2 text-xs text-purple-400/70 hover:text-purple-400 hover:bg-purple-900/20 disabled:opacity-50 rounded-lg transition-colors">
-                        {reEnriching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
-                        {reEnriching ? 'Enriching...' : 'Re-enrich metadata'}
-                    </button>
+                    <div className="flex items-center gap-1">
+                        <button onClick={onReEnrich} disabled={reEnriching || isEnriching}
+                            className="flex items-center gap-2 px-3 py-2 text-xs text-purple-400/70 hover:text-purple-400 hover:bg-purple-900/20 disabled:opacity-50 rounded-lg transition-colors">
+                            {reEnriching || isEnriching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                            {reEnriching || isEnriching ? 'Enriching...' : 'Re-enrich'}
+                        </button>
+                        {crates.filter(c => c.type === 'manual').length > 0 && (
+                            <div className="relative">
+                                <button onClick={() => setShowCrateMenu(!showCrateMenu)}
+                                    className="flex items-center gap-2 px-3 py-2 text-xs text-indigo-400/70 hover:text-indigo-400 hover:bg-indigo-900/20 rounded-lg transition-colors">
+                                    <FolderPlus className="w-3.5 h-3.5" />
+                                    Add to Crate
+                                </button>
+                                {showCrateMenu && (
+                                    <div className="absolute bottom-full mb-1 left-0 z-20 bg-zinc-900 border border-zinc-700/50 rounded-lg shadow-xl py-1 min-w-[140px]">
+                                        {crates.filter(c => c.type === 'manual').map(crate => (
+                                            <button key={crate.id}
+                                                onClick={async () => { await onAddToCrate(crate.id); setShowCrateMenu(false); }}
+                                                className="w-full px-3 py-1.5 text-left text-xs text-muted-foreground hover:text-foreground hover:bg-zinc-800 transition-colors flex items-center gap-1.5">
+                                                {crate.icon && <span>{crate.icon}</span>}
+                                                {crate.name}
+                                            </button>
+                                        ))}
+                                    </div>
+                                )}
+                            </div>
+                        )}
+                    </div>
                     <button onClick={onDelete}
                         className="flex items-center gap-2 px-3 py-2 text-xs text-red-400/60 hover:text-red-400 hover:bg-red-900/20 rounded-lg transition-colors">
                         <Trash2 className="w-3.5 h-3.5" />
@@ -629,5 +868,154 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
                 </div>
             )}
         </div>
+    );
+}
+
+function CrateModal({ crate, vinyls, onClose, onSave, onDelete, parseMeta }) {
+    const [name, setName] = useState(crate?.name || '');
+    const [type, setType] = useState(crate?.type || 'manual');
+    const [icon, setIcon] = useState(crate?.icon || '');
+    const [rules, setRules] = useState(crate?.rules || {});
+    const [saving, setSaving] = useState(false);
+
+    const updateRule = (key, value) => setRules(prev => ({ ...prev, [key]: value }));
+
+    // Count matching vinyls for smart crate preview
+    const matchCount = type === 'smart' ? vinyls.filter(v => {
+        const meta = parseMeta(v);
+        const tracks = typeof v.tracks === 'string' ? JSON.parse(v.tracks || '[]') : (v.tracks || []);
+        if (rules.genre && meta.genre?.toLowerCase() !== rules.genre.toLowerCase()) return false;
+        if (rules.style && meta.style?.toLowerCase() !== rules.style.toLowerCase()) return false;
+        if (rules.label && v.label?.toLowerCase() !== rules.label.toLowerCase()) return false;
+        if (rules.rpm && meta.rpm && meta.rpm !== Number(rules.rpm)) return false;
+        if (rules.yearMin && meta.year && meta.year < Number(rules.yearMin)) return false;
+        if (rules.yearMax && meta.year && meta.year > Number(rules.yearMax)) return false;
+        if (rules.bpmMin || rules.bpmMax) {
+            const has = tracks.some(t => {
+                const bpm = t.bpm || 0;
+                if (!bpm) return false;
+                if (rules.bpmMin && bpm < Number(rules.bpmMin)) return false;
+                if (rules.bpmMax && bpm > Number(rules.bpmMax)) return false;
+                return true;
+            });
+            if (!has) return false;
+        }
+        return true;
+    }).length : 0;
+
+    const handleSave = async () => {
+        if (!name.trim()) return;
+        setSaving(true);
+        await onSave({ name: name.trim(), type, icon: icon || null, rules: type === 'smart' ? rules : null });
+        setSaving(false);
+    };
+
+    return (
+        <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center"
+            onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+            <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
+                className="bg-zinc-900 border border-zinc-700/50 rounded-2xl shadow-2xl w-full max-w-md mx-4 p-5 space-y-4">
+                <h2 className="text-lg font-bold">{crate ? 'Edit Crate' : 'New Crate'}</h2>
+
+                {/* Name */}
+                <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground uppercase tracking-wider">Name</label>
+                    <div className="flex gap-2">
+                        <input value={icon} onChange={(e) => setIcon(e.target.value)} placeholder="Icon" maxLength={2}
+                            className="w-12 px-2 py-2 bg-zinc-800 border border-zinc-600 rounded-lg text-sm text-center focus:outline-none focus:border-purple-500" />
+                        <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Crate name"
+                            className="flex-1 px-3 py-2 bg-zinc-800 border border-zinc-600 rounded-lg text-sm focus:outline-none focus:border-purple-500" autoFocus />
+                    </div>
+                </div>
+
+                {/* Type toggle */}
+                <div className="space-y-1">
+                    <label className="text-xs text-muted-foreground uppercase tracking-wider">Type</label>
+                    <div className="flex rounded-lg border border-zinc-700/50 overflow-hidden">
+                        <button onClick={() => setType('manual')}
+                            className={`flex-1 py-2 text-xs font-medium transition-colors ${type === 'manual' ? 'bg-purple-600 text-white' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>
+                            Manual
+                        </button>
+                        <button onClick={() => setType('smart')}
+                            className={`flex-1 py-2 text-xs font-medium transition-colors flex items-center justify-center gap-1 ${type === 'smart' ? 'bg-purple-600 text-white' : 'bg-muted text-muted-foreground hover:text-foreground'}`}>
+                            <Sparkles className="w-3 h-3" /> Smart
+                        </button>
+                    </div>
+                </div>
+
+                {/* Smart rules */}
+                {type === 'smart' && (
+                    <div className="space-y-3 p-3 bg-zinc-800/50 rounded-lg border border-zinc-700/30">
+                        <div className="flex items-center justify-between">
+                            <label className="text-xs text-muted-foreground uppercase tracking-wider">Filter Rules</label>
+                            <span className="text-[10px] text-purple-400">{matchCount} match{matchCount !== 1 ? 'es' : ''}</span>
+                        </div>
+                        <div className="grid grid-cols-2 gap-2">
+                            <div className="space-y-1">
+                                <label className="text-[10px] text-muted-foreground">Genre</label>
+                                <input value={rules.genre || ''} onChange={(e) => updateRule('genre', e.target.value)} placeholder="e.g. Techno"
+                                    className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-600 rounded text-xs focus:outline-none focus:border-purple-500" />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-[10px] text-muted-foreground">Style</label>
+                                <input value={rules.style || ''} onChange={(e) => updateRule('style', e.target.value)} placeholder="e.g. Deep House"
+                                    className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-600 rounded text-xs focus:outline-none focus:border-purple-500" />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-[10px] text-muted-foreground">Year Min</label>
+                                <input type="number" value={rules.yearMin || ''} onChange={(e) => updateRule('yearMin', e.target.value ? Number(e.target.value) : '')}
+                                    className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-600 rounded text-xs focus:outline-none focus:border-purple-500" />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-[10px] text-muted-foreground">Year Max</label>
+                                <input type="number" value={rules.yearMax || ''} onChange={(e) => updateRule('yearMax', e.target.value ? Number(e.target.value) : '')}
+                                    className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-600 rounded text-xs focus:outline-none focus:border-purple-500" />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-[10px] text-muted-foreground">BPM Min</label>
+                                <input type="number" value={rules.bpmMin || ''} onChange={(e) => updateRule('bpmMin', e.target.value ? Number(e.target.value) : '')}
+                                    className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-600 rounded text-xs focus:outline-none focus:border-purple-500" />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-[10px] text-muted-foreground">BPM Max</label>
+                                <input type="number" value={rules.bpmMax || ''} onChange={(e) => updateRule('bpmMax', e.target.value ? Number(e.target.value) : '')}
+                                    className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-600 rounded text-xs focus:outline-none focus:border-purple-500" />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-[10px] text-muted-foreground">Label</label>
+                                <input value={rules.label || ''} onChange={(e) => updateRule('label', e.target.value)} placeholder="e.g. Warp"
+                                    className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-600 rounded text-xs focus:outline-none focus:border-purple-500" />
+                            </div>
+                            <div className="space-y-1">
+                                <label className="text-[10px] text-muted-foreground">RPM</label>
+                                <select value={rules.rpm || ''} onChange={(e) => updateRule('rpm', e.target.value ? Number(e.target.value) : '')}
+                                    className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-600 rounded text-xs focus:outline-none focus:border-purple-500">
+                                    <option value="">Any</option>
+                                    <option value="33">33 RPM</option>
+                                    <option value="45">45 RPM</option>
+                                    <option value="78">78 RPM</option>
+                                </select>
+                            </div>
+                        </div>
+                    </div>
+                )}
+
+                {/* Actions */}
+                <div className="flex items-center justify-between pt-2">
+                    {crate ? (
+                        <button onClick={onDelete} className="text-xs text-red-400/60 hover:text-red-400 transition-colors">Delete Crate</button>
+                    ) : <div />}
+                    <div className="flex gap-2">
+                        <button onClick={onClose} className="px-4 py-2 text-sm text-muted-foreground hover:text-foreground rounded-lg hover:bg-zinc-800 transition-colors">Cancel</button>
+                        <button onClick={handleSave} disabled={saving || !name.trim()}
+                            className="flex items-center gap-2 px-4 py-2 bg-purple-600 hover:bg-purple-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium transition-all">
+                            {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                            {crate ? 'Save' : 'Create'}
+                        </button>
+                    </div>
+                </div>
+            </motion.div>
+        </motion.div>
     );
 }
