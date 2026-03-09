@@ -79,6 +79,7 @@ class Agent {
     this.titleService = new TitleService(this);
     this.configService = new ConfigService();
     this.ragService = new RagService(this);
+    this.journal.setRagService(this.ragService);
     this.djService = new DJService(this);
     this.impersonationService = new ImpersonationService(this);
     this.skillService = new SkillService(this);
@@ -1775,7 +1776,7 @@ class Agent {
 
     // --- INTERNAL DB TOOLS ---
     if (executionName === 'rememberFact') {
-      this.db.setKey(args.key, args.value);
+      this.db.setKey(args.key, args.value, { source: 'tool', confidence: 'user_explicit' });
       return { success: true };
     }
     if (executionName === 'getFact') {

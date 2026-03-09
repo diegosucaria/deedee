@@ -207,7 +207,32 @@ class MemoryExecutor extends BaseExecutor {
                                         console.log(`[Consolidation] Skipping protected key: ${f.key}`);
                                         continue;
                                     }
-                                    db.setKey(f.key, f.value);
+
+                                    // Contradiction detection
+                                    const existingFact = db.getFact(f.key);
+                                    if (existingFact) {
+                                        const oldValue = typeof existingFact.value === 'string' ? existingFact.value : JSON.stringify(existingFact.value);
+                                        const newValue = typeof f.value === 'string' ? f.value : JSON.stringify(f.value);
+
+                                        if (oldValue !== newValue) {
+                                            // Log the change to journal for audit trail
+                                            this.services.journal.log(`**Fact Updated**: \`${f.key}\` changed from "${oldValue}" to "${newValue}"`);
+                                            console.log(`[Consolidation] Fact change detected: ${f.key}: "${oldValue}" -> "${newValue}"`);
+
+                                            // Block overwrite of pinned facts
+                                            if (existingFact.pinned) {
+                                                this.services.journal.log(`**CONFLICT**: Consolidation wanted to change pinned fact \`${f.key}\` from "${oldValue}" to "${newValue}". Change was blocked.`);
+                                                console.warn(`[Consolidation] Blocked update to pinned fact: ${f.key}`);
+                                                continue;
+                                            }
+                                        }
+                                    }
+
+                                    db.setKey(f.key, f.value, {
+                                        category: f.category || 'general',
+                                        confidence: 'consolidated',
+                                        source: 'consolidation'
+                                    });
                                     factsAdded++;
                                 }
                             }

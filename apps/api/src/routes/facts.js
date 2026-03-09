@@ -18,6 +18,7 @@ const proxyToAgent = async (req, res, method, path, data) => {
 
 router.get('/', (req, res) => proxyToAgent(req, res, 'GET', '', null));
 router.post('/', (req, res) => proxyToAgent(req, res, 'POST', '', req.body));
-router.delete('/:key', (req, res) => proxyToAgent(req, res, 'DELETE', `/${req.params.key}`, null));
+router.post('/:key/pin', (req, res) => proxyToAgent(req, res, 'POST', `/${encodeURIComponent(req.params.key)}/pin`, req.body));
+router.delete('/:key', (req, res) => proxyToAgent(req, res, 'DELETE', `/${encodeURIComponent(req.params.key)}`, null));
 
 module.exports = router;

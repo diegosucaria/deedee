@@ -56,20 +56,21 @@ class SmartContextManager {
             return msg;
         });
 
-        // 4. Inject Summary as System Message (or first user message)
+        // 4. Inject Summary as user/model pair for proper Gemini turn alternation
         if (summary) {
-            const summaryMsg = {
-                role: 'user', // Inject as user to ensure model pays attention, or model 'system' if supported
+            const summaryUserMsg = {
+                role: 'user',
                 parts: [{
-                    text: `
-IMPORTANT CONTEXT SUMMARY:
-The following is a compressed summary of our earlier conversation. Use it to maintain continuity.
---------------------------------------------------
-${summary.content}
---------------------------------------------------
-` }]
+                    text: `[SYSTEM: Context Summary from earlier conversation]\n${summary.content}`
+                }]
             };
-            return [summaryMsg, ...timestampedHistory];
+            const summaryAckMsg = {
+                role: 'model',
+                parts: [{
+                    text: 'Understood. I have the context from our earlier conversation and will maintain continuity.'
+                }]
+            };
+            return [summaryUserMsg, summaryAckMsg, ...timestampedHistory];
         }
 
         return timestampedHistory;
@@ -112,21 +113,21 @@ ${summary.content}
             ${conversationText}
             `;
 
-            // Use independent session
-            const model = this.client.getGenerativeModel({ model: this.SUMMARY_MODEL });
-            const result = await model.generateContent(prompt);
+            // Use @google/genai SDK pattern (models.generateContent)
+            const result = await this.client.models.generateContent({
+                model: this.SUMMARY_MODEL,
+                contents: [{ parts: [{ text: prompt }] }]
+            });
             let summaryText = '';
             try {
-                if (typeof result.response.text === 'function') summaryText = result.response.text();
-            } catch (e) { /* ignore */ }
-
-            if (!summaryText && result.response?.candidates?.[0]?.content?.parts) {
-                summaryText = result.response.candidates[0].content.parts.map(p => p.text).join(' ');
+                summaryText = result.candidates[0].content.parts.map(p => p.text).join(' ');
+            } catch (e) {
+                console.error('[SmartContext] Failed to extract summary text:', e);
             }
 
             if (summaryText) {
                 // Save Summary with real token usage
-                const usage = result.response.usageMetadata;
+                const usage = result.usageMetadata;
                 const originalTokens = usage?.promptTokenCount || 0;
                 const summaryTokens = usage?.candidatesTokenCount || 0;
 

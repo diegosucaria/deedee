@@ -40,6 +40,7 @@ router.get('/jobs/:name/state', (req, res) => proxyRequest(req, res, 'GET', `/in
 // Facts
 router.get('/facts', (req, res) => proxyRequest(req, res, 'GET', '/internal/facts'));
 router.post('/facts', (req, res) => proxyRequest(req, res, 'POST', '/internal/facts', req.body));
+router.post('/facts/:key/pin', (req, res) => proxyRequest(req, res, 'POST', `/internal/facts/${encodeURIComponent(req.params.key)}/pin`, req.body));
 router.delete('/facts/:key', (req, res) => proxyRequest(req, res, 'DELETE', `/internal/facts/${encodeURIComponent(req.params.key)}`));
 
 // Tasks

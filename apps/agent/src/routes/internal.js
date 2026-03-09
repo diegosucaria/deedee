@@ -82,12 +82,14 @@ function createInternalRouter(agent) {
     router.get('/facts', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
         try {
-            const stmt = agent.db.db.prepare('SELECT key, value, updated_at FROM kv_store ORDER BY updated_at DESC');
-            const rows = stmt.all();
-            const facts = rows.map(r => {
-                try { return { ...r, value: JSON.parse(r.value) }; }
-                catch (e) { return r; }
-            });
+            const allFacts = agent.db.getAllFacts();
+            // Filter out internal/system keys from user-facing views
+            const facts = allFacts.filter(f =>
+                !f.key.startsWith('config:') &&
+                !f.key.startsWith('job:') &&
+                !f.key.startsWith('sys_') &&
+                !f.key.startsWith('sch_')
+            );
             res.json({ facts });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
@@ -95,8 +97,26 @@ function createInternalRouter(agent) {
     router.post('/facts', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
         try {
-            const { key, value } = req.body;
-            agent.db.setKey(key, value);
+            const { key, value, category, confidence, source, pinned } = req.body;
+            agent.db.setKey(key, value, { category, confidence, source });
+            if (pinned !== undefined) {
+                agent.db.toggleFactPin(key, pinned);
+            }
+            if (agent.interface) {
+                agent.interface.broadcast('facts:update', { action: 'upsert', key }).catch(() => {});
+            }
+            res.json({ success: true });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.post('/facts/:key/pin', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const { pinned } = req.body;
+            agent.db.toggleFactPin(req.params.key, pinned);
+            if (agent.interface) {
+                agent.interface.broadcast('facts:update', { action: 'pin', key: req.params.key, pinned }).catch(() => {});
+            }
             res.json({ success: true });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
@@ -105,6 +125,9 @@ function createInternalRouter(agent) {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
         try {
             agent.db.deleteFact(req.params.key);
+            if (agent.interface) {
+                agent.interface.broadcast('facts:update', { action: 'delete', key: req.params.key }).catch(() => {});
+            }
             res.json({ success: true });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });

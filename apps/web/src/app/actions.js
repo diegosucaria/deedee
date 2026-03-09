@@ -112,7 +112,10 @@ export async function addFact(prevState, formData) {
         const value = formData.get('value');
         if (!key || !value) return { success: false, error: 'Key and Value required' };
 
-        await fetchAPI('/v1/facts', { method: 'POST', body: JSON.stringify({ key, value }) });
+        await fetchAPI('/v1/facts', {
+            method: 'POST',
+            body: JSON.stringify({ key, value, source: 'manual', confidence: 'user_explicit', pinned: true })
+        });
         revalidatePath('/brain');
         return { success: true };
     } catch (e) { return { success: false, error: e.message }; }
@@ -141,6 +144,17 @@ export async function updateFact(originalKey, newKey, value) {
             await fetchAPI(`/v1/facts/${encodeURIComponent(originalKey)}`, { method: 'DELETE' });
         }
 
+        revalidatePath('/brain');
+        return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+}
+
+export async function toggleFactPin(key, pinned) {
+    try {
+        await fetchAPI(`/v1/facts/${encodeURIComponent(key)}/pin`, {
+            method: 'POST',
+            body: JSON.stringify({ pinned })
+        });
         revalidatePath('/brain');
         return { success: true };
     } catch (e) { return { success: false, error: e.message }; }

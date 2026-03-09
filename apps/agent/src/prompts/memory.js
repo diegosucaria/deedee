@@ -1,18 +1,25 @@
 
 /**
  * Prompt for Memory Pruning (Deleting stale facts)
- * @param {Array} facts - List of { key, value } objects
+ * @param {Array} facts - List of { key, value, category, confidence, source, pinned } objects
  * @param {string} currentDate - YYYY-MM-DD
  */
 function getMemoryPruningPrompt(facts, currentDate) {
-  const factsList = facts.map(f => `- ${f.key}: ${JSON.stringify(f.value)}`).join('\n');
+  // Filter out pinned facts — they are protected from auto-pruning
+  const prunableFacts = facts.filter(f => !f.pinned);
+  const pinnedCount = facts.length - prunableFacts.length;
+
+  const factsList = prunableFacts.map(f => {
+    const meta = [f.category || 'general', f.confidence || 'inferred', f.source || 'system'].join(', ');
+    return `- ${f.key}: ${JSON.stringify(f.value)} [${meta}]`;
+  }).join('\n');
 
   return `
 You are a Memory Pruning System for a personal AI assistant.
 Your goal is to identify "stale" or "obsolete" facts from the user's long-term memory that should be DELETED to keep the database clean.
 
 Current Date: ${currentDate}
-
+${pinnedCount > 0 ? `\nNOTE: ${pinnedCount} facts are pinned by the user and have been excluded from this list. They cannot be deleted.\n` : ''}
 ### Deletion Criteria (STRICT)
 1. **Expired Temporal Facts**: Delete facts with a date suffix (e.g., '_on_2024-01-01') if the date is more than 7 days in the past.
    - Example: 'user_dinner_plans_on_2024-01-01' (DELETE if today is 2024-01-10)
@@ -28,8 +35,9 @@ Current Date: ${currentDate}
 - **Long-term Goals**: (e.g. 'goal_learn_rust')
 - **System Settings**: (e.g. 'admin_chat_id', 'voice_settings')
 - **Recent Facts**: Anything created/updated in the last 7 days (unless explicitly dated in the past).
+- **Facts with confidence "user_explicit"**: These were directly stated by the user and should be preserved.
 
-### Input Facts
+### Input Facts (Eligible for Pruning)
 ${factsList}
 
 ### Output Format
@@ -45,7 +53,6 @@ Example Output:
 
 /**
  * Prompt for Memory Consolidation (Summarizing logs into facts)
- * Included here for reference/updates.
  */
 function getConsolidationPrompt(date, logText) {
   return `
@@ -54,8 +61,14 @@ Analyze the following chat logs from ${date}.
 
 Produce a JSON object with two fields:
 1. "summary": A concise bullet-point journal entry of what happened, tasks completed, and context.
-2. "facts": An array of { key, value } objects representing NEW durable facts, preferences, or critical information learned about the user.
+2. "facts": An array of { key, value, category } objects representing NEW durable facts, preferences, or critical information learned about the user.
    - Keys should be snake_case (e.g. user_project_name, favorite_color).
+   - **category**: One of "preference", "relationship", "temporal", "system", "general".
+     - "preference" for user likes, dislikes, habits, settings.
+     - "relationship" for people, contacts, family.
+     - "temporal" for time-bound plans, appointments, events.
+     - "system" for technical configs, device settings.
+     - "general" for anything else.
    - **CRITICAL**: For facts that are time-bound, temporary, or specific to a date (e.g. plans, appointments, current status, upcoming events), you **MUST** append the date to the key.
      - Format: 'key_name_on_YYYY-MM-DD'
      - Example: 'user_dinner_plans_on_2024-10-22', 'flight_status_on_2024-11-01'.
@@ -68,7 +81,7 @@ Produce a JSON object with two fields:
      - General world knowledge or trivia.
      - Temporary context (e.g. "User is currently looking at file Y") UNLESS it is substantial enough to remember for a few days.
      - If the logs only contain media messages (images, audio, video) without textual context, summarize the interactions briefly (e.g. "Exchanged media with X") but DO NOT invent details.
-   
+
    - SYNTHESIS RULES:
      - Output your summary directly as a list of bullet points. Start immediately with the bullets.
      - You are an advanced reasoning model. Do not just blindly summarize; understand the actual life-state of the user based on these logs.
