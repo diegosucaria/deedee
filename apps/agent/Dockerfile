@@ -1,5 +1,5 @@
 FROM node:24-alpine AS base
-RUN apk add --no-cache libc6-compat python3 py3-pip make g++ git gettext sqlite-dev
+RUN apk add --no-cache libc6-compat python3 py3-pip make g++ git
 RUN npm install turbo --global
 
 # --- Pruner Stage ---
@@ -35,22 +35,6 @@ RUN mkdir -p patches
 # Install dependencies (cached)
 RUN npm install
 RUN npm prune --production
-
-# Build sqlite-vec from source for musl (Alpine) compatibility.
-# The npm prebuilt binaries are glibc-only; compiling natively gives us a
-# musl .so that works on Alpine ARM64 without compatibility hacks.
-# We skip the Makefile (its -Wall -Wextra flags fail on newer GCC) and
-# compile directly, generating the header template ourselves.
-RUN git clone --depth 1 --branch v0.1.6 https://github.com/asg017/sqlite-vec.git /tmp/sqlite-vec \
-    && cd /tmp/sqlite-vec \
-    && export VERSION=0.1.6 VERSION_MAJOR=0 VERSION_MINOR=1 VERSION_PATCH=6 \
-    && export DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) SOURCE=$(git rev-parse HEAD) \
-    && envsubst < sqlite-vec.h.tmpl > sqlite-vec.h \
-    && sed -i 's/typedef u_int8_t uint8_t;//' sqlite-vec.c \
-    && gcc -fPIC -shared -O3 -w -Ivendor/ sqlite-vec.c -o vec0.so -lm \
-    && mkdir -p /app/native-extensions \
-    && cp vec0.so /app/native-extensions/vec0.so \
-    && rm -rf /tmp/sqlite-vec
 
 # Copy source code
 COPY . .
@@ -95,7 +79,6 @@ RUN uv pip install ha-mcp youtube-transcript-api
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/apps/agent ./apps/agent
 COPY --from=builder /app/package.json ./package.json
-COPY --from=builder /app/native-extensions ./native-extensions
 
 WORKDIR /app/apps/agent
 CMD ["npm", "start"]
