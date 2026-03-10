@@ -99,6 +99,8 @@ class DJService {
             }
         });
 
+        this.config.logUsageFromResponse(this.db, modelName, result, null, 'dj_analyze');
+
         let responseText = '';
         try {
             if (typeof result.text === 'function') responseText = result.text();

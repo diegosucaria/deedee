@@ -1,8 +1,10 @@
 const { getMemoryPruningPrompt } = require('../prompts/memory');
+const { ConfigService } = require('./config-service');
 
 class MemoryPruningService {
     constructor(agent) {
         this.agent = agent;
+        this._config = new ConfigService();
     }
 
     /**
@@ -31,6 +33,8 @@ class MemoryPruningService {
                 contents: [{ parts: [{ text: prompt }] }],
                 config: { responseMimeType: 'application/json' }
             });
+
+            this._config.logUsageFromResponse(this.agent.db, modelName, response, null, 'memory_pruning');
 
             // 4. Parse Response
             let data = null;

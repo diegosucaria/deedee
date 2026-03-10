@@ -86,7 +86,7 @@ class Agent {
     this.memoryPruning = new MemoryPruningService(this);
     this.dreamService = new DreamService(this);
     this.subAgentService = new SubAgentService(this);
-    this.toolScoper = new ToolScoper(config.googleApiKey);
+    this.toolScoper = new ToolScoper(config.googleApiKey, this.db);
 
     // In-Memory Settings Cache
     this.settings = {};
@@ -481,13 +481,15 @@ class Agent {
           { role: 'system', content: this.currentSystemPrompt || 'You are DeeDee, a helpful AI assistant.' }, // Fallback if not set
           ...messages
         ],
-        stream: true
+        stream: true,
+        stream_options: { include_usage: true }
       });
 
       let fullText = '';
+      let streamUsage = null;
 
       for await (const chunk of stream) {
-        const content = chunk.choices[0]?.delta?.content || '';
+        const content = chunk.choices?.[0]?.delta?.content || '';
         if (content) {
           fullText += content;
           // Broadcast
@@ -505,6 +507,20 @@ class Agent {
             });
           }
         }
+        // Final chunk includes usage data
+        if (chunk.usage) streamUsage = chunk.usage;
+      }
+
+      // Log token usage for Grok/OpenAI calls
+      if (streamUsage && this.db) {
+        const promptTokens = streamUsage.prompt_tokens || 0;
+        const completionTokens = streamUsage.completion_tokens || 0;
+        const cost = calculateCost(model, promptTokens, completionTokens);
+        this.db.logTokenUsage({
+          model, promptTokens, candidateTokens: completionTokens,
+          totalTokens: promptTokens + completionTokens, chatId, estimatedCost: cost, tag: 'grok'
+        });
+        console.log(`[Tokens-Grok] P: ${promptTokens} | C: ${completionTokens} | Cost: $${cost.toFixed(6)}`);
       }
 
       return fullText;

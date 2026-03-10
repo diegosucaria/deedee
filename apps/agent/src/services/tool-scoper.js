@@ -41,10 +41,11 @@ const MCP_PATTERNS = [
 ];
 
 class ToolScoper {
-    constructor(apiKey) {
+    constructor(apiKey, db) {
         this.apiKey = apiKey;
         this.client = null;
         this.config = new ConfigService();
+        this.db = db || null;
     }
 
     async _ensureClient() {
@@ -135,6 +136,8 @@ Example: ["slack", "calendar_email", "memory", "subagent", "scheduler"]`;
                     temperature: 0
                 }
             });
+
+            this.config.logUsageFromResponse(this.db, model, response, null, 'tool_scoper');
 
             const text = response.text?.trim() || response.candidates?.[0]?.content?.parts?.[0]?.text?.trim();
             if (!text) return null;

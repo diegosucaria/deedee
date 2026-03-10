@@ -1,6 +1,7 @@
 const { BaseExecutor } = require('./base');
 const { createAssistantMessage } = require('@deedee/shared/src/types');
 const { createWavHeader } = require('../utils/audio');
+const { ConfigService } = require('../services/config-service');
 
 class MediaExecutor extends BaseExecutor {
     async execute(name, args, context) {
@@ -21,6 +22,9 @@ class MediaExecutor extends BaseExecutor {
                         tools: [{ googleSearch: {} }],
                     },
                 });
+
+                const _cfg = new ConfigService();
+                _cfg.logUsageFromResponse(this.services.db, imagenModel, response, message.metadata?.chatId, 'image_gen');
 
                 let b64JSON = null;
                 if (response.candidates && response.candidates[0].content && response.candidates[0].content.parts) {
@@ -103,6 +107,9 @@ class MediaExecutor extends BaseExecutor {
                 });
                 const ttsDuration = Date.now() - ttsStart;
                 console.log(`[MediaExecutor] TTS Generation took ${ttsDuration}ms`);
+
+                const _cfgTts = new ConfigService();
+                _cfgTts.logUsageFromResponse(db, modelName, audioResponse, message.metadata?.chatId, 'tts');
 
                 let audioData = null;
                 if (audioResponse.candidates && audioResponse.candidates[0].content && audioResponse.candidates[0].content.parts) {
