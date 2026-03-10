@@ -1,11 +1,19 @@
 'use client';
 
 import { useFormState } from 'react-dom';
-import { addFact, deleteFact, updateFact } from '@/app/actions';
-import { Trash2, Plus, Database, Search } from 'lucide-react';
+import { addFact, deleteFact, updateFact, toggleFactPin } from '@/app/actions';
+import { Trash2, Plus, Database, Search, Pin, PinOff } from 'lucide-react';
 import { useState } from 'react';
 
 const initialState = { success: false, error: null };
+
+const CATEGORY_COLORS = {
+    preference: 'bg-purple-500/20 text-purple-400',
+    relationship: 'bg-pink-500/20 text-pink-400',
+    temporal: 'bg-amber-500/20 text-amber-400',
+    system: 'bg-cyan-500/20 text-cyan-400',
+    general: 'bg-zinc-500/20 text-zinc-400',
+};
 
 export default function MemoryList({ facts }) {
     const [state, formAction] = useFormState(addFact, initialState);
@@ -28,6 +36,10 @@ export default function MemoryList({ facts }) {
     const handleSaveEdit = async () => {
         await updateFact(editingKey, editKeyInput, editValue);
         setEditingKey(null);
+    };
+
+    const handleTogglePin = async (fact) => {
+        await toggleFactPin(fact.key, !fact.pinned);
     };
 
     return (
@@ -82,15 +94,27 @@ export default function MemoryList({ facts }) {
                     filteredFacts.map((fact) => (
                         <div
                             key={fact.key}
-                            className="group relative flex flex-col gap-2 rounded-xl border border-zinc-800 bg-zinc-900 p-4 transition-all hover:bg-zinc-800/50 hover:border-zinc-700"
+                            className={`group relative flex flex-col gap-2 rounded-xl border bg-zinc-900 p-4 transition-all hover:bg-zinc-800/50 hover:border-zinc-700 ${fact.pinned ? 'border-indigo-500/30' : 'border-zinc-800'}`}
                         >
                             <div className="flex items-center justify-between">
                                 <div className="flex items-center gap-2 text-indigo-400 font-medium font-mono text-sm">
-                                    <Database className="h-3 w-3" />
+                                    {fact.pinned ? <Pin className="h-3 w-3 text-indigo-400" /> : <Database className="h-3 w-3" />}
                                     {fact.key}
+                                    {fact.category && fact.category !== 'general' && (
+                                        <span className={`text-[10px] px-1.5 py-0.5 rounded-full font-sans font-normal ${CATEGORY_COLORS[fact.category] || CATEGORY_COLORS.general}`}>
+                                            {fact.category}
+                                        </span>
+                                    )}
                                 </div>
 
                                 <div className="flex opacity-0 group-hover:opacity-100 transition-opacity gap-2">
+                                    <button
+                                        onClick={() => handleTogglePin(fact)}
+                                        className="p-2 text-zinc-500 hover:bg-indigo-500/10 hover:text-indigo-400 rounded-lg transition-all"
+                                        title={fact.pinned ? 'Unpin fact' : 'Pin fact'}
+                                    >
+                                        {fact.pinned ? <PinOff className="h-4 w-4" /> : <Pin className="h-4 w-4" />}
+                                    </button>
                                     <button
                                         onClick={() => handleEditClick(fact)}
                                         className="p-2 text-zinc-500 hover:bg-indigo-500/10 hover:text-indigo-400 rounded-lg transition-all"
@@ -132,7 +156,11 @@ export default function MemoryList({ facts }) {
                                     <div className="text-sm text-zinc-300 font-mono break-all bg-black/30 p-3 rounded border border-zinc-800/50">
                                         {typeof fact.value === 'object' ? JSON.stringify(fact.value) : fact.value}
                                     </div>
-                                    <div className="text-[10px] text-zinc-600">Updated: {new Date(fact.updated_at).toLocaleString()}</div>
+                                    <div className="text-[10px] text-zinc-600 flex gap-3">
+                                        <span>Updated: {new Date(fact.updated_at).toLocaleString()}</span>
+                                        {fact.source && fact.source !== 'system' && <span>Source: {fact.source}</span>}
+                                        {fact.confidence && fact.confidence !== 'inferred' && <span>Confidence: {fact.confidence}</span>}
+                                    </div>
                                 </>
                             )}
                         </div>

@@ -320,6 +320,31 @@ class AgentDB {
       this.db.exec("ALTER TABLE people ADD COLUMN relationship TEXT");
     } catch (err) { }
 
+    // Migration: Add category to kv_store (memory metadata)
+    try {
+      this.db.exec("ALTER TABLE kv_store ADD COLUMN category TEXT DEFAULT 'general'");
+    } catch (err) { }
+
+    // Migration: Add confidence to kv_store
+    try {
+      this.db.exec("ALTER TABLE kv_store ADD COLUMN confidence TEXT DEFAULT 'inferred'");
+    } catch (err) { }
+
+    // Migration: Add source to kv_store
+    try {
+      this.db.exec("ALTER TABLE kv_store ADD COLUMN source TEXT DEFAULT 'system'");
+    } catch (err) { }
+
+    // Migration: Add created_at to kv_store
+    try {
+      this.db.exec("ALTER TABLE kv_store ADD COLUMN created_at DATETIME DEFAULT CURRENT_TIMESTAMP");
+    } catch (err) { }
+
+    // Migration: Add pinned to kv_store (protect from auto-pruning)
+    try {
+      this.db.exec("ALTER TABLE kv_store ADD COLUMN pinned INTEGER DEFAULT 0");
+    } catch (err) { }
+
     // Migration: Add enrichment_status to dj_vinyls
     try {
       this.db.exec("ALTER TABLE dj_vinyls ADD COLUMN enrichment_status TEXT DEFAULT 'complete'");
@@ -827,13 +852,19 @@ class AgentDB {
   }
 
   // --- KV Store (Memory) ---
-  setKey(key, value) {
+  setKey(key, value, options = {}) {
     const valStr = JSON.stringify(value);
+    const { category, confidence, source } = options;
     const stmt = this.db.prepare(`
-      INSERT INTO kv_store (key, value) VALUES (?, ?)
-      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+      INSERT INTO kv_store (key, value, category, confidence, source) VALUES (?, ?, COALESCE(?, 'general'), COALESCE(?, 'inferred'), COALESCE(?, 'system'))
+      ON CONFLICT(key) DO UPDATE SET
+        value = excluded.value,
+        updated_at = CURRENT_TIMESTAMP,
+        category = COALESCE(excluded.category, kv_store.category),
+        confidence = COALESCE(excluded.confidence, kv_store.confidence),
+        source = COALESCE(excluded.source, kv_store.source)
     `);
-    stmt.run(key, valStr);
+    stmt.run(key, valStr, category || null, confidence || null, source || null);
   }
 
   getKey(key) {
@@ -842,13 +873,42 @@ class AgentDB {
     return row ? JSON.parse(row.value) : null;
   }
 
+  getFact(key) {
+    const row = this.db.prepare('SELECT key, value, updated_at, category, confidence, source, created_at, pinned FROM kv_store WHERE key = ?').get(key);
+    if (!row) return null;
+    try { return { ...row, value: JSON.parse(row.value) }; }
+    catch (e) { return row; }
+  }
+
+  toggleFactPin(key, pinned) {
+    this.db.prepare('UPDATE kv_store SET pinned = ? WHERE key = ?').run(pinned ? 1 : 0, key);
+  }
+
   getAllFacts() {
-    const stmt = this.db.prepare('SELECT key, value FROM kv_store ORDER BY updated_at DESC');
+    const stmt = this.db.prepare('SELECT key, value, updated_at, category, confidence, source, created_at, pinned FROM kv_store ORDER BY updated_at DESC');
     return stmt.all().map(row => {
       try {
-        return { key: row.key, value: JSON.parse(row.value) };
+        return {
+          key: row.key,
+          value: JSON.parse(row.value),
+          updated_at: row.updated_at,
+          category: row.category || 'general',
+          confidence: row.confidence || 'inferred',
+          source: row.source || 'system',
+          created_at: row.created_at,
+          pinned: row.pinned || 0
+        };
       } catch (e) {
-        return { key: row.key, value: row.value };
+        return {
+          key: row.key,
+          value: row.value,
+          updated_at: row.updated_at,
+          category: row.category || 'general',
+          confidence: row.confidence || 'inferred',
+          source: row.source || 'system',
+          created_at: row.created_at,
+          pinned: row.pinned || 0
+        };
       }
     });
   }

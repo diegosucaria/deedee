@@ -21,7 +21,7 @@ describe('Memory Tools', () => {
                             parts: [{
                                 text: JSON.stringify({
                                     summary: 'Summary of the day.',
-                                    facts: [{ key: 'mock_key', value: 'mock_val' }]
+                                    facts: [{ key: 'mock_key', value: 'mock_val', category: 'general' }]
                                 })
                             }]
                         }
@@ -37,10 +37,9 @@ describe('Memory Tools', () => {
             scheduler: {},
             gsuite: {},
             mcp: {},
-            mcp: {},
             client,
-            db, // Inject mocked DB
-            agent: { // Mock Agent Structure for ConfigService
+            db,
+            agent: {
                 configService: {
                     getModel: jest.fn().mockReturnValue('gemini-mock')
                 },
@@ -53,7 +52,6 @@ describe('Memory Tools', () => {
 
     afterAll(() => {
         if (db) db.close();
-        // Cleanup
         try {
             if (fs.existsSync('data/agent.db')) {
                 fs.unlinkSync('data/agent.db');
@@ -77,6 +75,7 @@ describe('Memory Tools', () => {
             { timestamp: '2023-01-01T10:01:00Z', role: 'model', content: 'Hello' }
         ]);
         db.getAllFacts = jest.fn().mockReturnValue([{ key: 'mock', value: 'value' }]);
+        db.getFact = jest.fn().mockReturnValue(null); // No existing fact (no contradiction)
         journal.log = jest.fn();
         journal.syncFactsToMemory = jest.fn().mockResolvedValue('path/to/memory.md');
 
@@ -86,6 +85,63 @@ describe('Memory Tools', () => {
         expect(client.models.generateContent).toHaveBeenCalled();
         expect(journal.log).toHaveBeenCalledWith(expect.stringContaining('Summary of the day'));
         expect(result.success).toBe(true);
+    });
+
+    test('consolidateMemory should call setKey with metadata options', async () => {
+        db.getMessagesByDate = jest.fn().mockReturnValue([
+            { timestamp: '2023-01-01T10:00:00Z', role: 'user', content: 'Hi' },
+            { timestamp: '2023-01-01T10:01:00Z', role: 'model', content: 'Hello' }
+        ]);
+        db.getAllFacts = jest.fn().mockReturnValue([]);
+        db.getFact = jest.fn().mockReturnValue(null);
+        db.setKey = jest.fn();
+        journal.log = jest.fn();
+        journal.syncFactsToMemory = jest.fn().mockResolvedValue('path/to/memory.md');
+
+        await executor.execute('consolidateMemory', { date: '2023-01-01' }, {});
+
+        expect(db.setKey).toHaveBeenCalledWith('mock_key', 'mock_val', {
+            category: 'general',
+            confidence: 'consolidated',
+            source: 'consolidation'
+        });
+    });
+
+    test('consolidateMemory should detect contradictions and log to journal', async () => {
+        db.getMessagesByDate = jest.fn().mockReturnValue([
+            { timestamp: '2023-01-01T10:00:00Z', role: 'user', content: 'Hi' },
+        ]);
+        db.getAllFacts = jest.fn().mockReturnValue([]);
+        db.getFact = jest.fn().mockReturnValue({ key: 'mock_key', value: 'old_val', pinned: 0 });
+        db.setKey = jest.fn();
+        journal.log = jest.fn();
+        journal.syncFactsToMemory = jest.fn().mockResolvedValue('path/to/memory.md');
+
+        await executor.execute('consolidateMemory', { date: '2023-01-01' }, {});
+
+        // Should log the change to journal
+        expect(journal.log).toHaveBeenCalledWith(expect.stringContaining('Fact Updated'));
+        expect(journal.log).toHaveBeenCalledWith(expect.stringContaining('mock_key'));
+        // Should still update the fact
+        expect(db.setKey).toHaveBeenCalledWith('mock_key', 'mock_val', expect.any(Object));
+    });
+
+    test('consolidateMemory should block overwrite of pinned facts', async () => {
+        db.getMessagesByDate = jest.fn().mockReturnValue([
+            { timestamp: '2023-01-01T10:00:00Z', role: 'user', content: 'Hi' },
+        ]);
+        db.getAllFacts = jest.fn().mockReturnValue([]);
+        db.getFact = jest.fn().mockReturnValue({ key: 'mock_key', value: 'old_val', pinned: 1 });
+        db.setKey = jest.fn();
+        journal.log = jest.fn();
+        journal.syncFactsToMemory = jest.fn().mockResolvedValue('path/to/memory.md');
+
+        await executor.execute('consolidateMemory', { date: '2023-01-01' }, {});
+
+        // Should log the conflict
+        expect(journal.log).toHaveBeenCalledWith(expect.stringContaining('CONFLICT'));
+        // Should NOT call setKey for the pinned fact
+        expect(db.setKey).not.toHaveBeenCalled();
     });
 
     test('consolidateMemory should handle empty day', async () => {

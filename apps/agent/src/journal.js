@@ -86,16 +86,34 @@ class JournalManager {
         return null;
     }
 
-    search(query) {
-        // Naive text search across all markdown files
-        // Returns array of { date, content } chunks
+    setRagService(ragService) {
+        this.ragService = ragService;
+    }
+
+    async search(query) {
+        // Use RAG service for semantic+keyword search if available
+        if (this.ragService) {
+            try {
+                const results = await this.ragService.search(query, 'journal', 10, 0.2);
+                return results.map(r => ({
+                    date: r.filename ? r.filename.replace('.md', '') : 'unknown',
+                    matches: [r.content],
+                    score: r.score
+                }));
+            } catch (e) {
+                console.warn('[Journal] RAG search failed, falling back to naive:', e.message);
+            }
+        }
+        return this._naiveSearch(query);
+    }
+
+    _naiveSearch(query) {
         const results = [];
         const files = fs.readdirSync(this.journalDir).filter(f => f.endsWith('.md'));
 
         for (const file of files) {
             const content = fs.readFileSync(path.join(this.journalDir, file), 'utf8');
             if (content.toLowerCase().includes(query.toLowerCase())) {
-                // Find the specific line or context
                 const lines = content.split('\n');
                 const matchingLines = lines.filter(l => l.toLowerCase().includes(query.toLowerCase()));
 

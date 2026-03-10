@@ -55,9 +55,14 @@ class MemoryPruningService {
                 const timestamp = new Date().toISOString();
 
                 for (const key of data.delete_keys) {
-                    // Double check key exists to be safe
                     const exists = facts.find(f => f.key === key);
                     if (exists) {
+                        // Safety: Never delete pinned facts even if LLM suggests them
+                        if (exists.pinned) {
+                            console.warn(`[MemoryPruning] LLM tried to delete pinned fact: ${key}. Skipping.`);
+                            continue;
+                        }
+
                         backupData.push({
                             key,
                             value: exists.value,

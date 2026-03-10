@@ -19,7 +19,7 @@ class ProductivityExecutor extends BaseExecutor {
                 }
             }
             case 'searchJournal': {
-                const results = journal.search(args.query);
+                const results = await journal.search(args.query);
                 return { count: results.length, results };
             }
             default: return null;

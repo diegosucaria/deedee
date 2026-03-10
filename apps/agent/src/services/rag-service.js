@@ -3,8 +3,9 @@ const fs = require('fs');
 const path = require('path');
 const crypto = require('crypto');
 const Database = require('better-sqlite3');
-// const pdf = require('pdf-parse'); // Moved to lazy load
 const { ConfigService } = require('./config-service');
+
+const EMBEDDING_DIMENSIONS = 768; // Gemini text-embedding-004
 
 class RagService {
     constructor(agent) {
@@ -16,10 +17,22 @@ class RagService {
             fs.mkdirSync(dbDir, { recursive: true });
         }
         this.db = new Database(this.dbPath);
+        this.useVec = false;
         this._initDB();
     }
 
     _initDB() {
+        // Try to load sqlite-vec extension for native vector search
+        try {
+            const sqliteVec = require('sqlite-vec');
+            sqliteVec.load(this.db);
+            this.useVec = true;
+            console.log('[RAG] sqlite-vec extension loaded successfully.');
+        } catch (e) {
+            console.warn('[RAG] sqlite-vec not available, falling back to in-memory cosine similarity:', e.message);
+            this.useVec = false;
+        }
+
         this.db.exec(`
             CREATE TABLE IF NOT EXISTS documents (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -39,10 +52,7 @@ class RagService {
             );
         `);
 
-
         // Initialize FTS5 Table for Hybrid Search
-        // content is indexed for full text search
-        // chunk_index, document_id are unindexed columns for join
         try {
             this.db.exec(`
                 CREATE VIRTUAL TABLE IF NOT EXISTS chunks_fts USING fts5(
@@ -55,14 +65,13 @@ class RagService {
             console.error('[RAG] Failed to init FTS5 table:', e.message);
         }
 
-        // Migration: Backfill FTS if empty but chunks exist (Avoid re-ingest if possible)
+        // Migration: Backfill FTS if empty but chunks exist
         try {
             const ftsCount = this.db.prepare('SELECT COUNT(*) as count FROM chunks_fts').get().count;
             if (ftsCount === 0) {
                 const chunksCount = this.db.prepare('SELECT COUNT(*) as count FROM chunks').get().count;
                 if (chunksCount > 0) {
                     console.log(`[RAG] Backfilling FTS index from ${chunksCount} existing chunks...`);
-                    // Bulk insert
                     this.db.prepare(`
                         INSERT INTO chunks_fts (content, chunk_index, document_id)
                         SELECT content, chunk_index, document_id FROM chunks
@@ -77,8 +86,38 @@ class RagService {
         // Migration: Add vault_id if missing
         try {
             this.db.prepare('ALTER TABLE documents ADD COLUMN vault_id TEXT').run();
-        } catch (e) {
-            // Ignore if column exists
+        } catch (e) { }
+
+        // Initialize vec0 virtual table for native vector search
+        if (this.useVec) {
+            try {
+                this.db.exec(`
+                    CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(
+                        chunk_id INTEGER PRIMARY KEY,
+                        embedding float[${EMBEDDING_DIMENSIONS}]
+                    );
+                `);
+
+                // Backfill vec0 if empty but chunks exist
+                const vecCount = this.db.prepare('SELECT COUNT(*) as count FROM chunks_vec').get().count;
+                if (vecCount === 0) {
+                    const chunksWithEmb = this.db.prepare('SELECT id, embedding FROM chunks WHERE embedding IS NOT NULL').all();
+                    if (chunksWithEmb.length > 0) {
+                        console.log(`[RAG] Backfilling vec0 index from ${chunksWithEmb.length} existing chunks...`);
+                        const insert = this.db.prepare('INSERT INTO chunks_vec (chunk_id, embedding) VALUES (?, ?)');
+                        const batch = this.db.transaction((rows) => {
+                            for (const row of rows) {
+                                insert.run(row.id, row.embedding);
+                            }
+                        });
+                        batch(chunksWithEmb);
+                        console.log('[RAG] vec0 backfill complete.');
+                    }
+                }
+            } catch (e) {
+                console.warn('[RAG] Failed to create vec0 table:', e.message);
+                this.useVec = false;
+            }
         }
     }
 
@@ -97,7 +136,14 @@ class RagService {
         }
 
         if (existing) {
-            // Re-index: delete old chunks
+            // Re-index: delete old chunks (vec0 first, then chunks)
+            if (this.useVec) {
+                const oldChunkIds = this.db.prepare('SELECT id FROM chunks WHERE document_id = ?').all(existing.id);
+                for (const c of oldChunkIds) {
+                    try { this.db.prepare('DELETE FROM chunks_vec WHERE chunk_id = ?').run(c.id); } catch (e) { }
+                }
+            }
+            this.db.prepare('DELETE FROM chunks_fts WHERE document_id = ?').run(existing.id);
             this.db.prepare('DELETE FROM chunks WHERE document_id = ?').run(existing.id);
             this.db.prepare('UPDATE documents SET hash = ?, vault_id = ?, indexed_at = ? WHERE id = ?')
                 .run(hash, vaultId, new Date().toISOString(), existing.id);
@@ -111,7 +157,6 @@ class RagService {
             let parser;
             try {
                 const { PDFParse } = require('pdf-parse');
-                // v2 API: new PDFParse({ data: buffer })
                 parser = new PDFParse({ data: buffer });
                 const data = await parser.getText();
                 text = data.text;
@@ -127,8 +172,6 @@ class RagService {
             text = buffer.toString('utf-8');
         }
 
-        // Chunking (Simple sliding window or paragraph based)
-        // Paragraph-based chunking with overlap
         const chunks = this._chunkText(text, 1000, 200);
 
         // Insert Document if new
@@ -139,9 +182,6 @@ class RagService {
             docId = info.lastInsertRowid;
         }
 
-        // Embed and Insert Chunks
-        // Batch embedding if possible? Gemini supports batch?
-        // SDK: embedContent or batchEmbedContents
         console.log(`[RAG] Embedding ${chunks.length} chunks for ${filename}...`);
 
         // Process in batches of 10 to avoid rate limits
@@ -151,15 +191,23 @@ class RagService {
                 const globalIdx = i + idx;
                 try {
                     const embedding = await this._getEmbedding(chunk, 'RETRIEVAL_DOCUMENT');
-                    // Store as Buffer (Float32Array)
-                    const vectorApi = Buffer.from(new Float32Array(embedding).buffer);
+                    const vectorBuf = Buffer.from(new Float32Array(embedding).buffer);
 
-                    this.db.prepare('INSERT INTO chunks (document_id, content, embedding, chunk_index) VALUES (?, ?, ?, ?)')
-                        .run(docId, chunk, vectorApi, globalIdx);
+                    const insertResult = this.db.prepare('INSERT INTO chunks (document_id, content, embedding, chunk_index) VALUES (?, ?, ?, ?)')
+                        .run(docId, chunk, vectorBuf, globalIdx);
 
                     // Insert into FTS
                     this.db.prepare('INSERT INTO chunks_fts (content, chunk_index, document_id) VALUES (?, ?, ?)')
                         .run(chunk, globalIdx, docId);
+
+                    // Insert into vec0 if available
+                    if (this.useVec) {
+                        try {
+                            this.db.prepare('INSERT INTO chunks_vec (chunk_id, embedding) VALUES (?, ?)').run(insertResult.lastInsertRowid, vectorBuf);
+                        } catch (e) {
+                            console.warn(`[RAG] vec0 insert failed for chunk ${globalIdx}:`, e.message);
+                        }
+                    }
                 } catch (e) {
                     console.error(`[RAG] Failed to embed chunk ${globalIdx}:`, e.message);
                 }
@@ -170,13 +218,18 @@ class RagService {
     }
 
     async deleteDocument(filename, vaultId) {
-        // Find document
         const doc = this.db.prepare('SELECT id FROM documents WHERE filename = ? AND vault_id = ?').get(filename, vaultId);
         if (doc) {
             console.log(`[RAG] Deleting document ${filename} (Vault: ${vaultId})`);
-            // Cascade delete chunks
-            this.db.prepare('DELETE FROM chunks WHERE document_id = ?').run(doc.id);
+            // Delete from vec0 first (needs chunk IDs)
+            if (this.useVec) {
+                const chunkIds = this.db.prepare('SELECT id FROM chunks WHERE document_id = ?').all(doc.id);
+                for (const c of chunkIds) {
+                    try { this.db.prepare('DELETE FROM chunks_vec WHERE chunk_id = ?').run(c.id); } catch (e) { }
+                }
+            }
             this.db.prepare('DELETE FROM chunks_fts WHERE document_id = ?').run(doc.id);
+            this.db.prepare('DELETE FROM chunks WHERE document_id = ?').run(doc.id);
             this.db.prepare('DELETE FROM documents WHERE id = ?').run(doc.id);
             return true;
         }
@@ -201,8 +254,6 @@ class RagService {
         }
         this.isScanning = true;
         let processed = 0;
-        let added = 0;
-        let updated = 0;
 
         try {
             if (!fs.existsSync(vaultsDir)) {
@@ -220,18 +271,14 @@ class RagService {
                     for (const file of files) {
                         const filePath = path.join(filesDir, file);
                         try {
-                            const result = await this.ingestDocument(filePath, vault);
+                            await this.ingestDocument(filePath, vault);
                             processed++;
-                            // ingestDocument currently returns nothing if unchanged, or undefined if success?
-                            // I need to check ingestDocument return value.
-                            // But for now let's just count processed.
                         } catch (e) {
                             console.error(`[RAG] Failed to ingest ${file} in vault ${vault}:`, e.message);
                         }
                     }
                 }
 
-                // Ingest the Wiki Page (index.md)
                 const indexFile = path.join(vaultsDir, vault, 'index.md');
                 if (fs.existsSync(indexFile)) {
                     try {
@@ -244,7 +291,6 @@ class RagService {
             }
             console.log(`[RAG] Scan complete. ${processed} files checked.`);
 
-            // Broadcast update
             if (this.agent && this.agent.interface && this.agent.interface.broadcast) {
                 const stats = this.getStats();
                 this.agent.interface.broadcast('rag:stats', stats).catch(e => console.error('[RAG] Broadcast failed:', e.message));
@@ -277,7 +323,7 @@ class RagService {
                 const content = fs.readFileSync(filePath, 'utf8');
                 if (content.length < 200) {
                     skipped++;
-                    continue; // Skip noise-only days
+                    continue;
                 }
                 await this.ingestDocument(filePath, 'journal');
                 ingested++;
@@ -289,12 +335,75 @@ class RagService {
         console.log(`[RAG] Journal scan complete. ${ingested} ingested, ${skipped} skipped (too short).`);
     }
 
-    async search(query, vaultId = null, limit = 5) {
-        console.log(`[RAG] Hybrid Searching for: "${query}" (Vault: ${vaultId || 'Global'})`);
+    async search(query, vaultId = null, limit = 5, minScore = 0.3) {
+        console.log(`[RAG] Hybrid Searching for: "${query}" (Vault: ${vaultId || 'Global'}, minScore: ${minScore})`);
         const queryEmbedding = await this._getEmbedding(query, 'RETRIEVAL_QUERY');
 
-        // 1. Vector Search (Cosine Similarity)
-        // Fetch All Chunks (Current Limitations of Better-Sqlite3 / No Vector Extension)
+        if (this.useVec) {
+            return this._searchWithVec(queryEmbedding, query, vaultId, limit, minScore);
+        }
+        return this._searchBruteForce(queryEmbedding, query, vaultId, limit, minScore);
+    }
+
+    /**
+     * Native vector search via sqlite-vec (KNN) + FTS boost.
+     */
+    _searchWithVec(queryEmbedding, query, vaultId, limit, minScore) {
+        const queryBuffer = Buffer.from(new Float32Array(queryEmbedding).buffer);
+        const candidateLimit = limit * 4;
+
+        // 1. Vector KNN search via vec0
+        let vecSql = `
+            SELECT cv.chunk_id, cv.distance,
+                   c.content, c.chunk_index, c.document_id,
+                   d.filename, d.vault_id
+            FROM chunks_vec cv
+            JOIN chunks c ON cv.chunk_id = c.id
+            JOIN documents d ON c.document_id = d.id
+            WHERE cv.embedding MATCH ?
+        `;
+        const params = [queryBuffer];
+        if (vaultId) {
+            vecSql += ' AND d.vault_id = ?';
+            params.push(vaultId);
+        }
+        vecSql += ` ORDER BY cv.distance LIMIT ?`;
+        params.push(candidateLimit);
+
+        let candidates;
+        try {
+            candidates = this.db.prepare(vecSql).all(...params);
+        } catch (e) {
+            console.warn('[RAG] vec0 search failed, falling back to brute force:', e.message);
+            return this._searchBruteForce(queryEmbedding, query, vaultId, limit, minScore);
+        }
+
+        // Convert distance to similarity score (vec0 uses L2 distance by default)
+        // Cosine distance: 0 = identical, 2 = opposite. Convert: score = 1 - (distance / 2)
+        const candidateScores = candidates.map(c => ({
+            ...c,
+            vScore: Math.max(0, 1 - (c.distance / 2))
+        }));
+
+        // 2. FTS boost on candidates
+        const ftsMatches = this._ftsSearch(query);
+        const ftsSet = new Set(ftsMatches.map(r => `${r.document_id}_${r.chunk_index}`));
+
+        // 3. Combine scores
+        const results = candidateScores.map(c => {
+            const ftsBoost = ftsSet.has(`${c.document_id}_${c.chunk_index}`) ? 0.3 : 0;
+            const score = (c.vScore * 0.7) + ftsBoost;
+            return { ...c, score };
+        });
+
+        results.sort((a, b) => b.score - a.score);
+        return results.filter(r => r.score >= minScore).slice(0, limit);
+    }
+
+    /**
+     * Brute-force cosine similarity search (fallback when sqlite-vec unavailable).
+     */
+    _searchBruteForce(queryEmbedding, query, vaultId, limit, minScore) {
         let vectorSql = 'SELECT chunks.id, chunks.content, chunks.embedding, chunk_index, document_id, documents.filename, documents.vault_id FROM chunks JOIN documents ON chunks.document_id = documents.id';
         const params = [];
         if (vaultId) {
@@ -304,86 +413,75 @@ class RagService {
 
         const allChunks = this.db.prepare(vectorSql).all(...params);
 
-        // Calculate similarity and store in map
-        const vectorScores = new Map(); // id -> score (0-1)
-
+        // Calculate cosine similarity for all chunks
+        const vectorScores = new Map();
         allChunks.forEach(chunk => {
             const vector = new Float32Array(chunk.embedding.buffer, chunk.embedding.byteOffset, chunk.embedding.byteLength / 4);
             const score = this._cosineSimilarity(queryEmbedding, vector);
             vectorScores.set(chunk.id, score);
         });
 
-        // 2. Keyword Search (FTS5) - BM25
-        // FTS5 rank is negative (lower is better), so we need to inverse/normalize it?
-        // FTS5 rank is negative (lower = better relevance)
-        // Simple approach: SELECT *, rank FROM chunks_fts WHERE chunks_fts MATCH ? ORDER BY rank
-        // But matching constraint is tricky with joins if we need to filter by Vault.
-        // We can select document_ids first?
-        // FTS Table has (content, chunk_index, document_id)
-
-        // Construct MATCH query. Sanitize query by removing special chars that break FTS syntax
-        const sanitizedQuery = query.replace(/[^a-zA-Z0-9 ]/g, ' ').trim();
-
-        const ftsScores = new Map(); // chunk table id?? No, chunks_fts rowid! 
-        // Wait, proper mapping: 
-        // We inserted into chunks_fts. Rowid might not match chunks.id unless we forced it?
-        // We didn't force ROWID. 
-        // But we stored `document_id` and `chunk_index`. This forms a unique composite key.
-        // Map (document_id, chunk_index) composite key → chunks.id for FTS↔vector correlation
+        // FTS boost
+        const ftsMatches = this._ftsSearch(query);
         const chunkLookup = new Map();
         allChunks.forEach(c => chunkLookup.set(`${c.document_id}_${c.chunk_index}`, c.id));
 
-        if (sanitizedQuery.length > 2) {
-            try {
-                // simple OR query or phrase? Standard match using FTS5
-                // We perform search and get unindexed cols
-                const keywordResults = this.db.prepare(`
-                    SELECT document_id, chunk_index, rank 
-                    FROM chunks_fts 
-                    WHERE chunks_fts MATCH ? 
-                    ORDER BY rank 
-                    LIMIT 20
-                `).all(`"${sanitizedQuery}"`); // simple phrase search?
-
-                // Normalize Rank: FTS rank is arbitrary magnitude. 
-                // Apply flat +0.3 boost for keyword matches
-                // Simpler: If it matches keyword, boost score by +0.3
-                keywordResults.forEach(res => {
-                    const key = `${res.document_id}_${res.chunk_index}`;
-                    const chunkId = chunkLookup.get(key);
-                    if (chunkId && vectorScores.has(chunkId)) {
-                        ftsScores.set(chunkId, 1.0); // Binary boost for now, or use rank?
-                    }
-                });
-            } catch (e) {
-                console.warn('[RAG] FTS Search failed:', e.message);
-            }
-        }
-
-        // 3. Combine Scores
-        // Weight: 0.7 Vector + 0.3 Keyword
-        // Note: Vector is Cosine (-1 to 1). We should clamp to 0-1?
-        // FTS is binary 1.0 here.
-
-        const finalResults = allChunks.map(chunk => {
-            const vScore = Math.max(0, vectorScores.get(chunk.id) || 0); // Clamp negative
-            const fScore = ftsScores.get(chunk.id) || 0;
-
-            // Formula: Weighted Average
-            // If FTS match, it's very significant.
-            const combined = (vScore * 0.7) + (fScore * 0.3);
-
-            return {
-                ...chunk,
-                score: combined,
-                debug: { vScore, fScore }
-            };
+        const ftsScores = new Map();
+        ftsMatches.forEach(res => {
+            const key = `${res.document_id}_${res.chunk_index}`;
+            const chunkId = chunkLookup.get(key);
+            if (chunkId) ftsScores.set(chunkId, 1.0);
         });
 
-        // Sort descending
-        finalResults.sort((a, b) => b.score - a.score);
+        // Combine scores
+        const finalResults = allChunks.map(chunk => {
+            const vScore = Math.max(0, vectorScores.get(chunk.id) || 0);
+            const fScore = ftsScores.get(chunk.id) || 0;
+            const combined = (vScore * 0.7) + (fScore * 0.3);
+            return { ...chunk, score: combined };
+        });
 
-        return finalResults.slice(0, limit);
+        finalResults.sort((a, b) => b.score - a.score);
+        return finalResults.filter(r => r.score >= minScore).slice(0, limit);
+    }
+
+    /**
+     * Flexible FTS5 search: try phrase match first, fall back to OR tokens with prefix.
+     */
+    _ftsSearch(query) {
+        const sanitizedQuery = query.replace(/[^a-zA-Z0-9 ]/g, ' ').trim();
+        if (sanitizedQuery.length <= 2) return [];
+
+        // Try exact phrase match first
+        try {
+            const phraseResults = this.db.prepare(`
+                SELECT document_id, chunk_index, rank
+                FROM chunks_fts
+                WHERE chunks_fts MATCH ?
+                ORDER BY rank
+                LIMIT 20
+            `).all(`"${sanitizedQuery}"`);
+
+            if (phraseResults.length > 0) return phraseResults;
+        } catch (e) { }
+
+        // Fall back to OR tokens with prefix matching
+        const tokens = sanitizedQuery.split(/\s+/).filter(t => t.length > 2);
+        if (tokens.length === 0) return [];
+
+        try {
+            const orQuery = tokens.map(t => `${t}*`).join(' OR ');
+            return this.db.prepare(`
+                SELECT document_id, chunk_index, rank
+                FROM chunks_fts
+                WHERE chunks_fts MATCH ?
+                ORDER BY rank
+                LIMIT 20
+            `).all(orQuery);
+        } catch (e) {
+            console.warn('[RAG] FTS Search failed:', e.message);
+            return [];
+        }
     }
 
     _chunkText(text, size = 1000, overlap = 200) {
@@ -399,23 +497,8 @@ class RagService {
     }
 
     async _getEmbedding(text, taskType = 'RETRIEVAL_DOCUMENT') {
-        // Use configured embedding model
         const modelName = this.config.getModel('EMBEDDING');
         try {
-            // New SDK @google/genai uses client.models.embedContent
-            // Note: signature is (config: { model, content, config: { taskType, title? } })
-            // Wait, for taskType it is often inside 'config' or top level depending on method.
-            // In @google/genai, it is:
-            // client.models.embedContent({
-            //   model: ...,
-            //   contents: ...,
-            //   config: { taskType: ... } 
-            // })
-            // Or properties directly. Checking docs logic. usually it is inside 'config' object or direct. 
-            // In REST: "taskType": "..."
-            // In SDK: usually top level options or config.
-            // @google/genai SDK maps camelCase to snake_case for the API
-
             const result = await this.agent.client.models.embedContent({
                 model: modelName,
                 contents: [
@@ -430,11 +513,9 @@ class RagService {
                 }
             });
 
-            // Result structure for @google/genai: result.embeddings[0].values
             if (result.embeddings && result.embeddings.length > 0) {
                 return result.embeddings[0].values;
             }
-            // Fallback just in case
             if (result.embedding) {
                 return result.embedding.values;
             }
@@ -456,25 +537,23 @@ class RagService {
         }
         return dot / (Math.sqrt(magA) * Math.sqrt(magB));
     }
+
     getStats() {
         try {
             const docCount = this.db.prepare('SELECT COUNT(*) as count FROM documents').get().count;
             const chunkCount = this.db.prepare('SELECT COUNT(*) as count FROM chunks').get().count;
 
-            // Vault distribution
             const vaults = this.db.prepare('SELECT vault_id, COUNT(*) as count FROM documents GROUP BY vault_id').all();
             const vaultStats = {};
             vaults.forEach(v => {
                 vaultStats[v.vault_id || 'Global'] = v.count;
             });
 
-            // DB Size
             let sizeBytes = 0;
             try {
                 const stat = fs.statSync(this.db.name);
                 sizeBytes = stat.size;
             } catch (e) {
-                // If in-memory or error
                 sizeBytes = 0;
             }
 
@@ -482,7 +561,8 @@ class RagService {
                 documents: docCount,
                 chunks: chunkCount,
                 vaults: vaultStats,
-                sizeBytes
+                sizeBytes,
+                vectorSearchEnabled: this.useVec
             };
         } catch (e) {
             console.error('[RAG] Error getting stats:', e);
