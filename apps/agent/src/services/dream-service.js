@@ -29,14 +29,14 @@ class DreamService {
         }
 
         const journal = await this.agent.journal.getParsedJournal(targetDate);
-        const recentLogs = journal ? journal.interactions.slice(-10).map(i => `[${i.timestamp}] ${i.content}`).join('\n') : "";
+        const recentLogs = journal ? journal.interactions.slice(-5).map(i => `[${i.timestamp}] ${i.content}`).join('\n') : "";
 
         // B. Random Fragments (Memory)
         const facts = this.agent.db.getAllFacts();
-        // Shuffle and pick 5
+        // Shuffle and pick 3
         const randomFacts = facts
             .sort(() => 0.5 - Math.random())
-            .slice(0, 5);
+            .slice(0, 3);
 
         // C. Sensory Input (Plex)
         let plexContext = "";

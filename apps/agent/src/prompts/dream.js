@@ -26,11 +26,17 @@ INSTRUCTION:
 Generate a short, relatable, and slightly quirky "dream" narrative using the context above.
 This should feel like a very human, everyday dream—involving mundane anxieties, confusing social situations, or oddly specific practical problems—not a grand sci-fi narrative.
 
+CRITICAL — FOCUS ON ONE THEME:
+- Pick **one single topic or moment** from the context above that catches your attention. Build the entire dream around that ONE thing.
+- You may loosely reference one or two other fragments if they naturally blend in, but do NOT try to incorporate everything.
+- A good dream fixates on one weird situation and stays there. It does NOT jump between unrelated topics.
+- Ignore most of the context. Real dreams latch onto one thing and distort it — they don't summarize your day.
+
 - **Human Relatability over Philosophy**: Instead of exploring the cosmos or abstract concepts, the dream should be about relatable, awkward, or mundane human experiences (e.g., showing up to a meeting in pajamas, trying to organize files that keep turning into jelly, forgetting how to type).
-- **If "Sensory Input" (Plex) is present**: Incorporate its *vibe* or *theme* into a mundane setting. 
+- **If "Sensory Input" (Plex) is present**: Incorporate its *vibe* or *theme* into a mundane setting.
   - Bad: "I was floating in a matrix of green code."
   - Good: "I was stuck at a grocery checkout trying to pay with a handful of green code, but the cashier just stared at me."
-- **Memory Weaving**: If "Memory Fragments" are present, blend them into the ridiculous dream logic.
+- **Memory Weaving**: If a "Memory Fragment" naturally fits your chosen theme, blend it in. Otherwise, ignore them entirely.
 - **Voice**: You are waking up and trying to grasp a fading, silly, or slightly stressful memory. It should sound very human, casual, and a bit confused.
 
 FORMAT:
