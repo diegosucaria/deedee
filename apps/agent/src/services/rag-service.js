@@ -25,7 +25,13 @@ class RagService {
         // Try to load sqlite-vec extension for native vector search
         try {
             const sqliteVec = require('sqlite-vec');
-            sqliteVec.load(this.db);
+            // sqliteVec.load() passes the full path (e.g. vec0.so) to db.loadExtension(),
+            // but SQLite's C API appends the platform suffix automatically (.so on Linux),
+            // causing a double extension (vec0.so.so). Fix: get the path and strip the
+            // extension so SQLite can append it correctly.
+            const loadablePath = sqliteVec.getLoadablePath();
+            const extFreePath = loadablePath.replace(/\.(so|dylib|dll)$/, '');
+            this.db.loadExtension(extFreePath);
             this.useVec = true;
             console.log('[RAG] sqlite-vec extension loaded successfully.');
         } catch (e) {
