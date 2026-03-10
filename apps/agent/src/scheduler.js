@@ -580,7 +580,12 @@ DO NOT contact third parties.`,
                         console.log('[Scheduler] Proactive loop skipped this hour (RNG).');
                         return { success: true, skipped: true };
                     }
-                    console.log('[Scheduler] Proactive loop ACTIVATED this hour! Waking up Agent...');
+                    // Random delay 1-30 minutes to avoid predictable timing
+                    const delayMinutes = Math.floor(Math.random() * 30) + 1;
+                    const delayMs = delayMinutes * 60 * 1000;
+                    console.log(`[Scheduler] Proactive loop ACTIVATED this hour! Delaying ${delayMinutes}m before waking Agent...`);
+                    await new Promise(resolve => setTimeout(resolve, delayMs));
+                    console.log('[Scheduler] Proactive loop delay complete. Waking up Agent...');
                 }
 
                 let executionResult = null;
