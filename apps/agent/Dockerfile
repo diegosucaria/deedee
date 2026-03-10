@@ -1,5 +1,5 @@
 FROM node:24-alpine AS base
-RUN apk add --no-cache libc6-compat python3 py3-pip make g++ git gettext
+RUN apk add --no-cache libc6-compat python3 py3-pip make g++ git gettext sqlite-dev
 RUN npm install turbo --global
 
 # --- Pruner Stage ---
