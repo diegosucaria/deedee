@@ -1,5 +1,5 @@
 FROM node:24-alpine AS base
-RUN apk add --no-cache libc6-compat python3 py3-pip make g++ git
+RUN apk add --no-cache libc6-compat python3 py3-pip make g++ git gettext
 RUN npm install turbo --global
 
 # --- Pruner Stage ---
@@ -35,6 +35,16 @@ RUN mkdir -p patches
 # Install dependencies (cached)
 RUN npm install
 RUN npm prune --production
+
+# Build sqlite-vec from source for musl (Alpine) compatibility.
+# The npm prebuilt binaries are glibc-only; compiling natively gives us a
+# musl .so that works on Alpine ARM64 without compatibility hacks.
+RUN git clone --depth 1 --branch v0.1.6 https://github.com/asg017/sqlite-vec.git /tmp/sqlite-vec \
+    && cd /tmp/sqlite-vec \
+    && make loadable \
+    && mkdir -p /app/native-extensions \
+    && cp dist/vec0.* /app/native-extensions/ \
+    && rm -rf /tmp/sqlite-vec
 
 # Copy source code
 COPY . .
@@ -79,6 +89,7 @@ RUN uv pip install ha-mcp youtube-transcript-api
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/apps/agent ./apps/agent
 COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/native-extensions ./native-extensions
 
 WORKDIR /app/apps/agent
 CMD ["npm", "start"]
