@@ -58,7 +58,7 @@ describe('RagService', () => {
         // Initialize Service
         // Mock ConfigService to return test-embedding-004
         ragService = new RagService(mockAgent);
-        ragService.config = { getModel: jest.fn().mockReturnValue('text-embedding-004') };
+        ragService.config = { getModel: jest.fn().mockReturnValue('text-embedding-004'), logUsageFromResponse: jest.fn().mockReturnValue({ cost: 0, tokens: 0 }) };
     });
 
     test('should initialize database', () => {

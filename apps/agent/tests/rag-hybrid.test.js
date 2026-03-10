@@ -9,6 +9,7 @@ jest.mock('../src/services/config-service', () => {
     return {
         ConfigService: class {
             getModel(type) { return 'mock-model'; }
+            logUsageFromResponse() { return { cost: 0, tokens: 0 }; }
         }
     };
 });
