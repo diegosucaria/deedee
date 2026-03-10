@@ -1,5 +1,5 @@
 FROM node:24-alpine AS base
-RUN apk add --no-cache libc6-compat python3 py3-pip make g++ git
+RUN apk add --no-cache libc6-compat python3 py3-pip make g++ git gettext
 RUN npm install turbo --global
 
 # --- Pruner Stage ---
@@ -37,13 +37,13 @@ RUN npm install
 RUN npm prune --production
 
 # Build sqlite-vec from source for musl (Alpine) compatibility.
-# The npm prebuilt binaries are glibc-only; compiling from source gives us a
-# musl-native .so that works on Alpine ARM64 without gcompat hacks.
+# The npm prebuilt binaries are glibc-only; compiling natively gives us a
+# musl .so that works on Alpine ARM64 without compatibility hacks.
 RUN git clone --depth 1 --branch v0.1.6 https://github.com/asg017/sqlite-vec.git /tmp/sqlite-vec \
     && cd /tmp/sqlite-vec \
-    && gcc -fPIC -shared -Wall -O3 -Ivendor/ sqlite-vec.c -o vec0.so -lm \
+    && make loadable \
     && mkdir -p /app/native-extensions \
-    && cp vec0.so /app/native-extensions/vec0.so \
+    && cp dist/vec0.* /app/native-extensions/ \
     && rm -rf /tmp/sqlite-vec
 
 # Copy source code
