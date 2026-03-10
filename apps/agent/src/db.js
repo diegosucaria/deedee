@@ -239,7 +239,11 @@ class AgentDB {
     // ...
 
     // Migration: Backfill sessions for existing messages
-    this.migrateSessions();
+    try {
+      this.migrateSessions();
+    } catch (err) {
+      console.warn('[DB] Session migration failed (non-fatal):', err.message);
+    }
 
     try {
       this.db.exec("ALTER TABLE people ADD COLUMN autopilot_status TEXT DEFAULT 'off'");
@@ -874,7 +878,7 @@ class AgentDB {
   }
 
   getFact(key) {
-    const row = this.db.prepare('SELECT key, value, updated_at, category, confidence, source, created_at, pinned FROM kv_store WHERE key = ?').get(key);
+    const row = this.db.prepare('SELECT * FROM kv_store WHERE key = ?').get(key);
     if (!row) return null;
     try { return { ...row, value: JSON.parse(row.value) }; }
     catch (e) { return row; }
@@ -885,31 +889,20 @@ class AgentDB {
   }
 
   getAllFacts() {
-    const stmt = this.db.prepare('SELECT key, value, updated_at, category, confidence, source, created_at, pinned FROM kv_store ORDER BY updated_at DESC');
+    const stmt = this.db.prepare('SELECT * FROM kv_store ORDER BY updated_at DESC');
     return stmt.all().map(row => {
-      try {
-        return {
-          key: row.key,
-          value: JSON.parse(row.value),
-          updated_at: row.updated_at,
-          category: row.category || 'general',
-          confidence: row.confidence || 'inferred',
-          source: row.source || 'system',
-          created_at: row.created_at,
-          pinned: row.pinned || 0
-        };
-      } catch (e) {
-        return {
-          key: row.key,
-          value: row.value,
-          updated_at: row.updated_at,
-          category: row.category || 'general',
-          confidence: row.confidence || 'inferred',
-          source: row.source || 'system',
-          created_at: row.created_at,
-          pinned: row.pinned || 0
-        };
-      }
+      let value = row.value;
+      try { value = JSON.parse(row.value); } catch (e) { /* keep raw */ }
+      return {
+        key: row.key,
+        value,
+        updated_at: row.updated_at,
+        category: row.category || 'general',
+        confidence: row.confidence || 'inferred',
+        source: row.source || 'system',
+        created_at: row.created_at || null,
+        pinned: row.pinned || 0
+      };
     });
   }
 
