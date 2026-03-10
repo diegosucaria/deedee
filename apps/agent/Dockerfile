@@ -39,11 +39,16 @@ RUN npm prune --production
 # Build sqlite-vec from source for musl (Alpine) compatibility.
 # The npm prebuilt binaries are glibc-only; compiling natively gives us a
 # musl .so that works on Alpine ARM64 without compatibility hacks.
+# We skip the Makefile (its -Wall -Wextra flags fail on newer GCC) and
+# compile directly, generating the header template ourselves.
 RUN git clone --depth 1 --branch v0.1.6 https://github.com/asg017/sqlite-vec.git /tmp/sqlite-vec \
     && cd /tmp/sqlite-vec \
-    && make loadable \
+    && export VERSION=0.1.6 VERSION_MAJOR=0 VERSION_MINOR=1 VERSION_PATCH=6 \
+    && export DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) SOURCE=$(git rev-parse HEAD) \
+    && envsubst < sqlite-vec.h.tmpl > sqlite-vec.h \
+    && gcc -fPIC -shared -O3 -w -Ivendor/ sqlite-vec.c -o vec0.so -lm \
     && mkdir -p /app/native-extensions \
-    && cp dist/vec0.* /app/native-extensions/ \
+    && cp vec0.so /app/native-extensions/vec0.so \
     && rm -rf /tmp/sqlite-vec
 
 # Copy source code
