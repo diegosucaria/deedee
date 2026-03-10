@@ -36,6 +36,16 @@ RUN mkdir -p patches
 RUN npm install
 RUN npm prune --production
 
+# Build sqlite-vec from source for musl (Alpine) compatibility.
+# The npm prebuilt binaries are glibc-only; compiling from source gives us a
+# musl-native .so that works on Alpine ARM64 without gcompat hacks.
+RUN git clone --depth 1 --branch v0.1.6 https://github.com/asg017/sqlite-vec.git /tmp/sqlite-vec \
+    && cd /tmp/sqlite-vec \
+    && gcc -fPIC -shared -Wall -O3 -Ivendor/ sqlite-vec.c -o vec0.so -lm \
+    && mkdir -p /app/native-extensions \
+    && cp vec0.so /app/native-extensions/vec0.so \
+    && rm -rf /tmp/sqlite-vec
+
 # Copy source code
 COPY . .
 
@@ -79,6 +89,7 @@ RUN uv pip install ha-mcp youtube-transcript-api
 COPY --from=builder /app/node_modules ./node_modules
 COPY --from=builder /app/apps/agent ./apps/agent
 COPY --from=builder /app/package.json ./package.json
+COPY --from=builder /app/native-extensions ./native-extensions
 
 WORKDIR /app/apps/agent
 CMD ["npm", "start"]

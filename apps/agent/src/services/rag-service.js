@@ -22,12 +22,24 @@ class RagService {
     }
 
     _initDB() {
-        // Try to load sqlite-vec extension for native vector search
+        // Try to load sqlite-vec extension for native vector search.
+        // Strategy: 1) Try musl-native build from /app/native-extensions (Docker)
+        //           2) Try npm package (strip extension to avoid .so.so double-suffix)
+        //           3) Fall back to brute-force cosine similarity
         try {
-            const sqliteVec = require('sqlite-vec');
-            sqliteVec.load(this.db);
-            this.useVec = true;
-            console.log('[RAG] sqlite-vec extension loaded successfully.');
+            const nativePath = path.join(process.cwd(), '..', '..', 'native-extensions', 'vec0');
+            if (fs.existsSync(nativePath + '.so') || fs.existsSync(nativePath + '.dylib')) {
+                this.db.loadExtension(nativePath);
+                this.useVec = true;
+                console.log('[RAG] sqlite-vec loaded from native build.');
+            } else {
+                const sqliteVec = require('sqlite-vec');
+                const loadablePath = sqliteVec.getLoadablePath();
+                const extFreePath = loadablePath.replace(/\.(so|dylib|dll)$/, '');
+                this.db.loadExtension(extFreePath);
+                this.useVec = true;
+                console.log('[RAG] sqlite-vec loaded from npm package.');
+            }
         } catch (e) {
             console.warn('[RAG] sqlite-vec not available, falling back to in-memory cosine similarity:', e.message);
             this.useVec = false;
