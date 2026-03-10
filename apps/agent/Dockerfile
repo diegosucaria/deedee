@@ -46,6 +46,7 @@ RUN git clone --depth 1 --branch v0.1.6 https://github.com/asg017/sqlite-vec.git
     && export VERSION=0.1.6 VERSION_MAJOR=0 VERSION_MINOR=1 VERSION_PATCH=6 \
     && export DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) SOURCE=$(git rev-parse HEAD) \
     && envsubst < sqlite-vec.h.tmpl > sqlite-vec.h \
+    && sed -i 's/typedef u_int8_t uint8_t;//' sqlite-vec.c \
     && gcc -fPIC -shared -O3 -w -Ivendor/ sqlite-vec.c -o vec0.so -lm \
     && mkdir -p /app/native-extensions \
     && cp vec0.so /app/native-extensions/vec0.so \
