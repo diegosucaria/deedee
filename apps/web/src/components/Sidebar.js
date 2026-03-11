@@ -24,6 +24,7 @@ const navItems = [
 
 
 import { useState } from 'react';
+import NotificationBell from './NotificationBell';
 
 export function Sidebar() {
     const pathname = usePathname();
@@ -35,7 +36,10 @@ export function Sidebar() {
             isCollapsed ? "w-16 items-center" : "w-16 md:w-52"
         )}>
             {/* Header */}
-            <div className={clsx("flex items-center mb-8 px-4", isCollapsed ? "justify-center" : "justify-between")}>
+            <div className={clsx(
+                "flex items-center mb-4 px-4",
+                isCollapsed ? "justify-center flex-col gap-3" : "justify-between flex-col md:flex-row gap-3 md:gap-0"
+            )}>
                 <div className="flex items-center">
                     <div className="relative h-8 w-8 shrink-0">
                         <Image
@@ -49,6 +53,7 @@ export function Sidebar() {
                         DeeDee
                     </span>
                 </div>
+                <NotificationBell />
             </div>
 
             <nav className="flex flex-1 flex-col gap-2 px-2 w-full">

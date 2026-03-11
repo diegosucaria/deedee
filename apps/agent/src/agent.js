@@ -36,6 +36,7 @@ const { DreamService } = require('./services/dream-service');
 const { SubAgentService } = require('./services/subagent-service');
 const { ToolScoper } = require('./services/tool-scoper');
 const { sanitizeToolResult } = require('./utils/tool-result-sanitizer');
+const { NotificationService } = require('./utils/notifications');
 
 
 
@@ -88,6 +89,7 @@ class Agent {
     this.dreamService = new DreamService(this);
     this.subAgentService = new SubAgentService(this);
     this.toolScoper = new ToolScoper(config.googleApiKey, this.db);
+    this.notifications = new NotificationService(this.db, this.interface);
 
     // In-Memory Settings Cache
     this.settings = {};
@@ -1556,6 +1558,25 @@ class Agent {
             logResult = sanitizedStr;
           }
           console.log(`${logPrefix} Tool Result (${executionName}): ~${resultStr.length} chars${resultStr.length !== sanitizedStr.length ? ` → ${sanitizedStr.length} sanitized` : ''}. Content:`, logResult);
+
+          // Notify on tool result truncation
+          if (dbToolResult?._sanitizer?.truncated) {
+            const chatId = message.metadata?.chatId;
+            this.notifications.create({
+              type: 'tool_truncation',
+              severity: 'warning',
+              title: `Tool output truncated: ${executionName}`,
+              message: `"${executionName}" returned ${dbToolResult._sanitizer.originalChars.toLocaleString()} chars, truncated to ${dbToolResult._sanitizer.maxChars.toLocaleString()}. Some data may have been lost.`,
+              metadata: {
+                toolName: executionName,
+                originalChars: dbToolResult._sanitizer.originalChars,
+                maxChars: dbToolResult._sanitizer.maxChars,
+                chatId,
+                source: message.source,
+                link: chatId ? `/system/history?chatId=${encodeURIComponent(chatId)}` : '/system/history',
+              }
+            });
+          }
 
           // Build API Payload (Send CLEAN result to Model)
           // SDK Requirement: 'response' must be an object map.

@@ -1652,3 +1652,69 @@ export async function updateGSuiteAccountLabel(email, label) {
         return { success: false, error: error.message };
     }
 }
+
+// --- Notifications ---
+
+export async function getNotifications(limit = 50, includeRead = false, includeDismissed = false) {
+    try {
+        const params = new URLSearchParams({ limit, includeRead, includeDismissed });
+        return await fetchAPI(`/v1/notifications?${params.toString()}`);
+    } catch (error) {
+        console.error('getNotifications Error:', error);
+        return { notifications: [], unreadCount: 0 };
+    }
+}
+
+export async function getUnreadCount() {
+    try {
+        return await fetchAPI('/v1/notifications/count');
+    } catch (error) {
+        return { count: 0 };
+    }
+}
+
+export async function markNotificationRead(id) {
+    try {
+        await fetchAPI(`/v1/notifications/${encodeURIComponent(id)}/read`, { method: 'POST' });
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function markAllNotificationsRead() {
+    try {
+        await fetchAPI('/v1/notifications/read-all', { method: 'POST' });
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function dismissNotification(id) {
+    try {
+        await fetchAPI(`/v1/notifications/${encodeURIComponent(id)}/dismiss`, { method: 'POST' });
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function dismissAllNotifications() {
+    try {
+        await fetchAPI('/v1/notifications/dismiss-all', { method: 'POST' });
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function deleteNotification(id) {
+    try {
+        await fetchAPI(`/v1/notifications/${encodeURIComponent(id)}`, { method: 'DELETE' });
+        revalidatePath('/system/notifications');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}

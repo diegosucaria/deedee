@@ -272,6 +272,21 @@ class AgentDB {
         created_at TEXT DEFAULT (datetime('now')),
         completed_at TEXT
       );
+
+      CREATE TABLE IF NOT EXISTS notifications (
+        id TEXT PRIMARY KEY,
+        type TEXT NOT NULL,
+        severity TEXT NOT NULL DEFAULT 'warning',
+        title TEXT NOT NULL,
+        message TEXT NOT NULL,
+        metadata TEXT,
+        is_read INTEGER DEFAULT 0,
+        is_dismissed INTEGER DEFAULT 0,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_notifications_active
+        ON notifications(is_read, is_dismissed, created_at DESC);
     `);
 
     // Migration: Add watchers table if missing (idempotent via create table if not exists, but for updates just in case)
@@ -2191,6 +2206,62 @@ class AgentDB {
       cleaned++;
     }
     return { cleaned };
+  }
+
+  // --- Notifications ---
+
+  getNotifications({ limit = 50, includeRead = false, includeDismissed = false } = {}) {
+    const safeLimit = Math.min(Math.max(1, limit), 500);
+    const conditions = [];
+    if (!includeRead) conditions.push('is_read = 0');
+    if (!includeDismissed) conditions.push('is_dismissed = 0');
+    const where = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+
+    const rows = this.db.prepare(`
+      SELECT * FROM notifications ${where}
+      ORDER BY created_at DESC LIMIT ?
+    `).all(safeLimit);
+
+    return rows.map(row => ({
+      ...row,
+      metadata: row.metadata ? JSON.parse(row.metadata) : {},
+      is_read: !!row.is_read,
+      is_dismissed: !!row.is_dismissed,
+    }));
+  }
+
+  getUnreadNotificationCount() {
+    return this.db.prepare(
+      'SELECT COUNT(*) as count FROM notifications WHERE is_read = 0 AND is_dismissed = 0'
+    ).get().count;
+  }
+
+  markNotificationRead(id) {
+    this.db.prepare('UPDATE notifications SET is_read = 1 WHERE id = ?').run(id);
+  }
+
+  markAllNotificationsRead() {
+    this.db.prepare('UPDATE notifications SET is_read = 1 WHERE is_read = 0').run();
+  }
+
+  dismissNotification(id) {
+    this.db.prepare('UPDATE notifications SET is_dismissed = 1 WHERE id = ?').run(id);
+  }
+
+  dismissAllNotifications() {
+    this.db.prepare('UPDATE notifications SET is_dismissed = 1 WHERE is_dismissed = 0').run();
+  }
+
+  deleteNotification(id) {
+    this.db.prepare('DELETE FROM notifications WHERE id = ?').run(id);
+  }
+
+  createNotification({ id, type, severity, title, message, metadata }) {
+    const metadataStr = metadata ? JSON.stringify(metadata) : null;
+    this.db.prepare(`
+      INSERT INTO notifications (id, type, severity, title, message, metadata)
+      VALUES (?, ?, ?, ?, ?, ?)
+    `).run(id, type, severity, title, message, metadataStr);
   }
 }
 
