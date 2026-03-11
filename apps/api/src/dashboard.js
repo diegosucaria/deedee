@@ -98,4 +98,13 @@ router.get('/subagents', (req, res) => proxyRequest(req, res, 'GET', '/internal/
 router.get('/subagents/:id', (req, res) => proxyRequest(req, res, 'GET', `/internal/subagents/${encodeURIComponent(req.params.id)}`));
 router.post('/subagents/cleanup', (req, res) => proxyRequest(req, res, 'POST', '/internal/subagents/cleanup'));
 
+// Notifications
+router.get('/notifications', (req, res) => proxyRequest(req, res, 'GET', '/internal/notifications'));
+router.get('/notifications/count', (req, res) => proxyRequest(req, res, 'GET', '/internal/notifications/count'));
+router.post('/notifications/:id/read', (req, res) => proxyRequest(req, res, 'POST', `/internal/notifications/${encodeURIComponent(req.params.id)}/read`));
+router.post('/notifications/read-all', (req, res) => proxyRequest(req, res, 'POST', '/internal/notifications/read-all'));
+router.post('/notifications/:id/dismiss', (req, res) => proxyRequest(req, res, 'POST', `/internal/notifications/${encodeURIComponent(req.params.id)}/dismiss`));
+router.post('/notifications/dismiss-all', (req, res) => proxyRequest(req, res, 'POST', '/internal/notifications/dismiss-all'));
+router.delete('/notifications/:id', (req, res) => proxyRequest(req, res, 'DELETE', `/internal/notifications/${encodeURIComponent(req.params.id)}`));
+
 module.exports = router;

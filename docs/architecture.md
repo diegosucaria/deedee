@@ -17,6 +17,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
         - `FileSystemExecutor`, `MemoryExecutor`, `SchedulerExecutor`, `SmartHomeExecutor`, `GSuiteExecutor`, `MediaExecutor`, `ProductivityExecutor`, `SubAgentExecutor`.
     - **Tool Auto-Scoping**: Each tool definition includes a `category` field (e.g., `memory`, `slack`, `calendar_email`). A `ToolScoper` service uses a cheap LLM call to analyze scheduled job prompts on save, determining which tool categories are needed. At runtime, only relevant tools are included in the request, reducing input token costs. MCP tools are classified by namespace pattern.
     - **Multi-Agent**: Spawns isolated child agents (`SubAgentService`) for parallel tasks. Max 3 concurrent, 10-min timeout, depth=1.
+    - **Notification Service**: Persists system alerts (tool truncation, errors) to SQLite and broadcasts via Socket.io for real-time UI updates.
     - **Optimization**:
         - **Smart Context**: Intelligent token management with auto-summarization (`gemini-2.5-flash`) and long-term memory via a `summaries` table.
         - **Cost Tracking**: Real-time cost estimation using exact model matching (e.g., `gemini-2.5-flash`), tiered pricing (<=128k/200k vs >), and fallback logging. Tracks actual tokens saved via summarization.
@@ -84,6 +85,13 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - `GET /v1/subagents?page=1&limit=50`: List sub-agent tasks (paginated, max limit 100).
     - `GET /v1/subagents/:id`: Get sub-agent task detail.
     - `POST /v1/subagents/cleanup`: Cleanup completed sub-agent sessions.
+    - `GET /v1/notifications`: List system notifications (filterable).
+    - `GET /v1/notifications/count`: Get unread notification count.
+    - `POST /v1/notifications/:id/read`: Mark notification as read.
+    - `POST /v1/notifications/read-all`: Mark all notifications as read.
+    - `POST /v1/notifications/:id/dismiss`: Dismiss a notification.
+    - `POST /v1/notifications/dismiss-all`: Dismiss all notifications.
+    - `DELETE /v1/notifications/:id`: Delete a notification.
 - **Auth**: Bearer Token (`DEEDEE_API_TOKEN`). All routes protected (except `/health`).
 - **Security**: All route parameters are encoded with `encodeURIComponent()` to prevent injection via crafted job names or IDs.
 - **Flow**: Client -> API -> Agent (Waits for full processing) -> API -> Client JSON Response.
@@ -94,7 +102,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 - **Port**: `5000`
 - **Supported Channels**:
     - **Socket.io**: Real-time event-based communication for Web Interface.
-        - Emits: `agent:message` (Stream), `agent:thinking` (Status), `session:update` (Auto-Title), `subagent:update` (Sub-agent status change).
+        - Emits: `agent:message` (Stream), `agent:thinking` (Status), `session:update` (Auto-Title), `subagent:update` (Sub-agent status change), `notification:new` (System notifications).
     - **Telegram**: Long-Polling Bot. Supports Global Stop (`/stop`) and Audio Messages.
     - **WhatsApp**:
         - **Dual Session Architecture**: Runs two concurrent Baileys sockets:
@@ -107,7 +115,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 ### 5. Web Interface (`apps/web`)
 - **Type**: Next.js 14 App (Port 3002)
 - **Role**: Visual Dashboard & detailed Chat.
-- **Features**: Real-time Chat with Sessions, Markdown Journal, Memory Bank, Task Scheduler.
+- **Features**: Real-time Chat with Sessions, Markdown Journal, Memory Bank, Task Scheduler, System Notifications (bell icon + management page).
 - **Auth**:
     - **User**: Relies on Reverse Proxy (Authelia/Authentik).
     - **Service**: Injected `DEEDEE_API_TOKEN` for secure API communication (Server Actions).

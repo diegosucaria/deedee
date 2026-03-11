@@ -132,6 +132,7 @@ const createVaultRouter = require('./routes/vaults');
 const { createPeopleRouter } = require('./routes/people');
 const { createDjRouter } = require('./routes/dj');
 const { createAutopilotRouter } = require('./routes/autopilot');
+const { createNotificationsRouter } = require('./routes/notifications');
 
 // Mount Live Router (works without Agent instance for Config/Token)
 app.use('/live', createLiveRouter(agent));
@@ -149,6 +150,7 @@ if (agent) {
   app.use('/v1/vaults', createVaultRouter(agent));
   app.use('/internal/dj', createDjRouter(agent));
   app.use('/v1/autopilot', createAutopilotRouter(agent));
+  app.use('/internal/notifications', createNotificationsRouter(agent));
   app.use('/', createToolRouter(agent));
 }
 

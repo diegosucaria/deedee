@@ -2,7 +2,7 @@
 
 import Link from 'next/link';
 import { usePathname } from 'next/navigation';
-import { Activity, Clock, Terminal } from 'lucide-react';
+import { Activity, Bell, Clock, Terminal } from 'lucide-react';
 
 export default function SystemLayout({ children }) {
     const pathname = usePathname();
@@ -10,8 +10,8 @@ export default function SystemLayout({ children }) {
     const tabs = [
         { name: 'Stats', href: '/system/stats', icon: Activity },
         { name: 'History', href: '/system/history', icon: Clock },
+        { name: 'Notifications', href: '/system/notifications', icon: Bell },
         { name: 'Logs', href: '/system/logs', icon: Terminal },
-
     ];
 
     return (
