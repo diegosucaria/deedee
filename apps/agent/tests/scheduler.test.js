@@ -104,6 +104,32 @@ describe('Scheduler & Smart Notifications', () => {
         });
     });
 
+    describe('alreadyDelivered Suppression', () => {
+        it('should skip notification when forceSilent (alreadyDelivered) is true', async () => {
+            const result = { text: 'Here is your reminder!' };
+            const payload = { task: 'remind me to buy groceries' };
+
+            const finalResult = await scheduler._processSmartNotification(result, payload, true);
+
+            // Smart Notification should NOT send — the callback already delivered
+            expect(agent.interface.send).not.toHaveBeenCalled();
+            expect(finalResult.text).toBe('Here is your reminder!');
+        });
+
+        it('should still notify when forceSilent is false (source=scheduler)', async () => {
+            const result = { text: 'Here is your reminder!' };
+            const payload = { task: 'remind me to buy groceries' };
+
+            await scheduler._processSmartNotification(result, payload, false);
+
+            expect(agent.interface.send).toHaveBeenCalledWith(expect.objectContaining({
+                source: 'scheduler',
+                content: 'Here is your reminder!',
+                isNotification: true
+            }));
+        });
+    });
+
     describe('Execution Result Accumulation Phase 2', () => {
         it('Test F: Extracts reply.content from Agent and passes it to _processSmartNotification', async () => {
             // Mock DB to return 1 scheduled job

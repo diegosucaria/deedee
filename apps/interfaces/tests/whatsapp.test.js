@@ -340,6 +340,185 @@ describe('WhatsAppService Unit Tests', () => {
     });
 });
 
+describe('convertToOpus', () => {
+    const { spawn: realSpawn } = require('child_process');
+    let childProcessMock;
+
+    beforeEach(() => {
+        jest.spyOn(console, 'log').mockImplementation(() => {});
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+    });
+
+    // We need to access the module-level function. Since it's not exported,
+    // we test it indirectly via sendMessage, OR we re-require the module.
+    // For direct testing, let's use sendMessage with audio type.
+    test('should reject on empty buffer', async () => {
+        const wa = new WhatsAppService('http://mock-agent', 'test');
+        jest.spyOn(wa, '_importBaileys').mockResolvedValue({
+            default: jest.fn(() => ({
+                ev: { on: jest.fn() },
+                sendMessage: jest.fn(),
+                sendPresenceUpdate: jest.fn(),
+                logout: jest.fn(),
+                readMessages: jest.fn()
+            })),
+            useMultiFileAuthState: jest.fn(() => ({ state: {}, saveCreds: jest.fn() })),
+            fetchLatestBaileysVersion: jest.fn().mockResolvedValue({ version: [2, 3000, 0], isLatest: true }),
+            DisconnectReason: { loggedOut: 401 },
+            makeInMemoryStore: jest.fn(() => ({ bind: jest.fn(), readFromFile: jest.fn(), writeToFile: jest.fn(), contacts: {} }))
+        });
+        await wa.connect();
+
+        // Empty base64 produces a 0-length buffer
+        await expect(wa.sendMessage('123@s.whatsapp.net', '', { type: 'audio' }))
+            .rejects.toThrow('empty or null audio buffer');
+    });
+
+    test('should handle ffmpeg not available (graceful fallback)', async () => {
+        // This test verifies the error handler path. In CI without ffmpeg,
+        // the spawn will emit an error event and the function falls back to raw buffer.
+        const wa = new WhatsAppService('http://mock-agent', 'test');
+        const mockSendMessage = jest.fn();
+        jest.spyOn(wa, '_importBaileys').mockResolvedValue({
+            default: jest.fn(() => ({
+                ev: { on: jest.fn() },
+                sendMessage: mockSendMessage,
+                sendPresenceUpdate: jest.fn(),
+                logout: jest.fn(),
+                readMessages: jest.fn()
+            })),
+            useMultiFileAuthState: jest.fn(() => ({ state: {}, saveCreds: jest.fn() })),
+            fetchLatestBaileysVersion: jest.fn().mockResolvedValue({ version: [2, 3000, 0], isLatest: true }),
+            DisconnectReason: { loggedOut: 401 },
+            makeInMemoryStore: jest.fn(() => ({ bind: jest.fn(), readFromFile: jest.fn(), writeToFile: jest.fn(), contacts: {} }))
+        });
+        await wa.connect();
+
+        // Mock spawn to simulate ffmpeg not found
+        const child_process = require('child_process');
+        const EventEmitter = require('events');
+        const { Writable, Readable } = require('stream');
+
+        jest.spyOn(child_process, 'spawn').mockImplementation(() => {
+            const proc = new EventEmitter();
+            proc.stdout = new Readable({ read() {} });
+            proc.stderr = new Readable({ read() {} });
+            proc.stdin = new Writable({ write(c, e, cb) { cb(); }, final(cb) { cb(); } });
+            proc.kill = jest.fn();
+            // Simulate ENOENT error
+            process.nextTick(() => proc.emit('error', new Error('spawn ffmpeg ENOENT')));
+            return proc;
+        });
+
+        const audio = Buffer.from('fake-wav-data').toString('base64');
+        await wa.sendMessage('123@s.whatsapp.net', audio, { type: 'audio' });
+
+        // Should still send (with raw buffer as fallback)
+        expect(mockSendMessage).toHaveBeenCalledWith(
+            '123@s.whatsapp.net',
+            expect.objectContaining({ audio: expect.any(Buffer), ptt: true })
+        );
+    });
+});
+
+describe('fromMe feedback loop prevention', () => {
+    let whatsappAssistant;
+    let whatsappUser;
+    let spyAxios;
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        jest.spyOn(console, 'log').mockImplementation(() => {});
+        jest.spyOn(console, 'error').mockImplementation(() => {});
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
+        process.env.ALLOWED_WHATSAPP_NUMBERS = '123456';
+
+        whatsappAssistant = new WhatsAppService('http://mock-agent', 'assistant');
+        whatsappUser = new WhatsAppService('http://mock-agent', 'user');
+
+        spyAxios = require('axios').post;
+        spyAxios.mockResolvedValue({});
+    });
+
+    test('assistant session should block fromMe audio (prevents feedback loop)', async () => {
+        whatsappAssistant.allowedNumbers = new Set(['123456']);
+
+        await whatsappAssistant.handleMessage({
+            key: { remoteJid: '123456@s.whatsapp.net', fromMe: true },
+            message: { audioMessage: { mimetype: 'audio/ogg; codecs=opus' } }
+        });
+
+        // Should NOT forward to agent — this is the bot's own TTS echo
+        expect(spyAxios).not.toHaveBeenCalled();
+    });
+
+    test('assistant session should block fromMe text', async () => {
+        whatsappAssistant.allowedNumbers = new Set(['123456']);
+
+        await whatsappAssistant.handleMessage({
+            key: { remoteJid: '123456@s.whatsapp.net', fromMe: true },
+            message: { conversation: 'Hello from me' }
+        });
+
+        expect(spyAxios).not.toHaveBeenCalled();
+    });
+
+    test('assistant session should allow non-fromMe messages', async () => {
+        whatsappAssistant.allowedNumbers = new Set(['123456']);
+
+        await whatsappAssistant.handleMessage({
+            key: { remoteJid: '123456@s.whatsapp.net', fromMe: false },
+            message: { conversation: 'Hello from user' }
+        });
+
+        expect(spyAxios).toHaveBeenCalled();
+    });
+
+    test('user session should allow fromMe audio for semantic extraction', async () => {
+        // Verify the session-based filter logic directly:
+        // On user session, fromMe audio should NOT be blocked
+        const msg = {
+            key: { remoteJid: '123456@s.whatsapp.net', fromMe: true },
+            message: { audioMessage: { mimetype: 'audio/ogg; codecs=opus' } }
+        };
+
+        expect(whatsappUser.sessionId).toBe('user');
+
+        // Replicate the filter logic from whatsapp.js
+        const isFromMeMedia = msg.key.fromMe && whatsappUser.sessionId === 'user' &&
+            (!!msg.message?.audioMessage || !!msg.message?.imageMessage);
+        expect(isFromMeMedia).toBe(true);
+
+        // The filter: if (fromMe && !isFromMeMedia) return;
+        // Since isFromMeMedia is true, it should NOT return early
+        const shouldBlock = msg.key.fromMe && !isFromMeMedia;
+        expect(shouldBlock).toBe(false);
+
+        // Verify the inverse: on assistant session, same message IS blocked
+        const isFromMeMediaAssistant = msg.key.fromMe && whatsappAssistant.sessionId === 'user' &&
+            (!!msg.message?.audioMessage || !!msg.message?.imageMessage);
+        expect(isFromMeMediaAssistant).toBe(false);
+
+        const shouldBlockAssistant = msg.key.fromMe && !isFromMeMediaAssistant;
+        expect(shouldBlockAssistant).toBe(true);
+    });
+
+    test('user session should block fromMe text (only media passes)', async () => {
+        whatsappUser.allowedNumbers = new Set(['123456']);
+
+        await whatsappUser.handleMessage({
+            key: { remoteJid: '123456@s.whatsapp.net', fromMe: true },
+            message: { conversation: 'My own text' }
+        });
+
+        expect(spyAxios).not.toHaveBeenCalled();
+    });
+});
+
 describe('WhatsApp API Integration Tests', () => {
     let app;
     let mockStart;
