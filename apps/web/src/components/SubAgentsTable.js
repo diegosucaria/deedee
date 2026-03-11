@@ -102,14 +102,42 @@ function groupTasks(tasks) {
     return groups;
 }
 
+function getGroupTotals(group) {
+    const totalCost = group.tasks.reduce((sum, t) => sum + (t.cost || 0), 0);
+    const timestamps = group.tasks
+        .filter(t => t.created_at)
+        .map(t => ({
+            start: new Date(t.created_at),
+            end: t.completed_at ? new Date(t.completed_at) : new Date(),
+        }));
+    let wallDurationMs = 0;
+    if (timestamps.length > 0) {
+        const earliest = Math.min(...timestamps.map(t => t.start.getTime()));
+        const latest = Math.max(...timestamps.map(t => t.end.getTime()));
+        wallDurationMs = latest - earliest;
+    }
+    return { totalCost, wallDurationMs };
+}
+
+function formatDurationMs(ms) {
+    const seconds = Math.floor(ms / 1000);
+    if (seconds < 60) return `${seconds}s`;
+    const minutes = Math.floor(seconds / 60);
+    const remainingSec = seconds % 60;
+    return `${minutes}m ${remainingSec}s`;
+}
+
 function GroupSummary({ group }) {
     const running = group.tasks.filter(t => t.status === 'running').length;
     const completed = group.tasks.filter(t => t.status === 'completed').length;
     const failed = group.tasks.filter(t => t.status === 'failed' || t.status === 'timeout').length;
+    const { totalCost, wallDurationMs } = getGroupTotals(group);
     const parts = [];
     if (running > 0) parts.push(<span key="r" className="text-sky-400">{running} running</span>);
     if (completed > 0) parts.push(<span key="c" className="text-emerald-400">{completed} done</span>);
     if (failed > 0) parts.push(<span key="f" className="text-red-400">{failed} failed</span>);
+    if (totalCost > 0) parts.push(<span key="cost" className="text-red-400">${totalCost.toFixed(4)}</span>);
+    if (wallDurationMs > 0) parts.push(<span key="dur" className="text-zinc-400">{formatDurationMs(wallDurationMs)}</span>);
     return (
         <span className="flex items-center gap-1.5 text-[11px] text-zinc-500">
             {parts.reduce((acc, el, i) => {
