@@ -1938,27 +1938,26 @@ class AgentDB {
     const log = this.db.prepare('SELECT * FROM job_logs WHERE id = ?').get(jobLogId);
     if (!log) return { totalCost: 0, totalTokens: 0, callCount: 0 };
 
-    // Match token_usage by chat_id prefix and time window
-    const chatIdPatterns = [
-      `scheduled_${log.job_name}`,
-      `system_${log.job_name}`
-    ];
+    // Match token_usage by chat_id prefix and time window.
+    // Scheduler generates chat_ids like 'scheduled_{name}_{timestamp}' or 'system_{name}_{timestamp}'
+    // so we use LIKE with a prefix pattern to match all runs of a given job name.
+    const scheduledPrefix = `scheduled_${log.job_name}_%`;
+    const systemPrefix = `system_${log.job_name}_%`;
     const durationMs = log.duration_ms || 60000; // fallback 1 min
     const startTime = log.timestamp;
     // End time = start + duration + small buffer
     const endBufferSec = Math.ceil(durationMs / 1000) + 5;
 
-    const placeholders = chatIdPatterns.map(() => '?').join(',');
     const row = this.db.prepare(`
       SELECT
         SUM(estimated_cost) as total_cost,
         SUM(total_tokens) as total_tokens,
         COUNT(*) as call_count
       FROM token_usage
-      WHERE chat_id IN (${placeholders})
-        AND timestamp >= datetime(?, 'localtime', '-2 seconds')
-        AND timestamp <= datetime(?, 'localtime', '+' || ? || ' seconds')
-    `).get(...chatIdPatterns, startTime, startTime, endBufferSec);
+      WHERE (chat_id LIKE ? OR chat_id LIKE ?)
+        AND timestamp >= datetime(?, '-2 seconds')
+        AND timestamp <= datetime(?, '+' || ? || ' seconds')
+    `).get(scheduledPrefix, systemPrefix, startTime, startTime, endBufferSec);
 
     return {
       totalCost: row?.total_cost || 0,
