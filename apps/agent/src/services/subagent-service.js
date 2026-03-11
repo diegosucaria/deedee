@@ -50,7 +50,7 @@ class SubAgentService {
                 taskId,
                 isSubAgent: true,
                 allowedTools: tools || null,
-                modelOverride: selectedModel,
+                forceModel: selectedModel,
                 subAgentDepth: parentDepth + 1
             }
         };
