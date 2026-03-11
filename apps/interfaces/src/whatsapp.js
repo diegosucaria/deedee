@@ -11,8 +11,17 @@ const { spawn } = require('child_process');
  * Required because WhatsApp PTT messages must be OGG/Opus encoded.
  * Falls back to the original buffer if ffmpeg is unavailable.
  */
+const FFMPEG_TIMEOUT_MS = 30000;
+
 function convertToOpus(wavBuffer) {
+    if (!wavBuffer || wavBuffer.length === 0) {
+        return Promise.reject(new Error('convertToOpus: empty or null audio buffer'));
+    }
+
     return new Promise((resolve, reject) => {
+        let settled = false;
+        const settle = (fn, val) => { if (!settled) { settled = true; clearTimeout(timer); fn(val); } };
+
         const ffmpeg = spawn('ffmpeg', [
             '-i', 'pipe:0',
             '-c:a', 'libopus',
@@ -22,20 +31,34 @@ function convertToOpus(wavBuffer) {
             'pipe:1'
         ], { stdio: ['pipe', 'pipe', 'pipe'] });
 
+        // Timeout guard — kill ffmpeg if it hangs
+        const timer = setTimeout(() => {
+            ffmpeg.kill('SIGKILL');
+            settle(reject, new Error('ffmpeg conversion timed out'));
+        }, FFMPEG_TIMEOUT_MS);
+
         const chunks = [];
         ffmpeg.stdout.on('data', chunk => chunks.push(chunk));
+
+        // Drain stderr to prevent pipe buffer deadlock
+        let stderrOutput = '';
+        ffmpeg.stderr.on('data', chunk => { stderrOutput += chunk.toString().slice(0, 2000); });
+
         ffmpeg.on('close', code => {
             if (code === 0) {
-                resolve(Buffer.concat(chunks));
+                settle(resolve, Buffer.concat(chunks));
             } else {
-                reject(new Error(`ffmpeg exited with code ${code}`));
+                settle(reject, new Error(`ffmpeg exited with code ${code}: ${stderrOutput.slice(0, 500)}`));
             }
         });
         ffmpeg.on('error', (err) => {
             // ffmpeg not installed — fall back to raw buffer
             console.warn('[WhatsApp] ffmpeg not available, sending audio without conversion:', err.message);
-            resolve(wavBuffer);
+            settle(resolve, wavBuffer);
         });
+
+        // Prevent uncaught EPIPE if ffmpeg exits before we finish writing
+        ffmpeg.stdin.on('error', () => {});
         ffmpeg.stdin.write(wavBuffer);
         ffmpeg.stdin.end();
     });
