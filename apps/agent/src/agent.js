@@ -1525,18 +1525,6 @@ class Agent {
           // Capture to Summary
           executionSummary.toolOutputs.push({ name: executionName, result });
 
-          // Log (Truncated only if string is too long, prevent pollution. Objects kept for collapsing)
-          let logResult;
-          const resultStr = JSON.stringify(result);
-          const resultLen = resultStr.length;
-
-          if (typeof result === 'string' && result.length > 1000) {
-            logResult = result.substring(0, 200) + '... [TRUNCATED STRING]';
-          } else {
-            logResult = resultStr; // JSON.stringify(result);
-          }
-          console.log(`${logPrefix} Tool Result (${executionName}): ~${resultLen} chars. Content:`, logResult);
-
           // Sanitize for DB AND Model to prevent Context Pollution
           let dbToolResult = result;
           if (executionName === 'generateImage') {
@@ -1548,6 +1536,19 @@ class Agent {
 
           // Sanitize MCP tool results (strip email bloat, cap oversized results)
           dbToolResult = sanitizeToolResult(executionName, dbToolResult);
+
+          // Log the SANITIZED result (post-cleanup) to keep console logs readable
+          const resultStr = JSON.stringify(result);
+          const sanitizedStr = JSON.stringify(dbToolResult);
+          let logResult;
+          if (typeof dbToolResult === 'string' && dbToolResult.length > 1000) {
+            logResult = dbToolResult.substring(0, 200) + '... [TRUNCATED STRING]';
+          } else if (sanitizedStr.length > 1000) {
+            logResult = sanitizedStr.substring(0, 1000) + '... [TRUNCATED]';
+          } else {
+            logResult = sanitizedStr;
+          }
+          console.log(`${logPrefix} Tool Result (${executionName}): ~${resultStr.length} chars${resultStr.length !== sanitizedStr.length ? ` → ${sanitizedStr.length} sanitized` : ''}. Content:`, logResult);
 
           // Build API Payload (Send CLEAN result to Model)
           // SDK Requirement: 'response' must be an object map.
