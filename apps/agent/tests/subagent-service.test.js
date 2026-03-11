@@ -107,7 +107,7 @@ describe('SubAgentService', () => {
 
             const calledMsg = mockAgent.processMessage.mock.calls[0][0];
             expect(calledMsg.metadata.isSubAgent).toBe(true);
-            expect(calledMsg.metadata.modelOverride).toBe('PRO');
+            expect(calledMsg.metadata.forceModel).toBe('PRO');
             expect(calledMsg.metadata.allowedTools).toEqual(['googleSearch', 'rememberFact']);
             expect(calledMsg.source).toBe('subagent');
         });
