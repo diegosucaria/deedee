@@ -1559,7 +1559,8 @@ export async function repairWhatsAppSession(session) {
 // --- Sub-Agents ---
 export async function getSubAgentTasks({ page = 1, limit = 50 } = {}) {
     try {
-        return await fetchAPI(`/v1/subagents?page=${page}&limit=${limit}`);
+        const params = new URLSearchParams({ page, limit });
+        return await fetchAPI(`/v1/subagents?${params}`);
     } catch (error) {
         console.error('getSubAgentTasks Error:', error);
         return { tasks: [], total: 0, page: 1, limit, totalPages: 0 };

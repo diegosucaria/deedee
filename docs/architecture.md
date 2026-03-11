@@ -81,7 +81,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - `GET/POST /v1/browser-secrets`: Securely manage browser automation credentials.
     - `GET/POST /v1/vaults/:id/files`: Secure file upload to vaults. [Proxy -> Agent]
     - `GET /v1/vaults/:id/files/:filename`: Secure file download. [Proxy -> Agent]
-    - `GET /v1/subagents`: List sub-agent tasks.
+    - `GET /v1/subagents?page=1&limit=50`: List sub-agent tasks (paginated, max limit 100).
     - `GET /v1/subagents/:id`: Get sub-agent task detail.
     - `POST /v1/subagents/cleanup`: Cleanup completed sub-agent sessions.
 - **Auth**: Bearer Token (`DEEDEE_API_TOKEN`). All routes protected (except `/health`).

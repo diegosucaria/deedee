@@ -181,10 +181,10 @@ export default function SubAgentsTable() {
     // Live update: refresh when agent emits sub-agent status change
     useEffect(() => {
         if (!socket) return;
-        const handler = () => loadTasks();
+        const handler = () => loadTasks(page);
         socket.on('subagent:update', handler);
         return () => socket.off('subagent:update', handler);
-    }, [socket]);
+    }, [socket, page]);
 
     const handleCleanup = async () => {
         setCleaning(true);
