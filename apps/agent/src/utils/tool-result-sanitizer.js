@@ -2,12 +2,14 @@
  * Tool Result Sanitizer
  *
  * Two-layer defense against oversized tool results that bloat the Gemini context window:
- *   Layer 1: Gmail-specific deep cleaning (decode base64, strip HTML/headers)
+ *   Layer 1a: Gmail-specific deep cleaning (decode base64, strip HTML/headers)
+ *   Layer 1b: Calendar-specific cleaning (strip attendees, etags, attachments)
  *   Layer 2: Generic size cap for ALL tool results
  */
 
-const MAX_TOOL_RESULT_CHARS = 30_000;
+const MAX_TOOL_RESULT_CHARS = 50_000;
 const MAX_EMAIL_BODY_CHARS = 4_000;
+const MAX_EVENT_DESCRIPTION_CHARS = 500;
 
 const ALLOWED_EMAIL_HEADERS = new Set([
     'from', 'to', 'subject', 'date', 'cc', 'reply-to',
@@ -27,13 +29,22 @@ function sanitizeToolResult(toolName, result, maxChars = MAX_TOOL_RESULT_CHARS) 
 
     let cleaned = result;
 
-    // Layer 1: Gmail-specific deep cleaning
+    // Layer 1a: Gmail-specific deep cleaning
     if (isGmailTool(toolName)) {
         try {
             cleaned = sanitizeGmailResult(cleaned);
         } catch (e) {
             console.error(`[Sanitizer] Gmail sanitization failed for ${toolName}:`, e.message);
             // Fall through to generic cap
+        }
+    }
+
+    // Layer 1b: Calendar-specific cleaning
+    if (isCalendarTool(toolName)) {
+        try {
+            cleaned = sanitizeCalendarResult(cleaned);
+        } catch (e) {
+            console.error(`[Sanitizer] Calendar sanitization failed for ${toolName}:`, e.message);
         }
     }
 
@@ -236,6 +247,97 @@ function stripHtml(html) {
         .trim();
 }
 
+// --- Layer 1b: Calendar-specific ---
+
+function isCalendarTool(toolName) {
+    return toolName && toolName.toLowerCase().includes('calendar');
+}
+
+/**
+ * Sanitize a Google Calendar tool result.
+ * Strips attendee metadata, etags, iCalUIDs, htmlLinks, attachments, etc.
+ * Keeps: summary, start, end, location, attendees (name+email), description (truncated), status.
+ */
+function sanitizeCalendarResult(result) {
+    // GWS MCP wraps results as { output: "JSON string" }
+    if (result && typeof result.output === 'string') {
+        try {
+            const parsed = JSON.parse(result.output);
+            const cleaned = sanitizeCalendarParsed(parsed);
+            return { output: JSON.stringify(cleaned) };
+        } catch {
+            return result;
+        }
+    }
+
+    if (result && typeof result === 'object') {
+        return sanitizeCalendarParsed(result);
+    }
+
+    return result;
+}
+
+function sanitizeCalendarParsed(obj) {
+    // Calendar events list response { items: [...], kind: "calendar#events", ... }
+    if (obj.items && Array.isArray(obj.items)) {
+        return {
+            summary: obj.summary,
+            timeZone: obj.timeZone,
+            items: obj.items.map(extractCleanEvent),
+        };
+    }
+
+    // Single event
+    if (obj.kind === 'calendar#event' || obj.start) {
+        return extractCleanEvent(obj);
+    }
+
+    // Array of events
+    if (Array.isArray(obj)) {
+        return obj.map(item => item.start ? extractCleanEvent(item) : item);
+    }
+
+    return obj;
+}
+
+function extractCleanEvent(event) {
+    const clean = {
+        id: event.id,
+        summary: event.summary || '(no title)',
+        start: event.start,
+        end: event.end,
+        status: event.status,
+    };
+
+    if (event.location) clean.location = event.location;
+
+    if (event.description) {
+        clean.description = truncate(event.description, MAX_EVENT_DESCRIPTION_CHARS);
+    }
+
+    // Keep attendees but only name + email (strip responseStatus, organizer flag, etc.)
+    if (event.attendees && event.attendees.length > 0) {
+        clean.attendees = event.attendees.map(a => {
+            const att = {};
+            if (a.displayName) att.name = a.displayName;
+            if (a.email) att.email = a.email;
+            if (a.self) att.self = true;
+            if (a.organizer) att.organizer = true;
+            if (a.optional) att.optional = true;
+            return att;
+        });
+    }
+
+    if (event.recurringEventId) clean.recurringEventId = event.recurringEventId;
+    if (event.hangoutLink) clean.hangoutLink = event.hangoutLink;
+    if (event.conferenceData?.entryPoints) {
+        clean.meetingLink = event.conferenceData.entryPoints
+            .find(e => e.entryPointType === 'video')?.uri;
+    }
+
+    return clean;
+}
+
 // --- Layer 2: Generic size cap ---
 
 function applyGenericCap(toolName, result, maxChars) {
@@ -269,4 +371,4 @@ function truncate(str, maxLen) {
     return str.substring(0, maxLen) + '... [truncated]';
 }
 
-module.exports = { sanitizeToolResult, MAX_TOOL_RESULT_CHARS, MAX_EMAIL_BODY_CHARS };
+module.exports = { sanitizeToolResult, MAX_TOOL_RESULT_CHARS, MAX_EMAIL_BODY_CHARS, MAX_EVENT_DESCRIPTION_CHARS };

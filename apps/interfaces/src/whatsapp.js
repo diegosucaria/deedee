@@ -353,24 +353,38 @@ class SQLiteStore {
     }
 
     getRecentChats(limit = 10) {
+        // Exclude groups (@g.us) AND LID-based JIDs (@lid) to avoid duplicates.
+        // LIDs are alternate identifiers for the same contact — getChatHistory already
+        // resolves both, so listing them separately just makes the LLM read the same
+        // person twice, doubling cost.
         const rows = this.db.prepare(`
-            SELECT remote_jid, MAX(timestamp) as last_ts, COUNT(*) as count 
-            FROM messages 
-            WHERE remote_jid NOT LIKE '%@g.us' 
-            GROUP BY remote_jid 
-            ORDER BY last_ts DESC 
+            SELECT remote_jid, MAX(timestamp) as last_ts, COUNT(*) as count
+            FROM messages
+            WHERE remote_jid NOT LIKE '%@g.us'
+              AND remote_jid NOT LIKE '%@lid'
+            GROUP BY remote_jid
+            ORDER BY last_ts DESC
             LIMIT ?
         `).all(limit);
 
         return rows.map(r => {
             // Get snippets
             const msgs = this.db.prepare('SELECT content FROM messages WHERE remote_jid = ? ORDER BY timestamp DESC LIMIT 3').all(r.remote_jid);
-            return {
+
+            // Resolve contact name to avoid extra getPerson calls
+            const phoneDigits = r.remote_jid.replace(/@.*/, '');
+            const contact = this.db.prepare('SELECT name, notify FROM contacts WHERE id = ?').get(r.remote_jid);
+            const name = contact?.name || contact?.notify || null;
+
+            const chat = {
                 jid: r.remote_jid,
                 lastTimestamp: r.last_ts * 1000,
                 msgCount: r.count,
                 snippets: msgs.map(m => m.content).reverse()
             };
+            if (name) chat.name = name;
+
+            return chat;
         });
     }
 
