@@ -60,10 +60,22 @@ class ImpersonationService {
         // Try strict ID first, then phone match
         let person = this.db.getPerson(contactIdOrPhone);
         if (!person && contactIdOrPhone.includes('@')) {
-            // It's a JID, try to find by phone (remove suffix)
+            // It's a JID (phone or LID), try to find by phone digits
             const phone = contactIdOrPhone.split('@')[0];
-            // Fuzzy verify? or just try getPerson again if getPerson handles phone numbers (it does)
             person = this.db.getPerson(phone);
+        }
+        // If still not found and looks like an LID (>14 digits), try suffix match
+        if (!person) {
+            const digits = contactIdOrPhone.replace(/[^0-9]/g, '');
+            if (digits.length > 14) {
+                const suffix = digits.slice(-7);
+                const row = this.db.db.prepare('SELECT * FROM people WHERE phone LIKE ?').get(`%${suffix}`);
+                if (row) {
+                    if (row.metadata) row.metadata = JSON.parse(row.metadata);
+                    if (row.identifiers) row.identifiers = JSON.parse(row.identifiers);
+                    person = row;
+                }
+            }
         }
 
         if (!person) return null;
@@ -607,19 +619,22 @@ ${transcript}
     getAutopilotStatus(contactIdentifier, contactName) {
         if (!contactIdentifier) return 'off';
 
-        // Clean ID (remove @s.whatsapp.net, etc) to match DB 'id' or 'phone' which are usually numeric
+        // Clean ID (remove @s.whatsapp.net, @lid, etc) to match DB 'id' or 'phone' which are usually numeric
         const cleanId = contactIdentifier.includes('@') ? contactIdentifier.split('@')[0] : contactIdentifier;
 
-        // console.log(`[Autopilot Debug] Checking status for raw='${contactIdentifier}', clean='${cleanId}', name='${contactName}'`);
-
         // 1. Try finding person by CLEAN ID directly
-        // console.log(`[Autopilot Debug] Checking status for raw='${contactIdentifier}', clean='${cleanId}'`);
         let person = this.db.db.prepare('SELECT id, autopilot_status, autopilot_expires_at FROM people WHERE id = ?').get(cleanId);
 
-        // 2. If not found, try by phone/metadata match (using both clean and raw to be safe)
+        // 2. If not found, try by phone match
         if (!person) {
-            // console.log(`[Autopilot Debug] Not found by ID. Trying fallback query...`);
             person = this.db.db.prepare('SELECT id, autopilot_status, autopilot_expires_at FROM people WHERE phone = ? OR id = ?').get(cleanId, contactIdentifier);
+        }
+
+        // 3. If still not found and looks like an LID (>14 digits), try fuzzy suffix match on phone
+        //    LID digits won't match phone, so try the last 7 digits as a phone suffix
+        if (!person && cleanId.length > 14) {
+            const suffix = cleanId.slice(-7);
+            person = this.db.db.prepare('SELECT id, autopilot_status, autopilot_expires_at FROM people WHERE phone LIKE ?').get(`%${suffix}`);
         }
 
         if (!person) {

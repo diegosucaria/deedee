@@ -299,93 +299,146 @@ class SQLiteStore {
         return row ? { ...JSON.parse(row.data), ...row } : null;
     }
 
+    /**
+     * Centralized JID/LID resolver. Given ANY identifier (phone JID, LID, raw digits),
+     * returns the canonical phone JID, LID, contact name, and all known message JIDs.
+     *
+     * This is the SINGLE SOURCE OF TRUTH for identity resolution.
+     * All other code should use this instead of ad-hoc resolution.
+     *
+     * @param {string} identifier - Phone JID, LID, or raw digits
+     * @returns {{ phoneJid: string|null, lid: string|null, name: string|null, allJids: string[] }}
+     */
+    resolveIdentity(identifier) {
+        if (!identifier) return { phoneJid: null, lid: null, name: null, allJids: [] };
+
+        const digits = identifier.replace(/[^0-9]/g, '');
+        const isLid = identifier.includes('@lid');
+        const isPhoneJid = identifier.includes('@s.whatsapp.net');
+
+        let contact = null;
+
+        // Strategy 1: Direct lookup by phone JID
+        if (isPhoneJid) {
+            contact = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE id = ?').get(identifier);
+        }
+
+        // Strategy 2: Direct lookup by LID
+        if (!contact && (isLid || digits.length > 14)) {
+            const lid = isLid ? identifier : `${digits}@lid`;
+            contact = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE lid = ?').get(lid);
+        }
+
+        // Strategy 3: Raw digits — try as phone JID
+        if (!contact && !isLid && !isPhoneJid && digits.length >= 7) {
+            const phoneJid = `${digits}@s.whatsapp.net`;
+            contact = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE id = ?').get(phoneJid);
+        }
+
+        // Strategy 4: Fuzzy suffix match (handles country code variations like 549 vs 54)
+        if (!contact && digits.length >= 7) {
+            const suffix = digits.slice(-7);
+            contact = this.db.prepare("SELECT id, name, notify, lid FROM contacts WHERE id LIKE ?").get(`%${suffix}%`);
+        }
+
+        if (!contact) {
+            // No contact found — return what we can infer
+            const phoneJid = isPhoneJid ? identifier : (!isLid && digits.length <= 14 ? `${digits}@s.whatsapp.net` : null);
+            const lid = isLid ? identifier : (digits.length > 14 ? `${digits}@lid` : null);
+            return { phoneJid, lid, name: null, allJids: [phoneJid, lid].filter(Boolean) };
+        }
+
+        const phoneJid = contact.id || null;
+        const lid = contact.lid || null;
+        const name = contact.name || contact.notify || null;
+        const allJids = [phoneJid, lid].filter(Boolean);
+
+        return { phoneJid, lid, name, allJids };
+    }
+
     getAllContactsRaw() {
         // For searchContacts compatibility which expects array of objects
         return this.getContacts();
     }
 
     getChatHistory(jid, limit = 50) {
-        let targetJid = jid;
+        // Use centralized resolver to find ALL JIDs for this contact
+        const identity = this.resolveIdentity(jid);
+        const targetJids = identity.allJids.length > 0 ? identity.allJids : [jid];
 
-        // 1. Primary Query
-        let rows = this.db.prepare(`
-            SELECT data FROM messages 
-            WHERE remote_jid = ? 
-            ORDER BY timestamp DESC 
+        // Query across ALL known JIDs for this contact (phone + LID)
+        const placeholders = targetJids.map(() => '?').join(',');
+        const rows = this.db.prepare(`
+            SELECT data FROM messages
+            WHERE remote_jid IN (${placeholders})
+            ORDER BY timestamp DESC
             LIMIT ?
-        `).all(targetJid, limit);
+        `).all(...targetJids, limit);
 
-        // 2. Smart Resolution (Retry if empty)
-
-        if (rows.length === 0) {
-            let resolvedJid = null;
-
-            // Case A: Explicit LID (@lid)
-            if (targetJid.includes('@lid')) {
-                const contact = this.getContactByLid(targetJid);
-                if (contact && contact.id) resolvedJid = contact.id;
-            }
-            // Case B: Digits only or Wrong Domain (e.g. LID_NUMBER@s.whatsapp.net)
-            else {
-                // Heuristic: LIDs are usually 15 digits (longer than phone numbers which are ~10-13)
-                const digits = targetJid.split('@')[0].replace(/[^0-9]/g, '');
-                if (digits.length > 14) {
-                    // Try constructing valid LID
-                    const potentialLid = `${digits}@lid`;
-                    const contact = this.getContactByLid(potentialLid);
-                    if (contact && contact.id) resolvedJid = contact.id;
-                }
-            }
-
-            if (resolvedJid) {
-                console.log(`[SQLiteStore] History Auto-Resolve: ${targetJid} -> ${resolvedJid}`);
-                targetJid = resolvedJid;
-                rows = this.db.prepare(`
-                    SELECT data FROM messages 
-                    WHERE remote_jid = ? 
-                    ORDER BY timestamp DESC 
-                    LIMIT ?
-                `).all(targetJid, limit);
-            }
+        if (rows.length === 0 && targetJids[0] !== jid) {
+            // Fallback: try the original JID directly
+            const fallback = this.db.prepare(`
+                SELECT data FROM messages
+                WHERE remote_jid = ?
+                ORDER BY timestamp DESC
+                LIMIT ?
+            `).all(jid, limit);
+            return fallback.reverse().map(r => JSON.parse(r.data));
         }
 
         return rows.reverse().map(r => JSON.parse(r.data));
     }
 
     getRecentChats(limit = 10) {
-        // Exclude groups (@g.us) AND LID-based JIDs (@lid) to avoid duplicates.
-        // LIDs are alternate identifiers for the same contact — getChatHistory already
-        // resolves both, so listing them separately just makes the LLM read the same
-        // person twice, doubling cost.
+        // Fetch more rows than needed to account for LID duplicates we'll merge
         const rows = this.db.prepare(`
             SELECT remote_jid, MAX(timestamp) as last_ts, COUNT(*) as count
             FROM messages
             WHERE remote_jid NOT LIKE '%@g.us'
-              AND remote_jid NOT LIKE '%@lid'
             GROUP BY remote_jid
             ORDER BY last_ts DESC
             LIMIT ?
-        `).all(limit);
+        `).all(limit * 2);
 
-        return rows.map(r => {
-            // Get snippets
-            const msgs = this.db.prepare('SELECT content FROM messages WHERE remote_jid = ? ORDER BY timestamp DESC LIMIT 3').all(r.remote_jid);
+        // Deduplicate: resolve each JID to its canonical phone JID and merge
+        const seen = new Map(); // phoneJid -> merged chat object
+        const results = [];
 
-            // Resolve contact name to avoid extra getPerson calls
-            const phoneDigits = r.remote_jid.replace(/@.*/, '');
-            const contact = this.db.prepare('SELECT name, notify FROM contacts WHERE id = ?').get(r.remote_jid);
-            const name = contact?.name || contact?.notify || null;
+        for (const r of rows) {
+            const identity = this.resolveIdentity(r.remote_jid);
+            const canonicalJid = identity.phoneJid || r.remote_jid;
+
+            if (seen.has(canonicalJid)) {
+                // Merge: add message count, keep latest timestamp
+                const existing = seen.get(canonicalJid);
+                existing.msgCount += r.count;
+                if (r.last_ts * 1000 > existing.lastTimestamp) {
+                    existing.lastTimestamp = r.last_ts * 1000;
+                }
+                continue;
+            }
+
+            // Get snippets from the canonical JID
+            const allJids = identity.allJids.length > 0 ? identity.allJids : [r.remote_jid];
+            const placeholders = allJids.map(() => '?').join(',');
+            const msgs = this.db.prepare(`SELECT content FROM messages WHERE remote_jid IN (${placeholders}) ORDER BY timestamp DESC LIMIT 3`).all(...allJids);
 
             const chat = {
-                jid: r.remote_jid,
+                jid: canonicalJid,
                 lastTimestamp: r.last_ts * 1000,
                 msgCount: r.count,
                 snippets: msgs.map(m => m.content).reverse()
             };
-            if (name) chat.name = name;
+            if (identity.name) chat.name = identity.name;
 
-            return chat;
-        });
+            seen.set(canonicalJid, chat);
+            results.push(chat);
+        }
+
+        // Return only the requested limit, sorted by most recent
+        return results
+            .sort((a, b) => b.lastTimestamp - a.lastTimestamp)
+            .slice(0, limit);
     }
 
     // New Helper: Get single message by key (for retries)
@@ -846,39 +899,24 @@ class WhatsAppService {
 
             let phoneNumber = remoteJid.split('@')[0];
 
-            // Handle LID: If remoteJid is an LID, check if we have a participant (likely the real phone JID)
-            if (remoteJid.includes('@lid')) {
-                // console.log(`${this.logPrefix} [LID Debug] Handling LID ${remoteJid}. Participant: ${msg.key.participant}`);
-                if (msg.key.participant) {
+            // Handle LID: Use centralized resolver for consistent identity resolution
+            if (this.store && (remoteJid.includes('@lid') || phoneNumber.length > 14)) {
+                const identity = this.store.resolveIdentity(remoteJid);
+                if (identity.phoneJid) {
+                    const resolvedPhone = identity.phoneJid.split('@')[0];
+                    if (resolvedPhone !== phoneNumber) {
+                        console.log(`${this.logPrefix} Resolved ${phoneNumber} to ${resolvedPhone} (via centralized resolver)`);
+                        phoneNumber = resolvedPhone;
+                    }
+                } else if (msg.key.participant) {
+                    // Fallback: use participant field (group messages)
                     const participantNumber = msg.key.participant.split('@')[0];
                     if (participantNumber) {
-                        console.log(`${this.logPrefix} Resolving LID (via participant) ${phoneNumber} to ${participantNumber}`);
+                        console.log(`${this.logPrefix} Resolved LID (via participant) ${phoneNumber} to ${participantNumber}`);
                         phoneNumber = participantNumber;
                     }
-                } else if (this.store) {
-                    const resolvedData = this.store.getContactByLid(remoteJid);
-                    if (resolvedData) {
-                        const resolvedId = resolvedData.id || '';
-                        const resolvedPhone = resolvedId.split('@')[0];
-                        console.log(`${this.logPrefix} Resolving LID (via DB) ${phoneNumber} to ${resolvedPhone}`);
-                        phoneNumber = resolvedPhone;
-                    } else {
-                        console.log(`${this.logPrefix} [LID Warning] Could not resolve LID ${remoteJid} from DB.`);
-                    }
-                }
-            } else {
-                // Fallback: If phoneNumber is very long (>14 digits), it might be a raw LID without suffix
-                // or Baileys normalized it. Try to resolve it.
-                if (phoneNumber.length > 14 && this.store) {
-                    // Try appending @lid
-                    const potentialLid = phoneNumber + '@lid';
-                    const resolvedData = this.store.getContactByLid(potentialLid);
-                    if (resolvedData) {
-                        const resolvedId = resolvedData.id || '';
-                        const resolvedPhone = resolvedId.split('@')[0];
-                        console.log(`${this.logPrefix} Resolving Ambiguous ID ${phoneNumber} to ${resolvedPhone} (via Fallback LID Match)`);
-                        phoneNumber = resolvedPhone;
-                    }
+                } else {
+                    console.log(`${this.logPrefix} [LID Warning] Could not resolve ${remoteJid}`);
                 }
             }
 
@@ -1168,6 +1206,15 @@ class WhatsAppService {
         };
     }
 
+    /**
+     * Resolve any identifier to canonical identity using centralized resolver.
+     * Exposed for HTTP endpoint and cross-service use.
+     */
+    resolveIdentity(identifier) {
+        if (!this.store) return { phoneJid: null, lid: null, name: null, allJids: [] };
+        return this.store.resolveIdentity(identifier);
+    }
+
     // Helper for safe timestamp conversion (handles Number vs Long)
     _getSafeTimestamp(ts) {
         if (typeof ts === 'number') return ts;
@@ -1189,80 +1236,17 @@ class WhatsAppService {
             return [];
         }
 
-        // Logic to handle Split JIDs (ID vs LID, and Country Code Prefix issues)
-        // 1. Sanitize Input
-        const inputDigits = jid.replace(/[^0-9]/g, '');
-        const isLid = jid.includes('@lid');
+        // Use centralized resolver to find all JIDs for this contact
+        const identity = this.store.resolveIdentity(jid);
+        const targetJids = identity.allJids.length > 0 ? identity.allJids : [jid.includes('@') ? jid : `${jid}@s.whatsapp.net`];
 
-        let candidateJids = new Set();
-
-        // 1. Seed with the input (Normalized)
-        const norm = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
-        candidateJids.add(norm);
-
-        // 2. Identify Primary Candidates (Phone JIDs)
-        if (isLid) {
-            candidateJids.add(jid);
-            // Try to find the Phone JID for this LID
-            const row = this.store.db.prepare('SELECT id FROM contacts WHERE lid = ?').get(jid);
-            if (row && row.id) candidateJids.add(row.id);
-        } else {
-            // It is a phone number (or partial)
-            if (inputDigits.length >= 7) {
-                // Fuzzy Search: Look in CONTACTS first (Reliable mapping source)
-                const suffix = inputDigits.slice(-7);
-
-                // Find matching Phone JIDs in Contacts
-                const contactRows = this.store.db.prepare("SELECT id FROM contacts WHERE id LIKE ?").all(`%${suffix}%`);
-                contactRows.forEach(r => candidateJids.add(r.id));
-
-                // Find matching Phone JIDs in Messages (Legacy/Direct)
-                const msgRows = this.store.db.prepare("SELECT DISTINCT remote_jid FROM messages WHERE remote_jid LIKE ? AND remote_jid NOT LIKE '%@lid'").all(`%${suffix}%`);
-                msgRows.forEach(r => candidateJids.add(r.remote_jid));
-            }
-
-            // [FIX] Check for Malformed LID (Wrong domain but long number)
-            // LIDs are usually 15 digits, phone numbers are usually <14 (even with country code)
-            if (inputDigits.length > 14) {
-                const potentialLid = `${inputDigits}@lid`;
-                candidateJids.add(potentialLid);
-                // Resolve to phone via DB
-                const row = this.store.db.prepare('SELECT id FROM contacts WHERE lid = ?').get(potentialLid);
-                if (row && row.id) candidateJids.add(row.id);
-            }
-        }
-
-        // 3. Expand to include linked LIDs/IDs
-        // For every Candidate JID found so far, find its partner (Phone <-> LID)
-        const currentList = Array.from(candidateJids);
-        if (currentList.length > 0) {
-            const placeholders = currentList.map(() => '?').join(',');
-
-            // Find LIDs for these Phone IDs
-            const lids = this.store.db.prepare(`SELECT lid FROM contacts WHERE id IN (${placeholders})`).all(...currentList);
-            lids.forEach(r => { if (r.lid) candidateJids.add(r.lid); });
-
-            // Find IDs for these LIDs (bidirectional check)
-            const ids = this.store.db.prepare(`SELECT id FROM contacts WHERE lid IN (${placeholders})`).all(...currentList);
-            ids.forEach(r => { if (r.id) candidateJids.add(r.id); });
-        }
-
-        // 4. Fallback (if still empty)
-        if (candidateJids.size === 0) {
-            const norm = jid.includes('@') ? jid : `${jid}@s.whatsapp.net`;
-            candidateJids.add(norm);
-        }
-
-        const targetJids = Array.from(candidateJids);
         console.log(`${this.logPrefix} Fetching history for ${jid}. Resolved targets: ${targetJids.join(', ')}`);
 
-        // Query IN (...)
-        // Query IN (...)
-        const queryPlaceholders = targetJids.map(() => '?').join(',');
+        const placeholders = targetJids.map(() => '?').join(',');
         const rows = this.store.db.prepare(`
-            SELECT data, timestamp FROM messages 
-            WHERE remote_jid IN (${queryPlaceholders})
-            ORDER BY timestamp DESC 
+            SELECT data, timestamp FROM messages
+            WHERE remote_jid IN (${placeholders})
+            ORDER BY timestamp DESC
             LIMIT ?
         `).all(...targetJids, limit);
 

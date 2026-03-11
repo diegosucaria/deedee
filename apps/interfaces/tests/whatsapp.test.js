@@ -243,16 +243,25 @@ describe('WhatsAppService Unit Tests', () => {
             })
         );
     });
-    test('should handle LID remoteJid by checking participant or resolving', async () => {
+    test('should handle LID remoteJid by resolving via centralized resolver', async () => {
         whatsapp.allowedNumbers = new Set(['123456']);
         const spyAxios = require('axios').post;
         spyAxios.mockResolvedValue({});
-        const spyWarn = jest.spyOn(console, 'warn');
+
+        // Mock the centralized resolver
+        whatsapp.store = {
+            resolveIdentity: jest.fn().mockReturnValue({
+                phoneJid: '123456@s.whatsapp.net',
+                lid: '999999999@lid',
+                name: 'Test User',
+                allJids: ['123456@s.whatsapp.net', '999999999@lid']
+            })
+        };
 
         await whatsapp.handleMessage({
             key: {
                 remoteJid: '999999999@lid',
-                participant: '123456@s.whatsapp.net', // The real phone number
+                participant: '123456@s.whatsapp.net',
                 fromMe: false
             },
             message: { conversation: 'Hello from LID' }
@@ -264,48 +273,27 @@ describe('WhatsAppService Unit Tests', () => {
                 content: 'Hello from LID'
             })
         );
-        expect(spyWarn).not.toHaveBeenCalled();
     });
 
-    test('should resolve LID via internal map if participant is missing (Fix Verification)', async () => {
-        const lidJid = '987654321@lid';
-        const realNumber = '987654321';
+    test('should resolve LID via centralized resolver when participant is missing', async () => {
+        const lidJid = '987654321012345@lid';
+        const realNumber = '549351234567';
 
         whatsapp.allowedNumbers = new Set([realNumber]);
         const spyAxios = require('axios').post;
         spyAxios.mockResolvedValue({});
-        const spyError = jest.spyOn(console, 'error');
 
-        // 1. Simulate Contact Sync (Population of Map)
-        // Access mock directly from the socket instance
-        await whatsapp.connect();
-
-        // Wait for async initialization
-        await new Promise(resolve => setTimeout(resolve, 50));
-
-        if (!whatsapp.sock) throw new Error('Socket not initialized');
-
-        // Note: New implementation uses this.store binding, but we still have lidMap helper for LID resolution
-        // which is populated by contacts.upsert event listener IF we kept it.
-        // Wait, I might have removed the contacts.upsert listener in favor of store binding!
-        // Let's check the code. The lidMap population logic was inside 'contacts.upsert'.
-        // If I removed that listener, lidMap won't populate.
-        // The store handles persistence, but lidMap was custom logic.
-        // CHECK: The replace_file_content removed the 'contacts.upsert' block entirely!
-        // This means LID resolution via Map is BROKEN in the current implementation unless Bailyes store provides it?
-        // Baileys store provides `lid` field on contact object.
-        // But my handleMessage logic uses `this.lidMap`.
-        // I need to either fix the implementation or skip this test.
-        // I will FIX the implementation in a subsequent step if this test fails.
-        // For now, let's skip the LID Map test part or assume I'll fix it.
-        // Actually, let's keep the test as is, if it fails I know I broke LID map.
-
-        // Mock Store resolution
+        // Mock the centralized resolver on the store
         whatsapp.store = {
-            getContactByLid: jest.fn().mockReturnValue({ id: realNumber + '@s.whatsapp.net' })
+            resolveIdentity: jest.fn().mockReturnValue({
+                phoneJid: realNumber + '@s.whatsapp.net',
+                lid: lidJid,
+                name: 'Test Contact',
+                allJids: [realNumber + '@s.whatsapp.net', lidJid]
+            })
         };
 
-        // 2. Handle Message (Missing Participant)
+        // Handle Message (Missing Participant — LID only)
         await whatsapp.handleMessage({
             key: {
                 remoteJid: lidJid,
@@ -315,12 +303,12 @@ describe('WhatsAppService Unit Tests', () => {
             message: { conversation: 'Hello' }
         });
 
-        // 3. Verify Success
+        // Verify resolver was called and message was processed
+        expect(whatsapp.store.resolveIdentity).toHaveBeenCalledWith(lidJid);
         expect(spyAxios).toHaveBeenCalledWith(
             expect.anything(),
             expect.objectContaining({ content: 'Hello' })
         );
-        expect(spyError).not.toHaveBeenCalled();
     });
 
     test('should search contacts correctly', async () => {

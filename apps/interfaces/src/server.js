@@ -272,6 +272,18 @@ app.get('/whatsapp/history', (req, res) => {
   res.json(service.getChatHistory(jid, l));
 });
 
+app.get('/whatsapp/resolve', (req, res) => {
+  if (isWhatsAppDisabled) return res.json({ phoneJid: null, lid: null, name: null, allJids: [] });
+  const { identifier, session } = req.query;
+  if (!identifier) return res.status(400).json({ error: 'Missing identifier' });
+
+  const targetSession = session || 'user';
+  const service = whatsappSessions[targetSession];
+  if (!service) return res.status(400).json({ error: 'Invalid session' });
+
+  res.json(service.resolveIdentity(identifier));
+});
+
 app.get('/whatsapp/global-history', (req, res) => {
   if (isWhatsAppDisabled) return res.json([]);
   const { session, limit } = req.query;
