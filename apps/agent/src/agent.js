@@ -35,6 +35,7 @@ const { MemoryPruningService } = require('./services/memory-pruning');
 const { DreamService } = require('./services/dream-service');
 const { SubAgentService } = require('./services/subagent-service');
 const { ToolScoper } = require('./services/tool-scoper');
+const { sanitizeToolResult } = require('./utils/tool-result-sanitizer');
 
 
 
@@ -1544,6 +1545,9 @@ class Agent {
           } else if (result && result.image_base64 && result.image_base64.length > 500) {
             dbToolResult = { ...result, image_base64: '<BASE64_IMAGE_TRUNCATED>' };
           }
+
+          // Sanitize MCP tool results (strip email bloat, cap oversized results)
+          dbToolResult = sanitizeToolResult(executionName, dbToolResult);
 
           // Build API Payload (Send CLEAN result to Model)
           // SDK Requirement: 'response' must be an object map.
