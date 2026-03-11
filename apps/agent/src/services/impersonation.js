@@ -105,6 +105,14 @@ class ImpersonationService {
             const phone = contactIdOrPhone.split('@')[0];
             person = this.db.getPerson(phone);
         }
+        // LID suffix fallback (same pattern as getContactStyle/getAutopilotStatus)
+        if (!person) {
+            const digits = contactIdOrPhone.replace(/[^0-9]/g, '');
+            if (digits.length > 14) {
+                const suffix = digits.slice(-7);
+                person = this.db.db.prepare('SELECT * FROM people WHERE phone LIKE ?').get(`%${suffix}`);
+            }
+        }
         return person ? (person.relationship || null) : null;
     }
 
