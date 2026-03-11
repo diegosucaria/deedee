@@ -596,7 +596,7 @@ DO NOT contact third parties.`,
                     role: 'user',
                     content: `System Maintenance: ${sysJob.task} `,
                     source: 'scheduler',
-                    metadata: { chatId: `system_${sysJob.name}_${Date.now()} ` }
+                    metadata: { chatId: `system_${sysJob.name}_${Date.now()}` }
                 }, async (reply) => {
                     // Update executionResult as the stream progresses, storing the latest full text
                     // reply can be { text: '...', toolCalls: [...] }. We care about the final text.
