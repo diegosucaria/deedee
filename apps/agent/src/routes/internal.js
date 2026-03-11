@@ -332,6 +332,24 @@ function createInternalRouter(agent) {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
+    router.get('/stats/cost-by-tag', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const days = parseInt(req.query.days || '1', 10);
+            const result = agent.db.getCostByTag(days);
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.get('/stats/daily-cost-by-category', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const limit = parseInt(req.query.limit || '7', 10);
+            const result = agent.db.getDailyCostByCategory(limit);
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
     // --- Sessions / History ---
     router.get('/sessions', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });

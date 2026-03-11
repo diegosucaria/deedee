@@ -3,6 +3,45 @@ const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
 
+// Map raw tags to human-friendly service categories for cost breakdown
+const SERVICE_CATEGORIES = {
+  // NULL tag = main agent chat
+  null: 'Chat',
+  // Dreams
+  dream: 'Dreams',
+  dream_tts: 'Dreams',
+  // Speech
+  tts: 'Speech',
+  tts_preview: 'Speech',
+  transcribe: 'Speech',
+  eager_transcribe: 'Speech',
+  // Image
+  image_gen: 'Image',
+  eager_describe: 'Image',
+  // DJ
+  dj_analyze: 'DJ',
+  dj_enrich: 'DJ',
+  dj_history: 'DJ',
+  dj_track_enrich: 'DJ',
+  // Memory
+  embedding: 'Memory',
+  summarization: 'Memory',
+  consolidation: 'Memory',
+  memory_pruning: 'Memory',
+  // Impersonation (Autopilot)
+  impersonation_analyze: 'Autopilot',
+  impersonation_learn: 'Autopilot',
+  autopilot: 'Autopilot',
+  // Analysis
+  analysis: 'Analysis',
+  tool_scoper: 'Analysis',
+  cron_helper: 'Analysis',
+  // People
+  people_enrich: 'People',
+  // Grok
+  grok: 'Grok',
+};
+
 class AgentDB {
   constructor(dataDir) {
     // Determine data directory
@@ -1625,6 +1664,81 @@ class AgentDB {
     return stmt.all(limit).reverse();
   }
 
+  /**
+   * Get cost breakdown grouped by service category.
+   * @param {number} days - Number of days to look back (1=today, 7=last week, 30=last month)
+   * @returns {{ categories: Object, total: { cost: number, tokens: number, calls: number } }}
+   */
+  getCostByTag(days = 1) {
+    const stmt = this.db.prepare(`
+      SELECT
+        tag,
+        SUM(estimated_cost) as cost,
+        SUM(total_tokens) as tokens,
+        COUNT(*) as calls
+      FROM token_usage
+      WHERE timestamp >= datetime('now', '-' || ? || ' days', 'localtime')
+      GROUP BY tag
+    `);
+    const rows = stmt.all(days);
+
+    // Roll up raw tags into categories
+    const categories = {};
+    let totalCost = 0, totalTokens = 0, totalCalls = 0;
+
+    for (const row of rows) {
+      const category = SERVICE_CATEGORIES[row.tag] || SERVICE_CATEGORIES[null] ? (SERVICE_CATEGORIES[row.tag] ?? 'Other') : 'Other';
+      if (!categories[category]) {
+        categories[category] = { cost: 0, tokens: 0, calls: 0 };
+      }
+      categories[category].cost += row.cost || 0;
+      categories[category].tokens += row.tokens || 0;
+      categories[category].calls += row.calls || 0;
+      totalCost += row.cost || 0;
+      totalTokens += row.tokens || 0;
+      totalCalls += row.calls || 0;
+    }
+
+    return {
+      categories,
+      total: { cost: totalCost, tokens: totalTokens, calls: totalCalls }
+    };
+  }
+
+  /**
+   * Get daily cost trend broken down by service category for stacked bar chart.
+   * @param {number} limit - Number of days to return
+   * @returns {Array<{ date: string, Chat: number, Dreams: number, ... }>}
+   */
+  getDailyCostByCategory(limit = 7) {
+    // Get raw per-tag per-day data
+    const stmt = this.db.prepare(`
+      SELECT
+        date(timestamp, 'localtime') as date,
+        tag,
+        SUM(estimated_cost) as cost
+      FROM token_usage
+      GROUP BY date(timestamp, 'localtime'), tag
+      ORDER BY date(timestamp, 'localtime') DESC
+      LIMIT 500
+    `);
+    const rows = stmt.all();
+
+    // Pivot: { date -> { category -> cost } }
+    const dateMap = {};
+    for (const row of rows) {
+      const category = SERVICE_CATEGORIES[row.tag] ?? 'Other';
+      if (!dateMap[row.date]) dateMap[row.date] = { date: row.date };
+      dateMap[row.date][category] = (dateMap[row.date][category] || 0) + (row.cost || 0);
+    }
+
+    // Sort by date desc, take limit, reverse to chronological
+    return Object.values(dateMap)
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, limit)
+      .reverse();
+  }
+
   getTokenUsageStats() {
     // Total tokens today
     const todayQuery = this.db.prepare(`
@@ -2073,4 +2187,4 @@ class AgentDB {
   }
 }
 
-module.exports = { AgentDB };
+module.exports = { AgentDB, SERVICE_CATEGORIES };
