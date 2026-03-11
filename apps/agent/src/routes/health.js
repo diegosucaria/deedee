@@ -16,22 +16,24 @@ function createHealthRouter(agent) {
         };
 
         if (agent) {
-            // Check DB
+            // Check DB with real integrity check
             try {
-                // Determine if DB is connected by running a simple query
-                if (agent.db && agent.db.db) {
-                    // Check connection
-                    if (agent.db.db.open) {
-                        health.checks.db = 'ok';
-                    } else {
-                        health.checks.db = 'closed';
-                        health.status = 'degraded';
+                if (agent.db && agent.db.healthCheck) {
+                    const dbHealth = agent.db.healthCheck();
+                    health.checks.db = dbHealth.ok ? 'ok' : dbHealth.details.status;
+                    if (!dbHealth.ok) {
+                        health.status = dbHealth.details.status === 'corrupt' ? 'corrupt' : 'degraded';
+                        health.checks.dbDetails = dbHealth.details;
                     }
+                } else if (agent.db && agent.db.db) {
+                    health.checks.db = agent.db.db.open ? 'ok' : 'closed';
+                    if (!agent.db.db.open) health.status = 'degraded';
                 } else {
                     health.checks.db = 'missing';
                 }
             } catch (e) {
                 health.checks.db = 'error';
+                health.checks.dbError = e.message;
                 health.status = 'degraded';
             }
 

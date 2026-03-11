@@ -142,9 +142,24 @@ class SQLiteStore {
 
     }
 
+    close() {
+        if (this.db) {
+            try {
+                this.db.pragma('wal_checkpoint(TRUNCATE)');
+                this.db.close();
+                this.db = null;
+                console.log('[SQLiteStore] Database closed with WAL checkpoint.');
+            } catch (err) {
+                console.error('[SQLiteStore] Error closing database:', err.message);
+            }
+        }
+    }
+
     init() {
         this.db.pragma('journal_mode = WAL');
         this.db.pragma('synchronous = NORMAL');
+        this.db.pragma('busy_timeout = 5000');
+        this.db.pragma('temp_store = MEMORY');
         this.db.exec(`
             CREATE TABLE IF NOT EXISTS contacts (
                 id TEXT PRIMARY KEY,

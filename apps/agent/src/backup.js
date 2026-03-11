@@ -35,6 +35,11 @@ class BackupManager {
         console.log(`[BackupManager] Starting backup: ${backupName}`);
 
         try {
+            // 0. Checkpoint WAL so all data is in the main db file before zipping
+            if (this.agent.db?.checkpoint) {
+                this.agent.db.checkpoint();
+            }
+
             // 1. Create Zip
             await this.createZip(sourceDir, outputPath);
             console.log(`[BackupManager] Zip created at ${outputPath}`);
