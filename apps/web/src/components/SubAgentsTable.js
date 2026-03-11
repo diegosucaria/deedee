@@ -127,17 +127,14 @@ function formatDurationMs(ms) {
     return `${minutes}m ${remainingSec}s`;
 }
 
-function GroupSummary({ group }) {
+function GroupStatusSummary({ group }) {
     const running = group.tasks.filter(t => t.status === 'running').length;
     const completed = group.tasks.filter(t => t.status === 'completed').length;
     const failed = group.tasks.filter(t => t.status === 'failed' || t.status === 'timeout').length;
-    const { totalCost, wallDurationMs } = getGroupTotals(group);
     const parts = [];
     if (running > 0) parts.push(<span key="r" className="text-sky-400">{running} running</span>);
     if (completed > 0) parts.push(<span key="c" className="text-emerald-400">{completed} done</span>);
     if (failed > 0) parts.push(<span key="f" className="text-red-400">{failed} failed</span>);
-    if (totalCost > 0) parts.push(<span key="cost" className="text-red-400">${totalCost.toFixed(4)}</span>);
-    if (wallDurationMs > 0) parts.push(<span key="dur" className="text-zinc-400">{formatDurationMs(wallDurationMs)}</span>);
     return (
         <span className="flex items-center gap-1.5 text-[11px] text-zinc-500">
             {parts.reduce((acc, el, i) => {
@@ -153,7 +150,7 @@ export default function SubAgentsTable() {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [expandedId, setExpandedId] = useState(null);
-    const [collapsedGroups, setCollapsedGroups] = useState(new Set());
+    const [expandedGroups, setExpandedGroups] = useState(new Set());
     const [cleaning, setCleaning] = useState(false);
     const { socket } = useSocket();
 
@@ -196,7 +193,7 @@ export default function SubAgentsTable() {
     };
 
     const toggleGroup = (key) => {
-        setCollapsedGroups(prev => {
+        setExpandedGroups(prev => {
             const next = new Set(prev);
             if (next.has(key)) next.delete(key);
             else next.add(key);
@@ -264,18 +261,20 @@ export default function SubAgentsTable() {
                                 const colorIdx = groupIdx % GROUP_COLORS.length;
                                 const borderColor = GROUP_COLORS[colorIdx];
                                 const dotColor = GROUP_DOT_COLORS[colorIdx];
-                                const isCollapsed = collapsedGroups.has(group.key);
+                                const isCollapsed = !expandedGroups.has(group.key);
                                 const isSingleTask = group.tasks.length === 1;
+                                const showGroupHeader = (hasMultipleGroups || groups.length === 1) && !isSingleTask;
+                                const { totalCost, wallDurationMs } = showGroupHeader ? getGroupTotals(group) : { totalCost: 0, wallDurationMs: 0 };
 
                                 return (
                                     <Fragment key={group.key}>
-                                        {/* Group header row */}
-                                        {(hasMultipleGroups || groups.length === 1) && !isSingleTask && (
+                                        {/* Group header row — uses individual cells to align with column headers */}
+                                        {showGroupHeader && (
                                             <tr
                                                 className={`bg-zinc-950/80 hover:bg-zinc-800/40 transition-colors cursor-pointer border-l-2 ${borderColor}`}
                                                 onClick={() => toggleGroup(group.key)}
                                             >
-                                                <td colSpan={6} className="px-4 py-2">
+                                                <td className="px-4 py-2">
                                                     <div className="flex items-center gap-2">
                                                         <span className="text-zinc-500 transition-transform duration-150" style={{ transform: isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}>
                                                             <ChevronRight className="w-3.5 h-3.5" />
@@ -283,9 +282,23 @@ export default function SubAgentsTable() {
                                                         <span className={`w-2 h-2 rounded-full ${dotColor}`} />
                                                         <span className="text-xs font-semibold text-zinc-400">{group.label}</span>
                                                         <span className="text-[11px] text-zinc-600 font-mono">{group.tasks.length} tasks</span>
-                                                        <span className="ml-auto"><GroupSummary group={group} /></span>
                                                     </div>
                                                 </td>
+                                                <td className="px-4 py-2">
+                                                    <GroupStatusSummary group={group} />
+                                                </td>
+                                                <td className="px-4 py-2"></td>
+                                                <td className="px-4 py-2">
+                                                    {totalCost > 0 && (
+                                                        <span className="text-xs font-mono text-red-400">${totalCost.toFixed(4)}</span>
+                                                    )}
+                                                </td>
+                                                <td className="px-4 py-2">
+                                                    {wallDurationMs > 0 && (
+                                                        <span className="text-xs font-mono text-zinc-400">{formatDurationMs(wallDurationMs)}</span>
+                                                    )}
+                                                </td>
+                                                <td className="px-4 py-2"></td>
                                             </tr>
                                         )}
                                         {/* Task rows */}
