@@ -11,7 +11,7 @@ describe('SubAgentService', () => {
                 createSubAgent: jest.fn(),
                 updateSubAgent: jest.fn(),
                 getSubAgent: jest.fn(),
-                listSubAgents: jest.fn().mockReturnValue([]),
+                listSubAgents: jest.fn().mockReturnValue({ tasks: [], total: 0, page: 1, limit: 50 }),
                 cleanupSubAgents: jest.fn().mockReturnValue({ cleaned: 0 }),
                 deleteSession: jest.fn(),
             },
@@ -221,10 +221,10 @@ describe('SubAgentService', () => {
 
     describe('listTasks()', () => {
         it('should return formatted task list', () => {
-            mockAgent.db.listSubAgents.mockReturnValue([
+            mockAgent.db.listSubAgents.mockReturnValue({ tasks: [
                 { id: 't1', task: 'Research', status: 'completed', model: 'FLASH', created_at: '2026-01-01', completed_at: '2026-01-01', result: 'done' },
                 { id: 't2', task: 'Calendar', status: 'running', model: 'PRO', created_at: '2026-01-01', completed_at: null, result: null },
-            ]);
+            ], total: 2, page: 1, limit: 50 });
 
             const tasks = service.listTasks('chat-123');
             expect(tasks).toHaveLength(2);
