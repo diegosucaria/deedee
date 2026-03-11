@@ -703,7 +703,9 @@ function createInternalRouter(agent) {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
         try {
             const parentChatId = req.query.parentChatId || null;
-            const tasks = agent.db.listSubAgents(parentChatId);
+            const page = Math.max(1, parseInt(req.query.page) || 1);
+            const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
+            const { tasks, total, page: pg, limit: lim } = agent.db.listSubAgents(parentChatId, { page, limit });
 
             // Enrich with cost data
             const taskIds = tasks.map(t => t.id);
@@ -714,7 +716,7 @@ function createInternalRouter(agent) {
                 tokens: costs[t.id]?.totalTokens || 0
             }));
 
-            res.json({ tasks: enriched });
+            res.json({ tasks: enriched, total, page: pg, limit: lim, totalPages: Math.ceil(total / lim) });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, Fragment, useMemo } from 'react';
 import { getSubAgentTasks, cleanupSubAgentTasks } from '@/app/actions';
-import { RefreshCw, Bot, Trash2, ChevronDown, ChevronUp, ChevronRight } from 'lucide-react';
+import { RefreshCw, Bot, Trash2, ChevronDown, ChevronUp, ChevronRight, ChevronLeft } from 'lucide-react';
 import { useSocket } from '@/hooks/useSocket';
 
 const STATUS_STYLES = {
@@ -152,13 +152,19 @@ export default function SubAgentsTable() {
     const [expandedId, setExpandedId] = useState(null);
     const [expandedGroups, setExpandedGroups] = useState(new Set());
     const [cleaning, setCleaning] = useState(false);
+    const [page, setPage] = useState(1);
+    const [totalPages, setTotalPages] = useState(0);
+    const [total, setTotal] = useState(0);
+    const PAGE_SIZE = 50;
     const { socket } = useSocket();
 
-    const loadTasks = async () => {
+    const loadTasks = async (p = page) => {
         setLoading(true);
         try {
-            const data = await getSubAgentTasks();
+            const data = await getSubAgentTasks({ page: p, limit: PAGE_SIZE });
             setTasks(data.tasks || []);
+            setTotalPages(data.totalPages || 0);
+            setTotal(data.total || 0);
         } catch (err) {
             console.error('Failed to load sub-agent tasks:', err);
         } finally {
@@ -167,24 +173,25 @@ export default function SubAgentsTable() {
     };
 
     useEffect(() => {
-        loadTasks();
-        const interval = setInterval(loadTasks, 10000);
+        loadTasks(page);
+        const interval = setInterval(() => loadTasks(page), 10000);
         return () => clearInterval(interval);
-    }, []);
+    }, [page]);
 
     // Live update: refresh when agent emits sub-agent status change
     useEffect(() => {
         if (!socket) return;
-        const handler = () => loadTasks();
+        const handler = () => loadTasks(page);
         socket.on('subagent:update', handler);
         return () => socket.off('subagent:update', handler);
-    }, [socket]);
+    }, [socket, page]);
 
     const handleCleanup = async () => {
         setCleaning(true);
         try {
             await cleanupSubAgentTasks();
-            await loadTasks();
+            setPage(1);
+            await loadTasks(1);
         } catch (err) {
             console.error('Failed to cleanup:', err);
         } finally {
@@ -312,7 +319,7 @@ export default function SubAgentsTable() {
                                                         <div className="flex flex-col">
                                                             <span className="text-zinc-300 line-clamp-1">{task.task}</span>
                                                             <span className="text-[10px] text-zinc-600 font-mono mt-0.5">
-                                                                {task.id} • {isSingleTask ? formatTriggerSource(task.parent_chat_id) + ' • ' : ''}Started: {task.created_at ? new Date(task.created_at).toLocaleTimeString() : '-'}
+                                                                {task.id} • {isSingleTask ? formatTriggerSource(task.parent_chat_id) + ' • ' : ''}Started: {task.created_at ? new Date(task.created_at).toLocaleDateString(undefined, { weekday: 'short', month: 'short', day: 'numeric' }) + ' ' + new Date(task.created_at).toLocaleTimeString() : '-'}
                                                             </span>
                                                         </div>
                                                     </td>
@@ -402,6 +409,30 @@ export default function SubAgentsTable() {
                     </tbody>
                 </table>
             </div>
+
+            {totalPages > 1 && (
+                <div className="px-4 py-3 border-t border-zinc-800 flex items-center justify-between">
+                    <span className="text-xs text-zinc-500">
+                        {total} total · Page {page} of {totalPages}
+                    </span>
+                    <div className="flex items-center gap-1">
+                        <button
+                            onClick={() => setPage(p => Math.max(1, p - 1))}
+                            disabled={page <= 1}
+                            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                        >
+                            <ChevronLeft className="w-4 h-4" />
+                        </button>
+                        <button
+                            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
+                            disabled={page >= totalPages}
+                            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                        >
+                            <ChevronRight className="w-4 h-4" />
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }
