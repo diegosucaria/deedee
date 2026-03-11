@@ -39,12 +39,12 @@ class AgentDB {
   init() {
     // Enable WAL mode for better concurrency
     this.db.pragma('journal_mode = WAL');
-
-    // Handle graceful shutdown
-    // Handle graceful shutdown
-    // REMOVED: Managed by Agent/Server lifecycle to prevent premature closure
-    // process.on('SIGINT', () => this.close());
-    // process.on('SIGTERM', () => this.close());
+    // Ensure WAL data is synced to disk on commit (NORMAL is safe with WAL)
+    this.db.pragma('synchronous = NORMAL');
+    // Wait up to 5s if the DB is locked (RPi can be slow under load)
+    this.db.pragma('busy_timeout = 5000');
+    // Store temp data in memory for performance
+    this.db.pragma('temp_store = MEMORY');
 
     this.db.exec(`
       CREATE TABLE IF NOT EXISTS messages (
@@ -1480,10 +1480,78 @@ class AgentDB {
     stmt.run(alias.toLowerCase(), entityId);
   }
 
+  /**
+   * Checkpoint WAL to main database file.
+   * Call before backups or shutdown to ensure all data is persisted.
+   */
+  checkpoint() {
+    if (!this.db) return;
+    try {
+      const result = this.db.pragma('wal_checkpoint(TRUNCATE)');
+      console.log('[DB] WAL checkpoint completed:', result);
+    } catch (err) {
+      console.error('[DB] WAL checkpoint failed:', err.message);
+    }
+  }
+
+  /**
+   * Run a health check on the database.
+   * Returns { ok, details } where details has integrity and connectivity info.
+   */
+  healthCheck() {
+    if (!this.db || !this.db.open) {
+      return { ok: false, details: { status: 'closed' } };
+    }
+
+    const details = { status: 'ok' };
+
+    // 1. Connectivity: run a simple query
+    try {
+      this.db.prepare('SELECT 1').get();
+      details.connectivity = 'ok';
+    } catch (err) {
+      details.connectivity = 'error';
+      details.connectivityError = err.message;
+      details.status = 'error';
+      return { ok: false, details };
+    }
+
+    // 2. Quick integrity check (fast — checks page structure without scanning all data)
+    try {
+      const rows = this.db.pragma('quick_check');
+      const isOk = rows.length === 1 && rows[0].quick_check === 'ok';
+      details.integrity = isOk ? 'ok' : 'corrupt';
+      if (!isOk) {
+        details.integrityErrors = rows.slice(0, 10).map(r => r.quick_check);
+        details.status = 'corrupt';
+      }
+    } catch (err) {
+      details.integrity = 'error';
+      details.integrityError = err.message;
+      details.status = 'error';
+    }
+
+    // 3. WAL status
+    try {
+      const walInfo = this.db.pragma('wal_checkpoint');
+      details.wal = {
+        busy: walInfo[0]?.busy ?? null,
+        log: walInfo[0]?.log ?? null,
+        checkpointed: walInfo[0]?.checkpointed ?? null
+      };
+    } catch (err) {
+      details.wal = { error: err.message };
+    }
+
+    return { ok: details.status === 'ok', details };
+  }
+
   close() {
     if (this.db) {
       console.log('[DB] Closing database connection...');
       try {
+        // Checkpoint WAL before closing to ensure all writes are in the main db file
+        this.checkpoint();
         this.db.close();
         this.db = null;
       } catch (err) {
