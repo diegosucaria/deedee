@@ -251,8 +251,11 @@ class Scheduler {
                         if (!executionResult) executionResult = { text: '' };
                         if (typeof executionResult.text !== 'string') executionResult.text = String(executionResult.content || executionResult.text || '');
 
-                        // Process Smart Notification INSIDE the try/catch so errors fail the job
-                        return await this._processSmartNotification(executionResult, payload);
+                        // Process Smart Notification INSIDE the try/catch so errors fail the job.
+                        // Skip if the agent already sent directly to a user-facing source
+                        // (e.g. whatsapp:assistant), since the callback delivered the message.
+                        const alreadyDelivered = msgSource !== 'scheduler';
+                        return await this._processSmartNotification(executionResult, payload, alreadyDelivered);
 
                     } catch (error) {
                         console.error(`[Scheduler] Task '${name}' failed:`, error.message);
