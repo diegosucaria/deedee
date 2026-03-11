@@ -1,16 +1,25 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { LatencyChart, TokenEfficiencyChart, DailyCostChart } from '@/components/InteractiveCharts';
-import { RefreshCw, Activity, Cpu, DollarSign, Database } from 'lucide-react';
-import { getStatsLatency, getStatsUsage, getStatsCostTrend, getDailyCostTrend, getSystemStats } from '../../actions';
+import { LatencyChart, TokenEfficiencyChart, DailyCostChart, ServiceCostBreakdown, StackedDailyCostChart } from '@/components/InteractiveCharts';
+import { RefreshCw, Activity, Cpu, DollarSign, Database, PieChart } from 'lucide-react';
+import { getStatsLatency, getStatsUsage, getStatsCostTrend, getDailyCostTrend, getSystemStats, getCostByTag, getDailyCostByCategory } from '../../actions';
+
+const COST_PERIODS = [
+    { label: 'Today', days: 1 },
+    { label: '7d', days: 7 },
+    { label: '30d', days: 30 },
+];
 
 export default function StatsClient({ startDate, endDate }) {
     const [latencyData, setLatencyData] = useState([]);
     const [tokenTrendData, setTokenTrendData] = useState([]);
     const [dailyCostData, setDailyCostData] = useState([]);
+    const [dailyCostByCategory, setDailyCostByCategory] = useState([]);
     const [usageData, setUsageData] = useState(null);
     const [dbStats, setDbStats] = useState(null);
+    const [costByTag, setCostByTag] = useState(null);
+    const [costPeriod, setCostPeriod] = useState(1); // days
     const [loading, setLoading] = useState(true);
 
     const fetchData = async () => {
@@ -26,8 +35,6 @@ export default function StatsClient({ startDate, endDate }) {
             const latData = await getStatsLatency(qs);
 
             // Group and Map latency data
-            // Group by Metadata.runId OR ChatId OR Timestamp (proximity)
-            // Ideally we want to see trends.
             const mapped = latData.map(item => {
                 let meta = {};
                 try { meta = JSON.parse(item.metadata); } catch (e) { }
@@ -40,20 +47,8 @@ export default function StatsClient({ startDate, endDate }) {
                 };
             });
 
-            // Grouping logic (simplified: just list E2E points for now, or group by runId?)
-            // If we just show lines over time, we need consistent X-Axis.
-            // Let's rely on E2E events as the primary "Request" anchors.
-
-            // NOTE: For a perfect stacked/line chart we need to join rows.
-            // For now let's just format it such that 'e2e' is the main line.
-            // A truly accurate graph needs data reshaping on the backend or here.
-            // Simplified approach: Filter for e2e only? No, use raw points.
-
-            // Better Approach:
-            // Create a list of "Requests".
             const requests = {};
             mapped.forEach(m => {
-                // If we have runId, use it. Else use timestamp grouping (1s window?)
                 const key = m.runId || m.timestamp;
                 if (!requests[key]) requests[key] = { timestamp: new Date(m.timestamp).getTime(), e2e: 0, model: 0, router: 0, tokens: 0 };
 
@@ -64,14 +59,12 @@ export default function StatsClient({ startDate, endDate }) {
 
             const chartData = Object.values(requests)
                 .sort((a, b) => a.timestamp - b.timestamp)
-                .slice(-50); // Last 50
+                .slice(-50);
 
             setLatencyData(chartData);
 
             // Fetch Token Trend (Cost & Tokens)
             const trend = await getStatsCostTrend(qs);
-            // Process trend for charts.
-            // DB returns: { timestamp, estimated_cost, total_tokens, model }
             const mappedTrend = trend.map(t => ({
                 timestamp: new Date(t.timestamp).getTime(),
                 estimated_cost: t.estimated_cost,
@@ -83,6 +76,10 @@ export default function StatsClient({ startDate, endDate }) {
             // Fetch Daily Cost Trend
             const dailyCost = await getDailyCostTrend();
             setDailyCostData(dailyCost);
+
+            // Fetch Daily Cost by Category (30 days for stacked chart)
+            const dailyCatData = await getDailyCostByCategory(30);
+            setDailyCostByCategory(dailyCatData);
 
             // Fetch Usage
             const usageJson = await getStatsUsage(qs);
@@ -99,22 +96,28 @@ export default function StatsClient({ startDate, endDate }) {
         }
     };
 
+    // Fetch cost breakdown separately so period toggle doesn't re-fetch everything
+    const fetchCostBreakdown = async (days) => {
+        try {
+            const data = await getCostByTag(days);
+            setCostByTag(data);
+        } catch (e) {
+            console.error('[StatsClient] CostByTag Error:', e);
+        }
+    };
+
     useEffect(() => {
         fetchData();
-        const interval = setInterval(fetchData, 10000);
+        fetchCostBreakdown(costPeriod);
+        const interval = setInterval(() => {
+            fetchData();
+            fetchCostBreakdown(costPeriod);
+        }, 10000);
 
         // Listen for real-time RAG updates
-        // We probably need to connect to the Interfaces socket
-        // Assuming we can import io or use a global if provided?
-        // Let's create a temporary socket just for this page if needed, or use polling as fallback.
-        // User rule says "YOU MUST implement a socket event".
         try {
             const { io } = require('socket.io-client');
-            const socket = io(); // Connects to same origin (API proxy -> Interfaces?)
-            // Wait, Web is Next.js (port 3000), Interfaces is 5000 (proxied via /api/socket ? No.
-            // Client usually connects to the Interfaces URL.
-            // Env var? NEXT_PUBLIC_API_URL?
-            // "apps/web/src/app/chat/[id]/page.js" uses socket.
+            const socket = io();
 
             socket.on('rag:stats', (newStats) => {
                 console.log('[StatsClient] Received RAG stats update via socket');
@@ -124,7 +127,7 @@ export default function StatsClient({ startDate, endDate }) {
                         rag: newStats
                     }));
                 } else {
-                    fetchData(); // Full refresh if payload empty
+                    fetchData();
                 }
             });
 
@@ -136,12 +139,70 @@ export default function StatsClient({ startDate, endDate }) {
             console.error('[StatsClient] Socket setup failed:', e);
             return () => clearInterval(interval);
         }
-    }, [startDate, endDate]);
+    }, [startDate, endDate, costPeriod]);
+
+    // Fetch cost breakdown immediately when period changes (for responsive toggle)
+    useEffect(() => {
+        fetchCostBreakdown(costPeriod);
+    }, [costPeriod]);
 
     if (loading && !latencyData.length) return <div className="p-4 text-zinc-500 animate-pulse">Loading stats...</div>;
 
     return (
         <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            {/* Cost Breakdown by Service — Full Width, Top */}
+            <div className="lg:col-span-2 bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[300px] flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold flex items-center gap-2 text-zinc-300">
+                        <PieChart className="w-5 h-5 text-indigo-400" />
+                        Cost Breakdown by Service
+                    </h2>
+                    <div className="flex items-center gap-2">
+                        {/* Period Toggle */}
+                        <div className="flex bg-zinc-800 rounded-lg p-0.5">
+                            {COST_PERIODS.map(p => (
+                                <button
+                                    key={p.days}
+                                    onClick={() => setCostPeriod(p.days)}
+                                    className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                                        costPeriod === p.days
+                                            ? 'bg-indigo-500 text-white'
+                                            : 'text-zinc-400 hover:text-zinc-200'
+                                    }`}
+                                >
+                                    {p.label}
+                                </button>
+                            ))}
+                        </div>
+                        {/* Total Cost Badge */}
+                        {costByTag?.total?.cost > 0 && (
+                            <span className="text-sm font-mono text-red-400 bg-red-500/10 px-2.5 py-1 rounded-lg border border-red-500/20">
+                                ${costByTag.total.cost.toFixed(4)}
+                            </span>
+                        )}
+                    </div>
+                </div>
+                <div className="flex-1 min-h-[280px]">
+                    <ServiceCostBreakdown data={costByTag} />
+                </div>
+            </div>
+
+            {/* Stacked Daily Cost Chart — Full Width */}
+            <div className="lg:col-span-2 bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[300px] flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold flex items-center gap-2 text-zinc-300">
+                        <DollarSign className="w-5 h-5 text-red-400" />
+                        Daily Cost Trend
+                    </h2>
+                </div>
+                <div className="w-full h-[300px]">
+                    {dailyCostByCategory.length > 0
+                        ? <StackedDailyCostChart data={dailyCostByCategory} />
+                        : <DailyCostChart data={dailyCostData} />
+                    }
+                </div>
+            </div>
+
             {/* Latency Chart */}
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[300px] flex flex-col">
                 <div className="flex items-center justify-between mb-4">
@@ -259,19 +320,6 @@ export default function StatsClient({ startDate, endDate }) {
                             </div>
                         </div>
                     )}
-                </div>
-            </div>
-
-            {/* Cost Chart */}
-            <div className="lg:col-span-2 bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[300px] flex flex-col">
-                <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-xl font-semibold flex items-center gap-2 text-zinc-300">
-                        <DollarSign className="w-5 h-5 text-red-400" />
-                        Daily Cost Trend
-                    </h2>
-                </div>
-                <div className="w-full h-[300px]">
-                    <DailyCostChart data={dailyCostData} />
                 </div>
             </div>
 

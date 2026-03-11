@@ -299,6 +299,24 @@ export async function getDailyCostTrend() {
     }
 }
 
+export async function getCostByTag(days = 1) {
+    try {
+        return await fetchAPI(`/v1/stats/cost-by-tag?days=${days}`);
+    } catch (error) {
+        console.error('getCostByTag Error:', error);
+        return { categories: {}, total: { cost: 0, tokens: 0, calls: 0 } };
+    }
+}
+
+export async function getDailyCostByCategory(limit = 7) {
+    try {
+        return await fetchAPI(`/v1/stats/daily-cost-by-category?limit=${limit}`);
+    } catch (error) {
+        console.error('getDailyCostByCategory Error:', error);
+        return [];
+    }
+}
+
 export async function getJobLogs(page = 1, limit = 50) {
     try {
         const offset = (page - 1) * limit;

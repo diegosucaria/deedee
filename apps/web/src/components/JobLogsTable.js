@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { getJobLogs, deleteJobLogs } from '@/app/actions';
 import { Clock, CheckCircle, XCircle, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import LogContent from './LogContent';
+import { useSocket } from '@/hooks/useSocket';
 
 
 
@@ -55,11 +56,21 @@ export default function JobLogsTable() {
         }
     };
 
+    const { socket } = useSocket();
+
     useEffect(() => {
         loadLogs();
         const interval = setInterval(loadLogs, 10000); // Poll every 10s
         return () => clearInterval(interval);
     }, [page]); // Reload when page changes
+
+    // Live update: refresh when scheduler emits job completion
+    useEffect(() => {
+        if (!socket) return;
+        const handler = () => loadLogs();
+        socket.on('joblog:update', handler);
+        return () => socket.off('joblog:update', handler);
+    }, [socket]);
 
     const handleDeleteSelected = async () => {
         if (!confirm(`Delete ${selectedIds.size} logs?`)) return;

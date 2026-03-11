@@ -236,7 +236,7 @@ function createInternalRouter(agent) {
                     content: `Scheduled Task: ${task}`,
                     source: 'scheduler',
                     metadata: {
-                        chatId: `scheduled_${name}`,
+                        chatId: `scheduled_${name}_${Date.now()}`,
                         ...(payload.model ? { forceModel: payload.model } : {}),
                         ...(payload.allowedTools ? { allowedTools: payload.allowedTools } : {})
                     }
@@ -329,6 +329,24 @@ function createInternalRouter(agent) {
             const limit = parseInt(req.query.limit || '7', 10);
             const trend = agent.db.getDailyCostTrend(limit);
             res.json(trend);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.get('/stats/cost-by-tag', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const days = Math.max(1, Math.min(parseInt(req.query.days || '1', 10) || 1, 365));
+            const result = agent.db.getCostByTag(days);
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.get('/stats/daily-cost-by-category', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const limit = Math.max(1, Math.min(parseInt(req.query.limit || '7', 10) || 7, 365));
+            const result = agent.db.getDailyCostByCategory(limit);
+            res.json(result);
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
@@ -780,6 +798,8 @@ Input: "${input.replace(/"/g, '\\"')}"`;
                     temperature: 0.0,
                 }
             });
+
+            config.logUsageFromResponse(agent.db, modelName, response, null, 'cron_helper');
 
             let responseText = '';
             if (typeof response.text === 'function') {
