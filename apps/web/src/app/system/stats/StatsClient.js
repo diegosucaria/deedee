@@ -108,7 +108,11 @@ export default function StatsClient({ startDate, endDate }) {
 
     useEffect(() => {
         fetchData();
-        const interval = setInterval(fetchData, 10000);
+        fetchCostBreakdown(costPeriod);
+        const interval = setInterval(() => {
+            fetchData();
+            fetchCostBreakdown(costPeriod);
+        }, 10000);
 
         // Listen for real-time RAG updates
         try {
@@ -135,9 +139,9 @@ export default function StatsClient({ startDate, endDate }) {
             console.error('[StatsClient] Socket setup failed:', e);
             return () => clearInterval(interval);
         }
-    }, [startDate, endDate]);
+    }, [startDate, endDate, costPeriod]);
 
-    // Fetch cost breakdown when period changes
+    // Fetch cost breakdown immediately when period changes (for responsive toggle)
     useEffect(() => {
         fetchCostBreakdown(costPeriod);
     }, [costPeriod]);

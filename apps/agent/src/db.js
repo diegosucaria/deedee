@@ -1687,7 +1687,8 @@ class AgentDB {
     let totalCost = 0, totalTokens = 0, totalCalls = 0;
 
     for (const row of rows) {
-      const category = SERVICE_CATEGORIES[row.tag] || SERVICE_CATEGORIES[null] ? (SERVICE_CATEGORIES[row.tag] ?? 'Other') : 'Other';
+      // row.tag is null for main chat (SQLite NULL → JS null), or a string tag like 'dream'
+      const category = SERVICE_CATEGORIES[row.tag] ?? 'Other';
       if (!categories[category]) {
         categories[category] = { cost: 0, tokens: 0, calls: 0 };
       }
@@ -1712,6 +1713,8 @@ class AgentDB {
    */
   getDailyCostByCategory(limit = 7) {
     // Get raw per-tag per-day data
+    // Each day can have up to ~15 category rows, so fetch limit * 20 rows to be safe
+    const sqlLimit = limit * 20;
     const stmt = this.db.prepare(`
       SELECT
         date(timestamp, 'localtime') as date,
@@ -1720,9 +1723,9 @@ class AgentDB {
       FROM token_usage
       GROUP BY date(timestamp, 'localtime'), tag
       ORDER BY date(timestamp, 'localtime') DESC
-      LIMIT 500
+      LIMIT ?
     `);
-    const rows = stmt.all();
+    const rows = stmt.all(sqlLimit);
 
     // Pivot: { date -> { category -> cost } }
     const dateMap = {};
