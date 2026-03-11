@@ -449,6 +449,8 @@ function createSettingsRouter(agent) {
                 }
             });
 
+            config.logUsageFromResponse(agent.db, modelName, audioResponse, null, 'tts_preview');
+
             let audioData = null;
             let mimeType = 'audio/wav'; // Default
 

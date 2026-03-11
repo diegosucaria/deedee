@@ -667,8 +667,17 @@ function createInternalRouter(agent) {
         try {
             const limit = parseInt(req.query.limit) || 50;
             const offset = parseInt(req.query.offset) || 0;
-            const logs = agent.db.getJobLogs(limit, offset);
-            res.json(logs);
+            const result = agent.db.getJobLogs(limit, offset);
+
+            // Enrich with cost data
+            const costs = agent.db.getJobLogCosts(result.logs.map(l => l.id));
+            result.logs = result.logs.map(l => ({
+                ...l,
+                cost: costs[l.id]?.totalCost || 0,
+                tokens: costs[l.id]?.totalTokens || 0
+            }));
+
+            res.json(result);
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
@@ -695,7 +704,17 @@ function createInternalRouter(agent) {
         try {
             const parentChatId = req.query.parentChatId || null;
             const tasks = agent.db.listSubAgents(parentChatId);
-            res.json({ tasks });
+
+            // Enrich with cost data
+            const taskIds = tasks.map(t => t.id);
+            const costs = agent.db.getSubAgentCosts(taskIds);
+            const enriched = tasks.map(t => ({
+                ...t,
+                cost: costs[t.id]?.totalCost || 0,
+                tokens: costs[t.id]?.totalTokens || 0
+            }));
+
+            res.json({ tasks: enriched });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 

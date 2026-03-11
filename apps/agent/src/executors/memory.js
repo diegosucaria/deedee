@@ -1,5 +1,6 @@
 const { BaseExecutor } = require('./base');
 const { getConsolidationPrompt } = require('../prompts/memory');
+const { ConfigService } = require('../services/config-service');
 
 class MemoryExecutor extends BaseExecutor {
     async execute(name, args, context) {
@@ -175,6 +176,9 @@ class MemoryExecutor extends BaseExecutor {
                         contents: [{ parts: [{ text: summaryReq }] }],
                         generationConfig: { responseMimeType: 'application/json' }
                     });
+
+                    const _cfg = new ConfigService();
+                    _cfg.logUsageFromResponse(db, modelName, response, null, 'consolidation');
 
                     let data = null;
                     try {

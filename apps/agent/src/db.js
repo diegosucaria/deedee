@@ -1828,6 +1828,121 @@ class AgentDB {
     console.log(`[DB] Migration complete: `, stats);
     return stats;
   }
+  // --- Cost Attribution Queries ---
+
+  /**
+   * Get total cost for a specific chat_id (sub-agent or scheduled task).
+   */
+  getCostByChatId(chatId) {
+    const row = this.db.prepare(`
+      SELECT
+        SUM(estimated_cost) as total_cost,
+        SUM(total_tokens) as total_tokens,
+        SUM(prompt_tokens) as prompt_tokens,
+        SUM(candidate_tokens) as candidate_tokens,
+        COUNT(*) as call_count
+      FROM token_usage
+      WHERE chat_id = ?
+    `).get(chatId);
+    return {
+      totalCost: row?.total_cost || 0,
+      totalTokens: row?.total_tokens || 0,
+      promptTokens: row?.prompt_tokens || 0,
+      candidateTokens: row?.candidate_tokens || 0,
+      callCount: row?.call_count || 0
+    };
+  }
+
+  /**
+   * Get cost for a sub-agent (by its task ID).
+   * Sub-agents use chat_id = 'subagent-{taskId}'
+   */
+  getSubAgentCost(taskId) {
+    return this.getCostByChatId(`subagent-${taskId}`);
+  }
+
+  /**
+   * Get cost for a job execution by matching chat_id and time window.
+   * Job executions use chat_id like 'scheduled_{name}' or 'system_{name}'.
+   * We match by job_name from job_logs and correlate with token_usage timestamps.
+   */
+  getJobRunCost(jobLogId) {
+    const log = this.db.prepare('SELECT * FROM job_logs WHERE id = ?').get(jobLogId);
+    if (!log) return { totalCost: 0, totalTokens: 0, callCount: 0 };
+
+    // Match token_usage by chat_id prefix and time window
+    const chatIdPatterns = [
+      `scheduled_${log.job_name}`,
+      `system_${log.job_name}`
+    ];
+    const durationMs = log.duration_ms || 60000; // fallback 1 min
+    const startTime = log.timestamp;
+    // End time = start + duration + small buffer
+    const endBufferSec = Math.ceil(durationMs / 1000) + 5;
+
+    const placeholders = chatIdPatterns.map(() => '?').join(',');
+    const row = this.db.prepare(`
+      SELECT
+        SUM(estimated_cost) as total_cost,
+        SUM(total_tokens) as total_tokens,
+        COUNT(*) as call_count
+      FROM token_usage
+      WHERE chat_id IN (${placeholders})
+        AND timestamp >= datetime(?, 'localtime', '-2 seconds')
+        AND timestamp <= datetime(?, 'localtime', '+' || ? || ' seconds')
+    `).get(...chatIdPatterns, startTime, startTime, endBufferSec);
+
+    return {
+      totalCost: row?.total_cost || 0,
+      totalTokens: row?.total_tokens || 0,
+      callCount: row?.call_count || 0
+    };
+  }
+
+  /**
+   * Batch get costs for multiple sub-agents at once.
+   */
+  getSubAgentCosts(taskIds) {
+    if (!taskIds || taskIds.length === 0) return {};
+    const chatIds = taskIds.map(id => `subagent-${id}`);
+    const placeholders = chatIds.map(() => '?').join(',');
+    const rows = this.db.prepare(`
+      SELECT
+        chat_id,
+        SUM(estimated_cost) as total_cost,
+        SUM(total_tokens) as total_tokens,
+        COUNT(*) as call_count
+      FROM token_usage
+      WHERE chat_id IN (${placeholders})
+      GROUP BY chat_id
+    `).all(...chatIds);
+
+    const result = {};
+    for (const row of rows) {
+      // Extract task ID from chat_id
+      const taskId = row.chat_id.replace('subagent-', '');
+      result[taskId] = {
+        totalCost: row.total_cost || 0,
+        totalTokens: row.total_tokens || 0,
+        callCount: row.call_count || 0
+      };
+    }
+    return result;
+  }
+
+  /**
+   * Batch get costs for multiple job log entries.
+   */
+  getJobLogCosts(jobLogIds) {
+    if (!jobLogIds || jobLogIds.length === 0) return {};
+
+    const result = {};
+    for (const id of jobLogIds) {
+      result[id] = this.getJobRunCost(id);
+    }
+    return result;
+  }
+
   // --- Sub-Agents ---
 
   createSubAgent({ id, parentChatId, task, model, createdAt }) {

@@ -5,6 +5,7 @@ class ImpersonationService {
     constructor(agent) {
         this.agent = agent;
         this.db = agent.db;
+        this._config = new ConfigService();
         this.messageBuffers = new Map(); // Store buffered messages by chatId
     }
 
@@ -186,10 +187,13 @@ ${corpus}
 Output a concise list of rules for this specific relationship.
 `;
         try {
+            const analyzeModel = process.env.WORKER_PRO || 'gemini-1.5-pro-exp';
             const result = await this.agent.client.models.generateContent({
-                model: process.env.WORKER_PRO || 'gemini-1.5-pro-exp',
+                model: analyzeModel,
                 contents: [{ role: 'user', parts: [{ text: prompt }] }]
             });
+
+            this._config.logUsageFromResponse(this.db, analyzeModel, result, contactIdentifier, 'impersonation_analyze');
 
             let profile = "";
             if (result.response && result.response.candidates && result.response.candidates.length > 0) {
@@ -217,8 +221,9 @@ Output a concise list of rules for this specific relationship.
      */
     async transcribeAudio(part) {
         try {
+            const transcribeModel = process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
             const result = await this.agent.client.models.generateContent({
-                model: process.env.WORKER_FLASH || 'gemini-2.0-flash-exp',
+                model: transcribeModel,
                 contents: [{
                     role: 'user',
                     parts: [
@@ -227,6 +232,8 @@ Output a concise list of rules for this specific relationship.
                     ]
                 }]
             });
+
+            this._config.logUsageFromResponse(this.db, transcribeModel, result, null, 'transcribe');
 
             // Robust response handling
             if (result.response && typeof result.response.text === 'function') {
@@ -685,10 +692,13 @@ Return a SINGLE, concise rule (max 10 words).
 `;
 
         try {
+            const learnModel = process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
             const result = await this.agent.client.models.generateContent({
-                model: process.env.WORKER_FLASH || 'gemini-2.0-flash-exp',
+                model: learnModel,
                 contents: [{ role: 'user', parts: [{ text: prompt }] }]
             });
+
+            this._config.logUsageFromResponse(this.db, learnModel, result, chatId, 'impersonation_learn');
 
             let rule = "";
             if (result.response) rule = result.response.text().trim();

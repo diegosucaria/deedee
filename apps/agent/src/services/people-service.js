@@ -297,6 +297,8 @@ Output pure JSON only.`;
                 contents: prompt
             });
 
+            this.config.logUsageFromResponse(this.agent.db, modelName, response, null, 'people_enrich');
+
             // Robust Response Handling
             const candidate = response.candidates?.[0];
             const part = candidate?.content?.parts?.[0];

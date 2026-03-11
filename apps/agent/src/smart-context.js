@@ -131,6 +131,8 @@ class SmartContextManager {
                 const originalTokens = usage?.promptTokenCount || 0;
                 const summaryTokens = usage?.candidatesTokenCount || 0;
 
+                this.config.logUsageFromResponse(this.db, this.SUMMARY_MODEL, result, chatId, 'summarization');
+
                 const start = attemptsToSummarize[0].timestamp || new Date().toISOString();
                 const end = attemptsToSummarize[attemptsToSummarize.length - 1].timestamp || new Date().toISOString();
 

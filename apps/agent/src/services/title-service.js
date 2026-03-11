@@ -22,6 +22,8 @@ class TitleService {
                 contents: [{ role: 'user', parts: [{ text: prompt }] }]
             });
 
+            this.config.logUsageFromResponse(this.agent.db, model, result, chatId, 'title');
+
             let title = '';
 
             // Console Debug for Structure

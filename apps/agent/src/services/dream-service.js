@@ -1,12 +1,12 @@
 
 const { getDreamPrompt } = require('../prompts/dream');
 const { createWavHeader } = require('../utils/audio');
-// We don't have access to types package easily in raw node, so we'll construct the object manually to avoid path issues
-// const { createAssistantMessage } = require('@deedee/shared/src/types');
+const { ConfigService } = require('./config-service');
 
 class DreamService {
     constructor(agent) {
         this.agent = agent;
+        this._config = new ConfigService();
     }
 
     async dream(force = false) {
@@ -105,6 +105,8 @@ class DreamService {
                 config: { responseMimeType: 'application/json' }
             });
 
+            this._config.logUsageFromResponse(this.agent.db, modelName, response, null, 'dream');
+
             const raw = response.candidates[0].content.parts[0].text;
             const jsonStr = raw.replace(/```json\n|\n```/g, '').trim();
             dreamContent = JSON.parse(jsonStr);
@@ -188,6 +190,8 @@ class DreamService {
                     }
                 }
             });
+
+            this._config.logUsageFromResponse(this.agent.db, modelName, audioResponse, null, 'dream_tts');
 
             let audioData = null;
             if (audioResponse.candidates && audioResponse.candidates[0].content && audioResponse.candidates[0].content.parts) {

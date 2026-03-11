@@ -196,6 +196,7 @@ export default function JobLogsTable() {
                             <th className="px-6 py-3 w-[120px] cursor-pointer hover:text-zinc-300" onClick={() => handleSort('status')}>Status</th>
                             <th className="px-6 py-3 w-[200px] cursor-pointer hover:text-zinc-300" onClick={() => handleSort('job_name')}>Job Name</th>
                             <th className="px-6 py-3 min-w-[300px]">Output</th>
+                            <th className="px-6 py-3 w-[80px] text-right cursor-pointer hover:text-zinc-300" onClick={() => handleSort('cost')}>Cost</th>
                             <th className="px-6 py-3 w-[100px] text-right cursor-pointer hover:text-zinc-300" onClick={() => handleSort('duration_ms')}>Duration</th>
                             <th className="px-6 py-3 w-[180px] text-right cursor-pointer hover:text-zinc-300" onClick={() => handleSort('timestamp')}>Time</th>
                         </tr>
@@ -203,7 +204,7 @@ export default function JobLogsTable() {
                     <tbody className="divide-y divide-zinc-800 bg-zinc-900/50">
                         {filteredLogs.length === 0 ? (
                             <tr>
-                                <td colSpan={6} className="px-6 py-12 text-center text-zinc-500">
+                                <td colSpan={7} className="px-6 py-12 text-center text-zinc-500">
                                     No job logs found.
                                 </td>
                             </tr>
@@ -236,6 +237,13 @@ export default function JobLogsTable() {
                                     </td>
                                     <td className="px-6 py-4 align-top max-w-xl">
                                         <LogContent content={log.output} />
+                                    </td>
+                                    <td className="px-6 py-4 align-top text-right font-mono text-xs">
+                                        {log.cost > 0 ? (
+                                            <span className="text-red-400">${Number(log.cost).toFixed(4)}</span>
+                                        ) : (
+                                            <span className="text-zinc-600">-</span>
+                                        )}
                                     </td>
                                     <td className="px-6 py-4 align-top text-right text-zinc-400 font-mono text-xs">
                                         {formatDuration(log.duration_ms)}

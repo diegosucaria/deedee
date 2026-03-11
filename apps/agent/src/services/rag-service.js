@@ -517,6 +517,8 @@ class RagService {
                 }
             });
 
+            this.config.logUsageFromResponse(this.agent.db, modelName, result, null, 'embedding');
+
             if (result.embeddings && result.embeddings.length > 0) {
                 return result.embeddings[0].values;
             }

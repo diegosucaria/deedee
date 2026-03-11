@@ -68,6 +68,8 @@ class AnalysisService {
                 }
             });
 
+            this.config.logUsageFromResponse(this.agent.db, model, result, chatId, 'analysis');
+
             // Parse JSON from response text (SDK may return raw text even with responseMimeType set)
             let analysis;
             try {
