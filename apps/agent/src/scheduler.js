@@ -35,10 +35,14 @@ class Scheduler {
                         if (this.agent.db) {
                             let output = result ? (typeof result === 'object' ? JSON.stringify(result) : String(result)) : null;
                             this.agent.db.logJobExecution(name, 'success', output, 0);
+                            this.agent.interface?.broadcast('joblog:update', { jobName: name, status: 'success' });
                         }
                     } catch (err) {
                         console.error(`[Scheduler] Immediate job '${name}' failed:`, err);
-                        if (this.agent.db) this.agent.db.logJobExecution(name, 'failure', err.message, 0);
+                        if (this.agent.db) {
+                            this.agent.db.logJobExecution(name, 'failure', err.message, 0);
+                            this.agent.interface?.broadcast('joblog:update', { jobName: name, status: 'failure' });
+                        }
                     } finally {
                         // Cleanup
                         console.log(`[Scheduler] Immediate job '${name}' completed. Cleaning up...`);
@@ -85,6 +89,7 @@ class Scheduler {
             const duration = Date.now() - start;
             if (this.agent.db) {
                 this.agent.db.logJobExecution(name, status, output, duration);
+                this.agent.interface?.broadcast('joblog:update', { jobName: name, status, duration });
             }
 
             // Auto-cleanup one-off jobs

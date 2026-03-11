@@ -795,6 +795,8 @@ class Agent {
                     }
                   });
 
+                  this.configService.logUsageFromResponse(this.db, liteModel, result, chatId, isAudio ? 'eager_transcribe' : 'eager_describe');
+
                   const text = result.text;
                   if (text) {
                     const tag = isAudio ? '[Voice Transcript]' : '[Image Description]';

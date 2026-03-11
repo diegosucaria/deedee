@@ -471,6 +471,7 @@ Respond ONLY with valid JSON.` }]
 
             const elapsed = Date.now() - startTime;
             console.log(`[DJService] Gemini search+enrichment call took ${elapsed}ms`);
+            this.config.logUsageFromResponse(this.agent.db, modelName, result, null, 'dj_enrich');
 
             let text = '';
             try {
@@ -626,6 +627,8 @@ Respond ONLY with valid JSON.` }]
                 }],
                 config: { tools: [{ googleSearch: {} }] }
             });
+
+            this.config.logUsageFromResponse(this.agent.db, modelName, result, null, 'dj_history');
 
             let text = '';
             try {
@@ -1165,6 +1168,7 @@ If unsure, return { "bpm": 0, "key": "" }`
                 }],
                 config: { tools: [{ googleSearch: {} }] }
             }).then(result => {
+                this.config.logUsageFromResponse(this.agent.db, modelName, result, null, 'dj_track_enrich');
                 let text = '';
                 try {
                     if (typeof result.text === 'function') text = result.text();

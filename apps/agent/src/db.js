@@ -1938,11 +1938,11 @@ class AgentDB {
     const log = this.db.prepare('SELECT * FROM job_logs WHERE id = ?').get(jobLogId);
     if (!log) return { totalCost: 0, totalTokens: 0, callCount: 0 };
 
-    // Match token_usage by chat_id prefix and time window.
-    // Scheduler generates chat_ids like 'scheduled_{name}_{timestamp}' or 'system_{name}_{timestamp}'
-    // so we use LIKE with a prefix pattern to match all runs of a given job name.
-    const scheduledPrefix = `scheduled_${log.job_name}_%`;
-    const systemPrefix = `system_${log.job_name}_%`;
+    // Match token_usage by chat_id and time window.
+    // Scheduler generates chat_ids like 'scheduled_{name}_{epoch}' or 'system_{name}_{epoch}'.
+    // We use GLOB with a digit-only suffix to prevent job 'foo' from matching 'foo_bar'.
+    const scheduledGlob = `scheduled_${log.job_name}_[0-9]*`;
+    const systemGlob = `system_${log.job_name}_[0-9]*`;
     const durationMs = log.duration_ms || 60000; // fallback 1 min
     const startTime = log.timestamp;
     // End time = start + duration + small buffer
@@ -1954,10 +1954,10 @@ class AgentDB {
         SUM(total_tokens) as total_tokens,
         COUNT(*) as call_count
       FROM token_usage
-      WHERE (chat_id LIKE ? OR chat_id LIKE ?)
+      WHERE (chat_id GLOB ? OR chat_id GLOB ?)
         AND timestamp >= datetime(?, '-2 seconds')
         AND timestamp <= datetime(?, '+' || ? || ' seconds')
-    `).get(scheduledPrefix, systemPrefix, startTime, startTime, endBufferSec);
+    `).get(scheduledGlob, systemGlob, startTime, startTime, endBufferSec);
 
     return {
       totalCost: row?.total_cost || 0,

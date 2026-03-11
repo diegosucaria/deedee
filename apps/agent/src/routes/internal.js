@@ -236,7 +236,7 @@ function createInternalRouter(agent) {
                     content: `Scheduled Task: ${task}`,
                     source: 'scheduler',
                     metadata: {
-                        chatId: `scheduled_${name}`,
+                        chatId: `scheduled_${name}_${Date.now()}`,
                         ...(payload.model ? { forceModel: payload.model } : {}),
                         ...(payload.allowedTools ? { allowedTools: payload.allowedTools } : {})
                     }
@@ -778,6 +778,8 @@ Input: "${input.replace(/"/g, '\\"')}"`;
                     temperature: 0.0,
                 }
             });
+
+            config.logUsageFromResponse(agent.db, modelName, response, null, 'cron_helper');
 
             let responseText = '';
             if (typeof response.text === 'function') {
