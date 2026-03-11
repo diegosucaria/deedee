@@ -1557,12 +1557,12 @@ export async function repairWhatsAppSession(session) {
 }
 
 // --- Sub-Agents ---
-export async function getSubAgentTasks() {
+export async function getSubAgentTasks({ page = 1, limit = 50 } = {}) {
     try {
-        return await fetchAPI('/v1/subagents');
+        return await fetchAPI(`/v1/subagents?page=${page}&limit=${limit}`);
     } catch (error) {
         console.error('getSubAgentTasks Error:', error);
-        return { tasks: [] };
+        return { tasks: [], total: 0, page: 1, limit, totalPages: 0 };
     }
 }
 

@@ -2035,11 +2035,15 @@ class AgentDB {
     return this.db.prepare('SELECT * FROM subagents WHERE id = ?').get(id);
   }
 
-  listSubAgents(parentChatId) {
+  listSubAgents(parentChatId, { page = 1, limit = 50 } = {}) {
+    const offset = (page - 1) * limit;
     if (parentChatId) {
-      return this.db.prepare('SELECT * FROM subagents WHERE parent_chat_id = ? ORDER BY created_at DESC').all(parentChatId);
+      const tasks = this.db.prepare('SELECT * FROM subagents WHERE parent_chat_id = ? ORDER BY created_at DESC').all(parentChatId);
+      return { tasks, total: tasks.length, page: 1, limit: tasks.length };
     }
-    return this.db.prepare('SELECT * FROM subagents ORDER BY created_at DESC LIMIT 50').all();
+    const total = this.db.prepare('SELECT COUNT(*) as count FROM subagents').get().count;
+    const tasks = this.db.prepare('SELECT * FROM subagents ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset);
+    return { tasks, total, page, limit };
   }
 
   markStaleSubAgents() {

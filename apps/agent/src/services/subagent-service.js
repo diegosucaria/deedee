@@ -148,7 +148,7 @@ class SubAgentService {
      * List all sub-agent tasks.
      */
     listTasks(parentChatId) {
-        const records = this.agent.db.listSubAgents(parentChatId);
+        const { tasks: records } = this.agent.db.listSubAgents(parentChatId);
         return records.map(r => ({
             taskId: r.id,
             task: r.task,
