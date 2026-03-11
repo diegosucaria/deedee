@@ -118,3 +118,8 @@ The agent can now resolve contact names to phone numbers using your WhatsApp con
 -   **Search**: You can search contacts in the Web UI settings to verify visibility.
 -   **Tool**: The agent uses the `searchContacts` tool to find numbers when you say "Send message to Alice".
 -   **Safeguard**: The agent will NOT send messages to unknown numbers by default unless explicitly instructed (or if they are in the `allowedNumbers` list).
+
+### Identity Resolution
+-   **Centralized Resolver**: All WhatsApp identity resolution goes through `resolveIdentity()` in the SQLiteStore. This handles phone JIDs, LIDs (Linked IDs), raw digits, and fuzzy suffix matching in a single entry point.
+-   **API Endpoint**: `GET /v1/whatsapp/resolve?identifier=<phone|lid|digits>` returns the canonical phone JID, LID, name, and all known JIDs for a contact.
+-   **Cross-JID History**: Chat history queries automatically merge messages from both phone JID and LID for the same contact.

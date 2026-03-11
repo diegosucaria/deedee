@@ -21,7 +21,7 @@ const ALLOWED_EMAIL_HEADERS = new Set([
  * Sanitize a tool result before it enters the Gemini context.
  * @param {string} toolName - The tool name (e.g. 'personal_gmail', 'work_gmail_messages_list')
  * @param {*} result - The raw tool result
- * @param {number} [maxChars] - Generic size cap (default 30K)
+ * @param {number} [maxChars] - Generic size cap (default 50K)
  * @returns {*} Cleaned result
  */
 function sanitizeToolResult(toolName, result, maxChars = MAX_TOOL_RESULT_CHARS) {
@@ -315,7 +315,7 @@ function extractCleanEvent(event) {
         clean.description = truncate(event.description, MAX_EVENT_DESCRIPTION_CHARS);
     }
 
-    // Keep attendees but only name + email (strip responseStatus, organizer flag, etc.)
+    // Keep attendees: name, email, responseStatus, and flags (strip other metadata)
     if (event.attendees && event.attendees.length > 0) {
         clean.attendees = event.attendees.map(a => {
             const att = {};
@@ -324,6 +324,7 @@ function extractCleanEvent(event) {
             if (a.self) att.self = true;
             if (a.organizer) att.organizer = true;
             if (a.optional) att.optional = true;
+            if (a.responseStatus) att.responseStatus = a.responseStatus;
             return att;
         });
     }

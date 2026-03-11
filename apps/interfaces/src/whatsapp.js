@@ -317,11 +317,6 @@ class SQLiteStore {
         return row ? { ...JSON.parse(row.data), ...row } : null;
     }
 
-    getContactByLid(lid) {
-        const row = this.db.prepare('SELECT * FROM contacts WHERE lid = ?').get(lid);
-        return row ? { ...JSON.parse(row.data), ...row } : null;
-    }
-
     /**
      * Centralized JID/LID resolver. Given ANY identifier (phone JID, LID, raw digits),
      * returns the canonical phone JID, LID, contact name, and all known message JIDs.
@@ -339,44 +334,52 @@ class SQLiteStore {
         const isLid = identifier.includes('@lid');
         const isPhoneJid = identifier.includes('@s.whatsapp.net');
 
-        let contact = null;
+        try {
+            let contact = null;
 
-        // Strategy 1: Direct lookup by phone JID
-        if (isPhoneJid) {
-            contact = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE id = ?').get(identifier);
-        }
+            // Strategy 1: Direct lookup by phone JID
+            if (isPhoneJid) {
+                contact = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE id = ?').get(identifier);
+            }
 
-        // Strategy 2: Direct lookup by LID
-        if (!contact && (isLid || digits.length > 14)) {
-            const lid = isLid ? identifier : `${digits}@lid`;
-            contact = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE lid = ?').get(lid);
-        }
+            // Strategy 2: Direct lookup by LID
+            if (!contact && (isLid || digits.length > 14)) {
+                const lid = isLid ? identifier : `${digits}@lid`;
+                contact = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE lid = ?').get(lid);
+            }
 
-        // Strategy 3: Raw digits — try as phone JID
-        if (!contact && !isLid && !isPhoneJid && digits.length >= 7) {
-            const phoneJid = `${digits}@s.whatsapp.net`;
-            contact = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE id = ?').get(phoneJid);
-        }
+            // Strategy 3: Raw digits — try as phone JID
+            if (!contact && !isLid && !isPhoneJid && digits.length >= 7) {
+                const phoneJid = `${digits}@s.whatsapp.net`;
+                contact = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE id = ?').get(phoneJid);
+            }
 
-        // Strategy 4: Fuzzy suffix match (handles country code variations like 549 vs 54)
-        if (!contact && digits.length >= 7) {
-            const suffix = digits.slice(-7);
-            contact = this.db.prepare("SELECT id, name, notify, lid FROM contacts WHERE id LIKE ?").get(`%${suffix}%`);
-        }
+            // Strategy 4: Fuzzy suffix match (handles country code variations like 549 vs 54)
+            if (!contact && digits.length >= 7) {
+                const suffix = digits.slice(-7);
+                contact = this.db.prepare("SELECT id, name, notify, lid FROM contacts WHERE id LIKE ?").get(`%${suffix}@s.whatsapp.net`);
+            }
 
-        if (!contact) {
-            // No contact found — return what we can infer
+            if (!contact) {
+                // No contact found — return what we can infer
+                const phoneJid = isPhoneJid ? identifier : (!isLid && digits.length <= 14 ? `${digits}@s.whatsapp.net` : null);
+                const lid = isLid ? identifier : (digits.length > 14 ? `${digits}@lid` : null);
+                return { phoneJid, lid, name: null, allJids: [phoneJid, lid].filter(Boolean) };
+            }
+
+            const phoneJid = contact.id || null;
+            const lid = contact.lid || null;
+            const name = contact.name || contact.notify || null;
+            const allJids = [phoneJid, lid].filter(Boolean);
+
+            return { phoneJid, lid, name, allJids };
+        } catch (err) {
+            console.error(`[WhatsApp Store] resolveIdentity failed for "${identifier}":`, err.message);
+            // Graceful fallback: return best-effort inferred identity
             const phoneJid = isPhoneJid ? identifier : (!isLid && digits.length <= 14 ? `${digits}@s.whatsapp.net` : null);
             const lid = isLid ? identifier : (digits.length > 14 ? `${digits}@lid` : null);
             return { phoneJid, lid, name: null, allJids: [phoneJid, lid].filter(Boolean) };
         }
-
-        const phoneJid = contact.id || null;
-        const lid = contact.lid || null;
-        const name = contact.name || contact.notify || null;
-        const allJids = [phoneJid, lid].filter(Boolean);
-
-        return { phoneJid, lid, name, allJids };
     }
 
     getAllContactsRaw() {
@@ -473,17 +476,6 @@ class SQLiteStore {
             return JSON.parse(row.data); // Returns full WebMessageInfo object
         }
         return null;
-    }
-
-    // Check if a JID exists in messages (normalization helper)
-    hasOutputForJid(jid) {
-        const row = this.db.prepare('SELECT 1 FROM messages WHERE remote_jid = ? LIMIT 1').get(jid);
-        return !!row;
-    }
-
-    findFuzzyJid(digits) {
-        const row = this.db.prepare('SELECT remote_jid FROM messages WHERE remote_jid LIKE ? LIMIT 1').get(digits + '%');
-        return row ? row.remote_jid : null;
     }
 
     // --- Stats ---

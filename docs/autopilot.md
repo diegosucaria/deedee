@@ -18,6 +18,7 @@ Autopilot allows DeeDee to assist in personal messaging by drafting replies in y
   - **Professional** relationships enforce formal tone and ban slang.
   - **Personal** relationships allow casual tone and slang.
   - This constraint is appended at runtime to override any ambiguous learned style.
+- **LID Resolution**: WhatsApp Linked IDs (LIDs) are resolved transparently. The draft system, style learning, and autopilot status checks all handle LID-based contacts via suffix matching, so contacts don't need to be re-configured when WhatsApp migrates their internal identifiers.
 - **Safety**: Function calling is disabled for drafts to prevent accidental command execution.
 
 ## Usage

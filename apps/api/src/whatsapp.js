@@ -35,6 +35,8 @@ router.post('/disconnect', (req, res) => proxyRequest(req, res, 'POST', '/whatsa
 
 router.get('/contacts', (req, res) => proxyRequest(req, res, 'GET', '/whatsapp/contacts'));
 
+router.get('/resolve', (req, res) => proxyRequest(req, res, 'GET', '/whatsapp/resolve'));
+
 router.post('/repair', (req, res) => proxyRequest(req, res, 'POST', '/whatsapp/repair', req.body));
 
 module.exports = router;

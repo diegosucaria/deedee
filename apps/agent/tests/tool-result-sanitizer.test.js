@@ -298,7 +298,7 @@ describe('Tool Result Sanitizer', () => {
             expect(str).not.toContain('accessRole');
         });
 
-        it('should keep attendees with only name, email, self, organizer, optional', () => {
+        it('should keep attendees with name, email, responseStatus, and flags', () => {
             const event = makeCalendarEvent({ numAttendees: 3 });
             const result = { output: JSON.stringify(makeCalendarResponse([event])) };
 
@@ -307,12 +307,9 @@ describe('Tool Result Sanitizer', () => {
             const attendees = parsed.items[0].attendees;
 
             expect(attendees).toHaveLength(3);
-            expect(attendees[0]).toEqual({ name: 'Person 0', email: 'person0@company.com', organizer: true });
-            expect(attendees[1]).toEqual({ name: 'Person 1', email: 'person1@company.com', self: true, optional: true });
-            expect(attendees[2]).toEqual({ name: 'Person 2', email: 'person2@company.com' });
-
-            // responseStatus should be stripped
-            expect(JSON.stringify(attendees)).not.toContain('responseStatus');
+            expect(attendees[0]).toEqual({ name: 'Person 0', email: 'person0@company.com', organizer: true, responseStatus: 'needsAction' });
+            expect(attendees[1]).toEqual({ name: 'Person 1', email: 'person1@company.com', self: true, optional: true, responseStatus: 'needsAction' });
+            expect(attendees[2]).toEqual({ name: 'Person 2', email: 'person2@company.com', responseStatus: 'needsAction' });
         });
 
         it('should strip attachments', () => {
@@ -386,8 +383,9 @@ describe('Tool Result Sanitizer', () => {
             const cleaned = sanitizeToolResult('work_calendar', rawResult);
             const cleanedSize = JSON.stringify(cleaned).length;
 
-            // Should be meaningfully smaller (real-world data has much more bloat)
-            expect(cleanedSize).toBeLessThan(rawSize * 0.6);
+            // Should be meaningfully smaller (real-world data has much more bloat;
+            // test fixtures are minimal, so the ratio is higher than production)
+            expect(cleanedSize).toBeLessThan(rawSize * 0.75);
 
             const parsed = JSON.parse(cleaned.output);
             expect(parsed.items).toHaveLength(10);

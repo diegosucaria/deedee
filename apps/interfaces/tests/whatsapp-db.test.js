@@ -106,15 +106,76 @@ describe('WhatsApp SQLiteStore', () => {
         expect(recent[0].lastTimestamp).toBe(2000000); // 2000 * 1000
     });
 
-    test('getContactByLid should return full contact object', () => {
-        const contact = { id: '5551234@s.whatsapp.net', lid: '123456789012345@lid', name: 'Test User' };
-        ev.emit('contacts.upsert', [contact]);
+    describe('resolveIdentity', () => {
+        test('Strategy 1: should resolve by phone JID', () => {
+            const contact = { id: '5551234@s.whatsapp.net', lid: '999888777666555@lid', name: 'Alice' };
+            ev.emit('contacts.upsert', [contact]);
 
-        const resolved = store.getContactByLid('123456789012345@lid');
-        expect(resolved).not.toBeNull();
-        expect(typeof resolved).toBe('object');
-        expect(resolved.id).toBe('5551234@s.whatsapp.net');
-        expect(resolved.name).toBe('Test User');
+            const result = store.resolveIdentity('5551234@s.whatsapp.net');
+            expect(result.phoneJid).toBe('5551234@s.whatsapp.net');
+            expect(result.lid).toBe('999888777666555@lid');
+            expect(result.name).toBe('Alice');
+            expect(result.allJids).toContain('5551234@s.whatsapp.net');
+            expect(result.allJids).toContain('999888777666555@lid');
+        });
+
+        test('Strategy 2: should resolve by LID', () => {
+            const contact = { id: '5551234@s.whatsapp.net', lid: '999888777666555@lid', name: 'Bob' };
+            ev.emit('contacts.upsert', [contact]);
+
+            const result = store.resolveIdentity('999888777666555@lid');
+            expect(result.phoneJid).toBe('5551234@s.whatsapp.net');
+            expect(result.lid).toBe('999888777666555@lid');
+            expect(result.name).toBe('Bob');
+        });
+
+        test('Strategy 3: should resolve by raw digits (phone number)', () => {
+            const contact = { id: '5551234@s.whatsapp.net', name: 'Charlie' };
+            ev.emit('contacts.upsert', [contact]);
+
+            const result = store.resolveIdentity('5551234');
+            expect(result.phoneJid).toBe('5551234@s.whatsapp.net');
+            expect(result.name).toBe('Charlie');
+        });
+
+        test('Strategy 4: should resolve by fuzzy suffix match', () => {
+            const contact = { id: '549351234567@s.whatsapp.net', name: 'Diana' };
+            ev.emit('contacts.upsert', [contact]);
+
+            // Use last 7 digits with different country code prefix
+            const result = store.resolveIdentity('541234567');
+            expect(result.phoneJid).toBe('549351234567@s.whatsapp.net');
+            expect(result.name).toBe('Diana');
+        });
+
+        test('should return inferred identity when no contact found (phone JID)', () => {
+            const result = store.resolveIdentity('9876543@s.whatsapp.net');
+            expect(result.phoneJid).toBe('9876543@s.whatsapp.net');
+            expect(result.lid).toBeNull();
+            expect(result.name).toBeNull();
+            expect(result.allJids).toEqual(['9876543@s.whatsapp.net']);
+        });
+
+        test('should return inferred LID when no contact found for LID input', () => {
+            const result = store.resolveIdentity('999888777666555@lid');
+            expect(result.phoneJid).toBeNull();
+            expect(result.lid).toBe('999888777666555@lid');
+            expect(result.name).toBeNull();
+        });
+
+        test('should handle null/empty/undefined input', () => {
+            expect(store.resolveIdentity(null)).toEqual({ phoneJid: null, lid: null, name: null, allJids: [] });
+            expect(store.resolveIdentity('')).toEqual({ phoneJid: null, lid: null, name: null, allJids: [] });
+            expect(store.resolveIdentity(undefined)).toEqual({ phoneJid: null, lid: null, name: null, allJids: [] });
+        });
+
+        test('should prefer notify name when name is absent', () => {
+            const contact = { id: '5551234@s.whatsapp.net', notify: 'NotifyName' };
+            ev.emit('contacts.upsert', [contact]);
+
+            const result = store.resolveIdentity('5551234@s.whatsapp.net');
+            expect(result.name).toBe('NotifyName');
+        });
     });
 
     test('getChatHistory should smart-resolve JID from LID', async () => {
