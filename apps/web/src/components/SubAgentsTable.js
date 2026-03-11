@@ -1,8 +1,8 @@
 'use client';
 
-import { useState, useEffect, Fragment } from 'react';
+import { useState, useEffect, Fragment, useMemo } from 'react';
 import { getSubAgentTasks, cleanupSubAgentTasks } from '@/app/actions';
-import { RefreshCw, Bot, Trash2, ChevronDown, ChevronUp } from 'lucide-react';
+import { RefreshCw, Bot, Trash2, ChevronDown, ChevronUp, ChevronRight } from 'lucide-react';
 import { useSocket } from '@/hooks/useSocket';
 
 const STATUS_STYLES = {
@@ -11,6 +11,28 @@ const STATUS_STYLES = {
     failed: 'bg-red-500/10 text-red-400 border-red-500/20',
     timeout: 'bg-amber-500/10 text-amber-400 border-amber-500/20',
 };
+
+const GROUP_COLORS = [
+    'border-violet-500/60',
+    'border-sky-500/60',
+    'border-amber-500/60',
+    'border-emerald-500/60',
+    'border-rose-500/60',
+    'border-teal-500/60',
+    'border-orange-500/60',
+    'border-indigo-500/60',
+];
+
+const GROUP_DOT_COLORS = [
+    'bg-violet-500',
+    'bg-sky-500',
+    'bg-amber-500',
+    'bg-emerald-500',
+    'bg-rose-500',
+    'bg-teal-500',
+    'bg-orange-500',
+    'bg-indigo-500',
+];
 
 function StatusBadge({ status }) {
     return (
@@ -52,10 +74,58 @@ function formatTriggerSource(parentId) {
     return `Chat: ${parentId}`;
 }
 
+function getJobName(parentId) {
+    if (!parentId) return 'unknown';
+    if (parentId.startsWith('system_') || parentId.startsWith('scheduled_')) {
+        const parts = parentId.split('_');
+        parts.shift();
+        parts.pop();
+        return parts.join('_');
+    }
+    return parentId;
+}
+
+function groupTasks(tasks) {
+    const groups = [];
+    const groupMap = new Map();
+
+    for (const task of tasks) {
+        const key = task.parent_chat_id || 'unknown';
+        if (!groupMap.has(key)) {
+            const group = { key, label: formatTriggerSource(key), jobName: getJobName(key), tasks: [] };
+            groupMap.set(key, group);
+            groups.push(group);
+        }
+        groupMap.get(key).tasks.push(task);
+    }
+
+    return groups;
+}
+
+function GroupSummary({ group }) {
+    const running = group.tasks.filter(t => t.status === 'running').length;
+    const completed = group.tasks.filter(t => t.status === 'completed').length;
+    const failed = group.tasks.filter(t => t.status === 'failed' || t.status === 'timeout').length;
+    const parts = [];
+    if (running > 0) parts.push(<span key="r" className="text-sky-400">{running} running</span>);
+    if (completed > 0) parts.push(<span key="c" className="text-emerald-400">{completed} done</span>);
+    if (failed > 0) parts.push(<span key="f" className="text-red-400">{failed} failed</span>);
+    return (
+        <span className="flex items-center gap-1.5 text-[11px] text-zinc-500">
+            {parts.reduce((acc, el, i) => {
+                if (i > 0) acc.push(<span key={`sep-${i}`} className="text-zinc-700">·</span>);
+                acc.push(el);
+                return acc;
+            }, [])}
+        </span>
+    );
+}
+
 export default function SubAgentsTable() {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [expandedId, setExpandedId] = useState(null);
+    const [collapsedGroups, setCollapsedGroups] = useState(new Set());
     const [cleaning, setCleaning] = useState(false);
     const { socket } = useSocket();
 
@@ -97,6 +167,17 @@ export default function SubAgentsTable() {
         }
     };
 
+    const toggleGroup = (key) => {
+        setCollapsedGroups(prev => {
+            const next = new Set(prev);
+            if (next.has(key)) next.delete(key);
+            else next.add(key);
+            return next;
+        });
+    };
+
+    const groups = useMemo(() => groupTasks(tasks), [tasks]);
+    const hasMultipleGroups = groups.length > 1;
     const hasCompleted = tasks.some(t => t.status !== 'running');
 
     return (
@@ -151,99 +232,131 @@ export default function SubAgentsTable() {
                                 </td>
                             </tr>
                         ) : (
-                            tasks.map((task) => (
-                                <Fragment key={task.id}>
-                                    <tr
-                                        className="hover:bg-zinc-800/50 transition-colors cursor-pointer group"
-                                        onClick={() => setExpandedId(expandedId === task.id ? null : task.id)}
-                                    >
-                                        <td className="px-4 py-3">
-                                            <div className="flex flex-col">
-                                                <span className="text-zinc-300 line-clamp-1">{task.task}</span>
-                                                <span className="text-[10px] text-zinc-600 font-mono mt-0.5">
-                                                    {task.id} • {formatTriggerSource(task.parent_chat_id)} • Started: {task.created_at ? new Date(task.created_at).toLocaleTimeString() : '-'}
-                                                </span>
-                                            </div>
-                                        </td>
-                                        <td className="px-4 py-3">
-                                            <StatusBadge status={task.status} />
-                                        </td>
-                                        <td className="px-4 py-3">
-                                            <span className={`text-xs font-mono ${task.model === 'PRO' ? 'text-amber-400' : 'text-zinc-400'}`}>
-                                                {task.model || 'FLASH'}
-                                            </span>
-                                        </td>
-                                        <td className="px-4 py-3">
-                                            {task.cost > 0 ? (
-                                                <span className="text-xs font-mono text-red-400">${task.cost.toFixed(4)}</span>
-                                            ) : (
-                                                <span className="text-xs font-mono text-zinc-600">-</span>
-                                            )}
-                                        </td>
-                                        <td className="px-4 py-3 text-zinc-400 text-xs font-mono">
-                                            {getDuration(task.created_at, task.completed_at)}
-                                        </td>
-                                        <td className="px-4 py-3 text-zinc-500 w-[48px] text-center">
-                                            <div className="flex items-center justify-center">
-                                                {expandedId === task.id
-                                                    ? <ChevronUp className="w-4 h-4" />
-                                                    : <ChevronDown className="w-4 h-4" />
-                                                }
-                                            </div>
-                                        </td>
-                                    </tr>
-                                    {expandedId === task.id && (
-                                        <tr key={`${task.id}-detail`}>
-                                            <td colSpan={6} className="px-4 py-3 bg-zinc-950">
-                                                <div className="space-y-4">
-                                                    {(task.cost > 0 || task.tokens > 0) && (
-                                                        <div className="flex gap-4">
-                                                            <div className="px-3 py-2 rounded bg-zinc-900 border border-zinc-800">
-                                                                <span className="text-[10px] uppercase text-zinc-500 font-bold block">Cost</span>
-                                                                <span className="text-sm font-mono text-red-400">${task.cost?.toFixed(4) || '0.0000'}</span>
-                                                            </div>
-                                                            <div className="px-3 py-2 rounded bg-zinc-900 border border-zinc-800">
-                                                                <span className="text-[10px] uppercase text-zinc-500 font-bold block">Tokens</span>
-                                                                <span className="text-sm font-mono text-sky-400">{task.tokens?.toLocaleString() || 0}</span>
-                                                            </div>
-                                                        </div>
-                                                    )}
+                            groups.map((group, groupIdx) => {
+                                const colorIdx = groupIdx % GROUP_COLORS.length;
+                                const borderColor = GROUP_COLORS[colorIdx];
+                                const dotColor = GROUP_DOT_COLORS[colorIdx];
+                                const isCollapsed = collapsedGroups.has(group.key);
+                                const isSingleTask = group.tasks.length === 1;
+
+                                return (
+                                    <Fragment key={group.key}>
+                                        {/* Group header row */}
+                                        {(hasMultipleGroups || groups.length === 1) && !isSingleTask && (
+                                            <tr
+                                                className={`bg-zinc-950/80 hover:bg-zinc-800/40 transition-colors cursor-pointer border-l-2 ${borderColor}`}
+                                                onClick={() => toggleGroup(group.key)}
+                                            >
+                                                <td colSpan={6} className="px-4 py-2">
                                                     <div className="flex items-center gap-2">
-                                                        <span className="text-[10px] uppercase text-zinc-500 font-bold">Triggered by</span>
-                                                        <span className="text-xs text-zinc-300 font-mono">{formatTriggerSource(task.parent_chat_id)}</span>
+                                                        <span className="text-zinc-500 transition-transform duration-150" style={{ transform: isCollapsed ? 'rotate(0deg)' : 'rotate(90deg)' }}>
+                                                            <ChevronRight className="w-3.5 h-3.5" />
+                                                        </span>
+                                                        <span className={`w-2 h-2 rounded-full ${dotColor}`} />
+                                                        <span className="text-xs font-semibold text-zinc-400">{group.label}</span>
+                                                        <span className="text-[11px] text-zinc-600 font-mono">{group.tasks.length} tasks</span>
+                                                        <span className="ml-auto"><GroupSummary group={group} /></span>
                                                     </div>
-                                                    <div>
-                                                        <span className="text-[10px] uppercase text-zinc-500 font-bold">Task</span>
-                                                        <pre className="mt-1 text-xs text-zinc-300 whitespace-pre-wrap bg-zinc-900/80 p-3 rounded-lg border border-zinc-800/80 overflow-y-auto max-h-32">
-                                                            {task.task}
-                                                        </pre>
-                                                    </div>
-                                                    {task.result && (
-                                                        <div>
-                                                            <span className="text-[10px] uppercase text-zinc-500 font-bold">Result</span>
-                                                            <pre className="mt-1 text-xs text-zinc-300 whitespace-pre-wrap bg-zinc-900 p-3 rounded-lg border border-zinc-800 max-h-48 overflow-y-auto">
-                                                                {task.result}
-                                                            </pre>
+                                                </td>
+                                            </tr>
+                                        )}
+                                        {/* Task rows */}
+                                        {(!isCollapsed || isSingleTask) && group.tasks.map((task) => (
+                                            <Fragment key={task.id}>
+                                                <tr
+                                                    className={`hover:bg-zinc-800/50 transition-colors cursor-pointer group ${!isSingleTask ? `border-l-2 ${borderColor}` : ''}`}
+                                                    onClick={() => setExpandedId(expandedId === task.id ? null : task.id)}
+                                                >
+                                                    <td className="px-4 py-3">
+                                                        <div className="flex flex-col">
+                                                            <span className="text-zinc-300 line-clamp-1">{task.task}</span>
+                                                            <span className="text-[10px] text-zinc-600 font-mono mt-0.5">
+                                                                {task.id} • {isSingleTask ? formatTriggerSource(task.parent_chat_id) + ' • ' : ''}Started: {task.created_at ? new Date(task.created_at).toLocaleTimeString() : '-'}
+                                                            </span>
                                                         </div>
-                                                    )}
-                                                    {task.error && (
-                                                        <div>
-                                                            <span className="text-[10px] uppercase text-red-500 font-bold">Error</span>
-                                                            <pre className="mt-1 text-xs text-red-400 whitespace-pre-wrap bg-red-950/20 p-3 rounded-lg border border-red-900/30">
-                                                                {task.error}
-                                                            </pre>
+                                                    </td>
+                                                    <td className="px-4 py-3">
+                                                        <StatusBadge status={task.status} />
+                                                    </td>
+                                                    <td className="px-4 py-3">
+                                                        <span className={`text-xs font-mono ${task.model === 'PRO' ? 'text-amber-400' : 'text-zinc-400'}`}>
+                                                            {task.model || 'FLASH'}
+                                                        </span>
+                                                    </td>
+                                                    <td className="px-4 py-3">
+                                                        {task.cost > 0 ? (
+                                                            <span className="text-xs font-mono text-red-400">${task.cost.toFixed(4)}</span>
+                                                        ) : (
+                                                            <span className="text-xs font-mono text-zinc-600">-</span>
+                                                        )}
+                                                    </td>
+                                                    <td className="px-4 py-3 text-zinc-400 text-xs font-mono">
+                                                        {getDuration(task.created_at, task.completed_at)}
+                                                    </td>
+                                                    <td className="px-4 py-3 text-zinc-500 w-[48px] text-center">
+                                                        <div className="flex items-center justify-center">
+                                                            {expandedId === task.id
+                                                                ? <ChevronUp className="w-4 h-4" />
+                                                                : <ChevronDown className="w-4 h-4" />
+                                                            }
                                                         </div>
-                                                    )}
-                                                    <div className="flex gap-4 text-[10px] text-zinc-600">
-                                                        <span>Created: {task.created_at ? new Date(task.created_at).toLocaleString() : '-'}</span>
-                                                        <span>Completed: {task.completed_at ? new Date(task.completed_at).toLocaleString() : '-'}</span>
-                                                    </div>
-                                                </div>
-                                            </td>
-                                        </tr>
-                                    )}
-                                </Fragment>
-                            ))
+                                                    </td>
+                                                </tr>
+                                                {expandedId === task.id && (
+                                                    <tr key={`${task.id}-detail`}>
+                                                        <td colSpan={6} className={`px-4 py-3 bg-zinc-950 ${!isSingleTask ? `border-l-2 ${borderColor}` : ''}`}>
+                                                            <div className="space-y-4">
+                                                                {(task.cost > 0 || task.tokens > 0) && (
+                                                                    <div className="flex gap-4">
+                                                                        <div className="px-3 py-2 rounded bg-zinc-900 border border-zinc-800">
+                                                                            <span className="text-[10px] uppercase text-zinc-500 font-bold block">Cost</span>
+                                                                            <span className="text-sm font-mono text-red-400">${task.cost?.toFixed(4) || '0.0000'}</span>
+                                                                        </div>
+                                                                        <div className="px-3 py-2 rounded bg-zinc-900 border border-zinc-800">
+                                                                            <span className="text-[10px] uppercase text-zinc-500 font-bold block">Tokens</span>
+                                                                            <span className="text-sm font-mono text-sky-400">{task.tokens?.toLocaleString() || 0}</span>
+                                                                        </div>
+                                                                    </div>
+                                                                )}
+                                                                <div className="flex items-center gap-2">
+                                                                    <span className="text-[10px] uppercase text-zinc-500 font-bold">Triggered by</span>
+                                                                    <span className="text-xs text-zinc-300 font-mono">{formatTriggerSource(task.parent_chat_id)}</span>
+                                                                </div>
+                                                                <div>
+                                                                    <span className="text-[10px] uppercase text-zinc-500 font-bold">Task</span>
+                                                                    <pre className="mt-1 text-xs text-zinc-300 whitespace-pre-wrap bg-zinc-900/80 p-3 rounded-lg border border-zinc-800/80 overflow-y-auto max-h-32">
+                                                                        {task.task}
+                                                                    </pre>
+                                                                </div>
+                                                                {task.result && (
+                                                                    <div>
+                                                                        <span className="text-[10px] uppercase text-zinc-500 font-bold">Result</span>
+                                                                        <pre className="mt-1 text-xs text-zinc-300 whitespace-pre-wrap bg-zinc-900 p-3 rounded-lg border border-zinc-800 max-h-48 overflow-y-auto">
+                                                                            {task.result}
+                                                                        </pre>
+                                                                    </div>
+                                                                )}
+                                                                {task.error && (
+                                                                    <div>
+                                                                        <span className="text-[10px] uppercase text-red-500 font-bold">Error</span>
+                                                                        <pre className="mt-1 text-xs text-red-400 whitespace-pre-wrap bg-red-950/20 p-3 rounded-lg border border-red-900/30">
+                                                                            {task.error}
+                                                                        </pre>
+                                                                    </div>
+                                                                )}
+                                                                <div className="flex gap-4 text-[10px] text-zinc-600">
+                                                                    <span>Created: {task.created_at ? new Date(task.created_at).toLocaleString() : '-'}</span>
+                                                                    <span>Completed: {task.completed_at ? new Date(task.completed_at).toLocaleString() : '-'}</span>
+                                                                </div>
+                                                            </div>
+                                                        </td>
+                                                    </tr>
+                                                )}
+                                            </Fragment>
+                                        ))}
+                                    </Fragment>
+                                );
+                            })
                         )}
                     </tbody>
                 </table>
