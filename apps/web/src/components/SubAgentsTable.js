@@ -208,6 +208,10 @@ export default function SubAgentsTable() {
                                                             </div>
                                                         </div>
                                                     )}
+                                                    <div className="flex items-center gap-2">
+                                                        <span className="text-[10px] uppercase text-zinc-500 font-bold">Triggered by</span>
+                                                        <span className="text-xs text-zinc-300 font-mono">{formatTriggerSource(task.parent_chat_id)}</span>
+                                                    </div>
                                                     <div>
                                                         <span className="text-[10px] uppercase text-zinc-500 font-bold">Task</span>
                                                         <pre className="mt-1 text-xs text-zinc-300 whitespace-pre-wrap bg-zinc-900/80 p-3 rounded-lg border border-zinc-800/80 overflow-y-auto max-h-32">
