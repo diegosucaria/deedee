@@ -36,6 +36,7 @@ COPY . .
 
 # --- Runner Stage ---
 FROM node:24-alpine AS runner
+RUN apk add --no-cache ffmpeg
 WORKDIR /app
 ENV LANG=C.UTF-8
 

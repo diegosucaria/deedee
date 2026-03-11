@@ -4,6 +4,42 @@ const path = require('path');
 const fs = require('fs');
 const QRCode = require('qrcode');
 const Database = require('better-sqlite3');
+const { spawn } = require('child_process');
+
+/**
+ * Converts a WAV audio buffer to OGG/Opus format using ffmpeg.
+ * Required because WhatsApp PTT messages must be OGG/Opus encoded.
+ * Falls back to the original buffer if ffmpeg is unavailable.
+ */
+function convertToOpus(wavBuffer) {
+    return new Promise((resolve, reject) => {
+        const ffmpeg = spawn('ffmpeg', [
+            '-i', 'pipe:0',
+            '-c:a', 'libopus',
+            '-b:a', '48k',
+            '-application', 'voip',
+            '-f', 'ogg',
+            'pipe:1'
+        ], { stdio: ['pipe', 'pipe', 'pipe'] });
+
+        const chunks = [];
+        ffmpeg.stdout.on('data', chunk => chunks.push(chunk));
+        ffmpeg.on('close', code => {
+            if (code === 0) {
+                resolve(Buffer.concat(chunks));
+            } else {
+                reject(new Error(`ffmpeg exited with code ${code}`));
+            }
+        });
+        ffmpeg.on('error', (err) => {
+            // ffmpeg not installed — fall back to raw buffer
+            console.warn('[WhatsApp] ffmpeg not available, sending audio without conversion:', err.message);
+            resolve(wavBuffer);
+        });
+        ffmpeg.stdin.write(wavBuffer);
+        ffmpeg.stdin.end();
+    });
+}
 
 class SQLiteStore {
     constructor(filePath) {
@@ -767,14 +803,16 @@ class WhatsAppService {
             const remoteJid = msg.key.remoteJid;
             if (remoteJid === 'status@broadcast') return;
 
-            // Allow fromMe MEDIA (audio/image) through for semantic extraction.
-            // Skip fromMe text messages (they don't need transcription).
+            // Allow fromMe MEDIA (audio/image) through for semantic extraction
+            // but ONLY for the user session (passive monitoring of user's outgoing media).
+            // For the assistant session, skip ALL fromMe messages to prevent feedback loops
+            // where the bot's own TTS audio echoes back and gets re-processed as a new message.
             let messageContent_peek = msg.message;
             if (messageContent_peek?.ephemeralMessage) messageContent_peek = messageContent_peek.ephemeralMessage.message;
             else if (messageContent_peek?.viewOnceMessage) messageContent_peek = messageContent_peek.viewOnceMessage.message;
             else if (messageContent_peek?.viewOnceMessageV2) messageContent_peek = messageContent_peek.viewOnceMessageV2.message;
 
-            const isFromMeMedia = msg.key.fromMe && (!!messageContent_peek?.audioMessage || !!messageContent_peek?.imageMessage);
+            const isFromMeMedia = msg.key.fromMe && this.sessionId === 'user' && (!!messageContent_peek?.audioMessage || !!messageContent_peek?.imageMessage);
             if (msg.key.fromMe && !isFromMeMedia) return;
 
             let phoneNumber = remoteJid.split('@')[0];
@@ -942,8 +980,9 @@ class WhatsAppService {
             if (type === 'text') {
                 await this.sock.sendMessage(targetJid, { text: content });
             } else if (type === 'audio') {
-                const buffer = Buffer.from(content, 'base64');
-                await this.sock.sendMessage(targetJid, { audio: buffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
+                const rawBuffer = Buffer.from(content, 'base64');
+                const opusBuffer = await convertToOpus(rawBuffer);
+                await this.sock.sendMessage(targetJid, { audio: opusBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
             } else if (type === 'image') {
                 const buffer = Buffer.from(content, 'base64');
                 await this.sock.sendMessage(targetJid, { image: buffer });
