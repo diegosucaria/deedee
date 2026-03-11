@@ -369,6 +369,7 @@ class Agent {
 
         let fullText = '';
         const aggregatedParts = [];
+        let streamUsageMetadata = null;
 
         for await (const chunk of stream) {
           // CHECK CANCELLATION
@@ -396,6 +397,9 @@ class Agent {
             const part = chunk.candidates[0].content.parts.find(p => p.text);
             if (part) text = part.text;
           }
+
+          // Capture usage metadata (SDK includes it on the last chunk)
+          if (chunk.usageMetadata) streamUsageMetadata = chunk.usageMetadata;
 
           // Aggregate parts for final response (Function Calls etc.)
           if (chunk.candidates?.[0]?.content?.parts) {
@@ -438,7 +442,8 @@ class Agent {
               role: 'model',
               parts: aggregatedParts
             }
-          }]
+          }],
+          ...(streamUsageMetadata && { usageMetadata: streamUsageMetadata })
         };
 
         return response;
