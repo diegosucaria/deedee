@@ -234,6 +234,25 @@ export async function deleteHistory(id) {
 }
 
 // --- Journal ---
+export async function getJournalFiles() {
+    try {
+        const data = await fetchAPI('/v1/journal');
+        return (data.files || []).sort().reverse();
+    } catch (e) {
+        console.error('getJournalFiles Error:', e);
+        return [];
+    }
+}
+
+export async function getJournalEntry(date) {
+    try {
+        const data = await fetchAPI(`/v1/journal/${encodeURIComponent(date)}`);
+        return { content: data.content || '' };
+    } catch (e) {
+        return { error: e.message };
+    }
+}
+
 export async function deleteJournal(date) {
     try {
         await fetchAPI(`/v1/journal/${encodeURIComponent(date)}`, { method: 'DELETE' });
