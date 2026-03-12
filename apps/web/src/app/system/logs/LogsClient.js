@@ -3,7 +3,6 @@
 import { useState, useEffect, useRef } from 'react';
 import { Terminal, RefreshCw, Layers, Layout, AlertCircle, ChevronLeft, ChevronRight, ArrowUpCircle, ArrowDownCircle, PauseCircle, PlayCircle, Clock, Maximize2, Minimize2 } from 'lucide-react';
 import clsx from 'clsx';
-import { API_URL } from '@/lib/api';
 import LogContent from '@/components/LogContent';
 
 const CONTAINERS = [
@@ -23,7 +22,7 @@ const CONTAINER_COLORS = {
     supervisor: 'text-purple-500'
 };
 
-export default function LogsClient({ token }) {
+export default function LogsClient() {
     const [selectedContainer, setSelectedContainer] = useState('all');
     const [logs, setLogs] = useState([]);
     const [isConnected, setIsConnected] = useState(false);
@@ -56,8 +55,6 @@ export default function LogsClient({ token }) {
                 // Reset error on new connection attempt (optional, or keep generic "Connecting...")
                 // setError(null); 
 
-                let url = `${API_URL}/v1/logs/${selectedContainer}`;
-
                 // Construct Query Params
                 const params = new URLSearchParams();
                 if (timeFilter !== 'all') {
@@ -65,12 +62,11 @@ export default function LogsClient({ token }) {
                 } else {
                     params.append('tail', '1000');
                 }
-                url += `?${params.toString()}`;
 
+                const url = `/api/logs/${encodeURIComponent(selectedContainer)}?${params.toString()}`;
                 console.log(`[LogsClient] Connecting to ${url}`);
 
                 const response = await fetch(url, {
-                    headers: { 'Authorization': `Bearer ${token}` },
                     signal: abortController.signal
                 });
 
@@ -136,11 +132,7 @@ export default function LogsClient({ token }) {
             }
         };
 
-        if (token) {
-            connect();
-        } else {
-            setError('Missing API Token');
-        }
+        connect();
 
         return () => {
             isActive = false;
@@ -151,7 +143,7 @@ export default function LogsClient({ token }) {
                 readerRef.current = null;
             }
         };
-    }, [selectedContainer, token, timeFilter]);
+    }, [selectedContainer, timeFilter]);
 
     // Derived state for display
     const displayedLogs = [...logs];
