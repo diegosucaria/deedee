@@ -626,6 +626,26 @@ export default function DJCratePage() {
     );
 }
 
+function VinylField({ label, field, type = 'text', metaField = false, editing, editFields, setEditFields, meta, vinyl }) {
+    const value = metaField ? (editFields.meta?.[field] ?? meta[field] ?? '') : (editFields[field] ?? vinyl[field] ?? '');
+    return (
+        <div className="space-y-1">
+            <label className="text-[10px] sm:text-xs text-muted-foreground uppercase tracking-wider">{label}</label>
+            {editing ? (
+                <input type={type} value={value}
+                    onChange={(e) => {
+                        const val = type === 'number' ? Number(e.target.value) || 0 : e.target.value;
+                        if (metaField) setEditFields(prev => ({ ...prev, meta: { ...prev.meta, [field]: val } }));
+                        else setEditFields(prev => ({ ...prev, [field]: val }));
+                    }}
+                    className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-600 rounded text-sm text-foreground focus:outline-none focus:border-purple-500" />
+            ) : (
+                <p className="text-sm text-foreground">{String(value || '\u2014')}</p>
+            )}
+        </div>
+    );
+}
+
 function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit, onSave, onCancel, onDelete, onReEnrich, reEnriching, refreshingValue, onRefreshValue, crates, onAddToCrate, activeCrateId, onRemoveFromCrate, setEditFields, updateTrackField, parseMeta, parseTracks, getConfidenceInfo }) {
     const meta = parseMeta(vinyl);
     const tracks = parseTracks(vinyl);
@@ -633,26 +653,6 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
     const confInfo = getConfidenceInfo(conf);
     const isEnriching = vinyl.enrichment_status === 'enriching';
     const [showCrateMenu, setShowCrateMenu] = useState(false);
-
-    const Field = ({ label, field, type = 'text', metaField = false }) => {
-        const value = metaField ? (editFields.meta?.[field] ?? meta[field] ?? '') : (editFields[field] ?? vinyl[field] ?? '');
-        return (
-            <div className="space-y-1">
-                <label className="text-[10px] sm:text-xs text-muted-foreground uppercase tracking-wider">{label}</label>
-                {editing ? (
-                    <input type={type} value={value}
-                        onChange={(e) => {
-                            const val = type === 'number' ? Number(e.target.value) || 0 : e.target.value;
-                            if (metaField) setEditFields({ ...editFields, meta: { ...editFields.meta, [field]: val } });
-                            else setEditFields({ ...editFields, [field]: val });
-                        }}
-                        className="w-full px-2 py-1.5 bg-zinc-800 border border-zinc-600 rounded text-sm text-foreground focus:outline-none focus:border-purple-500" />
-                ) : (
-                    <p className="text-sm text-foreground">{String(value || '\u2014')}</p>
-                )}
-            </div>
-        );
-    };
 
     return (
         <div className="p-4 sm:p-6 space-y-4 sm:space-y-5">
@@ -673,9 +673,9 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
                     <div className="space-y-1 min-w-0 flex-1">
                         {editing ? (
                             <>
-                                <input value={editFields.title ?? vinyl.title ?? ''} onChange={(e) => setEditFields({ ...editFields, title: e.target.value })}
+                                <input value={editFields.title ?? vinyl.title ?? ''} onChange={(e) => { const v = e.target.value; setEditFields(prev => ({ ...prev, title: v })); }}
                                     className="text-lg sm:text-xl font-bold w-full bg-zinc-800 border border-zinc-600 rounded px-2 py-1 text-foreground focus:outline-none focus:border-purple-500" />
-                                <input value={editFields.artist ?? vinyl.artist ?? ''} onChange={(e) => setEditFields({ ...editFields, artist: e.target.value })}
+                                <input value={editFields.artist ?? vinyl.artist ?? ''} onChange={(e) => { const v = e.target.value; setEditFields(prev => ({ ...prev, artist: v })); }}
                                     className="text-sm w-full bg-zinc-800 border border-zinc-600 rounded px-2 py-1 text-muted-foreground focus:outline-none focus:border-purple-500" />
                             </>
                         ) : (
@@ -719,12 +719,12 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
 
             {/* Metadata Grid */}
             <div className="grid grid-cols-2 sm:grid-cols-3 gap-3 sm:gap-4">
-                <Field label="Label" field="label" />
-                <Field label="Catalog #" field="catalog_number" />
-                <Field label="Genre" field="genre" metaField />
-                <Field label="Style" field="style" metaField />
-                <Field label="Year" field="year" type="number" metaField />
-                <Field label="RPM" field="rpm" type="number" metaField />
+                <VinylField label="Label" field="label" editing={editing} editFields={editFields} setEditFields={setEditFields} meta={meta} vinyl={vinyl} />
+                <VinylField label="Catalog #" field="catalog_number" editing={editing} editFields={editFields} setEditFields={setEditFields} meta={meta} vinyl={vinyl} />
+                <VinylField label="Genre" field="genre" metaField editing={editing} editFields={editFields} setEditFields={setEditFields} meta={meta} vinyl={vinyl} />
+                <VinylField label="Style" field="style" metaField editing={editing} editFields={editFields} setEditFields={setEditFields} meta={meta} vinyl={vinyl} />
+                <VinylField label="Year" field="year" type="number" metaField editing={editing} editFields={editFields} setEditFields={setEditFields} meta={meta} vinyl={vinyl} />
+                <VinylField label="RPM" field="rpm" type="number" metaField editing={editing} editFields={editFields} setEditFields={setEditFields} meta={meta} vinyl={vinyl} />
             </div>
 
             {/* Tracklist */}
