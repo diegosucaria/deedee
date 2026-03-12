@@ -674,8 +674,45 @@ class WhatsAppService {
                 }
             });
 
-            // Bind Store - DISABLED causing sync blocking
-            // this.store.bind(this.sock.ev);
+            // Incremental contact events — deferred via setImmediate to avoid
+            // blocking the WebSocket buffer (the original store.bind() ran these
+            // synchronously which caused sync blocking).
+            this.sock.ev.on('contacts.upsert', (contacts) => {
+                if (!this.store || !contacts?.length) return;
+                setImmediate(() => this.store.upsertContacts(contacts));
+            });
+
+            this.sock.ev.on('contacts.update', (updates) => {
+                if (!this.store || !updates?.length) return;
+                setImmediate(() => {
+                    try {
+                        const stmt = this.store.db.prepare(`
+                            UPDATE contacts SET
+                            name=coalesce(?, name),
+                            notify=coalesce(?, notify),
+                            lid=coalesce(?, lid),
+                            data=?
+                            WHERE id=?
+                        `);
+                        const transaction = this.store.db.transaction((items) => {
+                            for (const u of items) {
+                                const existing = this.store.db.prepare('SELECT data FROM contacts WHERE id = ?').get(u.id);
+                                if (existing) {
+                                    const data = JSON.parse(existing.data);
+                                    const merged = { ...data, ...u };
+                                    stmt.run(u.name || null, u.notify || null, u.lid || null, JSON.stringify(merged), u.id);
+                                }
+                            }
+                        });
+                        transaction(updates);
+                    } catch (e) {
+                        console.error(`${this.logPrefix} [contacts.update] Error:`, e.message);
+                    }
+                });
+            });
+
+            // Note: messages.upsert is handled manually below (line ~880) where
+            // it calls store.upsertMessages() alongside handleMessage().
 
             // History Sync - Critical for initial contacts
             this.sock.ev.on('messaging-history.set', ({ contacts, messages }) => {
@@ -730,7 +767,7 @@ class WhatsAppService {
                     }
                 }
             });
-            // this.sock.ev.on('contacts.update', (data) => console.log(`${this.logPrefix} [DEBUG] Contacts Update: ${data.length} items`));
+            // contacts.update is handled above (deferred via setImmediate)
             // this.sock.ev.on('message-receipt.update', (data) => console.log(`${this.logPrefix} [DEBUG] Receipt: ${data.key.id} Status: ${data.receipt.status}`));
 
             // --- CONNECTION UPDATE ---
