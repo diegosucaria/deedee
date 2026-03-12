@@ -300,13 +300,19 @@ class Agent {
     };
     const _retryCall = async (fn) => {
       for (let attempt = 0; attempt <= MAX_RETRIES; attempt++) {
+        const controller = new AbortController();
+        let timer;
         try {
-          // We add the Promise.race here instead to catch hangs on every attempt
-          const timeoutPromise = new Promise((_, reject) =>
-            setTimeout(() => reject(new Error('Model request timed out after 60 seconds (Possible SDK hang or 503)')), 60000)
-          );
-          return await Promise.race([fn(), timeoutPromise]);
+          const timeoutPromise = new Promise((_, reject) => {
+            timer = setTimeout(() => {
+              controller.abort();
+              reject(new Error('Model request timed out after 60 seconds (Possible SDK hang or 503)'));
+            }, 60000);
+          });
+          return await Promise.race([fn(controller.signal), timeoutPromise]);
         } catch (err) {
+          // Ensure the controller is aborted to clean up any pending request
+          if (!controller.signal.aborted) controller.abort();
           if (attempt < MAX_RETRIES && _isRetryable(err)) {
             // Exponential backoff: 2s, 4s, 8s, 16s, 32s
             const delay = Math.pow(2, attempt + 1) * 1000;
@@ -315,6 +321,8 @@ class Agent {
           } else {
             throw err;
           }
+        } finally {
+          clearTimeout(timer);
         }
       }
     };
@@ -364,7 +372,7 @@ class Agent {
         console.log(`[Agent] Streaming request content type: ${typeof payload}`);
 
         // SDK Expects { message: ... } for sendMessageStream
-        const result = await _retryCall(() => session.sendMessageStream({ message: normalizedMessage }));
+        const result = await _retryCall((signal) => session.sendMessageStream({ message: normalizedMessage, config: { abortSignal: signal } }));
 
         // Handle both iterable result (new SDK) and result.stream (legacy/mock)
         const stream = result.stream || result;
@@ -453,7 +461,7 @@ class Agent {
         // Standard (WhatsApp/Telegram) - No stream
         // FIX: Use normalizedMessage here too!
         // SDK Expects { message: ... } for sendMessage in new SDK versions too, or strict types
-        const result = await _retryCall(() => session.sendMessage({ message: normalizedMessage }));
+        const result = await _retryCall((signal) => session.sendMessage({ message: normalizedMessage, config: { abortSignal: signal } }));
         let response = result.response;
         if (!response && result.candidates) response = result;
         return response;
