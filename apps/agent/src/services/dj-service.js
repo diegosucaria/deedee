@@ -737,12 +737,22 @@ Respond ONLY with valid JSON.` }]
         }
 
         // --- Catalog number match (weight 0.15) ---
+        let catnoMatch = false;
         if (expectedCatno) {
             totalWeight += 0.15;
             const resultCatno = norm(result.catno || '');
             if (resultCatno && resultCatno === norm(expectedCatno)) {
                 score += 0.15;
+                catnoMatch = true;
             }
+        }
+
+        // --- Bonus: catno + label both match is near-definitive ---
+        const labelMatch = expectedLabel && (Array.isArray(result.label) ? result.label : [])
+            .map(norm).some(l => l.includes(norm(expectedLabel)) || norm(expectedLabel).includes(l));
+        if (catnoMatch && labelMatch) {
+            score += 0.25;
+            totalWeight += 0.25;
         }
 
         return totalWeight > 0 ? score / totalWeight : 0;
@@ -765,8 +775,11 @@ Respond ONLY with valid JSON.` }]
             'User-Agent': 'DeeDee/1.0'
         };
 
-        // Build all search strategies
+        // Build all search strategies (most specific first)
         const searches = [];
+        if (catalogNumber && label) {
+            searches.push({ catno: catalogNumber, label, type: 'release' });
+        }
         if (catalogNumber) {
             searches.push({ catno: catalogNumber, type: 'release' });
         }
@@ -810,7 +823,7 @@ Respond ONLY with valid JSON.` }]
         // Pick best-scoring candidate
         candidates.sort((a, b) => b.score - a.score);
         const best = candidates[0];
-        const MIN_SCORE = 0.3;
+        const MIN_SCORE = 0.5;
 
         if (best.score < MIN_SCORE) {
             console.log(`[DJService] Discogs: best match "${best.result.title}" scored ${best.score.toFixed(2)} — below threshold ${MIN_SCORE}, rejecting.`);
@@ -877,7 +890,7 @@ Respond ONLY with valid JSON.` }]
                 _coverArtUrls: coverArtUrls,
                 label: r.labels?.[0]?.name || '',
                 catalogNumber: r.labels?.[0]?.catno || '',
-                confidence: 0.95,
+                confidence: best.score,
                 _source: 'discogs'
             };
         } catch (e) {
@@ -889,7 +902,7 @@ Respond ONLY with valid JSON.` }]
     /**
      * Search MusicBrainz for release metadata and Cover Art Archive for images.
      */
-    async _searchMusicBrainz(artist, title, catalogNumber) {
+    async _searchMusicBrainz(artist, title, catalogNumber, label) {
         const headers = {
             'User-Agent': 'DeeDee/1.0 (dj-crate-enrichment)',
             'Accept': 'application/json'
@@ -897,7 +910,9 @@ Respond ONLY with valid JSON.` }]
 
         // Build Lucene query
         let query;
-        if (catalogNumber) {
+        if (catalogNumber && label) {
+            query = `catno:${catalogNumber} AND label:"${label}"`;
+        } else if (catalogNumber) {
             query = `catno:${catalogNumber}`;
         } else if (artist && title) {
             query = `artist:"${artist}" AND release:"${title}"`;
@@ -1070,20 +1085,36 @@ Respond ONLY with valid JSON.` }]
 
         // Merge track BPM/key from secondary into primary tracks
         if (merged.tracks?.length > 0 && secondary.tracks?.length > 0) {
-            merged.tracks = merged.tracks.map(t => {
-                const match = secondary.tracks.find(st =>
+            // Check how many tracks actually overlap between primary and secondary
+            const overlapCount = merged.tracks.filter(t =>
+                secondary.tracks.some(st =>
                     st.position === t.position ||
                     st.title?.toLowerCase() === t.title?.toLowerCase()
-                );
-                if (match) {
-                    return {
-                        ...t,
-                        bpm: t.bpm || match.bpm || 0,
-                        key: t.key || match.key || ''
-                    };
-                }
-                return t;
-            });
+                )
+            ).length;
+
+            if (overlapCount === 0 && secondary.tracks.length >= merged.tracks.length) {
+                // Zero overlap and secondary has equal or more tracks — primary likely
+                // matched the wrong release. Replace with secondary's tracklist entirely.
+                console.log(`[DJService] Merge: zero track overlap — replacing ${merged.tracks.length} primary tracks with ${secondary.tracks.length} secondary tracks`);
+                merged.tracks = secondary.tracks;
+            } else {
+                // Normal merge: fill BPM/key gaps from secondary
+                merged.tracks = merged.tracks.map(t => {
+                    const match = secondary.tracks.find(st =>
+                        st.position === t.position ||
+                        st.title?.toLowerCase() === t.title?.toLowerCase()
+                    );
+                    if (match) {
+                        return {
+                            ...t,
+                            bpm: t.bpm || match.bpm || 0,
+                            key: t.key || match.key || ''
+                        };
+                    }
+                    return t;
+                });
+            }
         } else if (!merged.tracks?.length && secondary.tracks?.length) {
             merged.tracks = secondary.tracks;
         }
@@ -1112,7 +1143,7 @@ Respond ONLY with valid JSON.` }]
         // Tier 2: MusicBrainz + Cover Art Archive (if Discogs missed or no cover)
         if (!result || !result.coverArtUrl || !result.tracks?.length) {
             try {
-                const mbResult = await this._searchMusicBrainz(artist, title, catalogNumber);
+                const mbResult = await this._searchMusicBrainz(artist, title, catalogNumber, label);
                 if (mbResult) {
                     result = result ? this._mergeEnrichmentResults(result, mbResult) : mbResult;
                     console.log(`[DJService] Cascade: MusicBrainz data merged`);
