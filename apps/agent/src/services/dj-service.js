@@ -871,12 +871,19 @@ Respond ONLY with valid JSON.` }]
 
             const tracks = (r.tracklist || [])
                 .filter(t => t.type_ === 'track')
-                .map(t => ({
-                    position: t.position || '',
-                    title: t.title || '',
-                    bpm: 0,
-                    key: ''
-                }));
+                .map(t => {
+                    let title = t.title || '';
+                    // For VA compilations, Discogs stores per-track artists separately.
+                    // Join them into the title so we don't lose that info.
+                    if (t.artists?.length > 0) {
+                        const trackArtist = t.artists.map((a, i) => {
+                            if (i === t.artists.length - 1) return a.name;
+                            return a.name + (a.join ? ` ${a.join} ` : ', ');
+                        }).join('');
+                        title = `${trackArtist} - ${title}`;
+                    }
+                    return { position: t.position || '', title, bpm: 0, key: '' };
+                });
 
             return {
                 genre: r.genres?.[0] || '',
