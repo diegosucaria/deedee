@@ -609,7 +609,7 @@ const toolDefinitions = [
       {
         name: "searchDocuments",
         category: "rag",
-        description: "Search indexed vault documents (PDFs, text files) using semantic search. Use this for finding specific information from uploaded files.",
+        description: "Search indexed vault documents (PDFs, text, images, audio, video) using semantic search. Supports cross-modal search: text queries can find relevant images, audio, and video files.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -621,7 +621,7 @@ const toolDefinitions = [
       {
         name: "ingestDocument",
         category: "rag",
-        description: "Ingest a file (PDF or Text) into the semantic search index.",
+        description: "Ingest a file (PDF, text, image, audio, or video) into the semantic search index using multimodal embeddings.",
         parameters: {
           type: "OBJECT",
           properties: {

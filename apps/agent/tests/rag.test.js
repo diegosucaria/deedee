@@ -129,4 +129,78 @@ describe('RagService', () => {
         expect(mockAll).toHaveBeenCalledWith(vaultId);
         expect(docs[0].filename).toBe('doc.txt');
     });
+
+    test('should ingest an image file with multimodal embedding', async () => {
+        const filePath = '/tmp/photo.png';
+        const vaultId = 'photos';
+        const imageBuffer = Buffer.alloc(1024); // Small fake image
+        fs.existsSync.mockReturnValue(true);
+        fs.readFileSync.mockReturnValue(imageBuffer);
+        path.basename = jest.fn().mockReturnValue('photo.png');
+        path.extname = jest.fn().mockReturnValue('.png');
+
+        // Mock no existing doc
+        mockGet.mockReturnValue(null);
+
+        await ragService.ingestDocument(filePath, vaultId);
+
+        // Should use inlineData (not text) for multimodal embedding
+        expect(mockAgent.client.models.embedContent).toHaveBeenCalledWith(expect.objectContaining({
+            model: 'text-embedding-004',
+            contents: [{
+                parts: [{ inlineData: { mimeType: 'image/png', data: expect.any(String) } }]
+            }]
+        }));
+
+        // Should insert chunk with content_type = 'image'
+        expect(mockPrepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO chunks'));
+        expect(mockRun).toHaveBeenCalledWith(
+            expect.any(Number), '[IMAGE] photo.png', expect.any(Buffer), 0, 'image'
+        );
+    });
+
+    test('should ingest audio file with multimodal embedding', async () => {
+        const filePath = '/tmp/clip.mp3';
+        const vaultId = 'audio';
+        fs.existsSync.mockReturnValue(true);
+        fs.readFileSync.mockReturnValue(Buffer.alloc(2048));
+        path.basename = jest.fn().mockReturnValue('clip.mp3');
+        path.extname = jest.fn().mockReturnValue('.mp3');
+        mockGet.mockReturnValue(null);
+
+        await ragService.ingestDocument(filePath, vaultId);
+
+        expect(mockAgent.client.models.embedContent).toHaveBeenCalledWith(expect.objectContaining({
+            contents: [{
+                parts: [{ inlineData: { mimeType: 'audio/mpeg', data: expect.any(String) } }]
+            }]
+        }));
+    });
+
+    test('should skip multimodal embedding for files over 20MB', async () => {
+        const filePath = '/tmp/huge.png';
+        const vaultId = 'photos';
+        const hugeBuffer = Buffer.alloc(21 * 1024 * 1024); // 21MB
+        fs.existsSync.mockReturnValue(true);
+        fs.readFileSync.mockReturnValue(hugeBuffer);
+        path.basename = jest.fn().mockReturnValue('huge.png');
+        path.extname = jest.fn().mockReturnValue('.png');
+        mockGet.mockReturnValue(null);
+
+        const consoleSpy = jest.spyOn(console, 'warn').mockImplementation();
+        await ragService.ingestDocument(filePath, vaultId);
+        consoleSpy.mockRestore();
+
+        // Should NOT call embedContent for oversized files
+        expect(mockAgent.client.models.embedContent).not.toHaveBeenCalled();
+    });
+
+    test('_getMediaType should detect supported media types', () => {
+        expect(ragService._getMediaType('.png')).toEqual({ type: 'image', mimeType: 'image/png' });
+        expect(ragService._getMediaType('.jpg')).toEqual({ type: 'image', mimeType: 'image/jpeg' });
+        expect(ragService._getMediaType('.mp3')).toEqual({ type: 'audio', mimeType: 'audio/mpeg' });
+        expect(ragService._getMediaType('.mp4')).toEqual({ type: 'video', mimeType: 'video/mp4' });
+        expect(ragService._getMediaType('.txt')).toBeNull();
+        expect(ragService._getMediaType('.md')).toBeNull();
+    });
 });
