@@ -14,20 +14,26 @@ const nextConfig = {
     },
   },
   async rewrites() {
-    return [
-      {
-        source: '/socket.io',
-        destination: 'http://interfaces:5000/socket.io/',
-      },
-      {
-        source: '/socket.io/:path+',
-        destination: 'http://interfaces:5000/socket.io/:path+',
-      },
-      {
-        source: '/api/:path*',
-        destination: 'http://api:3001/:path*',
-      },
-    ];
+    return {
+      // beforeFiles: Next.js API Routes in src/app/api/ are resolved first.
+      // afterFiles: only unmatched /api/* paths are proxied to the external API gateway.
+      beforeFiles: [
+        {
+          source: '/socket.io',
+          destination: 'http://interfaces:5000/socket.io/',
+        },
+        {
+          source: '/socket.io/:path+',
+          destination: 'http://interfaces:5000/socket.io/:path+',
+        },
+      ],
+      afterFiles: [
+        {
+          source: '/api/:path*',
+          destination: 'http://api:3001/:path*',
+        },
+      ],
+    };
   },
 };
 
