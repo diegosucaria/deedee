@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { API_URL } from '@/lib/api';
 
 export async function GET(request, { params }) {
-    const { id } = params;
+    const { id } = await params;
     const { DEEDEE_API_TOKEN } = process.env;
 
     if (!id || !DEEDEE_API_TOKEN) {
