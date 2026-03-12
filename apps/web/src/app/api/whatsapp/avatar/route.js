@@ -13,8 +13,11 @@ export async function GET(request) {
     }
 
     try {
-        // Fetch URL from Backend (Interfaces Service)
-        const res = await fetch(`${API_URL}/whatsapp/profile?jid=${encodeURIComponent(jid)}&session=${encodeURIComponent(session || 'user')}`, {
+        const url = new URL(`${API_URL}/v1/whatsapp/profile`);
+        url.searchParams.set('jid', jid);
+        url.searchParams.set('session', session || 'user');
+
+        const res = await fetch(url.toString(), {
             headers: {
                 'Authorization': `Bearer ${DEEDEE_API_TOKEN}`
             },

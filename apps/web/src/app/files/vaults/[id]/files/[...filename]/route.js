@@ -3,7 +3,7 @@ import { NextResponse } from 'next/server';
 import { API_URL } from '@/lib/api';
 
 export async function GET(request, { params }) {
-    const { id, filename: filenameParam } = params;
+    const { id, filename: filenameParam } = await params;
     const filename = Array.isArray(filenameParam) ? filenameParam.join('/') : filenameParam;
     const { DEEDEE_API_TOKEN } = process.env;
 
@@ -12,7 +12,7 @@ export async function GET(request, { params }) {
     }
 
     // Fetch from Agent API
-    const url = new URL(`${API_URL}/v1/vaults/${id}/files/${encodeURIComponent(filename)}`);
+    const url = new URL(`${API_URL}/v1/vaults/${encodeURIComponent(id)}/files/${encodeURIComponent(filename)}`);
     const inline = request.nextUrl.searchParams.get('inline');
     if (inline === 'true') {
         url.searchParams.set('inline', 'true');
@@ -38,7 +38,8 @@ export async function GET(request, { params }) {
         if (inline === 'true') {
             headers.set('Content-Disposition', 'inline');
         } else {
-            headers.set('Content-Disposition', `attachment; filename="${filename}"`);
+            const safeFilename = filename.replace(/["\r\n]/g, '_');
+            headers.set('Content-Disposition', `attachment; filename="${safeFilename}"; filename*=UTF-8''${encodeURIComponent(filename)}`);
         }
 
         return new NextResponse(res.body, {
