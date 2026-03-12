@@ -400,6 +400,11 @@ class AgentDB {
       this.db.exec("ALTER TABLE autopilot_drafts ADD COLUMN context_content TEXT");
     } catch (err) { }
 
+    // Migration: Add sent_count to autopilot_drafts (track partial send progress)
+    try {
+      this.db.exec("ALTER TABLE autopilot_drafts ADD COLUMN sent_count INTEGER DEFAULT 0");
+    } catch (err) { }
+
     // Migration: Add relationship to people (Fix for older DBs)
     try {
       this.db.exec("ALTER TABLE people ADD COLUMN relationship TEXT");
