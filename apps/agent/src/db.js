@@ -387,6 +387,14 @@ class AgentDB {
       this.db.exec("ALTER TABLE token_usage ADD COLUMN tag TEXT");
     } catch (err) { }
 
+    // Migration: Add cached_tokens and thoughts_tokens to token_usage (implicit caching + thinking)
+    try {
+      this.db.exec("ALTER TABLE token_usage ADD COLUMN cached_tokens INTEGER DEFAULT 0");
+    } catch (err) { }
+    try {
+      this.db.exec("ALTER TABLE token_usage ADD COLUMN thoughts_tokens INTEGER DEFAULT 0");
+    } catch (err) { }
+
     // Migration: Add context_content to autopilot_drafts
     try {
       this.db.exec("ALTER TABLE autopilot_drafts ADD COLUMN context_content TEXT");
@@ -1123,12 +1131,12 @@ class AgentDB {
     return stmt.get(hours).count;
   }
 
-  logTokenUsage({ model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost, tag }) {
+  logTokenUsage({ model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost, tag, cachedTokens, thoughtsTokens }) {
     const stmt = this.db.prepare(`
-      INSERT INTO token_usage(model, prompt_tokens, candidate_tokens, total_tokens, chat_id, estimated_cost, tag)
-      VALUES(?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO token_usage(model, prompt_tokens, candidate_tokens, total_tokens, chat_id, estimated_cost, tag, cached_tokens, thoughts_tokens)
+      VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    stmt.run(model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost, tag || null);
+    stmt.run(model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost, tag || null, cachedTokens || 0, thoughtsTokens || 0);
   }
 
   // --- DJ Vinyls ---
@@ -1778,7 +1786,6 @@ class AgentDB {
   /**
    * Get cost breakdown grouped by model.
    * @param {number} days - Number of days to look back
-   * @returns {Array<{ model: string, cost: number, tokens: number, input_tokens: number, output_tokens: number, calls: number }>}
    */
   getCostByModel(days = 1) {
     const stmt = this.db.prepare(`
@@ -1788,6 +1795,8 @@ class AgentDB {
         SUM(prompt_tokens) as input_tokens,
         SUM(candidate_tokens) as output_tokens,
         SUM(total_tokens) as tokens,
+        SUM(cached_tokens) as cached_tokens,
+        SUM(thoughts_tokens) as thoughts_tokens,
         COUNT(*) as calls
       FROM token_usage
       WHERE timestamp >= datetime('now', '-' || ? || ' days', 'localtime')
