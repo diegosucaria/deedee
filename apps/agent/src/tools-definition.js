@@ -630,6 +630,16 @@ const toolDefinitions = [
           required: ["path"]
         }
       },
+      {
+        name: "reindexEmbeddings",
+        category: "rag",
+        description: "Force re-embed all documents with the current embedding model and dimensions. Use after changing embedding settings or to improve search quality.",
+        parameters: {
+          type: "OBJECT",
+          properties: {},
+          required: []
+        }
+      },
       // DJ Assistant
       {
         name: "add_vinyl",
