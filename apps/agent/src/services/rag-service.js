@@ -175,11 +175,30 @@ class RagService {
         const prevDims = storedDims ? parseInt(storedDims.value, 10) : null;
         const prevModel = storedModel ? storedModel.value : null;
 
-        // First run — just store current config
+        // First run of metadata system — check if existing embeddings have different dimensions
         if (!prevDims) {
+            // Detect actual embedding dimensions from existing data
+            const existingChunk = this.db.prepare('SELECT embedding FROM chunks WHERE embedding IS NOT NULL LIMIT 1').get();
+            if (existingChunk && existingChunk.embedding) {
+                const existingDims = existingChunk.embedding.byteLength / 4; // float32 = 4 bytes
+                if (existingDims !== currentDims) {
+                    console.warn(`[RAG] ⚠ First-run migration: existing embeddings are ${existingDims}D but configured for ${currentDims}D.`);
+                    console.warn('[RAG] Clearing incompatible embeddings to force re-indexing...');
+                    this.db.prepare('UPDATE chunks SET embedding = NULL').run();
+                    if (this.useVec) {
+                        try { this.db.exec('DROP TABLE IF EXISTS chunks_vec'); } catch (e) { }
+                    }
+                    this.db.prepare("UPDATE documents SET hash = ''").run();
+                    this.needsReindex = true;
+                    console.log('[RAG] Embeddings cleared. Documents will be re-embedded on next scan.');
+                } else {
+                    this.needsReindex = false;
+                }
+            } else {
+                this.needsReindex = false;
+            }
             this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_dimensions', ?)").run(String(currentDims));
             this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_model', ?)").run(currentModel);
-            this.needsReindex = false;
             return;
         }
 

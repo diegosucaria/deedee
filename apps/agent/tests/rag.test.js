@@ -38,6 +38,15 @@ jest.mock('better-sqlite3', () => {
 
 describe('RagService', () => {
     let mockModel;
+    const originalBasename = path.basename;
+    const originalExtname = path.extname;
+
+    afterEach(() => {
+        // Restore path functions — direct assignment mocks pollute the shared
+        // core module and corrupt path resolution for other test suites.
+        path.basename = originalBasename;
+        path.extname = originalExtname;
+    });
 
     beforeEach(() => {
         jest.clearAllMocks();
