@@ -5,8 +5,9 @@ class SubAgentExecutor extends BaseExecutor {
         super(services);
     }
 
-    async execute(name, args, context) {
-        const subAgentService = this.services.agent?.subAgentService;
+    async execute(name, args, context, callServices) {
+        const services = this.getServices(callServices);
+        const subAgentService = services.agent?.subAgentService;
 
         switch (name) {
             case 'spawnAgent': {

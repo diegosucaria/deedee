@@ -3,8 +3,9 @@ const { getConsolidationPrompt } = require('../prompts/memory');
 const { ConfigService } = require('../services/config-service');
 
 class MemoryExecutor extends BaseExecutor {
-    async execute(name, args, context) {
-        const { db, client } = this.services;
+    async execute(name, args, context, callServices) {
+        const services = this.getServices(callServices);
+        const { db, client } = services;
         const { message } = context;
 
         switch (name) {
@@ -194,7 +195,7 @@ class MemoryExecutor extends BaseExecutor {
 
                     if (data && data.summary) {
                         // 1. Log Journal & Ingest into RAG
-                        const journalPath = this.services.journal.log(`## Daily Summary (${date})\n${data.summary}`);
+                        const journalPath = services.journal.log(`## Daily Summary (${date})\n${data.summary}`);
                         try {
                             await agent.ragService.ingestDocument(journalPath, 'journal');
                         } catch (e) {
@@ -220,12 +221,12 @@ class MemoryExecutor extends BaseExecutor {
 
                                         if (oldValue !== newValue) {
                                             // Log the change to journal for audit trail
-                                            this.services.journal.log(`**Fact Updated**: \`${f.key}\` changed from "${oldValue}" to "${newValue}"`);
+                                            services.journal.log(`**Fact Updated**: \`${f.key}\` changed from "${oldValue}" to "${newValue}"`);
                                             console.log(`[Consolidation] Fact change detected: ${f.key}: "${oldValue}" -> "${newValue}"`);
 
                                             // Block overwrite of pinned facts
                                             if (existingFact.pinned) {
-                                                this.services.journal.log(`**CONFLICT**: Consolidation wanted to change pinned fact \`${f.key}\` from "${oldValue}" to "${newValue}". Change was blocked.`);
+                                                services.journal.log(`**CONFLICT**: Consolidation wanted to change pinned fact \`${f.key}\` from "${oldValue}" to "${newValue}". Change was blocked.`);
                                                 console.warn(`[Consolidation] Blocked update to pinned fact: ${f.key}`);
                                                 continue;
                                             }
@@ -245,7 +246,7 @@ class MemoryExecutor extends BaseExecutor {
                         // 3. Sync & Ingest MEMORY.md
                         if (factsAdded > 0) {
                             const allFacts = db.getAllFacts();
-                            const memoryPath = await this.services.journal.syncFactsToMemory(allFacts);
+                            const memoryPath = await services.journal.syncFactsToMemory(allFacts);
                             await agent.ragService.ingestDocument(memoryPath, 'memory');
                         }
 

@@ -1,8 +1,9 @@
 const { BaseExecutor } = require('./base');
 
 class SchedulerExecutor extends BaseExecutor {
-    async execute(name, args, context) {
-        const { scheduler } = this.services;
+    async execute(name, args, context, callServices) {
+        const services = this.getServices(callServices);
+        const { scheduler } = services;
         const { message, processMessage } = context;
 
         switch (name) {
@@ -24,8 +25,8 @@ class SchedulerExecutor extends BaseExecutor {
                         source: targetSource || 'scheduler',
                         metadata: meta
                     }, async (reply) => {
-                        if (this.services.interface) {
-                            await this.services.interface.send(reply);
+                        if (services.interface) {
+                            await services.interface.send(reply);
                         }
                     });
                 };
@@ -61,19 +62,19 @@ class SchedulerExecutor extends BaseExecutor {
                             source: targetSource || 'scheduler',
                             metadata: meta
                         }, async (reply) => {
-                            if (this.services.interface) {
+                            if (services.interface) {
                                 // Default reply to origin
-                                await this.services.interface.send(reply);
+                                await services.interface.send(reply);
 
                                 // Explicit Push Notification to Owner
-                                const agent = this.services.agent;
+                                const agent = services.agent;
                                 const settings = agent?.settings || {};
                                 const ownerPhone = settings.owner_phone;
                                 const channel = settings.notification_channel || 'whatsapp';
 
                                 if (ownerPhone) {
                                     console.log(`[Executor] Pushing reminder to owner (${ownerPhone}) via ${channel}`);
-                                    await this.services.interface.send({
+                                    await services.interface.send({
                                         ...reply,
                                         to: ownerPhone,
                                         platform: channel,
@@ -156,8 +157,8 @@ class SchedulerExecutor extends BaseExecutor {
                             source: targetSource || 'scheduler',
                             metadata: meta
                         }, async (reply) => {
-                            if (this.services.interface) {
-                                await this.services.interface.send(reply);
+                            if (services.interface) {
+                                await services.interface.send(reply);
                             }
                         });
 

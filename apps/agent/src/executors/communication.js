@@ -2,7 +2,8 @@ const { BaseExecutor } = require('./base');
 const axios = require('axios');
 
 class CommunicationExecutor extends BaseExecutor {
-    async execute(name, args, context) {
+    async execute(name, args, context, callServices) {
+        const services = this.getServices(callServices);
         const { message } = context;
 
         switch (name) {
@@ -22,16 +23,16 @@ class CommunicationExecutor extends BaseExecutor {
 
                 try {
                     // Check if method exists (it should now)
-                    if (this.services.db.getAgentSetting) {
-                        const phoneSetting = this.services.db.getAgentSetting('owner_phone');
+                    if (services.db.getAgentSetting) {
+                        const phoneSetting = services.db.getAgentSetting('owner_phone');
                         if (phoneSetting && phoneSetting.value) {
                             ownerPhone = phoneSetting.value;
                         }
-                        const nameSetting = this.services.db.getAgentSetting('owner_name');
+                        const nameSetting = services.db.getAgentSetting('owner_name');
                         if (nameSetting && nameSetting.value) {
                             ownerName = nameSetting.value.toLowerCase();
                         }
-                        const dryRunSetting = this.services.db.getAgentSetting('communication_dry_run');
+                        const dryRunSetting = services.db.getAgentSetting('communication_dry_run');
                         if (dryRunSetting && dryRunSetting.value === true) {
                             dryRun = true;
                         }
@@ -57,9 +58,9 @@ class CommunicationExecutor extends BaseExecutor {
                     console.log(`[CommunicationExecutor] Resolved alias '${to}' to '${target}'`);
                 } else if (target.match(/[a-zA-Z]/) && !target.includes('@')) {
                     // Search DB
-                    if (this.services.db && this.services.db.searchPeople) {
+                    if (services.db && services.db.searchPeople) {
                         originalSearch = target;
-                        const matches = this.services.db.searchPeople(target);
+                        const matches = services.db.searchPeople(target);
                         if (matches.length === 1 && matches[0].phone) {
                             foundPerson = matches[0];
                             target = matches[0].phone;
@@ -94,7 +95,7 @@ class CommunicationExecutor extends BaseExecutor {
 
                 // Check "First Time Contact" Safeguard
                 if (svc === 'whatsapp') {
-                    const isVerified = this.services.db.isVerifiedContact(svc, cleanTo);
+                    const isVerified = services.db.isVerifiedContact(svc, cleanTo);
                     const contactName = foundPerson ? foundPerson.name : to;
 
                     if (!isVerified && !force) {
@@ -110,7 +111,7 @@ class CommunicationExecutor extends BaseExecutor {
                     }
 
                     if (!isVerified && force) {
-                        this.services.db.verifyContact(svc, cleanTo);
+                        services.db.verifyContact(svc, cleanTo);
 
                         // Auto-Save Alias if we found a person via search
                         if (foundPerson && originalSearch) {
@@ -118,7 +119,7 @@ class CommunicationExecutor extends BaseExecutor {
                             // Avoid duplicates
                             if (!foundPerson.notes || !foundPerson.notes.toLowerCase().includes(originalSearch.toLowerCase())) {
                                 const updatedNotes = (foundPerson.notes || '') + newNote;
-                                this.services.db.updatePerson(foundPerson.id, { notes: updatedNotes });
+                                services.db.updatePerson(foundPerson.id, { notes: updatedNotes });
                                 console.log(`[Communication] Added alias '${originalSearch}' to ${foundPerson.name}`);
                             }
                         }
@@ -140,14 +141,14 @@ class CommunicationExecutor extends BaseExecutor {
                 };
 
                 // Use the interface service if available to send
-                if (this.services.interface && this.services.interface.send) {
+                if (services.interface && services.interface.send) {
                     if (dryRun) {
                         console.log(`[CommunicationExecutor] Dry Run: Message would have been sent to ${cleanTo} (${svc})`);
                         console.log(`[CommunicationExecutor] Content: "${content}"`);
                         return { success: true, info: `Success (Dry Run): Message to ${cleanTo} skipped. Content: "${content.substring(0, 50)}..."` };
                     }
                     console.log(`[CommunicationExecutor] Sending to ${cleanTo} (${svc}): "${content}"`);
-                    await this.services.interface.send(payload);
+                    await services.interface.send(payload);
 
                     // Verification handled above: 'force' marks verified, already-verified contacts skip check
 
@@ -157,15 +158,15 @@ class CommunicationExecutor extends BaseExecutor {
 
                 // Active Learning Intercept
                 try {
-                    if (this.services.agent && this.services.agent.impersonationService) {
+                    if (services.agent && services.agent.impersonationService) {
                         // metadata.chatId is constructed above (e.g. 123@s.whatsapp.net)
-                        const pendingDraft = this.services.agent.impersonationService.getPendingDraft(metadata.chatId);
+                        const pendingDraft = services.agent.impersonationService.getPendingDraft(metadata.chatId);
                         if (pendingDraft) {
                             // Mark as handled
-                            this.services.agent.impersonationService.markDraftCompleted(pendingDraft.id, 'approved'); // or 'corrected'
+                            services.agent.impersonationService.markDraftCompleted(pendingDraft.id, 'approved'); // or 'corrected'
 
                             // Trigger Learning (Fire & Forget)
-                            this.services.agent.impersonationService.learnFromCorrection(metadata.chatId, pendingDraft.content, content)
+                            services.agent.impersonationService.learnFromCorrection(metadata.chatId, pendingDraft.content, content)
                                 .catch(err => console.error('[Communication] Active Learning Error:', err.message));
                         }
                     }
@@ -180,7 +181,7 @@ class CommunicationExecutor extends BaseExecutor {
                 const { contactString, condition, instruction } = args;
                 console.log(`[CommunicationExecutor] Adding watcher for '${contactString}'`);
                 // Use AgentDB directly
-                const result = this.services.db.createWatcher({
+                const result = services.db.createWatcher({
                     contactString,
                     condition,
                     instruction,
