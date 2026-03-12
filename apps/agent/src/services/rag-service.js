@@ -225,14 +225,35 @@ class RagService {
             this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_model', ?)").run(currentModel);
             this.needsReindex = true;
             console.log('[RAG] Embeddings cleared. Documents will be re-embedded on next scan or ingest.');
-        } else if (modelChanged) {
-            // Model changed but dimensions same — embeddings from different models
-            // are still comparable at the same dimension, but quality improves with re-indexing
-            console.log(`[RAG] Embedding model changed: ${prevModel} → ${currentModel} (dimensions unchanged at ${currentDims}).`);
-            console.log('[RAG] Existing embeddings remain valid. Re-index recommended for improved quality.');
-            this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_model', ?)").run(currentModel);
-            this.needsReindex = false;
         } else {
+            // Metadata says dimensions match — but verify actual embeddings agree.
+            // Catches case where metadata was written (e.g. 1536) but embeddings were
+            // never actually migrated (still 768D from before metadata system existed).
+            const existingChunk = this.db.prepare('SELECT embedding FROM chunks WHERE embedding IS NOT NULL LIMIT 1').get();
+            if (existingChunk && existingChunk.embedding) {
+                const actualDims = existingChunk.embedding.byteLength / 4;
+                if (actualDims !== currentDims) {
+                    console.warn(`[RAG] ⚠ Metadata says ${currentDims}D but actual embeddings are ${actualDims}D — fixing stale metadata.`);
+                    console.warn('[RAG] Clearing incompatible embeddings to force re-indexing...');
+                    this.db.prepare('UPDATE chunks SET embedding = NULL').run();
+                    if (this.useVec) {
+                        try { this.db.exec('DROP TABLE IF EXISTS chunks_vec'); } catch (e) { }
+                    }
+                    this.db.prepare("UPDATE documents SET hash = ''").run();
+                    this.needsReindex = true;
+                    console.log('[RAG] Embeddings cleared. Documents will be re-embedded on next scan.');
+                    if (modelChanged) {
+                        this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_model', ?)").run(currentModel);
+                    }
+                    return;
+                }
+            }
+
+            if (modelChanged) {
+                console.log(`[RAG] Embedding model changed: ${prevModel} → ${currentModel} (dimensions unchanged at ${currentDims}).`);
+                console.log('[RAG] Existing embeddings remain valid. Re-index recommended for improved quality.');
+                this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_model', ?)").run(currentModel);
+            }
             this.needsReindex = false;
         }
     }
