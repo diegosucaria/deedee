@@ -115,7 +115,7 @@ class Monitor {
 
     async _deepCheck() {
         try {
-            const res = await fetch(`${this.agentUrl}/v1/chat`, {
+            const res = await fetch(`${this.agentUrl}/chat`, {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
