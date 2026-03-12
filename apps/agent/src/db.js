@@ -4,9 +4,15 @@ const fs = require('fs');
 const crypto = require('crypto');
 
 // Map raw tags to human-friendly service categories for cost breakdown
+// For tagged entries, use the tag directly. For NULL-tagged entries (main chat),
+// the SQL query resolves the source from chat_id patterns.
 const SERVICE_CATEGORIES = {
-  // NULL tag = main agent chat
-  null: 'Chat',
+  // Source-based categories (resolved from chat_id when tag is NULL)
+  whatsapp: 'WhatsApp',
+  web_chat: 'Web Chat',
+  scheduled_job: 'Jobs',
+  system_job: 'Jobs',
+  subagent: 'Sub-agents',
   // Dreams
   dream: 'Dreams',
   dream_tts: 'Dreams',
@@ -41,6 +47,19 @@ const SERVICE_CATEGORIES = {
   // Grok
   grok: 'Grok',
 };
+
+// SQL CASE expression that resolves an effective_tag from tag + chat_id.
+// When tag is NOT NULL, use it directly. When tag IS NULL (main agent chat),
+// classify by chat_id pattern: WhatsApp JIDs, scheduled jobs, sub-agents, etc.
+const EFFECTIVE_TAG_SQL = `
+  CASE
+    WHEN tag IS NOT NULL THEN tag
+    WHEN chat_id LIKE '%@s.us' OR chat_id LIKE '%@g.us' THEN 'whatsapp'
+    WHEN chat_id LIKE 'scheduled\\_%' ESCAPE '\\' THEN 'scheduled_job'
+    WHEN chat_id LIKE 'system\\_%' ESCAPE '\\' THEN 'system_job'
+    WHEN chat_id LIKE 'subagent-%' THEN 'subagent'
+    ELSE 'web_chat'
+  END`;
 
 class AgentDB {
   constructor(dataDir) {
@@ -1687,23 +1706,22 @@ class AgentDB {
   getCostByTag(days = 1) {
     const stmt = this.db.prepare(`
       SELECT
-        tag,
+        ${EFFECTIVE_TAG_SQL} as effective_tag,
         SUM(estimated_cost) as cost,
         SUM(total_tokens) as tokens,
         COUNT(*) as calls
       FROM token_usage
       WHERE timestamp >= datetime('now', '-' || ? || ' days', 'localtime')
-      GROUP BY tag
+      GROUP BY effective_tag
     `);
     const rows = stmt.all(days);
 
-    // Roll up raw tags into categories
+    // Roll up effective tags into categories
     const categories = {};
     let totalCost = 0, totalTokens = 0, totalCalls = 0;
 
     for (const row of rows) {
-      // row.tag is null for main chat (SQLite NULL → JS null), or a string tag like 'dream'
-      const category = SERVICE_CATEGORIES[row.tag] ?? 'Other';
+      const category = SERVICE_CATEGORIES[row.effective_tag] ?? 'Other';
       if (!categories[category]) {
         categories[category] = { cost: 0, tokens: 0, calls: 0 };
       }
@@ -1727,16 +1745,16 @@ class AgentDB {
    * @returns {Array<{ date: string, Chat: number, Dreams: number, ... }>}
    */
   getDailyCostByCategory(limit = 7) {
-    // Get raw per-tag per-day data
-    // Each day can have up to ~15 category rows, so fetch limit * 20 rows to be safe
-    const sqlLimit = limit * 20;
+    // Get raw per-effective-tag per-day data
+    // Each day can have up to ~20 effective_tag rows, so fetch limit * 25 rows to be safe
+    const sqlLimit = limit * 25;
     const stmt = this.db.prepare(`
       SELECT
         date(timestamp, 'localtime') as date,
-        tag,
+        ${EFFECTIVE_TAG_SQL} as effective_tag,
         SUM(estimated_cost) as cost
       FROM token_usage
-      GROUP BY date(timestamp, 'localtime'), tag
+      GROUP BY date(timestamp, 'localtime'), effective_tag
       ORDER BY date(timestamp, 'localtime') DESC
       LIMIT ?
     `);
@@ -1745,7 +1763,7 @@ class AgentDB {
     // Pivot: { date -> { category -> cost } }
     const dateMap = {};
     for (const row of rows) {
-      const category = SERVICE_CATEGORIES[row.tag] ?? 'Other';
+      const category = SERVICE_CATEGORIES[row.effective_tag] ?? 'Other';
       if (!dateMap[row.date]) dateMap[row.date] = { date: row.date };
       dateMap[row.date][category] = (dateMap[row.date][category] || 0) + (row.cost || 0);
     }
@@ -1755,6 +1773,28 @@ class AgentDB {
       .sort((a, b) => b.date.localeCompare(a.date))
       .slice(0, limit)
       .reverse();
+  }
+
+  /**
+   * Get cost breakdown grouped by model.
+   * @param {number} days - Number of days to look back
+   * @returns {Array<{ model: string, cost: number, tokens: number, input_tokens: number, output_tokens: number, calls: number }>}
+   */
+  getCostByModel(days = 1) {
+    const stmt = this.db.prepare(`
+      SELECT
+        model,
+        SUM(estimated_cost) as cost,
+        SUM(prompt_tokens) as input_tokens,
+        SUM(candidate_tokens) as output_tokens,
+        SUM(total_tokens) as tokens,
+        COUNT(*) as calls
+      FROM token_usage
+      WHERE timestamp >= datetime('now', '-' || ? || ' days', 'localtime')
+      GROUP BY model
+      ORDER BY cost DESC
+    `);
+    return stmt.all(days);
   }
 
   getTokenUsageStats() {

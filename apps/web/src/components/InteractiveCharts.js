@@ -234,7 +234,10 @@ export function DailyCostChart({ data }) {
 
 // --- Color palette for service categories ---
 const CATEGORY_COLORS = {
-    Chat: '#818cf8',       // indigo
+    'Web Chat': '#818cf8', // indigo
+    WhatsApp: '#22c55e',   // green
+    Jobs: '#f59e0b',       // amber
+    'Sub-agents': '#06b6d4', // cyan-500
     Dreams: '#c084fc',     // purple
     Speech: '#f472b6',     // pink
     Image: '#fb923c',      // orange
@@ -385,5 +388,59 @@ export function StackedDailyCostChart({ data }) {
                 ))}
             </BarChart>
         </ResponsiveContainer>
+    );
+}
+
+/**
+ * Model Cost Breakdown — sorted table showing cost per model
+ */
+export function ModelCostBreakdown({ data }) {
+    if (!data || data.length === 0) {
+        return <div className="h-full flex items-center justify-center text-zinc-600">No Data</div>;
+    }
+
+    const totalCost = data.reduce((sum, row) => sum + (row.cost || 0), 0);
+
+    // Shorten model names for display
+    const shortName = (model) => {
+        if (!model) return 'unknown';
+        return model
+            .replace('gemini-', '')
+            .replace('-preview', '')
+            .replace('-exp', '');
+    };
+
+    return (
+        <div className="overflow-auto">
+            <table className="w-full text-sm">
+                <thead>
+                    <tr className="text-zinc-500 text-xs border-b border-zinc-800">
+                        <th className="text-left py-2 px-2">Model</th>
+                        <th className="text-right py-2 px-2">Calls</th>
+                        <th className="text-right py-2 px-2">Input</th>
+                        <th className="text-right py-2 px-2">Output</th>
+                        <th className="text-right py-2 px-2">Cost</th>
+                        <th className="text-right py-2 px-2">%</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {data.map((row) => {
+                        const pct = totalCost > 0 ? ((row.cost / totalCost) * 100) : 0;
+                        return (
+                            <tr key={row.model} className="border-b border-zinc-800/50 hover:bg-zinc-800/30">
+                                <td className="py-2 px-2 text-zinc-300 font-mono text-xs" title={row.model}>
+                                    {shortName(row.model)}
+                                </td>
+                                <td className="text-right py-2 px-2 font-mono text-zinc-400">{row.calls?.toLocaleString()}</td>
+                                <td className="text-right py-2 px-2 font-mono text-zinc-400 text-xs">{(row.input_tokens || 0).toLocaleString()}</td>
+                                <td className="text-right py-2 px-2 font-mono text-zinc-400 text-xs">{(row.output_tokens || 0).toLocaleString()}</td>
+                                <td className="text-right py-2 px-2 font-mono text-zinc-200">${(row.cost || 0).toFixed(4)}</td>
+                                <td className="text-right py-2 px-2 font-mono text-zinc-500">{pct.toFixed(1)}%</td>
+                            </tr>
+                        );
+                    })}
+                </tbody>
+            </table>
+        </div>
     );
 }
