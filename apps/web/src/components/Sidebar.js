@@ -6,6 +6,9 @@ import { usePathname } from 'next/navigation';
 import { MessageSquare, Book, ClipboardList, Database, Activity, Target, Clock, Tags, Terminal, PieChart, ChevronLeft, ChevronRight, Share2, Settings, Mic, Lock, Users, Disc, ShieldAlert, Zap } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
+import { useState } from 'react';
+import NotificationBell from './NotificationBell';
+import { useHealthStatus } from '@/hooks/useHealthStatus';
 
 const navItems = [
     { name: 'Chat', href: '/', icon: MessageSquare },
@@ -22,13 +25,29 @@ const navItems = [
     { name: 'System', href: '/system', icon: Terminal },
 ];
 
+const STATUS_CONFIG = {
+    ok:       { color: 'bg-emerald-500', shadow: 'shadow-[0_0_8px_rgba(16,185,129,0.5)]', label: 'Healthy' },
+    degraded: { color: 'bg-amber-500',   shadow: 'shadow-[0_0_8px_rgba(245,158,11,0.5)]', label: 'Degraded' },
+    error:    { color: 'bg-red-500',      shadow: 'shadow-[0_0_8px_rgba(239,68,68,0.5)]',  label: 'Down' },
+    unknown:  { color: 'bg-zinc-600',     shadow: '',                                       label: 'Unknown' },
+};
 
-import { useState } from 'react';
-import NotificationBell from './NotificationBell';
+function StatusDot({ status, detail }) {
+    const cfg = STATUS_CONFIG[status] || STATUS_CONFIG.unknown;
+    const tooltip = detail ? `${cfg.label}: ${detail}` : cfg.label;
+
+    return (
+        <span
+            title={tooltip}
+            className={clsx('w-2 h-2 rounded-full shrink-0', cfg.color, cfg.shadow)}
+        />
+    );
+}
 
 export function Sidebar() {
     const pathname = usePathname();
     const [isCollapsed, setIsCollapsed] = useState(false);
+    const health = useHealthStatus();
 
     return (
         <div className={clsx(
@@ -96,15 +115,15 @@ export function Sidebar() {
                     <div className="w-full space-y-2 mb-2 hidden md:block">
                         <div className="flex items-center justify-between text-[10px] text-zinc-500">
                             <span>Agent</span>
-                            <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+                            <StatusDot status={health.agent.status} detail={health.agent.detail} />
                         </div>
                         <div className="flex items-center justify-between text-[10px] text-zinc-500">
-                            <span>Brain</span>
-                            <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+                            <span>API</span>
+                            <StatusDot status={health.api.status} detail={health.api.detail} />
                         </div>
                         <div className="flex items-center justify-between text-[10px] text-zinc-500">
                             <span>Supervisor</span>
-                            <span className="w-2 h-2 rounded-full bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.5)]" />
+                            <StatusDot status={health.supervisor.status} detail={health.supervisor.detail} />
                         </div>
                     </div>
                 )}
@@ -126,4 +145,3 @@ export function Sidebar() {
         </div>
     );
 }
-
