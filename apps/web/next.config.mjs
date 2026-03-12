@@ -15,8 +15,7 @@ const nextConfig = {
   },
   async rewrites() {
     return {
-      // beforeFiles: Next.js API Routes in src/app/api/ are resolved first.
-      // afterFiles: only unmatched /api/* paths are proxied to the external API gateway.
+      // beforeFiles: intercept socket.io before any file-system check.
       beforeFiles: [
         {
           source: '/socket.io',
@@ -27,7 +26,11 @@ const nextConfig = {
           destination: 'http://interfaces:5000/socket.io/:path+',
         },
       ],
-      afterFiles: [
+      // fallback: only reached after ALL file-system routes (static AND dynamic)
+      // have been checked. This ensures local API Route Handlers like
+      // /api/logs/[container] and /api/whatsapp/avatar resolve first.
+      // Unmatched /api/* paths are then proxied to the external API gateway.
+      fallback: [
         {
           source: '/api/:path*',
           destination: 'http://api:3001/:path*',
