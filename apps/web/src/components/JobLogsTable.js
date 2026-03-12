@@ -123,20 +123,20 @@ export default function JobLogsTable() {
 
     return (
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden flex flex-col">
-            <div className="p-4 border-b border-zinc-800 flex flex-col gap-4">
-                <div className="flex items-center justify-between">
-                    <h3 className="text-lg font-semibold text-zinc-300 flex items-center gap-2">
-                        <Clock className="w-5 h-5 text-indigo-400" />
+            <div className="p-3 md:p-4 border-b border-zinc-800 flex flex-col gap-3 md:gap-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                    <h3 className="text-base md:text-lg font-semibold text-zinc-300 flex items-center gap-2">
+                        <Clock className="w-5 h-5 shrink-0 text-indigo-400" />
                         Recent Job Executions
                     </h3>
                     <div className="flex items-center gap-2">
                         {selectedIds.size > 0 && (
                             <button
                                 onClick={handleDeleteSelected}
-                                className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-lg text-xs font-medium transition-colors flex items-center gap-2"
+                                className="px-2 md:px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-lg text-xs font-medium transition-colors flex items-center gap-1 md:gap-2"
                             >
                                 <XCircle className="w-4 h-4" />
-                                Delete ({selectedIds.size})
+                                ({selectedIds.size})
                             </button>
                         )}
                         <button
@@ -149,13 +149,13 @@ export default function JobLogsTable() {
                 </div>
 
                 {/* Filters */}
-                <div className="flex gap-2">
+                <div className="flex flex-wrap gap-2">
                     <input
                         type="text"
                         placeholder="Filter by Job Name"
                         value={filterName}
                         onChange={(e) => setFilterName(e.target.value)}
-                        className="bg-black border border-zinc-800 rounded px-3 py-1.5 text-xs text-zinc-300 placeholder-zinc-600 focus:outline-none focus:border-indigo-500/50"
+                        className="bg-black border border-zinc-800 rounded px-3 py-1.5 text-xs text-zinc-300 placeholder-zinc-600 focus:outline-none focus:border-indigo-500/50 min-w-0 flex-1 sm:flex-none"
                     />
                     <select
                         value={filterStatus}
@@ -192,8 +192,8 @@ export default function JobLogsTable() {
                 </div>
             </div>
 
-            <div className="overflow-x-auto max-h-[600px]">
-                <table className="w-full text-sm text-left relative">
+            <div className="overflow-x-auto scrollbar-hide max-h-[600px]">
+                <table className="w-full text-sm text-left relative min-w-[800px]">
                     <thead className="bg-zinc-950 text-zinc-500 uppercase text-xs sticky top-0 z-10 shadow-sm border-b border-zinc-800">
                         <tr>
                             <th className="px-4 py-3 w-[40px]">

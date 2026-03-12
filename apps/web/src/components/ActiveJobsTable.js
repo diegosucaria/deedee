@@ -149,18 +149,19 @@ export default function ActiveJobsTable({ onViewHistory, systemOnly = false }) {
 
     return (
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-            <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                    <h3 className="text-lg font-semibold text-zinc-300 flex items-center gap-2">
-                        <Clock className={`w-5 h-5 ${systemOnly ? 'text-amber-400' : 'text-sky-400'}`} />
-                        {systemOnly ? 'System Jobs' : 'Active Scheduled Jobs'}
+            <div className="p-3 md:p-4 border-b border-zinc-800 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 md:gap-4 min-w-0">
+                    <h3 className="text-base md:text-lg font-semibold text-zinc-300 flex items-center gap-2 whitespace-nowrap">
+                        <Clock className={`w-5 h-5 shrink-0 ${systemOnly ? 'text-amber-400' : 'text-sky-400'}`} />
+                        <span className="truncate">{systemOnly ? 'System Jobs' : 'Active Jobs'}</span>
                     </h3>
                     <button
                         onClick={onViewHistory}
-                        className="text-xs text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 px-2 py-1 rounded transition-colors flex items-center gap-1"
+                        className="text-xs text-indigo-400 hover:text-indigo-300 hover:bg-indigo-500/10 px-2 py-1 rounded transition-colors flex items-center gap-1 whitespace-nowrap"
                     >
                         <Clock className="w-3 h-3" />
-                        View Past Tasks
+                        <span className="hidden sm:inline">View Past Tasks</span>
+                        <span className="sm:hidden">History</span>
                     </button>
                 </div>
 
@@ -169,19 +170,19 @@ export default function ActiveJobsTable({ onViewHistory, systemOnly = false }) {
                         <button
                             onClick={handleBulkDelete}
                             disabled={deleting}
-                            className="px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-lg text-xs font-medium transition-colors flex items-center gap-2"
+                            className="px-2 md:px-3 py-1.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 rounded-lg text-xs font-medium transition-colors flex items-center gap-1 md:gap-2"
                         >
                             <Trash2 className="w-4 h-4" />
-                            Delete ({selectedNames.size})
+                            ({selectedNames.size})
                         </button>
                     )}
                     {!systemOnly && (
                         <button
                             onClick={() => setEditingJob({})}
-                            className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-2"
+                            className="px-2 md:px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1 md:gap-2"
                         >
                             <Plus className="w-4 h-4" />
-                            New Schedule
+                            <span className="hidden sm:inline">New Schedule</span>
                         </button>
                     )}
                     <button
@@ -208,8 +209,8 @@ export default function ActiveJobsTable({ onViewHistory, systemOnly = false }) {
                 </div>
             )}
 
-            <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left">
+            <div className="overflow-x-auto scrollbar-hide">
+                <table className="w-full text-sm text-left min-w-[700px]">
                     <thead className="bg-zinc-950 text-zinc-500 uppercase text-xs">
                         <tr>
                             {!systemOnly && (

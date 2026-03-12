@@ -106,6 +106,6 @@ export default function BrainTabs({ goals, facts, aliases, tools, servers }) {
                     </div>
                 )}
             </div>
-        </div >
+        </div>
     );
 }
