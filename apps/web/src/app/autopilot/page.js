@@ -7,6 +7,7 @@ import { Loader2, Check, X, Edit2, Save, User, Settings, MessageSquare, ShieldAl
 import clsx from 'clsx';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
 import { useSocket } from '../../hooks/useSocket';
+import ScrollableTabs from '@/components/ScrollableTabs';
 
 // Wrapper to handle Suspense boundary for useSearchParams
 export default function AutopilotPageWrapper() {
@@ -232,29 +233,16 @@ function AutopilotPage() {
                     </div>
                 </div>
 
-                <div className="flex bg-zinc-900 p-1 rounded-lg">
-                    <button
-                        onClick={() => setActiveTab('drafts')}
-                        className={clsx("px-4 py-2 rounded-md transition-colors flex items-center gap-2", activeTab === 'drafts' ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-zinc-300")}
-                    >
-                        <MessageSquare className="w-4 h-4" />
-                        Drafts ({drafts.length})
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('settings')}
-                        className={clsx("px-4 py-2 rounded-md transition-colors flex items-center gap-2", activeTab === 'settings' ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-zinc-300")}
-                    >
-                        <Settings className="w-4 h-4" />
-                        Settings
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('style')}
-                        className={clsx("px-4 py-2 rounded-md transition-colors flex items-center gap-2", activeTab === 'style' ? "bg-zinc-800 text-white" : "text-zinc-400 hover:text-zinc-300")}
-                    >
-                        <Brain className="w-4 h-4" />
-                        Style
-                    </button>
-                </div>
+                <ScrollableTabs
+                    tabs={[
+                        { id: 'drafts', label: `Drafts (${drafts.length})`, icon: MessageSquare },
+                        { id: 'settings', label: 'Settings', icon: Settings },
+                        { id: 'style', label: 'Style', icon: Brain },
+                    ]}
+                    activeTab={activeTab}
+                    onChange={setActiveTab}
+                    variant="pill"
+                />
             </header>
 
             <main className="flex-1 overflow-y-auto pr-2">

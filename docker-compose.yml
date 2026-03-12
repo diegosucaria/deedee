@@ -30,7 +30,8 @@ services:
       - GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview
       - WORKER_GOOGLE_SEARCH=gemini-2.5-pro
       - WORKER_LIVE=gemini-2.5-flash-native-audio-preview-12-2025
-      - GEMINI_EMBEDDING_MODEL=gemini-embedding-001
+      - GEMINI_EMBEDDING_MODEL=gemini-embedding-2-preview
+      - EMBEDDING_DIMENSIONS=1536
     volumes:
       - repo-data:/app/source
       - agent-data:/app/data

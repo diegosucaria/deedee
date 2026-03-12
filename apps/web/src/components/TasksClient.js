@@ -9,14 +9,6 @@ import WatchersTable from '@/components/WatchersTable';
 import SubAgentsTable from '@/components/SubAgentsTable';
 import ScrollableTabs from '@/components/ScrollableTabs';
 
-const TABS = [
-    { id: 'active', label: 'Active Scheduled Jobs' },
-    { id: 'watchers', label: 'Message Watchers' },
-    { id: 'subagents', label: 'Sub-Agents', activeColor: 'text-violet-400', activeBar: 'bg-violet-500' },
-    { id: 'system', label: 'System Jobs' },
-    { id: 'manage', label: 'Job History' },
-];
-
 export default function TasksClient() {
     const router = useRouter();
     const searchParams = useSearchParams();
@@ -37,10 +29,18 @@ export default function TasksClient() {
                 Scheduler & Tasks
             </h1>
 
+            {/* Tabs */}
             <ScrollableTabs
-                tabs={TABS}
+                tabs={[
+                    { id: 'active', label: 'Active Scheduled Jobs' },
+                    { id: 'watchers', label: 'Message Watchers' },
+                    { id: 'subagents', label: 'Sub-Agents' },
+                    { id: 'system', label: 'System Jobs' },
+                    { id: 'manage', label: 'Job History' },
+                ]}
                 activeTab={activeTab}
                 onChange={setActiveTab}
+                variant="underline"
                 trailing={
                     <button onClick={() => router.refresh()} className="p-2 text-zinc-500 hover:text-white transition-colors" title="Refresh">
                         <RefreshCw className="h-4 w-4" />

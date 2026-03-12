@@ -5,7 +5,28 @@ const crypto = require('crypto');
 const Database = require('better-sqlite3');
 const { ConfigService } = require('./config-service');
 
-const EMBEDDING_DIMENSIONS = 768; // Gemini text-embedding-004
+// Matryoshka dimensions supported by gemini-embedding-2-preview: 768, 1536, 3072
+// Default 768 for backward compat with existing embeddings; set EMBEDDING_DIMENSIONS to upgrade
+const EMBEDDING_DIMENSIONS = parseInt(process.env.EMBEDDING_DIMENSIONS, 10) || 768;
+
+// Max file size for multimodal embedding (base64 encoding adds ~33% overhead)
+const MAX_MULTIMODAL_SIZE = 20 * 1024 * 1024; // 20MB
+
+// Supported media types for native multimodal embedding via gemini-embedding-2-preview
+const MEDIA_TYPES = {
+    image: {
+        extensions: ['.png', '.jpg', '.jpeg', '.webp', '.gif'],
+        mimeMap: { '.png': 'image/png', '.jpg': 'image/jpeg', '.jpeg': 'image/jpeg', '.webp': 'image/webp', '.gif': 'image/gif' }
+    },
+    audio: {
+        extensions: ['.wav', '.mp3', '.ogg', '.opus'],
+        mimeMap: { '.wav': 'audio/wav', '.mp3': 'audio/mpeg', '.ogg': 'audio/ogg', '.opus': 'audio/opus' }
+    },
+    video: {
+        extensions: ['.mp4', '.mov'],
+        mimeMap: { '.mp4': 'video/mp4', '.mov': 'video/quicktime' }
+    }
+};
 
 class RagService {
     constructor(agent) {
@@ -54,7 +75,14 @@ class RagService {
                 chunk_index INTEGER,
                 FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS rag_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
         `);
+
+        // Detect embedding dimension changes and handle migration
+        this._handleDimensionMigration();
 
         // Initialize FTS5 Table for Hybrid Search
         try {
@@ -79,6 +107,7 @@ class RagService {
                     this.db.prepare(`
                         INSERT INTO chunks_fts (content, chunk_index, document_id)
                         SELECT content, chunk_index, document_id FROM chunks
+                        WHERE content_type = 'text' OR content_type IS NULL
                     `).run();
                     console.log('[RAG] FTS Backfill complete.');
                 }
@@ -90,6 +119,11 @@ class RagService {
         // Migration: Add vault_id if missing
         try {
             this.db.prepare('ALTER TABLE documents ADD COLUMN vault_id TEXT').run();
+        } catch (e) { }
+
+        // Migration: Add content_type to chunks for multimodal support
+        try {
+            this.db.prepare("ALTER TABLE chunks ADD COLUMN content_type TEXT DEFAULT 'text'").run();
         } catch (e) { }
 
         // Initialize vec0 virtual table for native vector search
@@ -125,6 +159,138 @@ class RagService {
         }
     }
 
+    /**
+     * Detect if embedding dimensions changed since last run.
+     * If dimensions changed, existing embeddings are incompatible:
+     * - Drop and recreate vec0 with new dimensions
+     * - Clear all embeddings (set to NULL) so they get re-embedded
+     * - Clear document hashes to force re-ingestion on next scan
+     */
+    _handleDimensionMigration() {
+        const storedDims = this.db.prepare("SELECT value FROM rag_metadata WHERE key = 'embedding_dimensions'").get();
+        const storedModel = this.db.prepare("SELECT value FROM rag_metadata WHERE key = 'embedding_model'").get();
+        const currentModel = this.config.getModel('EMBEDDING');
+        const currentDims = EMBEDDING_DIMENSIONS;
+
+        const prevDims = storedDims ? parseInt(storedDims.value, 10) : null;
+        const prevModel = storedModel ? storedModel.value : null;
+
+        // First run of metadata system — check if existing embeddings have different dimensions
+        if (!prevDims) {
+            // Detect actual embedding dimensions from existing data
+            const existingChunk = this.db.prepare('SELECT embedding FROM chunks WHERE embedding IS NOT NULL LIMIT 1').get();
+            if (existingChunk && existingChunk.embedding) {
+                const existingDims = existingChunk.embedding.byteLength / 4; // float32 = 4 bytes
+                if (existingDims !== currentDims) {
+                    console.warn(`[RAG] ⚠ First-run migration: existing embeddings are ${existingDims}D but configured for ${currentDims}D.`);
+                    console.warn('[RAG] Clearing incompatible embeddings to force re-indexing...');
+                    this.db.prepare('UPDATE chunks SET embedding = NULL').run();
+                    if (this.useVec) {
+                        try { this.db.exec('DROP TABLE IF EXISTS chunks_vec'); } catch (e) { }
+                    }
+                    this.db.prepare("UPDATE documents SET hash = ''").run();
+                    this.needsReindex = true;
+                    console.log('[RAG] Embeddings cleared. Documents will be re-embedded on next scan.');
+                } else {
+                    this.needsReindex = false;
+                }
+            } else {
+                this.needsReindex = false;
+            }
+            this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_dimensions', ?)").run(String(currentDims));
+            this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_model', ?)").run(currentModel);
+            return;
+        }
+
+        const dimsChanged = prevDims !== currentDims;
+        const modelChanged = prevModel !== currentModel;
+
+        if (dimsChanged) {
+            console.warn(`[RAG] ⚠ Embedding dimensions changed: ${prevDims} → ${currentDims}. Existing embeddings are incompatible.`);
+            console.warn('[RAG] Clearing all embeddings and document hashes to force re-indexing on next scan...');
+
+            // Clear embeddings (keep chunks for content/FTS)
+            this.db.prepare('UPDATE chunks SET embedding = NULL').run();
+
+            // Clear vec0 table if it exists (will be recreated with new dims below)
+            if (this.useVec) {
+                try { this.db.exec('DROP TABLE IF EXISTS chunks_vec'); } catch (e) { }
+            }
+
+            // Reset document hashes to force re-ingestion
+            this.db.prepare("UPDATE documents SET hash = ''").run();
+
+            // Update stored config
+            this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_dimensions', ?)").run(String(currentDims));
+            this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_model', ?)").run(currentModel);
+            this.needsReindex = true;
+            console.log('[RAG] Embeddings cleared. Documents will be re-embedded on next scan or ingest.');
+        } else {
+            // Metadata says dimensions match — but verify actual embeddings agree.
+            // Catches case where metadata was written (e.g. 1536) but embeddings were
+            // never actually migrated (still 768D from before metadata system existed).
+            const existingChunk = this.db.prepare('SELECT embedding FROM chunks WHERE embedding IS NOT NULL LIMIT 1').get();
+            if (existingChunk && existingChunk.embedding) {
+                const actualDims = existingChunk.embedding.byteLength / 4;
+                if (actualDims !== currentDims) {
+                    console.warn(`[RAG] ⚠ Metadata says ${currentDims}D but actual embeddings are ${actualDims}D — fixing stale metadata.`);
+                    console.warn('[RAG] Clearing incompatible embeddings to force re-indexing...');
+                    this.db.prepare('UPDATE chunks SET embedding = NULL').run();
+                    if (this.useVec) {
+                        try { this.db.exec('DROP TABLE IF EXISTS chunks_vec'); } catch (e) { }
+                    }
+                    this.db.prepare("UPDATE documents SET hash = ''").run();
+                    this.needsReindex = true;
+                    console.log('[RAG] Embeddings cleared. Documents will be re-embedded on next scan.');
+                    if (modelChanged) {
+                        this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_model', ?)").run(currentModel);
+                    }
+                    return;
+                }
+            }
+
+            if (modelChanged) {
+                console.log(`[RAG] Embedding model changed: ${prevModel} → ${currentModel} (dimensions unchanged at ${currentDims}).`);
+                console.log('[RAG] Existing embeddings remain valid. Re-index recommended for improved quality.');
+                this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_model', ?)").run(currentModel);
+            }
+            this.needsReindex = false;
+        }
+    }
+
+    /**
+     * Force re-embed all documents. Call manually or after dimension change.
+     * Clears all embeddings and hashes, then triggers a full scan.
+     */
+    async reindexAll(vaultsDir, journalDir) {
+        console.log('[RAG] Starting full re-index...');
+
+        // Clear all embeddings and hashes
+        this.db.prepare('UPDATE chunks SET embedding = NULL').run();
+        this.db.prepare("UPDATE documents SET hash = ''").run();
+
+        // Recreate vec0
+        if (this.useVec) {
+            try { this.db.exec('DROP TABLE IF EXISTS chunks_vec'); } catch (e) { }
+            try {
+                this.db.exec(`
+                    CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(
+                        chunk_id INTEGER PRIMARY KEY,
+                        embedding float[${EMBEDDING_DIMENSIONS}]
+                    );
+                `);
+            } catch (e) {
+                console.warn('[RAG] Failed to recreate vec0:', e.message);
+            }
+        }
+
+        // Re-scan if directories provided
+        if (vaultsDir) await this.scanAndIngest(vaultsDir);
+        if (journalDir) await this.scanJournals(journalDir);
+
+        console.log('[RAG] Full re-index complete.');
+    }
+
     async ingestDocument(filepath, vaultId = null) {
         if (!fs.existsSync(filepath)) throw new Error('File not found');
 
@@ -154,10 +320,51 @@ class RagService {
             console.log(`[RAG] Re-indexing ${filename}...`);
         }
 
-        let text = '';
         const ext = path.extname(filepath).toLowerCase();
+        const mediaType = this._getMediaType(ext);
 
+        // Insert Document if new
+        let docId = existing ? existing.id : null;
+        if (!docId) {
+            const info = this.db.prepare('INSERT INTO documents (filepath, filename, hash, vault_id, indexed_at) VALUES (?, ?, ?, ?, ?)')
+                .run(filepath, filename, hash, vaultId, new Date().toISOString());
+            docId = info.lastInsertRowid;
+        }
+
+        // === Path A: Media files (image/audio/video) — one embedding per file, no chunking ===
+        if (mediaType) {
+            const fileSize = buffer.length;
+            if (fileSize > MAX_MULTIMODAL_SIZE) {
+                console.warn(`[RAG] Skipping multimodal embedding for ${filename}: ${(fileSize / 1024 / 1024).toFixed(1)}MB exceeds ${MAX_MULTIMODAL_SIZE / 1024 / 1024}MB limit.`);
+                return;
+            }
+
+            console.log(`[RAG] Embedding ${mediaType.type} file: ${filename} (${(fileSize / 1024).toFixed(0)}KB)...`);
+            try {
+                const embedding = await this._getMultimodalEmbedding(filepath, mediaType.mimeType);
+                const vectorBuf = Buffer.from(new Float32Array(embedding).buffer);
+
+                const insertResult = this.db.prepare('INSERT INTO chunks (document_id, content, embedding, chunk_index, content_type) VALUES (?, ?, ?, ?, ?)')
+                    .run(docId, `[${mediaType.type.toUpperCase()}] ${filename}`, vectorBuf, 0, mediaType.type);
+
+                // Insert into vec0 (but NOT FTS — media has no text content)
+                if (this.useVec) {
+                    try {
+                        this.db.prepare('INSERT INTO chunks_vec (chunk_id, embedding) VALUES (?, ?)').run(insertResult.lastInsertRowid, vectorBuf);
+                    } catch (e) {
+                        console.warn(`[RAG] vec0 insert failed for ${filename}:`, e.message);
+                    }
+                }
+                console.log(`[RAG] Multimodal ingestion complete for ${filename}.`);
+            } catch (e) {
+                console.error(`[RAG] Failed to embed ${mediaType.type} ${filename}:`, e.message);
+            }
+            return;
+        }
+
+        // === Path B: PDF files — text extraction for FTS + native multimodal embedding ===
         if (ext === '.pdf') {
+            let text = '';
             let parser;
             try {
                 const { PDFParse } = require('pdf-parse');
@@ -172,23 +379,48 @@ class RagService {
                     await parser.destroy();
                 }
             }
-        } else {
-            text = buffer.toString('utf-8');
+
+            // Embed text chunks for FTS + vector search
+            const chunks = this._chunkText(text, 2000, 400);
+            console.log(`[RAG] Embedding ${chunks.length} text chunks + native PDF embedding for ${filename}...`);
+            await this._embedTextChunks(docId, chunks, 'text');
+
+            // Additionally: native multimodal PDF embedding for better visual/layout understanding
+            if (buffer.length <= MAX_MULTIMODAL_SIZE) {
+                try {
+                    const pdfEmbedding = await this._getMultimodalEmbedding(filepath, 'application/pdf');
+                    const vectorBuf = Buffer.from(new Float32Array(pdfEmbedding).buffer);
+                    const insertResult = this.db.prepare('INSERT INTO chunks (document_id, content, embedding, chunk_index, content_type) VALUES (?, ?, ?, ?, ?)')
+                        .run(docId, `[PDF] ${filename}`, vectorBuf, chunks.length, 'pdf');
+                    if (this.useVec) {
+                        try {
+                            this.db.prepare('INSERT INTO chunks_vec (chunk_id, embedding) VALUES (?, ?)').run(insertResult.lastInsertRowid, vectorBuf);
+                        } catch (e) { }
+                    }
+                    console.log(`[RAG] Native PDF embedding added for ${filename}.`);
+                } catch (e) {
+                    console.warn(`[RAG] Native PDF embedding failed for ${filename} (text chunks still indexed):`, e.message);
+                }
+            }
+
+            console.log(`[RAG] Ingestion complete for ${filename}.`);
+            return;
         }
 
-        const chunks = this._chunkText(text, 1000, 200);
-
-        // Insert Document if new
-        let docId = existing ? existing.id : null;
-        if (!docId) {
-            const info = this.db.prepare('INSERT INTO documents (filepath, filename, hash, vault_id, indexed_at) VALUES (?, ?, ?, ?, ?)')
-                .run(filepath, filename, hash, vaultId, new Date().toISOString());
-            docId = info.lastInsertRowid;
-        }
+        // === Path C: Text files (default) — unchanged behavior ===
+        const text = buffer.toString('utf-8');
+        const chunks = this._chunkText(text, 2000, 400);
 
         console.log(`[RAG] Embedding ${chunks.length} chunks for ${filename}...`);
+        await this._embedTextChunks(docId, chunks, 'text');
+        console.log(`[RAG] Ingestion complete for ${filename}.`);
+    }
 
-        // Process in batches of 10 to avoid rate limits
+    /**
+     * Embed text chunks and store in chunks table, FTS, and vec0.
+     * Shared by PDF text extraction (Path B) and plain text (Path C).
+     */
+    async _embedTextChunks(docId, chunks, contentType = 'text') {
         for (let i = 0; i < chunks.length; i += 10) {
             const batch = chunks.slice(i, i + 10);
             await Promise.all(batch.map(async (chunk, idx) => {
@@ -197,12 +429,14 @@ class RagService {
                     const embedding = await this._getEmbedding(chunk, 'RETRIEVAL_DOCUMENT');
                     const vectorBuf = Buffer.from(new Float32Array(embedding).buffer);
 
-                    const insertResult = this.db.prepare('INSERT INTO chunks (document_id, content, embedding, chunk_index) VALUES (?, ?, ?, ?)')
-                        .run(docId, chunk, vectorBuf, globalIdx);
+                    const insertResult = this.db.prepare('INSERT INTO chunks (document_id, content, embedding, chunk_index, content_type) VALUES (?, ?, ?, ?, ?)')
+                        .run(docId, chunk, vectorBuf, globalIdx, contentType);
 
-                    // Insert into FTS
-                    this.db.prepare('INSERT INTO chunks_fts (content, chunk_index, document_id) VALUES (?, ?, ?)')
-                        .run(chunk, globalIdx, docId);
+                    // Insert into FTS (text chunks only)
+                    if (contentType === 'text') {
+                        this.db.prepare('INSERT INTO chunks_fts (content, chunk_index, document_id) VALUES (?, ?, ?)')
+                            .run(chunk, globalIdx, docId);
+                    }
 
                     // Insert into vec0 if available
                     if (this.useVec) {
@@ -217,8 +451,6 @@ class RagService {
                 }
             }));
         }
-
-        console.log(`[RAG] Ingestion complete for ${filename}.`);
     }
 
     async deleteDocument(filename, vaultId) {
@@ -359,7 +591,7 @@ class RagService {
         // 1. Vector KNN search via vec0
         let vecSql = `
             SELECT cv.chunk_id, cv.distance,
-                   c.content, c.chunk_index, c.document_id,
+                   c.content, c.chunk_index, c.document_id, c.content_type,
                    d.filename, d.vault_id
             FROM chunks_vec cv
             JOIN chunks c ON cv.chunk_id = c.id
@@ -408,7 +640,7 @@ class RagService {
      * Brute-force cosine similarity search (fallback when sqlite-vec unavailable).
      */
     _searchBruteForce(queryEmbedding, query, vaultId, limit, minScore) {
-        let vectorSql = 'SELECT chunks.id, chunks.content, chunks.embedding, chunk_index, document_id, documents.filename, documents.vault_id FROM chunks JOIN documents ON chunks.document_id = documents.id';
+        let vectorSql = 'SELECT chunks.id, chunks.content, chunks.embedding, chunk_index, document_id, chunks.content_type, documents.filename, documents.vault_id FROM chunks JOIN documents ON chunks.document_id = documents.id';
         const params = [];
         if (vaultId) {
             vectorSql += ' WHERE documents.vault_id = ?';
@@ -500,9 +732,67 @@ class RagService {
         return chunks;
     }
 
+    /**
+     * Detect media type from file extension.
+     * Returns { type, mimeType } or null for text files.
+     */
+    _getMediaType(ext) {
+        for (const [type, config] of Object.entries(MEDIA_TYPES)) {
+            if (config.extensions.includes(ext)) {
+                return { type, mimeType: config.mimeMap[ext] };
+            }
+        }
+        return null;
+    }
+
+    /**
+     * Get embedding for a binary file (image, audio, video, PDF) using native multimodal support.
+     * Reads the file, base64 encodes it, and sends as inlineData to the embedding API.
+     */
+    async _getMultimodalEmbedding(filepath, mimeType, taskType = 'RETRIEVAL_DOCUMENT') {
+        const modelName = this.config.getModel('EMBEDDING');
+        const fileBuffer = fs.readFileSync(filepath);
+        const base64Data = fileBuffer.toString('base64');
+
+        const config = { taskType };
+        if (EMBEDDING_DIMENSIONS !== 3072) {
+            config.outputDimensionality = EMBEDDING_DIMENSIONS;
+        }
+
+        try {
+            const result = await this.agent.client.models.embedContent({
+                model: modelName,
+                contents: [{
+                    parts: [{ inlineData: { mimeType, data: base64Data } }]
+                }],
+                config
+            });
+
+            this.config.logUsageFromResponse(this.agent.db, modelName, result, null, 'embedding');
+
+            if (result.embeddings && result.embeddings.length > 0) {
+                return result.embeddings[0].values;
+            }
+            if (result.embedding) {
+                return result.embedding.values;
+            }
+            throw new Error('No embedding returned');
+        } catch (error) {
+            console.error(`[RAG] Multimodal embedding error for ${path.basename(filepath)}:`, error.message);
+            throw error;
+        }
+    }
+
     async _getEmbedding(text, taskType = 'RETRIEVAL_DOCUMENT') {
         const modelName = this.config.getModel('EMBEDDING');
         try {
+            const config = { taskType };
+
+            // Pass outputDimensionality for models that support it (embedding-2+)
+            if (EMBEDDING_DIMENSIONS !== 3072) {
+                config.outputDimensionality = EMBEDDING_DIMENSIONS;
+            }
+
             const result = await this.agent.client.models.embedContent({
                 model: modelName,
                 contents: [
@@ -512,9 +802,7 @@ class RagService {
                         ]
                     }
                 ],
-                config: {
-                    taskType: taskType
-                }
+                config
             });
 
             this.config.logUsageFromResponse(this.agent.db, modelName, result, null, 'embedding');
@@ -563,12 +851,23 @@ class RagService {
                 sizeBytes = 0;
             }
 
+            // Content type breakdown for multimodal stats
+            const typeCounts = this.db.prepare('SELECT content_type, COUNT(*) as count FROM chunks GROUP BY content_type').all();
+            const contentTypes = {};
+            typeCounts.forEach(t => {
+                contentTypes[t.content_type || 'text'] = t.count;
+            });
+
             return {
                 documents: docCount,
                 chunks: chunkCount,
                 vaults: vaultStats,
+                contentTypes,
                 sizeBytes,
-                vectorSearchEnabled: this.useVec
+                vectorSearchEnabled: this.useVec,
+                embeddingModel: this.config.getModel('EMBEDDING'),
+                embeddingDimensions: EMBEDDING_DIMENSIONS,
+                needsReindex: this.needsReindex || false
             };
         } catch (e) {
             console.error('[RAG] Error getting stats:', e);

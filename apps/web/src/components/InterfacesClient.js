@@ -5,6 +5,7 @@ import { MessageSquare, Send, Hash } from 'lucide-react';
 import WhatsAppSettings from './WhatsAppSettings';
 import SlackSettings from './SlackSettings';
 import GWSSettings from './GWSSettings';
+import ScrollableTabs from '@/components/ScrollableTabs';
 
 export default function InterfacesClient() {
     const [activeTab, setActiveTab] = useState('whatsapp');
@@ -20,58 +21,18 @@ export default function InterfacesClient() {
                 </div>
 
                 {/* Tabs */}
-                <div className="flex space-x-1 bg-zinc-900/50 p-1 rounded-lg w-fit mb-8 border border-zinc-800">
-                    <button
-                        onClick={() => setActiveTab('whatsapp')}
-                        className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'whatsapp'
-                            ? 'bg-zinc-800 text-white shadow-sm'
-                            : 'text-zinc-500 hover:text-zinc-300'
-                            }`}
-                    >
-                        <div className="flex items-center space-x-2">
-                            <MessageSquare size={16} />
-                            <span>WhatsApp</span>
-                        </div>
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('telegram')}
-                        className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'telegram'
-                            ? 'bg-zinc-800 text-white shadow-sm'
-                            : 'text-zinc-500 hover:text-zinc-300'
-                            }`}
-                    >
-                        <div className="flex items-center space-x-2">
-                            <Send size={16} />
-                            <span>Telegram</span>
-                        </div>
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('slack')}
-                        className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'slack'
-                            ? 'bg-zinc-800 text-white shadow-sm'
-                            : 'text-zinc-500 hover:text-zinc-300'
-                            }`}
-                    >
-                        <div className="flex items-center space-x-2">
-                            <Hash size={16} />
-                            <span>Slack</span>
-                        </div>
-                    </button>
-                    <button
-                        onClick={() => setActiveTab('gws')}
-                        className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === 'gws'
-                            ? 'bg-zinc-800 text-white shadow-sm'
-                            : 'text-zinc-500 hover:text-zinc-300'
-                            }`}
-                    >
-                        <div className="flex items-center space-x-2">
-                            <svg className="w-4 h-4" viewBox="0 0 24 24" fill="currentColor">
-                                <path d="M21.35,11.1H12.18V13.83H18.69C18.36,17.64 15.19,19.27 12.19,19.27C8.36,19.27 5,16.25 5,12C5,7.9 8.2,4.73 12.2,4.73C15.29,4.73 17.1,6.7 17.1,6.7L19,4.72C19,4.72 16.56,2 12.1,2C6.42,2 2.03,6.8 2.03,12C2.03,17.05 6.16,22 12.25,22C17.6,22 21.5,18.33 21.5,12.91C21.5,11.76 21.35,11.1 21.35,11.1V11.1Z" />
-                            </svg>
-                            <span>Google Workspace</span>
-                        </div>
-                    </button>
-                </div>
+                <ScrollableTabs
+                    tabs={[
+                        { id: 'whatsapp', label: 'WhatsApp', icon: MessageSquare },
+                        { id: 'telegram', label: 'Telegram', icon: Send },
+                        { id: 'slack', label: 'Slack', icon: Hash },
+                        { id: 'gws', label: 'Google Workspace' },
+                    ]}
+                    activeTab={activeTab}
+                    onChange={setActiveTab}
+                    variant="pill"
+                    className="mb-8"
+                />
 
                 {/* Content */}
                 <div className="bg-zinc-900 rounded-xl border border-zinc-800 min-h-[400px]">

@@ -1,37 +1,43 @@
 'use client';
 
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
+import { Target, Database, Tags, Wrench, Book, Zap } from 'lucide-react';
 import GoalList from '@/components/GoalList';
 import MemoryList from '@/components/MemoryList';
 import AliasList from '@/components/AliasList';
 import ToolsList from '@/components/ToolsList';
 import MCPServerList from '@/components/MCPServerList';
 import SecretsEditor from '@/components/SecretsEditor';
+import JournalTab from '@/components/JournalTab';
+import SkillsTab from '@/components/SkillsTab';
 import ScrollableTabs from '@/components/ScrollableTabs';
-
-const TABS = [
-    { id: 'goals', label: 'Goals' },
-    { id: 'memory', label: 'Memory' },
-    { id: 'aliases', label: 'Aliases' },
-    { id: 'tools', label: 'Tools & MCP' },
-    { id: 'secrets', label: 'Browser Secrets' },
-];
 
 export default function BrainTabs({ goals, facts, aliases, tools, servers }) {
     const router = useRouter();
     const pathname = usePathname();
-    const activeTab = useSearchParams().get('tab') || 'goals';
+    const activeTab = useSearchParams().get('tab') || 'journal';
 
     const handleTabChange = (tabId) => {
         router.replace(`${pathname}?tab=${tabId}`);
     };
 
+    const tabs = [
+        { id: 'journal', label: 'Journal', icon: Book },
+        { id: 'memory', label: 'Memory', icon: Database },
+        { id: 'goals', label: 'Goals', icon: Target },
+        { id: 'aliases', label: 'Aliases', icon: Tags },
+        { id: 'tools', label: 'Tools & MCP', icon: Wrench },
+        { id: 'skills', label: 'Skills', icon: Zap },
+        { id: 'secrets', label: 'Browser Secrets', icon: Wrench },
+    ];
+
     return (
         <div className="flex flex-col gap-6">
             <ScrollableTabs
-                tabs={TABS}
+                tabs={tabs}
                 activeTab={activeTab}
                 onChange={handleTabChange}
+                variant="underline"
             />
 
             <div className="min-h-[400px]">
@@ -87,6 +93,16 @@ export default function BrainTabs({ goals, facts, aliases, tools, servers }) {
                             <p className="text-zinc-400 text-sm">Securely manage credentials for the Agent's browser.</p>
                         </div>
                         <SecretsEditor />
+                    </div>
+                )}
+                {activeTab === 'journal' && (
+                    <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        <JournalTab />
+                    </div>
+                )}
+                {activeTab === 'skills' && (
+                    <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
+                        <SkillsTab />
                     </div>
                 )}
             </div>

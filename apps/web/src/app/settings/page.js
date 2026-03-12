@@ -7,6 +7,7 @@ import { Settings, Check, AlertTriangle, Eye, EyeOff, Save } from 'lucide-react'
 import BackupSettings from '@/components/BackupSettings';
 import EnvVariables from '@/components/EnvVariables';
 import VoiceSelector from '@/components/VoiceSelector';
+import ScrollableTabs from '@/components/ScrollableTabs';
 
 import InterfacesClient from '@/components/InterfacesClient';
 
@@ -104,20 +105,13 @@ function SettingsContent() {
                 <p className="text-zinc-400">Configure global behaviors and system preferences.</p>
 
                 {/* Tabs */}
-                <div className="flex space-x-1 mt-6 bg-zinc-900/50 p-1 rounded-lg border border-zinc-800 w-fit">
-                    {tabs.map(tab => (
-                        <button
-                            key={tab.id}
-                            onClick={() => handleTabChange(tab.id)}
-                            className={`px-4 py-2 rounded-md text-sm font-medium transition-all ${activeTab === tab.id
-                                ? 'bg-zinc-800 text-white shadow-sm'
-                                : 'text-zinc-400 hover:text-white hover:bg-zinc-800/50'
-                                }`}
-                        >
-                            {tab.label}
-                        </button>
-                    ))}
-                </div>
+                <ScrollableTabs
+                    tabs={tabs}
+                    activeTab={activeTab}
+                    onChange={handleTabChange}
+                    variant="pill"
+                    className="mt-6"
+                />
             </header>
 
             <section className="max-w-3xl mx-auto w-full space-y-8 pb-20">
