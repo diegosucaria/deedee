@@ -26,10 +26,18 @@ body {
   font-family: Arial, Helvetica, sans-serif;
 }
 
+/* Constrain main's direct children so overflow-x-auto works on mobile.
+   Without this, mx-auto on page wrappers prevents flex stretch,
+   causing children to expand to content width instead of viewport. */
+main > * {
+  max-width: 100%;
+}
+
 /* Hide scrollbar but keep scroll functionality */
 .scrollbar-hide {
   -ms-overflow-style: none;
   scrollbar-width: none;
+  -webkit-overflow-scrolling: touch;
 }
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
