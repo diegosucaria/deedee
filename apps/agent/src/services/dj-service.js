@@ -1328,8 +1328,10 @@ If unsure, return { "bpm": 0, "key": "" }`
                 candidateTokens: usage.candidatesTokenCount,
                 totalTokens: usage.totalTokenCount,
                 chatId: chatId,
-                estimatedCost: 0,
-                tag: 'dj_mode' // Tag!
+                estimatedCost: this.config.calculateCost(proModelName, usage.promptTokenCount, usage.candidatesTokenCount, usage.cachedContentTokenCount || 0, usage.thoughtsTokenCount || 0),
+                tag: 'dj_mode',
+                cachedTokens: usage.cachedContentTokenCount || 0,
+                thoughtsTokens: usage.thoughtsTokenCount || 0
             });
         }
 
@@ -1340,13 +1342,6 @@ If unsure, return { "bpm": 0, "key": "" }`
      * Recommend Digital (History + Global)
      */
     async recommendDigital(currentTrack, metadata = {}, chatId) {
-        // 1. Search History Vault
-        // Simple RAG: Read relevant history files?
-        // For now, let's read the index or a few recent files?
-        // Or searchMemory?
-
-        // Pass the prompt to the model with contextual knowledge
-
         const proModelName = process.env.WORKER_PRO || 'gemini-1.5-pro-latest';
         const model = this.agent.client.getGenerativeModel({ model: proModelName });
 
@@ -1354,7 +1349,6 @@ If unsure, return { "bpm": 0, "key": "" }`
         let learnedContext = "";
         if (this.agent.ragService) {
             try {
-                // Search for mixing advice, history, or context related to the current track or venue
                 const query = `mixing advice ${currentTrack} ${metadata.venue || ''} ${metadata.party || ''}`;
                 const results = await this.agent.ragService.search(query, null, 5);
                 if (results.length > 0) {
@@ -1369,9 +1363,9 @@ If unsure, return { "bpm": 0, "key": "" }`
         You are an expert Digital DJ.
         Current Track: "${currentTrack}"
         Context: ${JSON.stringify(metadata)}
-        
+
         ${learnedContext}
-        
+
         Suggest 3 mixing paths (Smooth, Lift, Pivot).
         You can recommend ANY track in the world, but prioritize tracks that fit the context and learned knowledge.
       `;
@@ -1379,16 +1373,18 @@ If unsure, return { "bpm": 0, "key": "" }`
         const result = await model.generateContent(prompt);
 
         // Log usage
-        const usage = result.response.usageMetadata;
-        if (usage) {
+        const usage2 = result.response.usageMetadata;
+        if (usage2) {
             this.db.logTokenUsage({
                 model: proModelName,
-                promptTokens: usage.promptTokenCount,
-                candidateTokens: usage.candidatesTokenCount,
-                totalTokens: usage.totalTokenCount,
+                promptTokens: usage2.promptTokenCount,
+                candidateTokens: usage2.candidatesTokenCount,
+                totalTokens: usage2.totalTokenCount,
                 chatId: chatId,
-                estimatedCost: 0,
-                tag: 'dj_mode'
+                estimatedCost: this.config.calculateCost(proModelName, usage2.promptTokenCount, usage2.candidatesTokenCount, usage2.cachedContentTokenCount || 0, usage2.thoughtsTokenCount || 0),
+                tag: 'dj_mode',
+                cachedTokens: usage2.cachedContentTokenCount || 0,
+                thoughtsTokens: usage2.thoughtsTokenCount || 0
             });
         }
 

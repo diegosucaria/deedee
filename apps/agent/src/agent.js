@@ -677,11 +677,12 @@ class Agent {
         // ... (existing slash command logic) ...
         const action = commandResult.action;
         console.log(`${logPrefix} User confirmed action: ${action.name}`);
-        const result = await this._executeTool(action.name, action.args, message, activeSendCallback, (model, pTokens, cTokens) => {
-          const cost = calculateCost(model, pTokens, cTokens);
+        const result = await this._executeTool(action.name, action.args, message, activeSendCallback, (model, pTokens, cTokens, cached = 0, thoughts = 0) => {
+          const cost = calculateCost(model, pTokens, cTokens, cached, thoughts);
           this.db.logTokenUsage({
             model, promptTokens: pTokens, candidateTokens: cTokens,
-            totalTokens: pTokens + cTokens, chatId, estimatedCost: cost
+            totalTokens: pTokens + cTokens, chatId, estimatedCost: cost,
+            cachedTokens: cached, thoughtsTokens: thoughts
           });
         });
 
@@ -1362,12 +1363,12 @@ class Agent {
 
       // USAGE LOGGING
       if (response.usageMetadata) {
-        const { promptTokenCount, candidatesTokenCount, totalTokenCount } = response.usageMetadata;
-        const cost = calculateCost(selectedModel, promptTokenCount, candidatesTokenCount);
+        const { promptTokenCount, candidatesTokenCount, totalTokenCount, cachedContentTokenCount, thoughtsTokenCount } = response.usageMetadata;
+        const cost = calculateCost(selectedModel, promptTokenCount, candidatesTokenCount, cachedContentTokenCount || 0, thoughtsTokenCount || 0);
         e2eCost += cost;
         e2eTokens += totalTokenCount;
 
-        console.log(`[Tokens] P: ${promptTokenCount} | C: ${candidatesTokenCount} | Total: ${totalTokenCount} | Cost: $${cost.toFixed(6)}`);
+        console.log(`[Tokens] P: ${promptTokenCount} | C: ${candidatesTokenCount} | Cached: ${cachedContentTokenCount || 0} | Think: ${thoughtsTokenCount || 0} | Total: ${totalTokenCount} | Cost: $${cost.toFixed(6)}`);
 
         this.db.logTokenUsage({
           model: selectedModel,
@@ -1375,7 +1376,9 @@ class Agent {
           candidateTokens: candidatesTokenCount,
           totalTokens: totalTokenCount,
           chatId,
-          estimatedCost: cost
+          estimatedCost: cost,
+          cachedTokens: cachedContentTokenCount || 0,
+          thoughtsTokens: thoughtsTokenCount || 0
         });
       }
 
@@ -1488,15 +1491,16 @@ class Agent {
               toolResult = { info: `Action PAUSED. ${guard.message} User must confirm.` };
             } else {
               // Execute normally
-              toolResult = await this._executeTool(executionName, call.args, message, activeSendCallback, (model, pTokens, cTokens) => {
-                const cost = calculateCost(model, pTokens, cTokens);
+              toolResult = await this._executeTool(executionName, call.args, message, activeSendCallback, (model, pTokens, cTokens, cached = 0, thoughts = 0) => {
+                const cost = calculateCost(model, pTokens, cTokens, cached, thoughts);
                 e2eCost += cost;
                 e2eTokens += (pTokens + cTokens);
-                console.log(`[Tokens-Polyfill] P: ${pTokens} | C: ${cTokens} | Cost: $${cost.toFixed(6)}`);
+                console.log(`[Tokens-Polyfill] P: ${pTokens} | C: ${cTokens} | Cached: ${cached} | Think: ${thoughts} | Cost: $${cost.toFixed(6)}`);
 
                 this.db.logTokenUsage({
                   model, promptTokens: pTokens, candidateTokens: cTokens,
-                  totalTokens: pTokens + cTokens, chatId, estimatedCost: cost
+                  totalTokens: pTokens + cTokens, chatId, estimatedCost: cost,
+                  cachedTokens: cached, thoughtsTokens: thoughts
                 });
               });
             }
@@ -1638,12 +1642,12 @@ class Agent {
 
         // USAGE LOGGING (Tool Loop)
         if (response.usageMetadata) {
-          const { promptTokenCount, candidatesTokenCount, totalTokenCount } = response.usageMetadata;
-          const cost = calculateCost(selectedModel, promptTokenCount, candidatesTokenCount);
+          const { promptTokenCount, candidatesTokenCount, totalTokenCount, cachedContentTokenCount, thoughtsTokenCount } = response.usageMetadata;
+          const cost = calculateCost(selectedModel, promptTokenCount, candidatesTokenCount, cachedContentTokenCount || 0, thoughtsTokenCount || 0);
           e2eCost += cost;
           e2eTokens += totalTokenCount;
 
-          console.log(`[Tokens-Tool] P: ${promptTokenCount} | C: ${candidatesTokenCount} | Total: ${totalTokenCount} | Cost: $${cost.toFixed(6)}`);
+          console.log(`[Tokens-Tool] P: ${promptTokenCount} | C: ${candidatesTokenCount} | Cached: ${cachedContentTokenCount || 0} | Think: ${thoughtsTokenCount || 0} | Total: ${totalTokenCount} | Cost: $${cost.toFixed(6)}`);
 
           this.db.logTokenUsage({
             model: selectedModel,
@@ -1651,7 +1655,9 @@ class Agent {
             candidateTokens: candidatesTokenCount,
             totalTokens: totalTokenCount,
             chatId,
-            estimatedCost: cost
+            estimatedCost: cost,
+            cachedTokens: cachedContentTokenCount || 0,
+            thoughtsTokens: thoughtsTokenCount || 0
           });
         }
 
@@ -1891,7 +1897,9 @@ class Agent {
           usageCallback(
             this.configService.getModel('SEARCH'),
             u.promptTokenCount,
-            u.candidatesTokenCount
+            u.candidatesTokenCount,
+            u.cachedContentTokenCount || 0,
+            u.thoughtsTokenCount || 0
           );
         }
 
@@ -1988,9 +1996,9 @@ class Agent {
 
 // Pricing per 1 Million Tokens (Input / Output)
 // Source: https://ai.google.dev/gemini-api/docs/pricing
-function calculateCost(model, inputTokens, outputTokens) {
+function calculateCost(model, inputTokens, outputTokens, cachedTokens = 0, thoughtsTokens = 0) {
   const config = new ConfigService();
-  return config.calculateCost(model, inputTokens, outputTokens);
+  return config.calculateCost(model, inputTokens, outputTokens, cachedTokens, thoughtsTokens);
 }
 
 module.exports = { Agent };

@@ -581,9 +581,9 @@ ${transcript}
 
                 // COST TRACKING
                 if (metadata) {
-                    const { promptTokenCount, candidatesTokenCount, totalTokenCount } = metadata;
+                    const { promptTokenCount, candidatesTokenCount, totalTokenCount, cachedContentTokenCount, thoughtsTokenCount } = metadata;
                     const config = new ConfigService();
-                    cost = config.calculateCost(modelName, promptTokenCount, candidatesTokenCount);
+                    cost = config.calculateCost(modelName, promptTokenCount, candidatesTokenCount, cachedContentTokenCount || 0, thoughtsTokenCount || 0);
 
                     console.log(`[Impersonation] Draft Cost: $${cost.toFixed(6)} (${totalTokenCount} tokens)`);
 
@@ -595,7 +595,9 @@ ${transcript}
                         totalTokens: totalTokenCount,
                         chatId: chatId,
                         estimatedCost: cost,
-                        tag: 'autopilot'
+                        tag: 'autopilot',
+                        cachedTokens: cachedContentTokenCount || 0,
+                        thoughtsTokens: thoughtsTokenCount || 0
                     });
                 }
             } else if (result.candidates && result.candidates.length > 0) {

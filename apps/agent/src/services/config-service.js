@@ -80,8 +80,10 @@ class ConfigService {
 
         const promptTokens = meta.promptTokenCount || 0;
         const candidateTokens = meta.candidatesTokenCount || 0;
+        const cachedTokens = meta.cachedContentTokenCount || 0;
+        const thoughtsTokens = meta.thoughtsTokenCount || 0;
         const totalTokens = meta.totalTokenCount || (promptTokens + candidateTokens);
-        const cost = this.calculateCost(model, promptTokens, candidateTokens);
+        const cost = this.calculateCost(model, promptTokens, candidateTokens, cachedTokens, thoughtsTokens);
 
         db.logTokenUsage({
             model,
@@ -90,13 +92,25 @@ class ConfigService {
             totalTokens,
             chatId: chatId || null,
             estimatedCost: cost,
-            tag: tag || null
+            tag: tag || null,
+            cachedTokens,
+            thoughtsTokens
         });
 
         return { cost, tokens: totalTokens };
     }
 
-    calculateCost(model, inputTokens, outputTokens) {
+    /**
+     * Calculate cost for an API call, accounting for implicit caching and thinking tokens.
+     * - cachedTokens are part of promptTokens, charged at 10% of input rate (90% discount)
+     * - thoughtsTokens are charged at the output rate (same as candidates)
+     * @param {string} model - Model name
+     * @param {number} inputTokens - Total input/prompt tokens (includes cached)
+     * @param {number} outputTokens - Candidate output tokens (may or may not include thinking depending on API version)
+     * @param {number} [cachedTokens=0] - Cached input tokens (subset of inputTokens)
+     * @param {number} [thoughtsTokens=0] - Thinking tokens (if separate from outputTokens)
+     */
+    calculateCost(model, inputTokens, outputTokens, cachedTokens = 0, thoughtsTokens = 0) {
         let pricing = CONSTANTS.PRICING[model];
         if (!pricing) {
             const lower = model.toLowerCase();
@@ -108,11 +122,20 @@ class ConfigService {
             else pricing = CONSTANTS.PRICING['FLASH_DEFAULT'];
         }
 
+        // Guard against bad data from API
+        inputTokens = Math.max(0, inputTokens || 0);
+        outputTokens = Math.max(0, outputTokens || 0);
+        cachedTokens = Math.min(Math.max(0, cachedTokens || 0), inputTokens);
+        thoughtsTokens = Math.max(0, thoughtsTokens || 0);
+
         const limit = pricing.threshold || 128000;
         const tier = inputTokens <= limit ? pricing.tier1 : pricing.tier2;
 
-        const inputCost = (inputTokens / 1_000_000) * tier.input;
-        const outputCost = (outputTokens / 1_000_000) * tier.output;
+        // Cached tokens get 90% discount on input rate
+        const uncachedInput = inputTokens - cachedTokens;
+        const inputCost = (uncachedInput / 1_000_000) * tier.input + (cachedTokens / 1_000_000) * tier.input * 0.1;
+        // Thinking tokens charged at output rate (same as candidates)
+        const outputCost = ((outputTokens + thoughtsTokens) / 1_000_000) * tier.output;
 
         return inputCost + outputCost;
     }

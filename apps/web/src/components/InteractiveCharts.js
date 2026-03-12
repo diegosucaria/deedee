@@ -400,6 +400,7 @@ export function ModelCostBreakdown({ data }) {
     }
 
     const totalCost = data.reduce((sum, row) => sum + (row.cost || 0), 0);
+    const totalCached = data.reduce((sum, row) => sum + (row.cached_tokens || 0), 0);
 
     // Shorten model names for display
     const shortName = (model) => {
@@ -410,6 +411,13 @@ export function ModelCostBreakdown({ data }) {
             .replace('-exp', '');
     };
 
+    const fmtTokens = (n) => {
+        if (!n) return '0';
+        if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+        if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+        return n.toLocaleString();
+    };
+
     return (
         <div className="overflow-auto">
             <table className="w-full text-sm">
@@ -418,6 +426,7 @@ export function ModelCostBreakdown({ data }) {
                         <th className="text-left py-2 px-2">Model</th>
                         <th className="text-right py-2 px-2">Calls</th>
                         <th className="text-right py-2 px-2">Input</th>
+                        {totalCached > 0 && <th className="text-right py-2 px-2">Cached</th>}
                         <th className="text-right py-2 px-2">Output</th>
                         <th className="text-right py-2 px-2">Cost</th>
                         <th className="text-right py-2 px-2">%</th>
@@ -426,14 +435,20 @@ export function ModelCostBreakdown({ data }) {
                 <tbody>
                     {data.map((row) => {
                         const pct = totalCost > 0 ? ((row.cost / totalCost) * 100) : 0;
+                        const cachePct = row.input_tokens > 0 ? ((row.cached_tokens || 0) / row.input_tokens * 100) : 0;
                         return (
                             <tr key={row.model} className="border-b border-zinc-800/50 hover:bg-zinc-800/30">
                                 <td className="py-2 px-2 text-zinc-300 font-mono text-xs" title={row.model}>
                                     {shortName(row.model)}
                                 </td>
                                 <td className="text-right py-2 px-2 font-mono text-zinc-400">{row.calls?.toLocaleString()}</td>
-                                <td className="text-right py-2 px-2 font-mono text-zinc-400 text-xs">{(row.input_tokens || 0).toLocaleString()}</td>
-                                <td className="text-right py-2 px-2 font-mono text-zinc-400 text-xs">{(row.output_tokens || 0).toLocaleString()}</td>
+                                <td className="text-right py-2 px-2 font-mono text-zinc-400 text-xs">{fmtTokens(row.input_tokens)}</td>
+                                {totalCached > 0 && (
+                                    <td className="text-right py-2 px-2 font-mono text-xs" title={`${cachePct.toFixed(0)}% of input cached`}>
+                                        <span className="text-green-400">{fmtTokens(row.cached_tokens)}</span>
+                                    </td>
+                                )}
+                                <td className="text-right py-2 px-2 font-mono text-zinc-400 text-xs">{fmtTokens(row.output_tokens)}</td>
                                 <td className="text-right py-2 px-2 font-mono text-zinc-200">${(row.cost || 0).toFixed(4)}</td>
                                 <td className="text-right py-2 px-2 font-mono text-zinc-500">{pct.toFixed(1)}%</td>
                             </tr>
