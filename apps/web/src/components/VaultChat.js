@@ -5,7 +5,7 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import io from 'socket.io-client';
 
-export default function VaultChat({ vaultId, isOpen, onClose }) {
+export default function VaultChat({ vaultId, isOpen = true, onClose }) {
     const [messages, setMessages] = useState([]);
     const [input, setInput] = useState('');
     const [isConnected, setIsConnected] = useState(false);
