@@ -9,7 +9,7 @@ const CONSTANTS = {
         ROUTER: process.env.ROUTER_MODEL || 'gemini-3.1-flash-lite-preview',
         SEARCH: process.env.WORKER_GOOGLE_SEARCH || 'gemini-2.5-pro',
         LIVE: process.env.WORKER_LIVE || 'gemini-2.5-flash-native-audio-preview-12-2025',
-        EMBEDDING: process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-001',
+        EMBEDDING: process.env.GEMINI_EMBEDDING_MODEL || 'gemini-embedding-2-preview',
     },
     // Pricing per 1M tokens (USD) - Updated March 2026
     // Source: https://ai.google.dev/gemini-api/docs/pricing
@@ -43,6 +43,7 @@ const CONSTANTS = {
         'text-embedding-004': { tier1: { input: 0.10, output: 0 }, tier2: { input: 0.10, output: 0 } },
         'gemini-embedding-001': { tier1: { input: 0.15, output: 0 }, tier2: { input: 0.15, output: 0 } },
         'gemini-embedding-002': { tier1: { input: 0.20, output: 0 }, tier2: { input: 0.20, output: 0 } },
+        'gemini-embedding-2-preview': { tier1: { input: 0.10, output: 0 }, tier2: { input: 0.10, output: 0 } },
         // --- Grok/xAI models (OpenAI-compatible) ---
         'grok-3': { tier1: { input: 3.00, output: 15.00 }, tier2: { input: 3.00, output: 15.00 } },
         'grok-3-mini': { tier1: { input: 0.30, output: 0.50 }, tier2: { input: 0.30, output: 0.50 } },

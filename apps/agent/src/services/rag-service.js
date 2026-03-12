@@ -5,7 +5,9 @@ const crypto = require('crypto');
 const Database = require('better-sqlite3');
 const { ConfigService } = require('./config-service');
 
-const EMBEDDING_DIMENSIONS = 768; // Gemini text-embedding-004
+// Matryoshka dimensions supported by gemini-embedding-2-preview: 768, 1536, 3072
+// Default 768 for backward compat with existing embeddings; set EMBEDDING_DIMENSIONS to upgrade
+const EMBEDDING_DIMENSIONS = parseInt(process.env.EMBEDDING_DIMENSIONS, 10) || 768;
 
 class RagService {
     constructor(agent) {
@@ -54,7 +56,14 @@ class RagService {
                 chunk_index INTEGER,
                 FOREIGN KEY(document_id) REFERENCES documents(id) ON DELETE CASCADE
             );
+            CREATE TABLE IF NOT EXISTS rag_metadata (
+                key TEXT PRIMARY KEY,
+                value TEXT
+            );
         `);
+
+        // Detect embedding dimension changes and handle migration
+        this._handleDimensionMigration();
 
         // Initialize FTS5 Table for Hybrid Search
         try {
@@ -125,6 +134,98 @@ class RagService {
         }
     }
 
+    /**
+     * Detect if embedding dimensions changed since last run.
+     * If dimensions changed, existing embeddings are incompatible:
+     * - Drop and recreate vec0 with new dimensions
+     * - Clear all embeddings (set to NULL) so they get re-embedded
+     * - Clear document hashes to force re-ingestion on next scan
+     */
+    _handleDimensionMigration() {
+        const storedDims = this.db.prepare("SELECT value FROM rag_metadata WHERE key = 'embedding_dimensions'").get();
+        const storedModel = this.db.prepare("SELECT value FROM rag_metadata WHERE key = 'embedding_model'").get();
+        const currentModel = this.config.getModel('EMBEDDING');
+        const currentDims = EMBEDDING_DIMENSIONS;
+
+        const prevDims = storedDims ? parseInt(storedDims.value, 10) : null;
+        const prevModel = storedModel ? storedModel.value : null;
+
+        // First run — just store current config
+        if (!prevDims) {
+            this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_dimensions', ?)").run(String(currentDims));
+            this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_model', ?)").run(currentModel);
+            this.needsReindex = false;
+            return;
+        }
+
+        const dimsChanged = prevDims !== currentDims;
+        const modelChanged = prevModel !== currentModel;
+
+        if (dimsChanged) {
+            console.warn(`[RAG] ⚠ Embedding dimensions changed: ${prevDims} → ${currentDims}. Existing embeddings are incompatible.`);
+            console.warn('[RAG] Clearing all embeddings and document hashes to force re-indexing on next scan...');
+
+            // Clear embeddings (keep chunks for content/FTS)
+            this.db.prepare('UPDATE chunks SET embedding = NULL').run();
+
+            // Clear vec0 table if it exists (will be recreated with new dims below)
+            if (this.useVec) {
+                try { this.db.exec('DROP TABLE IF EXISTS chunks_vec'); } catch (e) { }
+            }
+
+            // Reset document hashes to force re-ingestion
+            this.db.prepare("UPDATE documents SET hash = ''").run();
+
+            // Update stored config
+            this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_dimensions', ?)").run(String(currentDims));
+            this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_model', ?)").run(currentModel);
+            this.needsReindex = true;
+            console.log('[RAG] Embeddings cleared. Documents will be re-embedded on next scan or ingest.');
+        } else if (modelChanged) {
+            // Model changed but dimensions same — embeddings from different models
+            // are still comparable at the same dimension, but quality improves with re-indexing
+            console.log(`[RAG] Embedding model changed: ${prevModel} → ${currentModel} (dimensions unchanged at ${currentDims}).`);
+            console.log('[RAG] Existing embeddings remain valid. Re-index recommended for improved quality.');
+            this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_model', ?)").run(currentModel);
+            this.needsReindex = false;
+        } else {
+            this.needsReindex = false;
+        }
+    }
+
+    /**
+     * Force re-embed all documents. Call manually or after dimension change.
+     * Clears all embeddings and hashes, then triggers a full scan.
+     */
+    async reindexAll(vaultsDir, journalDir) {
+        console.log('[RAG] Starting full re-index...');
+
+        // Clear all embeddings and hashes
+        this.db.prepare('UPDATE chunks SET embedding = NULL').run();
+        this.db.prepare("UPDATE documents SET hash = ''").run();
+
+        // Recreate vec0
+        if (this.useVec) {
+            try { this.db.exec('DROP TABLE IF EXISTS chunks_vec'); } catch (e) { }
+            try {
+                this.db.exec(`
+                    CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(
+                        chunk_id INTEGER PRIMARY KEY,
+                        embedding float[${EMBEDDING_DIMENSIONS}]
+                    );
+                `);
+            } catch (e) {
+                console.warn('[RAG] Failed to recreate vec0:', e.message);
+            }
+        }
+
+        // Re-scan if directories provided
+        if (vaultsDir) await this.scanAndIngest(vaultsDir);
+        if (journalDir) await this.scanJournals(journalDir);
+
+        console.log('[RAG] Full re-index complete.');
+    }
+
     async ingestDocument(filepath, vaultId = null) {
         if (!fs.existsSync(filepath)) throw new Error('File not found');
 
@@ -176,7 +277,8 @@ class RagService {
             text = buffer.toString('utf-8');
         }
 
-        const chunks = this._chunkText(text, 1000, 200);
+        // gemini-embedding-2-preview supports 8K tokens (~24K chars); use 2K chars with 400 overlap
+        const chunks = this._chunkText(text, 2000, 400);
 
         // Insert Document if new
         let docId = existing ? existing.id : null;
@@ -503,6 +605,13 @@ class RagService {
     async _getEmbedding(text, taskType = 'RETRIEVAL_DOCUMENT') {
         const modelName = this.config.getModel('EMBEDDING');
         try {
+            const config = { taskType };
+
+            // Pass outputDimensionality for models that support it (embedding-2+)
+            if (EMBEDDING_DIMENSIONS !== 3072) {
+                config.outputDimensionality = EMBEDDING_DIMENSIONS;
+            }
+
             const result = await this.agent.client.models.embedContent({
                 model: modelName,
                 contents: [
@@ -512,9 +621,7 @@ class RagService {
                         ]
                     }
                 ],
-                config: {
-                    taskType: taskType
-                }
+                config
             });
 
             this.config.logUsageFromResponse(this.agent.db, modelName, result, null, 'embedding');
@@ -568,7 +675,10 @@ class RagService {
                 chunks: chunkCount,
                 vaults: vaultStats,
                 sizeBytes,
-                vectorSearchEnabled: this.useVec
+                vectorSearchEnabled: this.useVec,
+                embeddingModel: this.config.getModel('EMBEDDING'),
+                embeddingDimensions: EMBEDDING_DIMENSIONS,
+                needsReindex: this.needsReindex || false
             };
         } catch (e) {
             console.error('[RAG] Error getting stats:', e);

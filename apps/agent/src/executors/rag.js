@@ -33,6 +33,18 @@ class RagExecutor extends BaseExecutor {
                 }
             }
 
+            case 'reindexEmbeddings': {
+                if (!ragService) return { error: 'RAG Service not initialized.' };
+                try {
+                    const vaultsDir = agent.vaults ? agent.vaults.vaultsDir : null;
+                    const journalDir = agent.journal ? agent.journal.journalDir : null;
+                    await ragService.reindexAll(vaultsDir, journalDir);
+                    return { success: true, info: 'Full re-index complete. All documents re-embedded.' };
+                } catch (e) {
+                    return { error: `Re-index failed: ${e.message}` };
+                }
+            }
+
             default: return null;
         }
     }

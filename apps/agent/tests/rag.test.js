@@ -80,7 +80,7 @@ describe('RagService', () => {
 
         expect(mockAgent.client.models.embedContent).toHaveBeenCalledWith(expect.objectContaining({
             model: 'text-embedding-004',
-            config: { taskType: 'RETRIEVAL_DOCUMENT' }
+            config: expect.objectContaining({ taskType: 'RETRIEVAL_DOCUMENT' })
         }));
         expect(mockPrepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO documents'));
         // Verify vault_id is passed
