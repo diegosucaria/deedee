@@ -16,14 +16,17 @@ function createAutopilotRouter(agent) {
     router.get('/drafts', (req, res) => {
         try {
             const status = req.query.status || 'pending';
+            // Include 'partially_sent' drafts when querying for 'pending' so they remain actionable
+            const statuses = status === 'pending' ? ['pending', 'partially_sent'] : [status];
+            const placeholders = statuses.map(() => '?').join(', ');
             const drafts = agent.db.db.prepare(`
                 SELECT d.*, p.name as contact_name, p.phone as contact_phone,
                 CASE WHEN d.context_content IS NOT NULL THEN d.context_content ELSE (SELECT content FROM messages WHERE chat_id = d.chat_id AND role != 'assistant' ORDER BY timestamp DESC LIMIT 1) END as context_message
                 FROM autopilot_drafts d
                 LEFT JOIN people p ON d.contact_id = p.phone OR d.contact_id = p.id
-                WHERE d.status = ?
+                WHERE d.status IN (${placeholders})
                 ORDER BY d.created_at DESC
-            `).all(status);
+            `).all(...statuses);
             res.json(drafts);
         } catch (e) {
             console.error('Error fetching drafts:', e);
@@ -38,16 +41,12 @@ function createAutopilotRouter(agent) {
             const draft = agent.db.db.prepare('SELECT * FROM autopilot_drafts WHERE id = ?').get(id);
 
             if (!draft) return res.status(404).json({ error: 'Draft not found' });
-            if (draft.status !== 'pending') return res.status(400).json({ error: 'Draft already processed' });
-
-            // Send the message using the Agent's interface
-            // We need to route it correctly. 
-            // The draft has 'chat_id'. If it's a WhatsApp chat, the agent handles routing.
-            // We use agent.interface.send() or agent.sendMessage tool logic?
-            // Better to use `agent.interface.send()` directly if we know the structure.
+            if (draft.status !== 'pending' && draft.status !== 'partially_sent') {
+                return res.status(400).json({ error: 'Draft already processed' });
+            }
 
             // Resolve Source
-            // Per user request: "messages should be send 'from me'"
+            // Per user request: "messages should be sent 'from me'"
             // So we FORCE the 'user' session if the target is WhatsApp.
             let source = 'whatsapp:user';
 
@@ -58,38 +57,58 @@ function createAutopilotRouter(agent) {
                 source = 'web';
             }
 
-            // Construct message object
-            // Construct message object
+            // Construct message list from SPLIT markers
             const messages = draft.content.split(/\[\s*SPLIT\s*\]/i).map(m => m.trim()).filter(m => m);
 
-            for (const msgContent of messages) {
+            // Skip messages that were already sent in a previous partial attempt
+            const alreadySent = draft.sent_count || 0;
+            let sentCount = alreadySent;
+
+            for (let i = alreadySent; i < messages.length; i++) {
                 const reply = {
-                    role: 'assistant', // This is still 'assistant' role internally (Agent acting), but delivered via User Session
-                    content: msgContent,
-                    source: source, // 'whatsapp:user' signals server.js to use that sock
+                    role: 'assistant',
+                    content: messages[i],
+                    source: source,
                     metadata: {
                         chatId: draft.chat_id,
-                        session: 'user' // Explicitly target user session
+                        session: 'user'
                     }
                 };
 
-                // Send the message using the Agent's interface
-                await agent.interface.send(reply);
+                try {
+                    await agent.interface.send(reply);
+                    sentCount++;
 
-                // Delay if multiple
-                if (messages.length > 1) await new Promise(r => setTimeout(r, 800));
+                    // Persist progress after each successful send so we never re-send on retry
+                    agent.db.db.prepare(
+                        "UPDATE autopilot_drafts SET sent_count = ?, status = 'partially_sent' WHERE id = ?"
+                    ).run(sentCount, id);
+                } catch (sendErr) {
+                    console.error(`[Autopilot] Failed sending message ${i + 1}/${messages.length} for draft ${id}:`, sendErr.message);
+                    // Progress already persisted for previously sent messages; bail out
+                    return res.status(500).json({
+                        error: 'Failed to send all messages',
+                        sent: sentCount,
+                        total: messages.length
+                    });
+                }
+
+                // Delay between multiple messages
+                if (messages.length > 1 && i < messages.length - 1) {
+                    await new Promise(r => setTimeout(r, 800));
+                }
             }
 
-            // Log success (optional, but good for debugging)
-            console.log(`[Autopilot] Approved draft ${id}. Sent ${messages.length} messages.`);
-
-            // Update Status
-            agent.db.db.prepare("UPDATE autopilot_drafts SET status = 'approved' WHERE id = ?").run(id);
+            // All messages sent successfully
+            console.log(`[Autopilot] Approved draft ${id}. Sent ${sentCount}/${messages.length} messages.`);
+            agent.db.db.prepare(
+                "UPDATE autopilot_drafts SET status = 'approved', sent_count = ? WHERE id = ?"
+            ).run(sentCount, id);
 
             res.json({ success: true });
         } catch (e) {
             console.error('Error approving draft:', e);
-            res.status(500).json({ error: e.message });
+            res.status(500).json({ error: 'Failed to process draft' });
         }
     });
 
