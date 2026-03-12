@@ -7,6 +7,15 @@ import JobLogsTable from '@/components/JobLogsTable';
 import ActiveJobsTable from '@/components/ActiveJobsTable';
 import WatchersTable from '@/components/WatchersTable';
 import SubAgentsTable from '@/components/SubAgentsTable';
+import ScrollableTabs from '@/components/ScrollableTabs';
+
+const TABS = [
+    { id: 'active', label: 'Active Scheduled Jobs' },
+    { id: 'watchers', label: 'Message Watchers' },
+    { id: 'subagents', label: 'Sub-Agents', activeColor: 'text-violet-400', activeBar: 'bg-violet-500' },
+    { id: 'system', label: 'System Jobs' },
+    { id: 'manage', label: 'Job History' },
+];
 
 export default function TasksClient() {
     const router = useRouter();
@@ -22,56 +31,22 @@ export default function TasksClient() {
     }, [searchParams, pathname, router]);
 
     return (
-        <div className="space-y-8">
-            <h1 className="text-3xl font-bold mb-8 flex items-center gap-3 text-white">
-                <ClipboardList className="h-8 w-8 text-indigo-400" />
+        <div className="space-y-6 md:space-y-8">
+            <h1 className="text-2xl md:text-3xl font-bold mb-6 md:mb-8 flex items-center gap-3 text-white">
+                <ClipboardList className="h-7 w-7 md:h-8 md:w-8 text-indigo-400" />
                 Scheduler & Tasks
             </h1>
 
-            {/* Tabs */}
-            <div className="flex items-center gap-4 border-b border-zinc-800 pb-2 overflow-x-auto">
-                <button
-                    onClick={() => setActiveTab('active')}
-                    className={`pb-2 px-1 text-sm font-medium transition-colors relative whitespace-nowrap flex items-center gap-2 ${activeTab === 'active' ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
-                >
-                    Active Scheduled Jobs
-                    {activeTab === 'active' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-indigo-500" />}
-                </button>
-                <button
-                    onClick={() => setActiveTab('watchers')}
-                    className={`pb-2 px-1 text-sm font-medium transition-colors relative whitespace-nowrap flex items-center gap-2 ${activeTab === 'watchers' ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
-                >
-                    Message Watchers
-                    {activeTab === 'watchers' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-indigo-500" />}
-                </button>
-                <button
-                    onClick={() => setActiveTab('subagents')}
-                    className={`pb-2 px-1 text-sm font-medium transition-colors relative whitespace-nowrap flex items-center gap-2 ${activeTab === 'subagents' ? 'text-violet-400' : 'text-zinc-500 hover:text-zinc-300'}`}
-                >
-                    Sub-Agents
-                    {activeTab === 'subagents' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-violet-500" />}
-                </button>
-                <button
-                    onClick={() => setActiveTab('system')}
-                    className={`pb-2 px-1 text-sm font-medium transition-colors relative whitespace-nowrap flex items-center gap-2 ${activeTab === 'system' ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
-                >
-                    System Jobs
-                    {activeTab === 'system' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-indigo-500" />}
-                </button>
-                <button
-                    onClick={() => setActiveTab('manage')}
-                    className={`pb-2 px-1 text-sm font-medium transition-colors relative whitespace-nowrap flex items-center gap-2 ${activeTab === 'manage' ? 'text-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
-                >
-                    Job History
-                    {activeTab === 'manage' && <div className="absolute bottom-0 left-0 w-full h-0.5 bg-indigo-500" />}
-                </button>
-
-                <div className="ml-auto">
+            <ScrollableTabs
+                tabs={TABS}
+                activeTab={activeTab}
+                onChange={setActiveTab}
+                trailing={
                     <button onClick={() => router.refresh()} className="p-2 text-zinc-500 hover:text-white transition-colors" title="Refresh">
                         <RefreshCw className="h-4 w-4" />
                     </button>
-                </div>
-            </div>
+                }
+            />
 
             {/* Tab Content */}
             {activeTab === 'manage' && (

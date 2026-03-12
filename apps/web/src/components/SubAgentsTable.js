@@ -214,9 +214,9 @@ export default function SubAgentsTable() {
 
     return (
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-            <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
-                <h3 className="text-lg font-semibold text-zinc-300 flex items-center gap-2">
-                    <Bot className="w-5 h-5 text-violet-400" />
+            <div className="p-3 md:p-4 border-b border-zinc-800 flex flex-wrap items-center justify-between gap-2">
+                <h3 className="text-base md:text-lg font-semibold text-zinc-300 flex items-center gap-2">
+                    <Bot className="w-5 h-5 shrink-0 text-violet-400" />
                     Sub-Agent Tasks
                     {tasks.filter(t => t.status === 'running').length > 0 && (
                         <span className="text-xs bg-sky-500/10 text-sky-400 border border-sky-500/20 px-2 py-0.5 rounded-full font-bold">
@@ -244,8 +244,8 @@ export default function SubAgentsTable() {
                 </div>
             </div>
 
-            <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left">
+            <div className="overflow-x-auto scrollbar-hide">
+                <table className="w-full text-sm text-left min-w-[600px]">
                     <thead className="bg-zinc-950 text-zinc-500 uppercase text-xs">
                         <tr>
                             <th className="px-4 py-3">Task</th>

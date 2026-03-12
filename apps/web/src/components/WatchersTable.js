@@ -72,13 +72,13 @@ export default function WatchersTable() {
 
     return (
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden mt-8">
-            <div className="p-4 border-b border-zinc-800 flex items-center justify-between">
-                <div className="flex items-center gap-4">
-                    <h3 className="text-lg font-semibold text-zinc-300 flex items-center gap-2">
-                        <Eye className="w-5 h-5 text-emerald-400" />
+            <div className="p-3 md:p-4 border-b border-zinc-800 flex flex-wrap items-center justify-between gap-2">
+                <div className="flex items-center gap-2 md:gap-4 min-w-0">
+                    <h3 className="text-base md:text-lg font-semibold text-zinc-300 flex items-center gap-2 whitespace-nowrap">
+                        <Eye className="w-5 h-5 shrink-0 text-emerald-400" />
                         Message Watchers
                     </h3>
-                    <span className="text-xs text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded-full">
+                    <span className="text-xs text-zinc-500 bg-zinc-800 px-2 py-0.5 rounded-full hidden sm:inline">
                         Enhanced WhatsApp Intelligence
                     </span>
                 </div>
@@ -86,10 +86,10 @@ export default function WatchersTable() {
                 <div className="flex gap-2">
                     <button
                         onClick={() => setEditingWatcher({})}
-                        className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-2"
+                        className="px-2 md:px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white rounded-lg text-xs font-medium transition-colors flex items-center gap-1 md:gap-2"
                     >
                         <Plus className="w-4 h-4" />
-                        New Watcher
+                        <span className="hidden sm:inline">New Watcher</span>
                     </button>
                     <button
                         onClick={loadWatchers}
@@ -115,8 +115,8 @@ export default function WatchersTable() {
                 </div>
             )}
 
-            <div className="overflow-x-auto">
-                <table className="w-full text-sm text-left">
+            <div className="overflow-x-auto scrollbar-hide">
+                <table className="w-full text-sm text-left min-w-[600px]">
                     <thead className="bg-zinc-950 text-zinc-500 uppercase text-xs">
                         <tr>
                             <th className="px-4 py-3">Status</th>
