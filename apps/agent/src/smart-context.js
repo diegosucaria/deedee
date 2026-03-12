@@ -70,10 +70,51 @@ class SmartContextManager {
                     text: 'Understood. I have the context from our earlier conversation and will maintain continuity.'
                 }]
             };
-            return [summaryUserMsg, summaryAckMsg, ...timestampedHistory];
+            return SmartContextManager.ensureAlternation([summaryUserMsg, summaryAckMsg, ...timestampedHistory]);
         }
 
-        return timestampedHistory;
+        return SmartContextManager.ensureAlternation(timestampedHistory);
+    }
+
+    /**
+     * Ensures strict user/model turn alternation required by Gemini.
+     * - Drops leading model messages (history must start with 'user').
+     * - Merges consecutive same-role messages by combining their parts.
+     *
+     * Without this, injecting summary user/model pair before history that
+     * starts with a 'model' message would cause two consecutive model turns,
+     * triggering Gemini's 400 error.
+     */
+    static ensureAlternation(messages) {
+        if (!messages || messages.length === 0) return [];
+
+        // Step 1: Drop leading model messages (history must start with 'user')
+        let startIdx = 0;
+        while (startIdx < messages.length && messages[startIdx].role === 'model') {
+            startIdx++;
+        }
+        if (startIdx >= messages.length) return [];
+
+        const trimmed = messages.slice(startIdx);
+
+        // Step 2: Merge consecutive same-role messages
+        const merged = [];
+        for (const msg of trimmed) {
+            if (merged.length === 0) {
+                merged.push({ ...msg, parts: [...msg.parts] });
+                continue;
+            }
+
+            const prev = merged[merged.length - 1];
+            if (prev.role === msg.role) {
+                // Merge: append parts from current message into previous
+                prev.parts = [...prev.parts, ...msg.parts];
+            } else {
+                merged.push({ ...msg, parts: [...msg.parts] });
+            }
+        }
+
+        return merged;
     }
 
     async checkAndSummarize(chatId) {
