@@ -1,8 +1,9 @@
 const { BaseExecutor } = require('./base');
 
 class PeopleExecutor extends BaseExecutor {
-    async execute(name, args, context) {
-        const { db } = this.services;
+    async execute(name, args, context, callServices) {
+        const services = this.getServices(callServices);
+        const { db } = services;
 
         switch (name) {
             case 'listPeople':

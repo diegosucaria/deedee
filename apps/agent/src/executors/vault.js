@@ -6,7 +6,7 @@ class VaultExecutor extends BaseExecutor {
         super(services);
     }
 
-    async execute(name, args, context) {
+    async execute(name, args, context, callServices) {
         switch (name) {
             case 'createVault':
                 return this.createVault(args.topic);

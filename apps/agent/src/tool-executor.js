@@ -39,9 +39,16 @@ class ToolExecutor {
      * Execute a tool by name
      */
     async execute(name, args, context) {
+        // Create a per-call services snapshot merging shared services with
+        // per-call overrides (client, interface) to avoid race conditions
+        // when multiple processMessage calls run concurrently.
+        const callServices = context?.callServices
+            ? { ...this.services, ...context.callServices }
+            : this.services;
+
         // Try all registered executors
         for (const executor of this.executors) {
-            const result = await executor.execute(name, args, context);
+            const result = await executor.execute(name, args, context, callServices);
             if (result !== null) {
                 return result;
             }
@@ -49,7 +56,7 @@ class ToolExecutor {
 
         // Fallback to MCP
         try {
-            return await this.services.mcp.callTool(name, args);
+            return await callServices.mcp.callTool(name, args);
         } catch (e) {
             throw e;
         }

@@ -9,7 +9,7 @@ const { BaseExecutor } = require('./base');
 const axios = require('axios');
 
 class SlackExecutor extends BaseExecutor {
-    async execute(name, args, context) {
+    async execute(name, args, context, callServices) {
         const interfacesUrl = process.env.INTERFACES_URL || 'http://interfaces:5000';
         const token = process.env.DEEDEE_API_TOKEN;
 

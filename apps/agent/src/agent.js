@@ -101,10 +101,10 @@ class Agent {
       scheduler: this.scheduler,
       mcp: this.mcp,
       dj: this.djService,
-      client: null, // Will be populated in processMessage
-      interface: this.interface,
       db: this.db,
       agent: this
+      // Note: client and interface are passed per-call via context.callServices
+      // to avoid race conditions when multiple processMessage calls run concurrently
     });
 
     this.processMessage = this.processMessage.bind(this);
@@ -567,10 +567,8 @@ class Agent {
         this.client = new GoogleGenAI({ apiKey: this.config.googleApiKey });
       }
 
-      // Propagate dependencies to ToolExecutor
-      this.toolExecutor.services.client = this.client;
-      this.toolExecutor.services.interface = this.interface;
-      this.smartContext.client = this.client; // Ensure client is available for summarization
+      // Ensure SmartContext has the client for summarization
+      this.smartContext.client = this.client;
 
       const chatId = message.metadata?.chatId;
       const isSubAgent = !!message.metadata?.isSubAgent;
@@ -1976,7 +1974,8 @@ class Agent {
       const result = await this.toolExecutor.execute(executionName, args, {
         message,
         sendCallback,
-        processMessage: this.processMessage.bind(this)
+        processMessage: this.processMessage.bind(this),
+        callServices: { client: this.client, interface: this.interface }
       });
 
       // Side-channel usage tracking for MCP tools (e.g. Browser Vision)

@@ -1,8 +1,9 @@
 const { BaseExecutor } = require('./base');
 
 class RagExecutor extends BaseExecutor {
-    async execute(name, args, context) {
-        const { agent } = this.services;
+    async execute(name, args, context, callServices) {
+        const services = this.getServices(callServices);
+        const { agent } = services;
         const ragService = agent.ragService; // We need to attach this to agent
 
         switch (name) {

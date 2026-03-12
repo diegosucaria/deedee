@@ -4,13 +4,14 @@ const { createWavHeader } = require('../utils/audio');
 const { ConfigService } = require('../services/config-service');
 
 class MediaExecutor extends BaseExecutor {
-    async execute(name, args, context) {
-        const { client } = this.services;
+    async execute(name, args, context, callServices) {
+        const services = this.getServices(callServices);
+        const { client } = services;
         const { message, sendCallback } = context;
 
         switch (name) {
             case 'generateImage': {
-                const { client, agent } = this.services;
+                const { client, agent } = services;
                 const imagenModel = agent.configService.getModel('IMAGE');
                 console.log(`[MediaExecutor] Generating image with ${imagenModel} for prompt: "${args.prompt}"`);
 
@@ -24,7 +25,7 @@ class MediaExecutor extends BaseExecutor {
                 });
 
                 const _cfg = new ConfigService();
-                _cfg.logUsageFromResponse(this.services.db, imagenModel, response, message.metadata?.chatId, 'image_gen');
+                _cfg.logUsageFromResponse(services.db, imagenModel, response, message.metadata?.chatId, 'image_gen');
 
                 let b64JSON = null;
                 if (response.candidates && response.candidates[0].content && response.candidates[0].content.parts) {
@@ -59,7 +60,7 @@ class MediaExecutor extends BaseExecutor {
             }
 
             case 'replyWithAudio': {
-                const { client, db, agent } = this.services;
+                const { client, db, agent } = services;
                 const text = args.text;
                 const language = args.languageCode || args.language || 'detect';
 

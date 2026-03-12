@@ -39,7 +39,8 @@ function createToolRouter(agent) {
             const context = {
                 message: { source: 'live', metadata: { chatId: 'live-session' } },
                 sendCallback: async (msg) => console.log('[Agent] Live Tool Output:', msg), // No-op for direct response
-                processMessage: agent.processMessage
+                processMessage: agent.processMessage,
+                callServices: { client: agent.client, interface: agent.interface }
             };
 
             const result = await agent.toolExecutor.execute(name, args, context);
