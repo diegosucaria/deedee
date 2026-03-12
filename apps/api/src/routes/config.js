@@ -23,11 +23,6 @@ router.post('/', (req, res) => proxyToAgent(req, res, 'POST', '/internal/setting
 // Route /config/env to /internal/config/env (Legacy Internal Router)
 router.get('/env', (req, res) => proxyToAgent(req, res, 'GET', '/internal/config/env', null));
 
-// Proxy settings
-router.use('/settings', (req, res) => {
-    // ... logic ...
-});
-
 // Route /watchers to internal Agent endpoints
 router.get('/watchers', (req, res) => proxyToAgent(req, res, 'GET', '/internal/watchers', null));
 router.post('/watchers', (req, res) => proxyToAgent(req, res, 'POST', '/internal/watchers', req.body));
