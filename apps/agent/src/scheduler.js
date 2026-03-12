@@ -567,9 +567,9 @@ DO NOT contact third parties.`,
                     }
                 }
 
-                // Nightly Consolidation + Maintenance
+                // Nightly Consolidation + Maintenance (Direct Execution — bypass LLM for reliability)
                 if (sysJob.name === 'nightly_consolidation') {
-                    // Also run log cleanup
+                    // Run log cleanup
                     try {
                         if (this.agent.db) {
                             this.agent.db.cleanupJobLogs(30);
@@ -578,6 +578,20 @@ DO NOT contact third parties.`,
                         }
                     } catch (e) {
                         console.error('[Scheduler] Log cleanup failed:', e);
+                    }
+
+                    // Execute consolidateMemory directly via ToolExecutor
+                    try {
+                        console.log('[Scheduler] Starting Nightly Memory Consolidation...');
+                        const result = await this.agent.toolExecutor.execute('consolidateMemory', {}, {
+                            message: { source: 'scheduler' },
+                            callServices: { client: this.agent.client }
+                        });
+                        console.log('[Scheduler] Nightly Consolidation Result:', result);
+                        return result;
+                    } catch (e) {
+                        console.error('[Scheduler] Nightly Consolidation Failed:', e);
+                        throw e;
                     }
                 }
 
