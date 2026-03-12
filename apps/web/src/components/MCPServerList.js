@@ -135,7 +135,7 @@ function AddServerModal({ onClose }) {
                         <input
                             name="name"
                             type="text"
-                            placeholder="e.g. MacBook Bridge"
+                            placeholder="e.g. Home Assistant"
                             required
                             className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-white outline-none focus:ring-2 focus:ring-indigo-500/50"
                         />
@@ -146,12 +146,12 @@ function AddServerModal({ onClose }) {
                         <input
                             name="url"
                             type="url"
-                            placeholder="http://100.x.y.z:3000/sse"
+                            placeholder="http://192.168.1.x:8123/sse"
                             required
                             className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-white outline-none focus:ring-2 focus:ring-indigo-500/50"
                         />
                         <p className="text-xs text-zinc-500 mt-1">
-                            Your Tailscale IP address.
+                            The server&apos;s SSE endpoint URL.
                         </p>
                     </div>
 
