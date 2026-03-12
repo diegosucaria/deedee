@@ -122,6 +122,12 @@ class ConfigService {
             else pricing = CONSTANTS.PRICING['FLASH_DEFAULT'];
         }
 
+        // Guard against bad data from API
+        inputTokens = Math.max(0, inputTokens || 0);
+        outputTokens = Math.max(0, outputTokens || 0);
+        cachedTokens = Math.min(Math.max(0, cachedTokens || 0), inputTokens);
+        thoughtsTokens = Math.max(0, thoughtsTokens || 0);
+
         const limit = pricing.threshold || 128000;
         const tier = inputTokens <= limit ? pricing.tier1 : pricing.tier2;
 
