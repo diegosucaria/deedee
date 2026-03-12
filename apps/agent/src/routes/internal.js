@@ -350,6 +350,15 @@ function createInternalRouter(agent) {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
+    router.get('/stats/cost-by-model', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const days = Math.max(1, Math.min(parseInt(req.query.days || '1', 10) || 1, 365));
+            const result = agent.db.getCostByModel(days);
+            res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
     // --- Sessions / History ---
     router.get('/sessions', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });

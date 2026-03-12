@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { LatencyChart, TokenEfficiencyChart, DailyCostChart, ServiceCostBreakdown, StackedDailyCostChart } from '@/components/InteractiveCharts';
-import { RefreshCw, Activity, Cpu, DollarSign, Database, PieChart } from 'lucide-react';
-import { getStatsLatency, getStatsUsage, getStatsCostTrend, getDailyCostTrend, getSystemStats, getCostByTag, getDailyCostByCategory } from '../../actions';
+import { LatencyChart, TokenEfficiencyChart, DailyCostChart, ServiceCostBreakdown, StackedDailyCostChart, ModelCostBreakdown } from '@/components/InteractiveCharts';
+import { RefreshCw, Activity, Cpu, DollarSign, Database, PieChart, Server } from 'lucide-react';
+import { getStatsLatency, getStatsUsage, getStatsCostTrend, getDailyCostTrend, getSystemStats, getCostByTag, getDailyCostByCategory, getCostByModel } from '../../actions';
 
 const COST_PERIODS = [
     { label: 'Today', days: 1 },
@@ -19,6 +19,7 @@ export default function StatsClient({ startDate, endDate }) {
     const [usageData, setUsageData] = useState(null);
     const [dbStats, setDbStats] = useState(null);
     const [costByTag, setCostByTag] = useState(null);
+    const [costByModel, setCostByModel] = useState([]);
     const [costPeriod, setCostPeriod] = useState(1); // days
     const [loading, setLoading] = useState(true);
 
@@ -99,10 +100,14 @@ export default function StatsClient({ startDate, endDate }) {
     // Fetch cost breakdown separately so period toggle doesn't re-fetch everything
     const fetchCostBreakdown = async (days) => {
         try {
-            const data = await getCostByTag(days);
-            setCostByTag(data);
+            const [tagData, modelData] = await Promise.all([
+                getCostByTag(days),
+                getCostByModel(days)
+            ]);
+            setCostByTag(tagData);
+            setCostByModel(modelData);
         } catch (e) {
-            console.error('[StatsClient] CostByTag Error:', e);
+            console.error('[StatsClient] CostBreakdown Error:', e);
         }
     };
 
@@ -185,6 +190,20 @@ export default function StatsClient({ startDate, endDate }) {
                 <div className="flex-1 min-h-[280px]">
                     <ServiceCostBreakdown data={costByTag} />
                 </div>
+            </div>
+
+            {/* Cost by Model */}
+            <div className="lg:col-span-2 bg-zinc-900 border border-zinc-800 rounded-xl p-6 flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold flex items-center gap-2 text-zinc-300">
+                        <Server className="w-5 h-5 text-emerald-400" />
+                        Cost by Model
+                    </h2>
+                    <span className="text-xs text-zinc-500">
+                        {COST_PERIODS.find(p => p.days === costPeriod)?.label || 'Today'}
+                    </span>
+                </div>
+                <ModelCostBreakdown data={costByModel} />
             </div>
 
             {/* Stacked Daily Cost Chart — Full Width */}

@@ -317,6 +317,15 @@ export async function getDailyCostByCategory(limit = 7) {
     }
 }
 
+export async function getCostByModel(days = 1) {
+    try {
+        return await fetchAPI(`/v1/stats/cost-by-model?days=${days}`);
+    } catch (error) {
+        console.error('getCostByModel Error:', error);
+        return [];
+    }
+}
+
 export async function getJobLogs(page = 1, limit = 50) {
     try {
         const offset = (page - 1) * limit;
