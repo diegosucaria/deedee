@@ -19,7 +19,10 @@ class RagExecutor extends BaseExecutor {
 
                 if (results.length === 0) return { info: 'No relevant documents found.' };
 
-                const text = results.map(r => `[Score: ${r.score.toFixed(2)}] File: ${r.filename} (Vault: ${r.vault_id || 'Global'})\nContent: ${r.content}`).join('\n\n');
+                const text = results.map(r => {
+                    const typeLabel = r.content_type && r.content_type !== 'text' ? ` [${r.content_type.toUpperCase()}]` : '';
+                    return `[Score: ${r.score.toFixed(2)}]${typeLabel} File: ${r.filename} (Vault: ${r.vault_id || 'Global'})\nContent: ${r.content}`;
+                }).join('\n\n');
                 return { results: text };
             }
 

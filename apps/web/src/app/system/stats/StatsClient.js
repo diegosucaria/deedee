@@ -327,6 +327,18 @@ export default function StatsClient({ startDate, endDate }) {
                             <p className="text-lg font-mono text-zinc-300">{dbStats?.rag?.chunks?.toLocaleString() || 0}</p>
                         </div>
                     </div>
+                    {dbStats?.rag?.contentTypes && Object.keys(dbStats.rag.contentTypes).length > 0 && (
+                        <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
+                            <p className="text-xs text-zinc-500 mb-2">Content Types</p>
+                            <div className="flex flex-wrap gap-2">
+                                {Object.entries(dbStats.rag.contentTypes).map(([type, count]) => (
+                                    <span key={type} className="px-2 py-1 bg-emerald-500/10 text-emerald-400 text-xs rounded border border-emerald-500/20">
+                                        {type}: {count}
+                                    </span>
+                                ))}
+                            </div>
+                        </div>
+                    )}
                     {dbStats?.rag?.vaults && Object.keys(dbStats.rag.vaults).length > 0 && (
                         <div className="p-3 rounded-lg bg-zinc-950 border border-zinc-800">
                             <p className="text-xs text-zinc-500 mb-2">Vault Distribution</p>
