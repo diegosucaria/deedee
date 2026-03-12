@@ -4,7 +4,7 @@ Deedee uses the Model Context Protocol (MCP) to connect to external tools and se
 
 ## Overview
 - **Internal Tools**: Core tools (FileSystem, Git) run inside the Agent process.
-- **External Tools**: Additional capabilities run as separate MCP Servers (e.g., Mac Bridge, Home Assistant).
+- **External Tools**: Additional capabilities run as separate MCP Servers (e.g., Home Assistant).
 - **Persistence**: Configuration is stored in `data/mcp_config.json` (inside the `agent-data` volume) and persists across updates.
 
 ## Management UI
@@ -13,21 +13,11 @@ The easiest way to manage servers is via the **Brain > Tools & MCP** page in the
 ### Adding a Server
 1.  Go to `Settings` (GEAR ICON) -> `Tools & MCP`.
 2.  Click **"Connect New Server"**.
-3.  Enter the Name (e.g., `mac-bridge`).
-4.  Enter the URL (e.g., `http://100.x.y.z:3000/sse`) or Command details.
+3.  Enter the Name (e.g., `home-assistant`).
+4.  Enter the URL (e.g., `http://192.168.1.x:8123/sse`) or Command details.
 5.  (Optional) Enter an Auth Token.
 
 The Agent will automatically reload and connect to the new server.
-
-## Mac Bridge Integration
-To control your Mac (Apps, Mouse, Keyboard) from Deedee:
-
-1.  **Run Mac Bridge**: Follow instructions in `apps/mac-bridge/README.md`.
-2.  **Get Tailscale IP**: Ensure both Pi and Mac are on Tailscale.
-3.  **Add to Deedee**:
-    - **Name**: `mac-bridge`
-    - **URL**: `http://<MAC_TAILSCALE_IP>:3000/sse`
-    - **Token**: The one you set in `.env` (`BRIDGE_TOKEN`).
 
 ## Google Workspace Integration
 
