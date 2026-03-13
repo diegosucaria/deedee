@@ -12,17 +12,20 @@ export default async function HistoryPage({ searchParams }) {
     let history = [];
     let summaries = [];
     let sessions = [];
+    let subagent = null;
 
     const limit = searchParams.limit || 100;
     const since = searchParams.since;
     const order = searchParams.order || 'desc';
     const chatId = searchParams.chatId;
+    const source = searchParams.source || '';
 
     try {
         if (view === 'messages') {
             const query = new URLSearchParams({ limit, order });
             if (since) query.append('since', since);
             if (chatId) query.append('chatId', chatId);
+            if (source) query.append('source', source);
 
             const [historyData, sessionsData] = await Promise.all([
                 fetchAPI(`/v1/history?${query.toString()}`),
@@ -31,6 +34,7 @@ export default async function HistoryPage({ searchParams }) {
 
             history = historyData.history || [];
             sessions = sessionsData || [];
+            subagent = historyData.subagent || null;
         } else {
             const data = await fetchAPI('/v1/summaries?limit=50');
             summaries = data.summaries || [];
@@ -50,20 +54,20 @@ export default async function HistoryPage({ searchParams }) {
                         </p>
                     </div>
                     {view === 'messages' && (
-                        <SessionFilter sessions={sessions} />
+                        <SessionFilter sessions={sessions} chatId={chatId} />
                     )}
                 </div>
 
                 {/* Tabs */}
                 <div className="flex gap-4 mt-6 border-b border-zinc-800">
                     <Link
-                        href="/history?view=messages"
+                        href="/system/history?view=messages"
                         className={`pb-2 text-sm font-medium transition-colors ${view === 'messages' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
                     >
                         Messages
                     </Link>
                     <Link
-                        href="/history?view=summaries"
+                        href="/system/history?view=summaries"
                         className={`pb-2 text-sm font-medium transition-colors ${view === 'summaries' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
                     >
                         Summaries (Memory)
@@ -73,7 +77,7 @@ export default async function HistoryPage({ searchParams }) {
 
             <section className="w-full pb-20">
                 {view === 'messages' ? (
-                    <HistoryList history={history} />
+                    <HistoryList history={history} subagent={subagent} />
                 ) : (
                     <SummaryList summaries={summaries} />
                 )}

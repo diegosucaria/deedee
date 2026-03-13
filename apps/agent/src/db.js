@@ -571,6 +571,10 @@ class AgentDB {
     this.db.prepare('DELETE FROM people WHERE id = ?').run(id);
   }
 
+  countPeople() {
+    return this.db.prepare('SELECT COUNT(*) as count FROM people').get().count;
+  }
+
   listPeople({ limit, offset, query } = {}) {
     let sql = 'SELECT * FROM people';
     const args = [];
@@ -870,10 +874,21 @@ class AgentDB {
   }
 
   getHistory(options = {}) {
-    const { limit = 50, since, until, chatId, order = 'DESC' } = options;
+    const { limit = 50, since, until, chatId, order = 'DESC', source } = options;
+
+    // Classify source by chat_id pattern (messages table has no 'tag' column)
+    const sourceClassification = `
+      CASE
+        WHEN m.chat_id LIKE '%@s.us' OR m.chat_id LIKE '%@g.us' THEN 'whatsapp'
+        WHEN m.chat_id LIKE 'scheduled\\_%' ESCAPE '\\' THEN 'scheduled_job'
+        WHEN m.chat_id LIKE 'system\\_%' ESCAPE '\\' THEN 'system_job'
+        WHEN m.chat_id LIKE 'subagent-%' THEN 'subagent'
+        ELSE 'web_chat'
+      END`;
 
     let query = `
-      SELECT m.*, cs.title as session_title 
+      SELECT m.*, cs.title as session_title,
+        ${sourceClassification} as effective_source
       FROM messages m
       LEFT JOIN chat_sessions cs ON m.chat_id = cs.id
     `;
@@ -891,6 +906,27 @@ class AgentDB {
     if (until) {
       conditions.push('m.timestamp <= ?');
       params.push(until);
+    }
+
+    // Server-side source filtering by chat_id pattern
+    if (source && source !== 'all') {
+      switch (source) {
+        case 'subagent':
+          conditions.push("m.chat_id LIKE 'subagent-%'");
+          break;
+        case 'scheduled_job':
+          conditions.push("m.chat_id LIKE 'scheduled\\_%' ESCAPE '\\'");
+          break;
+        case 'system_job':
+          conditions.push("m.chat_id LIKE 'system\\_%' ESCAPE '\\'");
+          break;
+        case 'whatsapp':
+          conditions.push("(m.chat_id LIKE '%@s.us' OR m.chat_id LIKE '%@g.us')");
+          break;
+        case 'web_chat':
+          conditions.push("m.chat_id NOT LIKE 'subagent-%' AND m.chat_id NOT LIKE 'scheduled\\_%' ESCAPE '\\' AND m.chat_id NOT LIKE 'system\\_%' ESCAPE '\\' AND m.chat_id NOT LIKE '%@s.us' AND m.chat_id NOT LIKE '%@g.us'");
+          break;
+      }
     }
 
     if (conditions.length > 0) {

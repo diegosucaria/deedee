@@ -2,18 +2,25 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
-import { Trash2, User, Bot, Wrench, Terminal, Calendar, ArrowUpDown, Clock } from 'lucide-react';
+import { Trash2, User, Bot, Wrench, Terminal, ArrowUpDown, Clock, Cpu, MessageSquare } from 'lucide-react';
 import { deleteHistory } from '@/app/actions';
 import clsx from 'clsx';
 import ReactMarkdown from 'react-markdown';
 
-export default function HistoryList({ history }) {
+const SOURCE_OPTIONS = [
+    { value: '', label: 'All Sources' },
+    { value: 'web_chat', label: 'Web Chat' },
+    { value: 'whatsapp', label: 'WhatsApp' },
+    { value: 'subagent', label: 'Subagent' },
+    { value: 'scheduled_job', label: 'Scheduled' },
+    { value: 'system_job', label: 'System' },
+];
+
+export default function HistoryList({ history, subagent }) {
     const router = useRouter();
     const pathname = usePathname();
     const searchParams = useSearchParams();
 
-    // UI State for client-side filtering (Source) and Time Options
-    const [filterSource, setFilterSource] = useState('all');
     const [timeOptions, setTimeOptions] = useState({ last24h: '', last7d: '' });
 
     useEffect(() => {
@@ -28,6 +35,7 @@ export default function HistoryList({ history }) {
     // Get current server params
     const currentOrder = searchParams.get('order') || 'desc';
     const currentSince = searchParams.get('since') || '';
+    const currentSource = searchParams.get('source') || '';
 
     const updateParams = (key, value) => {
         const params = new URLSearchParams(searchParams);
@@ -36,19 +44,8 @@ export default function HistoryList({ history }) {
         router.push(`${pathname}?${params.toString()}`);
     };
 
-    // Get unique sources
-    const sources = ['all', ...new Set(history.map(h => h.source || 'db'))];
-
-    // Client-side filtering for Source (server filtering for Source not implemented yet)
-    const filteredHistory = filterSource === 'all'
-        ? history
-        : history.filter(h => (h.source || 'db') === filterSource);
-
-    // Server returns requested order (DESC by default).
-    const sorted = [...filteredHistory];
-
     // Group by Date using Map to preserve order
-    const grouped = sorted.reduce((acc, msg) => {
+    const grouped = history.reduce((acc, msg) => {
         const date = new Date(msg.timestamp).toLocaleDateString(undefined, {
             weekday: 'long',
             year: 'numeric',
@@ -68,9 +65,42 @@ export default function HistoryList({ history }) {
     };
 
     return (
-        <div className="space-y-8">
-            <div className="flex flex-col md:flex-row justify-between items-end md:items-center mb-6 gap-4 border-b border-zinc-800 pb-4">
-                <div className="flex items-center gap-4">
+        <div className="space-y-6">
+            {/* Subagent banner */}
+            {subagent && (
+                <div className="bg-indigo-500/10 border border-indigo-500/20 rounded-xl p-4 flex items-start gap-3">
+                    <Cpu className="w-5 h-5 text-indigo-400 mt-0.5 flex-shrink-0" />
+                    <div className="min-w-0">
+                        <div className="flex items-center gap-2 mb-1">
+                            <span className="text-sm font-semibold text-indigo-300">Subagent</span>
+                            <span className={clsx(
+                                "text-[10px] px-1.5 py-0.5 rounded font-medium uppercase",
+                                subagent.status === 'completed' && "bg-emerald-500/20 text-emerald-400",
+                                subagent.status === 'running' && "bg-amber-500/20 text-amber-400",
+                                subagent.status === 'failed' && "bg-red-500/20 text-red-400"
+                            )}>
+                                {subagent.status}
+                            </span>
+                            {subagent.model && (
+                                <span className="text-[10px] text-zinc-500">{subagent.model}</span>
+                            )}
+                        </div>
+                        <p className="text-sm text-zinc-300 line-clamp-3">{subagent.task}</p>
+                        {subagent.parent_chat_id && (
+                            <a
+                                href={`/system/history?chatId=${encodeURIComponent(subagent.parent_chat_id)}`}
+                                className="text-xs text-indigo-400 hover:text-indigo-300 mt-1 inline-block"
+                            >
+                                View parent session
+                            </a>
+                        )}
+                    </div>
+                </div>
+            )}
+
+            {/* Filters */}
+            <div className="flex flex-col md:flex-row justify-between items-end md:items-center gap-4 border-b border-zinc-800 pb-4">
+                <div className="flex items-center gap-3 flex-wrap">
                     {/* Time Filter */}
                     <label className="flex items-center gap-2 text-sm text-zinc-500">
                         <Clock className="w-4 h-4" />
@@ -95,19 +125,27 @@ export default function HistoryList({ history }) {
                     </button>
                 </div>
 
+                {/* Source Filter (server-side) */}
                 <label className="flex items-center gap-2 text-sm text-zinc-500">
-                    Filter Source:
+                    Source:
                     <select
-                        value={filterSource}
-                        onChange={(e) => setFilterSource(e.target.value)}
+                        value={currentSource}
+                        onChange={(e) => updateParams('source', e.target.value)}
                         className="bg-zinc-900 border border-zinc-800 text-zinc-300 rounded-lg px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-500"
                     >
-                        {sources.map(s => <option key={s} value={s}>{s.toUpperCase()}</option>)}
+                        {SOURCE_OPTIONS.map(s => <option key={s.value} value={s.value}>{s.label}</option>)}
                     </select>
                 </label>
             </div>
 
+            {/* Messages */}
             <div className="space-y-12">
+                {history.length === 0 && (
+                    <div className="text-center text-zinc-500 py-12">
+                        <MessageSquare className="w-8 h-8 mx-auto mb-3 opacity-50" />
+                        <p>No messages found for this filter.</p>
+                    </div>
+                )}
                 {Array.from(grouped.entries()).map(([date, messages]) => (
                     <div key={date}>
                         <div className="sticky top-0 z-10 flex justify-center mb-6">
@@ -136,27 +174,40 @@ export default function HistoryList({ history }) {
 
                                         {/* Content */}
                                         <div className="flex-1 min-w-0">
-                                            <div className="flex items-center gap-2 mb-1">
+                                            <div className="flex items-center gap-2 mb-1 flex-wrap">
                                                 <span className="text-sm font-semibold text-zinc-300 capitalize">
                                                     {msg.role}
                                                 </span>
                                                 <span className="text-xs text-zinc-600">
                                                     {new Date(msg.timestamp).toLocaleTimeString()}
                                                 </span>
-                                                <span className="text-[10px] text-zinc-700 bg-zinc-900 border border-zinc-800 px-1.5 rounded uppercase">
-                                                    {msg.source || 'db'}
-                                                </span>
+                                                {msg.effective_source && (
+                                                    <span className={clsx(
+                                                        "text-[10px] px-1.5 py-0.5 rounded uppercase font-medium",
+                                                        msg.effective_source === 'subagent' && "bg-indigo-500/10 text-indigo-400 border border-indigo-500/20",
+                                                        msg.effective_source === 'scheduled_job' && "bg-purple-500/10 text-purple-400 border border-purple-500/20",
+                                                        msg.effective_source === 'system_job' && "bg-zinc-800 text-zinc-500 border border-zinc-700",
+                                                        msg.effective_source === 'whatsapp' && "bg-green-500/10 text-green-400 border border-green-500/20",
+                                                        msg.effective_source === 'web_chat' && "bg-blue-500/10 text-blue-400 border border-blue-500/20"
+                                                    )}>
+                                                        {msg.effective_source.replaceAll('_', ' ')}
+                                                    </span>
+                                                )}
                                                 {msg.token_count > 0 && (
-                                                    <span className="text-[10px] text-zinc-500 ml-2 font-mono">
+                                                    <span className="text-[10px] text-zinc-500 font-mono">
                                                         {msg.token_count}t {msg.cost ? `($${msg.cost.toFixed(4)})` : ''}
                                                     </span>
                                                 )}
-                                                {/* Web Chat Link */}
-                                                {(msg.source === 'web' || msg.source === 'http' || msg.session_title) && msg.chat_id && (
-                                                    <a href={`/chat/${msg.chat_id}`} className="text-[10px] text-zinc-500 hover:text-indigo-400 ml-2 flex items-center gap-1 transition-colors" title={`Go to chat: ${msg.session_title || msg.chat_id}`}>
-                                                        <span>•</span>
-                                                        <span className='truncate max-w-[150px]'>{msg.session_title || msg.chat_id}</span>
+                                                {/* Session link */}
+                                                {msg.session_title && msg.chat_id && (
+                                                    <a href={`/chat/${encodeURIComponent(msg.chat_id)}`} className="text-[10px] text-zinc-500 hover:text-indigo-400 flex items-center gap-1 transition-colors" title={`Go to chat: ${msg.session_title}`}>
+                                                        <span className='truncate max-w-[150px]'>{msg.session_title}</span>
                                                     </a>
+                                                )}
+                                                {msg.chat_id?.startsWith('subagent-') && !msg.session_title && (
+                                                    <span className="text-[10px] text-zinc-600 font-mono truncate max-w-[200px]">
+                                                        {msg.chat_id}
+                                                    </span>
                                                 )}
                                             </div>
 

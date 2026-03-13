@@ -427,14 +427,24 @@ function createInternalRouter(agent) {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
         try {
             const limit = parseInt(req.query.limit) || 100;
+            const chatId = req.query.chatId;
             const history = agent.db.getHistory({
                 limit,
                 since: req.query.since,
                 until: req.query.until,
-                chatId: req.query.chatId,
-                order: req.query.order || 'DESC'
+                chatId,
+                order: req.query.order || 'DESC',
+                source: req.query.source
             });
-            res.json({ history });
+
+            // If chatId is a subagent, include subagent metadata
+            let subagent = null;
+            if (chatId && chatId.startsWith('subagent-')) {
+                const taskId = chatId.replace('subagent-', '');
+                subagent = agent.db.getSubAgent(taskId);
+            }
+
+            res.json({ history, subagent });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
