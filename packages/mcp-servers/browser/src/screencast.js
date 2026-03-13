@@ -1,6 +1,7 @@
 /**
  * Browser V2 — CDP Screencast
- * Extracted verbatim from index.js. Streams JPEG frames to Interfaces via Socket.io.
+ * Streams JPEG frames to Interfaces via Socket.io.
+ * Supports tab switching (stop old session, start new one).
  */
 
 /**
@@ -27,32 +28,67 @@ async function initScreencast(browser, page) {
             global.socket.on('connect_error', (err) => console.error('[Browser] Stream Socket Error:', err.message));
         }
 
-        // Start CDP Session for Screencast
-        if (!global.cdpSession) {
-            console.log('[Browser] Starting CDP Screencast...');
-            global.cdpSession = await browser.newCDPSession(page);
-
-            await global.cdpSession.send('Page.startScreencast', {
-                format: 'jpeg',
-                quality: 50,
-                maxWidth: 800,
-                everyNthFrame: 1,
-            });
-
-            global.cdpSession.on('Page.screencastFrame', ({ data, sessionId, metadata }) => {
-                if (global.socket && global.socket.connected) {
-                    global.socket.emit('browser:frame', {
-                        data,   // base64
-                        timestamp: metadata.timestamp,
-                    });
-                }
-
-                global.cdpSession.send('Page.screencastFrameAck', { sessionId }).catch(() => { });
-            });
-        }
+        await startScreencastSession(browser, page);
     } catch (err) {
         console.error('[Browser] Failed to start screencast:', err);
     }
 }
 
-module.exports = { initScreencast };
+/**
+ * Start a CDP screencast session on a specific page.
+ * @param {import('playwright').BrowserContext} browser
+ * @param {import('playwright').Page} page
+ */
+async function startScreencastSession(browser, page) {
+    try {
+        console.log('[Browser] Starting CDP Screencast...');
+        global.cdpSession = await browser.newCDPSession(page);
+
+        await global.cdpSession.send('Page.startScreencast', {
+            format: 'jpeg',
+            quality: 50,
+            maxWidth: 800,
+            everyNthFrame: 1,
+        });
+
+        global.cdpSession.on('Page.screencastFrame', ({ data, sessionId, metadata }) => {
+            if (global.socket && global.socket.connected) {
+                global.socket.emit('browser:frame', {
+                    data,   // base64
+                    timestamp: metadata.timestamp,
+                });
+            }
+
+            global.cdpSession.send('Page.screencastFrameAck', { sessionId }).catch(() => { });
+        });
+    } catch (err) {
+        console.error('[Browser] Failed to start screencast session:', err);
+    }
+}
+
+/**
+ * Switch screencast to a different page (tab).
+ * Stops the old CDP session and starts a new one on the target page.
+ *
+ * @param {import('playwright').BrowserContext} browser
+ * @param {import('playwright').Page} newPage
+ */
+async function switchScreencast(browser, newPage) {
+    try {
+        // Stop existing session
+        if (global.cdpSession) {
+            try {
+                await global.cdpSession.send('Page.stopScreencast');
+                await global.cdpSession.detach();
+            } catch { /* session may already be closed */ }
+            global.cdpSession = null;
+        }
+
+        // Start new session on the new page
+        await startScreencastSession(browser, newPage);
+    } catch (err) {
+        console.error('[Browser] Failed to switch screencast:', err);
+    }
+}
+
+module.exports = { initScreencast, switchScreencast };

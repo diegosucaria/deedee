@@ -9,7 +9,9 @@
     "dependencies": {
         "@google/genai": "^1.34.0",
         "@modelcontextprotocol/sdk": "^0.6.0",
+        "@mozilla/readability": "^0.5.0",
         "dotenv": "^16.4.5",
+        "jsdom": "^25.0.0",
         "playwright": "^1.49.0",
         "socket.io-client": "^4.8.3",
         "turndown": "^7.1.3",
