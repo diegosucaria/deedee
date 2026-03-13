@@ -10,6 +10,11 @@
 const MAX_TOOL_RESULT_CHARS = 50_000;
 const MAX_EMAIL_BODY_CHARS = 4_000;
 const MAX_EVENT_DESCRIPTION_CHARS = 500;
+const MAX_PERSON_NOTES_CHARS = 300;
+
+// Tools that need higher caps because the model needs complete data
+const HIGH_CAP_TOOLS = new Set(['listPeople', 'searchPeople', 'searchContacts', 'getPerson', 'searchMemory']);
+const HIGH_CAP_MAX_CHARS = 200_000;
 
 const ALLOWED_EMAIL_HEADERS = new Set([
     'from', 'to', 'subject', 'date', 'cc', 'reply-to',
@@ -39,6 +44,15 @@ function sanitizeToolResult(toolName, result, maxChars = MAX_TOOL_RESULT_CHARS) 
         }
     }
 
+    // Layer 1c: People-specific cleaning (strip nulls, truncate notes)
+    if (isPeopleTool(toolName)) {
+        try {
+            cleaned = sanitizePeopleResult(cleaned);
+        } catch (e) {
+            console.error(`[Sanitizer] People sanitization failed for ${toolName}:`, e.message);
+        }
+    }
+
     // Layer 1b: Calendar-specific cleaning
     if (isCalendarTool(toolName)) {
         try {
@@ -48,8 +62,9 @@ function sanitizeToolResult(toolName, result, maxChars = MAX_TOOL_RESULT_CHARS) 
         }
     }
 
-    // Layer 2: Generic size cap
-    cleaned = applyGenericCap(toolName, cleaned, maxChars);
+    // Layer 2: Generic size cap (use higher cap for critical tools)
+    const effectiveMaxChars = HIGH_CAP_TOOLS.has(toolName) ? Math.max(maxChars, HIGH_CAP_MAX_CHARS) : maxChars;
+    cleaned = applyGenericCap(toolName, cleaned, effectiveMaxChars);
 
     return cleaned;
 }
@@ -339,6 +354,54 @@ function extractCleanEvent(event) {
     return clean;
 }
 
+// --- Layer 1c: People-specific ---
+
+function isPeopleTool(toolName) {
+    if (!toolName) return false;
+    const lower = toolName.toLowerCase();
+    return lower.includes('people') || lower === 'listpeople' || lower === 'getperson' || lower === 'searchcontacts';
+}
+
+/**
+ * Sanitize people tool results by stripping null/empty fields and truncating notes.
+ * Reduces payload size significantly since most synced contacts have sparse data.
+ */
+function sanitizePeopleResult(result) {
+    if (!result || typeof result !== 'object') return result;
+
+    // Handle { people: [...] } format (listPeople)
+    if (Array.isArray(result.people)) {
+        return { ...result, people: result.people.map(compactPerson) };
+    }
+
+    // Handle { matches: [...] } format (searchPeople/searchContacts)
+    if (Array.isArray(result.matches)) {
+        return { ...result, matches: result.matches.map(compactPerson) };
+    }
+
+    // Handle { person: {...} } format (getPerson)
+    if (result.person && typeof result.person === 'object') {
+        return { ...result, person: compactPerson(result.person) };
+    }
+
+    return result;
+}
+
+/**
+ * Compact a person object: strip null/empty fields, truncate notes,
+ * remove verbose metadata/identifiers.
+ */
+function compactPerson(p) {
+    if (!p || typeof p !== 'object') return p;
+    const clean = { id: p.id, name: p.name };
+    if (p.phone) clean.phone = p.phone;
+    if (p.relationship) clean.relationship = p.relationship;
+    if (p.notes) clean.notes = truncate(p.notes, MAX_PERSON_NOTES_CHARS);
+    if (p.source && p.source !== 'manual') clean.source = p.source;
+    // Strip metadata and identifiers (verbose JSON blobs)
+    return clean;
+}
+
 // --- Layer 2: Generic size cap ---
 
 function applyGenericCap(toolName, result, maxChars) {
@@ -372,4 +435,4 @@ function truncate(str, maxLen) {
     return str.substring(0, maxLen) + '... [truncated]';
 }
 
-module.exports = { sanitizeToolResult, MAX_TOOL_RESULT_CHARS, MAX_EMAIL_BODY_CHARS, MAX_EVENT_DESCRIPTION_CHARS };
+module.exports = { sanitizeToolResult, MAX_TOOL_RESULT_CHARS, MAX_EMAIL_BODY_CHARS, MAX_EVENT_DESCRIPTION_CHARS, MAX_PERSON_NOTES_CHARS, HIGH_CAP_TOOLS, HIGH_CAP_MAX_CHARS };

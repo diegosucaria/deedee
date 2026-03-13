@@ -7,8 +7,15 @@ class PeopleExecutor extends BaseExecutor {
 
         switch (name) {
             case 'listPeople':
-                const people = db.listPeople();
-                return { people: people.map(p => ({ id: p.id, name: p.name, phone: p.phone, relationship: p.relationship, notes: p.notes })) };
+                const listOpts = {};
+                if (args.limit) listOpts.limit = args.limit;
+                if (args.offset) listOpts.offset = args.offset;
+                if (args.query) listOpts.query = args.query;
+                const people = db.listPeople(listOpts);
+                const total = db.countPeople();
+                const result = { people: people.map(p => ({ id: p.id, name: p.name, phone: p.phone, relationship: p.relationship, notes: p.notes })), total };
+                if (args.limit && people.length === args.limit) result.hasMore = true;
+                return result;
 
             case 'getPerson':
                 const person = db.getPerson(args.idOrPhone);
