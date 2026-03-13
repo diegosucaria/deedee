@@ -118,6 +118,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 - **Type**: Next.js 14 App (Port 3002)
 - **Role**: Visual Dashboard & detailed Chat.
 - **Features**: Real-time Chat with Sessions, Markdown Journal, Memory Bank, Task Scheduler, System Notifications (bell icon + management page).
+- **Runtime Config**: `SOCKET_URL` env var is read server-side by `layout.js` and injected into the client as `window.__DEEDEE_CONFIG__.socketUrl`. This is required because Next.js `NEXT_PUBLIC_*` vars are baked at build time, but Balena/Docker sets env vars at container start.
 - **Auth**:
     - **User**: Relies on Reverse Proxy (Authelia/Authentik).
     - **Service**: Injected `DEEDEE_API_TOKEN` for secure API communication (Server Actions).

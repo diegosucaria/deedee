@@ -101,7 +101,9 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - API_URL=http://api:3001
-      # NEXT_PUBLIC_SOCKET_URL injected by Balena (e.g. https://api.example.com)
+      # SOCKET_URL — public URL of the API gateway for browser WebSocket connections.
+      # Injected at runtime by Balena device vars (e.g. https://deedee.example.com).
+      # Read server-side by layout.js and emitted to the client via window.__DEEDEE_CONFIG__.
     ports:
       - "3002:3000"
     networks:

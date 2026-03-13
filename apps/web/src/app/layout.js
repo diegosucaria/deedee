@@ -20,8 +20,23 @@ export const metadata = {
 };
 
 export default function RootLayout({ children }) {
+  // Inject runtime config for client components.
+  // SOCKET_URL is set at container runtime (e.g. Balena device vars) so we
+  // can't rely on NEXT_PUBLIC_* (baked at build time). Instead, read the env
+  // server-side and emit a tiny <script> the client can reference.
+  const runtimeConfig = {
+    socketUrl: process.env.SOCKET_URL || '',
+  };
+
   return (
     <html lang="en" className="dark">
+      <head>
+        <script
+          dangerouslySetInnerHTML={{
+            __html: `window.__DEEDEE_CONFIG__=${JSON.stringify(runtimeConfig)};`,
+          }}
+        />
+      </head>
       <body
         className={`${inter.className} antialiased`}
       >
