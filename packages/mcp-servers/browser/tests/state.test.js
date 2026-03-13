@@ -1,11 +1,12 @@
 /**
- * Tests for Browser V2 — State Management
+ * Tests for Browser V2 — State Management (Multi-Tab)
  */
 
-const { storeRefs, getCurrentRefs, getCurrentUrl, clearRefs, refLocator } = require('../src/state');
+const { storeRefs, getCurrentRefs, getCurrentUrl, clearRefs, clearTabRefs, setActiveTab, getActiveTab, refLocator } = require('../src/state');
 
 describe('State Management', () => {
     beforeEach(() => {
+        setActiveTab(0);
         clearRefs();
     });
 
@@ -28,6 +29,48 @@ describe('State Management', () => {
             clearRefs();
             expect(getCurrentRefs()).toEqual({});
             expect(getCurrentUrl()).toBe('');
+        });
+    });
+
+    describe('multi-tab state', () => {
+        test('should store refs per tab', () => {
+            setActiveTab(0);
+            storeRefs({ e1: { role: 'button', name: 'Tab0' } }, 'https://tab0.com');
+
+            setActiveTab(1);
+            storeRefs({ e2: { role: 'link', name: 'Tab1' } }, 'https://tab1.com');
+
+            // Tab 1 refs
+            expect(getCurrentRefs()).toEqual({ e2: { role: 'link', name: 'Tab1' } });
+            expect(getCurrentUrl()).toBe('https://tab1.com');
+
+            // Switch back to tab 0
+            setActiveTab(0);
+            expect(getCurrentRefs()).toEqual({ e1: { role: 'button', name: 'Tab0' } });
+            expect(getCurrentUrl()).toBe('https://tab0.com');
+        });
+
+        test('should clear refs for specific tab', () => {
+            setActiveTab(0);
+            storeRefs({ e1: { role: 'button', name: 'A' } }, 'https://a.com');
+            setActiveTab(1);
+            storeRefs({ e2: { role: 'button', name: 'B' } }, 'https://b.com');
+
+            clearTabRefs(0);
+
+            // After closing tab 0, tab 1's state re-indexes to position 0
+            setActiveTab(0);
+            expect(getCurrentRefs()).toEqual({ e2: { role: 'button', name: 'B' } });
+
+            // Tab 1 no longer exists
+            setActiveTab(1);
+            expect(getCurrentRefs()).toEqual({});
+        });
+
+        test('getActiveTab should return current tab index', () => {
+            expect(getActiveTab()).toBe(0);
+            setActiveTab(3);
+            expect(getActiveTab()).toBe(3);
         });
     });
 

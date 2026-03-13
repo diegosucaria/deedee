@@ -84,6 +84,11 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
                - Use 'browser_screenshot --withLabels' for visual verification when unsure.
             6. **Secrets**: Use 'browser_fill_secret' with ref to type passwords/cards. Keys are in 'browser_list_secrets'.
             7. **Dynamic Content**: Use 'browser_wait' for loading states. Use 'browser_evaluate' for custom JS if needed.
+            8. **Performance**: Resource blocking is ON by default (images, fonts, media are blocked for speed). If a page looks broken or you need to see images, use 'browser_set_resource_blocking' with ['none'] to disable.
+            9. **Network Monitoring**: Use 'browser_network_log' to see API calls and AJAX responses. Use 'browser_wait_for_response' to wait for a specific API response (e.g. waiting for flight price data). Use 'browser_get_response_body' to read the response JSON.
+            10. **Debugging**: Use 'browser_console_messages' to see JavaScript errors if something isn't working on a page.
+            11. **Tabs**: Use 'browser_new_tab' / 'browser_switch_tab' / 'browser_list_tabs' for multi-tab workflows. Use 'browser_close_tab' to clean up.
+            12. **Auto-Snapshot**: Click, fill, select, and key-press actions return an updated snapshot automatically. No need to call browser_snapshot after every interaction (pass autoSnapshot=false to disable).
     `;
 
         const THINKING_PROTOCOL = `
