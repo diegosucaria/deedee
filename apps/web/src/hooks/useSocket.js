@@ -10,10 +10,17 @@ let socket;
 // (generates CSRF cookies on every HTTP poll).
 // Auth: interfaces validates the browser Origin header against an allowlist.
 export function getSocketUrl() {
+    // 1. Runtime config injected by layout.js (reads server-side env at render time).
+    //    This is the primary path for Balena/Docker deployments where env vars are
+    //    set at runtime, not build time.
+    if (typeof window !== 'undefined' && window.__DEEDEE_CONFIG__?.socketUrl) {
+        return window.__DEEDEE_CONFIG__.socketUrl;
+    }
+    // 2. Build-time env (works in dev / static builds)
     if (process.env.NEXT_PUBLIC_SOCKET_URL) {
         return process.env.NEXT_PUBLIC_SOCKET_URL;
     }
-    // Fallback: derive from current origin, swapping to API port
+    // 3. Fallback: derive from current origin, swapping to API port (local dev)
     if (typeof window !== 'undefined') {
         const { protocol, hostname } = window.location;
         return `${protocol}//${hostname}:3001`;
