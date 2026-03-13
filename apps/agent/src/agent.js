@@ -244,6 +244,13 @@ class Agent {
       console.log('[Memory] Durable Memory synced and ingested.');
     } catch (e) {
       console.error('[Memory] Startup Sync Failed:', e.message);
+      this.notifications.create({
+        type: 'startup_failure',
+        severity: 'error',
+        title: 'Memory sync failed at startup',
+        message: `Durable memory failed to sync on startup: ${e.message}. The agent may have reduced recall until next successful sync.`,
+        metadata: { error: e.message, link: '/system' }
+      });
     }
 
     this.interface.on('message', this.onMessage);
@@ -464,6 +471,13 @@ class Agent {
       }
     } catch (e) {
       console.error(`[Agent] sendMessage failed after retries: ${e.message}`);
+      this.notifications.create({
+        type: 'model_failure',
+        severity: 'error',
+        title: 'Model unavailable after retries',
+        message: `sendMessage failed after all retry attempts: ${e.message}`,
+        metadata: { error: e.message, link: '/system/history' }
+      });
       // Fallback to standard if stream fails?
       if (source === 'web' && !e.message.includes('sendMessage')) {
         try {
@@ -905,6 +919,14 @@ class Agent {
 
       // 2. Rate Limiting
       if (!(await this.rateLimiter.check(message, this.interface)) && !isSubAgent) {
+        const chatId = message.metadata?.chatId;
+        this.notifications.create({
+          type: 'rate_limit_exceeded',
+          severity: 'warning',
+          title: 'Rate limit exceeded',
+          message: `A message was blocked by the rate limiter. Source: ${message.source || 'unknown'}.`,
+          metadata: { chatId, source: message.source, link: chatId ? `/system/history?chatId=${encodeURIComponent(chatId)}` : '/system/history' }
+        });
         return executionSummary;
       }
 
@@ -1412,6 +1434,14 @@ class Agent {
         const maxLoops = hasBrowserSession ? MAX_LOOPS_BROWSER : MAX_LOOPS_DEFAULT;
         if (loopCount > maxLoops) {
           console.warn(`${logPrefix} Max tool loop limit reached (${maxLoops}). Breaking.`);
+          const chatId = message.metadata?.chatId;
+          this.notifications.create({
+            type: 'agent_loop_limit',
+            severity: 'warning',
+            title: `Tool loop limit hit (${loopCount}/${maxLoops})`,
+            message: `Agent reached the maximum tool call iteration limit and was stopped.`,
+            metadata: { loopCount, maxLoops, chatId, source: message.source, link: chatId ? `/system/history?chatId=${encodeURIComponent(chatId)}` : '/system/history' }
+          });
           await activeSendCallback(createAssistantMessage('I am stuck in a loop. Stopping now.'));
           break;
         }
@@ -2021,19 +2051,28 @@ class Agent {
       });
       const toolResult = await commitRes.json();
 
-      // Notification: Slack (Self-Improvement Alert)
-      if (toolResult && toolResult.success && process.env.SLACK_WEBHOOK_URL) {
-        try {
-          await fetch(process.env.SLACK_WEBHOOK_URL, {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-              text: `🚀 *New Feature Deployed via Self-Improvement*\n\n*Commit:* ${args.message}\n*Files:* All changed files`
-            })
-          });
-          console.log('[Agent] Sent Slack notification for self-improvement.');
-        } catch (slackErr) {
-          console.error('[Agent] Failed to send Slack notification:', slackErr);
+      // Notifications: Self-Improvement Alert
+      if (toolResult && toolResult.success) {
+        this.notifications.create({
+          type: 'self_improvement',
+          severity: 'info',
+          title: 'Self-improvement commit pushed',
+          message: args.message,
+          metadata: { link: '/system' }
+        });
+        if (process.env.SLACK_WEBHOOK_URL) {
+          try {
+            await fetch(process.env.SLACK_WEBHOOK_URL, {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({
+                text: `🚀 *New Feature Deployed via Self-Improvement*\n\n*Commit:* ${args.message}\n*Files:* All changed files`
+              })
+            });
+            console.log('[Agent] Sent Slack notification for self-improvement.');
+          } catch (slackErr) {
+            console.error('[Agent] Failed to send Slack notification:', slackErr);
+          }
         }
       }
       return toolResult;

@@ -191,6 +191,15 @@ class RagService {
                     this.db.prepare("UPDATE documents SET hash = ''").run();
                     this.needsReindex = true;
                     console.log('[RAG] Embeddings cleared. Documents will be re-embedded on next scan.');
+                    if (this.agent?.notifications) {
+                        this.agent.notifications.create({
+                            type: 'rag_reindex_required',
+                            severity: 'warning',
+                            title: 'RAG embeddings cleared — re-indexing required',
+                            message: `Existing embeddings (${existingDims}D) are incompatible with current config (${currentDims}D). All embeddings were cleared. Documents will be re-embedded on next nightly scan.`,
+                            metadata: { prevDims: existingDims, currentDims, link: '/system' }
+                        });
+                    }
                 } else {
                     this.needsReindex = false;
                 }
@@ -225,6 +234,15 @@ class RagService {
             this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_model', ?)").run(currentModel);
             this.needsReindex = true;
             console.log('[RAG] Embeddings cleared. Documents will be re-embedded on next scan or ingest.');
+            if (this.agent?.notifications) {
+                this.agent.notifications.create({
+                    type: 'rag_reindex_required',
+                    severity: 'warning',
+                    title: 'RAG embeddings cleared — re-indexing required',
+                    message: `Embedding dimensions changed (${prevDims}D → ${currentDims}D). All embeddings were cleared. Documents will be re-embedded on next scan.`,
+                    metadata: { prevDims, currentDims, link: '/system' }
+                });
+            }
         } else {
             // Metadata says dimensions match — but verify actual embeddings agree.
             // Catches case where metadata was written (e.g. 1536) but embeddings were

@@ -98,6 +98,15 @@ class SubAgentService {
                     completedAt
                 });
                 console.error(`[SubAgent] ${taskId} ${status}: ${error}`);
+                if (this.agent.notifications) {
+                    this.agent.notifications.create({
+                        type: 'subagent_failed',
+                        severity: isTimeout ? 'warning' : 'error',
+                        title: `Sub-agent ${isTimeout ? 'timed out' : 'failed'}: ${taskId}`,
+                        message: error,
+                        metadata: { taskId, status, error, link: '/system/history' }
+                    });
+                }
                 this._broadcast(taskId, status);
                 return partial || error;
             } finally {
