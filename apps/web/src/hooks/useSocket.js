@@ -4,16 +4,19 @@ import { io } from 'socket.io-client';
 let socket;
 
 // Resolve socket URL once.
-// NEXT_PUBLIC_SOCKET_URL points to the API gateway (port 3001) which proxies
-// socket.io to the Interfaces service with full WebSocket support.
-// This bypasses Next.js rewrites (can't upgrade WS) and Traefik forward-auth
-// (generates CSRF cookies on every HTTP poll).
+// SOCKET_URL points to the API gateway which proxies socket.io to the
+// Interfaces service with full WebSocket support.  This bypasses Next.js
+// rewrites (can't upgrade WS) and Traefik forward-auth (generates CSRF
+// cookies on every HTTP poll).
 // Auth: interfaces validates the browser Origin header against an allowlist.
 export function getSocketUrl() {
-    if (process.env.NEXT_PUBLIC_SOCKET_URL) {
-        return process.env.NEXT_PUBLIC_SOCKET_URL;
+    // 1. Runtime config injected by layout.js (reads server-side env at render
+    //    time).  Primary path for Balena/Docker where env vars are set at
+    //    container start, not at build time.
+    if (typeof window !== 'undefined' && window.__DEEDEE_CONFIG__?.socketUrl) {
+        return window.__DEEDEE_CONFIG__.socketUrl;
     }
-    // Fallback: derive from current origin, swapping to API port
+    // 2. Fallback: derive from current origin, swapping to API port (local dev)
     if (typeof window !== 'undefined') {
         const { protocol, hostname } = window.location;
         return `${protocol}//${hostname}:3001`;
