@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { LatencyChart, TokenEfficiencyChart, DailyCostChart, ServiceCostBreakdown, StackedDailyCostChart, ModelCostBreakdown } from '@/components/InteractiveCharts';
 import { RefreshCw, Activity, Cpu, DollarSign, Database, PieChart, Server } from 'lucide-react';
 import { getStatsLatency, getStatsUsage, getStatsCostTrend, getDailyCostTrend, getSystemStats, getCostByTag, getDailyCostByCategory, getCostByModel } from '../../actions';
+import { useSocket } from '@/hooks/useSocket';
 
 const COST_PERIODS = [
     { label: 'Today', days: 1 },
@@ -117,34 +118,24 @@ export default function StatsClient({ startDate, endDate }) {
         const interval = setInterval(() => {
             fetchData();
             fetchCostBreakdown(costPeriod);
-        }, 10000);
+        }, 60000);
 
-        // Listen for real-time RAG updates
-        try {
-            const { io } = require('socket.io-client');
-            const socket = io();
-
-            socket.on('rag:stats', (newStats) => {
-                console.log('[StatsClient] Received RAG stats update via socket');
-                if (newStats) {
-                    setDbStats(prev => ({
-                        ...prev,
-                        rag: newStats
-                    }));
-                } else {
-                    fetchData();
-                }
-            });
-
-            return () => {
-                clearInterval(interval);
-                socket.disconnect();
-            };
-        } catch (e) {
-            console.error('[StatsClient] Socket setup failed:', e);
-            return () => clearInterval(interval);
-        }
+        return () => clearInterval(interval);
     }, [startDate, endDate, costPeriod]);
+
+    // Listen for real-time RAG updates via shared socket
+    const { socket: statsSocket } = useSocket();
+    useEffect(() => {
+        if (!statsSocket) return;
+        const handler = (newStats) => {
+            console.log('[StatsClient] Received RAG stats update via socket');
+            if (newStats) {
+                setDbStats(prev => ({ ...prev, rag: newStats }));
+            }
+        };
+        statsSocket.on('rag:stats', handler);
+        return () => statsSocket.off('rag:stats', handler);
+    }, [statsSocket]);
 
     // Fetch cost breakdown immediately when period changes (for responsive toggle)
     useEffect(() => {

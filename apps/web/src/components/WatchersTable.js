@@ -4,7 +4,7 @@ import { useState, useEffect } from 'react';
 import { getWatchers, deleteWatcher, toggleWatcher } from '@/app/actions';
 import { Eye, Trash2, RefreshCw, Edit, Plus, Power, Activity } from 'lucide-react';
 import CreateWatcherForm from './CreateWatcherForm';
-import io from 'socket.io-client';
+import { useSocket } from '@/hooks/useSocket';
 
 export default function WatchersTable() {
     const [watchers, setWatchers] = useState([]);
@@ -24,25 +24,26 @@ export default function WatchersTable() {
         }
     };
 
+    const { socket } = useSocket();
+
     useEffect(() => {
         loadWatchers();
         const interval = setInterval(loadWatchers, 30000);
 
-        const socket = io(undefined, {
-            transports: ['websocket', 'polling'],
-            path: '/socket.io'
-        });
+        if (socket) {
+            const handler = () => {
+                console.log('Received watcher:update, refreshing list...');
+                loadWatchers();
+            };
+            socket.on('watcher:update', handler);
+            return () => {
+                clearInterval(interval);
+                socket.off('watcher:update', handler);
+            };
+        }
 
-        socket.on('watcher:update', () => {
-            console.log('Received watcher:update, refreshing list...');
-            loadWatchers();
-        });
-
-        return () => {
-            clearInterval(interval);
-            socket.disconnect();
-        };
-    }, []);
+        return () => clearInterval(interval);
+    }, [socket]);
 
     const handleDelete = async (id, name) => {
         if (!confirm(`Are you sure you want to delete watcher '${name}'?`)) return;

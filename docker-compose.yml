@@ -68,7 +68,7 @@ services:
       - AGENT_URL=http://agent:3000
       - PORT=5000
       - DATA_DIR=/app/data
-      # TELEGRAM_TOKEN, SLACK_TOKEN injected by Balena
+      # ALLOWED_SOCKET_ORIGINS, TELEGRAM_TOKEN, SLACK_TOKEN injected by Balena
     volumes:
       - interfaces-data:/app/data
     networks:
@@ -83,6 +83,7 @@ services:
     environment:
       - NODE_ENV=production
       - AGENT_URL=http://agent:3000
+      - INTERFACES_URL=http://interfaces:5000
       - PORT=3001
       # DEEDEE_API_TOKEN injected by Balena
     ports:
@@ -100,6 +101,7 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - API_URL=http://api:3001
+      # NEXT_PUBLIC_SOCKET_URL injected by Balena (e.g. https://api.example.com)
     ports:
       - "3002:3000"
     networks:

@@ -92,7 +92,8 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - `POST /v1/notifications/:id/dismiss`: Dismiss a notification.
     - `POST /v1/notifications/dismiss-all`: Dismiss all notifications.
     - `DELETE /v1/notifications/:id`: Delete a notification.
-- **Auth**: Bearer Token (`DEEDEE_API_TOKEN`). All routes protected (except `/health`).
+- **Socket.io Proxy**: `/socket.io` path is proxied to `interfaces:5000` via `http-proxy-middleware` with full WebSocket upgrade support. This bypasses Next.js (can't handle WS upgrades) and Traefik forward-auth (generates CSRF cookies on HTTP polls). Auth is handled by Interfaces, not the API gateway.
+- **Auth**: Bearer Token (`DEEDEE_API_TOKEN`). All `/v1` routes protected. `/health` and `/socket.io` are public (socket auth delegated to Interfaces).
 - **Security**: All route parameters are encoded with `encodeURIComponent()` to prevent injection via crafted job names or IDs.
 - **Flow**: Client -> API -> Agent (Waits for full processing) -> API -> Client JSON Response.
 
@@ -101,7 +102,8 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 - **Role**: The Ears and Mouth.
 - **Port**: `5000`
 - **Supported Channels**:
-    - **Socket.io**: Real-time event-based communication for Web Interface.
+    - **Socket.io**: Real-time event-based communication for Web Interface. Browser clients connect via the API gateway (`/socket.io` proxy) which handles WebSocket upgrades.
+        - **Auth**: Dual-path — internal services authenticate with `DEEDEE_API_TOKEN`, browser clients validated by `Origin` header against `ALLOWED_SOCKET_ORIGINS` allowlist.
         - Emits: `agent:message` (Stream), `agent:thinking` (Status), `session:update` (Auto-Title), `subagent:update` (Sub-agent status change), `notification:new` (System notifications).
     - **Telegram**: Long-Polling Bot. Supports Global Stop (`/stop`) and Audio Messages.
     - **WhatsApp**:
@@ -142,7 +144,8 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 ### Security Model
 1.  **Network Isolation**: No container relies on public ingress. All inter-service communication is internal Docker networking.
 2.  **Authentication**:
-    -   API: Bearer Token.
+    -   API: Bearer Token (`DEEDEE_API_TOKEN`).
+    -   Socket.io: Origin allowlist (`ALLOWED_SOCKET_ORIGINS`) for browser clients, token auth for internal services.
     -   Telegram: `ALLOWED_TELEGRAM_IDS` allowlist.
 3.  **Safety Mechanisms**:
     -   **Global Stop**: `/stop` command halts all active execution loops instantly.

@@ -14,22 +14,11 @@ const nextConfig = {
     },
   },
   async rewrites() {
+    // Socket.io now routes through the API gateway (port 3001) directly,
+    // bypassing Next.js. This enables proper WebSocket upgrades and avoids
+    // Traefik forward-auth CSRF cookie spam from HTTP polling.
+    // See useSocket.js getSocketUrl() for client-side routing.
     return {
-      // beforeFiles: intercept socket.io before any file-system check.
-      beforeFiles: [
-        {
-          source: '/socket.io',
-          destination: 'http://interfaces:5000/socket.io/',
-        },
-        {
-          source: '/socket.io/:path+',
-          destination: 'http://interfaces:5000/socket.io/:path+',
-        },
-      ],
-      // fallback: only reached after ALL file-system routes (static AND dynamic)
-      // have been checked. This ensures local API Route Handlers like
-      // /api/logs/[container] and /api/whatsapp/avatar resolve first.
-      // Unmatched /api/* paths are then proxied to the external API gateway.
       fallback: [
         {
           source: '/api/:path*',
