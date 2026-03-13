@@ -483,6 +483,53 @@ app.get('/slack/history/monitored', async (req, res) => {
   }
 });
 
+app.get('/slack/resolve-user', async (req, res) => {
+  try {
+    const { name, teamId } = req.query;
+    if (!name) return res.status(400).json({ error: 'Missing name parameter' });
+    const nameLower = name.toLowerCase();
+
+    // Search across all connected workspaces (or a specific one)
+    const connections = teamId
+      ? [slack.resolveConnection(teamId)]
+      : Array.from(slack.connections?.values?.() || []);
+
+    const matches = [];
+    for (const conn of connections) {
+      if (!conn?.connected) continue;
+      try {
+        const users = await conn.getWorkspaceUsers();
+        for (const user of users) {
+          const realName = (user.name || '').toLowerCase();
+          const displayName = (user.displayName || '').toLowerCase();
+          const email = (user.email || '').toLowerCase();
+          if (realName === nameLower || displayName === nameLower ||
+              realName.includes(nameLower) || displayName.includes(nameLower) ||
+              email.startsWith(nameLower)) {
+            matches.push({
+              ...user,
+              workspace: conn.workspace?.teamId,
+              workspaceName: conn.workspace?.teamName,
+              // Exact match scores higher
+              exactMatch: realName === nameLower || displayName === nameLower,
+            });
+          }
+        }
+      } catch (err) {
+        console.warn(`[Interfaces] Error resolving user in workspace ${conn.workspace?.teamId}:`, err.message);
+      }
+    }
+
+    // Sort: exact matches first
+    matches.sort((a, b) => (b.exactMatch ? 1 : 0) - (a.exactMatch ? 1 : 0));
+
+    res.json({ matches, count: matches.length });
+  } catch (err) {
+    console.error('[Interfaces] Slack resolve-user error:', err.message);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/slack/users', async (req, res) => {
   try {
     const { teamId } = req.query;
