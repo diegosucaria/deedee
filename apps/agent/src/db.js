@@ -571,6 +571,20 @@ class AgentDB {
     this.db.prepare('DELETE FROM people WHERE id = ?').run(id);
   }
 
+  deleteGroupContacts() {
+    // WhatsApp group IDs are 18+ digit numbers (e.g. 120363187523636164)
+    // Normal phone numbers are at most 15 digits (ITU-T E.164)
+    const rows = this.db.prepare(
+      "SELECT id, name, phone FROM people WHERE source = 'whatsapp_sync' AND length(phone) > 16"
+    ).all();
+    if (rows.length > 0) {
+      this.db.prepare(
+        "DELETE FROM people WHERE source = 'whatsapp_sync' AND length(phone) > 16"
+      ).run();
+    }
+    return rows;
+  }
+
   countPeople() {
     return this.db.prepare('SELECT COUNT(*) as count FROM people').get().count;
   }
