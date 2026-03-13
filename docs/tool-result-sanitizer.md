@@ -70,7 +70,7 @@ After domain-specific cleaning, a hard character cap is applied to the serialize
 | Tool Category | Max Chars | Rationale |
 |--------------|-----------|-----------|
 | Default | 50,000 | Safe limit for most tools |
-| People tools (names ending in `listPeople`, `searchPeople`, `searchContacts`, `getPerson`) | 200,000 | Agent needs full contact list for consolidation jobs |
+| People tools (`listPeople`, `searchPeople`, `searchContacts`, `getPerson`) | 200,000 | Agent needs full contact list for consolidation jobs |
 | `searchMemory` | 200,000 | Memory context is critical for agent behavior |
 
 When truncation occurs:
@@ -86,14 +86,14 @@ Called in `agent.js` after tool execution, before sending the result to Gemini:
 dbToolResult = sanitizeToolResult(executionName, dbToolResult);
 ```
 
-The `sanitizeToolResult` function accepts an optional third parameter `maxChars` to override the default cap, but the high-cap tool logic is now built into the sanitizer itself via `HIGH_CAP_SUFFIXES`.
+The `sanitizeToolResult` function accepts an optional third parameter `maxChars` to override the default cap, but the high-cap tool logic is now built into the sanitizer itself via `HIGH_CAP_TOOLS`.
 
 ## Adding a New Sanitizer
 
 1. Add a detection function: `isMyTool(toolName)` matching on tool name patterns
 2. Add a sanitization function: `sanitizeMyToolResult(result)` that handles both `{ output: "JSON" }` (MCP wrapper) and direct object formats
 3. Wire it into `sanitizeToolResult()` as a new Layer 1 step
-4. If the tool needs a higher cap, add its suffix to `HIGH_CAP_SUFFIXES`
+4. If the tool needs a higher cap, add it to `HIGH_CAP_TOOLS`
 5. Add tests in `tool-result-sanitizer.test.js`
 
 ## Constants

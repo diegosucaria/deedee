@@ -13,9 +13,8 @@ const MAX_EVENT_DESCRIPTION_CHARS = 500;
 const MAX_EVENT_ATTENDEES = 10;
 const MAX_PERSON_NOTES_CHARS = 300;
 
-// Tools that need higher caps because the model needs complete data.
-// Matched as suffixes since GWS tools are namespaced (e.g. work_listPeople).
-const HIGH_CAP_SUFFIXES = ['listpeople', 'searchpeople', 'searchcontacts', 'getperson', 'searchmemory'];
+// Tools that need higher caps because the model needs complete data
+const HIGH_CAP_TOOLS = new Set(['listPeople', 'searchPeople', 'searchContacts', 'getPerson', 'searchMemory']);
 const HIGH_CAP_MAX_CHARS = 200_000;
 
 const ALLOWED_EMAIL_HEADERS = new Set([
@@ -65,9 +64,7 @@ function sanitizeToolResult(toolName, result, maxChars = MAX_TOOL_RESULT_CHARS) 
     }
 
     // Layer 2: Generic size cap (use higher cap for critical tools)
-    const lowerName = toolName ? toolName.toLowerCase() : '';
-    const isHighCap = HIGH_CAP_SUFFIXES.some(s => lowerName.endsWith(s));
-    const effectiveMaxChars = isHighCap ? Math.max(maxChars, HIGH_CAP_MAX_CHARS) : maxChars;
+    const effectiveMaxChars = HIGH_CAP_TOOLS.has(toolName) ? Math.max(maxChars, HIGH_CAP_MAX_CHARS) : maxChars;
     cleaned = applyGenericCap(toolName, cleaned, effectiveMaxChars);
 
     return cleaned;
@@ -379,7 +376,7 @@ function extractCleanEvent(event) {
 function isPeopleTool(toolName) {
     if (!toolName) return false;
     const lower = toolName.toLowerCase();
-    return lower.includes('people') || lower.includes('getperson') || lower.includes('searchcontacts');
+    return lower.includes('people') || lower === 'listpeople' || lower === 'getperson' || lower === 'searchcontacts';
 }
 
 /**
@@ -455,4 +452,4 @@ function truncate(str, maxLen) {
     return str.substring(0, maxLen) + '... [truncated]';
 }
 
-module.exports = { sanitizeToolResult, MAX_TOOL_RESULT_CHARS, MAX_EMAIL_BODY_CHARS, MAX_EVENT_DESCRIPTION_CHARS, MAX_PERSON_NOTES_CHARS, HIGH_CAP_SUFFIXES, HIGH_CAP_MAX_CHARS };
+module.exports = { sanitizeToolResult, MAX_TOOL_RESULT_CHARS, MAX_EMAIL_BODY_CHARS, MAX_EVENT_DESCRIPTION_CHARS, MAX_PERSON_NOTES_CHARS, HIGH_CAP_TOOLS, HIGH_CAP_MAX_CHARS };

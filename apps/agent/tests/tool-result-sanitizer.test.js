@@ -250,28 +250,20 @@ describe('Tool Result Sanitizer', () => {
             warnSpy.mockRestore();
         });
 
-        it('should apply high cap for namespaced people tools', () => {
+        it('should apply high cap for people tools', () => {
             // A result between 50K and 200K should NOT be truncated for people tools
             const big = { output: 'X'.repeat(100_000) };
 
-            // Bare name (shouldn't happen in practice, but should still work)
             const cleaned1 = sanitizeToolResult('listPeople', big);
             expect(cleaned1._sanitizer).toBeUndefined();
 
-            // Namespaced name (the real scenario)
-            const cleaned2 = sanitizeToolResult('work_listPeople', big);
+            const cleaned2 = sanitizeToolResult('getPerson', big);
             expect(cleaned2._sanitizer).toBeUndefined();
 
-            const cleaned3 = sanitizeToolResult('personal_getPerson', big);
-            expect(cleaned3._sanitizer).toBeUndefined();
-
-            const cleaned4 = sanitizeToolResult('work_searchContacts', big);
-            expect(cleaned4._sanitizer).toBeUndefined();
-
             // Non-people tool SHOULD be truncated at 50K
-            const cleaned5 = sanitizeToolResult('readSlackHistory', big);
-            expect(cleaned5._sanitizer).toBeDefined();
-            expect(cleaned5._sanitizer.truncated).toBe(true);
+            const cleaned3 = sanitizeToolResult('readSlackHistory', big);
+            expect(cleaned3._sanitizer).toBeDefined();
+            expect(cleaned3._sanitizer.truncated).toBe(true);
         });
     });
 
