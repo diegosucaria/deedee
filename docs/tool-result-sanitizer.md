@@ -45,10 +45,11 @@ Strips verbose Google Calendar API metadata.
 
 | Kept | Stripped |
 |------|---------|
-| id, summary, start, end, status | etag, iCalUID, htmlLink, kind, sequence |
+| summary, start (flattened), end (flattened) | id, etag, iCalUID, htmlLink, kind, sequence |
 | location, description (500 chars) | creator, organizer metadata, reminders |
-| attendees (name, email, responseStatus) | attachments, extendedProperties |
-| hangoutLink, meetingLink | Full conferenceData blob |
+| attendees (name, email, responseStatus; max 10) | attachments, extendedProperties |
+| meetingLink | Full conferenceData blob, recurringEventId |
+| status (only if not "confirmed") | Calendar-level summary (email) |
 
 ### 1c. People (`isPeopleTool`)
 
@@ -103,4 +104,5 @@ The `sanitizeToolResult` function accepts an optional third parameter `maxChars`
 | `HIGH_CAP_MAX_CHARS` | 200,000 | People + memory tools |
 | `MAX_EMAIL_BODY_CHARS` | 4,000 | Gmail sanitizer |
 | `MAX_EVENT_DESCRIPTION_CHARS` | 500 | Calendar sanitizer |
+| `MAX_EVENT_ATTENDEES` | 10 | Calendar sanitizer |
 | `MAX_PERSON_NOTES_CHARS` | 300 | People sanitizer |

@@ -10,6 +10,7 @@
 const MAX_TOOL_RESULT_CHARS = 50_000;
 const MAX_EMAIL_BODY_CHARS = 4_000;
 const MAX_EVENT_DESCRIPTION_CHARS = 500;
+const MAX_EVENT_ATTENDEES = 10;
 const MAX_PERSON_NOTES_CHARS = 300;
 
 // Tools that need higher caps because the model needs complete data
@@ -296,7 +297,6 @@ function sanitizeCalendarParsed(obj) {
     // Calendar events list response { items: [...], kind: "calendar#events", ... }
     if (obj.items && Array.isArray(obj.items)) {
         return {
-            summary: obj.summary,
             timeZone: obj.timeZone,
             items: obj.items.map(extractCleanEvent),
         };
@@ -315,14 +315,26 @@ function sanitizeCalendarParsed(obj) {
     return obj;
 }
 
+function flattenDateTime(dt) {
+    if (!dt) return dt;
+    // All-day events use { date: "2026-03-13" }
+    if (dt.date) return dt.date;
+    // Timed events: dateTime already contains the offset, so timeZone is redundant
+    if (dt.dateTime) return dt.dateTime;
+    return dt;
+}
+
 function extractCleanEvent(event) {
     const clean = {
-        id: event.id,
         summary: event.summary || '(no title)',
-        start: event.start,
-        end: event.end,
-        status: event.status,
+        start: flattenDateTime(event.start),
+        end: flattenDateTime(event.end),
     };
+
+    // Only include status if it's NOT confirmed (the default)
+    if (event.status && event.status !== 'confirmed') {
+        clean.status = event.status;
+    }
 
     if (event.location) clean.location = event.location;
 
@@ -332,7 +344,7 @@ function extractCleanEvent(event) {
 
     // Keep attendees: name, email, responseStatus, and flags (strip other metadata)
     if (event.attendees && event.attendees.length > 0) {
-        clean.attendees = event.attendees.map(a => {
+        const mapped = event.attendees.map(a => {
             const att = {};
             if (a.displayName) att.name = a.displayName;
             if (a.email) att.email = a.email;
@@ -342,11 +354,16 @@ function extractCleanEvent(event) {
             if (a.responseStatus) att.responseStatus = a.responseStatus;
             return att;
         });
+        if (mapped.length > MAX_EVENT_ATTENDEES) {
+            clean.attendees = mapped.slice(0, MAX_EVENT_ATTENDEES);
+            clean.attendeesOmitted = mapped.length - MAX_EVENT_ATTENDEES;
+        } else {
+            clean.attendees = mapped;
+        }
     }
 
-    if (event.recurringEventId) clean.recurringEventId = event.recurringEventId;
-    if (event.hangoutLink) clean.hangoutLink = event.hangoutLink;
-    if (event.conferenceData?.entryPoints) {
+    if (event.hangoutLink) clean.meetingLink = event.hangoutLink;
+    else if (event.conferenceData?.entryPoints) {
         clean.meetingLink = event.conferenceData.entryPoints
             .find(e => e.entryPointType === 'video')?.uri;
     }

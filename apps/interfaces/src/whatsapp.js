@@ -309,7 +309,7 @@ class SQLiteStore {
     }
 
     getContacts() {
-        return this.db.prepare('SELECT * FROM contacts').all().map(r => ({ ...JSON.parse(r.data), ...r }));
+        return this.db.prepare("SELECT * FROM contacts WHERE id NOT LIKE '%@g.us'").all().map(r => ({ ...JSON.parse(r.data), ...r }));
     }
 
     getContact(jid) {
