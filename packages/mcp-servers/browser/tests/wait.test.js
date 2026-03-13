@@ -62,6 +62,24 @@ describe('Wait Module', () => {
         expect(result.success).toBe(true);
     });
 
+    test('should gracefully handle loadState timeout', async () => {
+        const timeoutError = new Error('Timeout');
+        timeoutError.name = 'TimeoutError';
+        mockPage.waitForLoadState.mockRejectedValue(timeoutError);
+
+        const result = await handleWait(mockPage, { loadState: 'networkidle' });
+        expect(result.success).toBe(true);
+        expect(result.message).toContain('timed out');
+        expect(result.message).toContain('may still be usable');
+    });
+
+    test('should rethrow non-timeout loadState errors', async () => {
+        mockPage.waitForLoadState.mockRejectedValue(new Error('Page crashed'));
+
+        await expect(handleWait(mockPage, { loadState: 'networkidle' }))
+            .rejects.toThrow('Page crashed');
+    });
+
     test('should cap timeout at 60s', async () => {
         await handleWait(mockPage, { text: 'X', timeout: 120000 });
         const waitForCall = mockPage.getByText('X').first().waitFor;
