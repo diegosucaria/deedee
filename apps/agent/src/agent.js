@@ -1493,14 +1493,49 @@ class Agent {
 
           // Tier 2: Identical call — hard block
           if (identicalCallTracker[sig] >= MAX_IDENTICAL_CALLS) {
-            console.warn(`${logPrefix} Stuck loop: ${toolName} called ${identicalCallTracker[sig]} times with identical args`);
+            const count = identicalCallTracker[sig];
+            console.warn(`${logPrefix} Stuck loop: ${toolName} called ${count} times with identical args`);
             sigsToBlock.add(sig);
-            loopWarnings.push(`"${toolName}" called ${identicalCallTracker[sig]} times with the exact same arguments`);
+            loopWarnings.push(`"${toolName}" called ${count} times with the exact same arguments`);
+            const chatId = message.metadata?.chatId;
+            this.notifications.create({
+              type: 'loop_detected',
+              severity: 'error',
+              title: `Tool loop blocked: ${toolName}`,
+              message: `"${toolName}" was called ${count} times with identical arguments. Call was blocked to prevent an infinite loop.`,
+              metadata: {
+                toolName,
+                tier: 2,
+                callCount: count,
+                chatId,
+                source: message.source,
+                link: chatId ? `/system/history?chatId=${encodeURIComponent(chatId)}` : '/system/history',
+              }
+            });
           }
           // Tier 1: Same tool name — warn via tool result
           else if (toolCallTracker[toolName] >= MAX_SAME_TOOL_CALLS) {
-            console.warn(`${logPrefix} Loop detection: ${toolName} called ${toolCallTracker[toolName]} times`);
-            call._loopWarning = `⚠️ You have called "${toolName}" ${toolCallTracker[toolName]} times. STOP repeating this tool with parameter variations and try a DIFFERENT approach.`;
+            const count = toolCallTracker[toolName];
+            console.warn(`${logPrefix} Loop detection: ${toolName} called ${count} times`);
+            call._loopWarning = `⚠️ You have called "${toolName}" ${count} times. STOP repeating this tool with parameter variations and try a DIFFERENT approach.`;
+            // Only notify once per tool (on first trigger)
+            if (count === MAX_SAME_TOOL_CALLS) {
+              const chatId = message.metadata?.chatId;
+              this.notifications.create({
+                type: 'loop_detected',
+                severity: 'warning',
+                title: `Possible tool loop: ${toolName}`,
+                message: `"${toolName}" has been called ${count} times with different arguments. The agent was warned to try a different approach.`,
+                metadata: {
+                  toolName,
+                  tier: 1,
+                  callCount: count,
+                  chatId,
+                  source: message.source,
+                  link: chatId ? `/system/history?chatId=${encodeURIComponent(chatId)}` : '/system/history',
+                }
+              });
+            }
           }
         }
 
