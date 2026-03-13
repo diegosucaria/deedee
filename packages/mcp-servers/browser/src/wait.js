@@ -50,8 +50,18 @@ async function handleWait(page, args) {
     }
 
     if (args.loadState) {
-        await page.waitForLoadState(args.loadState, { timeout });
-        results.push(`Load state "${args.loadState}" reached`);
+        try {
+            await page.waitForLoadState(args.loadState, { timeout });
+            results.push(`Load state "${args.loadState}" reached`);
+        } catch (err) {
+            if (err.name === 'TimeoutError') {
+                // loadState (especially networkidle) may never resolve on heavy sites.
+                // Don't fail — report it and let the agent continue with the current page state.
+                results.push(`⚠️ Load state "${args.loadState}" timed out — page may still be usable`);
+            } else {
+                throw err;
+            }
+        }
     }
 
     if (args.networkUrl) {
