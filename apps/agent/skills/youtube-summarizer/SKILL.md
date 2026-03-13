@@ -20,18 +20,16 @@ Fetch the transcript of a YouTube video so you can summarize it or answer questi
 
 ## Command
 
-Use the `youtube_transcript_api` CLI to fetch the transcript as JSON.
-
+**Always use text format** (keeps output small, avoids truncation):
 ```bash
-youtube_transcript_api <VIDEO_ID> --format json
+youtube_transcript_api <VIDEO_ID> --format text
 ```
 
 ## Usage
 1. Extract the `VIDEO_ID` from the user's URL (e.g., `dQw4w9WgXcQ`).
 2. Run the command.
-3. Parse the JSON output (it contains text segments).
-4. Summarize the content for the user.
+3. Summarize the plain text transcript for the user.
 
 ## Example
 **User**: "Summarize this video: https://www.youtube.com/watch?v=dQw4w9WgXcQ"
-**Action**: Run `youtube_transcript_api dQw4w9WgXcQ --format json`
+**Action**: Run `youtube_transcript_api dQw4w9WgXcQ --format text`
