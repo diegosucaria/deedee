@@ -1462,21 +1462,22 @@ class Agent {
           console.log(`${logPrefix} Processing ${functionCalls.length} tool calls in parallel.`);
         }
 
-        // LOOP DETECTION: Two-tier approach
-        // Tier 1: Per-tool-name tracking for non-browser tools (catches searchPerson("diego"), searchPerson("Die"), etc.)
-        // Tier 2: Identical call tracking for ALL tools (catches exact same call repeated — definitely stuck)
-        // Browser tools are exempt from Tier 1 because they legitimately repeat (click, type, snapshot)
+        // LOOP DETECTION: Two-tier approach (non-browser tools ONLY)
+        // Browser tools (click, type, snapshot, screenshot) are fully exempt — they legitimately
+        // repeat with identical args (e.g. screenshot has no args). The MAX_LOOPS_BROWSER limit
+        // is the safety net for browser sessions.
+        // Tier 1: Per-tool-name tracking (catches searchPerson("diego"), searchPerson("Die"), etc.)
+        // Tier 2: Identical call tracking (catches exact same call repeated — definitely stuck)
         for (const call of functionCalls) {
           const toolName = call.name || '';
+          if (toolName.includes('browser_')) continue; // Browser tools exempt from all loop detection
+
           const sig = `${toolName}:${JSON.stringify(call.args)}`;
-          const isBrowserTool = toolName.includes('browser_');
 
-          // Tier 1: Per-tool-name (non-browser only)
-          if (!isBrowserTool) {
-            toolCallTracker[toolName] = (toolCallTracker[toolName] || 0) + 1;
-          }
+          // Tier 1: Per-tool-name
+          toolCallTracker[toolName] = (toolCallTracker[toolName] || 0) + 1;
 
-          // Tier 2: Identical signature (all tools)
+          // Tier 2: Identical signature
           identicalCallTracker[sig] = (identicalCallTracker[sig] || 0) + 1;
         }
 
@@ -1486,19 +1487,19 @@ class Agent {
         const loopWarnings = [];
         for (const call of functionCalls) {
           const toolName = call.name || '';
-          const sig = `${toolName}:${JSON.stringify(call.args)}`;
-          const isBrowserTool = toolName.includes('browser_');
+          if (toolName.includes('browser_')) continue; // Browser tools exempt
 
-          // Tier 2: Identical call — hard block (any tool)
+          const sig = `${toolName}:${JSON.stringify(call.args)}`;
+
+          // Tier 2: Identical call — hard block
           if (identicalCallTracker[sig] >= MAX_IDENTICAL_CALLS) {
             console.warn(`${logPrefix} Stuck loop: ${toolName} called ${identicalCallTracker[sig]} times with identical args`);
             sigsToBlock.add(sig);
             loopWarnings.push(`"${toolName}" called ${identicalCallTracker[sig]} times with the exact same arguments`);
           }
-          // Tier 1: Same tool name — warn via tool result (non-browser only)
-          else if (!isBrowserTool && toolCallTracker[toolName] >= MAX_SAME_TOOL_CALLS) {
+          // Tier 1: Same tool name — warn via tool result
+          else if (toolCallTracker[toolName] >= MAX_SAME_TOOL_CALLS) {
             console.warn(`${logPrefix} Loop detection: ${toolName} called ${toolCallTracker[toolName]} times`);
-            // Don't block — inject warning so the model sees it
             call._loopWarning = `⚠️ You have called "${toolName}" ${toolCallTracker[toolName]} times. STOP repeating this tool with parameter variations and try a DIFFERENT approach.`;
           }
         }
