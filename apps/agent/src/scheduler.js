@@ -507,6 +507,15 @@ DO NOT contact third parties.`,
                         console.log('[Scheduler] Nightly Backup Result:', result);
                     } catch (err) {
                         console.error('[Scheduler] Nightly Backup Failed:', err);
+                        if (this.agent.notifications) {
+                            this.agent.notifications.create({
+                                type: 'backup_failed',
+                                severity: 'error',
+                                title: 'Nightly backup failed',
+                                message: `The scheduled backup failed: ${err.message}`,
+                                metadata: { error: err.message, link: '/system' }
+                            });
+                        }
                         result = { error: err.message };
                         throw err;
                     }

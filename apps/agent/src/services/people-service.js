@@ -115,6 +115,15 @@ class PeopleService {
             whatsappContacts = res.data || [];
         } catch (e) {
             console.error('[People] Sync failed to fetch contacts:', e.message);
+            if (this.agent.notifications) {
+                this.agent.notifications.create({
+                    type: 'sync_failed',
+                    severity: 'warning',
+                    title: 'WhatsApp contacts sync failed',
+                    message: `Failed to fetch WhatsApp contacts: ${e.message}`,
+                    metadata: { error: e.message, link: '/people' }
+                });
+            }
             throw new Error('Failed to fetch WhatsApp contacts');
         }
 
@@ -195,6 +204,15 @@ class PeopleService {
             statusRes = res.data || { connections: [] };
         } catch (e) {
             console.error('[People] Slack sync failed to fetch status:', e.message);
+            if (this.agent.notifications) {
+                this.agent.notifications.create({
+                    type: 'sync_failed',
+                    severity: 'warning',
+                    title: 'Slack people sync failed',
+                    message: `Failed to fetch Slack status: ${e.message}`,
+                    metadata: { error: e.message, link: '/people' }
+                });
+            }
             throw new Error('Failed to fetch Slack status. Is Slack connected?');
         }
 
