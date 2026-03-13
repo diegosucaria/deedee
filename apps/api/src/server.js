@@ -45,7 +45,21 @@ app.use('/v1/skills', require('./routes/skills'));
 app.use('/v1/browser-secrets', require('./routes/secrets'));
 app.use('/v1/mcp', require('./routes/mcp'));
 
-// BETTER: Add to apps/api/src/dashboard.js if it proxies to agent.
+// --- Socket.io Proxy to Interfaces ---
+// Proxies WebSocket + HTTP transport directly to interfaces:5000.
+// This bypasses the Next.js rewrite layer (which can't handle WS upgrades)
+// and avoids Traefik forward-auth CSRF cookie spam from polling.
+const { createProxyMiddleware } = require('http-proxy-middleware');
+const INTERFACES_URL = process.env.INTERFACES_URL || 'http://interfaces:5000';
+
+const socketProxy = createProxyMiddleware({
+    target: INTERFACES_URL,
+    ws: true,
+    changeOrigin: true,
+    pathFilter: '/socket.io',
+});
+app.use(socketProxy);
+
 const http = require('http');
 // Protected Log Stream
 app.get('/v1/logs/:container', authMiddleware, (req, res) => {
@@ -114,7 +128,10 @@ app.get('/v1/logs/:container', authMiddleware, (req, res) => {
 });
 
 if (require.main === module) {
-    app.listen(port, () => {
+    const server = http.createServer(app);
+    // Attach socket.io proxy to handle WebSocket upgrade requests
+    server.on('upgrade', socketProxy.upgrade);
+    server.listen(port, () => {
         console.log(`API Service listening on port ${port}`);
     });
 }

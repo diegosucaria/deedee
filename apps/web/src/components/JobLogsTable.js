@@ -60,7 +60,7 @@ export default function JobLogsTable() {
 
     useEffect(() => {
         loadLogs();
-        const interval = setInterval(loadLogs, 10000); // Poll every 10s
+        const interval = setInterval(loadLogs, 30000);
         return () => clearInterval(interval);
     }, [page]); // Reload when page changes
 

@@ -24,7 +24,7 @@ export default function WhatsAppSettings() {
 
     useEffect(() => {
         fetchStatus();
-        const interval = setInterval(fetchStatus, 3000);
+        const interval = setInterval(fetchStatus, 30000);
         return () => clearInterval(interval);
     }, [fetchStatus]);
 

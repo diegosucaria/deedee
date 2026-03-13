@@ -3,7 +3,8 @@ import { useState, useEffect, useRef } from 'react';
 import { Send, Loader2, X, MessageSquare } from 'lucide-react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import io from 'socket.io-client';
+import { io } from 'socket.io-client';
+import { getSocketUrl } from '@/hooks/useSocket';
 
 export default function VaultChat({ vaultId, isOpen = true, onClose }) {
     const [messages, setMessages] = useState([]);
@@ -21,12 +22,10 @@ export default function VaultChat({ vaultId, isOpen = true, onClose }) {
     useEffect(() => {
         if (!isOpen) return;
 
-        // Connect Socket
-        // Use relative URL to support Proxies (HTTPS/Nginx)
-        const socket = io(undefined, {
-            transports: ['websocket', 'polling'], // Prefer websocket
+        const socket = io(getSocketUrl(), {
+            transports: ['websocket', 'polling'],
             path: '/socket.io',
-            query: { chatId } // optional, identifying as vault chat
+            query: { chatId },
         });
 
         socket.on('connect', () => {

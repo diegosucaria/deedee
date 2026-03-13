@@ -2,10 +2,11 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { io } from 'socket.io-client';
+import { getSocketUrl } from '@/hooks/useSocket';
 import ReactMarkdown from 'react-markdown';
 import { Send, Play, Wifi, WifiOff, Mic, Image as ImageIcon, X, Loader2, StopCircle, Box, ChevronDown, Activity, DollarSign, Wallet, Code2, CheckCircle2, Paperclip, FileIcon, Menu } from 'lucide-react';
 import clsx from 'clsx';
-import { getSession, getUserLocation, getVaults, updateSession, uploadChatFile, getAgentConfig, rewindChat, forkChat, stopChat } from '../../actions'; // Added stopChat
+import { getSession, getUserLocation, getVaults, updateSession, uploadChatFile, getAgentConfig, rewindChat, forkChat, stopChat } from '../../actions';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
 
 
@@ -315,11 +316,11 @@ export default function ChatSessionPage({ params }) {
         let isMounted = true;
 
         const initSocket = () => {
-            newSocket = io({
+            newSocket = io(getSocketUrl(), {
                 path: '/socket.io',
                 reconnectionAttempts: 10,
-                transports: ['polling'], // Force polling to avoid WS Upgrade issues behind proxy
-                query: { chatId } // Identify session
+                transports: ['websocket', 'polling'],
+                query: { chatId },
             });
 
             newSocket.on('connect_error', (err) => {

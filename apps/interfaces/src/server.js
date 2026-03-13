@@ -28,14 +28,30 @@ app.use(express.json({ limit: '50mb' }));
 
 // --- SOCKET.IO ---
 
-// Auth Middleware to Identify Trusted Producers (Agent/Browser)
+// Auth Middleware — two paths:
+// 1. Token auth: internal services (agent, supervisor) send DEEDEE_API_TOKEN → trusted producer
+// 2. Origin auth: browser clients come from an allowed origin (behind Traefik forward-auth)
+// All other connections are rejected.
+const ALLOWED_ORIGINS = (process.env.ALLOWED_SOCKET_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
+
 io.use((socket, next) => {
+  // Path 1: Token auth (internal services)
   const token = socket.handshake.auth?.token || socket.handshake.query?.token;
   if (token && token === process.env.DEEDEE_API_TOKEN) {
     socket.isTrusted = true;
-    console.log(`[Interfaces] Trusted Socket Connected: ${socket.id} (Agent/Browser)`);
+    console.log(`[Interfaces] Trusted producer connected: ${socket.id}`);
+    return next();
   }
-  next();
+
+  // Path 2: Origin auth (browser clients behind forward-auth)
+  const origin = socket.handshake.headers?.origin;
+  if (origin && ALLOWED_ORIGINS.includes(origin)) {
+    console.log(`[Interfaces] Browser client connected: ${socket.id} (origin: ${origin})`);
+    return next();
+  }
+
+  console.warn(`[Interfaces] Rejected socket: ${socket.id} (origin: ${origin || 'none'}, token: ${token ? 'invalid' : 'none'})`);
+  return next(new Error('authentication_error'));
 });
 
 io.on("connection", (socket) => {

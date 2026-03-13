@@ -174,7 +174,7 @@ export default function SubAgentsTable() {
 
     useEffect(() => {
         loadTasks(page);
-        const interval = setInterval(() => loadTasks(page), 10000);
+        const interval = setInterval(() => loadTasks(page), 30000);
         return () => clearInterval(interval);
     }, [page]);
 

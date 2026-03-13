@@ -83,6 +83,7 @@ services:
     environment:
       - NODE_ENV=production
       - AGENT_URL=http://agent:3000
+      - INTERFACES_URL=http://interfaces:5000
       - PORT=3001
       # DEEDEE_API_TOKEN injected by Balena
     ports:
