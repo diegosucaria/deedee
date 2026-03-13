@@ -56,9 +56,8 @@ const socketProxy = createProxyMiddleware({
     target: INTERFACES_URL,
     ws: true,
     changeOrigin: true,
-    pathFilter: '/socket.io',
 });
-app.use(socketProxy);
+app.use('/socket.io', socketProxy);
 
 const http = require('http');
 // Protected Log Stream
