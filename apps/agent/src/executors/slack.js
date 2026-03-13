@@ -85,6 +85,45 @@ class SlackExecutor extends BaseExecutor {
                 }
             }
 
+            case 'resolveSlackUser': {
+                const { name, workspace } = args;
+                console.log(`[SlackExecutor] Resolving Slack user "${name}" (workspace: ${workspace || 'all'})`);
+
+                try {
+                    const res = await axios.get(`${interfacesUrl}/slack/resolve-user`, {
+                        params: { name: encodeURIComponent(name), teamId: workspace },
+                        headers,
+                    });
+                    const matches = res.data.matches || [];
+                    if (matches.length === 0) {
+                        return {
+                            success: true,
+                            matches: [],
+                            count: 0,
+                            hint: `No Slack user found matching "${name}". Try a different spelling or check the workspace.`,
+                        };
+                    }
+                    return {
+                        success: true,
+                        matches: matches.map(m => ({
+                            userId: m.id,
+                            name: m.name,
+                            displayName: m.displayName,
+                            email: m.email,
+                            workspace: m.workspace,
+                            workspaceName: m.workspaceName,
+                        })),
+                        count: matches.length,
+                        hint: `Use the userId (e.g., "from:@${matches[0].id}") in searchSlack queries, or pass the userId to readSlackHistory to read their DM.`,
+                    };
+                } catch (err) {
+                    return {
+                        success: false,
+                        error: err.response?.data?.error || err.message,
+                    };
+                }
+            }
+
             case 'getSlackMonitoredChannels': {
                 console.log('[SlackExecutor] Getting monitored channels from Interfaces API');
                 try {

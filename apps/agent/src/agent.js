@@ -1389,7 +1389,9 @@ class Agent {
 
 
       const MAX_LOOPS = parseInt(process.env.MAX_TOOL_LOOPS || '10');
+      const MAX_SAME_TOOL_CALLS = 3; // Max times the same tool can be called before warning
       let loopCount = 0;
+      const toolCallTracker = {}; // toolName -> count (tracks repeated tool usage)
 
       while (functionCalls && functionCalls.length > 0) {
         // CHECK STOP FLAG
@@ -1446,6 +1448,12 @@ class Agent {
           }
         }
         functionCalls = uniqueCalls;
+
+        // LOOP DETECTION: Track per-tool call counts and warn on excessive repetition
+        for (const call of functionCalls) {
+          const toolName = call.name || '';
+          toolCallTracker[toolName] = (toolCallTracker[toolName] || 0) + 1;
+        }
 
         const hasBrowserTools = functionCalls.some(c => c.name && c.name.includes('browser_'));
         if (hasBrowserTools) {
@@ -1582,6 +1590,14 @@ class Agent {
                 link: chatId ? `/system/history?chatId=${encodeURIComponent(chatId)}` : '/system/history',
               }
             });
+          }
+
+          // LOOP DETECTION: Inject warning if a tool has been called too many times
+          const toolCallCount = toolCallTracker[executionName] || 0;
+          if (toolCallCount >= MAX_SAME_TOOL_CALLS && typeof dbToolResult === 'object' && dbToolResult !== null) {
+            const overuseMsg = `⚠️ LOOP DETECTED: You have called "${executionName}" ${toolCallCount} times this turn. STOP repeating this tool with different parameter variations. Use the information you already have or try a DIFFERENT tool/approach. If searching for a person, use resolveSlackUser first.`;
+            console.warn(`${logPrefix} Loop detection: ${executionName} called ${toolCallCount} times`);
+            dbToolResult = { ...dbToolResult, _loopWarning: overuseMsg };
           }
 
           // Build API Payload (Send CLEAN result to Model)

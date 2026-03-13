@@ -740,7 +740,7 @@ const toolDefinitions = [
       {
         name: "searchSlack",
         category: "slack",
-        description: "Search Slack messages across channels and DMs. WARNING: If the user asks to summarize messages, find tasks for the day, or asks 'what happened yesterday', DO NOT use this tool. This tool is for SPECIFIC keyword lookups ONLY. Instead, use getSlackMonitoredChannels and readSlackHistory to scan their important conversations. You MUST use Slack's advanced search syntax to filter results efficiently and avoid hitting limits. Examples: 'from:@user', 'in:#channel', 'has:link', 'after:2024-01-01', or simply 'project deadline'. Do NOT just search for a generic name like 'Sean' multiple times; instead search 'from:@Sean'.",
+        description: "Search Slack messages across channels and DMs. WARNING: If the user asks to summarize messages, find tasks for the day, or asks 'what happened yesterday', DO NOT use this tool. This tool is for SPECIFIC keyword lookups ONLY. Instead, use getSlackMonitoredChannels and readSlackHistory to scan their important conversations. You MUST use Slack's advanced search syntax to filter results efficiently and avoid hitting limits. Examples: 'from:@U01P1A8BUCQ', 'in:#channel', 'has:link', 'after:2024-01-01'. IMPORTANT: When filtering by person, ALWAYS call resolveSlackUser FIRST to get their exact userId, then use 'from:@USERID' syntax. NEVER guess usernames or try multiple name variations.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -789,6 +789,19 @@ const toolDefinitions = [
           type: "OBJECT",
           properties: {},
           required: []
+        }
+      },
+      {
+        name: "resolveSlackUser",
+        category: "slack",
+        description: "Resolve a person's name to their Slack user ID and username. ALWAYS call this FIRST when the user asks about messages from a specific person (e.g., 'what did Sean say?'). Returns the user's Slack ID, real name, display name, and email so you can use their exact ID in searchSlack queries (e.g., 'from:@U01P1A8BUCQ') or readSlackHistory. This avoids guessing usernames.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            name: { type: "STRING", description: "The name (or partial name) to search for (e.g., 'Sean', 'alice')." },
+            workspace: { type: "STRING", description: "Optional. The specific workspace team ID to search in. If omitted, searches all workspaces." }
+          },
+          required: ["name"]
         }
       },
       {
