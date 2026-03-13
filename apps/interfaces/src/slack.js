@@ -238,7 +238,7 @@ class SlackConnection {
                     displayName: user.profile?.display_name || '',
                     email: user.profile?.email || '',
                     title: user.profile?.title || '',
-                    avatar: user.profile?.image_72 || '',
+                    avatar: user.profile?.image_192 || user.profile?.image_72 || '',
                 });
             }
             cursor = res.response_metadata?.next_cursor;

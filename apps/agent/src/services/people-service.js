@@ -203,6 +203,7 @@ class PeopleService {
             }
 
             stats.total += slackUsers.length;
+            const avatarQueue = []; // Collect avatar downloads to process in batches
 
             for (const user of slackUsers) {
                 if (!user.name || !user.id) {
@@ -223,9 +224,7 @@ class PeopleService {
                                 metadata.slack_avatar_url = user.avatar;
                                 this.agent.db.updatePerson(existingPersonId, { metadata });
                             }
-                            this.cacheSlackAvatar(existingPersonId, user.avatar).catch(e =>
-                                console.error(`[People] Slack avatar backfill fail for ${existingPersonId}:`, e.message)
-                            );
+                            avatarQueue.push({ personId: existingPersonId, url: user.avatar });
                         }
                     }
                     stats.skipped++;
@@ -251,13 +250,10 @@ class PeopleService {
                     this.agent.db.updatePerson(existingId, { identifiers, metadata });
                     slackIdToPersonId.set(user.id, existingId);
 
-                    // Cache Slack avatar if person doesn't have one yet
                     if (user.avatar) {
                         const avatarPath = path.join(process.cwd(), 'data', 'avatars', `${existingId}.jpg`);
                         if (!fs.existsSync(avatarPath)) {
-                            this.cacheSlackAvatar(existingId, user.avatar).catch(e =>
-                                console.error(`[People] Slack avatar cache fail for ${existingId}:`, e.message)
-                            );
+                            avatarQueue.push({ personId: existingId, url: user.avatar });
                         }
                     }
 
@@ -280,15 +276,28 @@ class PeopleService {
                     }
                 });
 
-                // Cache Slack avatar in background
                 if (user.avatar) {
-                    this.cacheSlackAvatar(personId, user.avatar).catch(e =>
-                        console.error(`[People] Slack avatar cache fail for ${personId}:`, e.message)
-                    );
+                    avatarQueue.push({ personId, url: user.avatar });
                 }
                 slackIdToPersonId.set(user.id, personId);
                 nameToPersonId.set(nameKey, personId);
                 stats.added++;
+            }
+
+            // Download avatars in batches of 5 to avoid overwhelming the CDN
+            if (avatarQueue.length > 0) {
+                console.log(`[People] Downloading ${avatarQueue.length} Slack avatars in batches...`);
+                const BATCH_SIZE = 5;
+                for (let i = 0; i < avatarQueue.length; i += BATCH_SIZE) {
+                    const batch = avatarQueue.slice(i, i + BATCH_SIZE);
+                    const results = await Promise.allSettled(
+                        batch.map(({ personId, url }) => this.cacheSlackAvatar(personId, url))
+                    );
+                    const succeeded = results.filter(r => r.status === 'fulfilled' && r.value).length;
+                    const failed = results.filter(r => r.status === 'rejected').length;
+                    if (failed > 0) console.warn(`[People] Avatar batch ${Math.floor(i / BATCH_SIZE) + 1}: ${succeeded} ok, ${failed} failed`);
+                }
+                console.log(`[People] Avatar download complete.`);
             }
         }
 
