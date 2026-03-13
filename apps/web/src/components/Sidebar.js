@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { MessageSquare, ClipboardList, Database, Activity, Target, Clock, Tags, Terminal, PieChart, ChevronLeft, ChevronRight, Share2, Settings, Mic, Lock, Users, Disc, ShieldAlert } from 'lucide-react';
+import { MessageSquare, ClipboardList, Database, Activity, Terminal, ChevronLeft, ChevronRight, Settings, Mic, Users, Disc, ShieldAlert } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useState } from 'react';

@@ -1,7 +1,7 @@
 'use client';
 
 import { useCallback } from 'react';
-import { RefreshCw, ClipboardList } from 'lucide-react';
+import { RefreshCw } from 'lucide-react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import JobLogsTable from '@/components/JobLogsTable';
 import ActiveJobsTable from '@/components/ActiveJobsTable';
@@ -24,12 +24,6 @@ export default function TasksClient() {
 
     return (
         <div className="space-y-6 md:space-y-8">
-            <h1 className="text-2xl md:text-3xl font-bold mb-6 md:mb-8 flex items-center gap-3 text-white">
-                <ClipboardList className="h-7 w-7 md:h-8 md:w-8 text-indigo-400" />
-                Scheduler & Tasks
-            </h1>
-
-            {/* Tabs */}
             <ScrollableTabs
                 tabs={[
                     { id: 'active', label: 'Active Scheduled Jobs' },

@@ -48,8 +48,8 @@ export default async function HistoryPage({ searchParams }) {
             <header className="mb-8 w-full">
                 <div className="flex items-center justify-between flex-wrap gap-4">
                     <div>
-                        <h1 className="text-3xl font-bold tracking-tight text-white mb-2">Message History</h1>
-                        <p className="text-zinc-400">
+                        <h2 className="text-xl font-semibold text-white mb-1">Message History</h2>
+                        <p className="text-zinc-400 text-sm">
                             {view === 'messages' ? `Raw log of database interactions (Last ${limit}).` : 'Compressed summaries of past conversations.'}
                         </p>
                     </div>
@@ -58,17 +58,17 @@ export default async function HistoryPage({ searchParams }) {
                     )}
                 </div>
 
-                {/* Tabs */}
-                <div className="flex gap-4 mt-6 border-b border-zinc-800">
+                {/* Sub-tabs */}
+                <div className="flex gap-1 mt-6 border-b border-zinc-800">
                     <Link
                         href="/system/history?view=messages"
-                        className={`pb-2 text-sm font-medium transition-colors ${view === 'messages' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                        className={`px-4 py-3 text-sm font-medium transition-all rounded-t-lg relative bottom-[-1px] ${view === 'messages' ? 'text-indigo-400 border-b-2 border-indigo-500 bg-zinc-900/50' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900/30'}`}
                     >
                         Messages
                     </Link>
                     <Link
                         href="/system/history?view=summaries"
-                        className={`pb-2 text-sm font-medium transition-colors ${view === 'summaries' ? 'text-indigo-400 border-b-2 border-indigo-400' : 'text-zinc-500 hover:text-zinc-300'}`}
+                        className={`px-4 py-3 text-sm font-medium transition-all rounded-t-lg relative bottom-[-1px] ${view === 'summaries' ? 'text-indigo-400 border-b-2 border-indigo-500 bg-zinc-900/50' : 'text-zinc-500 hover:text-zinc-300 hover:bg-zinc-900/30'}`}
                     >
                         Summaries (Memory)
                     </Link>

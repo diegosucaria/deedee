@@ -8,7 +8,7 @@ import BackupSettings from '@/components/BackupSettings';
 import EnvVariables from '@/components/EnvVariables';
 import VoiceSelector from '@/components/VoiceSelector';
 import ScrollableTabs from '@/components/ScrollableTabs';
-
+import PageShell from '@/components/PageShell';
 import InterfacesClient from '@/components/InterfacesClient';
 
 import { Suspense } from 'react';
@@ -96,25 +96,16 @@ function SettingsContent() {
     ];
 
     return (
-        <div className="flex h-screen flex-col bg-zinc-950 text-zinc-200 p-6 md:p-12 overflow-y-auto w-full">
-            <header className="mb-8 max-w-3xl mx-auto w-full">
-                <h1 className="text-3xl font-bold tracking-tight text-white mb-2 flex items-center gap-3">
-                    <Settings className="w-8 h-8 text-zinc-400" />
-                    Agent Settings
-                </h1>
-                <p className="text-zinc-400">Configure global behaviors and system preferences.</p>
+        <PageShell icon={Settings} title="Agent Settings" subtitle="Configure global behaviors and system preferences.">
+            <ScrollableTabs
+                tabs={tabs}
+                activeTab={activeTab}
+                onChange={handleTabChange}
+                variant="pill"
+                className="mb-8"
+            />
 
-                {/* Tabs */}
-                <ScrollableTabs
-                    tabs={tabs}
-                    activeTab={activeTab}
-                    onChange={handleTabChange}
-                    variant="pill"
-                    className="mt-6"
-                />
-            </header>
-
-            <section className="max-w-3xl mx-auto w-full space-y-8 pb-20">
+            <section className="max-w-3xl space-y-8">
                 {/* General Tab */}
                 {activeTab === 'general' && (
                     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
@@ -405,7 +396,7 @@ function SettingsContent() {
                     </div>
                 )}
             </section>
-        </div>
+        </PageShell>
     );
 }
 
