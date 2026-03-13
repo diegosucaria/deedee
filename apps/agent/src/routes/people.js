@@ -16,7 +16,8 @@ const createPeopleRouter = (agent) => {
                 offset: offset ? parseInt(offset) : undefined,
                 query: search
             });
-            res.json(people);
+            const total = agent.db.countPeople();
+            res.json({ people, total });
         } catch (error) {
             console.error('[People] List Error:', error);
             res.status(500).json({ error: error.message });
@@ -77,14 +78,24 @@ const createPeopleRouter = (agent) => {
         // Lazy Load logic
         try {
             person = agent.db.getPerson(req.params.id);
+
+            // Try WhatsApp first
             if (person && person.phone) {
                 const cleanPhone = person.phone.replace(/\D/g, ''); // Ensure digits only
                 const jid = `${cleanPhone}@s.whatsapp.net`;
 
-                // Attempt fetch
                 const webPath = await peopleService.cacheAvatar(req.params.id, jid);
                 if (webPath) {
                     console.log(`[People] Lazy-loaded avatar for ${req.params.id}`);
+                    return serve();
+                }
+            }
+
+            // Try Slack avatar
+            if (person && person.metadata?.slack_avatar_url) {
+                const webPath = await peopleService.cacheSlackAvatar(req.params.id, person.metadata.slack_avatar_url);
+                if (webPath) {
+                    console.log(`[People] Lazy-loaded Slack avatar for ${req.params.id}`);
                     return serve();
                 }
             }

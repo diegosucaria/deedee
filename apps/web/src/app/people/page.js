@@ -10,6 +10,7 @@ import PageShell from '@/components/PageShell';
 
 export default function PeoplePage() {
     const [people, setPeople] = useState([]);
+    const [totalCount, setTotalCount] = useState(0);
     const [loading, setLoading] = useState(true);
     const [query, setQuery] = useState('');
     const [debouncedQuery, setDebouncedQuery] = useState('');
@@ -44,7 +45,13 @@ export default function PeoplePage() {
             offset: page * LIMIT,
             search: debouncedQuery
         });
-        setPeople(res || []);
+        if (res && res.people) {
+            setPeople(res.people);
+            setTotalCount(res.total ?? 0);
+        } else {
+            // Fallback for old API shape (array)
+            setPeople(res || []);
+        }
         setLoading(false);
     };
 
@@ -102,7 +109,7 @@ export default function PeoplePage() {
     };
 
     return (
-        <PageShell icon={Users} title="People" subtitle="Manage your contacts and relationships.">
+        <PageShell icon={Users} title="People" subtitle={`Manage your contacts and relationships.${totalCount > 0 ? ` ${totalCount} total.` : ''}`}>
             {/* Actions */}
             <div className="flex flex-wrap gap-2 mb-6">
                 <button

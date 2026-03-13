@@ -87,12 +87,15 @@ describe('People Feature Integration', () => {
         expect(person.name).toBe('John Doe');
     });
 
-    test('GET /internal/people lists people', async () => {
+    test('GET /internal/people lists people with total count', async () => {
         const res = await request(app).get('/internal/people');
         expect(res.statusCode).toBe(200);
-        expect(Array.isArray(res.body)).toBe(true);
-        expect(res.body.length).toBeGreaterThan(0);
-        const john = res.body.find(p => p.name === 'John Doe');
+        expect(res.body).toHaveProperty('people');
+        expect(res.body).toHaveProperty('total');
+        expect(Array.isArray(res.body.people)).toBe(true);
+        expect(res.body.people.length).toBeGreaterThan(0);
+        expect(typeof res.body.total).toBe('number');
+        const john = res.body.people.find(p => p.name === 'John Doe');
         expect(john).toBeDefined();
         expect(john.name).toBe('John Doe');
     });

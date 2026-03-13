@@ -230,14 +230,27 @@ class PeopleService {
                     const identifiers = existing.identifiers || {};
                     identifiers.slack = user.id;
                     identifiers.slack_team = conn.teamId;
-                    this.agent.db.updatePerson(existingId, { identifiers });
+                    const metadata = existing.metadata || {};
+                    if (user.avatar) metadata.slack_avatar_url = user.avatar;
+                    this.agent.db.updatePerson(existingId, { identifiers, metadata });
                     existingSlackIds.add(user.id);
+
+                    // Cache Slack avatar if person doesn't have one yet
+                    if (user.avatar) {
+                        const avatarPath = path.join(process.cwd(), 'data', 'avatars', `${existingId}.jpg`);
+                        if (!fs.existsSync(avatarPath)) {
+                            this.cacheSlackAvatar(existingId, user.avatar).catch(e =>
+                                console.error(`[People] Slack avatar cache fail for ${existingId}:`, e.message)
+                            );
+                        }
+                    }
+
                     stats.merged++;
                     continue;
                 }
 
                 // Create new person
-                this.agent.db.createPerson({
+                const personId = this.agent.db.createPerson({
                     name: user.name,
                     source: 'slack_sync',
                     relationship: user.title || 'coworker',
@@ -246,9 +259,17 @@ class PeopleService {
                         synced_at: new Date().toISOString(),
                         slack_display_name: user.displayName,
                         slack_email: user.email,
-                        slack_team_name: conn.teamName
+                        slack_team_name: conn.teamName,
+                        slack_avatar_url: user.avatar || ''
                     }
                 });
+
+                // Cache Slack avatar in background
+                if (user.avatar) {
+                    this.cacheSlackAvatar(personId, user.avatar).catch(e =>
+                        console.error(`[People] Slack avatar cache fail for ${personId}:`, e.message)
+                    );
+                }
                 existingSlackIds.add(user.id);
                 nameToPersonId.set(nameKey, user.id);
                 stats.added++;
@@ -332,6 +353,21 @@ Output pure JSON only.`;
 
     // --- Profile Pictures ---
 
+    async cacheSlackAvatar(personId, imageUrl) {
+        if (!imageUrl) return null;
+        try {
+            const avatarsDir = path.join(process.cwd(), 'data', 'avatars');
+            if (!fs.existsSync(avatarsDir)) fs.mkdirSync(avatarsDir, { recursive: true });
+
+            const dest = path.join(avatarsDir, `${personId}.jpg`);
+            await this._downloadImage(imageUrl, dest);
+            return `/avatars/${personId}.jpg`;
+        } catch (e) {
+            console.error(`[People] Slack avatar cache failed for ${personId}:`, e.message);
+            return null;
+        }
+    }
+
     async cacheAvatar(personId, jid) {
         if (!jid) return null;
 
@@ -361,11 +397,18 @@ Output pure JSON only.`;
 
     _downloadImage(url, dest) {
         return new Promise((resolve, reject) => {
-            const file = fs.createWriteStream(dest);
             https.get(url, (response) => {
+                if (response.statusCode < 200 || response.statusCode >= 300) {
+                    response.resume(); // Drain response to free socket
+                    return reject(new Error(`HTTP ${response.statusCode} fetching avatar`));
+                }
+                const file = fs.createWriteStream(dest);
                 response.pipe(file);
                 file.on('finish', () => {
                     file.close(resolve);
+                });
+                file.on('error', (err) => {
+                    fs.unlink(dest, () => reject(err));
                 });
             }).on('error', (err) => {
                 fs.unlink(dest, () => reject(err));
