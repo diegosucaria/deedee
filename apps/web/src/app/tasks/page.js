@@ -1,11 +1,13 @@
+import { ClipboardList } from 'lucide-react';
+import PageShell from '@/components/PageShell';
 import TasksClient from '@/components/TasksClient';
 
 export const dynamic = 'force-dynamic';
 
 export default function TasksPage() {
     return (
-        <div className="p-4 md:p-8 max-w-6xl mx-auto">
+        <PageShell icon={ClipboardList} title="Scheduler & Tasks" subtitle="Manage scheduled jobs, watchers, and sub-agents.">
             <TasksClient />
-        </div>
+        </PageShell>
     );
 }

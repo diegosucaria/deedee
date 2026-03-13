@@ -1,7 +1,7 @@
 'use client';
 
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
-import { Target, Database, Tags, Wrench, Book, Zap } from 'lucide-react';
+import { Target, Database, Tags, Wrench, Book, Zap, KeyRound } from 'lucide-react';
 import GoalList from '@/components/GoalList';
 import MemoryList from '@/components/MemoryList';
 import AliasList from '@/components/AliasList';
@@ -28,7 +28,7 @@ export default function BrainTabs({ goals, facts, aliases, tools, servers }) {
         { id: 'aliases', label: 'Aliases', icon: Tags },
         { id: 'tools', label: 'Tools & MCP', icon: Wrench },
         { id: 'skills', label: 'Skills', icon: Zap },
-        { id: 'secrets', label: 'Browser Secrets', icon: Wrench },
+        { id: 'secrets', label: 'Browser Secrets', icon: KeyRound },
     ];
 
     return (

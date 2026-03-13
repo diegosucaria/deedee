@@ -8,6 +8,7 @@ import clsx from 'clsx';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
 import { useSocket } from '../../hooks/useSocket';
 import ScrollableTabs from '@/components/ScrollableTabs';
+import PageShell from '@/components/PageShell';
 
 // Wrapper to handle Suspense boundary for useSearchParams
 export default function AutopilotPageWrapper() {
@@ -46,6 +47,8 @@ function AutopilotPage() {
 
     const { setCollapsed } = useChatSidebar();
     const { socket } = useSocket();
+    const [mounted, setMounted] = useState(false);
+    useEffect(() => { setMounted(true); }, []);
 
     useEffect(() => {
         setCollapsed(false);
@@ -200,52 +203,39 @@ function AutopilotPage() {
     };
 
     return (
-        <div className="flex flex-col h-screen bg-zinc-950 text-white p-6 overflow-hidden">
-            <header className="flex items-center justify-between mb-8">
-                <div className="flex items-center gap-4">
-                    <div>
-                        <h1 className="text-2xl font-bold flex items-center gap-2">
-                            <ShieldAlert className="w-8 h-8 text-blue-500" />
-                            Autopilot Control
-                        </h1>
-                        <div className="flex items-center gap-3 mt-1">
-                            <p className="text-zinc-400">Assisted conversation management</p>
-
-                            {/* Socket Status */}
-                            {socket && (
-                                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-zinc-900 border border-zinc-800" title={socket.connected ? "Real-time updates active" : "Disconnected"}>
-                                    <div className={clsx("w-1.5 h-1.5 rounded-full transition-colors", socket.connected ? "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.4)]" : "bg-red-500")} />
-                                    <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">
-                                        {socket.connected ? 'Live' : 'Offline'}
-                                    </span>
-                                </div>
-                            )}
-
-                            <button
-                                onClick={() => loadData(false)}
-                                disabled={loading}
-                                className="p-1 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded transition-colors disabled:opacity-50"
-                                title="Refresh Data"
-                            >
-                                <RefreshCw className={clsx("w-4 h-4", loading && "animate-spin")} />
-                            </button>
-                        </div>
-                    </div>
+        <PageShell icon={ShieldAlert} title="Autopilot Control" subtitle="Assisted conversation management.">
+            <div className="flex items-center gap-3 mb-6">
+                {/* Socket Status */}
+                <div className="flex items-center gap-1.5 px-2 py-0.5 rounded-full bg-zinc-900 border border-zinc-800" title={mounted && socket?.connected ? "Real-time updates active" : "Disconnected"}>
+                    <div className={clsx("w-1.5 h-1.5 rounded-full transition-colors", mounted && socket?.connected ? "bg-emerald-500 shadow-[0_0_6px_rgba(16,185,129,0.4)]" : "bg-red-500")} />
+                    <span className="text-[10px] uppercase font-bold tracking-wider text-zinc-500">
+                        {mounted && socket?.connected ? 'Live' : 'Offline'}
+                    </span>
                 </div>
 
-                <ScrollableTabs
-                    tabs={[
-                        { id: 'drafts', label: `Drafts (${drafts.length})`, icon: MessageSquare },
-                        { id: 'settings', label: 'Settings', icon: Settings },
-                        { id: 'style', label: 'Style', icon: Brain },
-                    ]}
-                    activeTab={activeTab}
-                    onChange={setActiveTab}
-                    variant="pill"
-                />
-            </header>
+                <button
+                    onClick={() => loadData(false)}
+                    disabled={loading}
+                    className="p-1 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded transition-colors disabled:opacity-50"
+                    title="Refresh Data"
+                >
+                    <RefreshCw className={clsx("w-4 h-4", loading && "animate-spin")} />
+                </button>
+            </div>
 
-            <main className="flex-1 overflow-y-auto pr-2">
+            <ScrollableTabs
+                tabs={[
+                    { id: 'drafts', label: `Drafts (${drafts.length})`, icon: MessageSquare },
+                    { id: 'settings', label: 'Settings', icon: Settings },
+                    { id: 'style', label: 'Style', icon: Brain },
+                ]}
+                activeTab={activeTab}
+                onChange={setActiveTab}
+                variant="pill"
+                className="mb-8"
+            />
+
+            <div>
                 {activeTab === 'drafts' && (
                     <div className="space-y-4">
                         {loading && drafts.length === 0 && <div className="text-center text-zinc-500 mt-10"><Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" />Loading...</div>}
@@ -571,7 +561,7 @@ function AutopilotPage() {
                         </div>
                     </div>
                 )}
-            </main>
-        </div>
+            </div>
+        </PageShell>
     );
 }

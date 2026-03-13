@@ -4,7 +4,8 @@ import { useState, useEffect, useRef } from 'react';
 import { getVinylCrate, uploadVinylPhoto, updateVinyl, deleteVinyl as deleteVinylAction, reEnrichVinyl, retryEnrichVinyl, refreshVinylValue, getCrates, createCrate, updateCrate as updateCrateAction, deleteCrate as deleteCrateAction, getCrateVinyls, addVinylToCrate, removeVinylFromCrate } from '../actions';
 import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
-import { Upload, Disc3, Music, ExternalLink, Loader2, Search, X, AlertTriangle, Check, Pencil, Trash2, LayoutGrid, List, ArrowUpDown, RefreshCw, Plus, FolderPlus, TrendingUp, BookOpen, Sparkles, Camera } from 'lucide-react';
+import { Upload, Disc, Disc3, Music, ExternalLink, Loader2, Search, X, AlertTriangle, Check, Pencil, Trash2, LayoutGrid, List, ArrowUpDown, RefreshCw, Plus, FolderPlus, TrendingUp, BookOpen, Sparkles, Camera } from 'lucide-react';
+import PageShell from '@/components/PageShell';
 
 export default function DJCratePage() {
     const [vinyls, setVinyls] = useState([]);
@@ -243,14 +244,11 @@ export default function DJCratePage() {
     };
 
     return (
-        <div className="p-4 sm:p-6 md:p-10 max-w-7xl mx-auto space-y-4 sm:space-y-6">
-            {/* Header */}
+        <PageShell icon={Disc} title="DJ Crate" subtitle="Manage your vinyl collection.">
+            <div className="space-y-4 sm:space-y-6">
+            {/* Header Actions */}
             <div className="flex flex-col gap-3">
                 <div className="flex items-center justify-between">
-                    <h1 className="text-2xl sm:text-3xl font-bold tracking-tight text-foreground flex items-center gap-2 sm:gap-3">
-                        <Disc3 className="w-6 h-6 sm:w-8 sm:h-8 text-purple-400" />
-                        Vinyl Crate
-                    </h1>
                     <div className="flex items-center gap-2">
                         <span className="text-xs sm:text-sm font-medium bg-purple-500/10 text-purple-400 px-2 sm:px-3 py-1 rounded-full border border-purple-500/20">
                             {filteredVinyls.length}{searchQuery ? `/${vinyls.length}` : ''}
@@ -623,6 +621,7 @@ export default function DJCratePage() {
                 )}
             </AnimatePresence>
         </div>
+        </PageShell>
     );
 }
 
