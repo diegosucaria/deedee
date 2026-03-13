@@ -660,15 +660,31 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const waitUntil = args.waitUntil || 'domcontentloaded';
             clearRefs();
             rejectPendingWaiters(); // Cancel any pending network waiters from the previous page
-            await p.goto(args.url, { waitUntil, timeout: 30000 });
+
+            let timedOut = false;
+            try {
+                await p.goto(args.url, { waitUntil, timeout: 30000 });
+            } catch (err) {
+                if (err.name === 'TimeoutError') {
+                    // Page likely loaded but waitUntil condition (e.g. networkidle) wasn't met.
+                    // Fall through to snapshot the already-rendered page instead of failing.
+                    timedOut = true;
+                    console.warn(`[Browser] Navigation waitUntil="${waitUntil}" timed out for ${args.url}. Page may still be usable.`);
+                } else {
+                    throw err;
+                }
+            }
 
             const { snapshot, refs, title } = await getPageSnapshot(p, { compact: true });
             const refCount = Object.keys(refs).length;
+            const timeoutNote = timedOut
+                ? `⚠️ Navigation timed out waiting for "${waitUntil}" but the page appears loaded. Proceeding with current state.\n\n`
+                : '';
 
             return {
                 content: [{
                     type: "text",
-                    text: `Navigated to: ${title} (${args.url})\n\n` +
+                    text: `${timeoutNote}Navigated to: ${title} (${args.url})\n\n` +
                         `## Page Snapshot (${refCount} interactive elements)\n\n` +
                         `${snapshot}\n\n` +
                         `Use refs (e.g. browser_click ref=e1) to interact with elements.`,

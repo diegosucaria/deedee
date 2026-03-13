@@ -1388,8 +1388,14 @@ class Agent {
       let functionCalls = getFunctionCalls(response);
 
 
-      const MAX_LOOPS = parseInt(process.env.MAX_TOOL_LOOPS || '10');
+      const MAX_LOOPS_DEFAULT = parseInt(process.env.MAX_TOOL_LOOPS || '15');
+      const MAX_LOOPS_BROWSER = parseInt(process.env.MAX_TOOL_LOOPS_BROWSER || '25');
+      const MAX_SAME_TOOL_CALLS = 3; // Same tool name (non-browser) = likely stuck
+      const MAX_IDENTICAL_CALLS = 3; // Same tool + same args = definitely stuck
       let loopCount = 0;
+      let hasBrowserSession = false; // Escalate limit when browser tools are used
+      const toolCallTracker = {}; // toolName -> count (per-tool-name, non-browser only)
+      const identicalCallTracker = {}; // full signature -> count (any tool)
 
       while (functionCalls && functionCalls.length > 0) {
         // CHECK STOP FLAG
@@ -1403,8 +1409,9 @@ class Agent {
         }
 
         loopCount++;
-        if (loopCount > MAX_LOOPS) {
-          console.warn(`${logPrefix} Max tool loop limit reached (${MAX_LOOPS}). Breaking.`);
+        const maxLoops = hasBrowserSession ? MAX_LOOPS_BROWSER : MAX_LOOPS_DEFAULT;
+        if (loopCount > maxLoops) {
+          console.warn(`${logPrefix} Max tool loop limit reached (${maxLoops}). Breaking.`);
           await activeSendCallback(createAssistantMessage('I am stuck in a loop. Stopping now.'));
           break;
         }
@@ -1449,10 +1456,63 @@ class Agent {
 
         const hasBrowserTools = functionCalls.some(c => c.name && c.name.includes('browser_'));
         if (hasBrowserTools) {
+          hasBrowserSession = true; // Escalate loop limit for this session
           console.log(`${logPrefix} Processing ${functionCalls.length} tool calls sequentially (browser interactions).`);
         } else {
           console.log(`${logPrefix} Processing ${functionCalls.length} tool calls in parallel.`);
         }
+
+        // LOOP DETECTION: Two-tier approach
+        // Tier 1: Per-tool-name tracking for non-browser tools (catches searchPerson("diego"), searchPerson("Die"), etc.)
+        // Tier 2: Identical call tracking for ALL tools (catches exact same call repeated — definitely stuck)
+        // Browser tools are exempt from Tier 1 because they legitimately repeat (click, type, snapshot)
+        for (const call of functionCalls) {
+          const toolName = call.name || '';
+          const sig = `${toolName}:${JSON.stringify(call.args)}`;
+          const isBrowserTool = toolName.includes('browser_');
+
+          // Tier 1: Per-tool-name (non-browser only)
+          if (!isBrowserTool) {
+            toolCallTracker[toolName] = (toolCallTracker[toolName] || 0) + 1;
+          }
+
+          // Tier 2: Identical signature (all tools)
+          identicalCallTracker[sig] = (identicalCallTracker[sig] || 0) + 1;
+        }
+
+        // Check for loops and inject warnings into tool results
+        // Collect blocked sigs first, then filter — avoid mutating array mid-iteration
+        const sigsToBlock = new Set();
+        const loopWarnings = [];
+        for (const call of functionCalls) {
+          const toolName = call.name || '';
+          const sig = `${toolName}:${JSON.stringify(call.args)}`;
+          const isBrowserTool = toolName.includes('browser_');
+
+          // Tier 2: Identical call — hard block (any tool)
+          if (identicalCallTracker[sig] >= MAX_IDENTICAL_CALLS) {
+            console.warn(`${logPrefix} Stuck loop: ${toolName} called ${identicalCallTracker[sig]} times with identical args`);
+            sigsToBlock.add(sig);
+            loopWarnings.push(`"${toolName}" called ${identicalCallTracker[sig]} times with the exact same arguments`);
+          }
+          // Tier 1: Same tool name — warn via tool result (non-browser only)
+          else if (!isBrowserTool && toolCallTracker[toolName] >= MAX_SAME_TOOL_CALLS) {
+            console.warn(`${logPrefix} Loop detection: ${toolName} called ${toolCallTracker[toolName]} times`);
+            // Don't block — inject warning so the model sees it
+            call._loopWarning = `⚠️ You have called "${toolName}" ${toolCallTracker[toolName]} times. STOP repeating this tool with parameter variations and try a DIFFERENT approach.`;
+          }
+        }
+
+        // Apply Tier 2 blocks after iteration completes
+        if (sigsToBlock.size > 0) {
+          functionCalls = functionCalls.filter(c => !sigsToBlock.has(`${(c.name || '')}:${JSON.stringify(c.args)}`));
+        }
+
+        if (functionCalls.length === 0 && loopWarnings.length > 0) {
+          await activeSendCallback(createAssistantMessage(`Stopped: ${loopWarnings.join('; ')}. Try a different approach.`));
+          break;
+        }
+        if (functionCalls.length === 0) break;
         // console.log(JSON.stringify(functionCalls)); // PREVENT SPAM
         const toolNames = functionCalls.map(c => (c.name || '').replace('default_api:', '')).join(', ');
         await reportProgress(`Executing ${functionCalls.length} tools: ${toolNames}...`);
@@ -1582,6 +1642,11 @@ class Agent {
                 link: chatId ? `/system/history?chatId=${encodeURIComponent(chatId)}` : '/system/history',
               }
             });
+          }
+
+          // Inject loop warning into tool result so the model sees it
+          if (call._loopWarning && typeof dbToolResult === 'object' && dbToolResult !== null) {
+            dbToolResult = { ...dbToolResult, _loopWarning: call._loopWarning };
           }
 
           // Build API Payload (Send CLEAN result to Model)
