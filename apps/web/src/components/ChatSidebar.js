@@ -137,8 +137,14 @@ export default function ChatSidebar({ sessions = [] }) {
                 return;
             }
 
-            // Parse Date
-            const sessionDate = new Date(session.updated_at || session.created_at);
+            // Parse Date — SQLite CURRENT_TIMESTAMP returns UTC without timezone
+            // indicator (e.g. "2026-03-13 04:35:00"), which JS parses as local time.
+            // Normalize by appending 'Z' if no timezone info is present.
+            const raw = session.updated_at || session.created_at;
+            const normalized = (raw && !raw.endsWith('Z') && !raw.includes('+') && !raw.includes('T'))
+                ? raw.replace(' ', 'T') + 'Z'
+                : raw;
+            const sessionDate = new Date(normalized);
             const functionalSessionDate = getFunctionalDate(sessionDate);
 
             if (functionalSessionDate.getTime() === functionalToday.getTime()) {
