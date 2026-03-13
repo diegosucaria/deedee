@@ -121,6 +121,12 @@ class PeopleService {
         const stats = { added: 0, skipped: 0, total: whatsappContacts.length };
 
         for (const contact of whatsappContacts) {
+            // Skip group chats (JIDs ending in @g.us)
+            if (contact.id && contact.id.endsWith('@g.us')) {
+                stats.skipped++;
+                continue;
+            }
+
             const phone = contact.phone || contact.id.split('@')[0];
             const name = contact.name || contact.notify; // Prefer name (from phonebook), fallback to notify (public name)
 
@@ -159,6 +165,13 @@ class PeopleService {
             });
             existingPhones.add(phone);
             stats.added++;
+        }
+
+        // Cleanup any groups that slipped through (e.g. from prior syncs)
+        const removed = this.agent.db.deleteGroupContacts();
+        if (removed.length > 0) {
+            console.log(`[People] Cleaned up ${removed.length} group contacts`);
+            stats.skipped += removed.length;
         }
 
         return stats;
