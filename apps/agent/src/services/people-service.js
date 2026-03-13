@@ -167,10 +167,10 @@ class PeopleService {
     async syncFromSlack() {
         const existingPeople = this.agent.db.listPeople();
         // Build lookup maps for dedup
-        const existingSlackIds = new Set();
+        const slackIdToPersonId = new Map(); // slack ID → person ID (for dedup + avatar backfill)
         const nameToPersonId = new Map(); // lowercase name → person ID (for merging identifiers)
         for (const p of existingPeople) {
-            if (p.identifiers?.slack) existingSlackIds.add(p.identifiers.slack);
+            if (p.identifiers?.slack) slackIdToPersonId.set(p.identifiers.slack, p.id);
             if (p.name) nameToPersonId.set(p.name.toLowerCase().trim(), p.id);
         }
 
@@ -210,8 +210,24 @@ class PeopleService {
                     continue;
                 }
 
-                // Skip if already synced by Slack ID
-                if (existingSlackIds.has(user.id)) {
+                // Skip if already synced by Slack ID — but backfill avatar if missing
+                if (slackIdToPersonId.has(user.id)) {
+                    if (user.avatar) {
+                        const existingPersonId = slackIdToPersonId.get(user.id);
+                        const avatarPath = path.join(process.cwd(), 'data', 'avatars', `${existingPersonId}.jpg`);
+                        if (!fs.existsSync(avatarPath)) {
+                            // Store avatar URL in metadata for lazy-load fallback
+                            const existing = this.agent.db.getPerson(existingPersonId);
+                            if (existing && !existing.metadata?.slack_avatar_url) {
+                                const metadata = existing.metadata || {};
+                                metadata.slack_avatar_url = user.avatar;
+                                this.agent.db.updatePerson(existingPersonId, { metadata });
+                            }
+                            this.cacheSlackAvatar(existingPersonId, user.avatar).catch(e =>
+                                console.error(`[People] Slack avatar backfill fail for ${existingPersonId}:`, e.message)
+                            );
+                        }
+                    }
                     stats.skipped++;
                     continue;
                 }
@@ -233,7 +249,7 @@ class PeopleService {
                     const metadata = existing.metadata || {};
                     if (user.avatar) metadata.slack_avatar_url = user.avatar;
                     this.agent.db.updatePerson(existingId, { identifiers, metadata });
-                    existingSlackIds.add(user.id);
+                    slackIdToPersonId.set(user.id, existingId);
 
                     // Cache Slack avatar if person doesn't have one yet
                     if (user.avatar) {
@@ -270,8 +286,8 @@ class PeopleService {
                         console.error(`[People] Slack avatar cache fail for ${personId}:`, e.message)
                     );
                 }
-                existingSlackIds.add(user.id);
-                nameToPersonId.set(nameKey, user.id);
+                slackIdToPersonId.set(user.id, personId);
+                nameToPersonId.set(nameKey, personId);
                 stats.added++;
             }
         }
