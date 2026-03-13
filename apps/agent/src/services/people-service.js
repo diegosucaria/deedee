@@ -411,9 +411,16 @@ Output pure JSON only.`;
         }
     }
 
-    _downloadImage(url, dest) {
+    _downloadImage(url, dest, maxRedirects = 5) {
         return new Promise((resolve, reject) => {
-            https.get(url, (response) => {
+            const proto = url.startsWith('https') ? https : require('http');
+            proto.get(url, (response) => {
+                // Follow redirects (Slack avatar URLs return 302 to CDN)
+                if ((response.statusCode === 301 || response.statusCode === 302 || response.statusCode === 307) && response.headers.location) {
+                    response.resume(); // Drain response to free socket
+                    if (maxRedirects <= 0) return reject(new Error('Too many redirects'));
+                    return this._downloadImage(response.headers.location, dest, maxRedirects - 1).then(resolve, reject);
+                }
                 if (response.statusCode < 200 || response.statusCode >= 300) {
                     response.resume(); // Drain response to free socket
                     return reject(new Error(`HTTP ${response.statusCode} fetching avatar`));
