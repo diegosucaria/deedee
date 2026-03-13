@@ -1389,7 +1389,7 @@ class Agent {
 
 
       const MAX_LOOPS_DEFAULT = parseInt(process.env.MAX_TOOL_LOOPS || '15');
-      const MAX_LOOPS_BROWSER = parseInt(process.env.MAX_TOOL_LOOPS_BROWSER || '25');
+      const MAX_LOOPS_BROWSER = parseInt(process.env.MAX_TOOL_LOOPS_BROWSER || '50');
       const MAX_SAME_TOOL_CALLS = 3; // Same tool name (non-browser) = likely stuck
       const MAX_IDENTICAL_CALLS = 3; // Same tool + same args = definitely stuck
       let loopCount = 0;
