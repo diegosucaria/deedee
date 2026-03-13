@@ -45,10 +45,11 @@ Strips verbose Google Calendar API metadata.
 
 | Kept | Stripped |
 |------|---------|
-| id, summary, start, end, status | etag, iCalUID, htmlLink, kind, sequence |
+| summary, start (flattened), end (flattened) | id, etag, iCalUID, htmlLink, kind, sequence |
 | location, description (500 chars) | creator, organizer metadata, reminders |
-| attendees (name, email, responseStatus) | attachments, extendedProperties |
-| hangoutLink, meetingLink | Full conferenceData blob |
+| attendees (name, email, responseStatus; max 10) | attachments, extendedProperties |
+| meetingLink | Full conferenceData blob, recurringEventId |
+| status (only if not "confirmed") | Calendar-level summary (email) |
 
 ### 1c. People (`isPeopleTool`)
 
@@ -69,7 +70,7 @@ After domain-specific cleaning, a hard character cap is applied to the serialize
 | Tool Category | Max Chars | Rationale |
 |--------------|-----------|-----------|
 | Default | 50,000 | Safe limit for most tools |
-| People tools (`listPeople`, `searchPeople`, `searchContacts`, `getPerson`) | 200,000 | Agent needs full contact list for consolidation jobs |
+| People tools (names ending in `listPeople`, `searchPeople`, `searchContacts`, `getPerson`) | 200,000 | Agent needs full contact list for consolidation jobs |
 | `searchMemory` | 200,000 | Memory context is critical for agent behavior |
 
 When truncation occurs:
@@ -85,14 +86,14 @@ Called in `agent.js` after tool execution, before sending the result to Gemini:
 dbToolResult = sanitizeToolResult(executionName, dbToolResult);
 ```
 
-The `sanitizeToolResult` function accepts an optional third parameter `maxChars` to override the default cap, but the high-cap tool logic is now built into the sanitizer itself via `HIGH_CAP_TOOLS`.
+The `sanitizeToolResult` function accepts an optional third parameter `maxChars` to override the default cap, but the high-cap tool logic is now built into the sanitizer itself via `HIGH_CAP_SUFFIXES`.
 
 ## Adding a New Sanitizer
 
 1. Add a detection function: `isMyTool(toolName)` matching on tool name patterns
 2. Add a sanitization function: `sanitizeMyToolResult(result)` that handles both `{ output: "JSON" }` (MCP wrapper) and direct object formats
 3. Wire it into `sanitizeToolResult()` as a new Layer 1 step
-4. If the tool needs a higher cap, add it to `HIGH_CAP_TOOLS`
+4. If the tool needs a higher cap, add its suffix to `HIGH_CAP_SUFFIXES`
 5. Add tests in `tool-result-sanitizer.test.js`
 
 ## Constants
@@ -103,4 +104,5 @@ The `sanitizeToolResult` function accepts an optional third parameter `maxChars`
 | `HIGH_CAP_MAX_CHARS` | 200,000 | People + memory tools |
 | `MAX_EMAIL_BODY_CHARS` | 4,000 | Gmail sanitizer |
 | `MAX_EVENT_DESCRIPTION_CHARS` | 500 | Calendar sanitizer |
+| `MAX_EVENT_ATTENDEES` | 10 | Calendar sanitizer |
 | `MAX_PERSON_NOTES_CHARS` | 300 | People sanitizer |

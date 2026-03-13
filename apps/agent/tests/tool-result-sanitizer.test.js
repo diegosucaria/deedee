@@ -249,6 +249,30 @@ describe('Tool Result Sanitizer', () => {
             expect(warnSpy).not.toHaveBeenCalled();
             warnSpy.mockRestore();
         });
+
+        it('should apply high cap for namespaced people tools', () => {
+            // A result between 50K and 200K should NOT be truncated for people tools
+            const big = { output: 'X'.repeat(100_000) };
+
+            // Bare name (shouldn't happen in practice, but should still work)
+            const cleaned1 = sanitizeToolResult('listPeople', big);
+            expect(cleaned1._sanitizer).toBeUndefined();
+
+            // Namespaced name (the real scenario)
+            const cleaned2 = sanitizeToolResult('work_listPeople', big);
+            expect(cleaned2._sanitizer).toBeUndefined();
+
+            const cleaned3 = sanitizeToolResult('personal_getPerson', big);
+            expect(cleaned3._sanitizer).toBeUndefined();
+
+            const cleaned4 = sanitizeToolResult('work_searchContacts', big);
+            expect(cleaned4._sanitizer).toBeUndefined();
+
+            // Non-people tool SHOULD be truncated at 50K
+            const cleaned5 = sanitizeToolResult('readSlackHistory', big);
+            expect(cleaned5._sanitizer).toBeDefined();
+            expect(cleaned5._sanitizer.truncated).toBe(true);
+        });
     });
 
     describe('Non-Gmail tools', () => {
@@ -280,9 +304,10 @@ describe('Tool Result Sanitizer', () => {
             expect(parsed.items).toHaveLength(1);
             const event = parsed.items[0];
             expect(event.summary).toBe('Tech Q&A weekly');
-            expect(event.start).toBeDefined();
-            expect(event.end).toBeDefined();
-            expect(event.status).toBe('confirmed');
+            expect(event.start).toBe('2026-03-11T07:00:00-03:00');
+            expect(event.end).toBe('2026-03-11T08:00:00-03:00');
+            // 'confirmed' status is omitted (default)
+            expect(event.status).toBeUndefined();
 
             // Bloat should be gone
             const str = JSON.stringify(parsed);
@@ -310,6 +335,42 @@ describe('Tool Result Sanitizer', () => {
             expect(attendees[0]).toEqual({ name: 'Person 0', email: 'person0@company.com', organizer: true, responseStatus: 'needsAction' });
             expect(attendees[1]).toEqual({ name: 'Person 1', email: 'person1@company.com', self: true, optional: true, responseStatus: 'needsAction' });
             expect(attendees[2]).toEqual({ name: 'Person 2', email: 'person2@company.com', responseStatus: 'needsAction' });
+        });
+
+        it('should cap attendees when exceeding MAX_EVENT_ATTENDEES', () => {
+            const event = makeCalendarEvent({ numAttendees: 15 });
+            const result = { output: JSON.stringify(makeCalendarResponse([event])) };
+
+            const cleaned = sanitizeToolResult('work_calendar', result);
+            const parsed = JSON.parse(cleaned.output);
+            const item = parsed.items[0];
+
+            expect(item.attendees).toHaveLength(10);
+            expect(item.attendeesOmitted).toBe(5);
+        });
+
+        it('should flatten start/end to dateTime strings', () => {
+            const event = makeCalendarEvent();
+            const result = { output: JSON.stringify(makeCalendarResponse([event])) };
+
+            const cleaned = sanitizeToolResult('work_calendar', result);
+            const parsed = JSON.parse(cleaned.output);
+            const item = parsed.items[0];
+
+            expect(item.start).toBe('2026-03-11T07:00:00-03:00');
+            expect(item.end).toBe('2026-03-11T08:00:00-03:00');
+        });
+
+        it('should omit confirmed status and strip id/recurringEventId', () => {
+            const event = makeCalendarEvent();
+            const result = { output: JSON.stringify(makeCalendarResponse([event])) };
+
+            const cleaned = sanitizeToolResult('work_calendar', result);
+            const parsed = JSON.parse(cleaned.output);
+            const item = parsed.items[0];
+
+            expect(item.status).toBeUndefined();
+            expect(item.id).toBeUndefined();
         });
 
         it('should strip attachments', () => {
@@ -347,13 +408,13 @@ describe('Tool Result Sanitizer', () => {
             expect(parsed.items[0].description).toContain('[truncated]');
         });
 
-        it('should preserve calendar-level summary and timeZone', () => {
+        it('should preserve calendar-level timeZone (but not summary/email)', () => {
             const result = { output: JSON.stringify(makeCalendarResponse([makeCalendarEvent()])) };
 
             const cleaned = sanitizeToolResult('work_calendar', result);
             const parsed = JSON.parse(cleaned.output);
 
-            expect(parsed.summary).toBe('user@company.com');
+            expect(parsed.summary).toBeUndefined();
             expect(parsed.timeZone).toBe('America/Argentina/Cordoba');
         });
 
@@ -390,7 +451,11 @@ describe('Tool Result Sanitizer', () => {
             const parsed = JSON.parse(cleaned.output);
             expect(parsed.items).toHaveLength(10);
             expect(parsed.items[0].summary).toBe('Meeting 0');
-            expect(parsed.items[0].attendees).toHaveLength(20);
+            // Attendees capped at 10 (from 20)
+            expect(parsed.items[0].attendees).toHaveLength(10);
+            expect(parsed.items[0].attendeesOmitted).toBe(10);
+            // id and recurringEventId are stripped
+            expect(parsed.items[0].id).toBeUndefined();
         });
     });
 
