@@ -101,6 +101,7 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - API_URL=http://api:3001
+      # NEXT_PUBLIC_SOCKET_URL injected by Balena (e.g. https://api.example.com)
     ports:
       - "3002:3000"
     networks:
