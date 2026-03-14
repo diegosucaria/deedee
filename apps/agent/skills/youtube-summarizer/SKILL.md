@@ -2,6 +2,7 @@
 name: youtube-summarizer
 description: Fetch transcripts from YouTube videos for summarization.
 user-invocable: true
+injection: on-demand
 metadata:
   emoji: 📺
   requires:
