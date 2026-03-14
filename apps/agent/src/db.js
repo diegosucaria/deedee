@@ -2360,12 +2360,13 @@ class AgentDB {
     this.db.prepare('DELETE FROM notifications WHERE id = ?').run(id);
   }
 
-  createNotification({ id, type, severity, title, message, metadata }) {
+  createNotification({ id, type, severity, title, message, metadata, created_at }) {
     const metadataStr = metadata ? JSON.stringify(metadata) : null;
+    const createdAt = created_at || new Date().toISOString();
     this.db.prepare(`
-      INSERT INTO notifications (id, type, severity, title, message, metadata)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `).run(id, type, severity, title, message, metadataStr);
+      INSERT INTO notifications (id, type, severity, title, message, metadata, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(id, type, severity, title, message, metadataStr, createdAt);
   }
 }
 
