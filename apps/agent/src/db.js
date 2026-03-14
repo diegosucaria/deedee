@@ -884,7 +884,7 @@ class AgentDB {
     const partsStr = msg.parts ? JSON.stringify(msg.parts) : null;
     const metaStr = msg.metadata ? JSON.stringify(msg.metadata) : null;
     const targetChatId = msg.chatId || msg.chat_id || msg.metadata?.chatId;
-    stmt.run(id, msg.role, msg.content, partsStr, msg.source, targetChatId, msg.cost || 0, msg.tokenCount || 0, msg.timestamp, metaStr);
+    stmt.run(id, msg.role, msg.content, partsStr, msg.source, targetChatId, msg.cost || 0, msg.tokenCount || 0, msg.timestamp || Date.now(), metaStr);
   }
 
   getHistory(options = {}) {

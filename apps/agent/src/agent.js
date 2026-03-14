@@ -1498,9 +1498,13 @@ class Agent {
         // is the safety net for browser sessions.
         // Tier 1: Per-tool-name tracking (catches searchPerson("diego"), searchPerson("Die"), etc.)
         // Tier 2: Identical call tracking (catches exact same call repeated — definitely stuck)
+        // Tools that legitimately get called multiple times with different args per session
+        const LOOP_EXEMPT_TOOLS = new Set(['spawnAgent', 'readChatHistory']);
+
         for (const call of functionCalls) {
           const toolName = call.name || '';
           if (toolName.includes('browser_')) continue; // Browser tools exempt from all loop detection
+          if (LOOP_EXEMPT_TOOLS.has(toolName)) continue; // Tools expected to be called multiple times
 
           const sig = `${toolName}:${JSON.stringify(call.args)}`;
 
@@ -1518,6 +1522,7 @@ class Agent {
         for (const call of functionCalls) {
           const toolName = call.name || '';
           if (toolName.includes('browser_')) continue; // Browser tools exempt
+          if (LOOP_EXEMPT_TOOLS.has(toolName)) continue; // Tools expected to be called multiple times
 
           const sig = `${toolName}:${JSON.stringify(call.args)}`;
 
