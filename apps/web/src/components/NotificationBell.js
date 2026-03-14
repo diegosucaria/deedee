@@ -15,8 +15,13 @@ const SEVERITY_CONFIG = {
 };
 
 function timeAgo(dateStr) {
-    const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-    if (seconds < 60) return 'just now';
+    if (!dateStr) return '';
+    // Append 'Z' if the timestamp lacks timezone info (e.g. SQLite CURRENT_TIMESTAMP format)
+    const normalized = typeof dateStr === 'string' && !dateStr.includes('T') && !dateStr.includes('Z') && !dateStr.includes('+')
+        ? dateStr.replace(' ', 'T') + 'Z'
+        : dateStr;
+    const seconds = Math.floor((Date.now() - new Date(normalized).getTime()) / 1000);
+    if (isNaN(seconds) || seconds < 60) return 'just now';
     const minutes = Math.floor(seconds / 60);
     if (minutes < 60) return `${minutes}m ago`;
     const hours = Math.floor(minutes / 60);

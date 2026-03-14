@@ -24,15 +24,20 @@ const SEVERITY_OPTIONS = ['all', 'error', 'warning', 'info'];
 const STATUS_OPTIONS = ['active', 'unread', 'dismissed'];
 
 function timeAgo(dateStr) {
-    const seconds = Math.floor((Date.now() - new Date(dateStr).getTime()) / 1000);
-    if (seconds < 60) return 'just now';
+    if (!dateStr) return '';
+    // Append 'Z' if the timestamp lacks timezone info (e.g. SQLite CURRENT_TIMESTAMP format)
+    const normalized = typeof dateStr === 'string' && !dateStr.includes('T') && !dateStr.includes('Z') && !dateStr.includes('+')
+        ? dateStr.replace(' ', 'T') + 'Z'
+        : dateStr;
+    const seconds = Math.floor((Date.now() - new Date(normalized).getTime()) / 1000);
+    if (isNaN(seconds) || seconds < 60) return 'just now';
     const minutes = Math.floor(seconds / 60);
     if (minutes < 60) return `${minutes}m ago`;
     const hours = Math.floor(minutes / 60);
     if (hours < 24) return `${hours}h ago`;
     const days = Math.floor(hours / 24);
     if (days < 30) return `${days}d ago`;
-    return new Date(dateStr).toLocaleDateString();
+    return new Date(normalized).toLocaleDateString();
 }
 
 export default function NotificationsClient({ initialNotifications, initialUnreadCount }) {
