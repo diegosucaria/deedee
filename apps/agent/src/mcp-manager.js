@@ -263,10 +263,17 @@ class MCPManager {
                             safeName = safeName.substring(0, 55) + '_' + hash;
                         }
 
+                        // GWS tools require userId as a path param but don't default it.
+                        // Inject hint so the model always passes userId: "me".
+                        let description = t.description;
+                        if (name.startsWith('gws_')) {
+                            description += ' IMPORTANT: Always pass params.userId = "me" for any method that requires a userId parameter.';
+                        }
+
                         return {
                             name: safeName,
                             originalName: t.name,
-                            description: t.description,
+                            description,
                             parameters: t.inputSchema // MCP uses 'inputSchema', Gemini uses 'parameters'
                         };
                     });
