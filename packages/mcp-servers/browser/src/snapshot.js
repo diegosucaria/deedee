@@ -240,9 +240,10 @@ function compactTree(tree) {
  *
  * @param {Array} tree - Tree nodes
  * @param {number} depth - Current indent depth
+ * @param {number} [maxDepth] - Max tree depth to render (undefined = unlimited)
  * @returns {string} Formatted text
  */
-function renderTree(tree, depth = 0) {
+function renderTree(tree, depth = 0, maxDepth) {
     const lines = [];
     const indent = '  '.repeat(depth);
 
@@ -267,17 +268,34 @@ function renderTree(tree, depth = 0) {
         // Add ref
         if (node.ref) line += ` [ref=${node.ref}]`;
 
-        // Add nth if present in the ref info
-        // (already handled by ref assignment — nth is reflected in refLocator)
-
         lines.push(line);
 
         if (node.children && node.children.length > 0) {
-            lines.push(renderTree(node.children, depth + 1));
+            // Respect maxDepth: skip rendering children beyond limit
+            if (maxDepth !== undefined && depth + 1 >= maxDepth) {
+                const childRefCount = countRefs(node.children);
+                if (childRefCount > 0) {
+                    lines.push(`${indent}  - ... (${childRefCount} more refs inside)`);
+                }
+            } else {
+                lines.push(renderTree(node.children, depth + 1, maxDepth));
+            }
         }
     }
 
     return lines.join('\n');
+}
+
+/**
+ * Count refs in a subtree (used for depth-limited rendering).
+ */
+function countRefs(nodes) {
+    let count = 0;
+    for (const node of nodes) {
+        if (node.ref) count++;
+        if (node.children) count += countRefs(node.children);
+    }
+    return count;
 }
 
 /**
@@ -289,11 +307,13 @@ function renderTree(tree, depth = 0) {
  * @param {boolean} options.compact - Prune empty branches (default: true)
  * @param {string} [options.frameSelector] - Optional iframe to inspect
  * @param {number} [options.maxChars=20000] - Truncate output to prevent context blowout
+ * @param {number} [options.maxDepth] - Max tree depth to render (undefined = unlimited)
  * @returns {{ snapshot: string, refs: Object, url: string, title: string }}
  */
 async function getPageSnapshot(page, options = {}) {
     const compact = options.compact !== false;
     const maxChars = options.maxChars || 20000;
+    const maxDepth = options.maxDepth;
     const frameSelector = (options.frameSelector || '').trim();
 
     let ariaText = '';
@@ -324,7 +344,7 @@ async function getPageSnapshot(page, options = {}) {
     }
 
     // Render to text
-    let snapshot = renderTree(tree);
+    let snapshot = renderTree(tree, 0, maxDepth);
 
     // Truncate if it exceeds maxChars
     if (snapshot.length > maxChars) {

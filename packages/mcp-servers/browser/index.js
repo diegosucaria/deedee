@@ -215,7 +215,14 @@ function loadSecrets() {
 async function autoSnapshot(page) {
     try {
         await page.waitForLoadState('domcontentloaded', { timeout: 2000 }).catch(() => { });
-        const { snapshot, refs } = await getPageSnapshot(page, { compact: true });
+        // Efficient mode: interactive-only, depth-limited, smaller output
+        // This reduces token consumption from ~15K to ~3-5K per action
+        const { snapshot, refs } = await getPageSnapshot(page, {
+            compact: true,
+            interactiveOnly: true,
+            maxDepth: 6,
+            maxChars: 10000,
+        });
         const refCount = Object.keys(refs).length;
         return `\n\n## Updated Snapshot (${refCount} refs)\n\n${snapshot}`;
     } catch {
@@ -249,6 +256,7 @@ server.setRequestHandler(ListToolsRequestSchema, async () => {
                     properties: {
                         interactiveOnly: { type: "boolean", description: "Only show interactive elements (buttons, inputs, links). Default: false" },
                         compact: { type: "boolean", description: "Prune branches without interactive elements. Default: true" },
+                        maxDepth: { type: "number", description: "Max tree depth to render. Deeper elements are summarized with ref counts. Default: unlimited" },
                         frameSelector: { type: "string", description: "Optional iframe to inspect (e.g. 'iframe[title=\"Payment\"]')" },
                     },
                 },
@@ -696,6 +704,7 @@ server.setRequestHandler(CallToolRequestSchema, async (request) => {
             const { snapshot, refs, url, title } = await getPageSnapshot(p, {
                 interactiveOnly: args.interactiveOnly,
                 compact: args.compact,
+                maxDepth: args.maxDepth,
                 frameSelector: args.frameSelector,
             });
             const refCount = Object.keys(refs).length;
