@@ -1026,8 +1026,8 @@ class Agent {
         const timeZone = process.env.TZ || 'America/Argentina/Buenos_Aires';
         const timeString = new Date().toLocaleString('en-US', { timeZone, timeZoneName: 'short' }) + ` (${timeZone})`;
 
-        // Use latest skill context
-        const skillsContext = this.skillService.getGlobalInstructions();
+        // Context-aware skill injection: only inject on-demand skills that match the user message
+        const skillsContext = this.skillService.getContextualInstructions(contextQuery);
         let grokSystemPrompt = getSystemInstruction(timeString, activeGoals, facts, { codingMode: true, vaultContext, skillsContext });
 
         // Add Tool Manifest since Grok can't see definitions natively yet
@@ -1260,8 +1260,8 @@ class Agent {
       const timeZone = process.env.TZ || 'America/Argentina/Buenos_Aires';
       const timeString = new Date().toLocaleString('en-US', { timeZone, timeZoneName: 'short' }) + ` (${timeZone})`;
 
-      // Use latest skill context
-      const skillsContext = this.skillService.getGlobalInstructions();
+      // Context-aware skill injection: only inject on-demand skills that match the user message
+      const skillsContext = this.skillService.getContextualInstructions(contextQuery);
       let systemInstruction = getSystemInstruction(
         timeString,
         activeGoals,

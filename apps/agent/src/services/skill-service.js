@@ -1,6 +1,16 @@
 const fs = require('fs-extra');
 const path = require('path');
 
+const STOPWORDS = new Set([
+    'the', 'a', 'an', 'and', 'or', 'but', 'in', 'on', 'at', 'to', 'for',
+    'of', 'with', 'by', 'from', 'is', 'are', 'was', 'were', 'be', 'been',
+    'has', 'have', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+    'should', 'may', 'might', 'can', 'this', 'that', 'these', 'those',
+    'it', 'its', 'not', 'no', 'nor', 'so', 'if', 'then', 'than', 'too',
+    'very', 'just', 'about', 'also', 'into', 'over', 'such', 'use', 'using',
+    'when', 'where', 'how', 'what', 'which', 'who', 'whom', 'why',
+]);
+
 class SkillService {
     constructor(agent) {
         this.agent = agent;
@@ -349,7 +359,8 @@ class SkillService {
             filePath,
             // Defaults
             userInvocable: frontmatter['user-invocable'] !== false, // Default true
-            disableModelInvocation: frontmatter['disable-model-invocation'] === true // Default false
+            disableModelInvocation: frontmatter['disable-model-invocation'] === true, // Default false
+            injection: frontmatter['injection'] || 'always' // 'always' | 'on-demand'
         };
     }
 
@@ -357,7 +368,7 @@ class SkillService {
      * Returns the formatted prompt string to inject into the System Prompt.
      */
     getGlobalInstructions() {
-        // Enforce Enable/Disable State
+        // Enforce Enable/Disable State — injects ALL active skills (used for snapshots/diagnostics)
         const activeSkills = Array.from(this.skills.values())
             .filter(s => {
                 if (s.disableModelInvocation) return false;
@@ -369,7 +380,75 @@ class SkillService {
 
         if (activeSkills.length === 0) return '';
 
-        return activeSkills.map(skill => {
+        return this._formatSkillInstructions(activeSkills);
+    }
+
+    /**
+     * Checks if a skill's name/description matches the user message context.
+     * Used for on-demand skill injection.
+     */
+    _matchesContext(skill, userMessage) {
+        if (!userMessage) return false;
+        const messageLower = userMessage.toLowerCase();
+
+        // Extract terms from skill name (split on hyphens) and description
+        const nameTerms = skill.name.split('-');
+        const descTerms = skill.description ? skill.description.split(/\s+/) : [];
+        const terms = [...nameTerms, ...descTerms]
+            .map(t => t.toLowerCase().replace(/[^a-z0-9]/g, ''))
+            .filter(t => t.length > 3 && !STOPWORDS.has(t));
+
+        // Deduplicate
+        const uniqueTerms = [...new Set(terms)];
+
+        // Extract words from user message for bidirectional matching
+        const messageWords = messageLower.split(/\s+/)
+            .map(w => w.replace(/[^a-z0-9]/g, ''))
+            .filter(w => w.length > 3);
+
+        // Match if any skill term appears in message OR any message word shares a root with a skill term
+        // (prefix matching handles plurals/conjugations: "transcript" matches "transcripts")
+        return uniqueTerms.some(term =>
+            messageLower.includes(term) ||
+            messageWords.some(word => term.startsWith(word) || word.startsWith(term))
+        );
+    }
+
+    /**
+     * Returns formatted skill instructions, filtering on-demand skills by user message context.
+     */
+    getContextualInstructions(userMessage) {
+        const activeSkills = Array.from(this.skills.values())
+            .filter(s => {
+                if (s.disableModelInvocation) return false;
+                const state = this.getSkillState(s.name);
+                if (!state.enabled) return false;
+                if (s.missingDependencies && s.missingDependencies.length > 0) return false;
+                return true;
+            });
+
+        // Split into always-on and on-demand
+        const alwaysSkills = activeSkills.filter(s => s.injection !== 'on-demand');
+        const onDemandSkills = activeSkills.filter(s => s.injection === 'on-demand');
+
+        // Match on-demand skills against user message
+        const matchedOnDemand = onDemandSkills.filter(s => this._matchesContext(s, userMessage));
+
+        if (matchedOnDemand.length > 0) {
+            console.log(`[SkillService] On-demand skills matched: ${matchedOnDemand.map(s => s.name).join(', ')}`);
+        }
+
+        const skillsToInject = [...alwaysSkills, ...matchedOnDemand];
+        if (skillsToInject.length === 0) return '';
+
+        return this._formatSkillInstructions(skillsToInject);
+    }
+
+    /**
+     * Formats skill objects into the system prompt injection string.
+     */
+    _formatSkillInstructions(skills) {
+        return skills.map(skill => {
             const state = this.getSkillState(skill.name);
             const secrets = state.secrets || {};
             const secretKeys = Object.keys(secrets);
