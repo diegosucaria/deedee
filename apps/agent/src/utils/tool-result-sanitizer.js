@@ -4,6 +4,7 @@
  * Two-layer defense against oversized tool results that bloat the Gemini context window:
  *   Layer 1a: Gmail-specific deep cleaning (decode base64, strip HTML/headers)
  *   Layer 1b: Calendar-specific cleaning (strip attendees, etags, attachments)
+ *   Layer 1c: People-specific cleaning (strip metadata, compact Google API format)
  *   Layer 2: Generic size cap for ALL tool results
  */
 
@@ -14,8 +15,23 @@ const MAX_EVENT_ATTENDEES = 10;
 const MAX_PERSON_NOTES_CHARS = 300;
 
 // Tools that need higher caps because the model needs complete data
+// Matches both internal names (listPeople) and MCP namespaced names (personal_people_connections_list)
 const HIGH_CAP_TOOLS = new Set(['listPeople', 'searchPeople', 'searchContacts', 'getPerson', 'searchMemory']);
 const HIGH_CAP_MAX_CHARS = 200_000;
+
+/**
+ * Check if a tool should use the higher character cap.
+ * Supports both exact names (internal tools) and pattern matching (MCP namespaced tools).
+ */
+function isHighCapTool(toolName) {
+    if (!toolName) return false;
+    if (HIGH_CAP_TOOLS.has(toolName)) return true;
+    // MCP tools are namespaced: personal_people_connections_list, etc.
+    // Match if the tool is a people or memory tool (these need complete data for matching)
+    const lower = toolName.toLowerCase();
+    if (lower.includes('people') || lower.includes('contacts') || lower.includes('searchmemory')) return true;
+    return false;
+}
 
 const ALLOWED_EMAIL_HEADERS = new Set([
     'from', 'to', 'subject', 'date', 'cc', 'reply-to',
@@ -64,7 +80,7 @@ function sanitizeToolResult(toolName, result, maxChars = MAX_TOOL_RESULT_CHARS) 
     }
 
     // Layer 2: Generic size cap (use higher cap for critical tools)
-    const effectiveMaxChars = HIGH_CAP_TOOLS.has(toolName) ? Math.max(maxChars, HIGH_CAP_MAX_CHARS) : maxChars;
+    const effectiveMaxChars = isHighCapTool(toolName) ? Math.max(maxChars, HIGH_CAP_MAX_CHARS) : maxChars;
     cleaned = applyGenericCap(toolName, cleaned, effectiveMaxChars);
 
     return cleaned;
@@ -382,11 +398,33 @@ function isPeopleTool(toolName) {
 /**
  * Sanitize people tool results by stripping null/empty fields and truncating notes.
  * Reduces payload size significantly since most synced contacts have sparse data.
+ * Handles both internal DB format and Google People API format (MCP).
  */
 function sanitizePeopleResult(result) {
     if (!result || typeof result !== 'object') return result;
 
-    // Handle { people: [...] } format (listPeople)
+    // GWS MCP wraps results as { output: "JSON string" } (possibly nested)
+    if (typeof result.output === 'string') {
+        try {
+            let parsed = JSON.parse(result.output);
+            // Handle double-wrapped: { output: "{ output: \"...\" }" }
+            if (parsed && typeof parsed.output === 'string') {
+                try { parsed = JSON.parse(parsed.output); } catch {}
+            }
+            const cleaned = sanitizePeopleParsed(parsed);
+            return { output: JSON.stringify(cleaned) };
+        } catch {
+            return result;
+        }
+    }
+
+    return sanitizePeopleParsed(result);
+}
+
+function sanitizePeopleParsed(result) {
+    if (!result || typeof result !== 'object') return result;
+
+    // Handle { people: [...] } format (internal listPeople)
     if (Array.isArray(result.people)) {
         return { ...result, people: result.people.map(compactPerson) };
     }
@@ -401,7 +439,61 @@ function sanitizePeopleResult(result) {
         return { ...result, person: compactPerson(result.person) };
     }
 
+    // Handle Google People API format: { connections: [...] }
+    if (Array.isArray(result.connections)) {
+        return {
+            totalPeople: result.totalPeople || result.connections.length,
+            connections: result.connections.map(compactGooglePerson),
+        };
+    }
+
     return result;
+}
+
+/**
+ * Compact a Google People API person object.
+ * Extracts only the useful fields from the verbose API response.
+ */
+function compactGooglePerson(person) {
+    if (!person || typeof person !== 'object') return person;
+    const clean = {};
+
+    // Name
+    const name = person.names?.[0];
+    if (name) clean.name = name.displayName || name.unstructuredName;
+
+    // Phone numbers
+    if (person.phoneNumbers?.length) {
+        clean.phones = person.phoneNumbers.map(p => ({
+            number: p.canonicalForm || p.value,
+            type: p.formattedType,
+        }));
+    }
+
+    // Email addresses
+    if (person.emailAddresses?.length) {
+        clean.emails = person.emailAddresses.map(e => e.value);
+    }
+
+    // Organizations
+    if (person.organizations?.length) {
+        const org = person.organizations[0];
+        if (org.name) clean.organization = org.name;
+        if (org.title) clean.jobTitle = org.title;
+    }
+
+    // Birthdays
+    if (person.birthdays?.length) {
+        const bday = person.birthdays[0]?.date;
+        if (bday) clean.birthday = `${bday.year || '????'}-${String(bday.month).padStart(2, '0')}-${String(bday.day).padStart(2, '0')}`;
+    }
+
+    // Addresses
+    if (person.addresses?.length) {
+        clean.addresses = person.addresses.map(a => a.formattedValue || a.streetAddress).filter(Boolean);
+    }
+
+    return clean;
 }
 
 /**
@@ -441,8 +533,30 @@ function applyGenericCap(toolName, result, maxChars) {
             truncated: true,
             originalChars: originalLen,
             maxChars,
+            hint: getTruncationHint(toolName),
         }
     };
+}
+
+// --- Truncation hints ---
+
+/**
+ * Provide actionable guidance when tool results are truncated.
+ * Prevents the model from looping by retrying the same broad query.
+ */
+function getTruncationHint(toolName) {
+    if (!toolName) return 'Result was truncated. Try a more specific query to reduce the result size.';
+    const lower = toolName.toLowerCase();
+    if (lower.includes('people') || lower.includes('contacts')) {
+        return 'Contact list was truncated. Do NOT retry listing all contacts. Use searchPeople or searchContacts with a specific name query instead.';
+    }
+    if (lower.includes('calendar')) {
+        return 'Calendar data was truncated. Use a narrower date range (e.g. 1-3 days) to reduce the result size. Do NOT retry with the same parameters.';
+    }
+    if (lower.includes('gmail')) {
+        return 'Email results were truncated. Use a more specific search query or reduce maxResults. Do NOT retry with the same parameters.';
+    }
+    return 'Result was truncated due to size. Try a more specific query or use filters to reduce the result size. Do NOT retry the same call.';
 }
 
 // --- Shared helpers ---
@@ -452,4 +566,4 @@ function truncate(str, maxLen) {
     return str.substring(0, maxLen) + '... [truncated]';
 }
 
-module.exports = { sanitizeToolResult, MAX_TOOL_RESULT_CHARS, MAX_EMAIL_BODY_CHARS, MAX_EVENT_DESCRIPTION_CHARS, MAX_PERSON_NOTES_CHARS, HIGH_CAP_TOOLS, HIGH_CAP_MAX_CHARS };
+module.exports = { sanitizeToolResult, isHighCapTool, MAX_TOOL_RESULT_CHARS, MAX_EMAIL_BODY_CHARS, MAX_EVENT_DESCRIPTION_CHARS, MAX_PERSON_NOTES_CHARS, HIGH_CAP_TOOLS, HIGH_CAP_MAX_CHARS };

@@ -1,4 +1,4 @@
-const { sanitizeToolResult, MAX_TOOL_RESULT_CHARS, MAX_EMAIL_BODY_CHARS, MAX_EVENT_DESCRIPTION_CHARS } = require('../src/utils/tool-result-sanitizer');
+const { sanitizeToolResult, isHighCapTool, MAX_TOOL_RESULT_CHARS, MAX_EMAIL_BODY_CHARS, MAX_EVENT_DESCRIPTION_CHARS } = require('../src/utils/tool-result-sanitizer');
 
 // --- Fixtures ---
 
@@ -222,7 +222,7 @@ describe('Tool Result Sanitizer', () => {
             const cleaned = sanitizeToolResult('readSlackHistory', huge);
 
             const serialized = JSON.stringify(cleaned);
-            expect(serialized.length).toBeLessThanOrEqual(MAX_TOOL_RESULT_CHARS + 200); // some overhead for wrapper
+            expect(serialized.length).toBeLessThanOrEqual(MAX_TOOL_RESULT_CHARS + 300); // some overhead for wrapper + hint
             expect(cleaned._sanitizer).toBeDefined();
             expect(cleaned._sanitizer.truncated).toBe(true);
             expect(cleaned._sanitizer.originalChars).toBeGreaterThan(MAX_TOOL_RESULT_CHARS);
@@ -448,6 +448,156 @@ describe('Tool Result Sanitizer', () => {
             expect(parsed.items[0].attendeesOmitted).toBe(10);
             // id and recurringEventId are stripped
             expect(parsed.items[0].id).toBeUndefined();
+        });
+    });
+
+    describe('Google People API sanitization (MCP tools)', () => {
+        const makeGooglePerson = (name, phone, email) => ({
+            etag: '%EgkBAgkLLjc9Pj8aBAECBQciDGpmNDZVMVlVZXBnPQ==',
+            names: [{
+                displayName: name,
+                displayNameLastFirst: name.split(' ').reverse().join(', '),
+                familyName: name.split(' ')[1],
+                givenName: name.split(' ')[0],
+                metadata: { primary: true, source: { id: 'abc123', type: 'CONTACT' }, sourcePrimary: true },
+                unstructuredName: name,
+            }],
+            phoneNumbers: phone ? [{
+                canonicalForm: phone,
+                formattedType: 'Mobile',
+                metadata: { primary: true, source: { id: 'abc123', type: 'CONTACT' } },
+                type: 'mobile',
+                value: phone,
+            }] : undefined,
+            emailAddresses: email ? [{
+                metadata: { primary: true, source: { id: 'abc123', type: 'CONTACT' } },
+                value: email,
+            }] : undefined,
+            organizations: [{
+                metadata: { source: { id: 'abc123', type: 'CONTACT' } },
+                name: 'Acme Corp',
+                title: 'Engineer',
+            }],
+            birthdays: [{
+                date: { year: 1990, month: 3, day: 15 },
+                metadata: { source: { id: 'abc123', type: 'CONTACT' } },
+            }],
+            resourceName: 'people/c123456789',
+            photos: [{ url: 'https://lh3.googleusercontent.com/photo.jpg', metadata: {} }],
+            memberships: [{ contactGroupMembership: { contactGroupId: 'myContacts' } }],
+        });
+
+        it('should compact Google People API connections format', () => {
+            const apiResponse = {
+                connections: [
+                    makeGooglePerson('Marcelo Hini', '+543546659932', 'marcelo@test.com'),
+                    makeGooglePerson('Ana Lopez', '+5491155556666', null),
+                ],
+                totalPeople: 2,
+                totalItems: 2,
+            };
+            // MCP wraps as { output: "{ output: \"...\" }" }
+            const result = { output: JSON.stringify({ output: JSON.stringify(apiResponse) }) };
+
+            const cleaned = sanitizeToolResult('personal_people', result);
+            const parsed = JSON.parse(cleaned.output);
+
+            expect(parsed.connections).toHaveLength(2);
+
+            // First person: should have compacted fields
+            const person1 = parsed.connections[0];
+            expect(person1.name).toBe('Marcelo Hini');
+            expect(person1.phones).toEqual([{ number: '+543546659932', type: 'Mobile' }]);
+            expect(person1.emails).toEqual(['marcelo@test.com']);
+            expect(person1.organization).toBe('Acme Corp');
+            expect(person1.jobTitle).toBe('Engineer');
+            expect(person1.birthday).toBe('1990-03-15');
+
+            // Verbose metadata should be stripped
+            const str = JSON.stringify(parsed);
+            expect(str).not.toContain('etag');
+            expect(str).not.toContain('metadata');
+            expect(str).not.toContain('resourceName');
+            expect(str).not.toContain('photos');
+            expect(str).not.toContain('memberships');
+            expect(str).not.toContain('sourcePrimary');
+        });
+
+        it('should handle person without optional fields', () => {
+            const apiResponse = {
+                connections: [makeGooglePerson('Simple Person', null, null)],
+            };
+            const result = { output: JSON.stringify({ output: JSON.stringify(apiResponse) }) };
+
+            const cleaned = sanitizeToolResult('personal_people', result);
+            const parsed = JSON.parse(cleaned.output);
+
+            const person = parsed.connections[0];
+            expect(person.name).toBe('Simple Person');
+            expect(person.phones).toBeUndefined();
+            expect(person.emails).toBeUndefined();
+        });
+    });
+
+    describe('isHighCapTool - MCP namespaced tool name matching', () => {
+        it('should match internal tool names', () => {
+            expect(isHighCapTool('listPeople')).toBe(true);
+            expect(isHighCapTool('searchPeople')).toBe(true);
+            expect(isHighCapTool('getPerson')).toBe(true);
+            expect(isHighCapTool('searchContacts')).toBe(true);
+            expect(isHighCapTool('searchMemory')).toBe(true);
+        });
+
+        it('should match MCP namespaced tool names', () => {
+            expect(isHighCapTool('personal_people')).toBe(true);
+            expect(isHighCapTool('personal_people_connections_list')).toBe(true);
+            expect(isHighCapTool('work_people_searchContacts')).toBe(true);
+        });
+
+        it('should NOT match unrelated tools', () => {
+            expect(isHighCapTool('readSlackHistory')).toBe(false);
+            expect(isHighCapTool('work_calendar')).toBe(false);
+            expect(isHighCapTool('personal_gmail')).toBe(false);
+        });
+
+        it('should apply high cap for MCP people tools', () => {
+            const big = { output: 'X'.repeat(100_000) };
+
+            // MCP namespaced tool should get high cap
+            const cleaned = sanitizeToolResult('personal_people', big);
+            expect(cleaned._sanitizer).toBeUndefined(); // Not truncated at 50K
+
+            // Non-people tool should be truncated
+            const cleaned2 = sanitizeToolResult('readSlackHistory', big);
+            expect(cleaned2._sanitizer?.truncated).toBe(true);
+        });
+    });
+
+    describe('Truncation hints', () => {
+        it('should include a hint when people tool results are truncated', () => {
+            const huge = { output: 'X'.repeat(250_000) };
+            const cleaned = sanitizeToolResult('personal_people', huge);
+            expect(cleaned._sanitizer?.hint).toContain('searchPeople');
+            expect(cleaned._sanitizer?.hint).toContain('Do NOT retry');
+        });
+
+        it('should include a hint when calendar tool results are truncated', () => {
+            const huge = { output: 'X'.repeat(80_000) };
+            const cleaned = sanitizeToolResult('work_calendar', huge);
+            expect(cleaned._sanitizer?.hint).toContain('narrower date range');
+            expect(cleaned._sanitizer?.hint).toContain('Do NOT retry');
+        });
+
+        it('should include a hint when gmail tool results are truncated', () => {
+            const huge = { output: 'X'.repeat(80_000) };
+            const cleaned = sanitizeToolResult('personal_gmail', huge);
+            expect(cleaned._sanitizer?.hint).toContain('search query');
+        });
+
+        it('should include a generic hint for other tools', () => {
+            const huge = { output: 'X'.repeat(80_000) };
+            const cleaned = sanitizeToolResult('someRandomTool', huge);
+            expect(cleaned._sanitizer?.hint).toContain('more specific query');
         });
     });
 
