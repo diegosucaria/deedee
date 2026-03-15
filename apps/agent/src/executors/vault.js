@@ -15,8 +15,8 @@ class VaultExecutor extends BaseExecutor {
             case 'addToVault':
                 return this.addToVault(args.topic, args.file_path, args.summary, context);
             case 'readVaultPage':
-                return this.readVaultPage(args.topic, args.page);
-            case 'updateVaultPage':
+                return this.readVaultPage(args.topic, args.page || 'index.md');
+            case 'writeVaultPage':
                 return this.updateVaultPage(args.topic, args.page, args.content);
             case 'listVaultFiles':
                 return this.listVaultFiles(args.topic);
