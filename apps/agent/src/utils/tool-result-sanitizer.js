@@ -16,7 +16,7 @@ const MAX_PERSON_NOTES_CHARS = 300;
 
 // Tools that need higher caps because the model needs complete data
 // Matches both internal names (listPeople) and MCP namespaced names (personal_people_connections_list)
-const HIGH_CAP_TOOLS = new Set(['listPeople', 'searchPeople', 'searchContacts', 'getPerson', 'searchMemory']);
+const HIGH_CAP_TOOLS = new Set(['listPeople', 'searchPeople', 'searchContacts', 'getPerson', 'searchMemory', 'readAllMonitoredSlackHistory', 'readChatHistory']);
 const HIGH_CAP_MAX_CHARS = 200_000;
 
 /**
