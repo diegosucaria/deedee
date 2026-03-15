@@ -555,7 +555,7 @@ const toolDefinitions = [
             topic: { type: "STRING" },
             page: { type: "STRING", description: "Filename (e.g. 'index.md', 'summary.md')" }
           },
-          required: ["topic", "page"]
+          required: ["topic"]
         }
       },
       {
