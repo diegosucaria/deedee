@@ -1498,13 +1498,25 @@ class Agent {
         // is the safety net for browser sessions.
         // Tier 1: Per-tool-name tracking (catches searchPerson("diego"), searchPerson("Die"), etc.)
         // Tier 2: Identical call tracking (catches exact same call repeated — definitely stuck)
-        // Tools that legitimately get called multiple times with different args per session
+        // Tools that legitimately get called multiple times with different args per session.
+        // Gmail/calendar/people tools are exempt from Tier 1 because the normal workflow is
+        // list → fetch each item by ID (e.g. list emails → get each email). Multi-account
+        // setups (work_/personal_ prefixes) multiply the call count further.
         const LOOP_EXEMPT_TOOLS = new Set(['spawnAgent', 'readChatHistory']);
+        function isLoopExemptTool(toolName) {
+          if (!toolName) return false;
+          if (LOOP_EXEMPT_TOOLS.has(toolName)) return true;
+          const lower = toolName.toLowerCase();
+          if (lower.includes('gmail')) return true;
+          if (lower.includes('calendar')) return true;
+          if (lower.includes('people') || lower.includes('contacts')) return true;
+          return false;
+        }
 
         for (const call of functionCalls) {
           const toolName = call.name || '';
           if (toolName.includes('browser_')) continue; // Browser tools exempt from all loop detection
-          if (LOOP_EXEMPT_TOOLS.has(toolName)) continue; // Tools expected to be called multiple times
+          if (isLoopExemptTool(toolName)) continue; // Tools expected to be called multiple times
 
           const sig = `${toolName}:${JSON.stringify(call.args)}`;
 
@@ -1522,7 +1534,7 @@ class Agent {
         for (const call of functionCalls) {
           const toolName = call.name || '';
           if (toolName.includes('browser_')) continue; // Browser tools exempt
-          if (LOOP_EXEMPT_TOOLS.has(toolName)) continue; // Tools expected to be called multiple times
+          if (isLoopExemptTool(toolName)) continue; // Tools expected to be called multiple times
 
           const sig = `${toolName}:${JSON.stringify(call.args)}`;
 
