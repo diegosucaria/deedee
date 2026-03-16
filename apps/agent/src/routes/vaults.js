@@ -64,25 +64,19 @@ module.exports = (agent) => {
         }
     });
 
-    // GET /v1/vaults/:id - Get vault details (index + files)
+    // GET /v1/vaults/:id - Get vault details (index + files + pages)
     router.get('/:id', async (req, res) => {
         const { id } = req.params;
         try {
             const wiki = await agent.vaults.readVaultPage(id, 'index.md');
             const files = await agent.vaults.listVaultFiles(id);
-
-            // Check if vault exists (implied by success of above, but good to be explicit if wrapper throws)
-            if (wiki === null && files.length === 0) {
-                // Verify if directory actually exists or if it's just empty
-                // For now, if both fail, we assume 404 or empty.
-                // Return 200 with empty data if vault directory exists but is empty
-                // But listVaultFiles returns [] if error/empty.
-            }
+            const pages = await agent.vaults.listVaultPages(id);
 
             res.json({
                 id,
                 wiki: wiki || '',
-                files: files || []
+                files: files || [],
+                pages: pages || []
             });
         } catch (error) {
             res.status(500).json({ error: error.message });
@@ -202,6 +196,18 @@ module.exports = (agent) => {
             res.sendFile(filePath);
         } else {
             res.download(filePath);
+        }
+    });
+
+    // GET /v1/vaults/:id/pages/:page - Read a vault page
+    router.get('/:id/pages/:page', async (req, res) => {
+        const { id, page } = req.params;
+        try {
+            const content = await agent.vaults.readVaultPage(id, page);
+            if (content === null) return res.status(404).json({ error: 'Page not found' });
+            res.json({ page, content });
+        } catch (error) {
+            res.status(500).json({ error: error.message });
         }
     });
 
