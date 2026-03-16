@@ -8,7 +8,7 @@
  *   Layer 2: Generic size cap for ALL tool results
  */
 
-const MAX_TOOL_RESULT_CHARS = 50_000;
+const MAX_TOOL_RESULT_CHARS = 65_000;
 const MAX_EMAIL_BODY_CHARS = 4_000;
 const MAX_EVENT_DESCRIPTION_CHARS = 500;
 const MAX_EVENT_ATTENDEES = 10;
