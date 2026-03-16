@@ -577,7 +577,7 @@ export default function DJCratePage() {
                 {selectedVinyl && (
                     <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                         className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-end sm:items-center justify-center"
-                        onClick={(e) => { if (e.target === e.currentTarget) { setSelectedVinyl(null); setEditing(false); } }}>
+                        onMouseDown={(e) => { if (e.target === e.currentTarget) { setSelectedVinyl(null); setEditing(false); } }}>
                         <motion.div
                             initial={{ y: 100, opacity: 0 }}
                             animate={{ y: 0, opacity: 1 }}
@@ -943,7 +943,7 @@ function CrateModal({ crate, vinyls, onClose, onSave, onDelete, parseMeta }) {
     return (
         <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center"
-            onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
+            onMouseDown={(e) => { if (e.target === e.currentTarget) onClose(); }}>
             <motion.div initial={{ scale: 0.95, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.95, opacity: 0 }}
                 className="bg-zinc-900 border border-zinc-700/50 rounded-2xl shadow-2xl w-full max-w-md mx-4 p-5 space-y-4">
                 <h2 className="text-lg font-bold">{crate ? 'Edit Crate' : 'New Crate'}</h2>

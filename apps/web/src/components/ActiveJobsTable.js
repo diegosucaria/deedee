@@ -196,8 +196,8 @@ export default function ActiveJobsTable({ onViewHistory, systemOnly = false }) {
             </div>
 
             {editingJob && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setEditingJob(null)}>
-                    <div className="w-full max-w-2xl" onClick={e => e.stopPropagation()}>
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onMouseDown={e => { if (e.target === e.currentTarget) setEditingJob(null); }}>
+                    <div className="w-full max-w-2xl">
                         <CreateTaskForm
                             initialValues={editingJob.name ? editingJob : null}
                             onTaskCreated={() => {
