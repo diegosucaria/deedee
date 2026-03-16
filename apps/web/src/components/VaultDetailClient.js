@@ -34,6 +34,7 @@ export default function VaultDetailClient({ vault }) {
                     vaultId={vault.id}
                     initialContent={activeContent}
                     pageName={activePage}
+                    onNavigate={handlePageSelect}
                 />
             </div>
         </>

@@ -1,21 +1,48 @@
 'use client';
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { updateVaultPage } from '@/app/actions';
 import MDEditor from '@uiw/react-md-editor';
 
-export default function WikiEditor({ vaultId, initialContent, pageName }) {
+export default function WikiEditor({ vaultId, initialContent, pageName, onNavigate }) {
     const [content, setContent] = useState(initialContent || '');
     const [isSaving, setIsSaving] = useState(false);
     const [isDirty, setIsDirty] = useState(false);
     const [mode, setMode] = useState('preview');
-
-    // Auto-save logic or Manual save? 
-    // Manual save button for safety + Cmd+S
+    const editorRef = useRef(null);
 
     useEffect(() => {
         setContent(initialContent || '');
         setIsDirty(false);
     }, [initialContent]);
+
+    // Intercept .md link clicks in preview mode to navigate within the vault
+    useEffect(() => {
+        const container = editorRef.current;
+        if (!container) return;
+        const handleClick = (e) => {
+            const link = e.target.closest('a');
+            if (!link) return;
+            const href = link.getAttribute('href');
+            if (href && href.endsWith('.md') && !href.startsWith('http')) {
+                e.preventDefault();
+                onNavigate?.(href);
+            }
+        };
+        container.addEventListener('click', handleClick);
+        return () => container.removeEventListener('click', handleClick);
+    }, [onNavigate]);
+
+    // Cmd+S to save
+    useEffect(() => {
+        const handleKeyDown = (e) => {
+            if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+                e.preventDefault();
+                handleSave();
+            }
+        };
+        window.addEventListener('keydown', handleKeyDown);
+        return () => window.removeEventListener('keydown', handleKeyDown);
+    }, [content, pageName]);
 
     const handleSave = async () => {
         setIsSaving(true);
@@ -23,21 +50,13 @@ export default function WikiEditor({ vaultId, initialContent, pageName }) {
         setIsSaving(false);
         if (res.success) {
             setIsDirty(false);
-            // Optional toast here
         } else {
             alert('Failed to save: ' + res.error);
         }
     };
 
-    const handleKeyDown = (e) => {
-        if ((e.metaKey || e.ctrlKey) && e.key === 's') {
-            e.preventDefault();
-            handleSave();
-        }
-    };
-
     return (
-        <div className="flex flex-col h-full border border-zinc-800 rounded-lg bg-zinc-950 shadow-sm overflow-hidden text-zinc-300" data-color-mode="dark">
+        <div ref={editorRef} className="flex flex-col h-full border border-zinc-800 rounded-lg bg-zinc-950 shadow-sm overflow-hidden text-zinc-300" data-color-mode="dark">
             <div className="bg-zinc-900 px-4 py-2 border-b border-zinc-800 flex justify-between items-center z-10">
                 <div className="flex items-center gap-4">
                     <span className="font-semibold text-zinc-400 text-sm flex items-center gap-2">
@@ -75,7 +94,7 @@ export default function WikiEditor({ vaultId, initialContent, pageName }) {
                 </div>
             </div>
 
-            <div className="flex-1 overflow-hidden relative bg-zinc-950">
+            <div className="flex-1 overflow-hidden relative bg-zinc-950 vault-editor">
                 <MDEditor
                     value={content}
                     onChange={(val) => { setContent(val || ''); setIsDirty(true); }}
