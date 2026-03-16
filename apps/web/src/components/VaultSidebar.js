@@ -6,7 +6,7 @@ import VaultEmbeddings from '@/components/VaultEmbeddings';
 import { Files, Database, FileText } from 'lucide-react';
 
 export default function VaultSidebar({ vault, activePage, onPageSelect }) {
-    const [tab, setTab] = useState('files'); // 'files', 'pages', or 'index'
+    const [tab, setTab] = useState('files');
 
     const pages = vault.pages || [];
 

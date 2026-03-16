@@ -533,13 +533,18 @@ class RagService {
                     }
                 }
 
-                const indexFile = path.join(vaultsDir, vault, 'index.md');
-                if (fs.existsSync(indexFile)) {
-                    try {
-                        await this.ingestDocument(indexFile, vault);
-                        processed++;
-                    } catch (e) {
-                        console.error(`[RAG] Failed to ingest index.md in vault ${vault}:`, e.message);
+                // Ingest all .md pages in vault root (index.md + other pages)
+                const vaultDir = path.join(vaultsDir, vault);
+                const vaultEntries = fs.readdirSync(vaultDir);
+                for (const entry of vaultEntries) {
+                    if (entry.endsWith('.md')) {
+                        const mdPath = path.join(vaultDir, entry);
+                        try {
+                            await this.ingestDocument(mdPath, vault);
+                            processed++;
+                        } catch (e) {
+                            console.error(`[RAG] Failed to ingest ${entry} in vault ${vault}:`, e.message);
+                        }
                     }
                 }
             }
