@@ -1,10 +1,7 @@
 import { getVault } from '@/app/actions';
 import Link from 'next/link';
-import WikiEditor from '@/components/WikiEditor';
-import FileExplorer from '@/components/FileExplorer';
-import VaultUploader from '@/components/VaultUploader';
 import VaultChat from '@/components/VaultChat';
-import VaultSidebar from '@/components/VaultSidebar';
+import VaultDetailClient from '@/components/VaultDetailClient';
 import { notFound } from 'next/navigation';
 
 export const dynamic = 'force-dynamic';
@@ -36,17 +33,8 @@ export default async function VaultDetailPage({ params }) {
 
             {/* Main Content - Split View */}
             <div className="flex-1 flex overflow-hidden">
-                {/* Left: Files & Meta */}
-                <VaultSidebar vault={vault} />
-
-                {/* Right: Wiki Editor */}
-                <div className="flex-1 flex flex-col bg-zinc-950 p-4">
-                    <WikiEditor
-                        vaultId={vault.id}
-                        initialContent={vault.wiki}
-                        pageName="index.md"
-                    />
-                </div>
+                {/* Left Sidebar + Center Editor (client-side page switching) */}
+                <VaultDetailClient vault={vault} />
 
                 {/* Far Right: Contextual Chat */}
                 <div className="w-[400px] flex flex-col bg-zinc-900 border-l border-zinc-800">
