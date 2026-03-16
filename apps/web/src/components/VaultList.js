@@ -51,12 +51,9 @@ export default function VaultList({ vaults }) {
                             </div>
                             <h3 className="text-xl font-bold text-zinc-100 capitalize">{vault.id}</h3>
                         </div>
-                        <span className="text-xs bg-zinc-800 text-zinc-400 px-2 py-1 rounded-full">
-                            {vault.filesCount || 0} files
-                        </span>
                     </div>
-                    <p className="text-sm text-zinc-500 line-clamp-3 mb-2">
-                        Click to view knowledge base.
+                    <p className="text-sm text-zinc-500 mb-2">
+                        <span className="text-xs bg-zinc-800 text-zinc-400 px-2 py-0.5 rounded-full">{vault.filesCount || 0} files</span>
                     </p>
 
                     {/* Delete Button (Visible on Hover) */}

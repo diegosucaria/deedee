@@ -1132,6 +1132,16 @@ export async function getVault(id) {
     }
 }
 
+export async function getVaultPage(id, page) {
+    try {
+        const res = await fetchAPI(`/v1/vaults/${encodeURIComponent(id)}/pages?name=${encodeURIComponent(page)}`);
+        return res.content || '';
+    } catch (error) {
+        console.error(`getVaultPage(${id}, ${page}) Error:`, error);
+        return null;
+    }
+}
+
 export async function updateVaultPage(id, content, page = 'index.md') {
     try {
         await fetchAPI(`/v1/vaults/${encodeURIComponent(id)}/wiki`, {

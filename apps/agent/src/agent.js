@@ -1026,8 +1026,8 @@ class Agent {
         const timeZone = process.env.TZ || 'America/Argentina/Buenos_Aires';
         const timeString = new Date().toLocaleString('en-US', { timeZone, timeZoneName: 'short' }) + ` (${timeZone})`;
 
-        // Use latest skill context
-        const skillsContext = this.skillService.getGlobalInstructions();
+        // Context-aware skill injection: only inject on-demand skills that match the user message
+        const skillsContext = this.skillService.getContextualInstructions(contextQuery);
         const notificationContext = {
             ownerName: this.settings?.owner_name || 'the user',
             ownerPhone: this.settings?.owner_phone || '',
@@ -1265,8 +1265,8 @@ class Agent {
       const timeZone = process.env.TZ || 'America/Argentina/Buenos_Aires';
       const timeString = new Date().toLocaleString('en-US', { timeZone, timeZoneName: 'short' }) + ` (${timeZone})`;
 
-      // Use latest skill context
-      const skillsContext = this.skillService.getGlobalInstructions();
+      // Context-aware skill injection: only inject on-demand skills that match the user message
+      const skillsContext = this.skillService.getContextualInstructions(contextQuery);
       const notificationContext = {
           ownerName: this.settings?.owner_name || 'the user',
           ownerPhone: this.settings?.owner_phone || '',
@@ -1422,7 +1422,7 @@ class Agent {
 
       const MAX_LOOPS_DEFAULT = parseInt(process.env.MAX_TOOL_LOOPS || '15');
       const MAX_LOOPS_BROWSER = parseInt(process.env.MAX_TOOL_LOOPS_BROWSER || '50');
-      const MAX_SAME_TOOL_CALLS = 3; // Same tool name (non-browser) = likely stuck
+      const MAX_SAME_TOOL_CALLS = 6; // Same tool name (non-browser) = likely stuck
       const MAX_IDENTICAL_CALLS = 3; // Same tool + same args = definitely stuck
       let loopCount = 0;
       let hasBrowserSession = false; // Escalate limit when browser tools are used
@@ -1508,13 +1508,25 @@ class Agent {
         // is the safety net for browser sessions.
         // Tier 1: Per-tool-name tracking (catches searchPerson("diego"), searchPerson("Die"), etc.)
         // Tier 2: Identical call tracking (catches exact same call repeated — definitely stuck)
-        // Tools that legitimately get called multiple times with different args per session
+        // Tools that legitimately get called multiple times with different args per session.
+        // Gmail/calendar/people tools are exempt from Tier 1 because the normal workflow is
+        // list → fetch each item by ID (e.g. list emails → get each email). Multi-account
+        // setups (work_/personal_ prefixes) multiply the call count further.
         const LOOP_EXEMPT_TOOLS = new Set(['spawnAgent', 'readChatHistory']);
+        function isLoopExemptTool(toolName) {
+          if (!toolName) return false;
+          if (LOOP_EXEMPT_TOOLS.has(toolName)) return true;
+          const lower = toolName.toLowerCase();
+          if (lower.includes('gmail')) return true;
+          if (lower.includes('calendar')) return true;
+          if (lower.includes('people') || lower.includes('contacts')) return true;
+          return false;
+        }
 
         for (const call of functionCalls) {
           const toolName = call.name || '';
           if (toolName.includes('browser_')) continue; // Browser tools exempt from all loop detection
-          if (LOOP_EXEMPT_TOOLS.has(toolName)) continue; // Tools expected to be called multiple times
+          if (isLoopExemptTool(toolName)) continue; // Tools expected to be called multiple times
 
           const sig = `${toolName}:${JSON.stringify(call.args)}`;
 
@@ -1532,7 +1544,7 @@ class Agent {
         for (const call of functionCalls) {
           const toolName = call.name || '';
           if (toolName.includes('browser_')) continue; // Browser tools exempt
-          if (LOOP_EXEMPT_TOOLS.has(toolName)) continue; // Tools expected to be called multiple times
+          if (isLoopExemptTool(toolName)) continue; // Tools expected to be called multiple times
 
           const sig = `${toolName}:${JSON.stringify(call.args)}`;
 

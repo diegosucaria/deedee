@@ -151,6 +151,19 @@ class VaultManager {
         return true;
     }
 
+    async listVaultPages(topic) {
+        const safeTopic = this.sanitizeTopic(topic);
+        const vaultPath = path.join(this.vaultsDir, safeTopic);
+        try {
+            const entries = await fs.readdir(vaultPath, { withFileTypes: true });
+            return entries
+                .filter(e => e.isFile() && e.name.endsWith('.md') && e.name !== 'index.md')
+                .map(e => e.name);
+        } catch {
+            return [];
+        }
+    }
+
     async listVaultFiles(topic) {
         const safeTopic = this.sanitizeTopic(topic);
         const filesPath = path.join(this.vaultsDir, safeTopic, 'files');

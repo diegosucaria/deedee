@@ -18,7 +18,7 @@ const CATEGORY_DESCRIPTIONS = {
     smarthome: 'Control smart home devices (lights, AC, etc.)',
     communication: 'Send WhatsApp messages, search contacts, read chat history, watchers',
     people: 'Manage people/contacts database (list, search, update)',
-    vault: 'Life Vaults for document storage and knowledge management',
+    vault: 'Life Vaults for document storage, knowledge management, reviews, weekly summaries, and journal logs',
     rag: 'Semantic document search and ingestion',
     dj: 'DJ tools: vinyl management, track recommendations',
     slack: 'Slack: search, read history, send messages, monitored channels',
@@ -152,6 +152,16 @@ Example: ["slack", "calendar_email", "memory", "subagent", "scheduler"]`;
                 if (internal) internal.forEach(t => toolNames.add(t));
                 const mcp = mcpByCategory[cat];
                 if (mcp) mcp.forEach(t => toolNames.add(t));
+            }
+
+            // If the task prompt explicitly mentions a tool name, include its category
+            for (const [cat, tools] of Object.entries(internalByCategory)) {
+                for (const toolName of tools) {
+                    if (taskPrompt.includes(toolName)) {
+                        tools.forEach(t => toolNames.add(t));
+                        break;
+                    }
+                }
             }
 
             // Always include uncategorized MCP tools (safety fallback)

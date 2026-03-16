@@ -41,3 +41,8 @@ main > * {
 .scrollbar-hide::-webkit-scrollbar {
   display: none;
 }
+
+/* Vault wiki editor preview padding */
+.vault-editor .wmde-markdown {
+  padding: 1.5rem;
+}

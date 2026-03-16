@@ -20,7 +20,7 @@ class NotificationService {
     const created_at = new Date().toISOString();
 
     try {
-      this.db.createNotification({ id, type, severity, title, message, metadata });
+      this.db.createNotification({ id, type, severity, title, message, metadata, created_at });
     } catch (e) {
       console.error('[Notifications] Failed to persist notification:', e.message);
       return null;

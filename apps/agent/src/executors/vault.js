@@ -15,8 +15,8 @@ class VaultExecutor extends BaseExecutor {
             case 'addToVault':
                 return this.addToVault(args.topic, args.file_path, args.summary, context);
             case 'readVaultPage':
-                return this.readVaultPage(args.topic, args.page);
-            case 'updateVaultPage':
+                return this.readVaultPage(args.topic, args.page || 'index.md');
+            case 'writeVaultPage':
                 return this.updateVaultPage(args.topic, args.page, args.content);
             case 'listVaultFiles':
                 return this.listVaultFiles(args.topic);
@@ -93,6 +93,19 @@ class VaultExecutor extends BaseExecutor {
 
     async updateVaultPage(topic, page, content) {
         await this.services.vaults.updateVaultPage(topic, page, content);
+
+        // Trigger RAG ingestion for the page
+        try {
+            if (this.services.agent.ragService) {
+                const safeTopic = this.services.vaults.sanitizeTopic(topic);
+                const safePage = path.basename(page);
+                const targetPath = path.join(this.services.vaults.vaultsDir, safeTopic, safePage);
+                await this.services.agent.ragService.ingestDocument(targetPath, topic);
+            }
+        } catch (e) {
+            console.error(`[Vault] RAG ingestion failed for ${page}:`, e.message);
+        }
+
         return `Page '${page}' updated in vault '${topic}'.`;
     }
 
