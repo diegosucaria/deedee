@@ -47,6 +47,9 @@ router.post('/', (req, res) => proxyRequest(req, res, 'POST', '/v1/vaults', req.
 // DELETE /v1/vaults/:id
 router.delete('/:id', (req, res) => proxyRequest(req, res, 'DELETE', `/v1/vaults/${req.params.id}`));
 
+// GET /v1/vaults/:id/pages?name=X - Read a vault page
+router.get('/:id/pages', (req, res) => proxyRequest(req, res, 'GET', `/v1/vaults/${req.params.id}/pages`));
+
 // GET /v1/vaults/:id
 router.get('/:id', (req, res) => proxyRequest(req, res, 'GET', `/v1/vaults/${req.params.id}`));
 
