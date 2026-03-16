@@ -102,8 +102,8 @@ export default function WatchersTable() {
             </div>
 
             {editingWatcher && (
-                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onClick={() => setEditingWatcher(null)}>
-                    <div className="w-full max-w-2xl" onClick={e => e.stopPropagation()}>
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onMouseDown={e => { if (e.target === e.currentTarget) setEditingWatcher(null); }}>
+                    <div className="w-full max-w-2xl">
                         <CreateWatcherForm
                             initialValues={editingWatcher.name ? editingWatcher : null}
                             onWatcherCreated={() => {
