@@ -1028,7 +1028,12 @@ class Agent {
 
         // Context-aware skill injection: only inject on-demand skills that match the user message
         const skillsContext = this.skillService.getContextualInstructions(contextQuery);
-        let grokSystemPrompt = getSystemInstruction(timeString, activeGoals, facts, { codingMode: true, vaultContext, skillsContext });
+        const notificationContext = {
+            ownerName: this.settings?.owner_name || 'the user',
+            ownerPhone: this.settings?.owner_phone || '',
+            notificationChannel: this.settings?.notification_channel || 'whatsapp'
+        };
+        let grokSystemPrompt = getSystemInstruction(timeString, activeGoals, facts, { codingMode: true, vaultContext, skillsContext, notificationContext });
 
         // Add Tool Manifest since Grok can't see definitions natively yet
         grokSystemPrompt += `\n\n ** AVAILABLE TOOLS(You cannot execute them directly, but you know they exist):**\n` +
@@ -1262,11 +1267,16 @@ class Agent {
 
       // Context-aware skill injection: only inject on-demand skills that match the user message
       const skillsContext = this.skillService.getContextualInstructions(contextQuery);
+      const notificationContext = {
+          ownerName: this.settings?.owner_name || 'the user',
+          ownerPhone: this.settings?.owner_phone || '',
+          notificationChannel: this.settings?.notification_channel || 'whatsapp'
+      };
       let systemInstruction = getSystemInstruction(
         timeString,
         activeGoals,
         facts,
-        { codingMode: true, vaultContext, skillsContext } // Coding mode enabled by default for now, could be dynamic
+        { codingMode: true, vaultContext, skillsContext, notificationContext }
       );
 
       console.log(`${logPrefix} [Context] System Instruction Size: ~${systemInstruction.length} chars(~${Math.round(systemInstruction.length / 4)} tokens).`);

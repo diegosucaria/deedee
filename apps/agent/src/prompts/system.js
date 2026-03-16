@@ -7,7 +7,7 @@
  * @returns {string} The system instruction.
  */
 function getSystemInstruction(dateString, activeGoals, facts, options = { codingMode: false, vaultContext: null }) {
-        const { codingMode, vaultContext, skillsContext } = options;
+        const { codingMode, vaultContext, skillsContext, notificationContext } = options;
 
         const BASE_PROMPT = `
             You are Deedee, a helpful and capable AI assistant.
@@ -126,7 +126,17 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
             - [ ] Update "specs/" if adding new big features.
     `;
 
-        let instruction = BASE_PROMPT + THINKING_PROTOCOL;
+        let NOTIFICATION_PROTOCOL = '';
+        if (notificationContext && notificationContext.ownerPhone) {
+                NOTIFICATION_PROTOCOL = `
+            NOTIFICATION PROTOCOL (CRITICAL):
+            1. **Owner Contact**: Your owner is "${notificationContext.ownerName}". Their phone is ${notificationContext.ownerPhone}. Notification channel: ${notificationContext.notificationChannel || 'whatsapp'}.
+            2. **Direct Send**: When sending notifications or messages to the owner, use 'sendMessage' with to="me". Do NOT use 'searchContacts' for the owner.
+            3. **No Contact Lookup for Owner**: The owner's identity is already resolved. Skip contact search entirely for notifications directed at the owner.
+            `;
+        }
+
+        let instruction = BASE_PROMPT + NOTIFICATION_PROTOCOL + THINKING_PROTOCOL;
 
         if (skillsContext) {
                 instruction += `\n\nACTIVE SKILLS:\nThe following are specialized behavioral modules you have loaded. Adopt these personas or follow these procedures when triggered by the relevant context.\n${skillsContext}\n`;
