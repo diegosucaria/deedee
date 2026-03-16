@@ -199,9 +199,11 @@ module.exports = (agent) => {
         }
     });
 
-    // GET /v1/vaults/:id/pages/:page - Read a vault page
-    router.get('/:id/pages/:page', async (req, res) => {
-        const { id, page } = req.params;
+    // GET /v1/vaults/:id/pages?name=W11-2026.md - Read a vault page
+    router.get('/:id/pages', async (req, res) => {
+        const { id } = req.params;
+        const page = req.query.name;
+        if (!page) return res.status(400).json({ error: 'Query param "name" is required' });
         try {
             const content = await agent.vaults.readVaultPage(id, page);
             if (content === null) return res.status(404).json({ error: 'Page not found' });
