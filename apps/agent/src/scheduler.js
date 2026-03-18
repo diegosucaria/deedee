@@ -462,12 +462,17 @@ class Scheduler {
             {
                 name: 'proactive_thought',
                 cron: '0 7-22 * * *', // Daytime only (7am-10pm), reduced from every hour
-                task: `[PROACTIVE LOOP] You have free time. Review your recent context across platforms.
+                task: `[PROACTIVE LOOP] You have free time. Scan messages from the last 4 hours across all platforms.
 CRITICAL: Use spawnAgent(model: 'FLASH') to fetch and summarize each source:
-- Slack (readAllMonitoredSlackHistory) → format items as "[Slack #channel] Person Name: item"
-- Email/Calendar (GWS tools) → format items as "[Email] Sender: summary" or "[Calendar] Event: time"
-- WhatsApp → format items as "[WhatsApp] Contact Name: item"
-Use the FULL name as it appears on each platform. Never merge contacts across platforms.
+- Slack (readAllMonitoredSlackHistory) → return only actionable items with exact format: "[Slack #channel] Person Name: item"
+- Email/Calendar (GWS tools) → return only actionable items with exact format: "[Email] Sender: summary" or "[Calendar] Event: time"
+- WhatsApp → return only actionable items with exact format: "[WhatsApp] Contact Name: item"
+CRITICAL RULES:
+- Only include items that are directed at ME or require MY action. Ignore tasks assigned to or meant for other people.
+- Each item MUST include its source platform in brackets: [Slack #channel-name], [WhatsApp], [Email], or [Calendar]
+- Use the FULL contact name as it appears on each platform. Never shorten or alias names across platforms.
+- Do NOT list tasks already completed, answered, moved, or explicitly resolved. Cross-reference the timeline.
+- Do NOT merge or combine contacts from different platforms even if names look similar.
 If you found something actionable or noteworthy, output a message to your owner.
 Check if you have already notified the user about this topic recently — do NOT repeat yourself.
 If nothing new or actionable, output ONLY [SILENT].
