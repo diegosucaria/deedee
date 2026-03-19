@@ -1501,6 +1501,12 @@ class Agent {
         } else {
           console.log(`${logPrefix} Processing ${functionCalls.length} tool calls in parallel.`);
         }
+        // Log each tool call with args for debugging
+        for (const call of functionCalls) {
+          const argsStr = JSON.stringify(call.args || {});
+          const truncatedArgs = argsStr.length > 500 ? argsStr.substring(0, 500) + '...[TRUNCATED]' : argsStr;
+          console.log(`${logPrefix} → ${call.name}(${truncatedArgs})`);
+        }
 
         // LOOP DETECTION: Two-tier approach (non-browser tools ONLY)
         // Browser tools (click, type, snapshot, screenshot) are fully exempt — they legitimately
