@@ -213,17 +213,72 @@ export default function HistoryList({ history, subagent }) {
 
                                             <div className="prose prose-invert prose-sm max-w-none text-zinc-400 bg-zinc-900/40 p-4 rounded-xl border border-zinc-800/50">
                                                 {(() => {
-                                                    let text = msg.content;
-                                                    // Try parsing parts if content is empty or looks like JSON
-                                                    if ((!text || text === '{}') && msg.parts) {
+                                                    // Try rendering structured parts (tool calls / responses)
+                                                    if ((!msg.content || msg.content === '{}') && msg.parts) {
                                                         try {
                                                             const parts = typeof msg.parts === 'string' ? JSON.parse(msg.parts) : msg.parts;
                                                             if (Array.isArray(parts)) {
-                                                                text = parts.map(p => p.text || (p.functionCall ? `Tool Call: ${p.functionCall.name}` : '') || (p.inlineData ? '[Media]' : '')).join('\n');
+                                                                const hasToolParts = parts.some(p => p.functionCall || p.functionResponse);
+                                                                if (hasToolParts) {
+                                                                    return (
+                                                                        <div className="space-y-3">
+                                                                            {parts.map((p, i) => {
+                                                                                if (p.functionCall) {
+                                                                                    const argsStr = p.functionCall.args ? JSON.stringify(p.functionCall.args, null, 2) : null;
+                                                                                    return (
+                                                                                        <div key={i}>
+                                                                                            <div className="text-xs font-medium text-amber-400/80">
+                                                                                                Tool Call: <span className="text-amber-300 font-mono">{p.functionCall.name}</span>
+                                                                                            </div>
+                                                                                            {argsStr && argsStr !== '{}' && (
+                                                                                                <details className="mt-1">
+                                                                                                    <summary className="text-[10px] text-zinc-600 cursor-pointer hover:text-zinc-400 select-none">
+                                                                                                        Parameters
+                                                                                                    </summary>
+                                                                                                    <pre className="text-[11px] text-zinc-500 bg-zinc-950/60 p-2 rounded mt-1 overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap">
+                                                                                                        {argsStr}
+                                                                                                    </pre>
+                                                                                                </details>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    );
+                                                                                }
+                                                                                if (p.functionResponse) {
+                                                                                    const resp = p.functionResponse.response;
+                                                                                    const respStr = resp ? JSON.stringify(resp, null, 2) : null;
+                                                                                    return (
+                                                                                        <div key={i}>
+                                                                                            <div className="text-xs font-medium text-emerald-400/80">
+                                                                                                Response: <span className="text-emerald-300 font-mono">{p.functionResponse.name}</span>
+                                                                                            </div>
+                                                                                            {respStr && (
+                                                                                                <details className="mt-1">
+                                                                                                    <summary className="text-[10px] text-zinc-600 cursor-pointer hover:text-zinc-400 select-none">
+                                                                                                        Result
+                                                                                                    </summary>
+                                                                                                    <pre className="text-[11px] text-zinc-500 bg-zinc-950/60 p-2 rounded mt-1 overflow-x-auto max-h-48 overflow-y-auto whitespace-pre-wrap">
+                                                                                                        {respStr}
+                                                                                                    </pre>
+                                                                                                </details>
+                                                                                            )}
+                                                                                        </div>
+                                                                                    );
+                                                                                }
+                                                                                if (p.text) return <ReactMarkdown key={i}>{p.text}</ReactMarkdown>;
+                                                                                if (p.inlineData) return <span key={i} className="text-xs text-zinc-500">[Media]</span>;
+                                                                                return null;
+                                                                            })}
+                                                                        </div>
+                                                                    );
+                                                                }
+                                                                // Non-tool parts: extract text as before
+                                                                const text = parts.map(p => p.text || (p.inlineData ? '[Media]' : '')).filter(Boolean).join('\n');
+                                                                if (text) return <ReactMarkdown>{text}</ReactMarkdown>;
                                                             }
                                                         } catch (e) { }
                                                     }
 
+                                                    const text = msg.content;
                                                     if (msg.role === 'tool' || msg.source === 'tool') {
                                                         return (
                                                             <pre className="text-xs bg-transparent p-0 m-0 overflow-x-auto whitespace-pre-wrap">
