@@ -66,36 +66,6 @@ EXECUTABLE_PATH = os.environ.get('BROWSER_EXECUTABLE_PATH') or None
 MAX_STEPS_CAP = int(os.environ.get('BROWSER_USE_MAX_STEPS', '50'))
 TASK_TIMEOUT = 15 * 60  # 15 minutes
 
-# ── Agent System Message Tips ─────────────────────────────────────────────────
-# Appended to browser-use's built-in system prompt to improve reliability
-# on complex sites (autocomplete dropdowns, SPAs, date pickers, etc.)
-
-AGENT_TIPS = """
-## Autocomplete / Search Inputs
-Many travel, booking, and search sites use autocomplete dropdowns that only appear
-after typing AND a short delay. Follow this pattern:
-1. Click the input field first to focus it.
-2. If the field has existing text, clear it (use clear=True).
-3. Type a SHORT search term (e.g. city name or 3-letter code like "SLA" or "COR").
-4. ALWAYS use a `wait` action (2-3 seconds) AFTER typing to let the dropdown load.
-5. Only then look for and click the correct suggestion in the dropdown.
-6. If no dropdown appears after waiting, try a different search term (e.g. full city
-   name instead of airport code, or vice versa).
-7. Never submit the form until you have selected from the dropdown — just typing
-   the code is not enough on most sites.
-
-## Date Pickers
-- Click the date field to open the calendar/picker.
-- Use `wait` (2s) after clicking for the picker to render.
-- Navigate month by month if the target date is not visible.
-- Click the specific day number, not the month header.
-
-## General Tips
-- After any navigation or click that loads new content, use `wait` (2-3s).
-- If the page shows a cookie banner or popup, dismiss it first.
-- Prefer using the site in the same language the user used in the task.
-""".strip()
-
 # ── Singleton Browser Manager ─────────────────────────────────────────────────
 
 _browser = None
@@ -277,7 +247,6 @@ async def browser_use_task(task: str, url: str = '', max_steps: int = 25) -> str
             browser=browser,
             use_vision=True,
             register_new_step_callback=_on_step,
-            extend_system_message=AGENT_TIPS,
         )
 
         history = await asyncio.wait_for(
