@@ -10,6 +10,7 @@ class MCPManager {
         this.toolCache = [];       // Array of all tools (Gemini format)
         this.toolMap = new Map();  // toolName -> { name: string, client: Client }
         this.configPath = path.resolve(__dirname, configPath);
+        this._activeAbortControllers = new Set(); // Track active long-running calls
     }
 
     // ... (init method remains same)
@@ -337,7 +338,7 @@ class MCPManager {
         return this.toolCache;
     }
 
-    async callTool(name, args) {
+    async callTool(name, args, { signal } = {}) {
         // Linear lookup removed. Using cache.
         const owner = this.toolMap.get(name);
 
@@ -348,49 +349,85 @@ class MCPManager {
             if (!retryOwner) {
                 throw new Error(`Tool ${name} not found in any MCP server.`);
             }
-            return await this._callClient(retryOwner.client, retryOwner.originalName || name, args);
+            return await this._callClient(retryOwner.client, retryOwner.originalName || name, args, signal);
         }
 
-        return await this._callClient(owner.client, owner.originalName || name, args);
+        return await this._callClient(owner.client, owner.originalName || name, args, signal);
     }
 
-    async _callClient(client, name, args) {
+    /**
+     * Cancel all active long-running MCP tool calls.
+     * Called when the agent receives a stop request to abort in-flight browser_use_task etc.
+     */
+    cancelActiveCalls() {
+        if (this._activeAbortControllers.size === 0) return;
+        console.log(`[MCP] Cancelling ${this._activeAbortControllers.size} active long-running call(s)...`);
+        for (const ac of this._activeAbortControllers) {
+            try { ac.abort('Stop requested by user'); } catch {}
+        }
+        this._activeAbortControllers.clear();
+    }
+
+    async _callClient(client, name, args, externalSignal) {
         // Long-running tools get extended timeouts (default MCP SDK timeout is 60s)
         const LONG_RUNNING_PREFIXES = ['browser_use_'];
         const isLongRunning = LONG_RUNNING_PREFIXES.some(p => name.startsWith(p));
         const timeout = isLongRunning ? 15 * 60 * 1000 : undefined; // 15 min or SDK default
 
-        const result = await client.callTool({
-            name: name,
-            arguments: args
-        }, undefined, timeout ? { timeout } : undefined);
-
-        // Let's return the simplified result
-        if (result.content && result.content.length > 0) {
-            // Return text content
-            const text = result.content.map(c => c.text).join('\n');
-            const returnObj = { output: text };
-
-            // Extract usage metadata from MCP tool results (e.g. browser-use)
-            // Any MCP server can report token usage by including a "usage" field
-            // with { model, prompt_tokens, completion_tokens } in its JSON response.
-            try {
-                const parsed = JSON.parse(text);
-                if (parsed.usage && parsed.usage.model) {
-                    returnObj._meta = {
-                        usage: {
-                            model: parsed.usage.model,
-                            inputTokens: parsed.usage.prompt_tokens || 0,
-                            outputTokens: parsed.usage.completion_tokens || 0,
-                            tag: parsed.usage.tag || null,
-                        }
-                    };
-                }
-            } catch { /* not JSON or no usage — that's fine */ }
-
-            return returnObj;
+        // For long-running tools, create an AbortController so calls can be cancelled on stop
+        let ac, signal;
+        if (isLongRunning) {
+            ac = new AbortController();
+            this._activeAbortControllers.add(ac);
+            // If an external signal was provided (e.g., from stop), wire it to our controller
+            if (externalSignal) {
+                externalSignal.addEventListener('abort', () => ac.abort(externalSignal.reason), { once: true });
+            }
+            signal = ac.signal;
+        } else {
+            signal = externalSignal;
         }
-        return result;
+
+        try {
+            const options = {};
+            if (timeout) options.timeout = timeout;
+            if (signal) options.signal = signal;
+
+            const result = await client.callTool({
+                name: name,
+                arguments: args
+            }, undefined, Object.keys(options).length > 0 ? options : undefined);
+
+            // Let's return the simplified result
+            if (result.content && result.content.length > 0) {
+                // Return text content
+                const text = result.content.map(c => c.text).join('\n');
+                const returnObj = { output: text };
+
+                // Extract usage metadata from MCP tool results (e.g. browser-use)
+                // Any MCP server can report token usage by including a "usage" field
+                // with { model, prompt_tokens, completion_tokens } in its JSON response.
+                try {
+                    const parsed = JSON.parse(text);
+                    if (parsed.usage && parsed.usage.model) {
+                        returnObj._meta = {
+                            usage: {
+                                model: parsed.usage.model,
+                                inputTokens: parsed.usage.prompt_tokens || 0,
+                                outputTokens: parsed.usage.completion_tokens || 0,
+                                tag: parsed.usage.tag || null,
+                            }
+                        };
+                    }
+                } catch { /* not JSON or no usage — that's fine */ }
+
+                return returnObj;
+            }
+            return result;
+        } finally {
+            // Clean up tracked AbortController for long-running calls
+            if (ac) this._activeAbortControllers.delete(ac);
+        }
     }
 
 

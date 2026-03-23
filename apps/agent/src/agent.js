@@ -120,6 +120,8 @@ class Agent {
   async stopGeneration(chatId) {
     console.log(`[Agent] Stop requested for chat ${chatId}`);
     this.cancellationFlags.add(chatId);
+    // Cancel any active long-running MCP tool calls (e.g. browser_use_task)
+    if (this.mcp) this.mcp.cancelActiveCalls();
   }
 
   async stop() {
@@ -1433,6 +1435,8 @@ class Agent {
         // CHECK STOP FLAG
         if (this.stopFlags.has(chatId) || this.stopFlags.has('GLOBAL_STOP')) {
           console.log(`${logPrefix} Stop flag detected for chat ${chatId}. Breaking loop.`);
+          // Cancel any active long-running MCP tool calls (e.g. browser_use_task)
+          if (this.mcp) this.mcp.cancelActiveCalls();
           await activeSendCallback(createAssistantMessage('🛑 Execution stopped by user.'));
           this.stopFlags.delete(chatId);
           // Do NOT delete GLOBAL_STOP here, so it hits other concurrent loops.

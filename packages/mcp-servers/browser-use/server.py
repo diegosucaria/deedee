@@ -230,13 +230,16 @@ async def browser_use_task(task: str, url: str = '', max_steps: int = 25) -> str
             nonlocal _step_count
             _step_count = step_num
             actions = []
-            if output and hasattr(output, 'actions') and output.actions:
-                for a in output.actions:
-                    d = a.model_dump(exclude_unset=True) if hasattr(a, 'model_dump') else {}
-                    actions.append(next(iter(d.keys()), 'action'))
+            # AgentOutput.action (not .actions) is list[ActionModel]
+            action_list = getattr(output, 'action', None) or []
+            for a in action_list:
+                d = a.model_dump(exclude_unset=True) if hasattr(a, 'model_dump') else {}
+                actions.append(next(iter(d.keys()), 'action'))
+            goal = getattr(output, 'next_goal', '') or ''
             url = getattr(state, 'url', '') or ''
             actions_str = ', '.join(actions) if actions else 'thinking'
-            print(f'[browser-use] Step {step_num}: {actions_str} | {url[:80]}', file=sys.stderr)
+            goal_str = f' — {goal[:100]}' if goal else ''
+            print(f'[browser-use] Step {step_num}: {actions_str}{goal_str} | {url[:80]}', file=sys.stderr)
 
         agent = Agent(
             task=full_task,
