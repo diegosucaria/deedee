@@ -355,10 +355,15 @@ class MCPManager {
     }
 
     async _callClient(client, name, args) {
+        // Long-running tools get extended timeouts (default MCP SDK timeout is 60s)
+        const LONG_RUNNING_PREFIXES = ['browser_use_'];
+        const isLongRunning = LONG_RUNNING_PREFIXES.some(p => name.startsWith(p));
+        const timeout = isLongRunning ? 15 * 60 * 1000 : undefined; // 15 min or SDK default
+
         const result = await client.callTool({
             name: name,
             arguments: args
-        });
+        }, undefined, timeout ? { timeout } : undefined);
 
         // Let's return the simplified result
         if (result.content && result.content.length > 0) {
