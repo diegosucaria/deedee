@@ -1652,16 +1652,16 @@ class Agent {
               toolResult = { info: `Action PAUSED. ${guard.message} User must confirm.` };
             } else {
               // Execute normally
-              toolResult = await this._executeTool(executionName, call.args, message, activeSendCallback, (model, pTokens, cTokens, cached = 0, thoughts = 0) => {
+              toolResult = await this._executeTool(executionName, call.args, message, activeSendCallback, (model, pTokens, cTokens, cached = 0, thoughts = 0, tag = null) => {
                 const cost = calculateCost(model, pTokens, cTokens, cached, thoughts);
                 e2eCost += cost;
                 e2eTokens += (pTokens + cTokens);
-                console.log(`[Tokens-Polyfill] P: ${pTokens} | C: ${cTokens} | Cached: ${cached} | Think: ${thoughts} | Cost: $${cost.toFixed(6)}`);
+                console.log(`[Tokens-Polyfill] P: ${pTokens} | C: ${cTokens} | Cached: ${cached} | Think: ${thoughts} | Cost: $${cost.toFixed(6)}${tag ? ` (${tag})` : ''}`);
 
                 this.db.logTokenUsage({
                   model, promptTokens: pTokens, candidateTokens: cTokens,
                   totalTokens: pTokens + cTokens, chatId, estimatedCost: cost,
-                  cachedTokens: cached, thoughtsTokens: thoughts
+                  tag, cachedTokens: cached, thoughtsTokens: thoughts
                 });
               });
             }
@@ -2155,11 +2155,11 @@ class Agent {
         callServices: { client: this.client, interface: this.interface }
       });
 
-      // Side-channel usage tracking for MCP tools (e.g. Browser Vision)
+      // Side-channel usage tracking for MCP tools (e.g. browser-use, Browser Vision)
       if (result && result._meta && result._meta.usage && usageCallback) {
         const u = result._meta.usage;
-        console.log(`[Agent] Tracking usage from tool '${executionName}': ${u.model} (In: ${u.inputTokens}, Out: ${u.outputTokens})`);
-        usageCallback(u.model, u.inputTokens, u.outputTokens);
+        console.log(`[Agent] Tracking usage from tool '${executionName}': ${u.model} (In: ${u.inputTokens}, Out: ${u.outputTokens}${u.tag ? `, tag=${u.tag}` : ''})`);
+        usageCallback(u.model, u.inputTokens, u.outputTokens, 0, 0, u.tag || null);
       }
 
       return result;
