@@ -180,142 +180,6 @@ def _wrap_action(action_model_cls, prefix: str, inner_value):
     raise ValueError(f'No action wrapper found for prefix: {prefix}')
 
 
-# ── Custom browser-use Actions ────────────────────────────────────────────────
-# These are injected into browser-use's Agent as additional tools it can use
-# during autonomous browsing. They solve known limitations with custom UI
-# framework components (React, Angular, Vue) that don't respond to CDP typing.
-
-# JavaScript injected into the page to fill inputs with proper event dispatch.
-# Works around React/Angular/Vue controlled inputs that ignore CDP key events.
-_FORCE_FILL_JS = """
-(function(selector, value) {
-    // Find the target element — could be a CSS selector or the active element
-    let el = selector ? document.querySelector(selector) : document.activeElement;
-    if (!el) return JSON.stringify({ok: false, error: 'Element not found: ' + selector});
-
-    // If the target is a wrapper div, find the actual input inside it
-    if (el.tagName !== 'INPUT' && el.tagName !== 'TEXTAREA') {
-        const inner = el.querySelector('input, textarea');
-        if (inner) el = inner;
-    }
-
-    // Focus the element
-    el.focus();
-    el.click();
-
-    // Clear first
-    el.value = '';
-    el.dispatchEvent(new Event('input', {bubbles: true}));
-
-    // Use React's native value setter to bypass controlled input protection
-    const nativeSetter = Object.getOwnPropertyDescriptor(
-        window.HTMLInputElement.prototype, 'value'
-    )?.set || Object.getOwnPropertyDescriptor(
-        window.HTMLTextAreaElement.prototype, 'value'
-    )?.set;
-
-    if (nativeSetter) {
-        nativeSetter.call(el, value);
-    } else {
-        el.value = value;
-    }
-
-    // Dispatch all the events that frameworks listen for
-    el.dispatchEvent(new Event('input', {bubbles: true}));
-    el.dispatchEvent(new Event('change', {bubbles: true}));
-    el.dispatchEvent(new KeyboardEvent('keydown', {key: value.slice(-1), bubbles: true}));
-    el.dispatchEvent(new KeyboardEvent('keyup', {key: value.slice(-1), bubbles: true}));
-    el.dispatchEvent(new KeyboardEvent('keypress', {key: value.slice(-1), bubbles: true}));
-
-    return JSON.stringify({
-        ok: true,
-        tag: el.tagName,
-        id: el.id || null,
-        value: el.value,
-        placeholder: el.placeholder || null
-    });
-})(%SELECTOR%, %VALUE%)
-""".strip()
-
-
-def _build_tools_with_custom_actions():
-    """Create a Tools (Controller) instance with custom actions for the Agent."""
-    from browser_use import ActionResult  # type: ignore
-    from browser_use.controller import Controller  # type: ignore
-
-    tools = Controller()
-
-    @tools.action(
-        description=(
-            'Force-fill a text value into an input field using JavaScript event dispatch. '
-            'Use this when normal input/typing does NOT trigger autocomplete suggestions '
-            'or dropdown popups on React/Angular/Vue sites. Finds the real <input> inside '
-            'wrapper divs and dispatches proper input/change/keyboard events. '
-            'Provide EITHER a CSS selector OR an element index (from the page state), not both.'
-        ),
-    )
-    async def force_fill(
-        value: str,
-        index: int = 0,
-        css_selector: str = '',
-        browser_session=None,
-    ) -> ActionResult:
-        try:
-            # Build the JS selector argument
-            if css_selector:
-                selector_js = repr(css_selector)
-            elif index and browser_session:
-                # Resolve the element by index to get a CSS selector
-                node = browser_session.get_element_by_index(index)
-                if node is None:
-                    return ActionResult(error=f'Element at index {index} not found')
-                # Build a selector from the node's attributes
-                attrs = getattr(node, 'attributes', {}) or {}
-                tag = getattr(node, 'tag_name', 'input') or 'input'
-                if attrs.get('id'):
-                    selector_js = repr(f'#{attrs["id"]}')
-                elif attrs.get('aria-label'):
-                    selector_js = repr(f'{tag}[aria-label="{attrs["aria-label"]}"]')
-                elif attrs.get('placeholder'):
-                    selector_js = repr(f'{tag}[placeholder="{attrs["placeholder"]}"]')
-                elif attrs.get('name'):
-                    selector_js = repr(f'{tag}[name="{attrs["name"]}"]')
-                else:
-                    # Fallback: use activeElement (focus was probably set by a prior click)
-                    selector_js = 'null'
-            else:
-                # No selector — use whatever is focused
-                selector_js = 'null'
-
-            value_js = repr(value)
-            js_code = _FORCE_FILL_JS.replace('%SELECTOR%', selector_js).replace('%VALUE%', value_js)
-
-            # Execute via CDP Runtime.evaluate on the current page
-            cdp_session = await browser_session.get_or_create_cdp_session()
-            result = await cdp_session.cdp_client.send.Runtime.evaluate(
-                params={'expression': js_code, 'returnByValue': True},
-                session_id=cdp_session.session_id,
-            )
-
-            # Parse result
-            result_value = result.get('result', {}).get('value', '{}')
-            import json as _json
-            parsed = _json.loads(result_value) if isinstance(result_value, str) else result_value
-
-            if parsed.get('ok'):
-                msg = f'Force-filled "{value}" into <{parsed.get("tag", "?")}>'
-                if parsed.get('placeholder'):
-                    msg += f' (placeholder: {parsed["placeholder"]})'
-                return ActionResult(extracted_content=msg)
-            else:
-                return ActionResult(error=parsed.get('error', 'Unknown error'))
-
-        except Exception as e:
-            return ActionResult(error=f'force_fill failed: {e}')
-
-    return tools
-
-
 # ── Tools: Autonomous Task ────────────────────────────────────────────────────
 
 @mcp.tool()
@@ -377,15 +241,11 @@ async def browser_use_task(task: str, url: str = '', max_steps: int = 25) -> str
             goal_str = f' — {goal[:100]}' if goal else ''
             print(f'[browser-use] Step {step_num}: {actions_str}{goal_str} | {url[:80]}', file=sys.stderr)
 
-        # Build tools with custom actions (force_fill for React/Angular/Vue inputs)
-        custom_tools = _build_tools_with_custom_actions()
-
         agent = Agent(
             task=full_task,
             llm=llm,
             browser=browser,
             use_vision=True,
-            controller=custom_tools,
             register_new_step_callback=_on_step,
         )
 
