@@ -298,13 +298,14 @@ class Agent {
    * Helper to send message efficiently with streaming and token broadcasting
    */
   async _generateStream(session, payload, chatId, source) {
-    // Retry helper for transient network errors (up to 5 retries with backoff)
-    const MAX_RETRIES = 5;
+    // Retry helper for transient errors (up to 8 retries with longer backoff)
+    const MAX_RETRIES = 8;
+    const REQUEST_TIMEOUT_MS = 120000; // 120 seconds per attempt
+    const MAX_BACKOFF_MS = 60000; // cap backoff at 60s
     const _isRetryable = (err) => {
       const msg = (err.message || '').toLowerCase();
-      // Only retry on network errors or 503/429
       return msg.includes('fetch failed') || msg.includes('econnreset') || msg.includes('etimedout') ||
-        msg.includes('socket hang up') || msg.includes('network') ||
+        msg.includes('socket hang up') || msg.includes('network') || msg.includes('timed out') ||
         err.status === 503 || err.status === 429 || err.statusCode === 503 || err.statusCode === 429;
     };
     const _retryCall = async (fn) => {
@@ -313,15 +314,15 @@ class Agent {
         try {
           const timeoutPromise = new Promise((_, reject) => {
             timer = setTimeout(() => {
-              reject(new Error('Model request timed out after 60 seconds (Possible SDK hang or 503)'));
-            }, 60000);
+              reject(new Error(`Model request timed out after ${REQUEST_TIMEOUT_MS / 1000} seconds (Possible SDK hang or 503)`));
+            }, REQUEST_TIMEOUT_MS);
           });
           return await Promise.race([fn(), timeoutPromise]);
         } catch (err) {
           if (attempt < MAX_RETRIES && _isRetryable(err)) {
-            // Exponential backoff: 2s, 4s, 8s, 16s, 32s
-            const delay = Math.pow(2, attempt + 1) * 1000;
-            console.warn(`[Agent] Retryable error (attempt ${attempt + 1}/${MAX_RETRIES}): ${err.message}. Retrying in ${delay}ms...`);
+            // Exponential backoff: 4s, 8s, 16s, 32s, 60s, 60s, 60s, 60s
+            const delay = Math.min(Math.pow(2, attempt + 2) * 1000, MAX_BACKOFF_MS);
+            console.warn(`[Agent] Retryable error (attempt ${attempt + 1}/${MAX_RETRIES}): ${err.message}. Retrying in ${delay / 1000}s...`);
             await new Promise(r => setTimeout(r, delay));
           } else {
             throw err;
