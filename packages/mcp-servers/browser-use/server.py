@@ -215,6 +215,7 @@ async def browser_use_task(task: str, url: str = '', max_steps: int = 25) -> str
                 'total_tokens': history.usage.total_tokens,
                 'total_cost': round(history.usage.total_cost, 6),
                 'model': GOOGLE_MODEL,
+                'tag': 'browser_use',
             }
 
         result = {

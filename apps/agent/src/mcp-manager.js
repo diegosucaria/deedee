@@ -357,7 +357,26 @@ class MCPManager {
         if (result.content && result.content.length > 0) {
             // Return text content
             const text = result.content.map(c => c.text).join('\n');
-            return { output: text };
+            const returnObj = { output: text };
+
+            // Extract usage metadata from MCP tool results (e.g. browser-use)
+            // Any MCP server can report token usage by including a "usage" field
+            // with { model, prompt_tokens, completion_tokens } in its JSON response.
+            try {
+                const parsed = JSON.parse(text);
+                if (parsed.usage && parsed.usage.model) {
+                    returnObj._meta = {
+                        usage: {
+                            model: parsed.usage.model,
+                            inputTokens: parsed.usage.prompt_tokens || 0,
+                            outputTokens: parsed.usage.completion_tokens || 0,
+                            tag: parsed.usage.tag || null,
+                        }
+                    };
+                }
+            } catch { /* not JSON or no usage — that's fine */ }
+
+            return returnObj;
         }
         return result;
     }
