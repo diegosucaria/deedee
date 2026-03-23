@@ -24,6 +24,10 @@ class CommandHandler {
             if (this.stopFlags) {
                 this.stopFlags.add(chatId);
                 this.stopFlags.add('GLOBAL_STOP');
+                // Cancel any active long-running MCP tool calls immediately (e.g. browser_use_task)
+                if (this.agent?.mcp?.cancelActiveCalls) {
+                    this.agent.mcp.cancelActiveCalls();
+                }
                 console.log(`[CommandHandler] Stop flag set for ${chatId} and GLOBAL_STOP`);
                 await this.sendReply(chatId, message.source, 'Stopping ALL execution loops...');
             }
