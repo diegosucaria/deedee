@@ -14,8 +14,35 @@ import argparse
 import asyncio
 import base64
 import json
+import logging
 import os
 import sys
+
+# ── Tame browser-use / Rich logging BEFORE any imports ───────────────────────
+# browser-use uses Rich console + Python logging. By default it spews full
+# tracebacks, file paths, and ANSI escape codes that pollute container logs.
+# We configure logging early so browser-use picks up our settings on import.
+logging.basicConfig(
+    format='[browser-use] %(levelname)s %(message)s',
+    level=logging.WARNING,
+    stream=sys.stderr,
+)
+# Suppress verbose loggers from browser-use internals and dependencies
+for _name in (
+    'browser_use',
+    'browser_use.agent',
+    'browser_use.browser',
+    'browser_use.dom',
+    'browser_use.tools',
+    'cdp_use',
+    'httpx',
+    'httpcore',
+    'google.genai',
+):
+    logging.getLogger(_name).setLevel(logging.WARNING)
+
+# Disable browser-use's Rich tracebacks/console by setting env var it checks
+os.environ.setdefault('BROWSER_USE_LOGGING_LEVEL', 'WARNING')
 
 from mcp.server.fastmcp import FastMCP  # type: ignore
 
@@ -196,11 +223,27 @@ async def browser_use_task(task: str, url: str = '', max_steps: int = 25) -> str
         print(f'[browser-use] Task screencast init skipped: {e}', file=sys.stderr)
 
     try:
+        # Clean step-level logging (replaces browser-use's verbose Rich output)
+        _step_count = 0
+
+        def _on_step(state, output, step_num):
+            nonlocal _step_count
+            _step_count = step_num
+            actions = []
+            if output and hasattr(output, 'actions') and output.actions:
+                for a in output.actions:
+                    d = a.model_dump(exclude_unset=True) if hasattr(a, 'model_dump') else {}
+                    actions.append(next(iter(d.keys()), 'action'))
+            url = getattr(state, 'url', '') or ''
+            actions_str = ', '.join(actions) if actions else 'thinking'
+            print(f'[browser-use] Step {step_num}: {actions_str} | {url[:80]}', file=sys.stderr)
+
         agent = Agent(
             task=full_task,
             llm=llm,
             browser=browser,
             use_vision=True,
+            register_new_step_callback=_on_step,
         )
 
         history = await asyncio.wait_for(
