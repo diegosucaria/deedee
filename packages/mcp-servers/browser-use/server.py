@@ -25,7 +25,7 @@ mcp = FastMCP("browser-use-server")
 # ── Configuration ──────────────────────────────────────────────────────────────
 
 GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY', '')
-GOOGLE_MODEL = os.environ.get('BROWSER_USE_MODEL', 'gemini-2.0-flash')
+GOOGLE_MODEL = os.environ.get('WORKER_FLASH', 'gemini-3-flash-preview')
 HEADLESS = os.environ.get('BROWSER_USE_HEADLESS', 'true').lower() != 'false'
 EXECUTABLE_PATH = os.environ.get('BROWSER_EXECUTABLE_PATH') or None
 MAX_STEPS_CAP = int(os.environ.get('BROWSER_USE_MAX_STEPS', '50'))
@@ -206,12 +206,24 @@ async def browser_use_task(task: str, url: str = '', max_steps: int = 25) -> str
         errors = [e for e in history.errors() if e]
         urls_visited = history.urls()
 
+        # Extract token usage from browser-use's built-in tracking
+        usage = {}
+        if history.usage:
+            usage = {
+                'prompt_tokens': history.usage.total_prompt_tokens,
+                'completion_tokens': history.usage.total_completion_tokens,
+                'total_tokens': history.usage.total_tokens,
+                'total_cost': round(history.usage.total_cost, 6),
+                'model': GOOGLE_MODEL,
+            }
+
         result = {
             'status': 'completed' if is_done else 'incomplete',
             'result': final_result or '(no result extracted)',
             'steps_taken': len(history.action_names()),
             'urls_visited': urls_visited[-5:] if urls_visited else [],
             'errors': errors[-3:] if errors else [],
+            'usage': usage,
         }
 
         return json.dumps(result, indent=2, default=str)
@@ -376,7 +388,7 @@ if __name__ == '__main__':
     )
     args = parser.parse_args()
 
-    print(f'Starting browser-use MCP Server with {args.transport} transport (model={GOOGLE_MODEL})...', file=sys.stderr)
+    print(f'Starting browser-use MCP Server ({args.transport}, model={GOOGLE_MODEL})...', file=sys.stderr)
     if not GOOGLE_API_KEY:
         print('WARNING: GOOGLE_API_KEY not set. browser_use_task will fail.', file=sys.stderr)
 
