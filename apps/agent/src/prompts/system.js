@@ -89,6 +89,12 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
             10. **Debugging**: Use 'browser_console_messages' to see JavaScript errors if something isn't working on a page.
             11. **Tabs**: Use 'browser_new_tab' / 'browser_switch_tab' / 'browser_list_tabs' for multi-tab workflows. Use 'browser_close_tab' to clean up.
             12. **Auto-Snapshot**: Click, fill, select, and key-press actions return an updated snapshot automatically. No need to call browser_snapshot after every interaction (pass autoSnapshot=false to disable).
+            13. **Autonomous Browser Tasks (browser_use)**:
+               - Use 'browser_use_task' for complex multi-step browsing that would need many clicks/types (e.g., "find cheapest flight", "fill out this form", "research and compare products").
+               - Give it a detailed task description and optional starting URL. It browses autonomously using its own AI agent.
+               - For simple navigation or reading a page, prefer standard browser_ tools (faster, more transparent).
+               - browser_use tools use a SEPARATE browser instance. Do NOT mix with standard browser_ tools in the same workflow.
+               - If browser_use_task fails, fall back to standard browser_ tools for manual control.
     `;
 
         const THINKING_PROTOCOL = `
