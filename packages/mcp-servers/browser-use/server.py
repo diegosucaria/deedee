@@ -19,6 +19,14 @@ import sys
 
 from mcp.server.fastmcp import FastMCP  # type: ignore
 
+# ── Sanitize env vars BEFORE browser-use imports ──────────────────────────────
+# browser-use's internal FlatEnvConfig (Pydantic) reads BROWSER_USE_HEADLESS
+# directly from the environment and requires a valid boolean. Docker-compose
+# passes empty strings for unset vars, which Pydantic rejects.
+_headless_raw = os.environ.get('BROWSER_USE_HEADLESS', '')
+if _headless_raw == '' or _headless_raw.lower() not in ('true', 'false', '1', '0', 'yes', 'no'):
+    os.environ['BROWSER_USE_HEADLESS'] = 'true'
+
 # Initialize FastMCP server
 mcp = FastMCP("browser-use-server")
 

@@ -4,11 +4,10 @@
  * Two-layer defense against oversized tool results that bloat the Gemini context window:
  *   Layer 1a: Gmail-specific deep cleaning (decode base64, strip HTML/headers)
  *   Layer 1b: Calendar-specific cleaning (strip attendees, etags, attachments)
- *   Layer 1c: People-specific cleaning (strip metadata, compact Google API format)
  *   Layer 2: Generic size cap for ALL tool results
  */
 
-const MAX_TOOL_RESULT_CHARS = 65_000;
+const MAX_TOOL_RESULT_CHARS = 50_000;
 const MAX_EMAIL_BODY_CHARS = 4_000;
 const MAX_EVENT_DESCRIPTION_CHARS = 500;
 const MAX_EVENT_ATTENDEES = 10;
@@ -16,7 +15,7 @@ const MAX_PERSON_NOTES_CHARS = 300;
 
 // Tools that need higher caps because the model needs complete data
 // Matches both internal names (listPeople) and MCP namespaced names (personal_people_connections_list)
-const HIGH_CAP_TOOLS = new Set(['listPeople', 'searchPeople', 'searchContacts', 'getPerson', 'searchMemory', 'readAllMonitoredSlackHistory', 'readChatHistory']);
+const HIGH_CAP_TOOLS = new Set(['listPeople', 'searchPeople', 'searchContacts', 'getPerson', 'searchMemory']);
 const HIGH_CAP_MAX_CHARS = 200_000;
 
 /**
