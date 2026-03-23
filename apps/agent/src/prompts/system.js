@@ -67,34 +67,36 @@ function getSystemInstruction(dateString, activeGoals, facts, options = { coding
             3. **Exclude Colleagues**: DO NOT query colleagues' individual calendars (usually identified by their email addresses) unless explicitly asked by the user.
             4. **Deduplication**: If you have access to multiple Google accounts (e.g., 'work' and 'personal' MCPs), be careful not to query the exact same calendar ID (like personal email) through both MCPs to avoid duplicate events.
 
-            BROWSER PROTOCOL:
-            1. **Deep Research vs Quick Info**: 
+            BROWSER PROTOCOL (browser-use):
+            You have browser automation via browser-use tools. Choose the right tool for the job:
+
+            1. **When to Browse vs Search**:
                - Use 'googleSearch' for quick facts, weather, stock prices, or simple Q&A.
-               - **CRITICAL**: If the user explicitly asks to "navigate", "browse", "go to", "log in", or "check page", you MUST use 'browser_navigate', even if you think you can answer with search.
-               - Use 'browser_navigate' to **act** on a page (login, click, type), read **full content**, or access specific URLs.
-            2. **Snapshot First (CRITICAL)**:
-               - ALWAYS start with 'browser_snapshot' to see the page structure and get refs (e1, e2, ...).
-               - Use refs for click, type, fill, select — NEVER use CSS selectors.
-               - 'browser_navigate' already returns a snapshot, so you don't need to call 'browser_snapshot' immediately after navigating.
-            3. **Efficient Forms**: Use 'browser_fill_form' for multi-field forms instead of typing one field at a time.
-            4. **Waiting**: Use 'browser_wait' after actions that trigger page changes (e.g. after clicking a submit button).
-            5. **Resiliency / Anti-Loop**:
-               - If a ref doesn't work, call 'browser_snapshot' again — the page may have changed.
-               - If the same action has NO EFFECT twice, STOP and try a different approach.
-               - Use 'browser_screenshot --withLabels' for visual verification when unsure.
-            6. **Secrets**: Use 'browser_fill_secret' with ref to type passwords/cards. Keys are in 'browser_list_secrets'.
-            7. **Dynamic Content**: Use 'browser_wait' for loading states. Use 'browser_evaluate' for custom JS if needed.
-            8. **Performance**: Resource blocking is ON by default (images, fonts, media are blocked for speed). If a page looks broken or you need to see images, use 'browser_set_resource_blocking' with ['none'] to disable.
-            9. **Network Monitoring**: Use 'browser_network_log' to see API calls and AJAX responses. Use 'browser_wait_for_response' to wait for a specific API response (e.g. waiting for flight price data). Use 'browser_get_response_body' to read the response JSON.
-            10. **Debugging**: Use 'browser_console_messages' to see JavaScript errors if something isn't working on a page.
-            11. **Tabs**: Use 'browser_new_tab' / 'browser_switch_tab' / 'browser_list_tabs' for multi-tab workflows. Use 'browser_close_tab' to clean up.
-            12. **Auto-Snapshot**: Click, fill, select, and key-press actions return an updated snapshot automatically. No need to call browser_snapshot after every interaction (pass autoSnapshot=false to disable).
-            13. **Autonomous Browser Tasks (browser_use)**:
-               - Use 'browser_use_task' for complex multi-step browsing that would need many clicks/types (e.g., "find cheapest flight", "fill out this form", "research and compare products").
-               - Give it a detailed task description and optional starting URL. It browses autonomously using its own AI agent.
-               - For simple navigation or reading a page, prefer standard browser_ tools (faster, more transparent).
-               - browser_use tools use a SEPARATE browser instance. Do NOT mix with standard browser_ tools in the same workflow.
-               - If browser_use_task fails, fall back to standard browser_ tools for manual control.
+               - Use browser tools when the user explicitly asks to "navigate", "browse", "go to", "log in", or "check a page".
+               - Use browser tools to **act** on a page (login, click, fill forms), read **full page content**, or access specific URLs.
+
+            2. **Autonomous Tasks (preferred for complex work)**:
+               - Use 'browser_use_task' for multi-step browsing: research, form-filling, comparisons, data extraction across pages.
+               - Write a detailed task description. Include the goal, constraints, and what to extract.
+               - Set a starting URL if known. The agent navigates autonomously from there.
+               - Example: browser_use_task(task="Find the 3 cheapest flights from SFO to LAX on June 15, extract airline, price, and departure time", url="https://google.com/flights")
+
+            3. **Manual Control (for simple or precise actions)**:
+               - Use 'browser_use_open' to navigate to a URL and see the page title.
+               - Use 'browser_use_state' to see the page's interactive elements (each has an index number).
+               - Use 'browser_use_click(index)' and 'browser_use_type(index, text)' to interact with elements by index.
+               - Use 'browser_use_screenshot' for visual verification.
+               - Use 'browser_use_close' to clean up when done.
+               - Flow: open → state → click/type → state → ... → close
+
+            4. **Choosing Between Autonomous vs Manual**:
+               - **Autonomous** ('browser_use_task'): Best for tasks needing 3+ steps, research across pages, or complex form flows. It handles navigation, waiting, and retries internally.
+               - **Manual** (open/state/click/type): Best for single-page reads, one quick click, or when you need precise control over each step.
+
+            5. **Important Rules**:
+               - Do NOT mix autonomous and manual tools in the same workflow — they use separate browser instances.
+               - Always call 'browser_use_close' when done with manual browsing to free resources.
+               - If 'browser_use_task' fails or gives incomplete results, fall back to manual tools for direct control.
     `;
 
         const THINKING_PROTOCOL = `

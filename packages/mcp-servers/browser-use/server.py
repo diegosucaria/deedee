@@ -25,6 +25,7 @@ mcp = FastMCP("browser-use-server")
 # ── Configuration ──────────────────────────────────────────────────────────────
 
 GOOGLE_API_KEY = os.environ.get('GOOGLE_API_KEY', '')
+GOOGLE_MODEL = os.environ.get('BROWSER_USE_MODEL', 'gemini-2.0-flash')
 HEADLESS = os.environ.get('BROWSER_USE_HEADLESS', 'true').lower() != 'false'
 EXECUTABLE_PATH = os.environ.get('BROWSER_EXECUTABLE_PATH') or None
 MAX_STEPS_CAP = int(os.environ.get('BROWSER_USE_MAX_STEPS', '50'))
@@ -101,7 +102,7 @@ def _get_llm():
             'Get one at https://aistudio.google.com/app/apikey'
         )
 
-    return ChatGoogle(model='gemini-2.0-flash')
+    return ChatGoogle(model=GOOGLE_MODEL)
 
 
 # ── Controller Helpers ─────────────────────────────────────────────────────────
@@ -375,7 +376,7 @@ if __name__ == '__main__':
     )
     args = parser.parse_args()
 
-    print(f'Starting browser-use MCP Server with {args.transport} transport...', file=sys.stderr)
+    print(f'Starting browser-use MCP Server with {args.transport} transport (model={GOOGLE_MODEL})...', file=sys.stderr)
     if not GOOGLE_API_KEY:
         print('WARNING: GOOGLE_API_KEY not set. browser_use_task will fail.', file=sys.stderr)
 

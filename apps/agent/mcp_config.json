@@ -57,6 +57,7 @@
         "cwd": "../../packages/mcp-servers/browser-use",
         "env": {
             "GOOGLE_API_KEY": "${GOOGLE_API_KEY}",
+            "BROWSER_USE_MODEL": "${BROWSER_USE_MODEL}",
             "BROWSER_USE_HEADLESS": "${BROWSER_USE_HEADLESS}",
             "BROWSER_EXECUTABLE_PATH": "${BROWSER_EXECUTABLE_PATH}",
             "INTERFACES_URL": "${INTERFACES_URL}",
