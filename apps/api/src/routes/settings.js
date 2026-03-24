@@ -29,9 +29,9 @@ router.get('/gws/oauth/url', (req, res) => proxyToAgent(req, res, 'GET', '/gws/o
 router.post('/gws/oauth/exchange', (req, res) => proxyToAgent(req, res, 'POST', '/gws/oauth/exchange', req.body));
 router.get('/gws/validate/:label', (req, res) => proxyToAgent(req, res, 'GET', `/gws/validate/${encodeURIComponent(req.params.label)}`, null));
 
-// GWS Calendar filter routes
-router.get('/gws/:label/calendars', (req, res) => proxyToAgent(req, res, 'GET', `/gws/${encodeURIComponent(req.params.label)}/calendars`, null));
-router.post('/gws/:label/calendars', (req, res) => proxyToAgent(req, res, 'POST', `/gws/${encodeURIComponent(req.params.label)}/calendars`, req.body));
-router.get('/gws/:label/calendar-filter', (req, res) => proxyToAgent(req, res, 'GET', `/gws/${encodeURIComponent(req.params.label)}/calendar-filter`, null));
+// GWS Calendar filter routes (pattern: /gws/{action}/:label — matches /gws/validate/:label)
+router.get('/gws/calendars/:label', (req, res) => proxyToAgent(req, res, 'GET', `/gws/calendars/${encodeURIComponent(req.params.label)}`, null));
+router.get('/gws/calendar-filter/:label', (req, res) => proxyToAgent(req, res, 'GET', `/gws/calendar-filter/${encodeURIComponent(req.params.label)}`, null));
+router.post('/gws/calendar-filter/:label', (req, res) => proxyToAgent(req, res, 'POST', `/gws/calendar-filter/${encodeURIComponent(req.params.label)}`, req.body));
 
 module.exports = router;

@@ -441,9 +441,10 @@ function createSettingsRouter(agent) {
     });
 
     // ─── GWS Calendar Filter Routes ──────────────────────────────────
+    // URL pattern: /gws/{action}/:label (matches existing /gws/validate/:label convention)
 
-    // GET /internal/settings/gws/:label/calendars — List all calendars for an account
-    router.get('/gws/:label/calendars', async (req, res) => {
+    // GET /internal/settings/gws/calendars/:label — List all calendars for an account
+    router.get('/gws/calendars/:label', async (req, res) => {
         try {
             const safeLabel = req.params.label.toLowerCase().replace(/[^a-z0-9-]/g, '-');
 
@@ -477,7 +478,15 @@ function createSettingsRouter(agent) {
             try {
                 parsed = JSON.parse(text);
             } catch {
-                return res.json({ calendars: [] });
+                // MCP returned non-JSON (likely an error message) — surface it
+                console.error(`[Settings] MCP calendar response not JSON for ${safeLabel}:`, text?.substring(0, 500));
+                return res.status(502).json({ error: text?.substring(0, 200) || 'Invalid response from calendar service' });
+            }
+
+            // Check for API error responses from GWS CLI
+            if (parsed.error) {
+                console.error(`[Settings] GWS Calendar API error for ${safeLabel}:`, parsed.error);
+                return res.status(502).json({ error: parsed.error.message || 'Calendar API returned an error' });
             }
 
             const items = parsed.items || [];
@@ -496,8 +505,8 @@ function createSettingsRouter(agent) {
         }
     });
 
-    // GET /internal/settings/gws/:label/calendar-filter — Get current filter config
-    router.get('/gws/:label/calendar-filter', (req, res) => {
+    // GET /internal/settings/gws/calendar-filter/:label — Get current filter config
+    router.get('/gws/calendar-filter/:label', (req, res) => {
         try {
             const safeLabel = req.params.label.toLowerCase().replace(/[^a-z0-9-]/g, '-');
             const filterKey = `gws_calendar_filter:${safeLabel}`;
@@ -514,8 +523,8 @@ function createSettingsRouter(agent) {
         }
     });
 
-    // POST /internal/settings/gws/:label/calendars — Save calendar filter
-    router.post('/gws/:label/calendars', (req, res) => {
+    // POST /internal/settings/gws/calendar-filter/:label — Save calendar filter
+    router.post('/gws/calendar-filter/:label', (req, res) => {
         try {
             const { calendarIds } = req.body;
             if (!Array.isArray(calendarIds)) {
