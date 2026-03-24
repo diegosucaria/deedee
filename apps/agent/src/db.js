@@ -1725,59 +1725,78 @@ class AgentDB {
 
 
 
-  getLatencyTrend(limit = 100) {
-    // Get avg latency per hour? Or just raw points for graph?
+  getLatencyTrend(limit = 100, start, end) {
     // Return raw data points: timestamp, value, type
-    // SQLite stores UTC strings by default, but returning them as-is makes JS treat them as local.
     // Force 'Z' suffix to ensure ISO 8601 UTC interpretation.
-    const stmt = this.db.prepare(`
-      SELECT strftime('%Y-%m-%dT%H:%M:%SZ', timestamp) as timestamp, value, type, metadata FROM metrics 
-      WHERE type IN ('latency_router', 'latency_model', 'latency_e2e') 
-      ORDER BY timestamp DESC LIMIT ?
-  `);
-    return stmt.all(limit).reverse();
+    let sql = `
+      SELECT strftime('%Y-%m-%dT%H:%M:%SZ', timestamp) as timestamp, value, type, metadata FROM metrics
+      WHERE type IN ('latency_router', 'latency_model', 'latency_e2e')`;
+    const params = [];
+    if (start) { sql += ` AND timestamp >= ?`; params.push(start); }
+    if (end) { sql += ` AND timestamp <= ?`; params.push(end); }
+    sql += ` ORDER BY timestamp DESC LIMIT ?`;
+    params.push(limit);
+    return this.db.prepare(sql).all(...params).reverse();
   }
 
-  getTokenUsageTrend(limit = 100) {
-    const stmt = this.db.prepare(`
-      SELECT strftime('%Y-%m-%dT%H:%M:%SZ', timestamp) as timestamp, estimated_cost, total_tokens, model 
-      FROM token_usage 
-      ORDER BY timestamp DESC LIMIT ?
-    `);
-    return stmt.all(limit).reverse();
+  getTokenUsageTrend(limit = 100, start, end) {
+    let sql = `SELECT strftime('%Y-%m-%dT%H:%M:%SZ', timestamp) as timestamp, estimated_cost, total_tokens, model FROM token_usage WHERE 1=1`;
+    const params = [];
+    if (start) { sql += ` AND timestamp >= ?`; params.push(start); }
+    if (end) { sql += ` AND timestamp <= ?`; params.push(end); }
+    sql += ` ORDER BY timestamp DESC LIMIT ?`;
+    params.push(limit);
+    return this.db.prepare(sql).all(...params).reverse();
   }
 
-  getDailyCostTrend(limit = 7) {
-    const stmt = this.db.prepare(`
+  getDailyCostTrend(start, end, limit = 90) {
+    let sql = `
       SELECT
         date(timestamp, 'localtime') as date,
-      SUM(estimated_cost) as cost,
-      SUM(total_tokens) as tokens 
-      FROM token_usage 
-      GROUP BY date(timestamp, 'localtime') 
-      ORDER BY date(timestamp, 'localtime') DESC
-      LIMIT ?
-  `);
-    return stmt.all(limit).reverse();
+        SUM(estimated_cost) as cost,
+        SUM(total_tokens) as tokens
+      FROM token_usage
+      WHERE 1=1`;
+    const params = [];
+    if (start) { sql += ` AND timestamp >= ?`; params.push(start); }
+    if (end) { sql += ` AND timestamp <= ?`; params.push(end); }
+    sql += ` GROUP BY date(timestamp, 'localtime') ORDER BY date(timestamp, 'localtime') DESC LIMIT ?`;
+    params.push(limit);
+    return this.db.prepare(sql).all(...params).reverse();
   }
 
   /**
    * Get cost breakdown grouped by service category.
-   * @param {number} days - Number of days to look back (1=today, 7=last week, 30=last month)
+   * @param {string} [start] - ISO start date
+   * @param {string} [end] - ISO end date
+   * @param {number} [days] - Fallback: number of days to look back if no start/end
    * @returns {{ categories: Object, total: { cost: number, tokens: number, calls: number } }}
    */
-  getCostByTag(days = 1) {
-    const stmt = this.db.prepare(`
+  getCostByTag(start, end, days = 1) {
+    let sql = `
       SELECT
         ${EFFECTIVE_TAG_SQL} as effective_tag,
         SUM(estimated_cost) as cost,
         SUM(total_tokens) as tokens,
         COUNT(*) as calls
       FROM token_usage
-      WHERE timestamp >= datetime('now', '-' || ? || ' days', 'localtime')
-      GROUP BY effective_tag
-    `);
-    const rows = stmt.all(days);
+      WHERE `;
+    const params = [];
+    if (start && end) {
+      sql += `timestamp >= ? AND timestamp <= ?`;
+      params.push(start, end);
+    } else if (start) {
+      sql += `timestamp >= ?`;
+      params.push(start);
+    } else if (end) {
+      sql += `timestamp <= ?`;
+      params.push(end);
+    } else {
+      sql += `timestamp >= datetime('now', '-' || ? || ' days', 'localtime')`;
+      params.push(days);
+    }
+    sql += ` GROUP BY effective_tag`;
+    const rows = this.db.prepare(sql).all(...params);
 
     // Roll up effective tags into categories
     const categories = {};
@@ -1804,24 +1823,25 @@ class AgentDB {
 
   /**
    * Get daily cost trend broken down by service category for stacked bar chart.
-   * @param {number} limit - Number of days to return
+   * @param {string} [start] - ISO start date
+   * @param {string} [end] - ISO end date
+   * @param {number} [limit] - Fallback: max days to return
    * @returns {Array<{ date: string, Chat: number, Dreams: number, ... }>}
    */
-  getDailyCostByCategory(limit = 7) {
-    // Get raw per-effective-tag per-day data
-    // Each day can have up to ~20 effective_tag rows, so fetch limit * 25 rows to be safe
-    const sqlLimit = limit * 25;
-    const stmt = this.db.prepare(`
+  getDailyCostByCategory(start, end, limit = 90) {
+    let sql = `
       SELECT
         date(timestamp, 'localtime') as date,
         ${EFFECTIVE_TAG_SQL} as effective_tag,
         SUM(estimated_cost) as cost
       FROM token_usage
-      GROUP BY date(timestamp, 'localtime'), effective_tag
-      ORDER BY date(timestamp, 'localtime') DESC
-      LIMIT ?
-    `);
-    const rows = stmt.all(sqlLimit);
+      WHERE 1=1`;
+    const params = [];
+    if (start) { sql += ` AND timestamp >= ?`; params.push(start); }
+    if (end) { sql += ` AND timestamp <= ?`; params.push(end); }
+    sql += ` GROUP BY date(timestamp, 'localtime'), effective_tag ORDER BY date(timestamp, 'localtime') DESC`;
+    if (!start && !end) { sql += ` LIMIT ?`; params.push(limit * 25); }
+    const rows = this.db.prepare(sql).all(...params);
 
     // Pivot: { date -> { category -> cost } }
     const dateMap = {};
@@ -1840,10 +1860,12 @@ class AgentDB {
 
   /**
    * Get cost breakdown grouped by model.
-   * @param {number} days - Number of days to look back
+   * @param {string} [start] - ISO start date
+   * @param {string} [end] - ISO end date
+   * @param {number} [days] - Fallback: number of days to look back
    */
-  getCostByModel(days = 1) {
-    const stmt = this.db.prepare(`
+  getCostByModel(start, end, days = 1) {
+    let sql = `
       SELECT
         model,
         SUM(estimated_cost) as cost,
@@ -1854,44 +1876,69 @@ class AgentDB {
         SUM(thoughts_tokens) as thoughts_tokens,
         COUNT(*) as calls
       FROM token_usage
-      WHERE timestamp >= datetime('now', '-' || ? || ' days', 'localtime')
-      GROUP BY model
-      ORDER BY cost DESC
-    `);
-    return stmt.all(days);
+      WHERE `;
+    const params = [];
+    if (start && end) {
+      sql += `timestamp >= ? AND timestamp <= ?`;
+      params.push(start, end);
+    } else if (start) {
+      sql += `timestamp >= ?`;
+      params.push(start);
+    } else if (end) {
+      sql += `timestamp <= ?`;
+      params.push(end);
+    } else {
+      sql += `timestamp >= datetime('now', '-' || ? || ' days', 'localtime')`;
+      params.push(days);
+    }
+    sql += ` GROUP BY model ORDER BY cost DESC`;
+    return this.db.prepare(sql).all(...params);
   }
 
-  getTokenUsageStats() {
-    // Total tokens today
-    const todayQuery = this.db.prepare(`
+  getTokenUsageStats(start, end) {
+    let sql = `
       SELECT
         SUM(prompt_tokens) as prompt,
         SUM(candidate_tokens) as candidate,
         SUM(total_tokens) as total,
         SUM(estimated_cost) as cost
-      FROM token_usage 
-      WHERE date(timestamp, 'localtime') = date('now', 'localtime')
-    `).get();
+      FROM token_usage
+      WHERE `;
+    const params = [];
+    if (start && end) {
+      sql += `timestamp >= ? AND timestamp <= ?`;
+      params.push(start, end);
+    } else if (start) {
+      sql += `timestamp >= ?`;
+      params.push(start);
+    } else {
+      sql += `date(timestamp, 'localtime') = date('now', 'localtime')`;
+    }
+    const row = this.db.prepare(sql).get(...params);
 
     return {
       today: {
-        prompt: todayQuery?.prompt || 0,
-        candidate: todayQuery?.candidate || 0,
-        total: todayQuery?.total || 0,
-        cost: todayQuery?.cost || 0
+        prompt: row?.prompt || 0,
+        candidate: row?.candidate || 0,
+        total: row?.total || 0,
+        cost: row?.cost || 0
       }
     };
   }
 
-  getLatencyStats() {
-    // Average E2E latency in last 24h
-    const avgQuery = this.db.prepare(`
-        SELECT AVG(value) as avg_latency 
-        FROM metrics 
-        WHERE type = 'latency_e2e' 
-        AND timestamp > datetime('now', '-24 hours')
-    `).get();
-
+  getLatencyStats(start, end) {
+    let sql = `SELECT AVG(value) as avg_latency FROM metrics WHERE type = 'latency_e2e'`;
+    const params = [];
+    if (start && end) {
+      sql += ` AND timestamp >= ? AND timestamp <= ?`;
+      params.push(start, end);
+    } else if (start) {
+      sql += ` AND timestamp >= ?`;
+      params.push(start);
+    } else {
+      sql += ` AND timestamp > datetime('now', '-24 hours')`;
+    }
+    const avgQuery = this.db.prepare(sql).get(...params);
     return {
       avg24h: Math.round(avgQuery?.avg_latency || 0)
     };

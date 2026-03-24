@@ -24,14 +24,19 @@ export default function StatsClient({ startDate, endDate }) {
     const [costPeriod, setCostPeriod] = useState(1); // days
     const [loading, setLoading] = useState(true);
 
+    // Build query string from date range
+    const buildQs = (extraParams = {}) => {
+        const params = new URLSearchParams();
+        if (startDate) params.append('start', startDate);
+        if (endDate) params.append('end', endDate);
+        Object.entries(extraParams).forEach(([k, v]) => params.append(k, v));
+        return params.toString() ? `?${params.toString()}` : '';
+    };
+
     const fetchData = async () => {
         setLoading(true);
         try {
-            // Build query params
-            const params = new URLSearchParams();
-            if (startDate) params.append('start', startDate);
-            if (endDate) params.append('end', endDate);
-            const qs = params.toString() ? `?${params.toString()}` : '';
+            const qs = buildQs();
 
             // Fetch Latency
             const latData = await getStatsLatency(qs);
@@ -76,11 +81,11 @@ export default function StatsClient({ startDate, endDate }) {
             setTokenTrendData(mappedTrend);
 
             // Fetch Daily Cost Trend
-            const dailyCost = await getDailyCostTrend();
+            const dailyCost = await getDailyCostTrend(qs);
             setDailyCostData(dailyCost);
 
-            // Fetch Daily Cost by Category (30 days for stacked chart)
-            const dailyCatData = await getDailyCostByCategory(30);
+            // Fetch Daily Cost by Category (uses date range)
+            const dailyCatData = await getDailyCostByCategory(qs);
             setDailyCostByCategory(dailyCatData);
 
             // Fetch Usage
@@ -101,9 +106,13 @@ export default function StatsClient({ startDate, endDate }) {
     // Fetch cost breakdown separately so period toggle doesn't re-fetch everything
     const fetchCostBreakdown = async (days) => {
         try {
+            // If a global date range is set, use that instead of the days toggle
+            const qs = (startDate || endDate)
+                ? buildQs()
+                : buildQs({ days });
             const [tagData, modelData] = await Promise.all([
-                getCostByTag(days),
-                getCostByModel(days)
+                getCostByTag(qs),
+                getCostByModel(qs)
             ]);
             setCostByTag(tagData);
             setCostByModel(modelData);
@@ -154,22 +163,24 @@ export default function StatsClient({ startDate, endDate }) {
                         Cost Breakdown by Service
                     </h2>
                     <div className="flex items-center gap-2">
-                        {/* Period Toggle */}
-                        <div className="flex bg-zinc-800 rounded-lg p-0.5">
-                            {COST_PERIODS.map(p => (
-                                <button
-                                    key={p.days}
-                                    onClick={() => setCostPeriod(p.days)}
-                                    className={`px-3 py-1 text-xs rounded-md transition-colors ${
-                                        costPeriod === p.days
-                                            ? 'bg-indigo-500 text-white'
-                                            : 'text-zinc-400 hover:text-zinc-200'
-                                    }`}
-                                >
-                                    {p.label}
-                                </button>
-                            ))}
-                        </div>
+                        {/* Period Toggle — hidden when a global date range is set */}
+                        {!startDate && !endDate && (
+                            <div className="flex bg-zinc-800 rounded-lg p-0.5">
+                                {COST_PERIODS.map(p => (
+                                    <button
+                                        key={p.days}
+                                        onClick={() => setCostPeriod(p.days)}
+                                        className={`px-3 py-1 text-xs rounded-md transition-colors ${
+                                            costPeriod === p.days
+                                                ? 'bg-indigo-500 text-white'
+                                                : 'text-zinc-400 hover:text-zinc-200'
+                                        }`}
+                                    >
+                                        {p.label}
+                                    </button>
+                                ))}
+                            </div>
+                        )}
                         {/* Total Cost Badge */}
                         {costByTag?.total?.cost > 0 && (
                             <span className="text-sm font-mono text-red-400 bg-red-500/10 px-2.5 py-1 rounded-lg border border-red-500/20">
@@ -350,7 +361,7 @@ export default function StatsClient({ startDate, endDate }) {
                 <div className="lg:col-span-2 bg-zinc-900 border border-zinc-800 rounded-xl p-6">
                     <h2 className="text-xl font-semibold mb-6 flex items-center gap-2 text-zinc-300">
                         <Cpu className="w-5 h-5 text-emerald-400" />
-                        Token Consumption (Today)
+                        Token Consumption {startDate ? '(Range)' : '(Today)'}
                     </h2>
                     <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
                         <div className="p-4 rounded-lg bg-zinc-950 border border-zinc-800">
@@ -366,7 +377,7 @@ export default function StatsClient({ startDate, endDate }) {
                             <p className="text-2xl font-bold text-indigo-400">{usageData.today.candidate?.toLocaleString() || 0}</p>
                         </div>
                         <div className="p-4 rounded-lg bg-zinc-950 border border-zinc-800 col-span-1 md:col-span-3">
-                            <p className="text-sm text-zinc-500 mb-1">Today's Cost</p>
+                            <p className="text-sm text-zinc-500 mb-1">{startDate ? 'Total Cost' : "Today's Cost"}</p>
                             <p className="text-2xl font-bold text-red-400">${usageData.today.cost ? Number(usageData.today.cost).toFixed(4) : '0.0000'}</p>
                         </div>
                     </div>
