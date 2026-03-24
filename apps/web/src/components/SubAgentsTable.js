@@ -127,6 +127,25 @@ function formatDurationMs(ms) {
     return `${minutes}m ${remainingSec}s`;
 }
 
+function formatStartedAt(dateStr) {
+    if (!dateStr) return '-';
+    const date = new Date(dateStr);
+    const now = new Date();
+    const today = new Date(now.getFullYear(), now.getMonth(), now.getDate());
+    const yesterday = new Date(today);
+    yesterday.setDate(yesterday.getDate() - 1);
+    const dateDay = new Date(date.getFullYear(), date.getMonth(), date.getDate());
+
+    const time = date.toLocaleTimeString(undefined, { hour: 'numeric', minute: '2-digit' });
+
+    if (dateDay.getTime() === today.getTime()) return `Today ${time}`;
+    if (dateDay.getTime() === yesterday.getTime()) return `Yesterday ${time}`;
+    if (date.getFullYear() === now.getFullYear()) {
+        return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric' }) + ` ${time}`;
+    }
+    return date.toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric' }) + ` ${time}`;
+}
+
 function GroupStatusSummary({ group }) {
     const running = group.tasks.filter(t => t.status === 'running').length;
     const completed = group.tasks.filter(t => t.status === 'completed').length;
@@ -252,6 +271,7 @@ export default function SubAgentsTable() {
                             <th className="px-4 py-3 w-[100px]">Status</th>
                             <th className="px-4 py-3 w-[80px]">Model</th>
                             <th className="px-4 py-3 w-[80px]">Cost</th>
+                            <th className="px-4 py-3 w-[130px]">Started</th>
                             <th className="px-4 py-3 w-[90px]">Duration</th>
                             <th className="px-4 py-3 w-[40px]"></th>
                         </tr>
@@ -259,7 +279,7 @@ export default function SubAgentsTable() {
                     <tbody className="divide-y divide-zinc-800">
                         {tasks.length === 0 ? (
                             <tr>
-                                <td colSpan={6} className="px-4 py-8 text-center text-zinc-500">
+                                <td colSpan={7} className="px-4 py-8 text-center text-zinc-500">
                                     No sub-agent tasks found. Sub-agents are spawned by the main agent during complex tasks.
                                 </td>
                             </tr>
@@ -301,6 +321,16 @@ export default function SubAgentsTable() {
                                                     )}
                                                 </td>
                                                 <td className="px-4 py-2">
+                                                    {group.tasks.length > 0 && (
+                                                        <span className="text-xs font-mono text-zinc-500">
+                                                            {formatStartedAt(group.tasks.reduce((earliest, t) => {
+                                                                if (!t.created_at) return earliest;
+                                                                return !earliest || new Date(t.created_at) < new Date(earliest) ? t.created_at : earliest;
+                                                            }, null))}
+                                                        </span>
+                                                    )}
+                                                </td>
+                                                <td className="px-4 py-2">
                                                     {wallDurationMs > 0 && (
                                                         <span className="text-xs font-mono text-zinc-400">{formatDurationMs(wallDurationMs)}</span>
                                                     )}
@@ -338,6 +368,9 @@ export default function SubAgentsTable() {
                                                             <span className="text-xs font-mono text-zinc-600">-</span>
                                                         )}
                                                     </td>
+                                                    <td className="px-4 py-3 text-zinc-500 text-xs font-mono">
+                                                        {formatStartedAt(task.created_at)}
+                                                    </td>
                                                     <td className="px-4 py-3 text-zinc-400 text-xs font-mono">
                                                         {getDuration(task.created_at, task.completed_at)}
                                                     </td>
@@ -352,7 +385,7 @@ export default function SubAgentsTable() {
                                                 </tr>
                                                 {expandedId === task.id && (
                                                     <tr key={`${task.id}-detail`}>
-                                                        <td colSpan={6} className={`px-4 py-3 bg-zinc-950 ${!isSingleTask ? `border-l-2 ${borderColor}` : ''}`}>
+                                                        <td colSpan={7} className={`px-4 py-3 bg-zinc-950 ${!isSingleTask ? `border-l-2 ${borderColor}` : ''}`}>
                                                             <div className="space-y-4">
                                                                 {(task.cost > 0 || task.tokens > 0) && (
                                                                     <div className="flex gap-4">
