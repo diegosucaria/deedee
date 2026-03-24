@@ -529,7 +529,7 @@ export async function validateGWSAuth(label) {
 
 export async function getGWSCalendars(label) {
     try {
-        return await fetchAPI(`/v1/settings/gws/${encodeURIComponent(label)}/calendars`);
+        return await fetchAPI(`/v1/settings/gws/calendars/${encodeURIComponent(label)}`);
     } catch (error) {
         console.error('getGWSCalendars Error:', error);
         return { calendars: [], error: error.message };
@@ -538,7 +538,7 @@ export async function getGWSCalendars(label) {
 
 export async function getGWSCalendarFilter(label) {
     try {
-        return await fetchAPI(`/v1/settings/gws/${encodeURIComponent(label)}/calendar-filter`);
+        return await fetchAPI(`/v1/settings/gws/calendar-filter/${encodeURIComponent(label)}`);
     } catch (error) {
         console.error('getGWSCalendarFilter Error:', error);
         return { calendarIds: [], primaryOnly: true };
@@ -547,7 +547,7 @@ export async function getGWSCalendarFilter(label) {
 
 export async function saveGWSCalendarFilter(label, calendarIds) {
     try {
-        const res = await fetchAPI(`/v1/settings/gws/${encodeURIComponent(label)}/calendars`, {
+        const res = await fetchAPI(`/v1/settings/gws/calendar-filter/${encodeURIComponent(label)}`, {
             method: 'POST',
             body: JSON.stringify({ calendarIds })
         });
