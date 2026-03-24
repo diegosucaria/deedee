@@ -36,6 +36,7 @@ const { DreamService } = require('./services/dream-service');
 const { SubAgentService } = require('./services/subagent-service');
 const { ToolScoper } = require('./services/tool-scoper');
 const { sanitizeToolResult } = require('./utils/tool-result-sanitizer');
+const { filterCalendarResult } = require('./utils/calendar-filter');
 const { NotificationService } = require('./utils/notifications');
 
 
@@ -1712,6 +1713,9 @@ class Agent {
           } else if (result && result.image_base64 && result.image_base64.length > 500) {
             dbToolResult = { ...result, image_base64: '<BASE64_IMAGE_TRUNCATED>' };
           }
+
+          // Filter calendar results to only include user-configured calendars
+          dbToolResult = filterCalendarResult(executionName, dbToolResult, this.settings, this.mcp?.toolMap);
 
           // Sanitize MCP tool results (strip email bloat, cap oversized results)
           dbToolResult = sanitizeToolResult(executionName, dbToolResult);

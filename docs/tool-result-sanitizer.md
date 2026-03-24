@@ -80,11 +80,27 @@ When truncation occurs:
 
 ## Integration Point
 
-Called in `agent.js` after tool execution, before sending the result to Gemini:
+Called in `agent.js` after tool execution, before sending the result to Gemini. The calendar filter runs first:
 
 ```javascript
+dbToolResult = filterCalendarResult(executionName, dbToolResult, this.settings, this.mcp?.toolMap);
 dbToolResult = sanitizeToolResult(executionName, dbToolResult);
 ```
+
+### Calendar Filter (Pre-Sanitizer)
+
+**File:** `apps/agent/src/utils/calendar-filter.js`
+
+Runs **before** the sanitizer to remove calendars the user has not configured as visible. This is a separate module because it performs access filtering (removing entire entries) rather than data cleaning (stripping fields).
+
+| Behaviour | Detail |
+|-----------|--------|
+| Default (no config) | Only the primary calendar is visible |
+| With config | Only calendars in the `calendarIds` allowlist are visible |
+| `calendarList.list` | Filters the items array by calendar ID |
+| Events responses | Filters events by `organizer.email` |
+
+Configuration is stored per-GWS-account in `agent_settings` with key `gws_calendar_filter:{label}`. Managed via Settings > Interfaces > Google Workspace > Calendar Access.
 
 The `sanitizeToolResult` function accepts an optional third parameter `maxChars` to override the default cap, but the high-cap tool logic is now built into the sanitizer itself via `HIGH_CAP_TOOLS`.
 

@@ -1,6 +1,20 @@
 const express = require('express');
 const { ConfigService } = require('../services/config-service');
 
+/**
+ * Find the MCP calendar tool name for a GWS account label.
+ * In compact mode the tool is "{namespace}_calendar".
+ */
+function findGWSCalendarTool(mcp, safeLabel) {
+    if (!mcp || !mcp.toolMap) return null;
+    for (const [toolName, entry] of mcp.toolMap.entries()) {
+        if (entry.name === `gws_${safeLabel}` && toolName.toLowerCase().includes('calendar')) {
+            return toolName;
+        }
+    }
+    return null;
+}
+
 function createSettingsRouter(agent) {
     const router = express.Router();
 
@@ -408,6 +422,115 @@ function createSettingsRouter(agent) {
         } catch (error) {
             console.error('[Settings] GWS Validate Failed:', error);
             res.json({ valid: false, error: 'validation_error' });
+        }
+    });
+
+    // ─── GWS Calendar Filter Routes ──────────────────────────────────
+
+    // GET /internal/settings/gws/:label/calendars — List all calendars for an account
+    router.get('/gws/:label/calendars', async (req, res) => {
+        try {
+            const safeLabel = req.params.label.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+
+            if (!agent.mcp) {
+                return res.status(503).json({ error: 'MCP not ready' });
+            }
+
+            // Find the calendar tool for this GWS account
+            const toolName = findGWSCalendarTool(agent.mcp, safeLabel);
+            if (!toolName) {
+                return res.status(404).json({ error: `No calendar tool found for account "${safeLabel}"` });
+            }
+
+            // Call calendarList.list via MCP (unfiltered — bypass the filter for discovery)
+            let result;
+            try {
+                result = await agent.mcp.callTool(toolName, {
+                    method: 'calendarList.list',
+                    params: { userId: 'me' }
+                });
+            } catch (mcpErr) {
+                console.error(`[Settings] MCP call failed for ${safeLabel}:`, mcpErr.message);
+                return res.status(503).json({ error: 'Calendar service unavailable. Is the MCP server connected?' });
+            }
+
+            const text = result?.output || (typeof result === 'string' ? result : JSON.stringify(result));
+            let parsed;
+            try {
+                parsed = JSON.parse(text);
+            } catch {
+                return res.json({ calendars: [] });
+            }
+
+            const items = parsed.items || [];
+            const calendars = items.map(cal => ({
+                id: cal.id,
+                summary: cal.summary || cal.id,
+                primary: cal.primary || false,
+                backgroundColor: cal.backgroundColor || null,
+                accessRole: cal.accessRole || null,
+            }));
+
+            res.json({ calendars });
+        } catch (error) {
+            console.error('[Settings] GWS Calendar List Failed:', error);
+            res.status(500).json({ error: 'Failed to list calendars' });
+        }
+    });
+
+    // GET /internal/settings/gws/:label/calendar-filter — Get current filter config
+    router.get('/gws/:label/calendar-filter', (req, res) => {
+        try {
+            const safeLabel = req.params.label.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+            const filterKey = `gws_calendar_filter:${safeLabel}`;
+            const setting = agent.db.getAgentSetting(filterKey);
+
+            if (setting && setting.value) {
+                res.json(setting.value);
+            } else {
+                res.json({ calendarIds: [], primaryOnly: true });
+            }
+        } catch (error) {
+            console.error('[Settings] GWS Calendar Filter Get Failed:', error);
+            res.status(500).json({ error: 'Failed to get calendar filter' });
+        }
+    });
+
+    // POST /internal/settings/gws/:label/calendars — Save calendar filter
+    router.post('/gws/:label/calendars', (req, res) => {
+        try {
+            const { calendarIds } = req.body;
+            if (!Array.isArray(calendarIds)) {
+                return res.status(400).json({ error: 'calendarIds must be an array' });
+            }
+
+            // Validate each calendar ID is a non-empty string
+            const validIds = calendarIds.filter(id => typeof id === 'string' && id.length > 0 && id.length < 300);
+            if (validIds.length !== calendarIds.length) {
+                return res.status(400).json({ error: 'All calendarIds must be non-empty strings' });
+            }
+
+            const safeLabel = req.params.label.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+            const filterKey = `gws_calendar_filter:${safeLabel}`;
+            const value = { calendarIds: validIds };
+
+            agent.db.setAgentSetting(filterKey, value, 'gws');
+
+            // Update in-memory cache
+            if (agent.settings) {
+                agent.settings[filterKey] = value;
+            }
+
+            // Broadcast update for real-time UI sync
+            if (agent.interface) {
+                agent.interface.broadcast('entity:update', { type: 'setting', key: filterKey, value }).catch(console.error);
+            }
+
+            console.log(`[Settings] Saved calendar filter for ${safeLabel}: ${validIds.length} calendars`);
+            res.json({ success: true, calendarIds: validIds });
+        } catch (error) {
+            console.error('[Settings] GWS Calendar Filter Save Failed:', error);
+            res.status(500).json({ error: 'Failed to save calendar filter' });
         }
     });
 
