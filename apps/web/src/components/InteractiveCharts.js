@@ -332,6 +332,15 @@ export function ServiceCostBreakdown({ data }) {
                             );
                         })}
                     </tbody>
+                    <tfoot>
+                        <tr className="border-t-2 border-zinc-700">
+                            <td className="py-2 px-1 font-semibold text-zinc-200">Total</td>
+                            <td className="text-right py-2 px-1 font-mono font-semibold text-zinc-300">{total.calls.toLocaleString()}</td>
+                            <td className="text-right py-2 px-1 font-mono font-semibold text-zinc-300">{total.tokens.toLocaleString()}</td>
+                            <td className="text-right py-2 px-1 font-mono font-semibold text-yellow-400">${total.cost.toFixed(4)}</td>
+                            <td className="text-right py-2 px-1 font-mono font-semibold text-zinc-400">100%</td>
+                        </tr>
+                    </tfoot>
                 </table>
             </div>
         </div>
@@ -374,7 +383,25 @@ export function StackedDailyCostChart({ data }) {
                 <Tooltip
                     contentStyle={{ backgroundColor: '#18181b', borderColor: '#3f3f46', color: '#e4e4e7' }}
                     cursor={{ fill: '#27272a' }}
-                    formatter={(val, name) => [`$${Number(val).toFixed(4)}`, name]}
+                    content={({ active, payload, label }) => {
+                        if (!active || !payload || payload.length === 0) return null;
+                        const dayTotal = payload.reduce((sum, entry) => sum + (Number(entry.value) || 0), 0);
+                        return (
+                            <div style={{ backgroundColor: '#18181b', border: '1px solid #3f3f46', borderRadius: 8, padding: '10px 14px', color: '#e4e4e7', fontSize: 13 }}>
+                                <div style={{ fontWeight: 600, marginBottom: 6, color: '#a1a1aa' }}>{label}</div>
+                                {payload.filter(e => e.value > 0).sort((a, b) => b.value - a.value).map((entry, i) => (
+                                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 2 }}>
+                                        <span style={{ color: entry.color }}>{entry.name}</span>
+                                        <span style={{ fontFamily: 'monospace' }}>${Number(entry.value).toFixed(4)}</span>
+                                    </div>
+                                ))}
+                                <div style={{ borderTop: '1px solid #3f3f46', marginTop: 6, paddingTop: 6, display: 'flex', justifyContent: 'space-between', gap: 16, fontWeight: 700 }}>
+                                    <span style={{ color: '#facc15' }}>Total</span>
+                                    <span style={{ fontFamily: 'monospace', color: '#facc15' }}>${dayTotal.toFixed(4)}</span>
+                                </div>
+                            </div>
+                        );
+                    }}
                 />
                 <Legend />
                 {categories.map((cat, i) => (
@@ -455,6 +482,21 @@ export function ModelCostBreakdown({ data }) {
                         );
                     })}
                 </tbody>
+                <tfoot>
+                    <tr className="border-t-2 border-zinc-700">
+                        <td className="py-2 px-2 font-semibold text-zinc-200">Total</td>
+                        <td className="text-right py-2 px-2 font-mono font-semibold text-zinc-300">{data.reduce((s, r) => s + (r.calls || 0), 0).toLocaleString()}</td>
+                        <td className="text-right py-2 px-2 font-mono font-semibold text-zinc-300 text-xs">{fmtTokens(data.reduce((s, r) => s + (r.input_tokens || 0), 0))}</td>
+                        {totalCached > 0 && (
+                            <td className="text-right py-2 px-2 font-mono font-semibold text-xs">
+                                <span className="text-green-400">{fmtTokens(totalCached)}</span>
+                            </td>
+                        )}
+                        <td className="text-right py-2 px-2 font-mono font-semibold text-zinc-300 text-xs">{fmtTokens(data.reduce((s, r) => s + (r.output_tokens || 0), 0))}</td>
+                        <td className="text-right py-2 px-2 font-mono font-semibold text-yellow-400">${totalCost.toFixed(4)}</td>
+                        <td className="text-right py-2 px-2 font-mono font-semibold text-zinc-400">100%</td>
+                    </tr>
+                </tfoot>
             </table>
         </div>
     );

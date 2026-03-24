@@ -54,7 +54,7 @@ class Agent {
     this.smartContext = new SmartContextManager(this.db, this.client); // Client is null here, need to set later
 
     // Router
-    this.router = new Router(config.googleApiKey);
+    this.router = new Router(config.googleApiKey, this.db);
 
     // MCP Manager
     this.mcp = new MCPManager(path.join(dataDir, 'mcp_config.json'));

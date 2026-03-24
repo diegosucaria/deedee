@@ -282,63 +282,63 @@ export async function getSystemStats(query = '') {
     }
 }
 
-export async function getStatsLatency() {
+export async function getStatsLatency(query = '') {
     try {
-        return await fetchAPI('/v1/stats/latency');
+        return await fetchAPI(`/v1/stats/latency${query}`);
     } catch (error) {
         console.error('getStatsLatency Error:', error);
         return [];
     }
 }
 
-export async function getStatsUsage() {
+export async function getStatsUsage(query = '') {
     try {
-        return await fetchAPI('/v1/stats/usage');
+        return await fetchAPI(`/v1/stats/usage${query}`);
     } catch (error) {
         console.error('getStatsUsage Error:', error);
         return null;
     }
 }
 
-export async function getStatsCostTrend() {
+export async function getStatsCostTrend(query = '') {
     try {
-        return await fetchAPI('/v1/stats/cost-trend');
+        return await fetchAPI(`/v1/stats/cost-trend${query}`);
     } catch (error) {
         console.error('getStatsCostTrend Error:', error);
         return [];
     }
 }
 
-export async function getDailyCostTrend() {
+export async function getDailyCostTrend(query = '') {
     try {
-        return await fetchAPI('/v1/stats/daily-cost');
+        return await fetchAPI(`/v1/stats/daily-cost${query}`);
     } catch (error) {
         console.error('getDailyCostTrend Error:', error);
         return [];
     }
 }
 
-export async function getCostByTag(days = 1) {
+export async function getCostByTag(query = '') {
     try {
-        return await fetchAPI(`/v1/stats/cost-by-tag?days=${days}`);
+        return await fetchAPI(`/v1/stats/cost-by-tag${query}`);
     } catch (error) {
         console.error('getCostByTag Error:', error);
         return { categories: {}, total: { cost: 0, tokens: 0, calls: 0 } };
     }
 }
 
-export async function getDailyCostByCategory(limit = 7) {
+export async function getDailyCostByCategory(query = '') {
     try {
-        return await fetchAPI(`/v1/stats/daily-cost-by-category?limit=${limit}`);
+        return await fetchAPI(`/v1/stats/daily-cost-by-category${query}`);
     } catch (error) {
         console.error('getDailyCostByCategory Error:', error);
         return [];
     }
 }
 
-export async function getCostByModel(days = 1) {
+export async function getCostByModel(query = '') {
     try {
-        return await fetchAPI(`/v1/stats/cost-by-model?days=${days}`);
+        return await fetchAPI(`/v1/stats/cost-by-model${query}`);
     } catch (error) {
         console.error('getCostByModel Error:', error);
         return [];
