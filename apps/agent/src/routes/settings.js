@@ -4,10 +4,25 @@ const { ConfigService } = require('../services/config-service');
 /**
  * Find the MCP calendar tool name for a GWS account label.
  * In compact mode the tool is "{namespace}_calendar".
+ * Refreshes the tool cache once if not found (handles startup timing).
  */
-function findGWSCalendarTool(mcp, safeLabel) {
+async function findGWSCalendarTool(mcp, safeLabel) {
     if (!mcp || !mcp.toolMap) return null;
-    for (const [toolName, entry] of mcp.toolMap.entries()) {
+
+    // First attempt: search current cache
+    let found = _scanToolMap(mcp.toolMap, safeLabel);
+    if (found) return found;
+
+    // Tool not found — refresh cache once (handles startup race / MCP reconnect)
+    if (typeof mcp._refreshToolCache === 'function') {
+        await mcp._refreshToolCache();
+        found = _scanToolMap(mcp.toolMap, safeLabel);
+    }
+    return found;
+}
+
+function _scanToolMap(toolMap, safeLabel) {
+    for (const [toolName, entry] of toolMap.entries()) {
         if (entry.name === `gws_${safeLabel}` && toolName.toLowerCase().includes('calendar')) {
             return toolName;
         }
@@ -436,10 +451,13 @@ function createSettingsRouter(agent) {
                 return res.status(503).json({ error: 'MCP not ready' });
             }
 
-            // Find the calendar tool for this GWS account
-            const toolName = findGWSCalendarTool(agent.mcp, safeLabel);
+            // Find the calendar tool for this GWS account (async — retries with cache refresh)
+            const toolName = await findGWSCalendarTool(agent.mcp, safeLabel);
             if (!toolName) {
-                return res.status(404).json({ error: `No calendar tool found for account "${safeLabel}"` });
+                const availableTools = [...agent.mcp.toolMap.keys()].filter(t => t.includes('calendar'));
+                const gwsServers = [...agent.mcp.toolMap.values()].map(e => e.name).filter(n => n.startsWith('gws_'));
+                console.error(`[Settings] No calendar tool for "${safeLabel}". Calendar tools: [${availableTools}], GWS servers: [${[...new Set(gwsServers)]}]`);
+                return res.status(404).json({ error: `No calendar tool found for account "${safeLabel}". Available GWS servers: ${[...new Set(gwsServers)].join(', ') || 'none'}` });
             }
 
             // Call calendarList.list via MCP (unfiltered — bypass the filter for discovery)
