@@ -267,11 +267,15 @@ function createInternalRouter(agent) {
     });
 
     // --- Stats ---
+    // Validate ISO date strings from query params to prevent garbage-in/garbage-out
+    const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?Z?)?$/;
+    const safeDate = (v) => (typeof v === 'string' && ISO_DATE_RE.test(v)) ? v : undefined;
+
     router.get('/stats', (req, res) => {
         if (!agent.db || !agent.journal) return res.status(503).json({ error: 'Stats dependencies not ready' });
         try {
-            const { start, end } = req.query;
-            const dbStats = agent.db.getStats(start, end);
+            const start = safeDate(req.query.start), end = safeDate(req.query.end);
+            const dbStats = agent.db.getStats();
             const journalStats = agent.journal.getStats(start, end);
             const latencyStats = agent.db.getLatencyStats(start, end);
             const contextStats = agent.smartContext.getStats();
@@ -298,8 +302,8 @@ function createInternalRouter(agent) {
     router.get('/stats/latency', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
         try {
-            const { limit, start, end } = req.query;
-            const trend = agent.db.getLatencyTrend(limit || 100, start, end);
+            const start = safeDate(req.query.start), end = safeDate(req.query.end);
+            const trend = agent.db.getLatencyTrend(parseInt(req.query.limit || '100', 10), start, end);
             res.json(trend);
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
@@ -307,7 +311,7 @@ function createInternalRouter(agent) {
     router.get('/stats/usage', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
         try {
-            const { start, end } = req.query;
+            const start = safeDate(req.query.start), end = safeDate(req.query.end);
             const usage = agent.db.getTokenUsageStats(start, end);
             res.json(usage);
         } catch (e) { res.status(500).json({ error: e.message }); }
@@ -316,7 +320,7 @@ function createInternalRouter(agent) {
     router.get('/stats/cost-trend', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
         try {
-            const { start, end } = req.query;
+            const start = safeDate(req.query.start), end = safeDate(req.query.end);
             const limit = parseInt(req.query.limit || '100', 10);
             const trend = agent.db.getTokenUsageTrend(limit, start, end);
             res.json(trend);
@@ -326,8 +330,9 @@ function createInternalRouter(agent) {
     router.get('/stats/daily-cost', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
         try {
-            const limit = parseInt(req.query.limit || '7', 10);
-            const trend = agent.db.getDailyCostTrend(limit);
+            const start = safeDate(req.query.start), end = safeDate(req.query.end);
+            const limit = parseInt(req.query.limit || '90', 10);
+            const trend = agent.db.getDailyCostTrend(start, end, limit);
             res.json(trend);
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
@@ -335,8 +340,9 @@ function createInternalRouter(agent) {
     router.get('/stats/cost-by-tag', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
         try {
+            const start = safeDate(req.query.start), end = safeDate(req.query.end);
             const days = Math.max(1, Math.min(parseInt(req.query.days || '1', 10) || 1, 365));
-            const result = agent.db.getCostByTag(days);
+            const result = agent.db.getCostByTag(start, end, days);
             res.json(result);
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
@@ -344,8 +350,9 @@ function createInternalRouter(agent) {
     router.get('/stats/daily-cost-by-category', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
         try {
-            const limit = Math.max(1, Math.min(parseInt(req.query.limit || '7', 10) || 7, 365));
-            const result = agent.db.getDailyCostByCategory(limit);
+            const start = safeDate(req.query.start), end = safeDate(req.query.end);
+            const limit = Math.max(1, Math.min(parseInt(req.query.limit || '90', 10) || 90, 365));
+            const result = agent.db.getDailyCostByCategory(start, end, limit);
             res.json(result);
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
@@ -353,8 +360,9 @@ function createInternalRouter(agent) {
     router.get('/stats/cost-by-model', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
         try {
+            const start = safeDate(req.query.start), end = safeDate(req.query.end);
             const days = Math.max(1, Math.min(parseInt(req.query.days || '1', 10) || 1, 365));
-            const result = agent.db.getCostByModel(days);
+            const result = agent.db.getCostByModel(start, end, days);
             res.json(result);
         } catch (e) { res.status(500).json({ error: e.message }); }
     });

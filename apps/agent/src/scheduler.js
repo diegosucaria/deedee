@@ -467,6 +467,15 @@ CRITICAL: Use spawnAgent(model: 'FLASH') to fetch and summarize each source:
 - Slack (readAllMonitoredSlackHistory) → return only actionable items with exact format: "[Slack #channel] Person Name: item"
 - Email/Calendar (GWS tools) → return only actionable items with exact format: "[Email] Sender: summary" or "[Calendar] Event: time"
 - WhatsApp → return only actionable items with exact format: "[WhatsApp] Contact Name: item"
+
+SUB-AGENT DEPTH RULES — include these in EVERY spawnAgent prompt:
+- You are a SCANNER, not an investigator. Read what's in front of you and summarize it. Do NOT research, cross-reference, or look up additional context on other platforms.
+- Calendar: call events.list on the PRIMARY calendar only for each account (calendarId: 'primary'). Do NOT call calendarList. Do NOT iterate secondary calendars. If an event has no title, report it as "(untitled event at HH:MM)" — do NOT search other platforms to identify it.
+- Email: list recent messages, read subjects and snippets. Do NOT open individual emails unless the subject line itself suggests an action item directed at the user.
+- WhatsApp: call listConversations then readChatHistory for the top conversations. Summarize what you see. Do NOT resolve contact names via People API or cross-reference other platforms.
+- Slack: call readAllMonitoredSlackHistory. Summarize what you see. Done.
+- HARD LIMIT: If you have made 10 tool calls and are not done, STOP and return what you have so far.
+
 CRITICAL RULES:
 - Only include items that are directed at ME or require MY action. Ignore tasks assigned to or meant for other people.
 - Each item MUST include its source platform in brackets: [Slack #channel-name], [WhatsApp], [Email], or [Calendar]

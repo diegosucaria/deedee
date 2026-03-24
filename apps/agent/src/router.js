@@ -2,10 +2,11 @@
 const { ConfigService } = require('./services/config-service');
 
 class Router {
-    constructor(apiKey) {
+    constructor(apiKey, db) {
         this.apiKey = apiKey;
         this.client = null;
         this.config = new ConfigService();
+        this.db = db || null;
         // Use a fast model for routing
         this.model = this.config.getModel('ROUTER');
     }
@@ -104,6 +105,8 @@ class Router {
                 }
             }).sendMessage({ message: routerPrompt });
 
+            // Log token usage for routing calls
+            this.config.logUsageFromResponse(this.db, this.model, response, null, 'router');
 
             let text = '{}';
             if (!response) {
