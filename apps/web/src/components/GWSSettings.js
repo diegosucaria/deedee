@@ -2,8 +2,8 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { useSearchParams } from 'next/navigation';
-import { Calendar, Upload, CheckCircle2, AlertCircle, Plus, X, Server, RefreshCw, KeyRound, ChevronDown, ChevronUp } from 'lucide-react';
-import { uploadGWSCredentials, getMCPStatus, deleteMCPServer, saveGWSAuthClient, getGWSAuthClient, getGWSAuthURL, validateGWSAuth } from '../app/actions';
+import { Calendar, Upload, CheckCircle2, AlertCircle, Plus, X, Server, RefreshCw, KeyRound, ChevronDown, ChevronUp, SlidersHorizontal } from 'lucide-react';
+import { uploadGWSCredentials, getMCPStatus, deleteMCPServer, saveGWSAuthClient, getGWSAuthClient, getGWSAuthURL, validateGWSAuth, getGWSCalendars, getGWSCalendarFilter, saveGWSCalendarFilter } from '../app/actions';
 
 export default function GWSSettings() {
     const searchParams = useSearchParams();
@@ -31,6 +31,9 @@ export default function GWSSettings() {
     const [fileContent, setFileContent] = useState('');
     const [fileName, setFileName] = useState('');
     const fileInputRef = useRef(null);
+
+    // Calendar Filter State — keyed by account label
+    const [calConfig, setCalConfig] = useState({}); // { [label]: { expanded, loading, saving, calendars, selectedIds } }
 
     useEffect(() => {
         loadData();
@@ -243,6 +246,84 @@ export default function GWSSettings() {
         setLoading(false);
     };
 
+    // ─── Calendar Filter Handlers ─────────────────────────────────────
+
+    const toggleCalendarConfig = async (label) => {
+        const current = calConfig[label];
+        if (current?.expanded) {
+            // Collapse
+            setCalConfig(prev => ({ ...prev, [label]: { ...prev[label], expanded: false } }));
+            return;
+        }
+
+        // Expand & load data
+        setCalConfig(prev => ({
+            ...prev,
+            [label]: { expanded: true, loading: true, saving: false, calendars: [], selectedIds: new Set() }
+        }));
+
+        try {
+            const [calResult, filterResult] = await Promise.all([
+                getGWSCalendars(label),
+                getGWSCalendarFilter(label),
+            ]);
+
+            const calendars = calResult.calendars || [];
+            const selectedIds = new Set(
+                filterResult.calendarIds?.length > 0
+                    ? filterResult.calendarIds
+                    : calendars.filter(c => c.primary).map(c => c.id) // Default: primary checked
+            );
+
+            setCalConfig(prev => ({
+                ...prev,
+                [label]: { expanded: true, loading: false, saving: false, calendars, selectedIds, pristine: true }
+            }));
+        } catch (e) {
+            console.error('Failed to load calendar config:', e);
+            setCalConfig(prev => ({
+                ...prev,
+                [label]: { expanded: true, loading: false, saving: false, calendars: [], selectedIds: new Set(), error: e.message }
+            }));
+        }
+    };
+
+    const toggleCalendar = (label, calId) => {
+        setCalConfig(prev => {
+            const current = prev[label];
+            if (!current) return prev;
+            const newIds = new Set(current.selectedIds);
+            if (newIds.has(calId)) {
+                newIds.delete(calId);
+            } else {
+                newIds.add(calId);
+            }
+            return { ...prev, [label]: { ...current, selectedIds: newIds, pristine: false } };
+        });
+    };
+
+    const saveCalendarSelection = async (label) => {
+        const current = calConfig[label];
+        if (!current) return;
+
+        setCalConfig(prev => ({ ...prev, [label]: { ...prev[label], saving: true } }));
+
+        try {
+            const ids = [...current.selectedIds];
+            const res = await saveGWSCalendarFilter(label, ids);
+            if (res.success) {
+                setSuccessMessage(`Calendar filter saved for "${label}" (${ids.length} calendars)`);
+                setCalConfig(prev => ({ ...prev, [label]: { ...prev[label], saving: false, pristine: true } }));
+            } else {
+                setError(res.error || 'Failed to save calendar filter');
+                setCalConfig(prev => ({ ...prev, [label]: { ...prev[label], saving: false } }));
+            }
+        } catch (e) {
+            setError(e.message);
+            setCalConfig(prev => ({ ...prev, [label]: { ...prev[label], saving: false } }));
+        }
+    };
+
     return (
         <div className="space-y-6">
             <div>
@@ -430,6 +511,85 @@ export default function GWSSettings() {
                                         </button>
                                     </div>
                                 </div>
+
+                                {/* Calendar Access Section */}
+                                {acc.status !== 'disabled' && !isExpired && (
+                                    <div className="mt-3 border-t border-zinc-700/50 pt-3">
+                                        <button
+                                            onClick={() => toggleCalendarConfig(acc.label)}
+                                            className="flex items-center gap-2 text-sm text-zinc-400 hover:text-zinc-200 transition-colors w-full"
+                                        >
+                                            <SlidersHorizontal className="w-3.5 h-3.5" />
+                                            <span className="font-medium">Calendar Access</span>
+                                            {calConfig[acc.label]?.expanded
+                                                ? <ChevronUp className="w-3.5 h-3.5 ml-auto" />
+                                                : <ChevronDown className="w-3.5 h-3.5 ml-auto" />
+                                            }
+                                        </button>
+
+                                        {calConfig[acc.label]?.expanded && (
+                                            <div className="mt-3 space-y-3">
+                                                {calConfig[acc.label]?.loading ? (
+                                                    <div className="flex items-center gap-2 text-sm text-zinc-500 py-2">
+                                                        <RefreshCw className="w-3.5 h-3.5 animate-spin" />
+                                                        Loading calendars...
+                                                    </div>
+                                                ) : calConfig[acc.label]?.error ? (
+                                                    <p className="text-sm text-red-400">{calConfig[acc.label].error}</p>
+                                                ) : calConfig[acc.label]?.calendars.length === 0 ? (
+                                                    <p className="text-sm text-zinc-500">No calendars found. Is the MCP server connected?</p>
+                                                ) : (
+                                                    <>
+                                                        <p className="text-xs text-zinc-500">
+                                                            Select which calendars the agent can access. Unselected calendars are hidden from all tools.
+                                                        </p>
+                                                        <div className="space-y-1.5 max-h-48 overflow-y-auto">
+                                                            {calConfig[acc.label].calendars.map(cal => (
+                                                                <label
+                                                                    key={cal.id}
+                                                                    className="flex items-center gap-2.5 px-2 py-1.5 rounded-md hover:bg-zinc-700/30 cursor-pointer transition-colors"
+                                                                >
+                                                                    <input
+                                                                        type="checkbox"
+                                                                        checked={calConfig[acc.label].selectedIds.has(cal.id)}
+                                                                        onChange={() => toggleCalendar(acc.label, cal.id)}
+                                                                        className="rounded border-zinc-600 bg-zinc-800 text-indigo-500 focus:ring-indigo-500/30 focus:ring-offset-0"
+                                                                    />
+                                                                    {cal.backgroundColor && (
+                                                                        <span
+                                                                            className="w-2.5 h-2.5 rounded-full shrink-0"
+                                                                            style={{ backgroundColor: cal.backgroundColor }}
+                                                                        />
+                                                                    )}
+                                                                    <span className="text-sm text-zinc-300 truncate">{cal.summary}</span>
+                                                                    {cal.primary && (
+                                                                        <span className="text-[10px] text-zinc-500 bg-zinc-800 px-1.5 py-0.5 rounded border border-zinc-700 shrink-0">
+                                                                            Primary
+                                                                        </span>
+                                                                    )}
+                                                                </label>
+                                                            ))}
+                                                        </div>
+                                                        <div className="flex items-center gap-3 pt-1">
+                                                            <button
+                                                                onClick={() => saveCalendarSelection(acc.label)}
+                                                                disabled={calConfig[acc.label]?.saving || calConfig[acc.label]?.pristine}
+                                                                className="px-3 py-1.5 text-sm bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 disabled:cursor-not-allowed text-white rounded-lg transition-colors font-medium"
+                                                            >
+                                                                {calConfig[acc.label]?.saving ? 'Saving...' : 'Save'}
+                                                            </button>
+                                                            {calConfig[acc.label]?.selectedIds.size === 0 && (
+                                                                <span className="text-xs text-amber-400">
+                                                                    No calendars selected — defaults to primary only
+                                                                </span>
+                                                            )}
+                                                        </div>
+                                                    </>
+                                                )}
+                                            </div>
+                                        )}
+                                    </div>
+                                )}
                             </div>
                         );
                     })

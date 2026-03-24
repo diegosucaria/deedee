@@ -43,11 +43,24 @@ Two authentication methods are available:
 
 Multiple Google accounts are supported simultaneously. Each account gets a namespace prefix (e.g., `work`, `personal`), and all MCP tools from that account are prefixed accordingly (e.g., `work_calendar_events_list`).
 
+### Calendar Filtering
+
+By default, the agent only has access to the **primary calendar** for each account. This prevents subagents from wasting API calls iterating through irrelevant calendars (holidays, shared calendars, etc.).
+
+To configure which calendars the agent can see:
+1. Go to **Settings > Interfaces > Google Workspace**
+2. On a connected account, click **Calendar Access**
+3. Select the calendars the agent should have access to
+4. Click **Save**
+
+Calendar filters are stored per-account in the `agent_settings` database (key: `gws_calendar_filter:{label}`). When no filter is configured, only the primary calendar is exposed.
+
 ### Credentials Storage
 
 - OAuth client config: `/app/data/gws-oauth-client.json`
 - Per-account credentials: `/app/data/gws-credentials-{label}.json`
 - MCP config entries: `data/mcp_config.json` (auto-managed)
+- Calendar filter config: `agent_settings` DB table (key: `gws_calendar_filter:{label}`)
 
 ## Manual Configuration (Advanced)
 You can still manually edit `mcp_config.json` if you have shell access, but the UI is recommended.
