@@ -268,6 +268,15 @@ export default function GWSSettings() {
                 getGWSCalendarFilter(label),
             ]);
 
+            // Check if the calendar discovery returned an error
+            if (calResult.error) {
+                setCalConfig(prev => ({
+                    ...prev,
+                    [label]: { expanded: true, loading: false, saving: false, calendars: [], selectedIds: new Set(), error: calResult.error }
+                }));
+                return;
+            }
+
             const calendars = calResult.calendars || [];
             const selectedIds = new Set(
                 filterResult.calendarIds?.length > 0
@@ -535,7 +544,15 @@ export default function GWSSettings() {
                                                         Loading calendars...
                                                     </div>
                                                 ) : calConfig[acc.label]?.error ? (
-                                                    <p className="text-sm text-red-400">{calConfig[acc.label].error}</p>
+                                                    <div className="space-y-2">
+                                                        <p className="text-sm text-red-400">{calConfig[acc.label].error}</p>
+                                                        <button
+                                                            onClick={() => { setCalConfig(prev => ({ ...prev, [acc.label]: undefined })); toggleCalendarConfig(acc.label); }}
+                                                            className="text-xs text-indigo-400 hover:text-indigo-300 underline"
+                                                        >
+                                                            Retry
+                                                        </button>
+                                                    </div>
                                                 ) : calConfig[acc.label]?.calendars.length === 0 ? (
                                                     <p className="text-sm text-zinc-500">No calendars found. Is the MCP server connected?</p>
                                                 ) : (
