@@ -464,7 +464,11 @@ function createSettingsRouter(agent) {
             }
 
             const toolEntry = agent.mcp.toolMap.get(toolName);
-            console.log(`[CalendarDiscovery] Found tool: ${toolName} (server: ${toolEntry?.name}, original: ${toolEntry?.originalName})`);
+            // Log MCP server config for this account to help debug credential scoping
+            const serverConfig = agent.mcp.config?.[toolEntry?.name];
+            const credsFile = serverConfig?.env?.GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE || 'unknown';
+            const configuredAccount = serverConfig?.env?.GOOGLE_WORKSPACE_CLI_ACCOUNT || 'unknown';
+            console.log(`[CalendarDiscovery] Found tool: ${toolName} (server: ${toolEntry?.name}, creds: ${credsFile}, account: ${configuredAccount})`);
 
             // Call calendarList.list via MCP (unfiltered — bypass the filter for discovery)
             // GWS CLI compact mode expects: { resource, method, params }
