@@ -13,12 +13,13 @@ export default function DateIntervalSelector() {
     const initialStart = searchParams.get('start');
     const initialEnd = searchParams.get('end');
 
-    const [preset, setPreset] = useState('24h');
+    const [preset, setPreset] = useState('today');
     const [startDate, setStartDate] = useState(initialStart || '');
     const [endDate, setEndDate] = useState(initialEnd || '');
     const [isCustom, setIsCustom] = useState(!!(initialStart && initialEnd));
 
     const presets = [
+        { label: 'Today', value: 'today' },
         { label: 'Last 24 Hours', value: '24h' },
         { label: 'Last 7 Days', value: '7d' },
         { label: 'Last 30 Days', value: '30d' },
@@ -43,7 +44,9 @@ export default function DateIntervalSelector() {
         let start = new Date();
         const end = new Date(); // Now
 
-        if (value === '24h') {
+        if (value === 'today') {
+            start.setHours(0, 0, 0, 0);
+        } else if (value === '24h') {
             start.setHours(start.getHours() - 24);
         } else if (value === '7d') {
             start.setDate(start.getDate() - 7);
@@ -62,7 +65,7 @@ export default function DateIntervalSelector() {
     useEffect(() => {
         // Sync preset if URL empty
         if (!initialStart && !initialEnd && !isCustom) {
-            handlePresetChange('24h');
+            handlePresetChange('today');
         }
     }, []);
 

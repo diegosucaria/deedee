@@ -46,7 +46,7 @@ export default async function StatsPage({ searchParams }) {
                     bg="bg-blue-400/10 border-blue-400/20"
                 />
                 <StatCard
-                    title={params.get('start') ? "Avg Response (Range)" : "Avg Response (24h)"}
+                    title={params.get('start') ? "Avg Response (Range)" : "Avg Response (Today)"}
                     value={latency?.avg24h ? `${latency.avg24h}ms` : '-'}
                     icon={Zap}
                     color="text-yellow-400"
