@@ -9,14 +9,36 @@ export default function DateIntervalSelector() {
     const router = useRouter();
     const searchParams = useSearchParams();
 
-    // Default to '24h' if no params
     const initialStart = searchParams.get('start');
     const initialEnd = searchParams.get('end');
 
-    const [preset, setPreset] = useState('today');
+    // Detect if URL params match a known preset (e.g. page reload after clicking Today)
+    const detectPreset = () => {
+        if (!initialStart && !initialEnd) return 'today'; // No params = default to Today
+        if (!initialStart && initialEnd) return 'all'; // End only = All Time
+        const s = new Date(initialStart);
+        const now = new Date();
+        const today = new Date(); today.setHours(0, 0, 0, 0);
+        // Today: start is midnight today
+        if (Math.abs(s.getTime() - today.getTime()) < 60000) return 'today';
+        // 24h: start is ~24h ago
+        const h24 = new Date(now); h24.setHours(h24.getHours() - 24);
+        if (Math.abs(s.getTime() - h24.getTime()) < 120000) return '24h';
+        // 7d
+        const d7 = new Date(now); d7.setDate(d7.getDate() - 7);
+        if (Math.abs(s.getTime() - d7.getTime()) < 120000) return '7d';
+        // 30d
+        const d30 = new Date(now); d30.setDate(d30.getDate() - 30);
+        if (Math.abs(s.getTime() - d30.getTime()) < 120000) return '30d';
+        return 'custom';
+    };
+    // All Time: no start param at all (handled by !initialStart above)
+    const detectedPreset = detectPreset();
+
+    const [preset, setPreset] = useState(detectedPreset);
     const [startDate, setStartDate] = useState(initialStart || '');
     const [endDate, setEndDate] = useState(initialEnd || '');
-    const [isCustom, setIsCustom] = useState(!!(initialStart && initialEnd));
+    const [isCustom, setIsCustom] = useState(detectedPreset === 'custom');
 
     const presets = [
         { label: 'Today', value: 'today' },
