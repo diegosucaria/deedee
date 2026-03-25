@@ -447,8 +447,10 @@ function createSettingsRouter(agent) {
     router.get('/gws/calendars/:label', async (req, res) => {
         try {
             const safeLabel = req.params.label.toLowerCase().replace(/[^a-z0-9-]/g, '-');
+            console.log(`[CalendarDiscovery] Starting discovery for "${safeLabel}"`);
 
             if (!agent.mcp) {
+                console.error(`[CalendarDiscovery] MCP not initialized`);
                 return res.status(503).json({ error: 'MCP not ready' });
             }
 
@@ -457,9 +459,11 @@ function createSettingsRouter(agent) {
             if (!toolName) {
                 const availableTools = [...agent.mcp.toolMap.keys()].filter(t => t.includes('calendar'));
                 const gwsServers = [...agent.mcp.toolMap.values()].map(e => e.name).filter(n => n.startsWith('gws_'));
-                console.error(`[Settings] No calendar tool for "${safeLabel}". Calendar tools: [${availableTools}], GWS servers: [${[...new Set(gwsServers)]}]`);
+                console.error(`[CalendarDiscovery] No calendar tool for "${safeLabel}". Calendar tools: [${availableTools}], GWS servers: [${[...new Set(gwsServers)]}]`);
                 return res.status(404).json({ error: `No calendar tool found for account "${safeLabel}". Available GWS servers: ${[...new Set(gwsServers)].join(', ') || 'none'}` });
             }
+
+            console.log(`[CalendarDiscovery] Found tool: ${toolName}`);
 
             // Call calendarList.list via MCP (unfiltered — bypass the filter for discovery)
             let result;
@@ -469,27 +473,39 @@ function createSettingsRouter(agent) {
                     params: { userId: 'me' }
                 });
             } catch (mcpErr) {
-                console.error(`[Settings] MCP call failed for ${safeLabel}:`, mcpErr.message);
-                return res.status(503).json({ error: 'Calendar service unavailable. Is the MCP server connected?' });
+                console.error(`[CalendarDiscovery] MCP callTool failed for ${safeLabel}:`, mcpErr.message);
+                return res.status(503).json({ error: `Calendar service error: ${mcpErr.message}` });
             }
+
+            // Log raw MCP response shape for debugging
+            const resultKeys = result ? Object.keys(result) : [];
+            console.log(`[CalendarDiscovery] Raw result keys: [${resultKeys}], output length: ${result?.output?.length || 0}`);
 
             const text = result?.output || (typeof result === 'string' ? result : JSON.stringify(result));
             let parsed;
             try {
                 parsed = JSON.parse(text);
             } catch {
-                // MCP returned non-JSON (likely an error message) — surface it
-                console.error(`[Settings] MCP calendar response not JSON for ${safeLabel}:`, text?.substring(0, 500));
+                console.error(`[CalendarDiscovery] Response not JSON for ${safeLabel}:`, text?.substring(0, 500));
                 return res.status(502).json({ error: text?.substring(0, 200) || 'Invalid response from calendar service' });
             }
 
+            // Log parsed response shape
+            const parsedKeys = parsed ? Object.keys(parsed) : [];
+            console.log(`[CalendarDiscovery] Parsed keys: [${parsedKeys}], items count: ${parsed.items?.length ?? 'undefined'}`);
+
             // Check for API error responses from GWS CLI
             if (parsed.error) {
-                console.error(`[Settings] GWS Calendar API error for ${safeLabel}:`, parsed.error);
+                console.error(`[CalendarDiscovery] GWS API error for ${safeLabel}:`, JSON.stringify(parsed.error));
                 return res.status(502).json({ error: parsed.error.message || 'Calendar API returned an error' });
             }
 
             const items = parsed.items || [];
+            if (items.length === 0) {
+                // Log the full response (truncated) so we can see what the MCP returned
+                console.warn(`[CalendarDiscovery] No items found for "${safeLabel}". Full response: ${text?.substring(0, 1000)}`);
+            }
+
             const calendars = items.map(cal => ({
                 id: cal.id,
                 summary: cal.summary || cal.id,
@@ -498,9 +514,10 @@ function createSettingsRouter(agent) {
                 accessRole: cal.accessRole || null,
             }));
 
+            console.log(`[CalendarDiscovery] Returning ${calendars.length} calendars for "${safeLabel}"`);
             res.json({ calendars });
         } catch (error) {
-            console.error('[Settings] GWS Calendar List Failed:', error);
+            console.error('[CalendarDiscovery] Unexpected error:', error);
             res.status(500).json({ error: 'Failed to list calendars' });
         }
     });
