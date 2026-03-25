@@ -107,6 +107,20 @@ class MCPManager {
                     }
                 }
 
+                // GWS CLI token cache isolation: each GWS account gets its own HOME
+                // directory so the CLI doesn't share cached OAuth tokens between accounts.
+                // Without this, the second GWS server reuses the first's cached tokens
+                // and returns the wrong account's data for ALL tools (not just calendar).
+                if (name.startsWith('gws_')) {
+                    const dataDir = path.dirname(this.configPath); // /app/data
+                    const gwsHome = path.join(dataDir, `gws-home-${name}`);
+                    if (!fs.existsSync(gwsHome)) {
+                        fs.mkdirSync(gwsHome, { recursive: true });
+                    }
+                    env.HOME = gwsHome;
+                    console.log(`[MCP] GWS cache isolation: ${name} HOME=${gwsHome}`);
+                }
+
                 // SPECIAL HANDLING: Home Assistant
                 if (name === 'homeassistant') {
                     // Map standard variables for 'ha-mcp' package (and others that use HASS_*)
