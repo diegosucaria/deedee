@@ -466,10 +466,12 @@ function createSettingsRouter(agent) {
             console.log(`[CalendarDiscovery] Found tool: ${toolName}`);
 
             // Call calendarList.list via MCP (unfiltered — bypass the filter for discovery)
+            // GWS CLI compact mode expects: { resource, method, params }
             let result;
             try {
                 result = await agent.mcp.callTool(toolName, {
-                    method: 'calendarList.list',
+                    resource: 'calendarList',
+                    method: 'list',
                     params: { userId: 'me' }
                 });
             } catch (mcpErr) {
