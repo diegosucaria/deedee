@@ -267,9 +267,18 @@ function createInternalRouter(agent) {
     });
 
     // --- Stats ---
-    // Validate ISO date strings from query params to prevent garbage-in/garbage-out
+    // Validate ISO date strings and convert UTC → localtime format for SQLite comparison.
+    // DB stores timestamps as 'YYYY-MM-DD HH:MM:SS' in localtime (no T, no Z).
+    // Frontend sends ISO 8601 UTC strings like '2026-03-25T03:00:00.000Z'.
     const ISO_DATE_RE = /^\d{4}-\d{2}-\d{2}(T\d{2}:\d{2}:\d{2}(\.\d+)?Z?)?$/;
-    const safeDate = (v) => (typeof v === 'string' && ISO_DATE_RE.test(v)) ? v : undefined;
+    const safeDate = (v) => {
+        if (typeof v !== 'string' || !ISO_DATE_RE.test(v)) return undefined;
+        // Convert to localtime 'YYYY-MM-DD HH:MM:SS' format matching DB storage
+        const d = new Date(v);
+        if (isNaN(d.getTime())) return undefined;
+        const pad = (n) => String(n).padStart(2, '0');
+        return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())} ${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+    };
 
     router.get('/stats', (req, res) => {
         if (!agent.db || !agent.journal) return res.status(503).json({ error: 'Stats dependencies not ready' });
