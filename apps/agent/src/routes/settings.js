@@ -463,7 +463,8 @@ function createSettingsRouter(agent) {
                 return res.status(404).json({ error: `No calendar tool found for account "${safeLabel}". Available GWS servers: ${[...new Set(gwsServers)].join(', ') || 'none'}` });
             }
 
-            console.log(`[CalendarDiscovery] Found tool: ${toolName}`);
+            const toolEntry = agent.mcp.toolMap.get(toolName);
+            console.log(`[CalendarDiscovery] Found tool: ${toolName} (server: ${toolEntry?.name}, original: ${toolEntry?.originalName})`);
 
             // Call calendarList.list via MCP (unfiltered — bypass the filter for discovery)
             // GWS CLI compact mode expects: { resource, method, params }
@@ -507,6 +508,10 @@ function createSettingsRouter(agent) {
                 // Log the full response (truncated) so we can see what the MCP returned
                 console.warn(`[CalendarDiscovery] No items found for "${safeLabel}". Full response: ${text?.substring(0, 1000)}`);
             }
+
+            // Log which account this data belongs to (primary calendar email = account identity)
+            const primaryCal = items.find(c => c.primary);
+            console.log(`[CalendarDiscovery] Returning ${items.length} calendars for "${safeLabel}" (primary: ${primaryCal?.id || 'none'})`);
 
             const calendars = items.map(cal => ({
                 id: cal.id,
