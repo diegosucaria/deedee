@@ -376,6 +376,39 @@ function createInternalRouter(agent) {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
+    router.get('/stats/latency-percentiles', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const start = safeDate(req.query.start), end = safeDate(req.query.end);
+            res.json(agent.db.getLatencyPercentiles(start, end));
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.get('/stats/token-breakdown', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const start = safeDate(req.query.start), end = safeDate(req.query.end);
+            res.json(agent.db.getTokenBreakdownTrend(start, end));
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.get('/stats/cache-hit-rate', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const start = safeDate(req.query.start), end = safeDate(req.query.end);
+            res.json(agent.db.getCacheHitRateTrend(start, end));
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.get('/stats/model-usage', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const start = safeDate(req.query.start), end = safeDate(req.query.end);
+            const limit = Math.max(1, Math.min(parseInt(req.query.limit || '90', 10) || 90, 365));
+            res.json(agent.db.getModelUsageDistribution(start, end, limit));
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
     // --- Sessions / History ---
     router.get('/sessions', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });

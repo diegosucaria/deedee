@@ -345,6 +345,42 @@ export async function getCostByModel(query = '') {
     }
 }
 
+export async function getLatencyPercentiles(query = '') {
+    try {
+        return await fetchAPI(`/v1/stats/latency-percentiles${query}`);
+    } catch (error) {
+        console.error('getLatencyPercentiles Error:', error);
+        return [];
+    }
+}
+
+export async function getTokenBreakdownTrend(query = '') {
+    try {
+        return await fetchAPI(`/v1/stats/token-breakdown${query}`);
+    } catch (error) {
+        console.error('getTokenBreakdownTrend Error:', error);
+        return [];
+    }
+}
+
+export async function getCacheHitRate(query = '') {
+    try {
+        return await fetchAPI(`/v1/stats/cache-hit-rate${query}`);
+    } catch (error) {
+        console.error('getCacheHitRate Error:', error);
+        return [];
+    }
+}
+
+export async function getModelUsage(query = '') {
+    try {
+        return await fetchAPI(`/v1/stats/model-usage${query}`);
+    } catch (error) {
+        console.error('getModelUsage Error:', error);
+        return [];
+    }
+}
+
 export async function getJobLogs(page = 1, limit = 50) {
     try {
         const offset = (page - 1) * limit;
