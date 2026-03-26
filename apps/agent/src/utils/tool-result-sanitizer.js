@@ -15,7 +15,7 @@ const MAX_PERSON_NOTES_CHARS = 300;
 
 // Tools that need higher caps because the model needs complete data
 // Matches both internal names (listPeople) and MCP namespaced names (personal_people_connections_list)
-const HIGH_CAP_TOOLS = new Set(['listPeople', 'searchPeople', 'searchContacts', 'getPerson', 'searchMemory']);
+const HIGH_CAP_TOOLS = new Set(['listPeople', 'searchPeople', 'searchContacts', 'getPerson', 'searchMemory', 'readAllMonitoredSlackHistory']);
 const HIGH_CAP_MAX_CHARS = 200_000;
 
 /**
@@ -28,7 +28,7 @@ function isHighCapTool(toolName) {
     // MCP tools are namespaced: personal_people_connections_list, etc.
     // Match if the tool is a people or memory tool (these need complete data for matching)
     const lower = toolName.toLowerCase();
-    if (lower.includes('people') || lower.includes('contacts') || lower.includes('searchmemory')) return true;
+    if (lower.includes('people') || lower.includes('contacts') || lower.includes('searchmemory') || lower.includes('readallmonitoredslackhistory')) return true;
     return false;
 }
 
@@ -554,6 +554,9 @@ function getTruncationHint(toolName) {
     }
     if (lower.includes('gmail')) {
         return 'Email results were truncated. Use a more specific search query or reduce maxResults. Do NOT retry with the same parameters.';
+    }
+    if (lower.includes('slack')) {
+        return 'Slack history was truncated. Try reducing the number of monitored channels or the time range. Do NOT retry with the same parameters.';
     }
     return 'Result was truncated due to size. Try a more specific query or use filters to reduce the result size. Do NOT retry the same call.';
 }
