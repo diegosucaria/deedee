@@ -46,7 +46,6 @@ const getSmartTicks = (data) => {
 };
 
 export function LatencyChart({ data }) {
-    // Fix impurity: capture reference time
     const now = new Date().getTime();
     const ticks = getSmartTicks(data);
 
@@ -74,36 +73,41 @@ export function LatencyChart({ data }) {
                     fontSize={12}
                     tickFormatter={(val) => `${Math.round(val)}ms`}
                 />
-                <Tooltip content={<CustomTooltip />} />
+                <Tooltip content={({ active, payload, label }) => {
+                    if (!active || !payload || !payload.length) return null;
+                    const d = payload[0]?.payload;
+                    return (
+                        <div className="bg-zinc-900 border border-zinc-700 p-3 rounded shadow-lg text-sm">
+                            <p className="text-zinc-400 mb-2">{new Date(label).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', month: 'numeric', day: 'numeric' })}</p>
+                            {payload.map((p, i) => (
+                                <p key={i} style={{ color: p.color }} className="font-mono">
+                                    {p.name}: <span className="font-bold">{Math.round(p.value)}ms</span>
+                                </p>
+                            ))}
+                            {d?.sample_count && <p className="text-zinc-500 mt-1 text-xs">{d.sample_count} samples</p>}
+                        </div>
+                    );
+                }} />
                 <Legend />
-                <ReferenceLine x={now} stroke="#f472b6" label="Now" strokeDasharray="3 3" />
+                <ReferenceLine x={now} stroke="#818cf8" label="Now" strokeDasharray="3 3" />
                 <Line
                     type="monotone"
-                    dataKey="e2e"
-                    name="Total (E2E)"
-                    stroke="#f472b6"
-                    strokeWidth={2}
-                    dot={false}
-                    activeDot={{ r: 4 }}
-                    unit="ms"
-                />
-                <Line
-                    type="monotone"
-                    dataKey="model"
-                    name="Model"
+                    dataKey="p50"
+                    name="P50"
                     stroke="#818cf8"
                     strokeWidth={2}
                     dot={false}
-                    unit="ms"
+                    activeDot={{ r: 4 }}
                 />
                 <Line
                     type="monotone"
-                    dataKey="router"
-                    name="Router"
-                    stroke="#34d399"
+                    dataKey="p95"
+                    name="P95"
+                    stroke="#f472b6"
                     strokeWidth={2}
+                    strokeDasharray="6 3"
                     dot={false}
-                    unit="ms"
+                    activeDot={{ r: 4 }}
                 />
             </LineChart>
         </ResponsiveContainer>
@@ -154,12 +158,18 @@ export function CostChart({ data }) {
     );
 }
 
+const fmtTokens = (n) => {
+    if (!n) return '0';
+    if (n >= 1_000_000) return `${(n / 1_000_000).toFixed(1)}M`;
+    if (n >= 1_000) return `${(n / 1_000).toFixed(0)}K`;
+    return n.toLocaleString();
+};
+
 export function TokenEfficiencyChart({ data }) {
     const now = new Date().getTime();
     const ticks = getSmartTicks(data);
     if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-zinc-600">No Data</div>;
 
-    // Aggregate or use raw? Assuming raw trend data of requests
     return (
         <ResponsiveContainer width="100%" height="100%">
             <AreaChart
@@ -180,20 +190,155 @@ export function TokenEfficiencyChart({ data }) {
                 <YAxis
                     stroke="#71717a"
                     fontSize={12}
+                    tickFormatter={fmtTokens}
                 />
-                <Tooltip content={<CustomTooltip />} />
+                <Tooltip content={({ active, payload, label }) => {
+                    if (!active || !payload || !payload.length) return null;
+                    return (
+                        <div className="bg-zinc-900 border border-zinc-700 p-3 rounded shadow-lg text-sm">
+                            <p className="text-zinc-400 mb-2">{new Date(label).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', month: 'numeric', day: 'numeric' })}</p>
+                            {payload.filter(p => p.value > 0).map((p, i) => (
+                                <p key={i} style={{ color: p.color }} className="font-mono">
+                                    {p.name}: <span className="font-bold">{fmtTokens(p.value)}</span>
+                                </p>
+                            ))}
+                        </div>
+                    );
+                }} />
                 <Legend />
-                <ReferenceLine x={now} stroke="#fbbf24" label="Now" strokeDasharray="3 3" />
+                <ReferenceLine x={now} stroke="#60a5fa" label="Now" strokeDasharray="3 3" />
+                <Area type="monotone" dataKey="prompt_tokens" name="Prompt" stroke="#60a5fa" fill="#60a5fa" fillOpacity={0.15} stackId="tokens" />
+                <Area type="monotone" dataKey="cached_tokens" name="Cached" stroke="#34d399" fill="#34d399" fillOpacity={0.15} stackId="tokens" />
+                <Area type="monotone" dataKey="candidate_tokens" name="Output" stroke="#818cf8" fill="#818cf8" fillOpacity={0.15} stackId="tokens" />
+                <Area type="monotone" dataKey="thoughts_tokens" name="Thinking" stroke="#c084fc" fill="#c084fc" fillOpacity={0.15} stackId="tokens" />
+            </AreaChart>
+        </ResponsiveContainer>
+    );
+}
+
+export function CacheHitRateChart({ data }) {
+    const now = new Date().getTime();
+    const ticks = getSmartTicks(data);
+    if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-zinc-600">No Data</div>;
+
+    return (
+        <ResponsiveContainer width="100%" height="100%">
+            <AreaChart
+                data={data}
+                margin={{ top: 5, right: 20, left: 10, bottom: 5 }}
+                syncId="synced-charts"
+            >
+                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" horizontal={true} vertical={true} />
+                <XAxis
+                    dataKey="timestamp"
+                    stroke="#71717a"
+                    fontSize={12}
+                    type="number"
+                    domain={['dataMin', 'dataMax']}
+                    ticks={ticks}
+                    tickFormatter={(ts) => new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                />
+                <YAxis
+                    stroke="#71717a"
+                    fontSize={12}
+                    domain={[0, 100]}
+                    tickFormatter={(val) => `${val}%`}
+                />
+                <Tooltip content={({ active, payload, label }) => {
+                    if (!active || !payload || !payload.length) return null;
+                    const d = payload[0]?.payload;
+                    return (
+                        <div className="bg-zinc-900 border border-zinc-700 p-3 rounded shadow-lg text-sm">
+                            <p className="text-zinc-400 mb-2">{new Date(label).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', month: 'numeric', day: 'numeric' })}</p>
+                            <p className="font-mono text-emerald-400">
+                                Cache Hit: <span className="font-bold">{payload[0]?.value?.toFixed(1)}%</span>
+                            </p>
+                            {d && <p className="text-zinc-500 mt-1 text-xs">{fmtTokens(d.cached_tokens)} / {fmtTokens(d.prompt_tokens)} tokens</p>}
+                        </div>
+                    );
+                }} />
+                <Legend />
+                <ReferenceLine x={now} stroke="#34d399" label="Now" strokeDasharray="3 3" />
                 <Area
                     type="monotone"
-                    dataKey="tokens"
-                    name="Tokens / Msg"
-                    stroke="#fbbf24"
-                    fill="#fbbf24"
+                    dataKey="cache_hit_pct"
+                    name="Cache Hit %"
+                    stroke="#34d399"
+                    fill="#34d399"
                     fillOpacity={0.1}
-                    unit=""
                 />
             </AreaChart>
+        </ResponsiveContainer>
+    );
+}
+
+// --- Color palette for models ---
+const MODEL_COLORS = [
+    '#818cf8', '#f472b6', '#34d399', '#fbbf24', '#60a5fa',
+    '#c084fc', '#fb923c', '#22d3ee', '#f87171', '#a78bfa',
+    '#22c55e', '#06b6d4', '#e879f9', '#facc15',
+];
+
+const getModelColor = (model, index) => MODEL_COLORS[index % MODEL_COLORS.length];
+
+const shortModelName = (model) => {
+    if (!model) return 'unknown';
+    return model.replace('gemini-', '').replace('-preview', '').replace('-exp', '');
+};
+
+export function ModelUsageChart({ data }) {
+    if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-zinc-600">No Data</div>;
+
+    // Discover all models present across all days
+    const allModels = new Set();
+    data.forEach(d => {
+        Object.keys(d).forEach(k => { if (k !== 'date') allModels.add(k); });
+    });
+    const models = [...allModels].sort();
+
+    return (
+        <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={data} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" />
+                <XAxis
+                    dataKey="date"
+                    stroke="#71717a"
+                    fontSize={12}
+                    tickFormatter={(date) => new Date(date + 'T00:00:00').toLocaleDateString([], { month: 'numeric', day: 'numeric' })}
+                />
+                <YAxis stroke="#71717a" fontSize={12} />
+                <Tooltip
+                    content={({ active, payload, label }) => {
+                        if (!active || !payload || payload.length === 0) return null;
+                        const dayTotal = payload.reduce((sum, entry) => sum + (Number(entry.value) || 0), 0);
+                        return (
+                            <div style={{ backgroundColor: '#18181b', border: '1px solid #3f3f46', borderRadius: 8, padding: '10px 14px', color: '#e4e4e7', fontSize: 13 }}>
+                                <div style={{ fontWeight: 600, marginBottom: 6, color: '#a1a1aa' }}>{label}</div>
+                                {payload.filter(e => e.value > 0).sort((a, b) => b.value - a.value).map((entry, i) => (
+                                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', gap: 16, marginBottom: 2 }}>
+                                        <span style={{ color: entry.color }}>{shortModelName(entry.name)}</span>
+                                        <span style={{ fontFamily: 'monospace' }}>{Number(entry.value).toLocaleString()}</span>
+                                    </div>
+                                ))}
+                                <div style={{ borderTop: '1px solid #3f3f46', marginTop: 6, paddingTop: 6, display: 'flex', justifyContent: 'space-between', gap: 16, fontWeight: 700 }}>
+                                    <span style={{ color: '#facc15' }}>Total</span>
+                                    <span style={{ fontFamily: 'monospace', color: '#facc15' }}>{dayTotal.toLocaleString()}</span>
+                                </div>
+                            </div>
+                        );
+                    }}
+                />
+                <Legend formatter={(value) => shortModelName(value)} />
+                {models.map((model, i) => (
+                    <Bar
+                        key={model}
+                        dataKey={model}
+                        name={model}
+                        stackId="model-usage"
+                        fill={getModelColor(model, i)}
+                    />
+                ))}
+            </BarChart>
         </ResponsiveContainer>
     );
 }

@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { LatencyChart, TokenEfficiencyChart, DailyCostChart, ServiceCostBreakdown, StackedDailyCostChart, ModelCostBreakdown } from '@/components/InteractiveCharts';
-import { RefreshCw, Activity, Cpu, DollarSign, Database, PieChart, Server } from 'lucide-react';
-import { getStatsLatency, getStatsUsage, getStatsCostTrend, getDailyCostTrend, getSystemStats, getCostByTag, getDailyCostByCategory, getCostByModel } from '../../actions';
+import { LatencyChart, TokenEfficiencyChart, DailyCostChart, ServiceCostBreakdown, StackedDailyCostChart, ModelCostBreakdown, CacheHitRateChart, ModelUsageChart } from '@/components/InteractiveCharts';
+import { RefreshCw, Activity, Cpu, DollarSign, Database, PieChart, Server, Zap, BarChart3 } from 'lucide-react';
+import { getStatsUsage, getDailyCostTrend, getSystemStats, getCostByTag, getDailyCostByCategory, getCostByModel, getLatencyPercentiles, getTokenBreakdownTrend, getCacheHitRate, getModelUsage } from '../../actions';
 import { useSocket } from '@/hooks/useSocket';
 
 const COST_PERIODS = [
@@ -14,7 +14,9 @@ const COST_PERIODS = [
 
 export default function StatsClient({ startDate, endDate }) {
     const [latencyData, setLatencyData] = useState([]);
-    const [tokenTrendData, setTokenTrendData] = useState([]);
+    const [tokenBreakdownData, setTokenBreakdownData] = useState([]);
+    const [cacheHitData, setCacheHitData] = useState([]);
+    const [modelUsageData, setModelUsageData] = useState([]);
     const [dailyCostData, setDailyCostData] = useState([]);
     const [dailyCostByCategory, setDailyCostByCategory] = useState([]);
     const [usageData, setUsageData] = useState(null);
@@ -38,47 +40,35 @@ export default function StatsClient({ startDate, endDate }) {
         try {
             const qs = buildQs();
 
-            // Fetch Latency
-            const latData = await getStatsLatency(qs);
+            // Fetch Latency Percentiles (hourly P50/P95)
+            const pctData = await getLatencyPercentiles(qs);
+            setLatencyData(pctData.map(d => ({
+                timestamp: new Date(d.bucket).getTime(),
+                p50: d.p50, p95: d.p95, sample_count: d.sample_count
+            })));
 
-            // Group and Map latency data
-            const mapped = latData.map(item => {
-                let meta = {};
-                try { meta = JSON.parse(item.metadata); } catch (e) { }
+            // Fetch Token Breakdown Trend (hourly stacked by type)
+            const breakdown = await getTokenBreakdownTrend(qs);
+            setTokenBreakdownData(breakdown.map(d => ({
+                timestamp: new Date(d.bucket).getTime(),
+                prompt_tokens: d.prompt_tokens || 0,
+                cached_tokens: d.cached_tokens || 0,
+                candidate_tokens: d.candidate_tokens || 0,
+                thoughts_tokens: d.thoughts_tokens || 0
+            })));
 
-                return {
-                    timestamp: item.timestamp,
-                    value: item.value,
-                    type: item.type,
-                    runId: meta.runId
-                };
-            });
+            // Fetch Cache Hit Rate Trend
+            const cacheData = await getCacheHitRate(qs);
+            setCacheHitData(cacheData.map(d => ({
+                timestamp: new Date(d.bucket).getTime(),
+                cache_hit_pct: d.cache_hit_pct,
+                cached_tokens: d.cached_tokens,
+                prompt_tokens: d.prompt_tokens
+            })));
 
-            const requests = {};
-            mapped.forEach(m => {
-                const key = m.runId || m.timestamp;
-                if (!requests[key]) requests[key] = { timestamp: new Date(m.timestamp).getTime(), e2e: 0, model: 0, router: 0, tokens: 0 };
-
-                if (m.type === 'latency_e2e') requests[key].e2e = m.value;
-                if (m.type === 'latency_model') requests[key].model = m.value;
-                if (m.type === 'latency_router') requests[key].router = m.value;
-            });
-
-            const chartData = Object.values(requests)
-                .sort((a, b) => a.timestamp - b.timestamp)
-                .slice(-50);
-
-            setLatencyData(chartData);
-
-            // Fetch Token Trend (Cost & Tokens)
-            const trend = await getStatsCostTrend(qs);
-            const mappedTrend = trend.map(t => ({
-                timestamp: new Date(t.timestamp).getTime(),
-                estimated_cost: t.estimated_cost,
-                tokens: t.total_tokens
-            })).sort((a, b) => a.timestamp - b.timestamp);
-
-            setTokenTrendData(mappedTrend);
+            // Fetch Model Usage Distribution
+            const modelData = await getModelUsage(qs);
+            setModelUsageData(modelData);
 
             // Fetch Daily Cost Trend
             const dailyCost = await getDailyCostTrend(qs);
@@ -224,12 +214,12 @@ export default function StatsClient({ startDate, endDate }) {
                 </div>
             </div>
 
-            {/* Latency Chart */}
+            {/* Latency P50/P95 Chart */}
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[300px] flex flex-col">
                 <div className="flex items-center justify-between mb-4">
                     <h2 className="text-xl font-semibold flex items-center gap-2 text-zinc-300">
                         <Activity className="w-5 h-5 text-indigo-400" />
-                        System Latency (ms)
+                        Latency P50 / P95 (ms)
                     </h2>
                 </div>
                 <div className="w-full h-[300px]">
@@ -237,16 +227,42 @@ export default function StatsClient({ startDate, endDate }) {
                 </div>
             </div>
 
-            {/* Token Efficiency Chart */}
+            {/* Token Breakdown Chart */}
             <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[300px] flex flex-col">
                 <div className="flex items-center justify-between mb-4">
                     <h2 className="text-xl font-semibold flex items-center gap-2 text-zinc-300">
                         <Cpu className="w-5 h-5 text-amber-400" />
-                        Token Efficiency (Tokens/Msg)
+                        Token Breakdown
                     </h2>
                 </div>
                 <div className="w-full h-[300px]">
-                    <TokenEfficiencyChart data={tokenTrendData} />
+                    <TokenEfficiencyChart data={tokenBreakdownData} />
+                </div>
+            </div>
+
+            {/* Cache Hit Rate Chart */}
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[300px] flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold flex items-center gap-2 text-zinc-300">
+                        <Zap className="w-5 h-5 text-emerald-400" />
+                        Cache Hit Rate (%)
+                    </h2>
+                </div>
+                <div className="w-full h-[300px]">
+                    <CacheHitRateChart data={cacheHitData} />
+                </div>
+            </div>
+
+            {/* Model Usage Distribution — Full Width */}
+            <div className="lg:col-span-2 bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[300px] flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold flex items-center gap-2 text-zinc-300">
+                        <BarChart3 className="w-5 h-5 text-violet-400" />
+                        Model Usage Distribution
+                    </h2>
+                </div>
+                <div className="w-full h-[300px]">
+                    <ModelUsageChart data={modelUsageData} />
                 </div>
             </div>
 

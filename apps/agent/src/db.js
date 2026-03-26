@@ -1895,6 +1895,126 @@ class AgentDB {
     return this.db.prepare(sql).all(...params);
   }
 
+  // --- Revamped Analytics Methods ---
+
+  /**
+   * Hourly P50/P95 latency percentiles for e2e latency.
+   * Uses ROW_NUMBER + COUNT window functions for accurate percentiles
+   * even with small sample sizes.
+   */
+  getLatencyPercentiles(start, end) {
+    let where = `m.type = 'latency_e2e'`;
+    const params = [];
+    if (start) { where += ` AND m.timestamp >= ?`; params.push(start); }
+    if (end) { where += ` AND m.timestamp <= ?`; params.push(end); }
+    if (!start && !end) { where += ` AND m.timestamp >= datetime('now', '-7 days')`; }
+
+    const sql = `
+      WITH ranked AS (
+        SELECT
+          strftime('%Y-%m-%dT%H:00:00Z', m.timestamp) AS bucket,
+          m.value,
+          ROW_NUMBER() OVER (
+            PARTITION BY strftime('%Y-%m-%dT%H:00:00Z', m.timestamp)
+            ORDER BY m.value
+          ) AS rn,
+          COUNT(*) OVER (
+            PARTITION BY strftime('%Y-%m-%dT%H:00:00Z', m.timestamp)
+          ) AS total
+        FROM metrics m
+        WHERE ${where}
+      )
+      SELECT
+        bucket,
+        MAX(CASE WHEN rn = MAX(1, CAST(ROUND(0.50 * total) AS INTEGER)) THEN value END) AS p50,
+        MAX(CASE WHEN rn = MAX(1, CAST(ROUND(0.95 * total) AS INTEGER)) THEN value END) AS p95,
+        total AS sample_count,
+        ROUND(AVG(value), 1) AS avg_ms
+      FROM ranked
+      GROUP BY bucket
+      ORDER BY bucket`;
+    return this.db.prepare(sql).all(...params);
+  }
+
+  /**
+   * Hourly token breakdown trend — stacked by token type.
+   */
+  getTokenBreakdownTrend(start, end) {
+    let sql = `
+      SELECT
+        strftime('%Y-%m-%dT%H:00:00Z', timestamp) AS bucket,
+        SUM(prompt_tokens) AS prompt_tokens,
+        SUM(cached_tokens) AS cached_tokens,
+        SUM(candidate_tokens) AS candidate_tokens,
+        SUM(thoughts_tokens) AS thoughts_tokens,
+        SUM(total_tokens) AS total_tokens,
+        COUNT(*) AS calls
+      FROM token_usage
+      WHERE 1=1`;
+    const params = [];
+    if (start) { sql += ` AND timestamp >= ?`; params.push(start); }
+    if (end) { sql += ` AND timestamp <= ?`; params.push(end); }
+    if (!start && !end) { sql += ` AND timestamp >= datetime('now', '-7 days')`; }
+    sql += ` GROUP BY strftime('%Y-%m-%dT%H:00:00Z', timestamp) ORDER BY bucket`;
+    return this.db.prepare(sql).all(...params);
+  }
+
+  /**
+   * Hourly cache hit rate trend (cached_tokens / prompt_tokens %).
+   */
+  getCacheHitRateTrend(start, end) {
+    let sql = `
+      SELECT
+        strftime('%Y-%m-%dT%H:00:00Z', timestamp) AS bucket,
+        CASE
+          WHEN SUM(prompt_tokens) > 0
+          THEN ROUND(CAST(SUM(cached_tokens) AS REAL) / SUM(prompt_tokens) * 100, 1)
+          ELSE 0
+        END AS cache_hit_pct,
+        SUM(cached_tokens) AS cached_tokens,
+        SUM(prompt_tokens) AS prompt_tokens
+      FROM token_usage
+      WHERE 1=1`;
+    const params = [];
+    if (start) { sql += ` AND timestamp >= ?`; params.push(start); }
+    if (end) { sql += ` AND timestamp <= ?`; params.push(end); }
+    if (!start && !end) { sql += ` AND timestamp >= datetime('now', '-7 days')`; }
+    sql += ` GROUP BY strftime('%Y-%m-%dT%H:00:00Z', timestamp) ORDER BY bucket`;
+    return this.db.prepare(sql).all(...params);
+  }
+
+  /**
+   * Daily model usage distribution — call count per model per day.
+   * Returns pivoted data: [{ date, 'model-a': N, 'model-b': M, ... }]
+   */
+  getModelUsageDistribution(start, end, limit = 90) {
+    let sql = `
+      SELECT
+        date(timestamp, 'localtime') AS date,
+        model,
+        COUNT(*) AS calls
+      FROM token_usage
+      WHERE 1=1`;
+    const params = [];
+    if (start) { sql += ` AND timestamp >= ?`; params.push(start); }
+    if (end) { sql += ` AND timestamp <= ?`; params.push(end); }
+    sql += ` GROUP BY date(timestamp, 'localtime'), model ORDER BY date(timestamp, 'localtime') DESC`;
+    if (!start && !end) { sql += ` LIMIT ?`; params.push(limit * 15); }
+    const rows = this.db.prepare(sql).all(...params);
+
+    // Pivot: { date -> { model -> calls } }
+    const dateMap = {};
+    for (const row of rows) {
+      if (!dateMap[row.date]) dateMap[row.date] = { date: row.date };
+      dateMap[row.date][row.model] = (dateMap[row.date][row.model] || 0) + row.calls;
+    }
+
+    return Object.values(dateMap)
+      .sort((a, b) => b.date.localeCompare(a.date))
+      .slice(0, limit)
+      .reverse();
+  }
+
   getTokenUsageStats(start, end) {
     let sql = `
       SELECT
