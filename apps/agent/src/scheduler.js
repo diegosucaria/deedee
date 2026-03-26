@@ -463,27 +463,29 @@ class Scheduler {
                 name: 'proactive_thought',
                 cron: '0 7-22 * * *', // Daytime only (7am-10pm), reduced from every hour
                 task: `[PROACTIVE LOOP] You have free time. Scan messages from the last 4 hours across all platforms.
-CRITICAL: Use spawnAgent(model: 'FLASH') to fetch and summarize each source:
-- Slack (readAllMonitoredSlackHistory) → return only actionable items with exact format: "[Slack #channel] Person Name: item"
-- Email/Calendar (GWS tools) → return only actionable items with exact format: "[Email] Sender: summary" or "[Calendar] Event: time"
-- WhatsApp → return only actionable items with exact format: "[WhatsApp] Contact Name: item"
 
-SUB-AGENT DEPTH RULES — include these in EVERY spawnAgent prompt:
-- You are a SCANNER, not an investigator. Read what's in front of you and summarize it. Do NOT research, cross-reference, or look up additional context on other platforms.
-- Calendar: call events.list on the PRIMARY calendar only for each account (calendarId: 'primary'). Do NOT call calendarList. Do NOT iterate secondary calendars. If an event has no title, report it as "(untitled event at HH:MM)" — do NOT search other platforms to identify it.
-- Email: list recent messages, read subjects and snippets. Do NOT open individual emails unless the subject line itself suggests an action item directed at the user.
-- WhatsApp: call listConversations then readChatHistory for the top conversations. Summarize what you see. Do NOT resolve contact names via People API or cross-reference other platforms.
-- Slack: call readAllMonitoredSlackHistory. Summarize what you see. Done.
-- HARD LIMIT: If you have made 10 tool calls and are not done, STOP and return what you have so far.
+Spawn the following sub-agents using spawnAgent. You MUST pass 'lightweight: true' and 'tools' for each one.
 
-CRITICAL RULES:
-- Only include items that are directed at ME or require MY action. Ignore tasks assigned to or meant for other people.
-- Each item MUST include its source platform in brackets: [Slack #channel-name], [WhatsApp], [Email], or [Calendar]
-- Use the FULL contact name as it appears on each platform. Never shorten or alias names across platforms.
-- Do NOT list tasks already completed, answered, moved, or explicitly resolved. Cross-reference the timeline.
-- Do NOT merge or combine contacts from different platforms even if names look similar.
-If you found something actionable or noteworthy, output a message to your owner.
-Check if you have already notified the user about this topic recently — do NOT repeat yourself.
+1. SLACK sub-agent:
+spawnAgent(task: "Scan Slack messages from the last 4 hours. Call readAllMonitoredSlackHistory(days_back: 1). Return only actionable items directed at me (Diego) in format: '[Slack #channel] Person Name: item'. If nothing actionable, return [SILENT].", model: "FLASH", lightweight: true, tools: ["readAllMonitoredSlackHistory", "readSlackHistory", "resolveSlackUser"])
+
+2. WORK EMAIL & CALENDAR sub-agent:
+spawnAgent(task: "Scan work Email and Calendar for the last 4 hours. Call work_calendar (events.list on calendarId: 'primary' only) and work_gmail (messages.list for recent messages, read subjects/snippets only). Do NOT call calendarList. Do NOT open individual emails unless the subject suggests an action item. Return only actionable items in format: '[Email] Sender: summary' or '[Calendar] Event: time'. If nothing, return [SILENT].", model: "FLASH", lightweight: true, tools: ["server:gws_work"])
+
+3. PERSONAL EMAIL & CALENDAR sub-agent:
+spawnAgent(task: "Scan personal Email and Calendar for the last 4 hours. Call personal_calendar (events.list on calendarId: 'primary' only) and personal_gmail (messages.list for recent messages, read subjects/snippets only). Do NOT call calendarList. Do NOT open individual emails unless the subject suggests an action item. Return only actionable items in format: '[Email] Sender: summary' or '[Calendar] Event: time'. If nothing, return [SILENT].", model: "FLASH", lightweight: true, tools: ["server:gws_personal"])
+
+4. WHATSAPP sub-agent:
+spawnAgent(task: "Scan WhatsApp for messages in the last 4 hours. Follow this EXACT procedure:\\n1. Call listConversations(session: 'user', limit: 10) to get the 10 most recent conversations.\\n2. For each conversation with messages in the last 4 hours, call readChatHistory(session: 'user', contact: <contactId from step 1>, limit: 20).\\n3. If readChatHistory returns empty or no recent messages, SKIP that contact and move on.\\n4. HARD LIMIT: 12 tool calls maximum (1 listConversations + up to 10 readChatHistory + 1 buffer).\\n5. Return only actionable items directed at the owner in format: '[WhatsApp] Contact Name: item'.\\n6. If nothing actionable, return [SILENT].", model: "FLASH", lightweight: true, tools: ["listConversations", "readChatHistory"])
+
+AFTER all sub-agents complete, review their results:
+- Only include items directed at ME or requiring MY action. Ignore tasks for other people.
+- Each item MUST include its source platform in brackets: [Slack #channel-name], [WhatsApp], [Email], or [Calendar].
+- Use FULL contact names as they appear on each platform. Never shorten or alias across platforms.
+- Do NOT list tasks already completed, answered, or resolved.
+- Do NOT merge contacts from different platforms even if names look similar.
+If you found something actionable, output a message to your owner.
+Check if you have already notified the user about this topic recently — do NOT repeat.
 If nothing new or actionable, output ONLY [SILENT].
 DO NOT contact third parties.`,
                 silent: false

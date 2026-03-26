@@ -594,6 +594,7 @@ class Agent {
 
       const chatId = message.metadata?.chatId;
       const isSubAgent = !!message.metadata?.isSubAgent;
+      const isLightweight = isSubAgent && !!message.metadata?.lightweight;
       const taskId = message.metadata?.taskId;
       // Dynamic Log Prefix
       const logPrefix = isSubAgent ? `[SubAgent ${taskId || '?'}]` : '[Agent]';
@@ -1168,10 +1169,21 @@ class Agent {
       let internalTools = toolDefinitions.flatMap(td => td.functionDeclarations || [])
         .map(({ category, ...rest }) => rest);
 
+      // Helper: match tools by MCP server name prefix (e.g., "server:gws_personal")
+      const _matchesServerPrefix = (tool, allowedSet) => {
+        if (!tool.serverName) return false;
+        for (const entry of allowedSet) {
+          if (entry.startsWith('server:') && tool.serverName === entry.slice(7)) return true;
+        }
+        return false;
+      };
+
       // Sub-agent tool filtering: restrict to allowed tools if specified
       if (message.metadata?.isSubAgent && message.metadata?.allowedTools) {
         const allowed = new Set(message.metadata.allowedTools);
         internalTools = internalTools.filter(t => allowed.has(t.name));
+        externalTools = externalTools.filter(t => allowed.has(t.name) || _matchesServerPrefix(t, allowed));
+        console.log(`${logPrefix} Sub-agent tool scope applied: ${allowed.size} entries (internal: ${internalTools.length}, external: ${externalTools.length})`);
       }
 
       // Sub-agents cannot spawn other sub-agents (remove from available tools)
@@ -1183,7 +1195,7 @@ class Agent {
       if (message.source === 'scheduler' && message.metadata?.allowedTools) {
         const allowed = new Set(message.metadata.allowedTools);
         internalTools = internalTools.filter(t => allowed.has(t.name));
-        externalTools = externalTools.filter(t => allowed.has(t.name));
+        externalTools = externalTools.filter(t => allowed.has(t.name) || _matchesServerPrefix(t, allowed));
         console.log(`${logPrefix} Scheduler tool scope applied: ${allowed.size} tools allowed (internal: ${internalTools.length}, external: ${externalTools.length})`);
       }
 
@@ -1244,91 +1256,86 @@ class Agent {
         geminiTools = [{ functionDeclarations: allTools }];
       }
 
-      // Build System Instruction
-      const pendingGoals = this.db.getPendingGoals()
-        .map(g => `- [${g.id}] ${g.description} `)
-        .join('\n            ');
-
-      // Fetch Memory/Facts
-      const contextQuery = message.content || (message.parts ? message.parts.map(p => p.text).join(' ') : '');
-      const facts = this.db.getFactsFormatted(contextQuery);
-      const activeGoals = this.db.getPendingGoals().map(g => `- [${g.id}] ${g.description} `).join('\n');
-
-      // Fetch Vault Context if active
-      let vaultContext = null;
-      const activeTopic = this.activeTopics.get(chatId);
-      if (activeTopic) {
-        try {
-          vaultContext = await this.vaults.readVaultPage(activeTopic, 'index.md');
-        } catch (e) {
-          console.warn(`${logPrefix} Failed to read vault context for ${activeTopic}: `, e);
-        }
-      }
-
       // Formatter for System Time
       const timeZone = process.env.TZ || 'America/Argentina/Buenos_Aires';
       const timeString = new Date().toLocaleString('en-US', { timeZone, timeZoneName: 'short' }) + ` (${timeZone})`;
 
-      // Context-aware skill injection: only inject on-demand skills that match the user message
-      const skillsContext = this.skillService.getContextualInstructions(contextQuery);
       const notificationContext = {
           ownerName: this.settings?.owner_name || 'the user',
           ownerPhone: this.settings?.owner_phone || '',
           notificationChannel: this.settings?.notification_channel || 'whatsapp'
       };
+
+      // Lightweight sub-agents skip expensive context loading (facts, goals, skills, vault)
+      const contextQuery = message.content || (message.parts ? message.parts.map(p => p.text).join(' ') : '');
+      const facts = isLightweight ? '' : this.db.getFactsFormatted(contextQuery);
+      const activeGoals = isLightweight ? '' : this.db.getPendingGoals().map(g => `- [${g.id}] ${g.description} `).join('\n');
+      const skillsContext = isLightweight ? null : this.skillService.getContextualInstructions(contextQuery);
+
+      let vaultContext = null;
+      if (!isLightweight) {
+        const activeTopic = this.activeTopics.get(chatId);
+        if (activeTopic) {
+          try {
+            vaultContext = await this.vaults.readVaultPage(activeTopic, 'index.md');
+          } catch (e) {
+            console.warn(`${logPrefix} Failed to read vault context for ${activeTopic}: `, e);
+          }
+        }
+      }
+
       let systemInstruction = getSystemInstruction(
         timeString,
         activeGoals,
         facts,
-        { codingMode: true, vaultContext, skillsContext, notificationContext }
+        { codingMode: !isLightweight, vaultContext, skillsContext, notificationContext, isLightweight }
       );
 
-      console.log(`${logPrefix} [Context] System Instruction Size: ~${systemInstruction.length} chars(~${Math.round(systemInstruction.length / 4)} tokens).`);
-      // --- TONE MATCHING (Impersonation Mode) ---
-      // If we are acting on behalf of the user (whatsapp:user), we must sound like them.
-      // We add this instruction globally so the Agent knows how to behave if asked to "act as me" or use the 'user' session.
-      systemInstruction += `\n
-      \n === IMPERSONATION & TONE MATCHING ===
-        IF you are asked to draft a message for the user, or if you are replying via the 'user'(whatsapp: user) session:
-      1. ** Analyze History **: Look at the user's previous messages in the chat history.
-      2. ** Match Tone **: Mimic their style, brevity, capitalization(lowercase ?), and emoji usage.
-      3. ** Be Natural **: Do not sound like an AI.Use "I", not "Deedee".
-      --------------------------------
-      `;
-
-
-      // In-Context User Location
-      if (message.metadata?.location) {
-        systemInstruction += `\n\n**USER LOCATION**: The user is currently in **${message.metadata.location}**. Use this for context (weather, time, local queries) if queried.`;
-      }
-
-      if (['iphone', 'ios_shortcut'].includes(message.source)) {
+      console.log(`${logPrefix} [Context] System Instruction Size: ~${systemInstruction.length} chars(~${Math.round(systemInstruction.length / 4)} tokens)${isLightweight ? ' (lightweight)' : ''}.`);
+      // Lightweight sub-agents skip all contextual injections (impersonation, iOS, output mode)
+      if (!isLightweight) {
+        // --- TONE MATCHING (Impersonation Mode) ---
+        // If we are acting on behalf of the user (whatsapp:user), we must sound like them.
         systemInstruction += `\n
-            **DICTATION SAFEGUARD**: You are receiving input from iOS Voice Dictation. It is prone to errors.
-            - If the user's request is AMBIGUOUS, resembles gibberish, or matches a tool only weakly (e.g. "turn on the light" but no room specified, or "play movie" but name is garbled), DO NOT EXECUTE THE TOOL.
-            - Instead, ASK FOR CLARIFICATION: "Did you say [interpreted text]?" or "Which light?".
-            - ONLY execute tools if the intent is crystal clear.
+        \n === IMPERSONATION & TONE MATCHING ===
+          IF you are asked to draft a message for the user, or if you are replying via the 'user'(whatsapp: user) session:
+        1. ** Analyze History **: Look at the user's previous messages in the chat history.
+        2. ** Match Tone **: Mimic their style, brevity, capitalization(lowercase ?), and emoji usage.
+        3. ** Be Natural **: Do not sound like an AI.Use "I", not "Deedee".
+        --------------------------------
         `;
-      }
 
-      // REPLY MODE INSTRUCTION
-      const replyMode = message.metadata?.replyMode || 'auto';
+        // In-Context User Location
+        if (message.metadata?.location) {
+          systemInstruction += `\n\n**USER LOCATION**: The user is currently in **${message.metadata.location}**. Use this for context (weather, time, local queries) if queried.`;
+        }
 
-      // Force Audio for iOS Shortcut / iPhone to ensure consistent behavior
-      const isIOS = ['iphone', 'ios_shortcut'].includes(message.source);
+        if (['iphone', 'ios_shortcut'].includes(message.source)) {
+          systemInstruction += `\n
+              **DICTATION SAFEGUARD**: You are receiving input from iOS Voice Dictation. It is prone to errors.
+              - If the user's request is AMBIGUOUS, resembles gibberish, or matches a tool only weakly (e.g. "turn on the light" but no room specified, or "play movie" but name is garbled), DO NOT EXECUTE THE TOOL.
+              - Instead, ASK FOR CLARIFICATION: "Did you say [interpreted text]?" or "Which light?".
+              - ONLY execute tools if the intent is crystal clear.
+          `;
+        }
 
-      if (replyMode === 'text') {
-        systemInstruction += `\n
-            **OUTPUT RESTRICTION**: The user has explicitly requested a TEXT-ONLY response.
-            - DO NOT call the 'replyWithAudio' tool.
-            - Provide your response purely as text.
-        `;
-      } else if (isIOS || (replyMode === 'audio' && !message.parts)) {
-        systemInstruction += `\n
-            **OUTPUT RESTRICTION**: The user is interacting via Voice/Audio.
-            - YOU MUST call the 'replyWithAudio' tool to speak your response.
-            - DO NOT just return text.
-        `;
+        // REPLY MODE INSTRUCTION
+        const replyMode = message.metadata?.replyMode || 'auto';
+        const isIOS = ['iphone', 'ios_shortcut'].includes(message.source);
+
+        if (replyMode === 'text') {
+          systemInstruction += `\n
+              **OUTPUT RESTRICTION**: The user has explicitly requested a TEXT-ONLY response.
+              - DO NOT call the 'replyWithAudio' tool.
+              - Provide your response purely as text.
+          `;
+        } else if (isIOS || (replyMode === 'audio' && !message.parts)) {
+          systemInstruction += `\n
+              **OUTPUT RESTRICTION**: The user is interacting via Voice/Audio.
+              - YOU MUST call the 'replyWithAudio' tool to speak your response.
+              - DO NOT just return text.
+          `;
+        }
       }
 
       // 2. Send Message to Gemini (with Retry Logic)
