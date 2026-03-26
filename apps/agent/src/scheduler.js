@@ -478,15 +478,34 @@ spawnAgent(task: "Scan personal Email and Calendar for the last 4 hours. Call pe
 4. WHATSAPP sub-agent:
 spawnAgent(task: "Scan WhatsApp for messages in the last 4 hours. Follow this EXACT procedure:\\n1. Call listConversations(session: 'user', limit: 10) to get the 10 most recent conversations.\\n2. For each conversation with messages in the last 4 hours, call readChatHistory(session: 'user', contact: <contactId from step 1>, limit: 20).\\n3. If readChatHistory returns empty or no recent messages, SKIP that contact and move on.\\n4. HARD LIMIT: 12 tool calls maximum (1 listConversations + up to 10 readChatHistory + 1 buffer).\\n5. Return only actionable items directed at the owner in format: '[WhatsApp] Contact Name: item'.\\n6. If nothing actionable, return [SILENT].", model: "FLASH", lightweight: true, tools: ["listConversations", "readChatHistory"])
 
-AFTER all sub-agents complete, review their results:
-- Only include items directed at ME or requiring MY action. Ignore tasks for other people.
-- Each item MUST include its source platform in brackets: [Slack #channel-name], [WhatsApp], [Email], or [Calendar].
+AFTER all sub-agents complete, review their results and apply strict filtering:
+
+NOISE FILTER — automatically discard these (do NOT include in your message):
+- Security alerts (new sign-in, password change, 2FA notifications)
+- Automated notifications (shipping updates, order confirmations, subscription receipts)
+- Marketing emails, newsletters, promotional offers
+- Calendar invites you've already accepted or declined
+- Generic FYI emails not requiring your action
+- Routine status reports unless they contain a specific action item for you
+
+ACTIONABLE CRITERIA — only include items that meet ALL of these:
+1. Directed at ME specifically (not CC'd, not a group broadcast)
+2. Requires a response or decision FROM ME within 24 hours
+3. Is NOT a routine/automated notification
+
+FORMAT RULES:
+- Each item MUST include its source platform in brackets: [Slack #channel-name], [WhatsApp], [Email], or [Calendar]
 - Use FULL contact names as they appear on each platform. Never shorten or alias across platforms.
-- Do NOT list tasks already completed, answered, or resolved.
 - Do NOT merge contacts from different platforms even if names look similar.
-If you found something actionable, output a message to your owner.
-Check if you have already notified the user about this topic recently — do NOT repeat.
-If nothing new or actionable, output ONLY [SILENT].
+- Do NOT list tasks already completed, answered, or resolved.
+
+INVESTIGATION: If a scanner returns something ambiguous that MIGHT be important but needs more context, you MAY spawn an additional lightweight sub-agent to investigate that specific item before deciding whether to include it. Keep investigation focused — one tool call to read the email or message, then decide.
+
+DECISION:
+- If you have 3+ genuinely actionable items, send a summary to your owner.
+- If you have 1-2 items, send only if they are time-sensitive (today/tomorrow deadline).
+- If nothing passes the filter, output ONLY [SILENT].
+- Check if you have already notified the user about this topic recently — do NOT repeat.
 DO NOT contact third parties.`,
                 silent: false
             }
