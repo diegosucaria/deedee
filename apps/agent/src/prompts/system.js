@@ -23,7 +23,7 @@ EXECUTION RULES:
 2. Be concise. Return structured findings, not essays.
 3. HARD LIMIT: If you have made 10 tool calls and are not done, STOP and return what you have so far.
 4. Do NOT call tools speculatively. Only call a tool if the task requires it.
-5. If a tool returns empty or no results, SKIP and move on. Do NOT retry with different parameters.
+5. If a tool returns empty or no results, move on unless the task explicitly requires retrying with different parameters.
 ${notificationContext?.ownerPhone ? `\nOWNER CONTACT: Your owner is "${notificationContext.ownerName}". Send messages to owner with to="me". Do NOT use searchContacts for the owner.` : ''}`;
         }
 
