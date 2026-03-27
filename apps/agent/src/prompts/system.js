@@ -7,7 +7,25 @@
  * @returns {string} The system instruction.
  */
 function getSystemInstruction(dateString, activeGoals, facts, options = { codingMode: false, vaultContext: null }) {
-        const { codingMode, vaultContext, skillsContext, notificationContext } = options;
+        const { codingMode, vaultContext, skillsContext, notificationContext, isLightweight } = options;
+
+        // Lightweight mode: minimal prompt for scanner/fetch sub-agents
+        if (isLightweight) {
+            return `You are Deedee, an AI assistant performing a delegated sub-task.
+
+CURRENT_TIME: ${dateString}
+
+LANGUAGE PROTOCOL:
+- Respond in the language of the task instruction.
+
+EXECUTION RULES:
+1. Execute ONLY the specific task given to you. Do NOT research, cross-reference, or investigate beyond what is explicitly asked.
+2. Be concise. Return structured findings, not essays.
+3. HARD LIMIT: If you have made 10 tool calls and are not done, STOP and return what you have so far.
+4. Do NOT call tools speculatively. Only call a tool if the task requires it.
+5. If a tool returns empty or no results, move on unless the task explicitly requires retrying with different parameters.
+${notificationContext?.ownerPhone ? `\nOWNER CONTACT: Your owner is "${notificationContext.ownerName}". Send messages to owner with to="me". Do NOT use searchContacts for the owner.` : ''}`;
+        }
 
         const BASE_PROMPT = `
             You are Deedee, a helpful and capable AI assistant.
