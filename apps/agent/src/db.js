@@ -1068,12 +1068,31 @@ class AgentDB {
         }
       }
 
+      // Filter 2: Stale dated facts (>5 days old) — exclude from prompt, still in DB for RAG/search
+      const dateMatch = key.match(/_on_(\d{4}-\d{2}-\d{2})$/);
+      if (dateMatch) {
+        const factDate = new Date(dateMatch[1] + 'T00:00:00');
+        if (!isNaN(factDate.getTime())) {
+          const daysOld = Math.floor((Date.now() - factDate.getTime()) / (1000 * 60 * 60 * 24));
+          if (daysOld > 5) {
+            hiddenCount++;
+            return false;
+          }
+        }
+      }
+
+      // Filter 3: Notification flags — these are state, not facts
+      if (key.startsWith('notified_')) {
+        hiddenCount++;
+        return false;
+      }
+
       // Default: Include everything else
       return true;
     });
 
     if (hiddenCount > 0) {
-      console.log(`[Memory] Suppressed ${hiddenCount} Node-RED facts. (Query: "${q.substring(0, 20)}...")`);
+      console.log(`[Memory] Suppressed ${hiddenCount} stale/filtered facts. (Query: "${q.substring(0, 20)}...")`);
     } else if (nodeRedActive) {
       console.log(`[Memory] Node-RED Context ACTIVE. Input matched keywords.`);
     }

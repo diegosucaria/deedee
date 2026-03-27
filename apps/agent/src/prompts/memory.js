@@ -61,33 +61,55 @@ Analyze the following chat logs from ${date}.
 
 Produce a JSON object with two fields:
 1. "summary": A concise bullet-point journal entry of what happened, tasks completed, and context.
-2. "facts": An array of { key, value, category } objects representing NEW durable facts, preferences, or critical information learned about the user.
+2. "facts": An array of { key, value, category } objects representing NEW **durable** facts learned about the user.
    - Keys should be snake_case (e.g. user_project_name, favorite_color).
    - **category**: One of "preference", "relationship", "temporal", "system", "general".
      - "preference" for user likes, dislikes, habits, settings.
      - "relationship" for people, contacts, family.
-     - "temporal" for time-bound plans, appointments, events.
+     - "temporal" for future plans, upcoming trips, or deadlines that the user needs to remember.
      - "system" for technical configs, device settings.
      - "general" for anything else.
-   - **CRITICAL**: For facts that are time-bound, temporary, or specific to a date (e.g. plans, appointments, current status, upcoming events), you **MUST** append the date to the key.
-     - Format: 'key_name_on_YYYY-MM-DD'
-     - Example: 'user_dinner_plans_on_2024-10-22', 'flight_status_on_2024-11-01'.
-   - **PERMANENT FACTS**: For enduring preferences, relationships, or traits, keep the key simple (NO date suffix).
-     - Example: 'user_favorite_food', 'user_wifi_password', 'relationship_brother_name'.
 
-   - STRICTLY EXCLUDE:
-     - Meta-commentary about the consolidation process (e.g. NEVER write "Logs from X date have been consolidated").
-     - Information derived purely from transcripts, YouTube summaries, or web scrapes (unless the user explicitly confirms or claims it).
-     - General world knowledge or trivia.
-     - Temporary context (e.g. "User is currently looking at file Y") UNLESS it is substantial enough to remember for a few days.
-     - If the logs only contain media messages (images, audio, video) without textual context, summarize the interactions briefly (e.g. "Exchanged media with X") but DO NOT invent details.
+   - **WHAT TO SAVE AS A FACT** (will be in every prompt — be selective):
+     - User preferences, habits, and settings (enduring)
+     - Relationships, contacts, family info
+     - Future plans, upcoming trips, deadlines (use date suffix: 'key_on_YYYY-MM-DD')
+     - Work projects, client info, career context
+     - System configurations, device settings
+
+   - **WHAT GOES IN THE SUMMARY ONLY** (NOT as a fact — the journal handles these):
+     - What the user ate, drank, or did today — this is a journal entry, not a fact
+     - Where the user was today (unless it's a trip lasting multiple days)
+     - How the user felt today
+     - One-time events that already happened (deliveries received, alerts seen, errors encountered)
+     - Security alerts, system notifications, automated events
+     - Meeting notes or conversation summaries
+     - Anything that will be irrelevant in 3 days
+
+   - **DATE SUFFIX RULE**: For facts that are time-bound and FUTURE-facing, append the date:
+     - Format: 'key_name_on_YYYY-MM-DD'
+     - Example: 'user_flight_to_paris_on_2024-02-01' (upcoming trip — SAVE)
+     - Counter-example: 'user_dinner_on_2024-01-20' (what they ate — DO NOT SAVE, put in summary)
+
+   - **PERMANENT FACTS**: For enduring info, keep the key simple (NO date suffix).
+     - Example: 'user_favorite_food', 'relationship_brother_name'.
+
+   - STRICTLY EXCLUDE FROM FACTS:
+     - Meta-commentary about the consolidation process
+     - Information derived purely from transcripts, YouTube summaries, or web scrapes (unless user confirms it)
+     - General world knowledge or trivia
+     - Temporary context (e.g. "User is currently looking at file Y")
+     - Past events that already happened and require no follow-up
+     - Notification flags (e.g. "notified_someone_about_X") — use job state instead
+     - If the logs only contain media messages without text, summarize briefly but do NOT create facts
 
    - SYNTHESIS RULES:
      - Output your summary directly as a list of bullet points. Start immediately with the bullets.
-     - You are an advanced reasoning model. Do not just blindly summarize; understand the actual life-state of the user based on these logs.
+     - You are an advanced reasoning model. Do not just blindly summarize; understand the actual life-state of the user.
      - DO NOT include introductory or concluding sentences. Do NOT mention "logs" or "consolidation".
      - Write purely about what happened (e.g. "User met with [Name]" or "User was feeling tired").
      - Omit any general world knowledge, trivia, or temporary context that doesn't matter next week.
+     - The summary IS the place for ephemeral events — be thorough here so they're searchable via journal/RAG.
 
 Logs:
 ${logText}
