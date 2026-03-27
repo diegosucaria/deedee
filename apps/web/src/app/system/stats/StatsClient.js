@@ -253,12 +253,12 @@ export default function StatsClient({ startDate, endDate }) {
                 </div>
             </div>
 
-            {/* Model Usage Distribution — Full Width */}
-            <div className="lg:col-span-2 bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[300px] flex flex-col">
+            {/* Model Usage Distribution */}
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[300px] flex flex-col">
                 <div className="flex items-center justify-between mb-4">
                     <h2 className="text-xl font-semibold flex items-center gap-2 text-zinc-300">
                         <BarChart3 className="w-5 h-5 text-violet-400" />
-                        Model Usage Distribution
+                        Model Usage
                     </h2>
                 </div>
                 <div className="w-full h-[300px]">
