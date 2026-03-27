@@ -24,7 +24,7 @@ class SubAgentExecutor extends BaseExecutor {
                     };
                 }
 
-                const { task, model, tools, timeoutMinutes, waitForResult } = args;
+                const { task, model, tools, timeoutMinutes, waitForResult, lightweight } = args;
                 if (!task) {
                     return { success: false, error: 'Missing required parameter: task' };
                 }
@@ -40,6 +40,7 @@ class SubAgentExecutor extends BaseExecutor {
                         parentChatId,
                         waitForResult,
                         parentDepth: currentDepth,
+                        lightweight,
                     });
                     return { success: true, ...result };
                 } catch (err) {

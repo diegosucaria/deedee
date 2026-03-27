@@ -13,7 +13,7 @@ class SubAgentService {
      * Spawn a sub-agent to perform a specific task.
      * @returns {string|object} taskId (async) or { taskId, result } (blocking)
      */
-    async spawn({ task, model, tools, timeoutMinutes, parentChatId, waitForResult = true, parentDepth = 0 }) {
+    async spawn({ task, model, tools, timeoutMinutes, parentChatId, waitForResult = true, parentDepth = 0, lightweight = false }) {
         // Concurrent limit
         if (this.running.size >= this.MAX_CONCURRENT) {
             throw new Error(`Max concurrent sub-agents reached (${this.MAX_CONCURRENT}). Wait for existing tasks to complete.`);
@@ -51,7 +51,8 @@ class SubAgentService {
                 isSubAgent: true,
                 allowedTools: tools || null,
                 forceModel: selectedModel,
-                subAgentDepth: parentDepth + 1
+                subAgentDepth: parentDepth + 1,
+                lightweight: !!lightweight
             }
         };
 
