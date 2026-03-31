@@ -390,20 +390,36 @@ class Scheduler {
                             result.decision = 'notified';
                             result.decisionReason = `Sent via ${channel}`;
                         }
-                        const sendResult = await this.agent.interface.send({
-                            source: 'scheduler',
-                            content: notificationText,
-                            type: 'text',
-                            metadata: {
-                                chatId: ownerPhone
-                            },
-                            platform: channel, // Used by server.js to route from scheduler
-                            isNotification: true
-                        });
+                        try {
+                            const sendResult = await this.agent.interface.send({
+                                source: 'scheduler',
+                                content: notificationText,
+                                type: 'text',
+                                metadata: {
+                                    chatId: ownerPhone
+                                },
+                                platform: channel, // Used by server.js to route from scheduler
+                                isNotification: true
+                            });
 
-                        // If send() explicitly returns false (e.g. HttpInterface swallowed an error)
-                        if (sendResult === false) {
-                            throw new Error(`Failed to send smart notification to ${channel} for ${ownerPhone}`);
+                            // If send() explicitly returns false (e.g. HttpInterface swallowed an error)
+                            if (sendResult === false) {
+                                console.error(`[Scheduler] Smart Notification delivery failed (${channel} → ${ownerPhone}). Falling back to system notification.`);
+                                this._createFallbackNotification(payload, notificationText, `${channel} send returned false`);
+                                if (result) {
+                                    result.decision = 'delivery_failed';
+                                    result.decisionReason = `${channel} send returned false — saved as system notification`;
+                                }
+                            }
+                        } catch (sendErr) {
+                            // Notification delivery failure should NOT trigger a full job retry.
+                            // The agent already completed its work — only the delivery channel failed.
+                            console.error(`[Scheduler] Smart Notification send error (${channel}): ${sendErr.message}. Falling back to system notification.`);
+                            this._createFallbackNotification(payload, notificationText, sendErr.message);
+                            if (result) {
+                                result.decision = 'delivery_failed';
+                                result.decisionReason = `${sendErr.message} — saved as system notification`;
+                            }
                         }
                     } else {
                         const silentReason = !result?.text ? 'No output text' : `Action=${!!taskLower.match(/^(turn|run|backup)/i)}, Explicit=${!!taskLower.match(/^(remind|alert|notify)/i)}`;
@@ -422,6 +438,31 @@ class Scheduler {
         }
 
         return result;
+    }
+
+    /**
+     * Create a system notification when message delivery fails.
+     * The notification will appear in the web dashboard so the owner doesn't miss it.
+     */
+    _createFallbackNotification(payload, messageText, errorReason) {
+        try {
+            if (!this.agent.db) return;
+
+            const crypto = require('crypto');
+            const jobName = payload?.task ? payload.task.substring(0, 50) : 'Unknown job';
+            this.agent.db.createNotification({
+                id: crypto.randomUUID(),
+                type: 'delivery_failure',
+                severity: 'warning',
+                title: `📬 Undelivered notification`,
+                message: messageText.length > 2000 ? messageText.substring(0, 2000) + '...' : messageText,
+                metadata: { jobName, errorReason }
+            });
+            console.log(`[Scheduler] Fallback notification created for failed delivery (${jobName}).`);
+            this.agent.interface?.broadcast('notification:new', { type: 'delivery_failure' });
+        } catch (err) {
+            console.error('[Scheduler] Failed to create fallback notification:', err.message);
+        }
     }
 
     /**
@@ -464,58 +505,63 @@ class Scheduler {
                 cron: '0 7-22 * * *', // Daytime only (7am-10pm), reduced from every hour
                 task: `[PROACTIVE LOOP] You have free time. Scan messages from the last 4 hours across all platforms.
 
-Spawn the following sub-agents using spawnAgent. You MUST pass 'lightweight: true' and 'tools' for each one.
+PHASE 1 — SCAN (use lightweight FLASH sub-agents):
 
-1. SLACK sub-agent:
-spawnAgent(task: "Scan Slack messages from the last 4 hours. Call readAllMonitoredSlackHistory(days_back: 1). Return only actionable items directed at the owner in format: '[Slack #channel] Person Name: item'. If nothing actionable, return [SILENT].", model: "FLASH", lightweight: true, tools: ["readAllMonitoredSlackHistory", "readSlackHistory", "resolveSlackUser"])
+Spawn these sub-agents. You MUST pass 'lightweight: true' and 'tools' for each one.
 
-2. WORK EMAIL & CALENDAR sub-agent:
-spawnAgent(task: "Scan work Email and Calendar for the last 4 hours. Call work_calendar (events.list on calendarId: 'primary' only) and work_gmail (messages.list for recent messages, read subjects/snippets only). Do NOT call calendarList. Do NOT open individual emails unless the subject suggests an action item. Return only actionable items in format: '[Email] Sender: summary' or '[Calendar] Event: time'. If nothing, return [SILENT].", model: "FLASH", lightweight: true, tools: ["server:gws_work"])
+1. SLACK:
+spawnAgent(task: "Scan Slack from the last 4 hours. Call readAllMonitoredSlackHistory(days_back: 1). Return actionable items in format: '[Slack #channel] Person: item'. If nothing, return [SILENT].", model: "FLASH", lightweight: true, tools: ["readAllMonitoredSlackHistory", "readSlackHistory", "resolveSlackUser"])
 
-3. PERSONAL EMAIL & CALENDAR sub-agent:
-spawnAgent(task: "Scan personal Email and Calendar for the last 4 hours. Call personal_calendar (events.list on calendarId: 'primary' only) and personal_gmail (messages.list for recent messages, read subjects/snippets only). Do NOT call calendarList. Do NOT open individual emails unless the subject suggests an action item. Return only actionable items in format: '[Email] Sender: summary' or '[Calendar] Event: time'. If nothing, return [SILENT].", model: "FLASH", lightweight: true, tools: ["server:gws_personal"])
+2. WORK EMAIL & CALENDAR:
+spawnAgent(task: "Scan work Email/Calendar last 4 hours. Call work_gmail messages.list (maxResults: 15, read subjects/snippets ONLY). Call work_calendar events.list (calendarId: 'primary'). Do NOT open individual emails. HARD LIMIT: 8 tool calls. Return items in format: '[Email] Sender: subject' or '[Calendar] Event: time'. If nothing, return [SILENT].", model: "FLASH", lightweight: true, tools: ["server:gws_work"])
 
-4. WHATSAPP sub-agent:
-spawnAgent(task: "Scan WhatsApp for messages in the last 4 hours. Follow this EXACT procedure:\\n1. Call listConversations(session: 'user', limit: 10) to get the 10 most recent conversations.\\n2. For each conversation with messages in the last 4 hours, call readChatHistory(session: 'user', contact: <contactId from step 1>, limit: 20).\\n3. If readChatHistory returns empty or no recent messages, SKIP that contact and move on.\\n4. HARD LIMIT: 12 tool calls maximum (1 listConversations + up to 10 readChatHistory + 1 buffer).\\n5. Return only actionable items directed at the owner in format: '[WhatsApp] Contact Name: item'.\\n6. If nothing actionable, return [SILENT].", model: "FLASH", lightweight: true, tools: ["listConversations", "readChatHistory"])
+3. PERSONAL EMAIL & CALENDAR:
+spawnAgent(task: "Scan personal Email/Calendar last 4 hours. Call personal_gmail messages.list (maxResults: 15, read subjects/snippets ONLY). Call personal_calendar events.list (calendarId: 'primary'). Do NOT open individual emails. HARD LIMIT: 8 tool calls. Return items in format: '[Email] Sender: subject' or '[Calendar] Event: time'. If nothing, return [SILENT].", model: "FLASH", lightweight: true, tools: ["server:gws_personal"])
 
-AFTER all sub-agents complete, review their results and apply strict filtering:
+4. WHATSAPP:
+spawnAgent(task: "Scan WhatsApp last 4 hours.\\n1. listConversations(session: 'user', limit: 10).\\n2. For each with recent messages, readChatHistory(session: 'user', contact: <id>, limit: 20).\\n3. Skip empty conversations.\\n4. HARD LIMIT: 12 tool calls.\\n5. Return items in format: '[WhatsApp] Contact: item'. If nothing, return [SILENT].", model: "FLASH", lightweight: true, tools: ["listConversations", "readChatHistory"])
 
-NOISE FILTER — automatically discard these (do NOT include in your message):
-- Security alerts (new sign-in, password change, 2FA notifications)
-- Automated notifications (shipping updates, order confirmations, subscription receipts)
-- Marketing emails, newsletters, promotional offers
-- Calendar invites you've already accepted or declined
-- Generic FYI emails not requiring your action
-- Routine status reports unless they contain a specific action item for you
+PHASE 2 — FILTER (apply your judgment as a PRO model):
 
-ACTIONABLE CRITERIA — only include items where:
-1. It requires a response, decision, or action from ME
-2. It is NOT a routine/automated notification
-Note: Group messages and CC'd items CAN be actionable if they contain something relevant to me — use your judgment.
+DISCARD — never include these:
+- Security alerts, 2FA, password notifications
+- Shipping updates, order confirmations, subscription receipts
+- Marketing emails, newsletters, promotional offers, program applications
+- Calendar invites already accepted/declined
+- Generic FYI emails, routine status reports
+- Anything the owner was CC'd on that doesn't require their direct action
 
-BE PROACTIVE — You are not just a summarizer. After filtering, take action when appropriate:
-- Time-sensitive events (tickets, deadlines, expiring offers): Create a calendar event or reminder so I don't miss it.
-- Meeting invites that are important or complex: Add a reminder 30 min before with context about what the meeting is about. Skip routine/recurring meetings.
-- Action items with deadlines: Set a reminder — but FIRST check if I've already handled it (search memory/history). Only create the reminder if it's genuinely unresolved.
-- Items that need my personal attention: Flag them in the summary with why they're urgent.
-Use your judgment. If you can handle something without bothering me, do it. Only message me for things that genuinely need my input.
+KEEP — only items where:
+- A real person (not an automated system) is asking the owner to do something
+- There's a decision, response, or action only the owner can take
+- There's a time-sensitive situation the owner should know about TODAY
 
-HARD RULE: NEVER contact anyone on my behalf. Do NOT send messages, emails, or replies to any person. You may only message ME (your owner).
+PHASE 3 — THINK (this is what makes you valuable):
 
-FORMAT RULES (for the summary message, if you send one):
-- Each item MUST include its source platform in brackets: [Slack #channel-name], [WhatsApp], [Email], or [Calendar]
-- Use FULL contact names as they appear on each platform. Never shorten or alias across platforms.
-- Do NOT merge contacts from different platforms even if names look similar.
-- Do NOT list tasks already completed, answered, or resolved.
-- If you took proactive action on an item, note what you did (e.g., "→ Added to calendar", "→ Set reminder").
+You are not a notification relay. You are an intelligent assistant. After filtering, THINK about what you found:
 
-INVESTIGATION: If a scanner returns something ambiguous that MIGHT be important but needs more context, you MAY spawn an additional sub-agent to investigate that specific item (e.g., read the full email body). Keep investigation focused — max 2-3 tool calls per investigation.
+- If a colleague is asking for something and you know the answer from memory/facts, consider whether the owner needs to be involved at all. If not, skip it.
+- If there's a meeting coming up in the next 2 hours that looks important or complex, set a reminder with context (but ONLY for meetings that are unusual — skip daily standups, recurring 1:1s, and routine syncs).
+- If you see a pattern (e.g., someone has asked the owner the same thing multiple times), flag that specifically.
+- If an item needs investigation to determine if it's actionable, you MAY spawn a focused sub-agent to read the full email body or check context. Max 3 tool calls per investigation.
 
-DECISION:
-- If you have 3+ genuinely actionable items, send a summary to your owner.
-- If you have 1-2 items, send only if they are time-sensitive (today/tomorrow deadline).
-- If you only took silent actions (calendar events, reminders) with nothing urgent, output [SILENT].
-- Check if you have already notified the user about this topic recently — do NOT repeat.`,
+DO NOT:
+- Set reminders for promotional emails or marketing deadlines
+- Set reminders for routine/recurring meetings
+- Create goals or reminders unless you've checked (via searchMemory) that the owner hasn't already handled it
+- NEVER contact anyone on the owner's behalf — do NOT send messages, emails, or replies to any person. You may only message the OWNER.
+
+PHASE 4 — DECIDE:
+
+- If you have genuinely important items that need the owner's attention TODAY → send a concise summary
+- If you only have low-priority items → output [SILENT] (the daily_commitments job will catch these later)
+- If you took a silent action (e.g., set a useful reminder) but nothing needs the owner's attention → output [SILENT]
+- Check memory: have you already notified the owner about this topic recently? If yes → [SILENT]
+
+FORMAT (when you do notify):
+- Each item: [Platform #context] Person Name: what they need from you
+- If you took action: append "→ Set reminder" or "→ Added to calendar"
+- Be concise. 3-5 bullets max. No essays.`,
                 silent: false
             }
         ];
