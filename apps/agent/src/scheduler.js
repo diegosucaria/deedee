@@ -404,19 +404,21 @@ class Scheduler {
 
                             // If send() explicitly returns false (e.g. HttpInterface swallowed an error)
                             if (sendResult === false) {
-                                console.error(`[Scheduler] Smart Notification delivery failed (${channel} → ${ownerPhone}). Will NOT retry — agent work is done.`);
+                                console.error(`[Scheduler] Smart Notification delivery failed (${channel} → ${ownerPhone}). Falling back to system notification.`);
+                                this._createFallbackNotification(payload, notificationText, `${channel} send returned false`);
                                 if (result) {
                                     result.decision = 'delivery_failed';
-                                    result.decisionReason = `${channel} send returned false`;
+                                    result.decisionReason = `${channel} send returned false — saved as system notification`;
                                 }
                             }
                         } catch (sendErr) {
                             // Notification delivery failure should NOT trigger a full job retry.
                             // The agent already completed its work — only the delivery channel failed.
-                            console.error(`[Scheduler] Smart Notification send error (${channel}): ${sendErr.message}. Will NOT retry.`);
+                            console.error(`[Scheduler] Smart Notification send error (${channel}): ${sendErr.message}. Falling back to system notification.`);
+                            this._createFallbackNotification(payload, notificationText, sendErr.message);
                             if (result) {
                                 result.decision = 'delivery_failed';
-                                result.decisionReason = sendErr.message;
+                                result.decisionReason = `${sendErr.message} — saved as system notification`;
                             }
                         }
                     } else {
@@ -436,6 +438,31 @@ class Scheduler {
         }
 
         return result;
+    }
+
+    /**
+     * Create a system notification when message delivery fails.
+     * The notification will appear in the web dashboard so the owner doesn't miss it.
+     */
+    _createFallbackNotification(payload, messageText, errorReason) {
+        try {
+            if (!this.agent.db) return;
+
+            const crypto = require('crypto');
+            const jobName = payload?.task ? payload.task.substring(0, 50) : 'Unknown job';
+            this.agent.db.createNotification({
+                id: crypto.randomUUID(),
+                type: 'delivery_failure',
+                severity: 'warning',
+                title: `📬 Undelivered notification`,
+                message: messageText.length > 2000 ? messageText.substring(0, 2000) + '...' : messageText,
+                metadata: { jobName, errorReason }
+            });
+            console.log(`[Scheduler] Fallback notification created for failed delivery (${jobName}).`);
+            this.agent.interface?.broadcast('notification:new', { type: 'delivery_failure' });
+        } catch (err) {
+            console.error('[Scheduler] Failed to create fallback notification:', err.message);
+        }
     }
 
     /**
