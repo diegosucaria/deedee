@@ -66,19 +66,22 @@ class SchedulerExecutor extends BaseExecutor {
                                 // Default reply to origin
                                 await services.interface.send(reply);
 
-                                // Explicit Push Notification to Owner
+                                // Push to owner ONLY if the reminder origin is NOT already the owner's chat
+                                // (avoids duplicate messages when owner set the reminder themselves)
                                 const agent = services.agent;
                                 const settings = agent?.settings || {};
                                 const ownerPhone = settings.owner_phone;
                                 const channel = settings.notification_channel || 'whatsapp';
+                                const originChatId = reply.metadata?.chatId || targetChatId || '';
+                                const alreadySentToOwner = ownerPhone && originChatId.includes(ownerPhone);
 
-                                if (ownerPhone) {
+                                if (ownerPhone && !alreadySentToOwner) {
                                     console.log(`[Executor] Pushing reminder to owner (${ownerPhone}) via ${channel}`);
                                     await services.interface.send({
                                         ...reply,
-                                        to: ownerPhone,
-                                        platform: channel,
-                                        isNotification: true // Flag to possibly bypass certain checks or formatting
+                                        source: channel,
+                                        metadata: { ...reply.metadata, chatId: `${ownerPhone}@s.whatsapp.net` },
+                                        isNotification: true
                                     });
                                 }
                             }
