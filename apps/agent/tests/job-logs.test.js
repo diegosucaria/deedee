@@ -32,11 +32,11 @@ describe('Job Logs Persistence', () => {
         db.logJobExecution('job_a', 'success', 'OK', 100);
         db.logJobExecution('job_b', 'success', 'OK', 100);
 
-        const logsA = db.getJobLogs(50, 0, 'job_a').logs; // Pass offset 0
+        const logsA = db.getJobLogs(50, 0, { search: 'job_a' }).logs;
         expect(logsA).toHaveLength(1);
         expect(logsA[0].job_name).toBe('job_a');
 
-        const logsB = db.getJobLogs(50, 0, 'job_b').logs;
+        const logsB = db.getJobLogs(50, 0, { search: 'job_b' }).logs;
         expect(logsB).toHaveLength(1);
         expect(logsB[0].job_name).toBe('job_b');
     });

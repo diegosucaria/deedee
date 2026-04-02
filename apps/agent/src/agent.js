@@ -1531,7 +1531,7 @@ class Agent {
         // Gmail/calendar/people tools are exempt from Tier 1 because the normal workflow is
         // list → fetch each item by ID (e.g. list emails → get each email). Multi-account
         // setups (work_/personal_ prefixes) multiply the call count further.
-        const LOOP_EXEMPT_TOOLS = new Set(['spawnAgent', 'readChatHistory', 'getAgentResult', 'listAgentTasks']);
+        const LOOP_EXEMPT_TOOLS = new Set(['spawnAgent', 'readChatHistory', 'searchMemory', 'getFact', 'getAgentResult', 'listAgentTasks']);
         function isLoopExemptTool(toolName) {
           if (!toolName) return false;
           if (LOOP_EXEMPT_TOOLS.has(toolName)) return true;
