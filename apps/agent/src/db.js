@@ -2458,14 +2458,29 @@ class AgentDB {
     return this.db.prepare('SELECT * FROM subagents WHERE id = ?').get(id);
   }
 
-  listSubAgents(parentChatId, { page = 1, limit = 50 } = {}) {
+  listSubAgents(parentChatId, { page = 1, limit = 50, search = null, status = null } = {}) {
     const offset = (page - 1) * limit;
     if (parentChatId) {
       const tasks = this.db.prepare('SELECT * FROM subagents WHERE parent_chat_id = ? ORDER BY created_at DESC').all(parentChatId);
       return { tasks, total: tasks.length, page: 1, limit: tasks.length };
     }
-    const total = this.db.prepare('SELECT COUNT(*) as count FROM subagents').get().count;
-    const tasks = this.db.prepare('SELECT * FROM subagents ORDER BY created_at DESC LIMIT ? OFFSET ?').all(limit, offset);
+
+    const conditions = [];
+    const params = [];
+
+    if (search) {
+      conditions.push('(task LIKE ? OR parent_chat_id LIKE ?)');
+      params.push(`%${search}%`, `%${search}%`);
+    }
+    if (status && status !== 'all') {
+      conditions.push('status = ?');
+      params.push(status);
+    }
+
+    const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
+
+    const total = this.db.prepare(`SELECT COUNT(*) as count FROM subagents${where}`).get(...params).count;
+    const tasks = this.db.prepare(`SELECT * FROM subagents${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
     return { tasks, total, page, limit };
   }
 

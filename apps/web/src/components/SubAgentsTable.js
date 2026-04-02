@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, Fragment, useMemo } from 'react';
+import { useState, useEffect, Fragment, useMemo, useRef, useCallback } from 'react';
 import { getSubAgentTasks, cleanupSubAgentTasks } from '@/app/actions';
 import { RefreshCw, Bot, Trash2, ChevronDown, ChevronUp, ChevronRight, ChevronLeft } from 'lucide-react';
 import { useSocket } from '@/hooks/useSocket';
@@ -172,38 +172,47 @@ export default function SubAgentsTable() {
     const [expandedGroups, setExpandedGroups] = useState(new Set());
     const [cleaning, setCleaning] = useState(false);
     const [page, setPage] = useState(1);
-    const [totalPages, setTotalPages] = useState(0);
     const [total, setTotal] = useState(0);
-    const PAGE_SIZE = 50;
+    const [pageSize, setPageSize] = useState(25);
+    const [searchQuery, setSearchQuery] = useState('');
+    const [statusFilter, setStatusFilter] = useState('all');
     const { socket } = useSocket();
 
-    const loadTasks = async (p = page) => {
+    const loadTasks = useCallback(async () => {
         setLoading(true);
         try {
-            const data = await getSubAgentTasks({ page: p, limit: PAGE_SIZE });
+            const data = await getSubAgentTasks({
+                page,
+                limit: pageSize,
+                search: searchQuery || undefined,
+                status: statusFilter,
+            });
             setTasks(data.tasks || []);
-            setTotalPages(data.totalPages || 0);
             setTotal(data.total || 0);
         } catch (err) {
             console.error('Failed to load sub-agent tasks:', err);
         } finally {
             setLoading(false);
         }
-    };
+    }, [page, pageSize, searchQuery, statusFilter]);
 
+    const debounceRef = useRef(null);
     useEffect(() => {
-        loadTasks(page);
-        const interval = setInterval(() => loadTasks(page), 30000);
-        return () => clearInterval(interval);
-    }, [page]);
+        clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => {
+            loadTasks();
+        }, searchQuery ? 300 : 0);
+        const interval = setInterval(loadTasks, 30000);
+        return () => { clearInterval(interval); clearTimeout(debounceRef.current); };
+    }, [loadTasks]);
 
     // Live update: refresh when agent emits sub-agent status change
     useEffect(() => {
         if (!socket) return;
-        const handler = () => loadTasks(page);
+        const handler = () => loadTasks();
         socket.on('subagent:update', handler);
         return () => socket.off('subagent:update', handler);
-    }, [socket, page]);
+    }, [socket, loadTasks]);
 
     const handleCleanup = async () => {
         setCleaning(true);
@@ -233,7 +242,8 @@ export default function SubAgentsTable() {
 
     return (
         <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
-            <div className="p-3 md:p-4 border-b border-zinc-800 flex flex-wrap items-center justify-between gap-2">
+            <div className="p-3 md:p-4 border-b border-zinc-800 flex flex-col gap-3 md:gap-4">
+                <div className="flex flex-wrap items-center justify-between gap-2">
                 <h3 className="text-base md:text-lg font-semibold text-zinc-300 flex items-center gap-2">
                     <Bot className="w-5 h-5 shrink-0 text-violet-400" />
                     Sub-Agent Tasks
@@ -260,6 +270,29 @@ export default function SubAgentsTable() {
                     >
                         <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
                     </button>
+                </div>
+                </div>
+
+                {/* Filters */}
+                <div className="flex flex-wrap gap-2">
+                    <input
+                        type="text"
+                        placeholder="Search tasks..."
+                        value={searchQuery}
+                        onChange={(e) => { setSearchQuery(e.target.value); setPage(1); }}
+                        className="bg-black border border-zinc-800 rounded px-3 py-1.5 text-xs text-zinc-300 placeholder-zinc-600 focus:outline-none focus:border-indigo-500/50 min-w-0 flex-1 sm:flex-none"
+                    />
+                    <select
+                        value={statusFilter}
+                        onChange={(e) => { setStatusFilter(e.target.value); setPage(1); }}
+                        className="bg-black border border-zinc-800 rounded px-3 py-1.5 text-xs text-zinc-300 focus:outline-none focus:border-indigo-500/50"
+                    >
+                        <option value="all">All Status</option>
+                        <option value="running">Running</option>
+                        <option value="completed">Completed</option>
+                        <option value="failed">Failed</option>
+                        <option value="timeout">Timeout</option>
+                    </select>
                 </div>
             </div>
 
@@ -443,23 +476,36 @@ export default function SubAgentsTable() {
                 </table>
             </div>
 
-            {totalPages > 1 && (
-                <div className="px-4 py-3 border-t border-zinc-800 flex items-center justify-between">
-                    <span className="text-xs text-zinc-500">
-                        {total} total · Page {page} of {totalPages}
-                    </span>
-                    <div className="flex items-center gap-1">
+            {total > 0 && (
+                <div className="px-4 py-3 border-t border-zinc-800 flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3 text-xs text-zinc-500">
+                        <span>{total} total</span>
+                        <select
+                            value={pageSize}
+                            onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+                            className="bg-black border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-400 focus:outline-none focus:border-indigo-500/50"
+                        >
+                            <option value={10}>10 / page</option>
+                            <option value={25}>25 / page</option>
+                            <option value={50}>50 / page</option>
+                            <option value={100}>100 / page</option>
+                        </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs text-zinc-500">
+                            {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, total)} of {total}
+                        </span>
                         <button
                             onClick={() => setPage(p => Math.max(1, p - 1))}
-                            disabled={page <= 1}
-                            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                            disabled={page === 1 || loading}
+                            className="p-1.5 hover:bg-zinc-800 rounded disabled:opacity-50 text-zinc-400 transition-colors"
                         >
                             <ChevronLeft className="w-4 h-4" />
                         </button>
                         <button
-                            onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                            disabled={page >= totalPages}
-                            className="p-1.5 rounded-lg text-zinc-400 hover:text-white hover:bg-zinc-800 transition-colors disabled:opacity-30 disabled:cursor-not-allowed"
+                            onClick={() => setPage(p => Math.min(Math.ceil(total / pageSize), p + 1))}
+                            disabled={page >= Math.ceil(total / pageSize) || loading}
+                            className="p-1.5 hover:bg-zinc-800 rounded disabled:opacity-50 text-zinc-400 transition-colors"
                         >
                             <ChevronRight className="w-4 h-4" />
                         </button>

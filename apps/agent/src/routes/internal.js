@@ -793,7 +793,8 @@ function createInternalRouter(agent) {
             const parentChatId = req.query.parentChatId || null;
             const page = Math.max(1, parseInt(req.query.page) || 1);
             const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
-            const { tasks, total, page: pg, limit: lim } = agent.db.listSubAgents(parentChatId, { page, limit });
+            const { search, status } = req.query;
+            const { tasks, total, page: pg, limit: lim } = agent.db.listSubAgents(parentChatId, { page, limit, search, status });
 
             // Enrich with cost data
             const taskIds = tasks.map(t => t.id);
