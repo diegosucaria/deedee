@@ -242,19 +242,23 @@ class Scheduler {
                             if (this.agent.interface) {
                                 await this.agent.interface.send(reply);
                             }
-                            // Capture reply for logging
+                            // Capture reply for smart notification.
+                            // createAssistantMessage uses 'content', not 'text'.
+                            const replyText = reply.content || reply.text;
                             if (!executionResult) {
                                 executionResult = reply;
-                            } else if (reply.content) {
-                                executionResult.text = (executionResult.text || '') + '\n' + reply.content;
+                                if (replyText) executionResult.text = replyText;
+                            } else if (replyText) {
+                                // Always keep the latest text — final assistant message overwrites intermediate "Thinking..." messages
+                                executionResult.text = replyText;
                             }
-                            // Always ensure the latest text is tracked
-                            if (reply.content) executionResult.text = reply.content;
                         });
 
-                        // Ensure result has a string text property
+                        // Ensure result has text for smart notification
                         if (!executionResult) executionResult = { text: '' };
-                        if (typeof executionResult.text !== 'string') executionResult.text = String(executionResult.content || executionResult.text || '');
+                        if (!executionResult.text) {
+                            executionResult.text = String(executionResult.content || '');
+                        }
 
                         // Process Smart Notification INSIDE the try/catch so errors fail the job.
                         // Skip if the agent already sent directly to a user-facing source
