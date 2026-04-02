@@ -2167,25 +2167,26 @@ class AgentDB {
     `).run(jobName, status, output ? String(output) : null, durationMs);
   }
 
-  getJobLogs(limit = 50, offset = 0, jobName = null) {
-    let query = 'SELECT * FROM job_logs';
+  getJobLogs(limit = 50, offset = 0, { search = null, status = null } = {}) {
+    const conditions = [];
     const params = [];
-    const countParams = [];
 
-    if (jobName) {
-      query += ' WHERE job_name = ?';
-      params.push(jobName);
-      countParams.push(jobName);
+    if (search) {
+      conditions.push('job_name LIKE ?');
+      params.push(`%${search}%`);
+    }
+    if (status && status !== 'all') {
+      conditions.push('status = ?');
+      params.push(status);
     }
 
-    // Get Total Count
-    const countQuery = `SELECT COUNT(*) as count FROM job_logs${jobName ? ' WHERE job_name = ?' : ''} `;
-    const total = this.db.prepare(countQuery).get(...countParams).count;
+    const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
 
-    query += ' ORDER BY timestamp DESC LIMIT ? OFFSET ?';
-    params.push(limit, offset);
+    const total = this.db.prepare(`SELECT COUNT(*) as count FROM job_logs${where}`).get(...params).count;
 
-    const logs = this.db.prepare(query).all(...params);
+    const logs = this.db.prepare(`SELECT * FROM job_logs${where} ORDER BY timestamp DESC LIMIT ? OFFSET ?`)
+      .all(...params, limit, offset);
+
     return { logs, total };
   }
 

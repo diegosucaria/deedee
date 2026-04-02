@@ -754,7 +754,8 @@ function createInternalRouter(agent) {
         try {
             const limit = parseInt(req.query.limit) || 50;
             const offset = parseInt(req.query.offset) || 0;
-            const result = agent.db.getJobLogs(limit, offset);
+            const { search, status } = req.query;
+            const result = agent.db.getJobLogs(limit, offset, { search, status });
 
             // Enrich with cost data
             const costs = agent.db.getJobLogCosts(result.logs.map(l => l.id));
