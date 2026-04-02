@@ -702,16 +702,22 @@ FORMAT (when you do notify):
                     source: 'scheduler',
                     metadata: { chatId: `system_${sysJob.name}_${Date.now()}` }
                 }, async (reply) => {
-                    // Update executionResult as the stream progresses, storing the latest full text
-                    // reply can be { text: '...', toolCalls: [...] }. We care about the final text.
+                    // Capture reply for smart notification.
+                    // createAssistantMessage uses 'content', not 'text'.
+                    const replyText = reply.content || reply.text;
                     if (!executionResult) {
                         executionResult = reply;
-                    } else if (reply.text) {
-                        executionResult.text = (executionResult.text || '') + '\n' + reply.text;
-                    } else if (reply.toolCall) {
-                        // ignore intermediate tool call markers from updating text
+                        if (replyText) executionResult.text = replyText;
+                    } else if (replyText) {
+                        // Always keep the latest text — final assistant message overwrites intermediate "Thinking..." messages
+                        executionResult.text = replyText;
                     }
                 });
+
+                // Ensure result has text for smart notification
+                if (executionResult && !executionResult.text) {
+                    executionResult.text = String(executionResult.content || '');
+                }
 
                 // Now safely pass the final result through the Notification Logic!
                 return await this._processSmartNotification(executionResult, { task: sysJob.task }, sysJob.silent);
