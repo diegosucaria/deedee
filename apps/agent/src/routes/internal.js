@@ -754,7 +754,8 @@ function createInternalRouter(agent) {
         try {
             const limit = parseInt(req.query.limit) || 50;
             const offset = parseInt(req.query.offset) || 0;
-            const result = agent.db.getJobLogs(limit, offset);
+            const { search, status } = req.query;
+            const result = agent.db.getJobLogs(limit, offset, { search, status });
 
             // Enrich with cost data
             const costs = agent.db.getJobLogCosts(result.logs.map(l => l.id));
@@ -792,7 +793,8 @@ function createInternalRouter(agent) {
             const parentChatId = req.query.parentChatId || null;
             const page = Math.max(1, parseInt(req.query.page) || 1);
             const limit = Math.min(100, Math.max(1, parseInt(req.query.limit) || 50));
-            const { tasks, total, page: pg, limit: lim } = agent.db.listSubAgents(parentChatId, { page, limit });
+            const { search, status } = req.query;
+            const { tasks, total, page: pg, limit: lim } = agent.db.listSubAgents(parentChatId, { page, limit, search, status });
 
             // Enrich with cost data
             const taskIds = tasks.map(t => t.id);

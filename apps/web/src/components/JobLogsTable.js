@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef, useCallback } from 'react';
 import { getJobLogs, deleteJobLogs } from '@/app/actions';
 import { Clock, CheckCircle, XCircle, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
 import LogContent from './LogContent';
@@ -24,8 +24,8 @@ export default function JobLogsTable() {
     const [logs, setLogs] = useState([]);
     const [loading, setLoading] = useState(true);
     const [page, setPage] = useState(1);
-    const [totalPages, setTotalPages] = useState(1);
-    const LIMIT = 50;
+    const [totalCount, setTotalCount] = useState(0);
+    const [pageSize, setPageSize] = useState(25);
 
     // Filters & Sorting
     const [selectedIds, setSelectedIds] = useState(new Set());
@@ -33,36 +33,34 @@ export default function JobLogsTable() {
     const [filterStatus, setFilterStatus] = useState('all'); // all, success, failure
     const [sortConfig, setSortConfig] = useState({ key: 'timestamp', direction: 'desc' });
 
-    const loadLogs = async () => {
+    const loadLogs = useCallback(async () => {
         setLoading(true);
         try {
-            // Note: Server-side pagination means we only get one page.
-            // Client-side filtering/sorting ON TOP OF server-side pagination is tricky/broken
-            // without full server-side support for filters/sorts.
-            // For now, I will assume basic pagination for the raw stream,
-            // AND client-side filtering limited to the CURRENT page (which is standard for simple MVPs),
-            // OR I should fetch *all* for client-side ops?
-            // "Add pagination" usually implies server-side to handle large datasets.
-            // But if I do server-side pagination, my client-side filters (filterName) only filter the current page!
-            // Given the constraints and the user request, I will implement pagination fetching.
-
-            const data = await getJobLogs(page, LIMIT);
+            const data = await getJobLogs(page, pageSize, {
+                search: filterName || undefined,
+                status: filterStatus,
+            });
             setLogs(data.logs || []);
-            setTotalPages(Math.ceil((data.total || 0) / LIMIT));
+            setTotalCount(data.total || 0);
         } catch (err) {
             console.error('Failed to load job logs:', err);
         } finally {
             setLoading(false);
         }
-    };
+    }, [page, pageSize, filterName, filterStatus]);
 
     const { socket } = useSocket();
 
+    // Debounce filter changes to avoid firing on every keystroke
+    const debounceRef = useRef(null);
     useEffect(() => {
-        loadLogs();
+        clearTimeout(debounceRef.current);
+        debounceRef.current = setTimeout(() => {
+            loadLogs();
+        }, filterName ? 300 : 0); // instant for non-search changes
         const interval = setInterval(loadLogs, 30000);
-        return () => clearInterval(interval);
-    }, [page]); // Reload when page changes
+        return () => { clearInterval(interval); clearTimeout(debounceRef.current); };
+    }, [loadLogs]);
 
     // Live update: refresh when scheduler emits job completion
     useEffect(() => {
@@ -94,10 +92,10 @@ export default function JobLogsTable() {
     };
 
     const toggleAll = () => {
-        if (selectedIds.size === filteredLogs.length) {
+        if (selectedIds.size === sortedLogs.length) {
             setSelectedIds(new Set());
         } else {
-            setSelectedIds(new Set(filteredLogs.map(l => l.id)));
+            setSelectedIds(new Set(sortedLogs.map(l => l.id)));
         }
     };
 
@@ -108,12 +106,8 @@ export default function JobLogsTable() {
         }));
     };
 
-    // Filter & Sort Logic
-    const filteredLogs = logs.filter(log => {
-        const matchesName = log.job_name.toLowerCase().includes(filterName.toLowerCase());
-        const matchesStatus = filterStatus === 'all' || log.status === filterStatus;
-        return matchesName && matchesStatus;
-    }).sort((a, b) => {
+    // Sort (filtering is now server-side)
+    const sortedLogs = [...logs].sort((a, b) => {
         const aVal = a[sortConfig.key];
         const bVal = b[sortConfig.key];
         if (aVal < bVal) return sortConfig.direction === 'asc' ? -1 : 1;
@@ -152,43 +146,20 @@ export default function JobLogsTable() {
                 <div className="flex flex-wrap gap-2">
                     <input
                         type="text"
-                        placeholder="Filter by Job Name"
+                        placeholder="Search by Job Name"
                         value={filterName}
-                        onChange={(e) => setFilterName(e.target.value)}
+                        onChange={(e) => { setFilterName(e.target.value); setPage(1); }}
                         className="bg-black border border-zinc-800 rounded px-3 py-1.5 text-xs text-zinc-300 placeholder-zinc-600 focus:outline-none focus:border-indigo-500/50 min-w-0 flex-1 sm:flex-none"
                     />
                     <select
                         value={filterStatus}
-                        onChange={(e) => setFilterStatus(e.target.value)}
+                        onChange={(e) => { setFilterStatus(e.target.value); setPage(1); }}
                         className="bg-black border border-zinc-800 rounded px-3 py-1.5 text-xs text-zinc-300 focus:outline-none focus:border-indigo-500/50"
                     >
                         <option value="all">All Status</option>
                         <option value="success">Success</option>
                         <option value="failure">Failed</option>
                     </select>
-                </div>
-            </div>
-
-            {/* Pagination Controls */}
-            <div className="p-4 border-t border-zinc-800 flex items-center justify-between">
-                <div className="text-xs text-zinc-500">
-                    Page {page} of {totalPages}
-                </div>
-                <div className="flex gap-2">
-                    <button
-                        onClick={() => setPage(p => Math.max(1, p - 1))}
-                        disabled={page === 1 || loading}
-                        className="p-1.5 hover:bg-zinc-800 rounded disabled:opacity-50 text-zinc-400"
-                    >
-                        <ChevronLeft className="w-4 h-4" />
-                    </button>
-                    <button
-                        onClick={() => setPage(p => Math.min(totalPages, p + 1))}
-                        disabled={page >= totalPages || loading}
-                        className="p-1.5 hover:bg-zinc-800 rounded disabled:opacity-50 text-zinc-400"
-                    >
-                        <ChevronRight className="w-4 h-4" />
-                    </button>
                 </div>
             </div>
 
@@ -200,7 +171,7 @@ export default function JobLogsTable() {
                                 <input
                                     type="checkbox"
                                     className="rounded border-zinc-700 bg-zinc-900"
-                                    checked={filteredLogs.length > 0 && selectedIds.size === filteredLogs.length}
+                                    checked={sortedLogs.length > 0 && selectedIds.size === sortedLogs.length}
                                     onChange={toggleAll}
                                 />
                             </th>
@@ -213,14 +184,14 @@ export default function JobLogsTable() {
                         </tr>
                     </thead>
                     <tbody className="divide-y divide-zinc-800 bg-zinc-900/50">
-                        {filteredLogs.length === 0 ? (
+                        {sortedLogs.length === 0 ? (
                             <tr>
                                 <td colSpan={7} className="px-6 py-12 text-center text-zinc-500">
                                     No job logs found.
                                 </td>
                             </tr>
                         ) : (
-                            filteredLogs.map((log) => (
+                            sortedLogs.map((log) => (
                                 <tr key={log.id} className={`hover:bg-zinc-800/50 transition-colors group ${selectedIds.has(log.id) ? 'bg-indigo-500/5 hover:bg-indigo-500/10' : ''}`}>
                                     <td className="px-4 py-4 align-top">
                                         <input
@@ -271,6 +242,44 @@ export default function JobLogsTable() {
                     </tbody>
                 </table>
             </div>
+
+            {/* Pagination */}
+            {totalCount > 0 && (
+                <div className="px-4 py-3 border-t border-zinc-800 flex items-center justify-between gap-4">
+                    <div className="flex items-center gap-3 text-xs text-zinc-500">
+                        <span>{totalCount} total</span>
+                        <select
+                            value={pageSize}
+                            onChange={(e) => { setPageSize(Number(e.target.value)); setPage(1); }}
+                            className="bg-black border border-zinc-800 rounded px-2 py-1 text-xs text-zinc-400 focus:outline-none focus:border-indigo-500/50"
+                        >
+                            <option value={10}>10 / page</option>
+                            <option value={25}>25 / page</option>
+                            <option value={50}>50 / page</option>
+                            <option value={100}>100 / page</option>
+                        </select>
+                    </div>
+                    <div className="flex items-center gap-2">
+                        <span className="text-xs text-zinc-500">
+                            {(page - 1) * pageSize + 1}–{Math.min(page * pageSize, totalCount)} of {totalCount}
+                        </span>
+                        <button
+                            onClick={() => setPage(p => Math.max(1, p - 1))}
+                            disabled={page === 1 || loading}
+                            className="p-1.5 hover:bg-zinc-800 rounded disabled:opacity-50 text-zinc-400 transition-colors"
+                        >
+                            <ChevronLeft className="w-4 h-4" />
+                        </button>
+                        <button
+                            onClick={() => setPage(p => Math.min(Math.ceil(totalCount / pageSize), p + 1))}
+                            disabled={page >= Math.ceil(totalCount / pageSize) || loading}
+                            className="p-1.5 hover:bg-zinc-800 rounded disabled:opacity-50 text-zinc-400 transition-colors"
+                        >
+                            <ChevronRight className="w-4 h-4" />
+                        </button>
+                    </div>
+                </div>
+            )}
         </div>
     );
 }

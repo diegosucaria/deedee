@@ -381,10 +381,13 @@ export async function getModelUsage(query = '') {
     }
 }
 
-export async function getJobLogs(page = 1, limit = 50) {
+export async function getJobLogs(page = 1, limit = 50, { search, status } = {}) {
     try {
         const offset = (page - 1) * limit;
-        return await fetchAPI(`/v1/logs/jobs?limit=${limit}&offset=${offset}`);
+        const params = new URLSearchParams({ limit, offset });
+        if (search) params.set('search', search);
+        if (status && status !== 'all') params.set('status', status);
+        return await fetchAPI(`/v1/logs/jobs?${params}`);
     } catch (error) {
         console.error('getJobLogs Error:', error);
         return { logs: [] };
@@ -1681,9 +1684,11 @@ export async function repairWhatsAppSession(session) {
 }
 
 // --- Sub-Agents ---
-export async function getSubAgentTasks({ page = 1, limit = 50 } = {}) {
+export async function getSubAgentTasks({ page = 1, limit = 50, search, status } = {}) {
     try {
         const params = new URLSearchParams({ page, limit });
+        if (search) params.set('search', search);
+        if (status && status !== 'all') params.set('status', status);
         return await fetchAPI(`/v1/subagents?${params}`);
     } catch (error) {
         console.error('getSubAgentTasks Error:', error);
