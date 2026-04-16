@@ -50,90 +50,27 @@ class SchedulerExecutor extends BaseExecutor {
                 const targetChatId = message.metadata?.chatId;
                 const targetSource = message.source;
 
-                // Define the logic in a reusable way or inline it
-                const createCallback = (currentPayload) => async () => {
-                    const meta = { chatId: targetChatId || `reminder_${parsedName}` };
-                    console.log(`[Executor] Running Reminder (Retry: ${currentPayload.retryCount || 0})`);
-
-                    try {
-                        const summary = await processMessage({
-                            role: 'user',
-                            content: `System Instruction: It is now ${new Date().toLocaleTimeString()}. The user set a reminder: "${reminderMessage}". Please explicitly remind them now.`,
-                            source: targetSource || 'scheduler',
-                            metadata: meta
-                        }, async (reply) => {
-                            if (services.interface) {
-                                // Default reply to origin
-                                await services.interface.send(reply);
-
-                                // Push to owner ONLY if the reminder origin is NOT already the owner's chat
-                                // (avoids duplicate messages when owner set the reminder themselves)
-                                const agent = services.agent;
-                                const settings = agent?.settings || {};
-                                const ownerPhone = settings.owner_phone;
-                                const channel = settings.notification_channel || 'whatsapp';
-                                const originChatId = reply.metadata?.chatId || targetChatId || '';
-                                const alreadySentToOwner = ownerPhone && originChatId.includes(ownerPhone);
-
-                                if (ownerPhone && !alreadySentToOwner) {
-                                    console.log(`[Executor] Pushing reminder to owner (${ownerPhone}) via ${channel}`);
-                                    await services.interface.send({
-                                        ...reply,
-                                        source: channel,
-                                        metadata: { ...reply.metadata, chatId: `${ownerPhone}@s.whatsapp.net` },
-                                        isNotification: true
-                                    });
-                                }
-                            }
-                        });
-
-                        // Verification
-                        // Reminders are successful if they produce ANY non-error output
-                        const failures = ["I received an empty response", "Error:", "No text response found"];
-                        const success = summary && summary.replies.some(r => r.content && !failures.some(f => r.content.includes(f)));
-
-                        if (!success) throw new Error("Agent execution failed.");
-
-                    } catch (error) {
-                        console.error(`[Executor] Reminder '${parsedName}' failed:`, error.message);
-                        const currentRetry = currentPayload.retryCount || 0;
-                        const MAX_RETRIES = 3;
-
-                        if (currentRetry < MAX_RETRIES) {
-                            // Reschedule
-                            scheduler.scheduleOneOff(parsedName, new Date(Date.now() + 60000), createCallback({ ...currentPayload, retryCount: currentRetry + 1 }), {
-                                persist: true,
-                                taskType: 'agent_instruction',
-                                payload: { ...currentPayload, retryCount: currentRetry + 1 }
-                            });
-                        } else {
-                            // Slack Alert
-                            if (process.env.SLACK_WEBHOOK_URL) {
-                                try {
-                                    await fetch(process.env.SLACK_WEBHOOK_URL, {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({
-                                            text: `🚨 *Reminder Failure*\n\nFailed to deliver reminder: *"${reminderMessage}"*\nError: ${error.message}`
-                                        })
-                                    });
-                                } catch (e) { console.error(e); }
-                            }
-                        }
-                    }
-                };
-
+                // Reminders deliver a static text message. Do NOT route them through the
+                // LLM — that caused double-messages (the agent would call sendMessage(to="me")
+                // per NOTIFICATION_PROTOCOL AND reply with a confirmation, both delivered).
+                // scheduler._buildDirectReminderCallback handles direct delivery + retries +
+                // fallback notification, and is shared with loadJobs so persisted reminders
+                // reconstruct with the same behavior after a restart.
                 const initialPayload = {
                     task: `Reminder: ${reminderMessage}`,
+                    reminderMessage,
                     isOneOff: true,
+                    isReminder: true,
                     targetChatId,
                     targetSource,
                     retryCount: 0
                 };
 
-                scheduler.scheduleOneOff(parsedName, date, createCallback(initialPayload), {
+                const callback = scheduler._buildDirectReminderCallback(parsedName, initialPayload);
+
+                scheduler.scheduleOneOff(parsedName, date, callback, {
                     persist: true,
-                    taskType: 'agent_instruction',
+                    taskType: 'reminder',
                     payload: initialPayload
                 });
                 return { success: true, info: `Reminder set for ${date.toLocaleString()}` };
@@ -149,63 +86,22 @@ class SchedulerExecutor extends BaseExecutor {
                 const targetChatId = message.metadata?.chatId;
                 const targetSource = message.source;
 
-                const createCallback = (currentPayload) => async () => {
-                    const meta = { chatId: targetChatId || `task_${parsedName}` };
-                    console.log(`[Executor] Running One-Off Task (Retry: ${currentPayload.retryCount || 0})`);
-
-                    try {
-                        const summary = await processMessage({
-                            role: 'user',
-                            content: `Scheduled Instruction: ${task}`,
-                            source: targetSource || 'scheduler',
-                            metadata: meta
-                        }, async (reply) => {
-                            if (services.interface) {
-                                await services.interface.send(reply);
-                            }
-                        });
-
-                        const failures = ["I received an empty response", "Error:", "No text response found"];
-                        const success = summary && summary.replies.some(r => r.content && !failures.some(f => r.content.includes(f)));
-
-                        if (!success) throw new Error("Agent execution failed.");
-
-                    } catch (error) {
-                        console.error(`[Executor] Task '${parsedName}' failed:`, error.message);
-                        const currentRetry = currentPayload.retryCount || 0;
-                        const MAX_RETRIES = 3;
-
-                        if (currentRetry < MAX_RETRIES) {
-                            scheduler.scheduleOneOff(parsedName, new Date(Date.now() + 60000), createCallback({ ...currentPayload, retryCount: currentRetry + 1 }), {
-                                persist: true,
-                                taskType: 'agent_instruction',
-                                payload: { ...currentPayload, retryCount: currentRetry + 1 }
-                            });
-                        } else {
-                            if (process.env.SLACK_WEBHOOK_URL) {
-                                try {
-                                    await fetch(process.env.SLACK_WEBHOOK_URL, {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({
-                                            text: `🚨 *Task Failure Alert*\n\nTask *"${task}"* failed after 3 retries.\nError: ${error.message}`
-                                        })
-                                    });
-                                } catch (e) { console.error(e); }
-                            }
-                        }
-                    }
-                };
-
+                // Use the shared scheduler helper so in-memory scheduled tasks match
+                // what loadJobs reconstructs after a restart — smart notification for
+                // system-origin results, [SILENT] support, and a proper retry closure
+                // (the old inline version captured retryCount=0 per-session, never
+                // hitting MAX_RETRIES until the process restarted).
                 const initialPayload = {
-                    task: task,
+                    task,
                     isOneOff: true,
                     targetChatId,
                     targetSource,
                     retryCount: 0
                 };
 
-                scheduler.scheduleOneOff(parsedName, date, createCallback(initialPayload), {
+                const callback = scheduler._buildAgentInstructionCallback(parsedName, initialPayload);
+
+                scheduler.scheduleOneOff(parsedName, date, callback, {
                     persist: true,
                     taskType: 'agent_instruction',
                     payload: initialPayload

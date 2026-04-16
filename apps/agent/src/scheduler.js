@@ -216,91 +216,26 @@ class Scheduler {
             }
 
             let callback;
-            if (payload && payload.task) {
+            // Direct-delivery reminders (setReminder tool). Detect via explicit flag or
+            // legacy payload shape (payload.task starts with "Reminder: " + targetChatId).
+            // Must come BEFORE the generic `payload.task` branch so legacy reminders
+            // don't get routed through the agent (causing double-messages).
+            const isReminderPayload = payload && (
+                payload.isReminder === true ||
+                taskType === 'reminder' ||
+                (isOneOff && typeof payload.task === 'string' && payload.task.startsWith('Reminder: '))
+            );
+            if (isReminderPayload) {
+                // Backfill reminderMessage for legacy payloads that only have `task`
+                const reminderPayload = { ...payload };
+                if (!reminderPayload.reminderMessage && typeof reminderPayload.task === 'string') {
+                    reminderPayload.reminderMessage = reminderPayload.task.replace(/^Reminder:\s*/, '');
+                }
+                callback = this._buildDirectReminderCallback(name, reminderPayload);
+            } else if (payload && payload.task) {
                 // Any job with a task string is treated as an agent instruction
                 // (handles legacy 'custom', 'function_call', and 'agent_instruction' types)
-                // Reconstruct agent instruction callback
-                callback = async () => {
-                    console.log(`[Scheduler] Executing persisted task: ${payload.task} (Retry: ${payload.retryCount || 0})`);
-
-                    const msgSource = payload.targetSource || 'scheduler';
-                    const msgMeta = {
-                        chatId: payload.targetChatId || `scheduled_${name}_${Date.now()}`,
-                        jobName: name,
-                        ...(payload.model ? { forceModel: payload.model } : {}),
-                        ...(payload.allowedTools ? { allowedTools: payload.allowedTools } : {})
-                    };
-
-                    let executionResult = null;
-                    try {
-                        await this.agent.processMessage({
-                            role: 'user',
-                            content: `Scheduled Task: ${payload.task}\n\n[SYSTEM: This is a recurring job. To track changes between runs, use 'getJobState' to check previous data and 'saveJobState' to save new data. IMPORTANT: If the result of this task is "nothing to report" or "no action needed", prefix your ENTIRE response with the tag [SILENT] (e.g. "[SILENT] No commitments found."). This prevents unnecessary notifications to the user. Only omit [SILENT] when you have genuinely actionable or interesting information to share.]`,
-                            source: msgSource,
-                            metadata: msgMeta
-                        }, async (reply) => {
-                            if (this.agent.interface) {
-                                await this.agent.interface.send(reply);
-                            }
-                            // Capture reply for smart notification.
-                            // createAssistantMessage uses 'content', not 'text'.
-                            const replyText = reply.content || reply.text;
-                            if (!executionResult) {
-                                executionResult = reply;
-                                if (replyText) executionResult.text = replyText;
-                            } else if (replyText) {
-                                // Always keep the latest text — final assistant message overwrites intermediate "Thinking..." messages
-                                executionResult.text = replyText;
-                            }
-                        });
-
-                        // Ensure result has text for smart notification
-                        if (!executionResult) executionResult = { text: '' };
-                        if (!executionResult.text) {
-                            executionResult.text = String(executionResult.content || '');
-                        }
-
-                        // Process Smart Notification INSIDE the try/catch so errors fail the job.
-                        // Skip if the agent already sent directly to a user-facing source
-                        // (e.g. whatsapp:assistant), since the callback delivered the message.
-                        const alreadyDelivered = msgSource !== 'scheduler';
-                        return await this._processSmartNotification(executionResult, payload, alreadyDelivered);
-
-                    } catch (error) {
-                        console.error(`[Scheduler] Task '${name}' failed:`, error.message);
-
-                        // Retry Logic
-                        const currentRetry = payload.retryCount || 0;
-                        const MAX_RETRIES = 3;
-
-                        if (currentRetry < MAX_RETRIES) {
-                            console.log(`[Scheduler] Rescheduling '${name}' for retry ${currentRetry + 1}/${MAX_RETRIES} in 60s.`);
-
-                            // Re-schedule execution for +1 minute
-                            this.scheduleOneOff(name, new Date(Date.now() + 60000), callback, {
-                                persist: true,
-                                taskType: 'agent_instruction',
-                                payload: { ...payload, retryCount: currentRetry + 1 }
-                            });
-                        } else {
-                            console.error(`[Scheduler] Task '${name}' failed permanently after ${MAX_RETRIES} retries.`);
-
-                            // Slack Notification
-                            if (process.env.SLACK_WEBHOOK_URL) {
-                                try {
-                                    await fetch(process.env.SLACK_WEBHOOK_URL, {
-                                        method: 'POST',
-                                        headers: { 'Content-Type': 'application/json' },
-                                        body: JSON.stringify({
-                                            text: `🚨 *Task Failure Alert*\n\nThe task *"${payload.task}"* failed after ${MAX_RETRIES} retries.\n\nError: ${error.message}`
-                                        })
-                                    });
-                                } catch (e) { console.error('[Scheduler] Failed to send Slack alert:', e); }
-                            }
-                        }
-                        throw error; // Propagate error so scheduleJob logger sees it
-                    }
-                };
+                callback = this._buildAgentInstructionCallback(name, payload);
             } else {
                 console.warn(`[Scheduler] Unknown task type '${taskType}' for job '${name}'. Skipping.`);
                 continue;
@@ -445,6 +380,209 @@ class Scheduler {
     }
 
     /**
+     * Build a callback that runs a persisted agent_instruction through the LLM and
+     * routes the output through _processSmartNotification.
+     *
+     * Shared between loadJobs() (persisted jobs) and executors/scheduler.js
+     * scheduleTask (in-memory one-offs). Before unification, the in-memory path
+     * diverged from reconstructed — no smart notification, no text accumulation,
+     * and a stale retry closure that captured retryCount=0 indefinitely.
+     * This helper fixes all three: uses createCallback so each retry receives a
+     * fresh closure with the incremented counter, accumulates text across replies,
+     * and runs smart notification on the final result.
+     */
+    _buildAgentInstructionCallback(name, payload) {
+        const createCallback = (currentPayload) => async () => {
+            console.log(`[Scheduler] Executing task '${name}': ${currentPayload.task} (Retry: ${currentPayload.retryCount || 0})`);
+
+            const msgSource = currentPayload.targetSource || 'scheduler';
+            const msgMeta = {
+                chatId: currentPayload.targetChatId || `scheduled_${name}_${Date.now()}`,
+                jobName: name,
+                ...(currentPayload.model ? { forceModel: currentPayload.model } : {}),
+                ...(currentPayload.allowedTools ? { allowedTools: currentPayload.allowedTools } : {})
+            };
+
+            let executionResult = null;
+            try {
+                await this.agent.processMessage({
+                    role: 'user',
+                    content: `Scheduled Task: ${currentPayload.task}\n\n[SYSTEM: This is a recurring job. To track changes between runs, use 'getJobState' to check previous data and 'saveJobState' to save new data. IMPORTANT: If the result of this task is "nothing to report" or "no action needed", prefix your ENTIRE response with the tag [SILENT] (e.g. "[SILENT] No commitments found."). This prevents unnecessary notifications to the user. Only omit [SILENT] when you have genuinely actionable or interesting information to share.]`,
+                    source: msgSource,
+                    metadata: msgMeta
+                }, async (reply) => {
+                    if (this.agent.interface) {
+                        await this.agent.interface.send(reply);
+                    }
+                    // Capture reply for smart notification.
+                    // createAssistantMessage uses 'content', not 'text'.
+                    const replyText = reply.content || reply.text;
+                    if (!executionResult) {
+                        executionResult = reply;
+                        if (replyText) executionResult.text = replyText;
+                    } else if (replyText) {
+                        // Always keep the latest text — final assistant message overwrites intermediate "Thinking..." messages
+                        executionResult.text = replyText;
+                    }
+                });
+
+                // Ensure result has text for smart notification
+                if (!executionResult) executionResult = { text: '' };
+                if (!executionResult.text) {
+                    executionResult.text = String(executionResult.content || '');
+                }
+
+                // Skip smart notification if the agent already delivered to a user-facing source
+                // (the callback's interface.send above sent the reply directly to origin).
+                const alreadyDelivered = msgSource !== 'scheduler';
+                return await this._processSmartNotification(executionResult, currentPayload, alreadyDelivered);
+
+            } catch (error) {
+                console.error(`[Scheduler] Task '${name}' failed:`, error.message);
+
+                const currentRetry = currentPayload.retryCount || 0;
+                const MAX_RETRIES = 3;
+
+                if (currentRetry < MAX_RETRIES) {
+                    console.log(`[Scheduler] Rescheduling '${name}' for retry ${currentRetry + 1}/${MAX_RETRIES} in 60s.`);
+                    const nextPayload = { ...currentPayload, retryCount: currentRetry + 1 };
+                    // Fresh closure with incremented counter — otherwise reusing the same
+                    // callback would leave retryCount pinned to its original value within
+                    // this process (the fix works across restarts because loadJobs reads
+                    // the persisted counter, but in-session retries wouldn't terminate).
+                    this.scheduleOneOff(name, new Date(Date.now() + 60000), createCallback(nextPayload), {
+                        persist: true,
+                        taskType: 'agent_instruction',
+                        payload: nextPayload
+                    });
+                } else {
+                    console.error(`[Scheduler] Task '${name}' failed permanently after ${MAX_RETRIES} retries.`);
+                    if (process.env.SLACK_WEBHOOK_URL) {
+                        try {
+                            await fetch(process.env.SLACK_WEBHOOK_URL, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    text: `🚨 *Task Failure Alert*\n\nThe task *"${currentPayload.task}"* failed after ${MAX_RETRIES} retries.\n\nError: ${error.message}`
+                                })
+                            });
+                        } catch (e) { console.error('[Scheduler] Failed to send Slack alert:', e); }
+                    }
+                }
+                throw error; // Propagate error so scheduleJob logger sees it
+            }
+        };
+        return createCallback(payload);
+    }
+
+    /**
+     * Build a direct-delivery callback for a persisted reminder (setReminder tool).
+     *
+     * Reminders contain a static text message and do NOT need to invoke the LLM.
+     * Going through processMessage caused double-messages: the agent would call
+     * sendMessage(to="me") per NOTIFICATION_PROTOCOL AND then emit a confirmation
+     * reply ("I've sent the reminder to your WhatsApp...") — both got delivered.
+     *
+     * This callback just sends the reminder text directly via the interface.
+     * Shared between executors/scheduler.js (new reminders) and loadJobs (persisted).
+     */
+    _buildDirectReminderCallback(name, payload) {
+        const createCallback = (currentPayload) => async () => {
+            const reminderMessage = currentPayload.reminderMessage;
+            if (!reminderMessage) {
+                console.error(`[Scheduler] Reminder '${name}' has no reminderMessage; skipping.`);
+                return;
+            }
+            console.log(`[Scheduler] Firing reminder '${name}' (retry ${currentPayload.retryCount || 0}): ${reminderMessage}`);
+
+            try {
+                if (!this.agent.interface) throw new Error('No interface available for reminder delivery');
+
+                // Refresh settings from DB in case they changed
+                const settings = this.agent.db?.getAllAgentSettings?.() || this.agent.settings || {};
+                const ownerPhone = settings.owner_phone;
+                const channel = settings.notification_channel || 'whatsapp';
+
+                const originChatId = currentPayload.targetChatId || '';
+                const originSource = currentPayload.targetSource || '';
+                // Include 'web' so a reminder set from the web UI is attempted there too.
+                // The socket may be dead by the time it fires; that's fine — we still
+                // push to owner's channel below as the durable delivery path.
+                const userFacingSources = ['whatsapp', 'telegram', 'slack', 'web'];
+                const isUserOrigin = userFacingSources.includes(originSource) && originChatId;
+
+                let delivered = false;
+
+                if (isUserOrigin) {
+                    // User set the reminder from a chat interface — reply to that chat
+                    const originResult = await this.agent.interface.send({
+                        source: originSource,
+                        content: reminderMessage,
+                        type: 'text',
+                        metadata: { chatId: originChatId, session: 'assistant' },
+                        isNotification: true
+                    });
+                    if (originResult !== false) delivered = true;
+
+                    // Also push to owner if origin isn't already their chat
+                    const alreadySentToOwner = ownerPhone && originChatId.includes(ownerPhone);
+                    if (ownerPhone && !alreadySentToOwner) {
+                        await this.agent.interface.send({
+                            source: channel,
+                            content: reminderMessage,
+                            type: 'text',
+                            metadata: { chatId: `${ownerPhone}@s.whatsapp.net`, session: 'assistant' },
+                            isNotification: true
+                        });
+                    }
+                } else {
+                    // System-origin (e.g. proactive_thought) — deliver to owner's channel
+                    if (!ownerPhone) throw new Error('No owner phone configured for reminder delivery');
+                    const result = await this.agent.interface.send({
+                        source: channel,
+                        content: reminderMessage,
+                        type: 'text',
+                        metadata: { chatId: `${ownerPhone}@s.whatsapp.net`, session: 'assistant' },
+                        isNotification: true
+                    });
+                    if (result !== false) delivered = true;
+                }
+
+                if (!delivered) throw new Error('Reminder delivery returned false');
+            } catch (error) {
+                console.error(`[Scheduler] Reminder '${name}' delivery failed:`, error.message);
+                const currentRetry = currentPayload.retryCount || 0;
+                const MAX_RETRIES = 3;
+
+                if (currentRetry < MAX_RETRIES) {
+                    console.log(`[Scheduler] Rescheduling reminder '${name}' for retry ${currentRetry + 1}/${MAX_RETRIES} in 60s.`);
+                    const nextPayload = { ...currentPayload, retryCount: currentRetry + 1 };
+                    this.scheduleOneOff(name, new Date(Date.now() + 60000), createCallback(nextPayload), {
+                        persist: true,
+                        taskType: 'reminder',
+                        payload: nextPayload
+                    });
+                } else {
+                    // Fallback: surface in web dashboard so the owner doesn't miss it
+                    this._createFallbackNotification({ task: `Reminder: ${reminderMessage}` }, reminderMessage, error.message);
+                    if (process.env.SLACK_WEBHOOK_URL) {
+                        try {
+                            await fetch(process.env.SLACK_WEBHOOK_URL, {
+                                method: 'POST',
+                                headers: { 'Content-Type': 'application/json' },
+                                body: JSON.stringify({
+                                    text: `🚨 *Reminder Failure*\n\nFailed to deliver reminder: *"${reminderMessage}"*\nError: ${error.message}`
+                                })
+                            });
+                        } catch (e) { console.error('[Scheduler] Slack alert failed:', e.message); }
+                    }
+                }
+            }
+        };
+        return createCallback(payload);
+    }
+
+    /**
      * Create a system notification when message delivery fails.
      * The notification will appear in the web dashboard so the owner doesn't miss it.
      */
@@ -523,7 +661,7 @@ spawnAgent(task: "Scan work Email/Calendar last 4 hours. Call work_gmail message
 spawnAgent(task: "Scan personal Email/Calendar last 4 hours. Call personal_gmail messages.list (maxResults: 15, read subjects/snippets ONLY). Call personal_calendar events.list (calendarId: 'primary'). Do NOT open individual emails. HARD LIMIT: 8 tool calls. Return items in format: '[Email] Sender: subject' or '[Calendar] Event: time'. If nothing, return [SILENT].", model: "FLASH", lightweight: true, tools: ["server:gws_personal"])
 
 4. WHATSAPP:
-spawnAgent(task: "Scan WhatsApp last 4 hours.\\n1. listConversations(session: 'user', limit: 10).\\n2. For each with recent messages, readChatHistory(session: 'user', contact: <id>, limit: 20).\\n3. Skip empty conversations.\\n4. HARD LIMIT: 12 tool calls.\\n5. Return items in format: '[WhatsApp] Contact: item'. If nothing, return [SILENT].", model: "FLASH", lightweight: true, tools: ["listConversations", "readChatHistory"])
+spawnAgent(task: "Scan WhatsApp last 4 hours.\\n1. Call listConversations(session: 'user', limit: 10) EXACTLY ONCE. Keep the returned list in mind for the rest of this task — do NOT call it again under any circumstance.\\n2. From that single result, call readChatHistory(session: 'user', contact: <id>, limit: 20) in parallel for each conversation with recent messages. Skip empty/stale conversations.\\n3. After all readChatHistory calls return, stop calling tools and write the final answer.\\n4. HARD LIMIT: 12 tool calls total. If you hit it, return what you have so far.\\n5. Return items in format: '[WhatsApp] Contact: item'. If nothing actionable, return [SILENT].", model: "FLASH", lightweight: true, tools: ["listConversations", "readChatHistory"])
 
 PHASE 2 — FILTER (apply your judgment as a PRO model):
 
