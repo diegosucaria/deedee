@@ -196,7 +196,8 @@ class SlackConnection {
 
             console.log(`[Slack:${this.workspace?.team}] Message from ${contactString}: ${event.text?.substring(0, 80)}`);
 
-            const message = createUserMessage(event.text || '', 'slack', event.user);
+            const expandedText = await this._expandMentions(event.text || '');
+            const message = createUserMessage(expandedText, 'slack', event.user);
             message.metadata = {
                 teamId: this.workspace?.teamId,
                 teamName: this.workspace?.team,
@@ -343,15 +344,15 @@ class SlackConnection {
             query, count: Math.min(limit, 50), sort: 'timestamp', sort_dir: 'desc',
         });
         if (!result.messages?.matches) return [];
-        return result.messages.matches.map(m => ({
+        return await Promise.all(result.messages.matches.map(async m => ({
             teamId: this.workspace?.teamId,
             teamName: this.workspace?.team,
-            text: m.text,
+            text: await this._expandMentions(m.text),
             user: m.username || m.user,
             channel: m.channel?.name || m.channel?.id,
             timestamp: m.ts,
             permalink: m.permalink,
-        }));
+        })));
     }
 
     async getHistory(channelNameOrId, limit = 20, days_back = null) {
@@ -390,7 +391,7 @@ class SlackConnection {
             // Add the main message
             messages.push({
                 user: uName,
-                text: msg.text,
+                text: await this._expandMentions(msg.text),
                 timestamp: msg.ts,
                 teamId: this.workspace?.teamId,
                 teamName: this.workspace?.team,
@@ -411,7 +412,7 @@ class SlackConnection {
 
                             messages.push({
                                 user: rName,
-                                text: rMsg.text,
+                                text: await this._expandMentions(rMsg.text),
                                 timestamp: rMsg.ts,
                                 teamId: this.workspace?.teamId,
                                 teamName: this.workspace?.team,
@@ -463,6 +464,29 @@ class SlackConnection {
             throw new Error(`Slack API ${method}: ${data.error}`);
         }
         return data;
+    }
+
+    /**
+     * Replace raw Slack user mentions inside message text with @names so the LLM
+     * doesn't have to call resolveSlackUser for every <@U...> it sees.
+     * Leaves <!channel>, <!here>, <!subteam^...>, and already-expanded <@U|name>
+     * forms alone-ish (we unwrap <@U|name> to @name since |name is already the display form).
+     */
+    async _expandMentions(text) {
+        if (!text || typeof text !== 'string' || text.indexOf('<@') === -1) return text;
+        const MENTION_RE = /<@([UW][A-Z0-9]+)(?:\|([^>]*))?>/g;
+        const ids = new Set();
+        for (const m of text.matchAll(MENTION_RE)) {
+            if (!m[2]) ids.add(m[1]); // only need to look up ones without a |name hint
+        }
+        if (ids.size > 0) {
+            await Promise.all([...ids].map(id => this._resolveUser(id).catch(() => null)));
+        }
+        return text.replace(MENTION_RE, (_, id, inline) => {
+            if (inline) return `@${inline}`;
+            const name = this.userCache.get(id);
+            return name ? `@${name}` : `@${id}`;
+        });
     }
 
     async _resolveUser(userId) {
