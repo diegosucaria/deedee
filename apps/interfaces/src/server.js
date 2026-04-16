@@ -503,15 +503,17 @@ app.get('/slack/resolve-user', async (req, res) => {
           const realName = (user.name || '').toLowerCase();
           const displayName = (user.displayName || '').toLowerCase();
           const email = (user.email || '').toLowerCase();
-          if (realName === nameLower || displayName === nameLower ||
+          const userId = (user.id || '').toLowerCase();
+          if (userId === nameLower ||
+              realName === nameLower || displayName === nameLower ||
               realName.includes(nameLower) || displayName.includes(nameLower) ||
               email.startsWith(nameLower)) {
             matches.push({
               ...user,
               workspace: conn.workspace?.teamId,
-              workspaceName: conn.workspace?.teamName,
+              workspaceName: conn.workspace?.team,
               // Exact match scores higher
-              exactMatch: realName === nameLower || displayName === nameLower,
+              exactMatch: userId === nameLower || realName === nameLower || displayName === nameLower,
             });
           }
         }

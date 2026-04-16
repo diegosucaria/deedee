@@ -1435,6 +1435,11 @@ class Agent {
       const MAX_LOOPS_BROWSER = parseInt(process.env.MAX_TOOL_LOOPS_BROWSER || '50');
       const MAX_SAME_TOOL_CALLS = 6; // Same tool name (non-browser) = likely stuck
       const MAX_IDENTICAL_CALLS = 3; // Same tool + same args = definitely stuck
+      // Per-tool Tier 1 overrides. Use for tools that legitimately fan out across
+      // many distinct arguments (but should still have a ceiling, unlike LOOP_EXEMPT_TOOLS).
+      const TIER1_LIMIT_OVERRIDES = {
+        resolveSlackUser: 12, // fans out to resolve each user in a Slack scan (6–10 is normal)
+      };
       let loopCount = 0;
       let hasBrowserSession = false; // Escalate limit when browser tools are used
       const toolCallTracker = {}; // toolName -> count (per-tool-name, non-browser only)
@@ -1590,12 +1595,13 @@ class Agent {
             });
           }
           // Tier 1: Same tool name — warn via tool result
-          else if (toolCallTracker[toolName] >= MAX_SAME_TOOL_CALLS) {
+          else if (toolCallTracker[toolName] >= (TIER1_LIMIT_OVERRIDES[toolName] || MAX_SAME_TOOL_CALLS)) {
             const count = toolCallTracker[toolName];
+            const limit = TIER1_LIMIT_OVERRIDES[toolName] || MAX_SAME_TOOL_CALLS;
             console.warn(`${logPrefix} Loop detection: ${toolName} called ${count} times`);
             call._loopWarning = `⚠️ You have called "${toolName}" ${count} times. STOP repeating this tool with parameter variations and try a DIFFERENT approach.`;
             // Only notify once per tool (on first trigger)
-            if (count === MAX_SAME_TOOL_CALLS) {
+            if (count === limit) {
               const chatId = message.metadata?.chatId;
               this.notifications.create({
                 type: 'loop_detected',
