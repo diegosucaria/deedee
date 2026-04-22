@@ -116,6 +116,31 @@ const createWardrobeRouter = (agent) => {
         }
     });
 
+    // POST /garments/:id/reenrich { hint?: string }
+    router.post('/garments/:id/reenrich', async (req, res) => {
+        try {
+            const { hint } = req.body || {};
+            if (!agent.wardrobeService) return res.status(503).json({ error: 'Wardrobe service not available' });
+            const updated = await agent.wardrobeService.reenrichGarment(req.params.id, { hint: hint || '' });
+            res.json({ success: true, garment: updated });
+        } catch (error) {
+            console.error('[WardrobeRouter] Re-enrich error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    // POST /garments/:id/generate-image
+    router.post('/garments/:id/generate-image', async (req, res) => {
+        try {
+            if (!agent.wardrobeService) return res.status(503).json({ error: 'Wardrobe service not available' });
+            const updated = await agent.wardrobeService.generateGarmentImage(req.params.id);
+            res.json({ success: true, garment: updated });
+        } catch (error) {
+            console.error('[WardrobeRouter] Generate image error:', error);
+            res.status(500).json({ error: error.message });
+        }
+    });
+
     // GET /profile
     router.get('/profile', (req, res) => {
         try {
