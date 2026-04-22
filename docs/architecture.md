@@ -14,7 +14,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - **Native TTS:** Generates high-quality speech using Gemini 2.5 (`LINEAR16`, `WAV`) with multilingual support.
     - **Sticky Routing:** Maintains model context (PRO vs FLASH) for multi-turn conversations by tracking `lastModel` metadata, ensuring complex reasoning tasks aren't interrupted by short follow-ups.
     - **Tool Executor**: Decoupled tool handling using a modular `ToolExecutor` facade. Delegates to domain-specific executors:
-        - `FileSystemExecutor`, `MemoryExecutor`, `SchedulerExecutor`, `SmartHomeExecutor`, `GSuiteExecutor`, `MediaExecutor`, `ProductivityExecutor`, `SubAgentExecutor`.
+        - `FileSystemExecutor`, `MemoryExecutor`, `SchedulerExecutor`, `SmartHomeExecutor`, `GSuiteExecutor`, `MediaExecutor`, `ProductivityExecutor`, `SubAgentExecutor`, `DJExecutor`, `WardrobeExecutor`.
     - **Tool Auto-Scoping**: Each tool definition includes a `category` field (e.g., `memory`, `slack`, `calendar_email`). A `ToolScoper` service uses a cheap LLM call to analyze scheduled job prompts on save, determining which tool categories are needed. At runtime, only relevant tools are included in the request, reducing input token costs. MCP tools are classified by namespace pattern.
     - **Multi-Agent**: Spawns isolated child agents (`SubAgentService`) for parallel tasks. Max 3 concurrent, 10-min timeout, depth=1.
     - **Notification Service**: Persists system alerts (tool truncation, errors) to SQLite and broadcasts via Socket.io for real-time UI updates.
@@ -92,6 +92,8 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - `POST /v1/notifications/:id/dismiss`: Dismiss a notification.
     - `POST /v1/notifications/dismiss-all`: Dismiss all notifications.
     - `DELETE /v1/notifications/:id`: Delete a notification.
+    - `/v1/dj/*`: DJ crate management (vinyls, crates). Agent-backed. See [docs/dj-assistant.md](dj-assistant.md).
+    - `/v1/wardrobe/*`: Wardrobe service (garments, outfits, trips, shopping list, profile). Agent-backed. See [docs/wardrobe.md](wardrobe.md).
 - **Socket.io Proxy**: `/socket.io` path is proxied to `interfaces:5000` via `http-proxy-middleware` with full WebSocket upgrade support. This bypasses Next.js (can't handle WS upgrades) and Traefik forward-auth (generates CSRF cookies on HTTP polls). Auth is handled by Interfaces, not the API gateway.
 - **Auth**: Bearer Token (`DEEDEE_API_TOKEN`). All `/v1` routes protected. `/health` and `/socket.io` are public (socket auth delegated to Interfaces).
 - **Security**: All route parameters are encoded with `encodeURIComponent()` to prevent injection via crafted job names or IDs.

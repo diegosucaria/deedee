@@ -146,6 +146,14 @@ Everything is customizable via environment variables. Like which models to use.
     -   **Booth Buddy**: Get real-time mixing recommendations based on Key, BPM, and Vibe.
     -   **Visual Crate**: Browse your collection at `/dj`.
 
+-   **👕 Wardrobe**:
+    -   **Photo Catalog**: Multi-item detection — one photo can capture several garments at once; each is cropped, tagged, and saved. Send from chat (Web/Telegram/WhatsApp) or upload directly.
+    -   **Outfit AI**: Ask "what should I wear" with a photo of clothes; the agent matches items against your existing wardrobe, auto-adds anything new, and recommends combinations across four buckets (weather / occasion / item-anchored / safe repeat).
+    -   **Virtual Mirror**: Renders you wearing a combo — single-panel or multi-panel side-by-side — using a stored reference selfie.
+    -   **Travel Capsules**: `pack_for_trip` pulls a weather forecast (via the weather skill) and plans a minimum-item capsule with per-day outfits. The capsule is editable once the trip is active.
+    -   **Shopping List**: Missing-piece suggestions from outfit reasoning land in a wanted-items list; ingesting a matching garment later prompts you to mark it purchased.
+    -   **Visual Wardrobe**: Browse, filter, and edit at `/wardrobe`. See [docs/wardrobe.md](docs/wardrobe.md) for the full feature tour.
+
 ---
 
 ##  Tools & Capabilities
