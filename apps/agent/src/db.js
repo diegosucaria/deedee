@@ -280,6 +280,83 @@ class AgentDB {
         PRIMARY KEY (crate_id, vinyl_id)
       );
 
+      CREATE TABLE IF NOT EXISTS wr_garments (
+        id TEXT PRIMARY KEY,
+        type TEXT,
+        subtype TEXT,
+        primary_color TEXT,
+        secondary_colors TEXT,
+        pattern TEXT,
+        material_guess TEXT,
+        warmth INTEGER,
+        formality INTEGER,
+        season_tags TEXT,
+        brand TEXT,
+        model TEXT,
+        size TEXT,
+        fit_notes TEXT,
+        source_image_path TEXT,
+        crop_image_path TEXT,
+        bbox TEXT,
+        source TEXT DEFAULT 'manual_upload',
+        enrichment_status TEXT DEFAULT 'complete',
+        enrichment_confidence REAL DEFAULT 0,
+        meta TEXT,
+        times_worn INTEGER DEFAULT 0,
+        last_worn_at TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS wr_outfits (
+        id TEXT PRIMARY KEY,
+        name TEXT,
+        occasion TEXT,
+        weather_tags TEXT,
+        garment_ids TEXT,
+        rendered_image_path TEXT,
+        liked INTEGER DEFAULT 0,
+        last_suggested_at TEXT,
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS wr_trips (
+        id TEXT PRIMARY KEY,
+        calendar_event_id TEXT,
+        destination TEXT,
+        start_date TEXT,
+        end_date TEXT,
+        activities TEXT,
+        weather_snapshot TEXT,
+        planned_capsule TEXT,
+        actual_capsule TEXT,
+        status TEXT DEFAULT 'planned',
+        created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
+      CREATE TABLE IF NOT EXISTS wr_shopping_list (
+        id TEXT PRIMARY KEY,
+        description TEXT NOT NULL,
+        type TEXT,
+        primary_color TEXT,
+        pattern TEXT,
+        material_hint TEXT,
+        suggested_context TEXT,
+        priority TEXT DEFAULT 'medium',
+        status TEXT DEFAULT 'wanted',
+        resolved_garment_id TEXT,
+        added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+        purchased_at TEXT
+      );
+
+      CREATE TABLE IF NOT EXISTS wr_user_profile (
+        id INTEGER PRIMARY KEY CHECK (id = 1),
+        reference_image_path TEXT,
+        preferred_brands TEXT,
+        sizing TEXT,
+        style_notes TEXT,
+        updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
+      );
+
       CREATE TABLE IF NOT EXISTS subagents (
         id TEXT PRIMARY KEY,
         parent_chat_id TEXT NOT NULL,
@@ -307,6 +384,19 @@ class AgentDB {
       CREATE INDEX IF NOT EXISTS idx_notifications_active
         ON notifications(is_read, is_dismissed, created_at DESC);
     `);
+
+    // Seed wr_user_profile singleton (id=1) with preferred brands if missing
+    try {
+      const existing = this.db.prepare('SELECT id FROM wr_user_profile WHERE id = 1').get();
+      if (!existing) {
+        this.db.prepare(`
+          INSERT INTO wr_user_profile (id, preferred_brands, sizing, style_notes)
+          VALUES (1, ?, ?, ?)
+        `).run(JSON.stringify(['Lacoste', 'Lululemon']), '{}', '');
+      }
+    } catch (err) {
+      console.warn('[DB] Failed to seed wr_user_profile:', err.message);
+    }
 
     // Migration: Add watchers table if missing (idempotent via create table if not exists, but for updates just in case)
     // ...
@@ -2569,6 +2659,376 @@ class AgentDB {
       INSERT INTO notifications (id, type, severity, title, message, metadata, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(id, type, severity, title, message, metadataStr, createdAt);
+  }
+
+  // --- Wardrobe: Garments ---
+
+  addGarment(garment) {
+    const id = garment.id || crypto.randomUUID();
+    const stmt = this.db.prepare(`
+      INSERT INTO wr_garments (
+        id, type, subtype, primary_color, secondary_colors, pattern, material_guess,
+        warmth, formality, season_tags, brand, model, size, fit_notes,
+        source_image_path, crop_image_path, bbox, source,
+        enrichment_status, enrichment_confidence, meta,
+        times_worn, last_worn_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    stmt.run(
+      id,
+      garment.type || null,
+      garment.subtype || null,
+      garment.primary_color || null,
+      garment.secondary_colors ? JSON.stringify(garment.secondary_colors) : null,
+      garment.pattern || null,
+      garment.material_guess || null,
+      garment.warmth || null,
+      garment.formality || null,
+      garment.season_tags ? JSON.stringify(garment.season_tags) : null,
+      garment.brand || null,
+      garment.model || null,
+      garment.size || null,
+      garment.fit_notes || null,
+      garment.source_image_path || null,
+      garment.crop_image_path || null,
+      garment.bbox ? JSON.stringify(garment.bbox) : null,
+      garment.source || 'manual_upload',
+      garment.enrichment_status || 'complete',
+      garment.enrichment_confidence || 0,
+      garment.meta ? JSON.stringify(garment.meta) : '{}',
+      garment.times_worn || 0,
+      garment.last_worn_at || null
+    );
+    return id;
+  }
+
+  getGarment(id) {
+    const row = this.db.prepare('SELECT * FROM wr_garments WHERE id = ?').get(id);
+    return row ? this._hydrateGarment(row) : null;
+  }
+
+  getGarments({ limit = 200, offset = 0, type = null } = {}) {
+    let sql = 'SELECT * FROM wr_garments';
+    const params = [];
+    if (type) {
+      sql += ' WHERE type = ?';
+      params.push(type);
+    }
+    sql += ' ORDER BY created_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+    return this.db.prepare(sql).all(...params).map(r => this._hydrateGarment(r));
+  }
+
+  updateGarment(id, fields) {
+    const allowed = [
+      'type', 'subtype', 'primary_color', 'secondary_colors', 'pattern', 'material_guess',
+      'warmth', 'formality', 'season_tags', 'brand', 'model', 'size', 'fit_notes',
+      'source_image_path', 'crop_image_path', 'bbox', 'source',
+      'enrichment_status', 'enrichment_confidence', 'meta',
+      'times_worn', 'last_worn_at'
+    ];
+    const jsonCols = new Set(['secondary_colors', 'season_tags', 'bbox', 'meta']);
+    const sets = [];
+    const values = [];
+    for (const [k, v] of Object.entries(fields)) {
+      if (!allowed.includes(k)) continue;
+      sets.push(`${k} = ?`);
+      values.push(jsonCols.has(k) && v !== null ? JSON.stringify(v) : v);
+    }
+    if (sets.length === 0) return false;
+    values.push(id);
+    const result = this.db.prepare(`UPDATE wr_garments SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    return result.changes > 0;
+  }
+
+  deleteGarment(id) {
+    const garment = this.getGarment(id);
+    if (!garment) return false;
+    const fs = require('fs');
+    for (const p of [garment.source_image_path, garment.crop_image_path]) {
+      if (p) {
+        try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (e) { /* ignore */ }
+      }
+    }
+    this.db.prepare('DELETE FROM wr_garments WHERE id = ?').run(id);
+    return true;
+  }
+
+  searchGarments(query) {
+    if (!query) return [];
+    const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+    if (tokens.length === 0) return [];
+    const conditions = tokens.map(() =>
+      `(LOWER(type) LIKE ? OR LOWER(subtype) LIKE ? OR LOWER(primary_color) LIKE ? OR LOWER(pattern) LIKE ? OR LOWER(brand) LIKE ? OR LOWER(fit_notes) LIKE ?)`
+    ).join(' AND ');
+    const params = tokens.flatMap(t => {
+      const w = `%${t}%`;
+      return [w, w, w, w, w, w];
+    });
+    return this.db.prepare(`SELECT * FROM wr_garments WHERE ${conditions} ORDER BY created_at DESC`)
+      .all(...params).map(r => this._hydrateGarment(r));
+  }
+
+  _hydrateGarment(row) {
+    const safeParse = (s, fallback) => {
+      if (!s) return fallback;
+      try { return JSON.parse(s); } catch { return fallback; }
+    };
+    return {
+      ...row,
+      secondary_colors: safeParse(row.secondary_colors, []),
+      season_tags: safeParse(row.season_tags, []),
+      bbox: safeParse(row.bbox, null),
+      meta: safeParse(row.meta, {})
+    };
+  }
+
+  // --- Wardrobe: Outfits ---
+
+  addOutfit(outfit) {
+    const id = outfit.id || crypto.randomUUID();
+    this.db.prepare(`
+      INSERT INTO wr_outfits (id, name, occasion, weather_tags, garment_ids, rendered_image_path, liked, last_suggested_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      outfit.name || null,
+      outfit.occasion || null,
+      outfit.weather_tags ? JSON.stringify(outfit.weather_tags) : null,
+      outfit.garment_ids ? JSON.stringify(outfit.garment_ids) : '[]',
+      outfit.rendered_image_path || null,
+      outfit.liked ? 1 : 0,
+      outfit.last_suggested_at || new Date().toISOString()
+    );
+    return id;
+  }
+
+  getOutfit(id) {
+    const row = this.db.prepare('SELECT * FROM wr_outfits WHERE id = ?').get(id);
+    return row ? this._hydrateOutfit(row) : null;
+  }
+
+  getOutfits({ liked = null, limit = 100, offset = 0 } = {}) {
+    let sql = 'SELECT * FROM wr_outfits';
+    const params = [];
+    if (liked !== null) {
+      sql += ' WHERE liked = ?';
+      params.push(liked ? 1 : 0);
+    }
+    sql += ' ORDER BY last_suggested_at DESC LIMIT ? OFFSET ?';
+    params.push(limit, offset);
+    return this.db.prepare(sql).all(...params).map(r => this._hydrateOutfit(r));
+  }
+
+  updateOutfit(id, fields) {
+    const allowed = ['name', 'occasion', 'weather_tags', 'garment_ids', 'rendered_image_path', 'liked', 'last_suggested_at'];
+    const jsonCols = new Set(['weather_tags', 'garment_ids']);
+    const sets = [];
+    const values = [];
+    for (const [k, v] of Object.entries(fields)) {
+      if (!allowed.includes(k)) continue;
+      sets.push(`${k} = ?`);
+      if (k === 'liked') values.push(v ? 1 : 0);
+      else if (jsonCols.has(k) && v !== null) values.push(JSON.stringify(v));
+      else values.push(v);
+    }
+    if (sets.length === 0) return false;
+    values.push(id);
+    const result = this.db.prepare(`UPDATE wr_outfits SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    return result.changes > 0;
+  }
+
+  deleteOutfit(id) {
+    this.db.prepare('DELETE FROM wr_outfits WHERE id = ?').run(id);
+    return true;
+  }
+
+  _hydrateOutfit(row) {
+    const safeParse = (s, fb) => { if (!s) return fb; try { return JSON.parse(s); } catch { return fb; } };
+    return {
+      ...row,
+      weather_tags: safeParse(row.weather_tags, []),
+      garment_ids: safeParse(row.garment_ids, []),
+      liked: !!row.liked
+    };
+  }
+
+  // --- Wardrobe: Trips ---
+
+  addTrip(trip) {
+    const id = trip.id || crypto.randomUUID();
+    this.db.prepare(`
+      INSERT INTO wr_trips (id, calendar_event_id, destination, start_date, end_date,
+        activities, weather_snapshot, planned_capsule, actual_capsule, status)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      trip.calendar_event_id || null,
+      trip.destination || null,
+      trip.start_date || null,
+      trip.end_date || null,
+      trip.activities ? JSON.stringify(trip.activities) : null,
+      trip.weather_snapshot ? JSON.stringify(trip.weather_snapshot) : null,
+      trip.planned_capsule ? JSON.stringify(trip.planned_capsule) : null,
+      trip.actual_capsule ? JSON.stringify(trip.actual_capsule) : null,
+      trip.status || 'planned'
+    );
+    return id;
+  }
+
+  getTrip(id) {
+    const row = this.db.prepare('SELECT * FROM wr_trips WHERE id = ?').get(id);
+    return row ? this._hydrateTrip(row) : null;
+  }
+
+  getTrips({ status = null, limit = 100 } = {}) {
+    let sql = 'SELECT * FROM wr_trips';
+    const params = [];
+    if (status) {
+      sql += ' WHERE status = ?';
+      params.push(status);
+    }
+    sql += ' ORDER BY start_date DESC LIMIT ?';
+    params.push(limit);
+    return this.db.prepare(sql).all(...params).map(r => this._hydrateTrip(r));
+  }
+
+  updateTrip(id, fields) {
+    const allowed = ['calendar_event_id', 'destination', 'start_date', 'end_date',
+      'activities', 'weather_snapshot', 'planned_capsule', 'actual_capsule', 'status'];
+    const jsonCols = new Set(['activities', 'weather_snapshot', 'planned_capsule', 'actual_capsule']);
+    const sets = [];
+    const values = [];
+    for (const [k, v] of Object.entries(fields)) {
+      if (!allowed.includes(k)) continue;
+      sets.push(`${k} = ?`);
+      values.push(jsonCols.has(k) && v !== null ? JSON.stringify(v) : v);
+    }
+    if (sets.length === 0) return false;
+    values.push(id);
+    const result = this.db.prepare(`UPDATE wr_trips SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    return result.changes > 0;
+  }
+
+  setTripCapsule(id, garmentIds) {
+    return this.updateTrip(id, { actual_capsule: garmentIds });
+  }
+
+  deleteTrip(id) {
+    this.db.prepare('DELETE FROM wr_trips WHERE id = ?').run(id);
+    return true;
+  }
+
+  _hydrateTrip(row) {
+    const safeParse = (s, fb) => { if (!s) return fb; try { return JSON.parse(s); } catch { return fb; } };
+    return {
+      ...row,
+      activities: safeParse(row.activities, []),
+      weather_snapshot: safeParse(row.weather_snapshot, null),
+      planned_capsule: safeParse(row.planned_capsule, []),
+      actual_capsule: safeParse(row.actual_capsule, [])
+    };
+  }
+
+  // --- Wardrobe: Shopping list ---
+
+  addShoppingItem(item) {
+    const id = item.id || crypto.randomUUID();
+    this.db.prepare(`
+      INSERT INTO wr_shopping_list (id, description, type, primary_color, pattern, material_hint,
+        suggested_context, priority, status, resolved_garment_id, purchased_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      id,
+      item.description,
+      item.type || null,
+      item.primary_color || null,
+      item.pattern || null,
+      item.material_hint || null,
+      item.suggested_context ? JSON.stringify(item.suggested_context) : null,
+      item.priority || 'medium',
+      item.status || 'wanted',
+      item.resolved_garment_id || null,
+      item.purchased_at || null
+    );
+    return id;
+  }
+
+  getShoppingItem(id) {
+    const row = this.db.prepare('SELECT * FROM wr_shopping_list WHERE id = ?').get(id);
+    return row ? this._hydrateShoppingItem(row) : null;
+  }
+
+  listShoppingItems({ status = null, limit = 200 } = {}) {
+    let sql = 'SELECT * FROM wr_shopping_list';
+    const params = [];
+    if (status) {
+      sql += ' WHERE status = ?';
+      params.push(status);
+    }
+    sql += ' ORDER BY added_at DESC LIMIT ?';
+    params.push(limit);
+    return this.db.prepare(sql).all(...params).map(r => this._hydrateShoppingItem(r));
+  }
+
+  updateShoppingItem(id, fields) {
+    const allowed = ['description', 'type', 'primary_color', 'pattern', 'material_hint',
+      'suggested_context', 'priority', 'status', 'resolved_garment_id', 'purchased_at'];
+    const jsonCols = new Set(['suggested_context']);
+    const sets = [];
+    const values = [];
+    for (const [k, v] of Object.entries(fields)) {
+      if (!allowed.includes(k)) continue;
+      sets.push(`${k} = ?`);
+      values.push(jsonCols.has(k) && v !== null ? JSON.stringify(v) : v);
+    }
+    if (sets.length === 0) return false;
+    values.push(id);
+    const result = this.db.prepare(`UPDATE wr_shopping_list SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    return result.changes > 0;
+  }
+
+  deleteShoppingItem(id) {
+    this.db.prepare('DELETE FROM wr_shopping_list WHERE id = ?').run(id);
+    return true;
+  }
+
+  _hydrateShoppingItem(row) {
+    const safeParse = (s, fb) => { if (!s) return fb; try { return JSON.parse(s); } catch { return fb; } };
+    return {
+      ...row,
+      suggested_context: safeParse(row.suggested_context, {})
+    };
+  }
+
+  // --- Wardrobe: User Profile ---
+
+  getUserProfile() {
+    const row = this.db.prepare('SELECT * FROM wr_user_profile WHERE id = 1').get();
+    if (!row) return null;
+    const safeParse = (s, fb) => { if (!s) return fb; try { return JSON.parse(s); } catch { return fb; } };
+    return {
+      ...row,
+      preferred_brands: safeParse(row.preferred_brands, []),
+      sizing: safeParse(row.sizing, {})
+    };
+  }
+
+  updateUserProfile(fields) {
+    const allowed = ['reference_image_path', 'preferred_brands', 'sizing', 'style_notes'];
+    const jsonCols = new Set(['preferred_brands', 'sizing']);
+    const sets = [];
+    const values = [];
+    for (const [k, v] of Object.entries(fields)) {
+      if (!allowed.includes(k)) continue;
+      sets.push(`${k} = ?`);
+      values.push(jsonCols.has(k) && v !== null ? JSON.stringify(v) : v);
+    }
+    if (sets.length === 0) return false;
+    sets.push(`updated_at = CURRENT_TIMESTAMP`);
+    values.push(1);
+    const result = this.db.prepare(`UPDATE wr_user_profile SET ${sets.join(', ')} WHERE id = ?`).run(...values);
+    return result.changes > 0;
   }
 }
 

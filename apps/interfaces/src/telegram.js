@@ -19,6 +19,7 @@ class TelegramService {
 
     this.bot.on('text', this.handleMessage.bind(this));
     this.bot.on('voice', this.handleVoice.bind(this));
+    this.bot.on('photo', this.handlePhoto.bind(this));
 
     this.activeTyping = new Map();
   }
@@ -135,6 +136,43 @@ class TelegramService {
     } catch (error) {
       console.error('[Telegram] Error handling voice:', error.message);
       ctx.reply('Sorry, I am having trouble listening to your voice message.');
+    }
+  }
+
+  async handlePhoto(ctx) {
+    try {
+      const userId = ctx.from.id.toString();
+      if (!this._isAllowed(userId)) {
+        console.warn(`[Telegram] Blocked photo from unauthorized user: ${userId}`);
+        return;
+      }
+      const chatId = ctx.chat.id.toString();
+
+      // Pick the largest photo size available
+      const photos = ctx.message.photo || [];
+      if (photos.length === 0) return;
+      const largest = photos[photos.length - 1];
+
+      const fileLink = await ctx.telegram.getFileLink(largest.file_id);
+      const response = await axios.get(fileLink.href, { responseType: 'arraybuffer' });
+      const base64Image = Buffer.from(response.data).toString('base64');
+
+      const caption = ctx.message.caption || '[Photo]';
+      console.log(`[Telegram] Received photo from ${userId}${ctx.message.caption ? ` with caption: ${ctx.message.caption}` : ''}`);
+
+      this.startTyping(chatId);
+
+      const message = createUserMessage(caption, 'telegram', userId);
+      message.parts = [
+        { text: caption },
+        { inlineData: { mimeType: 'image/jpeg', data: base64Image } }
+      ];
+      message.metadata = { chatId };
+
+      await axios.post(`${this.agentUrl}/webhook`, message);
+    } catch (error) {
+      console.error('[Telegram] Error handling photo:', error.message);
+      ctx.reply('Sorry, I had trouble processing your photo.');
     }
   }
 

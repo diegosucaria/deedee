@@ -131,6 +131,7 @@ const createVaultRouter = require('./routes/vaults');
 
 const { createPeopleRouter } = require('./routes/people');
 const { createDjRouter } = require('./routes/dj');
+const { createWardrobeRouter } = require('./routes/wardrobe');
 const { createAutopilotRouter } = require('./routes/autopilot');
 const { createNotificationsRouter } = require('./routes/notifications');
 
@@ -149,6 +150,7 @@ if (agent) {
   app.use('/internal', createInternalRouter(agent));
   app.use('/v1/vaults', createVaultRouter(agent));
   app.use('/internal/dj', createDjRouter(agent));
+  app.use('/internal/wardrobe', createWardrobeRouter(agent));
   app.use('/v1/autopilot', createAutopilotRouter(agent));
   app.use('/internal/notifications', createNotificationsRouter(agent));
   app.use('/', createToolRouter(agent));

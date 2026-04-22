@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { MessageSquare, ClipboardList, Database, Activity, Terminal, ChevronLeft, ChevronRight, Settings, Mic, Users, Disc, ShieldAlert } from 'lucide-react';
+import { MessageSquare, ClipboardList, Database, Activity, Terminal, ChevronLeft, ChevronRight, Settings, Mic, Users, Disc, ShieldAlert, Shirt } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useState } from 'react';
@@ -16,6 +16,7 @@ const navItems = [
     { name: 'Tasks', href: '/tasks', icon: ClipboardList },
     { name: 'Brain', href: '/brain', icon: Activity },
     { name: 'DJ Crate', href: '/dj', icon: Disc },
+    { name: 'Wardrobe', href: '/wardrobe', icon: Shirt },
     { name: 'Life Vaults', href: '/vaults', icon: Database },
     { name: 'People', href: '/people', icon: Users },
     { name: 'Autopilot', href: '/autopilot', icon: ShieldAlert },

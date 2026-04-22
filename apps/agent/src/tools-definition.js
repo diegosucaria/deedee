@@ -736,6 +736,342 @@ const toolDefinitions = [
           required: ["current_track"]
         }
       },
+      // Wardrobe
+      {
+        name: "add_garment",
+        category: "wardrobe",
+        description: "Add a garment to the user's wardrobe from an image. Accepts a base64-encoded image.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            image_base64: { type: "STRING", description: "Base64-encoded image data (no data: prefix)." },
+            mime_type: { type: "STRING", description: "Optional MIME type (e.g. 'image/jpeg')." }
+          },
+          required: ["image_base64"]
+        }
+      },
+      {
+        name: "list_garments",
+        category: "wardrobe",
+        description: "List garments in the user's wardrobe, optionally filtered by type.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            limit: { type: "NUMBER", description: "Max garments to return (default 100)." },
+            offset: { type: "NUMBER", description: "Offset for pagination." },
+            type: { type: "STRING", description: "Optional filter: top|bottom|shoes|outerwear|accessory|underwear|other." }
+          },
+          required: []
+        }
+      },
+      {
+        name: "get_garment",
+        category: "wardrobe",
+        description: "Get full details of a single garment by id.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            id: { type: "STRING", description: "Garment id." }
+          },
+          required: ["id"]
+        }
+      },
+      {
+        name: "search_garments",
+        category: "wardrobe",
+        description: "Search wardrobe by type, color, pattern, brand, or notes.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            query: { type: "STRING", description: "Search query." }
+          },
+          required: ["query"]
+        }
+      },
+      {
+        name: "update_garment",
+        category: "wardrobe",
+        description: "Update fields on a garment (type, subtype, color, brand, size, notes, etc.).",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            id: { type: "STRING", description: "Garment id." },
+            patch: {
+              type: "OBJECT",
+              description: "Partial fields to update. Allowed keys: type, subtype, primary_color, secondary_colors, pattern, material_guess, warmth, formality, season_tags, brand, model, size, fit_notes."
+            }
+          },
+          required: ["id", "patch"]
+        }
+      },
+      {
+        name: "delete_garment",
+        category: "wardrobe",
+        description: "Delete a garment from the wardrobe by id.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            id: { type: "STRING", description: "Garment id." }
+          },
+          required: ["id"]
+        }
+      },
+      {
+        name: "confirm_brand",
+        category: "wardrobe",
+        description: "Accept or reject a pending brand candidate for a garment (for items in the 'needs_brand_confirm' state).",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            garment_id: { type: "STRING", description: "Garment id." },
+            accept: { type: "BOOLEAN", description: "True to accept the candidate brand/model, false to reject." }
+          },
+          required: ["garment_id", "accept"]
+        }
+      },
+      {
+        name: "add_to_shopping_list",
+        category: "wardrobe",
+        description: "Add a wanted garment to the shopping list. Useful when a recommended outfit is missing a key piece.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            description: { type: "STRING" },
+            type: { type: "STRING", description: "e.g. top|bottom|shoes|outerwear|accessory" },
+            primary_color: { type: "STRING" },
+            pattern: { type: "STRING" },
+            material_hint: { type: "STRING" },
+            context: {
+              type: "OBJECT",
+              description: "Optional structured context (e.g. outfit_id, reason)."
+            },
+            priority: { type: "STRING", description: "low|medium|high (default medium)." }
+          },
+          required: ["description"]
+        }
+      },
+      {
+        name: "list_shopping_items",
+        category: "wardrobe",
+        description: "List shopping list items, optionally filtered by status (wanted|purchased|dismissed).",
+        parameters: { type: "OBJECT", properties: { status: { type: "STRING" } }, required: [] }
+      },
+      {
+        name: "mark_purchased",
+        category: "wardrobe",
+        description: "Mark a shopping item as purchased, optionally linking to the new garment id that fulfilled it.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            id: { type: "STRING" },
+            garment_id: { type: "STRING", description: "Optional garment id that fulfills this shopping item." }
+          },
+          required: ["id"]
+        }
+      },
+      {
+        name: "dismiss_shopping_item",
+        category: "wardrobe",
+        description: "Dismiss a shopping item (no longer wanted).",
+        parameters: { type: "OBJECT", properties: { id: { type: "STRING" } }, required: ["id"] }
+      },
+      {
+        name: "pack_for_trip",
+        category: "wardrobe",
+        description: "Plan a travel capsule: fetches weather via subagent, reasons over wardrobe with Pro model, and saves a wr_trips row with planned_capsule and per-day outfit suggestions.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            destination: { type: "STRING" },
+            start_date: { type: "STRING", description: "YYYY-MM-DD" },
+            end_date: { type: "STRING", description: "YYYY-MM-DD" },
+            activities: { type: "ARRAY", items: { type: "STRING" } },
+            calendar_event_id: { type: "STRING", description: "Optional linked calendar event id." }
+          },
+          required: ["destination", "start_date", "end_date"]
+        }
+      },
+      {
+        name: "get_trip",
+        category: "wardrobe",
+        description: "Get full details of a trip by id.",
+        parameters: { type: "OBJECT", properties: { id: { type: "STRING" } }, required: ["id"] }
+      },
+      {
+        name: "list_trips",
+        category: "wardrobe",
+        description: "List trips, optionally filtered by status (planned|active|completed).",
+        parameters: { type: "OBJECT", properties: { status: { type: "STRING" } }, required: [] }
+      },
+      {
+        name: "start_trip",
+        category: "wardrobe",
+        description: "Mark a trip as active. Copies planned_capsule into actual_capsule if empty.",
+        parameters: { type: "OBJECT", properties: { id: { type: "STRING" } }, required: ["id"] }
+      },
+      {
+        name: "complete_trip",
+        category: "wardrobe",
+        description: "Mark a trip as completed.",
+        parameters: { type: "OBJECT", properties: { id: { type: "STRING" } }, required: ["id"] }
+      },
+      {
+        name: "set_trip_capsule",
+        category: "wardrobe",
+        description: "Overwrite a trip's actual_capsule with the given garment ids. Use to record exactly what was actually packed.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            id: { type: "STRING" },
+            garment_ids: { type: "ARRAY", items: { type: "STRING" } }
+          },
+          required: ["id", "garment_ids"]
+        }
+      },
+      {
+        name: "add_to_trip_capsule",
+        category: "wardrobe",
+        description: "Append garments to a trip's actual_capsule. Accepts either explicit garment_ids or a photo (image_base64) that will be analyzed via analyze_outfit_photo.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            id: { type: "STRING" },
+            garment_ids: { type: "ARRAY", items: { type: "STRING" } },
+            image_base64: { type: "STRING" },
+            mime_type: { type: "STRING" }
+          },
+          required: ["id"]
+        }
+      },
+      {
+        name: "remove_from_trip_capsule",
+        category: "wardrobe",
+        description: "Remove garments from a trip's actual_capsule.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            id: { type: "STRING" },
+            garment_ids: { type: "ARRAY", items: { type: "STRING" } }
+          },
+          required: ["id", "garment_ids"]
+        }
+      },
+      {
+        name: "critique_outfit",
+        category: "wardrobe",
+        description: "Evaluate an outfit, score it 0-10, list specific strengths/weaknesses, and propose a better alternative using only pieces from the wardrobe. Accepts either a photo (image_base64) or explicit garment_ids.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            image_base64: { type: "STRING", description: "Optional photo to analyze." },
+            mime_type: { type: "STRING" },
+            garment_ids: {
+              type: "ARRAY",
+              items: { type: "STRING" },
+              description: "Alternative to image_base64: explicit garment ids to critique."
+            },
+            trip_id: { type: "STRING", description: "Optional active trip to scope alternatives within the capsule." },
+            question: { type: "STRING", description: "Optional user question to anchor the critique." }
+          },
+          required: []
+        }
+      },
+      {
+        name: "visualize_outfit",
+        category: "wardrobe",
+        description: "Render a virtual-mirror image of the user wearing one or more outfits. Pass either a flat array of garment ids (single panel) or an array of arrays (multi-mirror, up to 4 panels).",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            garment_ids_panels: {
+              type: "ARRAY",
+              description: "Either ['id1','id2',...] for one outfit, or [['id1','id2'], ['id3','id4']] for multiple panels.",
+              items: {}
+            },
+            layout: { type: "STRING", description: "auto|single|horizontal|grid (default auto)." },
+            outfit_id: { type: "STRING", description: "Optional. Attach the render to an existing outfit id." }
+          },
+          required: ["garment_ids_panels"]
+        }
+      },
+      {
+        name: "set_reference_selfie",
+        category: "wardrobe",
+        description: "Save a full-body reference selfie used for virtual-mirror image generation. Call this the first time visualize_outfit asks for one.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            image_base64: { type: "STRING" },
+            mime_type: { type: "STRING" }
+          },
+          required: ["image_base64"]
+        }
+      },
+      {
+        name: "get_user_profile",
+        category: "wardrobe",
+        description: "Read the user's wardrobe profile (preferred brands, style notes, whether a reference selfie is set).",
+        parameters: { type: "OBJECT", properties: {}, required: [] }
+      },
+      {
+        name: "recommend_outfit",
+        category: "wardrobe",
+        description: "Generate outfit proposals covering 4 buckets (weather/occasion/item/safe_repeat). Optionally scoped to a subset of garment ids or to an active trip's capsule.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            garment_ids: {
+              type: "ARRAY",
+              items: { type: "STRING" },
+              description: "Optional. Restrict reasoning to just these garment ids."
+            },
+            trip_id: { type: "STRING", description: "Optional. Scope to an active trip's capsule." },
+            context: { type: "STRING", description: "Free-text context: weather, occasion, vibe, dress code." },
+            count: { type: "NUMBER", description: "Max proposals (default 4)." }
+          },
+          required: []
+        }
+      },
+      {
+        name: "like_outfit",
+        category: "wardrobe",
+        description: "Mark an outfit as liked (or unliked). Liked outfits bias future recommendations.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            outfit_id: { type: "STRING" },
+            liked: { type: "BOOLEAN", description: "True to like, false to unlike (default true)." }
+          },
+          required: ["outfit_id"]
+        }
+      },
+      {
+        name: "list_outfits",
+        category: "wardrobe",
+        description: "List saved outfits, optionally filtered to liked only.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            liked: { type: "BOOLEAN", description: "Filter: true=liked only, false=unliked only, omit for all." }
+          },
+          required: []
+        }
+      },
+      {
+        name: "analyze_outfit_photo",
+        category: "wardrobe",
+        description: "Hybrid primitive for 'what should I wear' style requests. Given a photo of clothes, simultaneously matches items to the existing wardrobe AND auto-adds any unmatched garments. Returns garment ids you can then pass to recommend_outfit/visualize_outfit/critique_outfit. Use whenever the user sends a photo and asks about combinations.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            image_base64: { type: "STRING", description: "Base64 image (no data: prefix)." },
+            mime_type: { type: "STRING", description: "Optional MIME type." },
+            caption: { type: "STRING", description: "Optional user caption / question." },
+            trip_id: { type: "STRING", description: "Optional active trip id to scope matching to the trip's capsule." }
+          },
+          required: ["image_base64"]
+        }
+      },
       // Slack Integration
       {
         name: "searchSlack",

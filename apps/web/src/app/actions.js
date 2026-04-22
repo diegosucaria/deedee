@@ -954,6 +954,101 @@ export async function removeVinylFromCrate(crateId, vinylId) {
     }
 }
 
+// --- Wardrobe ---
+
+export async function getWardrobe({ limit = 200, offset = 0, type = null } = {}) {
+    try {
+        const qs = new URLSearchParams();
+        qs.set('limit', String(limit));
+        qs.set('offset', String(offset));
+        if (type) qs.set('type', type);
+        const data = await fetchAPI(`/v1/wardrobe/garments?${qs.toString()}`, { method: 'GET' });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function uploadGarmentPhoto(base64Data, mimeType) {
+    try {
+        const data = await fetchAPI('/v1/wardrobe/garments/upload', {
+            method: 'POST',
+            body: JSON.stringify({ image: base64Data, mimeType })
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function updateGarment(id, fields) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/garments/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            body: JSON.stringify(fields)
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function deleteGarment(id) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/garments/${encodeURIComponent(id)}`, {
+            method: 'DELETE'
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function confirmGarmentBrand(id, accept) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/garments/${encodeURIComponent(id)}/confirm-brand`, {
+            method: 'POST',
+            body: JSON.stringify({ accept: !!accept })
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function getWardrobeProfile() {
+    try {
+        const data = await fetchAPI('/v1/wardrobe/profile', { method: 'GET' });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function updateWardrobeProfile(fields) {
+    try {
+        const data = await fetchAPI('/v1/wardrobe/profile', {
+            method: 'PUT',
+            body: JSON.stringify(fields)
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function uploadReferenceSelfie(base64Data, mimeType) {
+    try {
+        const data = await fetchAPI('/v1/wardrobe/profile/reference-selfie', {
+            method: 'POST',
+            body: JSON.stringify({ image: base64Data, mimeType })
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function rewindChat(chatId, messageId) {
     console.log('[DEBUG] rewindChat Action:', { chatId, messageId });
     try {
