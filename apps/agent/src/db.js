@@ -3001,6 +3001,43 @@ class AgentDB {
     };
   }
 
+  // --- Wardrobe: Bulk operations ---
+
+  /**
+   * Wipe every wardrobe table and reset the singleton profile to its defaults.
+   * Returns per-table deletion counts so the caller can report what was removed.
+   * Does NOT delete files on disk — the service layer handles that.
+   */
+  clearWardrobe() {
+    const counts = {};
+    const tables = ['wr_garments', 'wr_outfits', 'wr_trips', 'wr_shopping_list'];
+    for (const t of tables) {
+      try {
+        const before = this.db.prepare(`SELECT COUNT(*) AS c FROM ${t}`).get()?.c || 0;
+        this.db.prepare(`DELETE FROM ${t}`).run();
+        counts[t] = before;
+      } catch (e) {
+        console.warn(`[DB] clearWardrobe: ${t} delete failed:`, e.message);
+        counts[t] = 0;
+      }
+    }
+    // Reset the singleton profile but keep the row so seed logic isn't re-run.
+    try {
+      this.db.prepare(`
+        UPDATE wr_user_profile
+        SET reference_image_path = NULL,
+            sizing = '{}',
+            style_notes = '',
+            preferred_brands = ?,
+            updated_at = CURRENT_TIMESTAMP
+        WHERE id = 1
+      `).run(JSON.stringify(['Lacoste', 'Lululemon']));
+    } catch (e) {
+      console.warn('[DB] clearWardrobe: profile reset failed:', e.message);
+    }
+    return counts;
+  }
+
   // --- Wardrobe: User Profile ---
 
   getUserProfile() {

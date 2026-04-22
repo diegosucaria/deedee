@@ -1068,6 +1068,33 @@ describe('WardrobeService misc', () => {
         );
         expect(result.preferred_brands).toEqual(['Lacoste', 'Lululemon']);
     });
+
+    test('clearAll wipes tables, removes files, and broadcasts', async () => {
+        mockAgent.db.clearWardrobe = jest.fn().mockReturnValue({
+            wr_garments: 5, wr_outfits: 2, wr_trips: 1, wr_shopping_list: 3
+        });
+        jest.spyOn(fs, 'readdirSync').mockImplementation((_dir) => [
+            { name: 'file-a.jpg', isDirectory: () => false },
+            { name: 'subdir', isDirectory: () => true }
+        ]).mockImplementationOnce((_dir) => [
+            { name: 'file-a.jpg', isDirectory: () => false },
+            { name: 'subdir', isDirectory: () => true }
+        ]).mockImplementation(() => []);
+        jest.spyOn(fs, 'unlinkSync').mockImplementation(() => { });
+        jest.spyOn(fs, 'rmdirSync').mockImplementation(() => { });
+
+        const r = await service.clearAll();
+
+        expect(mockAgent.db.clearWardrobe).toHaveBeenCalled();
+        expect(r.garments).toBe(5);
+        expect(r.outfits).toBe(2);
+        expect(r.trips).toBe(1);
+        expect(r.shopping).toBe(3);
+        expect(mockAgent.interface.broadcast).toHaveBeenCalledWith(
+            'wardrobe:cleared',
+            expect.objectContaining({ counts: expect.any(Object) })
+        );
+    });
 });
 
 describe('WardrobeExecutor', () => {
