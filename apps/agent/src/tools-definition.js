@@ -1010,8 +1010,23 @@ const toolDefinitions = [
       {
         name: "get_user_profile",
         category: "wardrobe",
-        description: "Read the user's wardrobe profile (preferred brands, style notes, whether a reference selfie is set).",
+        description: "Read the user's wardrobe profile (preferred brands, style notes, reference selfie status, morning outfit opt-in).",
         parameters: { type: "OBJECT", properties: {}, required: [] }
+      },
+      {
+        name: "update_user_profile",
+        category: "wardrobe",
+        description: "Update wardrobe profile fields. Allowed keys: preferred_brands (array), sizing (object), style_notes (string), morning_outfit_enabled (boolean). Use this when the user asks to toggle the daily morning outfit nudge.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            patch: {
+              type: "OBJECT",
+              description: "Partial fields to update."
+            }
+          },
+          required: ["patch"]
+        }
       },
       {
         name: "recommend_outfit",

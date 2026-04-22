@@ -1079,4 +1079,32 @@ describe('WardrobeExecutor', () => {
         const r = await executor.execute('totally_unknown', {}, {}, { wardrobe: service });
         expect(r).toBeNull();
     });
+
+    test('get_user_profile surfaces morning_outfit status', async () => {
+        mockAgent.db.getUserProfile.mockReturnValue({
+            id: 1,
+            preferred_brands: ['Lacoste'],
+            reference_image_path: '/x.jpg',
+            morning_outfit_enabled: true
+        });
+        const r = await executor.execute('get_user_profile', {}, {}, { wardrobe: service });
+        expect(r).toMatch(/Morning outfit suggestions: ON/);
+    });
+
+    test('update_user_profile toggles morning_outfit_enabled', async () => {
+        mockAgent.db.getUserProfile
+            .mockReturnValueOnce({ preferred_brands: ['Lacoste'], morning_outfit_enabled: true });
+        const r = await executor.execute(
+            'update_user_profile',
+            { patch: { morning_outfit_enabled: true } },
+            {}, { wardrobe: service }
+        );
+        expect(mockAgent.db.updateUserProfile).toHaveBeenCalledWith({ morning_outfit_enabled: true });
+        expect(r).toMatch(/ON/);
+    });
+
+    test('update_user_profile rejects empty patch', async () => {
+        const r = await executor.execute('update_user_profile', { patch: {} }, {}, { wardrobe: service });
+        expect(r).toMatch(/Missing patch/);
+    });
 });

@@ -40,6 +40,8 @@ class WardrobeExecutor extends BaseExecutor {
                 return this.set_reference_selfie(args, wardrobe);
             case 'get_user_profile':
                 return this.get_user_profile(args, wardrobe);
+            case 'update_user_profile':
+                return this.update_user_profile(args, wardrobe);
             case 'critique_outfit':
                 return this.critique_outfit(args, wardrobe);
             case 'pack_for_trip':
@@ -241,10 +243,25 @@ class WardrobeExecutor extends BaseExecutor {
             return [
                 `Preferred brands: ${(p.preferred_brands || []).join(', ') || 'none'}`,
                 `Reference selfie: ${p.reference_image_path ? 'set' : 'not set'}`,
+                `Morning outfit suggestions: ${p.morning_outfit_enabled ? 'ON' : 'OFF'}`,
                 p.style_notes ? `Notes: ${p.style_notes}` : null
             ].filter(Boolean).join('\n');
         } catch (e) {
             return `Error reading profile: ${e.message}`;
+        }
+    }
+
+    async update_user_profile({ patch } = {}, wardrobe) {
+        if (!patch || typeof patch !== 'object' || Object.keys(patch).length === 0) {
+            return 'Missing patch fields.';
+        }
+        try {
+            const ok = wardrobe.db.updateUserProfile(patch);
+            if (!ok) return 'No valid fields to update.';
+            const profile = wardrobe.db.getUserProfile();
+            return `Profile updated. Morning outfit: ${profile.morning_outfit_enabled ? 'ON' : 'OFF'}. Preferred brands: ${(profile.preferred_brands || []).join(', ') || 'none'}.`;
+        } catch (e) {
+            return `Error updating profile: ${e.message}`;
         }
     }
 
