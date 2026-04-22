@@ -1049,6 +1049,144 @@ export async function uploadReferenceSelfie(base64Data, mimeType) {
     }
 }
 
+// --- Wardrobe: Outfits ---
+
+export async function getOutfits({ liked = null } = {}) {
+    try {
+        const qs = liked === null ? '' : `?liked=${liked ? 'true' : 'false'}`;
+        const data = await fetchAPI(`/v1/wardrobe/outfits${qs}`, { method: 'GET' });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function likeOutfit(id, liked = true) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/outfits/${encodeURIComponent(id)}/like`, {
+            method: 'POST',
+            body: JSON.stringify({ liked })
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+// --- Wardrobe: Trips ---
+
+export async function getTrips({ status = null } = {}) {
+    try {
+        const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+        const data = await fetchAPI(`/v1/wardrobe/trips${qs}`, { method: 'GET' });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function getTrip(id) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/trips/${encodeURIComponent(id)}`, { method: 'GET' });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function startTrip(id) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/trips/${encodeURIComponent(id)}/start`, { method: 'POST' });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function completeTrip(id) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/trips/${encodeURIComponent(id)}/complete`, { method: 'POST' });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function setTripCapsule(id, garmentIds) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/trips/${encodeURIComponent(id)}/capsule`, {
+            method: 'PUT',
+            body: JSON.stringify({ garment_ids: garmentIds })
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function addToTripCapsule(id, { garmentIds = null, imageBase64 = null, mimeType = null } = {}) {
+    try {
+        const body = {};
+        if (garmentIds) body.garment_ids = garmentIds;
+        if (imageBase64) body.image = imageBase64;
+        if (mimeType) body.mimeType = mimeType;
+        const data = await fetchAPI(`/v1/wardrobe/trips/${encodeURIComponent(id)}/capsule/add`, {
+            method: 'POST',
+            body: JSON.stringify(body)
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function removeFromTripCapsule(id, garmentIds) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/trips/${encodeURIComponent(id)}/capsule/remove`, {
+            method: 'POST',
+            body: JSON.stringify({ garment_ids: garmentIds })
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+// --- Wardrobe: Shopping list ---
+
+export async function getShoppingList({ status = null } = {}) {
+    try {
+        const qs = status ? `?status=${encodeURIComponent(status)}` : '';
+        const data = await fetchAPI(`/v1/wardrobe/shopping${qs}`, { method: 'GET' });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function markShoppingItemPurchased(id, garmentId = null) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/shopping/${encodeURIComponent(id)}/purchased`, {
+            method: 'POST',
+            body: JSON.stringify(garmentId ? { garment_id: garmentId } : {})
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function dismissShoppingItem(id) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/shopping/${encodeURIComponent(id)}/dismiss`, {
+            method: 'POST'
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function rewindChat(chatId, messageId) {
     console.log('[DEBUG] rewindChat Action:', { chatId, messageId });
     try {
