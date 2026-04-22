@@ -857,9 +857,9 @@ const toolDefinitions = [
         parameters: { type: "OBJECT", properties: { status: { type: "STRING" } }, required: [] }
       },
       {
-        name: "mark_purchased",
+        name: "mark_wardrobe_item_purchased",
         category: "wardrobe",
-        description: "Mark a shopping item as purchased, optionally linking to the new garment id that fulfilled it.",
+        description: "Mark a wardrobe shopping list item as purchased, optionally linking to the new garment id that fulfilled it.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -876,9 +876,9 @@ const toolDefinitions = [
         parameters: { type: "OBJECT", properties: { id: { type: "STRING" } }, required: ["id"] }
       },
       {
-        name: "pack_for_trip",
+        name: "wardrobe_pack_for_trip",
         category: "wardrobe",
-        description: "Plan a travel capsule: fetches weather via subagent, reasons over wardrobe with Pro model, and saves a wr_trips row with planned_capsule and per-day outfit suggestions.",
+        description: "Plan a wardrobe travel capsule: fetches weather via subagent, reasons over wardrobe with Pro model, and saves a wr_trips row with planned_capsule and per-day outfit suggestions.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -892,33 +892,33 @@ const toolDefinitions = [
         }
       },
       {
-        name: "get_trip",
+        name: "get_wardrobe_trip",
         category: "wardrobe",
-        description: "Get full details of a trip by id.",
+        description: "Get full details of a wardrobe trip (capsule + daily plan) by id.",
         parameters: { type: "OBJECT", properties: { id: { type: "STRING" } }, required: ["id"] }
       },
       {
-        name: "list_trips",
+        name: "list_wardrobe_trips",
         category: "wardrobe",
-        description: "List trips, optionally filtered by status (planned|active|completed).",
+        description: "List wardrobe trips, optionally filtered by status (planned|active|completed).",
         parameters: { type: "OBJECT", properties: { status: { type: "STRING" } }, required: [] }
       },
       {
-        name: "start_trip",
+        name: "start_wardrobe_trip",
         category: "wardrobe",
-        description: "Mark a trip as active. Copies planned_capsule into actual_capsule if empty.",
+        description: "Mark a wardrobe trip as active. Copies planned_capsule into actual_capsule if empty.",
         parameters: { type: "OBJECT", properties: { id: { type: "STRING" } }, required: ["id"] }
       },
       {
-        name: "complete_trip",
+        name: "complete_wardrobe_trip",
         category: "wardrobe",
-        description: "Mark a trip as completed.",
+        description: "Mark a wardrobe trip as completed.",
         parameters: { type: "OBJECT", properties: { id: { type: "STRING" } }, required: ["id"] }
       },
       {
-        name: "set_trip_capsule",
+        name: "set_wardrobe_trip_capsule",
         category: "wardrobe",
-        description: "Overwrite a trip's actual_capsule with the given garment ids. Use to record exactly what was actually packed.",
+        description: "Overwrite a wardrobe trip's actual_capsule with the given garment ids. Use to record exactly what was actually packed.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -929,9 +929,9 @@ const toolDefinitions = [
         }
       },
       {
-        name: "add_to_trip_capsule",
+        name: "add_to_wardrobe_trip_capsule",
         category: "wardrobe",
-        description: "Append garments to a trip's actual_capsule. Accepts either explicit garment_ids or a photo (image_base64) that will be analyzed via analyze_outfit_photo.",
+        description: "Append garments to a wardrobe trip's actual_capsule. Accepts either explicit garment_ids or a photo (image_base64) that will be analyzed via analyze_outfit_photo.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -944,9 +944,9 @@ const toolDefinitions = [
         }
       },
       {
-        name: "remove_from_trip_capsule",
+        name: "remove_from_wardrobe_trip_capsule",
         category: "wardrobe",
-        description: "Remove garments from a trip's actual_capsule.",
+        description: "Remove garments from a wardrobe trip's actual_capsule.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -1008,15 +1008,15 @@ const toolDefinitions = [
         }
       },
       {
-        name: "get_user_profile",
+        name: "get_wardrobe_profile",
         category: "wardrobe",
-        description: "Read the user's wardrobe profile (preferred brands, style notes, reference selfie status, morning outfit opt-in).",
+        description: "Read the user's wardrobe profile (preferred brands, style notes, reference selfie status).",
         parameters: { type: "OBJECT", properties: {}, required: [] }
       },
       {
-        name: "update_user_profile",
+        name: "update_wardrobe_profile",
         category: "wardrobe",
-        description: "Update wardrobe profile fields. Allowed keys: preferred_brands (array), sizing (object), style_notes (string), morning_outfit_enabled (boolean). Use this when the user asks to toggle the daily morning outfit nudge.",
+        description: "Update wardrobe profile fields. Allowed keys: preferred_brands (array), sizing (object), style_notes (string).",
         parameters: {
           type: "OBJECT",
           properties: {

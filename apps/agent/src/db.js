@@ -354,7 +354,6 @@ class AgentDB {
         preferred_brands TEXT,
         sizing TEXT,
         style_notes TEXT,
-        morning_outfit_enabled INTEGER DEFAULT 0,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -529,11 +528,6 @@ class AgentDB {
     // Migration: Add enrichment_status to dj_vinyls
     try {
       this.db.exec("ALTER TABLE dj_vinyls ADD COLUMN enrichment_status TEXT DEFAULT 'complete'");
-    } catch (err) { }
-
-    // Migration: Add morning_outfit_enabled to wr_user_profile
-    try {
-      this.db.exec("ALTER TABLE wr_user_profile ADD COLUMN morning_outfit_enabled INTEGER DEFAULT 0");
     } catch (err) { }
   }
 
@@ -3016,23 +3010,19 @@ class AgentDB {
     return {
       ...row,
       preferred_brands: safeParse(row.preferred_brands, []),
-      sizing: safeParse(row.sizing, {}),
-      morning_outfit_enabled: !!row.morning_outfit_enabled
+      sizing: safeParse(row.sizing, {})
     };
   }
 
   updateUserProfile(fields) {
-    const allowed = ['reference_image_path', 'preferred_brands', 'sizing', 'style_notes', 'morning_outfit_enabled'];
+    const allowed = ['reference_image_path', 'preferred_brands', 'sizing', 'style_notes'];
     const jsonCols = new Set(['preferred_brands', 'sizing']);
-    const boolCols = new Set(['morning_outfit_enabled']);
     const sets = [];
     const values = [];
     for (const [k, v] of Object.entries(fields)) {
       if (!allowed.includes(k)) continue;
       sets.push(`${k} = ?`);
-      if (boolCols.has(k)) values.push(v ? 1 : 0);
-      else if (jsonCols.has(k) && v !== null) values.push(JSON.stringify(v));
-      else values.push(v);
+      values.push(jsonCols.has(k) && v !== null ? JSON.stringify(v) : v);
     }
     if (sets.length === 0) return false;
     sets.push(`updated_at = CURRENT_TIMESTAMP`);

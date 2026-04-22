@@ -38,34 +38,34 @@ class WardrobeExecutor extends BaseExecutor {
                 return this.visualize_outfit(args, wardrobe);
             case 'set_reference_selfie':
                 return this.set_reference_selfie(args, wardrobe);
-            case 'get_user_profile':
-                return this.get_user_profile(args, wardrobe);
-            case 'update_user_profile':
-                return this.update_user_profile(args, wardrobe);
+            case 'get_wardrobe_profile':
+                return this.get_wardrobe_profile(args, wardrobe);
+            case 'update_wardrobe_profile':
+                return this.update_wardrobe_profile(args, wardrobe);
             case 'critique_outfit':
                 return this.critique_outfit(args, wardrobe);
-            case 'pack_for_trip':
-                return this.pack_for_trip(args, wardrobe);
-            case 'get_trip':
-                return this.get_trip(args, wardrobe);
-            case 'list_trips':
-                return this.list_trips(args, wardrobe);
-            case 'start_trip':
-                return this.start_trip(args, wardrobe);
-            case 'complete_trip':
-                return this.complete_trip(args, wardrobe);
-            case 'set_trip_capsule':
-                return this.set_trip_capsule(args, wardrobe);
-            case 'add_to_trip_capsule':
-                return this.add_to_trip_capsule(args, wardrobe);
-            case 'remove_from_trip_capsule':
-                return this.remove_from_trip_capsule(args, wardrobe);
+            case 'wardrobe_pack_for_trip':
+                return this.wardrobe_pack_for_trip(args, wardrobe);
+            case 'get_wardrobe_trip':
+                return this.get_wardrobe_trip(args, wardrobe);
+            case 'list_wardrobe_trips':
+                return this.list_wardrobe_trips(args, wardrobe);
+            case 'start_wardrobe_trip':
+                return this.start_wardrobe_trip(args, wardrobe);
+            case 'complete_wardrobe_trip':
+                return this.complete_wardrobe_trip(args, wardrobe);
+            case 'set_wardrobe_trip_capsule':
+                return this.set_wardrobe_trip_capsule(args, wardrobe);
+            case 'add_to_wardrobe_trip_capsule':
+                return this.add_to_wardrobe_trip_capsule(args, wardrobe);
+            case 'remove_from_wardrobe_trip_capsule':
+                return this.remove_from_wardrobe_trip_capsule(args, wardrobe);
             case 'add_to_shopping_list':
                 return this.add_to_shopping_list(args, wardrobe);
             case 'list_shopping_items':
                 return this.list_shopping_items(args, wardrobe);
-            case 'mark_purchased':
-                return this.mark_purchased(args, wardrobe);
+            case 'mark_wardrobe_item_purchased':
+                return this.mark_wardrobe_item_purchased(args, wardrobe);
             case 'dismiss_shopping_item':
                 return this.dismiss_shopping_item(args, wardrobe);
             default:
@@ -91,7 +91,7 @@ class WardrobeExecutor extends BaseExecutor {
         ).join('\n');
     }
 
-    async mark_purchased({ id, garment_id } = {}, wardrobe) {
+    async mark_wardrobe_item_purchased({ id, garment_id } = {}, wardrobe) {
         if (!id) return 'Missing id.';
         try {
             const item = await wardrobe.markPurchased(id, garment_id || null);
@@ -107,7 +107,7 @@ class WardrobeExecutor extends BaseExecutor {
         } catch (e) { return `Error: ${e.message}`; }
     }
 
-    async pack_for_trip({ destination, start_date, end_date, activities, calendar_event_id } = {}, wardrobe) {
+    async wardrobe_pack_for_trip({ destination, start_date, end_date, activities, calendar_event_id } = {}, wardrobe) {
         if (!destination || !start_date || !end_date) return 'Missing destination, start_date, or end_date.';
         try {
             const trip = await wardrobe.packForTrip({
@@ -124,14 +124,14 @@ class WardrobeExecutor extends BaseExecutor {
         }
     }
 
-    async get_trip({ id } = {}, wardrobe) {
+    async get_wardrobe_trip({ id } = {}, wardrobe) {
         if (!id) return 'Missing id.';
         const t = wardrobe.db.getTrip(id);
         if (!t) return `Trip ${id} not found.`;
         return JSON.stringify(t, null, 2);
     }
 
-    async list_trips({ status } = {}, wardrobe) {
+    async list_wardrobe_trips({ status } = {}, wardrobe) {
         const trips = wardrobe.db.getTrips({ status: status || null });
         if (trips.length === 0) return 'No trips.';
         return trips.map(t =>
@@ -139,7 +139,7 @@ class WardrobeExecutor extends BaseExecutor {
         ).join('\n');
     }
 
-    async start_trip({ id } = {}, wardrobe) {
+    async start_wardrobe_trip({ id } = {}, wardrobe) {
         if (!id) return 'Missing id.';
         try {
             const t = await wardrobe.startTrip(id);
@@ -147,7 +147,7 @@ class WardrobeExecutor extends BaseExecutor {
         } catch (e) { return `Error: ${e.message}`; }
     }
 
-    async complete_trip({ id } = {}, wardrobe) {
+    async complete_wardrobe_trip({ id } = {}, wardrobe) {
         if (!id) return 'Missing id.';
         try {
             const t = await wardrobe.completeTrip(id);
@@ -155,7 +155,7 @@ class WardrobeExecutor extends BaseExecutor {
         } catch (e) { return `Error: ${e.message}`; }
     }
 
-    async set_trip_capsule({ id, garment_ids } = {}, wardrobe) {
+    async set_wardrobe_trip_capsule({ id, garment_ids } = {}, wardrobe) {
         if (!id) return 'Missing id.';
         try {
             const t = await wardrobe.setTripCapsule(id, Array.isArray(garment_ids) ? garment_ids : []);
@@ -163,7 +163,7 @@ class WardrobeExecutor extends BaseExecutor {
         } catch (e) { return `Error: ${e.message}`; }
     }
 
-    async add_to_trip_capsule({ id, garment_ids, image_base64, mime_type } = {}, wardrobe) {
+    async add_to_wardrobe_trip_capsule({ id, garment_ids, image_base64, mime_type } = {}, wardrobe) {
         if (!id) return 'Missing id.';
         try {
             const t = await wardrobe.addToTripCapsule(id, {
@@ -175,7 +175,7 @@ class WardrobeExecutor extends BaseExecutor {
         } catch (e) { return `Error: ${e.message}`; }
     }
 
-    async remove_from_trip_capsule({ id, garment_ids } = {}, wardrobe) {
+    async remove_from_wardrobe_trip_capsule({ id, garment_ids } = {}, wardrobe) {
         if (!id) return 'Missing id.';
         try {
             const t = await wardrobe.removeFromTripCapsule(id, Array.isArray(garment_ids) ? garment_ids : []);
@@ -236,14 +236,13 @@ class WardrobeExecutor extends BaseExecutor {
         }
     }
 
-    async get_user_profile(_args, wardrobe) {
+    async get_wardrobe_profile(_args, wardrobe) {
         try {
             const p = wardrobe.db.getUserProfile();
             if (!p) return 'No profile yet.';
             return [
                 `Preferred brands: ${(p.preferred_brands || []).join(', ') || 'none'}`,
                 `Reference selfie: ${p.reference_image_path ? 'set' : 'not set'}`,
-                `Morning outfit suggestions: ${p.morning_outfit_enabled ? 'ON' : 'OFF'}`,
                 p.style_notes ? `Notes: ${p.style_notes}` : null
             ].filter(Boolean).join('\n');
         } catch (e) {
@@ -251,7 +250,7 @@ class WardrobeExecutor extends BaseExecutor {
         }
     }
 
-    async update_user_profile({ patch } = {}, wardrobe) {
+    async update_wardrobe_profile({ patch } = {}, wardrobe) {
         if (!patch || typeof patch !== 'object' || Object.keys(patch).length === 0) {
             return 'Missing patch fields.';
         }
@@ -259,7 +258,7 @@ class WardrobeExecutor extends BaseExecutor {
             const ok = wardrobe.db.updateUserProfile(patch);
             if (!ok) return 'No valid fields to update.';
             const profile = wardrobe.db.getUserProfile();
-            return `Profile updated. Morning outfit: ${profile.morning_outfit_enabled ? 'ON' : 'OFF'}. Preferred brands: ${(profile.preferred_brands || []).join(', ') || 'none'}.`;
+            return `Profile updated. Preferred brands: ${(profile.preferred_brands || []).join(', ') || 'none'}.`;
         } catch (e) {
             return `Error updating profile: ${e.message}`;
         }

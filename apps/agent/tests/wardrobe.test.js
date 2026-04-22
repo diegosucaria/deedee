@@ -1137,31 +1137,50 @@ describe('WardrobeExecutor', () => {
         expect(r).toBeNull();
     });
 
-    test('get_user_profile surfaces morning_outfit status', async () => {
+    test('get_wardrobe_profile shows brands and selfie status', async () => {
         mockAgent.db.getUserProfile.mockReturnValue({
             id: 1,
-            preferred_brands: ['Lacoste'],
-            reference_image_path: '/x.jpg',
-            morning_outfit_enabled: true
+            preferred_brands: ['Lacoste', 'Lululemon'],
+            reference_image_path: '/x.jpg'
         });
-        const r = await executor.execute('get_user_profile', {}, {}, { wardrobe: service });
-        expect(r).toMatch(/Morning outfit suggestions: ON/);
+        const r = await executor.execute('get_wardrobe_profile', {}, {}, { wardrobe: service });
+        expect(r).toMatch(/Lacoste/);
+        expect(r).toMatch(/Reference selfie: set/);
     });
 
-    test('update_user_profile toggles morning_outfit_enabled', async () => {
-        mockAgent.db.getUserProfile
-            .mockReturnValueOnce({ preferred_brands: ['Lacoste'], morning_outfit_enabled: true });
+    test('update_wardrobe_profile applies patch', async () => {
+        mockAgent.db.getUserProfile.mockReturnValueOnce({ preferred_brands: ['Lacoste', 'Lululemon', 'Aesop'] });
         const r = await executor.execute(
-            'update_user_profile',
-            { patch: { morning_outfit_enabled: true } },
+            'update_wardrobe_profile',
+            { patch: { preferred_brands: ['Lacoste', 'Lululemon', 'Aesop'] } },
             {}, { wardrobe: service }
         );
-        expect(mockAgent.db.updateUserProfile).toHaveBeenCalledWith({ morning_outfit_enabled: true });
-        expect(r).toMatch(/ON/);
+        expect(mockAgent.db.updateUserProfile).toHaveBeenCalledWith({
+            preferred_brands: ['Lacoste', 'Lululemon', 'Aesop']
+        });
+        expect(r).toMatch(/Aesop/);
     });
 
-    test('update_user_profile rejects empty patch', async () => {
-        const r = await executor.execute('update_user_profile', { patch: {} }, {}, { wardrobe: service });
+    test('update_wardrobe_profile rejects empty patch', async () => {
+        const r = await executor.execute('update_wardrobe_profile', { patch: {} }, {}, { wardrobe: service });
         expect(r).toMatch(/Missing patch/);
+    });
+
+    test('renamed trip tools resolve through executor', async () => {
+        mockAgent.db.getTrips = jest.fn().mockReturnValue([]);
+        const r = await executor.execute('list_wardrobe_trips', {}, {}, { wardrobe: service });
+        expect(r).toMatch(/No trips/);
+        expect(mockAgent.db.getTrips).toHaveBeenCalled();
+    });
+
+    test('renamed mark_wardrobe_item_purchased resolves through executor', async () => {
+        service.markPurchased = jest.fn().mockResolvedValue({ id: 'shop_1', status: 'purchased' });
+        const r = await executor.execute(
+            'mark_wardrobe_item_purchased',
+            { id: 'shop_1', garment_id: 'g1' },
+            {}, { wardrobe: service }
+        );
+        expect(service.markPurchased).toHaveBeenCalledWith('shop_1', 'g1');
+        expect(r).toMatch(/Marked shop_1 purchased/);
     });
 });
