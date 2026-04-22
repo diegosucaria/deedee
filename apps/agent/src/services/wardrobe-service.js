@@ -177,13 +177,16 @@ Respond with JSON only.`;
     /**
      * Crop sourcePath to outPath using a normalized [x1, y1, x2, y2] bbox.
      * Idempotent: given the same source and bbox, produces the same crop.
+     *
+     * Uses `jimp` (pure JS) rather than `sharp` — no native deps, no ARM/libvips
+     * issues, no semver hoisting foot-guns in workspaces.
      */
     async _cropToFile(sourcePath, bbox, outPath) {
-        const sharp = require('sharp');
+        const Jimp = require('jimp');
         const [x1, y1, x2, y2] = bbox;
-        const meta = await sharp(sourcePath).metadata();
-        const W = meta.width || 0;
-        const H = meta.height || 0;
+        const image = await Jimp.read(sourcePath);
+        const W = image.bitmap.width;
+        const H = image.bitmap.height;
         if (!W || !H) throw new Error('Unable to read image dimensions');
 
         // Guard against zero-size crops; pad by 1% each side if needed
@@ -195,10 +198,7 @@ Respond with JSON only.`;
         const width = Math.max(1, px2 - px1);
         const height = Math.max(1, py2 - py1);
 
-        await sharp(sourcePath)
-            .extract({ left: px1, top: py1, width, height })
-            .jpeg({ quality: 90 })
-            .toFile(outPath);
+        await image.crop(px1, py1, width, height).quality(90).writeAsync(outPath);
         return outPath;
     }
 
@@ -1399,6 +1399,52 @@ Rules: only use ids from the wardrobe list above. No external items.`;
         const out = this.db.getOutfit(outfitId);
         this._broadcast('wardrobe:outfit:update', out);
         return out;
+    }
+
+    /**
+     * Wipe every wardrobe row AND every wardrobe file on disk.
+     * Used by the `/clear_wardrobe` slash command for a full reset.
+     *
+     * @returns {{garments: number, outfits: number, trips: number, shopping: number, filesRemoved: number}}
+     */
+    async clearAll() {
+        const counts = this.db.clearWardrobe();
+
+        let filesRemoved = 0;
+        const baseDir = this._baseDir();
+        if (fs.existsSync(baseDir)) {
+            try {
+                const walk = (dir) => {
+                    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                        const p = path.join(dir, entry.name);
+                        if (entry.isDirectory()) {
+                            walk(p);
+                            try { fs.rmdirSync(p); } catch (e) { /* ignore */ }
+                        } else {
+                            try { fs.unlinkSync(p); filesRemoved++; } catch (e) { /* ignore */ }
+                        }
+                    }
+                };
+                walk(baseDir);
+            } catch (e) {
+                console.warn('[WardrobeService] clearAll: file walk failed:', e.message);
+            }
+        }
+        // Recreate the empty subdirs the service expects
+        for (const sub of ['garments', 'outfits', 'profile']) {
+            const p = path.join(baseDir, sub);
+            if (!fs.existsSync(p)) fs.mkdirSync(p, { recursive: true });
+        }
+
+        this._broadcast('wardrobe:cleared', { counts, filesRemoved });
+
+        return {
+            garments: counts.wr_garments || 0,
+            outfits: counts.wr_outfits || 0,
+            trips: counts.wr_trips || 0,
+            shopping: counts.wr_shopping_list || 0,
+            filesRemoved
+        };
     }
 
     async setReferenceSelfie(base64Data, mimeType = 'image/jpeg') {

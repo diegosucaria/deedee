@@ -65,6 +65,24 @@ class CommandHandler {
             return true;
         }
 
+        if (cmd === '/clear_wardrobe') {
+            if (!this.agent?.wardrobeService?.clearAll) {
+                await this.sendReply(chatId, message.source, 'Wardrobe service not available.');
+                return true;
+            }
+            try {
+                const r = await this.agent.wardrobeService.clearAll();
+                await this.sendReply(
+                    chatId,
+                    message.source,
+                    `Wardrobe wiped. Deleted ${r.garments} garment(s), ${r.outfits} outfit(s), ${r.trips} trip(s), ${r.shopping} shopping item(s). Removed ${r.filesRemoved} file(s). Profile reset (preferred brands restored to Lacoste, Lululemon).`
+                );
+            } catch (e) {
+                await this.sendReply(chatId, message.source, `Failed to clear wardrobe: ${e.message}`);
+            }
+            return true;
+        }
+
         if (cmd === '/reset_goals') {
             this.db.clearGoals(chatId);
             const reply = createAssistantMessage('Pending goals reset (marked as failed).');
