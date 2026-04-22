@@ -705,6 +705,43 @@ FORMAT (when you do notify):
 - If you took action: append "→ Set reminder" or "→ Added to calendar"
 - Be concise. 3-5 bullets max. No essays.`,
                 silent: false
+            },
+            {
+                name: 'wardrobe_pretrip_check',
+                cron: '0 8 * * *', // Daily at 08:00
+                task: `[WARDROBE PRETRIP] Draft packing lists for upcoming trips.
+
+1. Call list_wardrobe_trips(status: "planned"). Remember the set of already-planned destinations+dates so you do not duplicate.
+2. Spawn a lightweight FLASH sub-agent to scan the next 7 days of personal calendar for multi-day travel:
+   spawnAgent(task: "List personal_calendar events in the next 7 days. Return STRICT JSON: [{summary, location, start_date, end_date}] ONLY for events that look like multi-day trips (end date > start date + 1 day OR location is clearly a different city/country). Skip routine meetings, recurring items, and 1-day outings. Dates MUST be in YYYY-MM-DD format (no times, no timezones). If none, return [SILENT].", model: "FLASH", lightweight: true, tools: ["server:gws_personal"])
+3. For each trip found that (a) starts 2-4 days from today AND (b) is not already in list_wardrobe_trips output by destination/dates:
+   - Call wardrobe_pack_for_trip(destination, start_date, end_date, activities if inferable). start_date and end_date must be YYYY-MM-DD strings. The weather subagent runs inside that call.
+4. If any new trips were planned, send ONE concise message to the owner:
+   "Trip to <destination> in <N> days — drafted a capsule with X items. Review in /wardrobe or ask me to adjust."
+   List up to 3 trips max.
+5. If no new trips needed planning, output [SILENT].
+
+NEVER contact anyone other than the owner.`,
+                silent: false
+            },
+            {
+                name: 'wardrobe_morning_outfit',
+                cron: '15 7 * * *', // Daily at 07:15
+                // Opt-out: toggle this job's enabled flag off via the /tasks UI if you don't want morning nudges.
+                task: `[WARDROBE MORNING] Suggest today's outfit.
+
+1. Look up the user's home city (searchMemory for "home city" / "lives in" / "location" — or getFact "home_city"). If unknown, proceed without weather.
+2. If home city is known, spawn a FLASH sub-agent to fetch today's weather via the weather skill:
+   spawnAgent(task: "Get today's weather for <home_city>. Use the weather skill (wttr.in compact format). Return one short line: 'tempC condition'.", model: "FLASH", lightweight: true, tools: ["runShellCommand"])
+3. Spawn a FLASH sub-agent to summarize today's calendar for occasion/dress-code signal:
+   spawnAgent(task: "List today's personal and work calendar events. Return a 1-2 line summary focused on the nature (work meeting, casual, gym, formal dinner, etc.) — NOT the full list.", model: "FLASH", lightweight: true, tools: ["server:gws_personal", "server:gws_work"])
+4. Call recommend_outfit(context: "today, <weather>, <occasion summary>", count: 2).
+5. Call get_wardrobe_profile. If reference_image_path is set, optionally call visualize_outfit with the top proposal's garment_ids (single panel). If not set, skip the render.
+6. Reply to the owner with the top proposal (1-2 sentences, cite specific pieces). Attach the rendered image if you produced one.
+7. If recommend_outfit returned zero proposals, output [SILENT].
+
+NEVER contact anyone other than the owner.`,
+                silent: false
             }
         ];
 

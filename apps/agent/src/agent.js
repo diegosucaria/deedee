@@ -30,6 +30,7 @@ const { TitleService } = require('./services/title-service');
 const { ConfigService } = require('./services/config-service');
 const { RagService } = require('./services/rag-service');
 const { DJService } = require('./services/dj-service');
+const { WardrobeService } = require('./services/wardrobe-service');
 const { SkillService } = require('./services/skill-service');
 const { MemoryPruningService } = require('./services/memory-pruning');
 const { DreamService } = require('./services/dream-service');
@@ -84,6 +85,7 @@ class Agent {
     this.ragService = new RagService(this);
     this.journal.setRagService(this.ragService);
     this.djService = new DJService(this);
+    this.wardrobeService = new WardrobeService(this);
     this.impersonationService = new ImpersonationService(this);
     this.skillService = new SkillService(this);
     this.memoryPruning = new MemoryPruningService(this);
@@ -102,6 +104,7 @@ class Agent {
       scheduler: this.scheduler,
       mcp: this.mcp,
       dj: this.djService,
+      wardrobe: this.wardrobeService,
       db: this.db,
       agent: this
       // Note: client and interface are passed per-call via context.callServices
@@ -186,6 +189,7 @@ class Agent {
     // Initialize Vaults
     await this.vaults.initialize();
     await this.djService.initialize();
+    await this.wardrobeService.initialize();
 
     // Ensure System Maintenance Jobs
     this.scheduler.ensureSystemJobs();

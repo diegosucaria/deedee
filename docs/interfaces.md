@@ -52,6 +52,7 @@ Deedee connects via the standard Telegram Bot API (Long Polling).
 
 ### Features
 -   **Audio**: Full support for voice notes (Ogg/Opus).
+-   **Images**: Send a photo with an optional caption. The agent receives the largest available size as `inlineData` and can route it to tools like `add_garment`, `analyze_outfit_photo`, `add_vinyl`, etc. based on the caption.
 -   **Commands**:
     -   `/stop`: Instantly kills any running agent processing loop.
     -   `/clear`: Clears conversation history (Context).
