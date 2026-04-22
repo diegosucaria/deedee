@@ -297,6 +297,7 @@ class AgentDB {
         fit_notes TEXT,
         source_image_path TEXT,
         crop_image_path TEXT,
+        generated_image_path TEXT,
         bbox TEXT,
         source TEXT DEFAULT 'manual_upload',
         enrichment_status TEXT DEFAULT 'complete',
@@ -528,6 +529,11 @@ class AgentDB {
     // Migration: Add enrichment_status to dj_vinyls
     try {
       this.db.exec("ALTER TABLE dj_vinyls ADD COLUMN enrichment_status TEXT DEFAULT 'complete'");
+    } catch (err) { }
+
+    // Migration: Add generated_image_path to wr_garments
+    try {
+      this.db.exec("ALTER TABLE wr_garments ADD COLUMN generated_image_path TEXT");
     } catch (err) { }
   }
 
@@ -2723,7 +2729,7 @@ class AgentDB {
     const allowed = [
       'type', 'subtype', 'primary_color', 'secondary_colors', 'pattern', 'material_guess',
       'warmth', 'formality', 'season_tags', 'brand', 'model', 'size', 'fit_notes',
-      'source_image_path', 'crop_image_path', 'bbox', 'source',
+      'source_image_path', 'crop_image_path', 'generated_image_path', 'bbox', 'source',
       'enrichment_status', 'enrichment_confidence', 'meta',
       'times_worn', 'last_worn_at'
     ];
@@ -2745,7 +2751,7 @@ class AgentDB {
     const garment = this.getGarment(id);
     if (!garment) return false;
     const fs = require('fs');
-    for (const p of [garment.source_image_path, garment.crop_image_path]) {
+    for (const p of [garment.source_image_path, garment.crop_image_path, garment.generated_image_path]) {
       if (p) {
         try { if (fs.existsSync(p)) fs.unlinkSync(p); } catch (e) { /* ignore */ }
       }

@@ -60,7 +60,7 @@ Return strict JSON with this shape:
 {
   "items": [
     {
-      "bbox": [x1, y1, x2, y2],
+      "box_2d": [ymin, xmin, ymax, xmax],
       "type": "top|bottom|shoes|outerwear|accessory|underwear|other",
       "subtype": "tshirt|polo|hoodie|chinos|jeans|sneakers|...",
       "primary_color": "...",
@@ -78,8 +78,9 @@ Return strict JSON with this shape:
 }
 
 RULES:
-- bbox coordinates are normalized 0..1 in [x1, y1, x2, y2] order (top-left and bottom-right corners)
-- Only include items clearly visible and identifiable
+- box_2d is [ymin, xmin, ymax, xmax] normalized to 0-1000 — this is Gemini's canonical bbox format; do not use any other ordering or range
+- The box must tightly enclose the garment itself (no background padding beyond the edges of the fabric)
+- Only include items clearly visible and identifiable; skip partial glimpses of background or furniture
 - Omit fields you are uncertain about (do not fabricate)
 - Never invent brands or models
 Respond with JSON only.`;
@@ -116,7 +117,10 @@ Respond with JSON only.`;
 
     _normalizeDetection(item) {
         if (!item) return null;
-        const bbox = this._normalizeBbox(item.bbox);
+        // Gemini returns box_2d as [ymin, xmin, ymax, xmax] normalized to 0-1000.
+        // Accept legacy `bbox` field (same layout, sometimes 0-1) for backward compat.
+        const raw = item.box_2d ?? item.bbox;
+        const bbox = this._normalizeBbox(raw);
         return {
             bbox,
             type: item.type || null,
@@ -133,19 +137,25 @@ Respond with JSON only.`;
         };
     }
 
+    /**
+     * Accept Gemini's native bbox format [ymin, xmin, ymax, xmax] in 0-1000
+     * and return [x1, y1, x2, y2] in 0-1 (what the rest of the code expects).
+     *
+     * Gemini trains on [ymin, xmin, ymax, xmax]; prompt overrides are unreliable,
+     * so we parse the native ordering and flip it here. Values in the 0-1 range
+     * are still accepted (some responses come back already normalized).
+     */
     _normalizeBbox(bbox) {
         if (!Array.isArray(bbox) || bbox.length !== 4) return [0, 0, 1, 1];
         let nums = bbox.map(n => Number(n));
         if (nums.some(n => Number.isNaN(n))) return [0, 0, 1, 1];
-        // Detect 0..1000 range (Gemini's common default) and normalize.
-        // Use a high threshold so slight overflow of a 0..1 bbox (e.g. 1.5)
-        // is clamped rather than misinterpreted as a 0..1000 value.
+        // Detect 0..1000 range (Gemini's canonical default) and normalize to 0..1.
         if (nums.some(n => n > 10)) nums = nums.map(n => n / 1000);
-        let [x1, y1, x2, y2] = nums;
-        if (x2 < x1) [x1, x2] = [x2, x1];
-        if (y2 < y1) [y1, y2] = [y2, y1];
+        let [ymin, xmin, ymax, xmax] = nums;
+        if (xmax < xmin) [xmin, xmax] = [xmax, xmin];
+        if (ymax < ymin) [ymin, ymax] = [ymax, ymin];
         const clamp = n => Math.max(0, Math.min(1, n));
-        return [clamp(x1), clamp(y1), clamp(x2), clamp(y2)];
+        return [clamp(xmin), clamp(ymin), clamp(xmax), clamp(ymax)];
     }
 
     _clampInt(v, min, max) {
@@ -206,8 +216,14 @@ Respond with JSON only.`;
      * Re-extract attributes from a single garment's crop (cleaner signal than
      * the multi-item detection pass). Updates the row and broadcasts
      * wardrobe:garment:attributes when done.
+     *
+     * @param {string} garmentId
+     * @param {Object} [options]
+     * @param {string} [options.hint] - user-supplied known brand/model (e.g.
+     *   "ABC Warpstreme Jogger Regular by Lululemon"). When present it biases
+     *   the model toward that identity instead of guessing from scratch.
      */
-    async _runAttributePass(garmentId) {
+    async _runAttributePass(garmentId, { hint = null } = {}) {
         const garment = this.db.getGarment(garmentId);
         if (!garment) return;
         if (!this.agent.client) {
@@ -236,11 +252,15 @@ Respond with JSON only.`;
   "warmth": 1-5,
   "formality": 1-5,
   "season_tags": ["spring","summer","fall","winter"],
-  "distinguishing_features": "logos, stitching, named model, distinctive cut",
+  "distinguishing_features": "logos, stitching, named model, distinctive cut",${hint ? `
+  "brand": "brand name parsed from the user hint, or null",
+  "model": "specific model name parsed from the user hint, or null",` : ''}
   "confidence": 0..1
 }
 
-Rules: omit fields you cannot confidently determine. Do not invent brands. Respond with JSON only.`;
+${hint ? `USER-SUPPLIED IDENTITY: "${hint}".
+Trust this hint as ground truth. Parse brand and model out of it (e.g. "ABC Warpstreme Jogger Regular · Lululemon" → brand: "Lululemon", model: "ABC Warpstreme Jogger Regular") and shape subtype/material/season_tags around that identity (e.g. "ABC Warpstreme Jogger" → subtype: "joggers", material: a synthetic blend). Only override the hint if the image is clearly inconsistent with it.
+` : ''}Rules: omit fields you cannot confidently determine. Do not invent brands${hint ? ' beyond what the hint states' : ''}. Respond with JSON only.`;
 
         try {
             const base64 = fs.readFileSync(cropPath).toString('base64');
@@ -277,6 +297,13 @@ Rules: omit fields you cannot confidently determine. Do not invent brands. Respo
             const f = this._clampInt(data.formality, 1, 5);
             if (f !== null) patch.formality = f;
             if (Array.isArray(data.season_tags)) patch.season_tags = data.season_tags;
+            // When the user supplied a hint, the attribute pass is allowed to populate
+            // brand/model from it. Only fill missing fields — never clobber a value
+            // the user already typed in.
+            if (hint) {
+                if (data.brand && !garment.brand) patch.brand = data.brand;
+                if (data.model && !garment.model) patch.model = data.model;
+            }
             patch.meta = {
                 ...(garment.meta || {}),
                 distinguishingFeatures: data.distinguishing_features || garment.meta?.distinguishingFeatures || null,
@@ -318,10 +345,20 @@ Rules: omit fields you cannot confidently determine. Do not invent brands. Respo
      * - Auto-accepts only when confidence >= 0.95 AND a visual identifier is cited
      * - Otherwise surfaces a candidate via enrichment_status='needs_brand_confirm'
      * - If no distinguishing features or no client, just completes
+     * - If the user has already supplied a brand or hint, skip the search entirely
+     *   (user input is authoritative)
      */
     async _enrichBrand(garmentId) {
         const garment = this.db.getGarment(garmentId);
         if (!garment) return;
+
+        // Respect user input: if they set brand, confirmed one, or supplied a hint,
+        // there's nothing for the search to add.
+        if (garment.brand || garment.meta?.userHint || garment.meta?.brandUserConfirmed) {
+            this.db.updateGarment(garmentId, { enrichment_status: 'complete' });
+            this._broadcast('wardrobe:garment:enriched', this.db.getGarment(garmentId));
+            return;
+        }
 
         const distinguishing = garment.meta?.distinguishingFeatures;
         const cropPath = garment.crop_image_path || garment.source_image_path;
@@ -450,6 +487,119 @@ Hard rules:
         this.db.updateGarment(garmentId, patch);
         this._broadcast('wardrobe:garment:update', this.db.getGarment(garmentId));
         return this.db.getGarment(garmentId);
+    }
+
+    /**
+     * Re-run the attribute pass on an existing garment, optionally biased by a
+     * user-supplied hint (e.g. "ABC Warpstreme Jogger Regular"). The hint is
+     * combined with whatever brand/model the user has already set so the model
+     * reshapes the subtype/material/season tags around that identity instead of
+     * guessing from scratch.
+     *
+     * Returns the garment row immediately; the refinement runs in the background
+     * and broadcasts wardrobe:garment:attributes / :enriched when complete.
+     */
+    async reenrichGarment(garmentId, { hint = '' } = {}) {
+        const garment = this.db.getGarment(garmentId);
+        if (!garment) throw new Error(`Garment ${garmentId} not found`);
+
+        const trimmed = (hint || '').trim();
+        const effectiveParts = [trimmed, garment.brand, garment.model]
+            .map(s => (s || '').trim())
+            .filter(Boolean);
+        // De-dupe so "ABC Warpstreme Jogger · ABC Warpstreme Jogger" doesn't happen
+        const seen = new Set();
+        const unique = [];
+        for (const p of effectiveParts) {
+            const k = p.toLowerCase();
+            if (!seen.has(k)) { seen.add(k); unique.push(p); }
+        }
+        const effectiveHint = unique.length ? unique.join(' · ') : null;
+
+        const metaPatch = { ...(garment.meta || {}) };
+        if (trimmed) metaPatch.userHint = trimmed;
+        // Clear any stale brand candidate — user-driven re-enrich supersedes it
+        metaPatch.brandCandidate = null;
+
+        this.db.updateGarment(garmentId, {
+            enrichment_status: 'enriching',
+            meta: metaPatch
+        });
+        this._broadcast('wardrobe:garment:update', this.db.getGarment(garmentId));
+
+        // Background refinement — caller gets the "enriching" state immediately
+        this._runAttributePass(garmentId, { hint: effectiveHint }).catch(err => {
+            console.error(`[WardrobeService] reenrichGarment failed for ${garmentId}:`, err.message);
+        });
+
+        return this.db.getGarment(garmentId);
+    }
+
+    /**
+     * Generate a clean product-catalog image of the garment using the Gemini
+     * image model. Uses the existing crop as the reference and writes the
+     * output alongside the source image. The garment row's
+     * `generated_image_path` is updated when the render lands.
+     */
+    async generateGarmentImage(garmentId) {
+        const garment = this.db.getGarment(garmentId);
+        if (!garment) throw new Error(`Garment ${garmentId} not found`);
+        if (!this.agent.client) throw new Error('Gemini client not initialized');
+
+        const cropPath = garment.crop_image_path || garment.source_image_path;
+        if (!cropPath || !fs.existsSync(cropPath)) {
+            throw new Error('Garment has no source image to reference');
+        }
+
+        const descriptorBits = [
+            garment.type,
+            garment.subtype,
+            garment.primary_color,
+            garment.pattern,
+            garment.material_guess,
+            garment.brand && `by ${garment.brand}`,
+            garment.model && `(${garment.model})`
+        ].filter(Boolean);
+        const descriptor = descriptorBits.length ? descriptorBits.join(' ') : 'garment';
+
+        const prompt = `Generate a clean product-catalog photo of the exact ${descriptor} shown in the reference image.
+- Plain neutral off-white background
+- Single garment centered, well-lit with soft diffuse lighting
+- No human model, no mannequin, no hanger, no clutter
+- Preserve color, pattern, fit, fabric texture, and any visible logos or stitching faithfully
+- Full item visible in frame with small margin around the edges
+- Studio e-commerce aesthetic
+- No text overlays, no watermarks`;
+
+        const mimeType = cropPath.endsWith('.png') ? 'image/png' : 'image/jpeg';
+        const base64 = fs.readFileSync(cropPath).toString('base64');
+
+        const modelName = this.config.getModel('IMAGE');
+        const response = await this.agent.client.models.generateContent({
+            model: modelName,
+            contents: [{
+                role: 'user',
+                parts: [
+                    { inlineData: { data: base64, mimeType } },
+                    { text: prompt }
+                ]
+            }],
+            config: { responseModalities: ['TEXT', 'IMAGE'] }
+        });
+        try { this.config.logUsageFromResponse(this.db, modelName, response, null, 'wardrobe_generate_garment'); } catch (e) { /* ignore */ }
+
+        const respParts = response?.candidates?.[0]?.content?.parts || [];
+        const imagePart = respParts.find(p => p?.inlineData?.mimeType?.startsWith?.('image/'));
+        if (!imagePart) throw new Error('No image returned from image model');
+
+        const outDir = path.dirname(cropPath);
+        const outPath = path.join(outDir, `generated_${garmentId}.jpg`);
+        fs.writeFileSync(outPath, Buffer.from(imagePart.inlineData.data, 'base64'));
+
+        this.db.updateGarment(garmentId, { generated_image_path: outPath });
+        const updated = this.db.getGarment(garmentId);
+        this._broadcast('wardrobe:garment:update', updated);
+        return updated;
     }
 
     /**

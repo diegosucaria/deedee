@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
 import {
     Shirt, Camera, Trash2, X, Loader2, Check, Pencil, Settings, Heart,
-    Plane, ShoppingBag, MapPin, Calendar, Upload, User, Layers
+    Plane, ShoppingBag, MapPin, Calendar, Upload, User, Layers, Sparkles, RefreshCw
 } from 'lucide-react';
 import PageShell from '@/components/PageShell';
 import {
@@ -14,6 +14,8 @@ import {
     updateGarment,
     deleteGarment as deleteGarmentAction,
     confirmGarmentBrand,
+    reenrichGarment,
+    generateGarmentImage,
     getWardrobeProfile,
     updateWardrobeProfile,
     uploadReferenceSelfie,
@@ -249,7 +251,7 @@ function GarmentsTab() {
             ) : (
                 <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-3">
                     {visible.map(g => {
-                        const imgUrl = pathToUrl(g.crop_image_path || g.source_image_path);
+                        const imgUrl = pathToUrl(g.generated_image_path || g.crop_image_path || g.source_image_path);
                         const enriching = g.enrichment_status === 'enriching';
                         return (
                             <button
@@ -309,6 +311,16 @@ function GarmentsTab() {
                             const res = await confirmGarmentBrand(selected.id, accept);
                             if (res.success && res.data?.garment) setSelected(res.data.garment);
                         }}
+                        onReenrich={async (hint) => {
+                            const res = await reenrichGarment(selected.id, hint);
+                            if (res.success && res.data?.garment) setSelected(res.data.garment);
+                            return res;
+                        }}
+                        onGenerateImage={async () => {
+                            const res = await generateGarmentImage(selected.id);
+                            if (res.success && res.data?.garment) setSelected(res.data.garment);
+                            return res;
+                        }}
                     />
                 )}
             </AnimatePresence>
@@ -327,16 +339,39 @@ const EDITABLE_TEXT = [
     { key: 'size', label: 'Size' }
 ];
 
-function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand }) {
+function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, onReenrich, onGenerateImage }) {
     const [editing, setEditing] = useState(null);
     const [draft, setDraft] = useState('');
-    const imgUrl = pathToUrl(garment.source_image_path);
+    const [hint, setHint] = useState('');
+    const [reenriching, setReenriching] = useState(false);
+    const [generating, setGenerating] = useState(false);
+    const [genError, setGenError] = useState('');
+    const [showOriginal, setShowOriginal] = useState(false);
+    const generatedUrl = pathToUrl(garment.generated_image_path);
+    const originalUrl = pathToUrl(garment.crop_image_path || garment.source_image_path);
+    const imgUrl = !showOriginal && generatedUrl ? generatedUrl : originalUrl;
+    const enriching = garment.enrichment_status === 'enriching';
     const brandCandidate = garment.enrichment_status === 'needs_brand_confirm'
         ? garment.meta?.brandCandidate : null;
 
     const save = async (key) => {
         await onChange({ [key]: draft || null });
         setEditing(null);
+    };
+
+    const handleReenrich = async () => {
+        setReenriching(true);
+        try { await onReenrich(hint); setHint(''); }
+        finally { setReenriching(false); }
+    };
+
+    const handleGenerate = async () => {
+        setGenerating(true);
+        setGenError('');
+        try {
+            const res = await onGenerateImage();
+            if (!res?.success) setGenError(res?.error || 'Generate failed');
+        } finally { setGenerating(false); }
     };
 
     return (
@@ -359,9 +394,31 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand })
                 </div>
 
                 {imgUrl && (
-                    // eslint-disable-next-line @next/next/no-img-element
-                    <img src={imgUrl} alt="" className="w-full rounded-xl mb-4 object-cover max-h-80" />
+                    <div className="relative mb-4">
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={imgUrl} alt="" className="w-full rounded-xl object-cover max-h-80" />
+                        {generatedUrl && (
+                            <button
+                                onClick={() => setShowOriginal(v => !v)}
+                                className="absolute top-2 right-2 px-2 py-1 rounded-full bg-black/70 text-[10px] text-white backdrop-blur"
+                            >
+                                {showOriginal ? 'Generated' : 'Original'}
+                            </button>
+                        )}
+                    </div>
                 )}
+
+                <div className="flex flex-wrap gap-2 mb-4">
+                    <button
+                        onClick={handleGenerate}
+                        disabled={generating || enriching}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-violet-600/90 hover:bg-violet-500 disabled:opacity-50 text-white text-xs min-h-[36px]"
+                    >
+                        {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                        {generatedUrl ? 'Regenerate image' : 'Generate clean image'}
+                    </button>
+                    {genError && <span className="text-xs text-rose-400 self-center">{genError}</span>}
+                </div>
 
                 {brandCandidate?.brand && (
                     <div className="mb-4 p-3 rounded-xl bg-amber-500/10 border border-amber-500/30">
@@ -430,6 +487,29 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand })
                         value={garment.formality}
                         onCommit={v => onChange({ formality: v })}
                     />
+                </div>
+
+                <div className="mb-4 p-3 rounded-xl bg-zinc-900 border border-zinc-800">
+                    <p className="text-xs text-zinc-400 mb-2">
+                        Re-analyze with a known model or brand. Leave blank to just refresh attributes using the fields above.
+                    </p>
+                    <div className="flex gap-2">
+                        <input
+                            value={hint}
+                            onChange={e => setHint(e.target.value)}
+                            placeholder="e.g. ABC Warpstreme Jogger Regular"
+                            className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600"
+                            disabled={reenriching || enriching}
+                        />
+                        <button
+                            onClick={handleReenrich}
+                            disabled={reenriching || enriching}
+                            className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs min-h-[36px]"
+                        >
+                            {reenriching || enriching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
+                            Re-enrich
+                        </button>
+                    </div>
                 </div>
 
                 <div className="flex gap-2">

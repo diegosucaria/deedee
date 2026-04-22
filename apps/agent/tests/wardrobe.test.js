@@ -44,18 +44,24 @@ describe('WardrobeService detection + bbox normalization', () => {
         service = new WardrobeService(mockAgent);
     });
 
-    test('_normalizeBbox accepts 0-1 range unchanged', () => {
-        expect(service._normalizeBbox([0.1, 0.2, 0.8, 0.9])).toEqual([0.1, 0.2, 0.8, 0.9]);
+    test('_normalizeBbox converts Gemini [ymin,xmin,ymax,xmax] (0-1) to [x1,y1,x2,y2]', () => {
+        // Input is ymin=0.2, xmin=0.1, ymax=0.9, xmax=0.8
+        // Output should be x1=0.1, y1=0.2, x2=0.8, y2=0.9
+        expect(service._normalizeBbox([0.2, 0.1, 0.9, 0.8])).toEqual([0.1, 0.2, 0.8, 0.9]);
     });
 
-    test('_normalizeBbox converts 0-1000 range to 0-1', () => {
-        const r = service._normalizeBbox([100, 200, 800, 900]);
-        expect(r[0]).toBeCloseTo(0.1, 5);
-        expect(r[2]).toBeCloseTo(0.8, 5);
+    test('_normalizeBbox converts Gemini [ymin,xmin,ymax,xmax] (0-1000) to [x1,y1,x2,y2] (0-1)', () => {
+        // Input: ymin=200, xmin=100, ymax=900, xmax=800 (Gemini native)
+        const r = service._normalizeBbox([200, 100, 900, 800]);
+        expect(r[0]).toBeCloseTo(0.1, 5); // x1
+        expect(r[1]).toBeCloseTo(0.2, 5); // y1
+        expect(r[2]).toBeCloseTo(0.8, 5); // x2
+        expect(r[3]).toBeCloseTo(0.9, 5); // y2
     });
 
     test('_normalizeBbox swaps reversed coords and clamps', () => {
-        expect(service._normalizeBbox([0.8, 0.9, 0.1, 0.2])).toEqual([0.1, 0.2, 0.8, 0.9]);
+        // Swapped: ymax first instead of ymin, etc. Result is still ordered x1<x2, y1<y2
+        expect(service._normalizeBbox([0.9, 0.8, 0.2, 0.1])).toEqual([0.1, 0.2, 0.8, 0.9]);
         expect(service._normalizeBbox([-0.1, -0.1, 1.5, 1.5])).toEqual([0, 0, 1, 1]);
     });
 
@@ -419,6 +425,256 @@ describe('WardrobeService.confirmBrand (P3)', () => {
     test('throws for missing garment', async () => {
         mockAgent.db.getGarment.mockReturnValue(null);
         await expect(service.confirmBrand('bad_id', true)).rejects.toThrow('not found');
+    });
+});
+
+describe('WardrobeService.reenrichGarment', () => {
+    let service;
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        service = new WardrobeService(mockAgent);
+    });
+
+    test('stores hint in meta and kicks off background attribute pass with combined hint', async () => {
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1',
+            brand: 'Lululemon',
+            model: null,
+            enrichment_status: 'complete',
+            meta: {}
+        });
+        service._runAttributePass = jest.fn().mockResolvedValue(undefined);
+
+        const r = await service.reenrichGarment('g1', { hint: 'ABC Warpstreme Jogger Regular' });
+
+        // Immediately-returned status change + broadcast
+        expect(mockAgent.db.updateGarment).toHaveBeenCalledWith('g1', expect.objectContaining({
+            enrichment_status: 'enriching',
+            meta: expect.objectContaining({ userHint: 'ABC Warpstreme Jogger Regular' })
+        }));
+        // Background pass called with hint that combines user text + existing brand
+        expect(service._runAttributePass).toHaveBeenCalledWith('g1', expect.objectContaining({
+            hint: expect.stringContaining('ABC Warpstreme Jogger Regular')
+        }));
+        const call = service._runAttributePass.mock.calls[0][1];
+        expect(call.hint).toMatch(/Lululemon/);
+        expect(r).toBeTruthy();
+    });
+
+    test('empty hint still re-enriches using only existing brand/model', async () => {
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1',
+            brand: 'Lacoste',
+            model: 'L.12.12',
+            meta: {}
+        });
+        service._runAttributePass = jest.fn().mockResolvedValue(undefined);
+
+        await service.reenrichGarment('g1', { hint: '' });
+
+        // No userHint saved when nothing provided
+        const patch = mockAgent.db.updateGarment.mock.calls[0][1];
+        expect(patch.meta).not.toHaveProperty('userHint');
+        // Effective hint combines brand + model
+        const effective = service._runAttributePass.mock.calls[0][1].hint;
+        expect(effective).toMatch(/Lacoste/);
+        expect(effective).toMatch(/L\.12\.12/);
+    });
+
+    test('throws when garment does not exist', async () => {
+        mockAgent.db.getGarment.mockReturnValue(null);
+        await expect(service.reenrichGarment('ghost', {})).rejects.toThrow('not found');
+    });
+
+    test('_enrichBrand skips web search when user brand already set', async () => {
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1',
+            brand: 'Lululemon',
+            model: 'ABC Warpstreme Jogger',
+            crop_image_path: '/c.jpg',
+            source_image_path: '/s.jpg',
+            enrichment_status: 'enriching',
+            meta: { distinguishingFeatures: 'omega logo on thigh' }
+        });
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+
+        await service._enrichBrand('g1');
+
+        expect(mockAgent.client.models.generateContent).not.toHaveBeenCalled();
+        expect(mockAgent.db.updateGarment).toHaveBeenCalledWith('g1', { enrichment_status: 'complete' });
+    });
+
+    test('_enrichBrand skips web search when userHint is present', async () => {
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1',
+            brand: null,
+            crop_image_path: '/c.jpg',
+            source_image_path: '/s.jpg',
+            enrichment_status: 'enriching',
+            meta: {
+                distinguishingFeatures: 'logo on chest',
+                userHint: 'ABC Warpstreme Jogger Regular'
+            }
+        });
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+
+        await service._enrichBrand('g1');
+
+        expect(mockAgent.client.models.generateContent).not.toHaveBeenCalled();
+        expect(mockAgent.db.updateGarment).toHaveBeenCalledWith('g1', { enrichment_status: 'complete' });
+    });
+
+    test('_runAttributePass prompt includes the hint when provided', async () => {
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1',
+            crop_image_path: '/c.jpg',
+            source_image_path: '/s.jpg',
+            enrichment_status: 'enriching',
+            enrichment_confidence: 0.5,
+            meta: {}
+        });
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        jest.spyOn(fs, 'readFileSync').mockReturnValue(Buffer.from('bytes'));
+        mockAgent.client.models.generateContent.mockResolvedValueOnce(mockAttrResponse({
+            type: 'bottom', subtype: 'joggers', primary_color: 'black', confidence: 0.9
+        }));
+
+        await service._runAttributePass('g1', { hint: 'ABC Warpstreme Jogger · Lululemon' });
+
+        const callArgs = mockAgent.client.models.generateContent.mock.calls[0][0];
+        const promptText = callArgs.contents[0].parts.find(p => p.text)?.text || '';
+        expect(promptText).toMatch(/USER-SUPPLIED IDENTITY/);
+        expect(promptText).toMatch(/ABC Warpstreme Jogger/);
+    });
+
+    test('_runAttributePass fills brand/model from hint-parsed response when garment has none', async () => {
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1',
+            crop_image_path: '/c.jpg',
+            source_image_path: '/s.jpg',
+            brand: null,
+            model: null,
+            enrichment_status: 'enriching',
+            meta: {}
+        });
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        jest.spyOn(fs, 'readFileSync').mockReturnValue(Buffer.from('bytes'));
+        mockAgent.client.models.generateContent.mockResolvedValueOnce(mockAttrResponse({
+            type: 'bottom',
+            subtype: 'joggers',
+            brand: 'Lululemon',
+            model: 'ABC Warpstreme Jogger Regular',
+            confidence: 0.95
+        }));
+
+        await service._runAttributePass('g1', { hint: 'ABC Warpstreme Jogger Regular' });
+
+        const patch = mockAgent.db.updateGarment.mock.calls.find(c => c[1].subtype === 'joggers')[1];
+        expect(patch.brand).toBe('Lululemon');
+        expect(patch.model).toBe('ABC Warpstreme Jogger Regular');
+    });
+
+    test('_runAttributePass does not overwrite user-set brand/model', async () => {
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1',
+            crop_image_path: '/c.jpg',
+            source_image_path: '/s.jpg',
+            brand: 'MyBrand',
+            model: 'MyModel',
+            enrichment_status: 'enriching',
+            meta: {}
+        });
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        jest.spyOn(fs, 'readFileSync').mockReturnValue(Buffer.from('bytes'));
+        mockAgent.client.models.generateContent.mockResolvedValueOnce(mockAttrResponse({
+            type: 'bottom',
+            brand: 'DifferentBrand',
+            model: 'DifferentModel',
+            confidence: 0.9
+        }));
+
+        await service._runAttributePass('g1', { hint: 'DifferentBrand DifferentModel' });
+
+        const patch = mockAgent.db.updateGarment.mock.calls.find(c => c[1].type === 'bottom')[1];
+        expect(patch.brand).toBeUndefined();
+        expect(patch.model).toBeUndefined();
+    });
+});
+
+describe('WardrobeService.generateGarmentImage', () => {
+    let service;
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        service = new WardrobeService(mockAgent);
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        jest.spyOn(fs, 'readFileSync').mockReturnValue(Buffer.from('bytes'));
+        jest.spyOn(fs, 'writeFileSync').mockImplementation(() => { });
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1',
+            type: 'bottom',
+            subtype: 'joggers',
+            primary_color: 'black',
+            brand: 'Lululemon',
+            model: 'ABC Warpstreme Jogger',
+            crop_image_path: '/data/wardrobe/garments/src/crop_0.jpg',
+            source_image_path: '/data/wardrobe/garments/src/original.jpg',
+            meta: {}
+        });
+    });
+
+    test('generates image, writes file, updates row with generated_image_path', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            candidates: [{ content: { parts: [
+                { inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } }
+            ]}}]
+        });
+
+        const r = await service.generateGarmentImage('g1');
+
+        expect(fs.writeFileSync).toHaveBeenCalled();
+        expect(mockAgent.db.updateGarment).toHaveBeenCalledWith('g1', expect.objectContaining({
+            generated_image_path: expect.stringMatching(/generated_g1\.jpg$/)
+        }));
+        expect(mockAgent.interface.broadcast).toHaveBeenCalledWith('wardrobe:garment:update', expect.anything());
+        expect(r).toBeTruthy();
+    });
+
+    test('prompt describes the garment using its attributes and brand', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            candidates: [{ content: { parts: [
+                { inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } }
+            ]}}]
+        });
+
+        await service.generateGarmentImage('g1');
+
+        const callArgs = mockAgent.client.models.generateContent.mock.calls[0][0];
+        const prompt = callArgs.contents[0].parts.find(p => p.text)?.text || '';
+        expect(prompt).toMatch(/joggers/);
+        expect(prompt).toMatch(/Lululemon/);
+        expect(prompt).toMatch(/ABC Warpstreme Jogger/);
+    });
+
+    test('throws when image model returns no image', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            candidates: [{ content: { parts: [{ text: 'text only' }] }}]
+        });
+        await expect(service.generateGarmentImage('g1')).rejects.toThrow('No image');
+    });
+
+    test('throws when garment has no source image', async () => {
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1', type: 'top',
+            crop_image_path: null, source_image_path: null, meta: {}
+        });
+        await expect(service.generateGarmentImage('g1')).rejects.toThrow('source image');
+    });
+
+    test('throws when garment not found', async () => {
+        mockAgent.db.getGarment.mockReturnValue(null);
+        await expect(service.generateGarmentImage('ghost')).rejects.toThrow('not found');
     });
 });
 

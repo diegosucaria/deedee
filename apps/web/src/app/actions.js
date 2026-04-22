@@ -1016,6 +1016,29 @@ export async function confirmGarmentBrand(id, accept) {
     }
 }
 
+export async function reenrichGarment(id, hint = '') {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/garments/${encodeURIComponent(id)}/reenrich`, {
+            method: 'POST',
+            body: JSON.stringify({ hint })
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function generateGarmentImage(id) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/garments/${encodeURIComponent(id)}/generate-image`, {
+            method: 'POST'
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function getWardrobeProfile() {
     try {
         const data = await fetchAPI('/v1/wardrobe/profile', { method: 'GET' });
