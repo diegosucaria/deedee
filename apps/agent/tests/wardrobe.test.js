@@ -732,6 +732,63 @@ describe('WardrobeService.visualizeOutfit (P7/P8)', () => {
     test('throws when no panels provided', async () => {
         await expect(service.visualizeOutfit({ garmentIdsPanels: [] })).rejects.toThrow('at least one panel');
     });
+
+    test('throws when supplied outfit_id does not exist (no silent no-op)', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            candidates: [{ content: { parts: [
+                { inlineData: { mimeType: 'image/png', data: 'AAAA' } }
+            ] } }]
+        });
+        mockAgent.db.getOutfit = jest.fn().mockReturnValue(null); // outfit doesn't exist
+
+        await expect(service.visualizeOutfit({ garmentIdsPanels: ['g1'], outfitId: 'ghost' }))
+            .rejects.toThrow('Outfit ghost not found');
+        expect(mockAgent.db.updateOutfit).not.toHaveBeenCalled();
+    });
+});
+
+describe('WardrobeService.analyzeOutfitPhoto trip-scoped shortlist (review fix)', () => {
+    let service;
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        service = new WardrobeService(mockAgent);
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        jest.spyOn(fs, 'mkdirSync').mockImplementation(() => { });
+        jest.spyOn(fs, 'writeFileSync').mockImplementation(() => { });
+        jest.spyOn(fs, 'readFileSync').mockReturnValue(Buffer.from('cropbytes'));
+        service._cropToFile = jest.fn().mockResolvedValue('/out/crop.jpg');
+        service._runAttributePass = jest.fn().mockResolvedValue(undefined);
+        service._detectItems = jest.fn().mockResolvedValue([
+            { bbox: [0.1, 0.1, 0.5, 0.5], type: 'top', primary_color: 'navy', secondary_colors: [], season_tags: [] }
+        ]);
+    });
+
+    test('active trip prepends capsule items but still includes non-capsule wardrobe items in shortlist', async () => {
+        mockAgent.db.getTrip = jest.fn().mockReturnValue({
+            id: 't1', status: 'active', actual_capsule: ['capsule_item_1']
+        });
+        mockAgent.db.getGarment.mockImplementation(id => {
+            if (id === 'capsule_item_1') return { id, type: 'top', crop_image_path: '/c.jpg' };
+            if (id === 'wardrobe_other') return { id, type: 'bottom', crop_image_path: '/w.jpg' };
+            return null;
+        });
+        mockAgent.db.getGarments.mockReturnValue([
+            { id: 'wardrobe_other', type: 'bottom', crop_image_path: '/w.jpg' }
+        ]);
+        mockAgent.db.setTripCapsule = jest.fn().mockReturnValue(true);
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            text: () => JSON.stringify({ matches: [{ detection_index: 0, match: 'wardrobe_other' }]}),
+            candidates: [{ content: { parts: [{ text: JSON.stringify({ matches: [{ detection_index: 0, match: 'wardrobe_other' }] }) }] } }]
+        });
+
+        const result = await service.analyzeOutfitPhoto('AAAA', { tripId: 't1' });
+
+        // Item matched against a non-capsule wardrobe piece (proof that shortlist
+        // now includes items beyond the capsule).
+        expect(result.matched).toEqual(['wardrobe_other']);
+        expect(result.newly_added).toEqual([]);
+    });
 });
 
 describe('WardrobeService.critiqueOutfit (P9)', () => {

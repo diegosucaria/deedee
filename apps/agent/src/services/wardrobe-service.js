@@ -539,22 +539,31 @@ Hard rules:
             return { matched: [], newly_added: [], notes: 'No items detected' };
         }
 
-        // Build candidate shortlist. Prefer active trip capsule if supplied.
+        // Build candidate shortlist. When on an active trip, prioritize capsule
+        // items but ALWAYS include recent wardrobe items too — a photo during a
+        // trip might contain pieces the user didn't formally pack, and those
+        // should still match existing wardrobe records (not be duplicated).
         let activeTrip = null;
         if (tripId) {
             try { activeTrip = this.db.getTrip?.(tripId); } catch (e) { /* db method may not exist in older test mocks */ }
         }
         const CAPS_SHORTLIST = 25;
-        let shortlist = [];
+        const shortlist = [];
+        const seen = new Set();
         if (activeTrip && activeTrip.status === 'active' && Array.isArray(activeTrip.actual_capsule)) {
-            shortlist = activeTrip.actual_capsule
-                .map(id => this.db.getGarment(id))
-                .filter(Boolean);
+            for (const id of activeTrip.actual_capsule) {
+                const g = this.db.getGarment(id);
+                if (g && !seen.has(g.id)) { shortlist.push(g); seen.add(g.id); }
+                if (shortlist.length >= CAPS_SHORTLIST) break;
+            }
         }
-        if (shortlist.length === 0) {
-            shortlist = this.db.getGarments({ limit: CAPS_SHORTLIST });
+        if (shortlist.length < CAPS_SHORTLIST) {
+            const rest = this.db.getGarments({ limit: CAPS_SHORTLIST });
+            for (const g of rest) {
+                if (!seen.has(g.id)) { shortlist.push(g); seen.add(g.id); }
+                if (shortlist.length >= CAPS_SHORTLIST) break;
+            }
         }
-        shortlist = shortlist.slice(0, CAPS_SHORTLIST);
 
         // Try a single-call Pro match. If client missing, fall back to "all NEW".
         let matchPlan = null;
@@ -1002,7 +1011,10 @@ ${panelDescriptors.map(d => `  Panel ${d.index}: ${d.garments.join(', ')}`).join
         // Pick an outfit id to associate the render with. If the caller passed outfitId, use it.
         // Otherwise create a new wr_outfits row capturing the first panel.
         let targetOutfitId = outfitId;
-        if (!targetOutfitId) {
+        if (targetOutfitId) {
+            const existing = this.db.getOutfit(targetOutfitId);
+            if (!existing) throw new Error(`Outfit ${targetOutfitId} not found`);
+        } else {
             targetOutfitId = this.db.addOutfit({
                 name: N === 1 ? 'Rendered outfit' : `Rendered ${N}-panel preview`,
                 garment_ids: panels[0],

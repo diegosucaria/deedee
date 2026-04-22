@@ -713,9 +713,9 @@ FORMAT (when you do notify):
 
 1. Call list_trips(status: "planned"). Remember the set of already-planned destinations+dates so you do not duplicate.
 2. Spawn a lightweight FLASH sub-agent to scan the next 7 days of personal calendar for multi-day travel:
-   spawnAgent(task: "List personal_calendar events in the next 7 days. Return STRICT JSON: [{summary, location, start_date, end_date}] ONLY for events that look like multi-day trips (end date > start date + 1 day OR location is clearly a different city/country). Skip routine meetings, recurring items, and 1-day outings. If none, return [SILENT].", model: "FLASH", lightweight: true, tools: ["server:gws_personal"])
+   spawnAgent(task: "List personal_calendar events in the next 7 days. Return STRICT JSON: [{summary, location, start_date, end_date}] ONLY for events that look like multi-day trips (end date > start date + 1 day OR location is clearly a different city/country). Skip routine meetings, recurring items, and 1-day outings. Dates MUST be in YYYY-MM-DD format (no times, no timezones). If none, return [SILENT].", model: "FLASH", lightweight: true, tools: ["server:gws_personal"])
 3. For each trip found that (a) starts 2-4 days from today AND (b) is not already in list_trips output by destination/dates:
-   - Call pack_for_trip(destination, start_date, end_date, activities if inferable). The weather subagent runs inside that call.
+   - Call pack_for_trip(destination, start_date, end_date, activities if inferable). start_date and end_date must be YYYY-MM-DD strings. The weather subagent runs inside that call.
 4. If any new trips were planned, send ONE concise message to the owner:
    "Trip to <destination> in <N> days — drafted a capsule with X items. Review in /wardrobe or ask me to adjust."
    List up to 3 trips max.
