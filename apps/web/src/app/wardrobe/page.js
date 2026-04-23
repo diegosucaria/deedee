@@ -941,7 +941,7 @@ function OutfitsTab() {
                                 <div className="w-16 h-20 shrink-0 bg-zinc-950 rounded-lg grid grid-cols-2 gap-0.5 p-0.5">
                                     {(o.garment_ids || []).slice(0, 4).map(gid => {
                                         const g = garmentIndex[gid];
-                                        const url = g ? pathToUrl(g.crop_image_path || g.source_image_path) : null;
+                                        const url = g ? pathToUrl(g.generated_image_path || g.crop_image_path || g.source_image_path) : null;
                                         return (
                                             <div key={gid} className="bg-zinc-900 rounded overflow-hidden">
                                                 {url && (
@@ -1159,7 +1159,7 @@ function TripDetail({ trip, onClose, onRefresh }) {
                         <div className="grid grid-cols-3 sm:grid-cols-4 gap-2">
                             {capsuleIds.map(gid => {
                                 const g = garmentIndex[gid];
-                                const url = g ? pathToUrl(g.crop_image_path || g.source_image_path) : null;
+                                const url = g ? pathToUrl(g.generated_image_path || g.crop_image_path || g.source_image_path) : null;
                                 return (
                                     <div key={gid} className="relative group aspect-[3/4] bg-zinc-900 rounded-lg overflow-hidden border border-zinc-800">
                                         {url ? (

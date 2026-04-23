@@ -87,15 +87,17 @@ RULES:
 - box_2d is [ymin, xmin, ymax, xmax] normalized to 0-1000 — this is Gemini's canonical bbox format; do not use any other ordering or range
 - The box must tightly enclose the garment itself (no background padding beyond the edges of the fabric)
 - Only include items clearly visible and identifiable; skip partial glimpses of background or furniture
+- INPUT CAN BE A SCREENSHOT: the photo may be a real-world scene (clothes laid on a bed, on a hanger, being worn) OR a screenshot of a clothing retailer / order history / lookbook showing a grid of product cards. When it's a product-card grid, treat each card as one item — return one detection per card with box_2d enclosing the product photo of that card. Use the product title text on the card to populate brand/model in distinguishing_features (e.g. "Lululemon ABC Warpstreme Jogger Regular"). Do NOT skip the screenshot just because it shows a screen — the screenshot itself IS the catalog of clothing.
 - HARD EXCLUDE — never return any of the following as items:
   · the phone or camera taking the photo, including its case, lens, and on-screen reflection
   · hands, fingers, arms, legs, faces, hair, skin, or any other body part
   · mirrors, mirror frames, or anything that is only visible as a reflection
-  · room contents (bed, sofa, desk, hangers, walls, floor, doors, plants, lamps)
-  · packaging, tags, receipts, paper, screens, or other non-clothing objects
+  · room contents in the scene (bed, sofa, desk, hangers, walls, floor, doors, plants, lamps)
+  · packaging, tags, receipts, paper, "MY CLOSET" / "VIEW DETAILS" buttons, prices, navigation chrome, or other UI text from screenshots
+  · physical screens or monitors visible IN a real-world scene that show unrelated content (this rule does NOT apply when the entire input image IS itself a screenshot of clothing — see SCREENSHOT rule above)
   An "accessory" means a wearable accessory the user owns (belt, bag, hat, watch, jewelry, sunglasses, scarf) — not anything else that happens to look small or rectangular
 - Omit fields you are uncertain about (do not fabricate)
-- Never invent brands or models
+- Never invent brands or models — but if the screenshot has visible product titles like "Lululemon ABC Warpstreme Jogger", quote that into distinguishing_features verbatim
 Respond with JSON only.`;
 
         const startedAt = Date.now();
@@ -174,6 +176,24 @@ Respond with JSON only.`;
             distinguishing_features: item.distinguishing_features || null,
             detection_confidence: typeof item.detection_confidence === 'number' ? item.detection_confidence : 0
         };
+    }
+
+    /**
+     * Pick the best image to show / send to a model for a garment.
+     *
+     * Generated catalog images are preferred when present because they're the
+     * canonical clean view (uniform composition, no clutter, no human model).
+     * Falls back to the crop, then the source. Used wherever we display a
+     * garment OR send it to another model call as a reference.
+     *
+     * Exception: methods that derive a NEW image FROM the garment's true
+     * appearance (re-enrich's attribute pass on a new crop, image regeneration)
+     * deliberately read crop_image_path directly so they don't drift through
+     * generations.
+     */
+    _imageForGarment(g) {
+        if (!g) return null;
+        return g.generated_image_path || g.crop_image_path || g.source_image_path || null;
     }
 
     /**
@@ -1295,10 +1315,12 @@ GENERAL RULES:
         if (!this.agent.client) return null;
         const modelName = this.config.getModel('PRO');
 
-        // Read shortlist crops for the Pro call
+        // Read shortlist images for the Pro call. Prefer the clean generated
+        // catalog shot when available — it's a much better visual match signal
+        // than the cluttered original crop.
         const shortlistParts = [];
         for (const g of shortlist) {
-            const p = g.crop_image_path || g.source_image_path;
+            const p = this._imageForGarment(g);
             if (!p || !fs.existsSync(p)) continue;
             try {
                 const data = fs.readFileSync(p).toString('base64');
@@ -1583,7 +1605,10 @@ Do not propose items outside the pool. Respond with strict JSON:
             if (garments.length === 0) continue;
             const cropParts = [];
             for (const g of garments) {
-                const cp = g.crop_image_path || g.source_image_path;
+                // Prefer the clean generated catalog shot — it's a much cleaner
+                // reference for the virtual-mirror render than the original
+                // photo (which may have folds, hands, background clutter).
+                const cp = this._imageForGarment(g);
                 if (!cp || !fs.existsSync(cp)) continue;
                 const mt = cp.endsWith('.png') ? 'image/png' : 'image/jpeg';
                 cropParts.push({ inlineData: { data: fs.readFileSync(cp).toString('base64'), mimeType: mt } });

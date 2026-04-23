@@ -71,6 +71,18 @@ describe('WardrobeService detection + bbox normalization', () => {
         expect(service._normalizeBbox(['a', 'b', 'c', 'd'])).toEqual([0, 0, 1, 1]);
     });
 
+    test('_imageForGarment prefers generated → crop → source', () => {
+        expect(service._imageForGarment(null)).toBeNull();
+        expect(service._imageForGarment({})).toBeNull();
+        expect(service._imageForGarment({ source_image_path: '/s.jpg' })).toBe('/s.jpg');
+        expect(service._imageForGarment({ crop_image_path: '/c.jpg', source_image_path: '/s.jpg' })).toBe('/c.jpg');
+        expect(service._imageForGarment({
+            generated_image_path: '/g.jpg',
+            crop_image_path: '/c.jpg',
+            source_image_path: '/s.jpg'
+        })).toBe('/g.jpg');
+    });
+
     test('_detectItems falls back when client missing', async () => {
         const agentNoClient = { ...mockAgent, client: null };
         const s = new WardrobeService(agentNoClient);
@@ -108,6 +120,17 @@ describe('WardrobeService detection + bbox normalization', () => {
         expect(promptText).toMatch(/mirror/i);
         // Make sure the accessory definition is narrowed to wearable accessories
         expect(promptText).toMatch(/wearable accessory/);
+    });
+
+    test('_detectItems prompt tells the model to handle screenshots of product grids', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce(mockDetectResponse([]));
+        await service._detectItems('AAAA');
+        const promptText = mockAgent.client.models.generateContent.mock.calls[0][0]
+            .contents[0].parts.find(p => p.text)?.text || '';
+        expect(promptText).toMatch(/SCREENSHOT|screenshot/);
+        expect(promptText).toMatch(/product card/i);
+        // Must explicitly tell it not to skip just because it's a screen
+        expect(promptText).toMatch(/Do NOT skip the screenshot/i);
     });
 });
 
