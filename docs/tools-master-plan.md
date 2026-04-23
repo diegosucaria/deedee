@@ -13,7 +13,8 @@ This document tracks the status of all tools available to the Deedee agent, thei
 | `searchMemory` | Memory | Search past conversation history (regex/SQL) | `executors/memory.js` | ✅ |
 | `searchHistory` | Memory | Search specific details in chat history | `executors/memory.js` | ✅ |
 | `consolidateMemory` | Memory | Summarize day's logs into journal | `executors/memory.js` | ✅ |
-| `addGoal` | Memory | Register a new high-level goal | `executors/memory.js` | ✅ |
+| `addGoal` | Memory | Register multi-session resumable work the agent is executing (not for user TODOs) | `executors/memory.js` | ✅ |
+| `updateGoalProgress` | Memory | Save a checkpoint for an in-flight goal so it can resume after a restart | `executors/memory.js` | ✅ |
 | `completeGoal` | Memory | Mark a goal as completed | `executors/memory.js` | ✅ |
 | `listEvents` | GSuite | List calendar events | `executors/gsuite.js` | ✅ |
 | `sendEmail` | GSuite | Send an email | `executors/gsuite.js` | ✅ |
@@ -61,7 +62,7 @@ Each tool in `tools-definition.js` has a `category` field used for automatic too
 | Category | Description | Example Tools |
 |----------|-------------|---------------|
 | `memory` | Remember/recall facts, search history, journal | `rememberFact`, `searchMemory`, `consolidateMemory` |
-| `goals` | Goal tracking | `addGoal`, `completeGoal` |
+| `goals` | Agent's multi-session resumable work | `addGoal`, `updateGoalProgress`, `completeGoal` |
 | `scheduler` | Job scheduling, state persistence | `scheduleJob`, `saveJobState`, `getJobState` |
 | `filesystem` | File I/O, shell commands, git | `readFile`, `writeFile`, `runShellCommand` |
 | `search` | Web search | `googleSearch` |

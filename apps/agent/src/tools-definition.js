@@ -91,17 +91,33 @@ const toolDefinitions = [
       {
         name: "addGoal",
         category: "goals",
-        description: "Register a new high-level goal or task (e.g. 'Update code for PDF support')",
+        description: "Register multi-session work YOU (the agent) are about to execute that must survive a restart. Use ONLY for: batch processing across many items, investigations spanning hours, or tasks with interruptible mid-state. DO NOT use for: things the USER has to do (those are not your work — respond in chat or offer scheduleJob for a reminder), single-turn requests, or timed reminders (use scheduleJob).",
         parameters: {
           type: "OBJECT",
-          properties: { description: { type: "STRING" } },
+          properties: {
+            description: { type: "STRING", description: "What YOU are about to execute, from your own perspective. e.g. 'Extract and summarize 200 Slack messages from last week'" },
+            progress: { type: "STRING", description: "Optional initial checkpoint note." }
+          },
           required: ["description"]
+        }
+      },
+      {
+        name: "updateGoalProgress",
+        category: "goals",
+        description: "Save a resumption checkpoint for an in-flight goal. Call after each significant step of multi-session work. The string you write is what future-you will read on the next restart to continue — include cursor/IDs/counts/last-processed-item so you can pick up where you left off.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            id: { type: "NUMBER" },
+            progress: { type: "STRING", description: "Free-form checkpoint, e.g. 'Processed 40/200 msgs, cursor=1711234567, remaining channels=[#eng,#ops]'" }
+          },
+          required: ["id", "progress"]
         }
       },
       {
         name: "completeGoal",
         category: "goals",
-        description: "Mark a goal as completed",
+        description: "Mark a goal as completed. Only call when the full multi-session task is actually done.",
         parameters: {
           type: "OBJECT",
           properties: { id: { type: "NUMBER" } },

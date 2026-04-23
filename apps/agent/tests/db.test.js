@@ -51,10 +51,44 @@ describe('AgentDB', () => {
     const goals = db.getPendingGoals();
     expect(goals).toHaveLength(1);
     expect(goals[0].description).toBe('Fix bugs');
+    expect(goals[0].progress).toBeNull();
+    expect(goals[0].last_activity_at).toBeTruthy();
 
     db.completeGoal(info.lastInsertRowid);
     const pending = db.getPendingGoals();
     expect(pending).toHaveLength(0);
+  });
+
+  test('should checkpoint goal progress for resumption', () => {
+    const info = db.addGoal('Extract 200 Slack msgs', { chatId: 'c1' }, 'starting');
+    const id = info.lastInsertRowid;
+
+    const initial = db.getPendingGoals();
+    expect(initial[0].progress).toBe('starting');
+    const startedAt = initial[0].last_activity_at;
+
+    // Small wait to ensure timestamp tick, then checkpoint
+    const res = db.updateGoalProgress(id, 'Processed 40/200, cursor=1711234567');
+    expect(res.changes).toBe(1);
+
+    const after = db.getPendingGoals();
+    expect(after[0].progress).toBe('Processed 40/200, cursor=1711234567');
+    expect(after[0].last_activity_at >= startedAt).toBe(true);
+    expect(after[0].metadata).toEqual({ chatId: 'c1' });
+  });
+
+  test('updateGoalProgress returns no changes for missing id', () => {
+    const res = db.updateGoalProgress(9999, 'x');
+    expect(res.changes).toBe(0);
+  });
+
+  test('clearGoals(chatId) marks pending goals for that chat as failed', () => {
+    db.addGoal('In chat A', { chatId: '12345@s.whatsapp.net' });
+    db.addGoal('In chat B', { chatId: 'other-chat' });
+    db.clearGoals('12345@s.whatsapp.net');
+    const pending = db.getPendingGoals();
+    expect(pending).toHaveLength(1);
+    expect(pending[0].description).toBe('In chat B');
   });
 
   describe('Chat Sessions', () => {

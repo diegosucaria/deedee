@@ -44,8 +44,10 @@ export default function BrainTabs({ goals, facts, aliases, tools, servers }) {
                 {activeTab === 'goals' && (
                     <div className="animate-in fade-in slide-in-from-bottom-2 duration-300">
                         <div className="mb-4">
-                            <h2 className="text-xl font-semibold text-white">Long-term Objectives</h2>
-                            <p className="text-zinc-400 text-sm">Track and manage high-level goals for the agent.</p>
+                            <h2 className="text-xl font-semibold text-white">Agent Goals</h2>
+                            <p className="text-zinc-400 text-sm">
+                                Multi-session work the agent is executing, with resumption checkpoints. Not for user TODOs or reminders — those go through the scheduler.
+                            </p>
                         </div>
                         <GoalList goals={goals} />
                     </div>

@@ -16,7 +16,7 @@ export default function GoalList({ goals }) {
                 <input
                     type="text"
                     name="description"
-                    placeholder="New Goal..."
+                    placeholder="New agent goal (multi-session, resumable work)..."
                     required
                     className="flex-1 rounded-lg bg-zinc-900 border border-zinc-800 px-4 py-2 text-white placeholder-zinc-500 focus:outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
                 />
@@ -55,12 +55,18 @@ export default function GoalList({ goals }) {
                                         <Circle className="h-5 w-5" />
                                     )}
                                 </button>
-                                <div>
+                                <div className="min-w-0">
                                     <p className={`font-medium text-zinc-200 ${goal.status === 'completed' ? 'line-through text-zinc-500' : ''}`}>
                                         {goal.description}
                                     </p>
-                                    <p className="text-xs text-zinc-500">
+                                    {goal.progress && (
+                                        <p className="mt-1 text-xs text-indigo-300/80 font-mono whitespace-pre-wrap break-words">
+                                            checkpoint: {goal.progress}
+                                        </p>
+                                    )}
+                                    <p className="mt-1 text-xs text-zinc-500">
                                         Created: {new Date(goal.created_at).toLocaleDateString()}
+                                        {goal.last_activity_at ? ` · Last activity: ${new Date(goal.last_activity_at).toLocaleString()}` : ''}
                                     </p>
                                 </div>
                             </div>
