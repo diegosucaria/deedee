@@ -1771,12 +1771,28 @@ Do not propose items outside the pool. Respond with strict JSON:
         return this._saveProposals(cleaned, context);
     }
 
+    // Turn internal bucket labels ("weather_anchored") into something that
+    // reads naturally next to the date prefix in an outfit title.
+    _prettyBucket(bucket) {
+        const map = {
+            weather_anchored: 'weather',
+            occasion_anchored: 'occasion',
+            safe_repeat: 'safe repeat',
+            experimental: 'bolder pick'
+        };
+        return map[bucket] || (bucket || 'outfit').replace(/_/g, ' ');
+    }
+
     _saveProposals(proposals, context) {
         const saved = [];
         const wantsAll = [];
+        // Human-readable creation date like "Apr 23" gives the outfits list a
+        // chronological spine — the raw bucket names ("weather_anchored") all
+        // look the same when scanning back through a week of suggestions.
+        const datePart = new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
         for (const p of proposals) {
             const id = this.db.addOutfit({
-                name: `${p.bucket}`,
+                name: `${datePart} · ${this._prettyBucket(p.bucket)}`,
                 occasion: context || null,
                 garment_ids: p.garment_ids,
                 weather_tags: [],

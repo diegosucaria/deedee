@@ -190,6 +190,28 @@ function GarmentsTab() {
         return () => socket.disconnect();
     }, [loadData]);
 
+    // Write a garment row back to BOTH `garments` (grid) and `selected`
+    // (dialog) in one step — both need to stay in sync or the user sees stale
+    // data in one of them until the next refresh.
+    const applyGarmentToState = useCallback((garment) => {
+        setGarments(prev => prev.map(g => g.id === garment.id ? garment : g));
+        setSelected(prev => prev?.id === garment.id ? garment : prev);
+    }, []);
+
+    // Apply a partial patch (or function that derives one from the current row)
+    // to the same two state slices. Used for optimistic flags like
+    // meta.generatingImage so the UI updates on click instead of after the
+    // websocket round-trip.
+    const optimisticallyPatchGarment = useCallback((id, patchOrFn) => {
+        const merge = (prev) => {
+            if (!prev) return prev;
+            const patch = typeof patchOrFn === 'function' ? patchOrFn(prev) : patchOrFn;
+            return { ...prev, ...patch };
+        };
+        setGarments(prev => prev.map(g => g.id === id ? merge(g) : g));
+        setSelected(prev => prev?.id === id ? merge(prev) : prev);
+    }, []);
+
     const filtered = typeFilter ? garments.filter(g => g.type === typeFilter) : garments;
     const visible = [...filtered].sort((a, b) => {
         if (sortBy === 'type') {
@@ -399,10 +421,12 @@ function GarmentsTab() {
                         onChange={async (patch) => {
                             const targetId = selected.id;
                             const res = await updateGarment(targetId, patch);
-                            // Only apply if user is still viewing the same garment.
-                            // The grid still gets the update via the socket broadcast.
+                            // Write through to BOTH the dialog and the grid. Prior
+                            // versions only touched `selected`, leaving the grid
+                            // stale until a socket broadcast landed — which was
+                            // unreliable, so the user had to refresh to see changes.
                             if (res.success && res.data?.garment) {
-                                setSelected(prev => prev?.id === targetId ? res.data.garment : prev);
+                                applyGarmentToState(res.data.garment);
                             }
                             return res;
                         }}
@@ -411,9 +435,6 @@ function GarmentsTab() {
                             const targetId = selected.id;
                             const res = await deleteGarmentAction(targetId);
                             if (res.success) {
-                                // Optimistically drop from the grid — the socket
-                                // broadcast will otherwise race and the user sees
-                                // the card hang around for a moment.
                                 setGarments(prev => prev.filter(g => g.id !== targetId));
                                 setSelected(prev => prev?.id === targetId ? null : prev);
                             }
@@ -422,22 +443,42 @@ function GarmentsTab() {
                             const targetId = selected.id;
                             const res = await confirmGarmentBrand(targetId, accept);
                             if (res.success && res.data?.garment) {
-                                setSelected(prev => prev?.id === targetId ? res.data.garment : prev);
+                                applyGarmentToState(res.data.garment);
                             }
                         }}
                         onReenrich={async (hint, opts) => {
                             const targetId = selected.id;
+                            // Optimistic: mark enriching so the grid skeleton shows
+                            // immediately, not after the socket event arrives.
+                            optimisticallyPatchGarment(targetId, { enrichment_status: 'enriching' });
                             const res = await reenrichGarment(targetId, hint, opts || {});
                             if (res.success && res.data?.garment) {
-                                setSelected(prev => prev?.id === targetId ? res.data.garment : prev);
+                                applyGarmentToState(res.data.garment);
+                            } else {
+                                // Back out the optimistic flag so we don't spin forever.
+                                optimisticallyPatchGarment(targetId, { enrichment_status: 'complete' });
                             }
                             return res;
                         }}
                         onGenerateImage={async (opts) => {
                             const targetId = selected.id;
+                            // Optimistic spinner: flip meta.generatingImage true now,
+                            // the server's post-completion broadcast (or HTTP response)
+                            // will clear it. Without this the grid shows no feedback
+                            // until the websocket event lands.
+                            optimisticallyPatchGarment(targetId, (prev) => ({
+                                meta: { ...(prev?.meta || {}), generatingImage: true }
+                            }));
                             const res = await generateGarmentImage(targetId, opts || {});
                             if (res.success && res.data?.garment) {
-                                setSelected(prev => prev?.id === targetId ? res.data.garment : prev);
+                                applyGarmentToState(res.data.garment);
+                            } else {
+                                optimisticallyPatchGarment(targetId, (prev) => {
+                                    const meta = { ...(prev?.meta || {}) };
+                                    delete meta.generatingImage;
+                                    delete meta.generatingImageStartedAt;
+                                    return { meta };
+                                });
                             }
                             return res;
                         }}
@@ -446,7 +487,9 @@ function GarmentsTab() {
                             const targetId = selected.id;
                             const res = await mergeGarments(targetId, duplicateIds);
                             if (res.success && res.data?.garment) {
-                                setSelected(prev => prev?.id === targetId ? res.data.garment : prev);
+                                // Merged-away duplicates get dropped from the grid too.
+                                setGarments(prev => prev.filter(g => g.id === targetId || !duplicateIds.includes(g.id)));
+                                applyGarmentToState(res.data.garment);
                             }
                             return res;
                         }}
@@ -1101,6 +1144,14 @@ function OutfitsTab() {
         }
     };
 
+    const handleRename = async (outfit, name) => {
+        const res = await updateOutfit(outfit.id, { name });
+        if (res.success && res.data?.outfit) {
+            setOutfits(prev => prev.map(o => o.id === outfit.id ? res.data.outfit : o));
+            setSelectedOutfit(prev => prev?.id === outfit.id ? res.data.outfit : prev);
+        }
+    };
+
     const filtered = outfits.filter(o => {
         if (labelFilter && !(o.labels || []).includes(labelFilter)) return false;
         return true;
@@ -1258,6 +1309,7 @@ function OutfitsTab() {
                         onSelectGarment={(g) => setSelectedGarment(g)}
                         onDelete={() => handleDeleteOutfit(selectedOutfit)}
                         onLabelsChange={(labels) => handleLabelsChange(selectedOutfit, labels)}
+                        onRename={(name) => handleRename(selectedOutfit, name)}
                     />
                 )}
             </AnimatePresence>
@@ -1299,19 +1351,46 @@ function OutfitsTab() {
                         }}
                         onReenrich={async (hint, opts) => {
                             const targetId = selectedGarment.id;
+                            // Optimistic enriching flag so the skeleton shows immediately.
+                            setSelectedGarment(prev => prev?.id === targetId ? { ...prev, enrichment_status: 'enriching' } : prev);
+                            setGarmentIndex(prev => prev[targetId]
+                                ? { ...prev, [targetId]: { ...prev[targetId], enrichment_status: 'enriching' } }
+                                : prev);
                             const res = await reenrichGarment(targetId, hint, opts || {});
                             if (res.success && res.data?.garment) {
                                 setSelectedGarment(prev => prev?.id === targetId ? res.data.garment : prev);
                                 setGarmentIndex(prev => ({ ...prev, [targetId]: res.data.garment }));
+                            } else {
+                                setSelectedGarment(prev => prev?.id === targetId ? { ...prev, enrichment_status: 'complete' } : prev);
                             }
                             return res;
                         }}
                         onGenerateImage={async (opts) => {
                             const targetId = selectedGarment.id;
+                            // Optimistic spinner.
+                            const flip = (g, on) => g
+                                ? { ...g, meta: { ...(g.meta || {}), ...(on ? { generatingImage: true } : {}) } }
+                                : g;
+                            const clear = (g) => {
+                                if (!g) return g;
+                                const meta = { ...(g.meta || {}) };
+                                delete meta.generatingImage;
+                                delete meta.generatingImageStartedAt;
+                                return { ...g, meta };
+                            };
+                            setSelectedGarment(prev => prev?.id === targetId ? flip(prev, true) : prev);
+                            setGarmentIndex(prev => prev[targetId]
+                                ? { ...prev, [targetId]: flip(prev[targetId], true) }
+                                : prev);
                             const res = await generateGarmentImage(targetId, opts || {});
                             if (res.success && res.data?.garment) {
                                 setSelectedGarment(prev => prev?.id === targetId ? res.data.garment : prev);
                                 setGarmentIndex(prev => ({ ...prev, [targetId]: res.data.garment }));
+                            } else {
+                                setSelectedGarment(prev => prev?.id === targetId ? clear(prev) : prev);
+                                setGarmentIndex(prev => prev[targetId]
+                                    ? { ...prev, [targetId]: clear(prev[targetId]) }
+                                    : prev);
                             }
                             return res;
                         }}
@@ -1340,10 +1419,13 @@ function OutfitsTab() {
     );
 }
 
-function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGarment, onDelete, onLabelsChange }) {
+function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGarment, onDelete, onLabelsChange, onRename }) {
     const [lightboxOpen, setLightboxOpen] = useState(false);
     const [labelDraft, setLabelDraft] = useState('');
     const [savingLabel, setSavingLabel] = useState(false);
+    const [editingName, setEditingName] = useState(false);
+    const [nameDraft, setNameDraft] = useState(outfit.name || '');
+    const [savingName, setSavingName] = useState(false);
     const renderUrl = pathToUrl(outfit.rendered_image_path);
     const labels = Array.isArray(outfit.labels) ? outfit.labels : [];
     const garments = (outfit.garment_ids || [])
@@ -1365,6 +1447,19 @@ function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGar
         await onLabelsChange(labels.filter(x => x !== lb));
     };
 
+    const handleSaveName = async () => {
+        const clean = nameDraft.trim();
+        if (!onRename || clean === (outfit.name || '').trim()) {
+            setEditingName(false);
+            return;
+        }
+        setSavingName(true);
+        try {
+            await onRename(clean || null);
+            setEditingName(false);
+        } finally { setSavingName(false); }
+    };
+
     return (
         <motion.div
             initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -1377,9 +1472,43 @@ function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGar
                 className="w-full md:max-w-lg bg-zinc-950 border-t md:border border-zinc-800 md:rounded-2xl rounded-t-2xl p-4 max-h-[90vh] overflow-y-auto"
                 onClick={e => e.stopPropagation()}
             >
-                <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-lg font-semibold text-white truncate">{outfit.name || 'Outfit'}</h2>
-                    <div className="flex items-center gap-1">
+                <div className="flex items-center justify-between mb-3 gap-2">
+                    {editingName && onRename ? (
+                        <div className="flex-1 flex items-center gap-2 min-w-0">
+                            <input
+                                autoFocus
+                                value={nameDraft}
+                                onChange={e => setNameDraft(e.target.value)}
+                                onKeyDown={e => {
+                                    if (e.key === 'Enter' && !savingName) handleSaveName();
+                                    if (e.key === 'Escape') { setEditingName(false); setNameDraft(outfit.name || ''); }
+                                }}
+                                disabled={savingName}
+                                maxLength={80}
+                                placeholder="Outfit name"
+                                className="flex-1 min-w-0 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-base text-white disabled:opacity-50"
+                            />
+                            <button
+                                onClick={handleSaveName}
+                                disabled={savingName}
+                                className="p-2 text-emerald-400 hover:text-emerald-300 disabled:opacity-50"
+                                title="Save"
+                            >
+                                {savingName ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                            </button>
+                        </div>
+                    ) : (
+                        <button
+                            onClick={() => { if (onRename) { setNameDraft(outfit.name || ''); setEditingName(true); } }}
+                            disabled={!onRename}
+                            className={`flex-1 min-w-0 text-left group flex items-center gap-2 ${onRename ? 'cursor-text' : 'cursor-default'}`}
+                            title={onRename ? 'Click to rename' : ''}
+                        >
+                            <h2 className="text-lg font-semibold text-white truncate">{outfit.name || 'Outfit'}</h2>
+                            {onRename && <Pencil className="w-3.5 h-3.5 text-zinc-600 opacity-0 group-hover:opacity-100 shrink-0" />}
+                        </button>
+                    )}
+                    <div className="flex items-center gap-1 shrink-0">
                         <button
                             onClick={onToggleLike}
                             className={`p-2 rounded-lg ${outfit.liked ? 'text-rose-400' : 'text-zinc-500 hover:text-zinc-200'}`}

@@ -1565,6 +1565,29 @@ describe('WardrobeService.recommendOutfit (P6)', () => {
         expect(saved.garment_ids).toEqual(['g1', 'g2']);
     });
 
+    test('saved outfit name is a human-readable date + pretty bucket label', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            text: () => JSON.stringify({ proposals: [
+                { bucket: 'weather_anchored', garment_ids: ['g1', 'g2'], rationale: 'light' },
+                { bucket: 'occasion_anchored', garment_ids: ['g2', 'g3'], rationale: 'work' },
+                { bucket: 'safe_repeat', garment_ids: ['g1'], rationale: 'tried and true' }
+            ]}),
+            candidates: [{ content: { parts: [{ text: JSON.stringify({ proposals: [] }) }] } }]
+        });
+
+        await service.recommendOutfit({ context: 'today' });
+
+        const saved = mockAgent.db.addOutfit.mock.calls.map(c => c[0]);
+        // "Apr 23 · weather", "Apr 23 · occasion", "Apr 23 · safe repeat" — the
+        // exact month abbreviation is locale-dependent on the host machine but
+        // every title should share the same date prefix and end with the
+        // pretty-printed bucket (never the raw "weather_anchored").
+        const datePrefix = saved[0].name.split(' · ')[0];
+        expect(datePrefix).toMatch(/^[A-Za-z]{3,} \d{1,2}$/);
+        expect(saved.map(s => s.name.split(' · ')[1])).toEqual(['weather', 'occasion', 'safe repeat']);
+        for (const s of saved) expect(s.name).not.toMatch(/_anchored/);
+    });
+
     test('wants[] from proposal flow to shopping list when available', async () => {
         mockAgent.db.addShoppingItem = jest.fn().mockReturnValue('shop_1');
         mockAgent.client.models.generateContent.mockResolvedValueOnce({
