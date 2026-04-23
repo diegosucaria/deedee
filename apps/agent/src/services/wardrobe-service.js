@@ -87,8 +87,17 @@ RULES:
 - box_2d is [ymin, xmin, ymax, xmax] normalized to 0-1000 — this is Gemini's canonical bbox format; do not use any other ordering or range
 - The box must tightly enclose the garment itself (no background padding beyond the edges of the fabric)
 - Only include items clearly visible and identifiable; skip partial glimpses of background or furniture
+- INPUT CAN BE A SCREENSHOT: the photo may be a real-world scene (clothes laid on a bed, on a hanger, being worn) OR a screenshot of a clothing retailer / order history / lookbook showing a grid of product cards. When it's a product-card grid, treat each card as one item — return one detection per card with box_2d enclosing the product photo of that card. Use the product title text on the card to populate brand/model in distinguishing_features (e.g. "Lululemon ABC Warpstreme Jogger Regular"). Do NOT skip the screenshot just because it shows a screen — the screenshot itself IS the catalog of clothing.
+- HARD EXCLUDE — never return any of the following as items:
+  · the phone or camera taking the photo, including its case, lens, and on-screen reflection
+  · hands, fingers, arms, legs, faces, hair, skin, or any other body part
+  · mirrors, mirror frames, or anything that is only visible as a reflection
+  · room contents in the scene (bed, sofa, desk, hangers, walls, floor, doors, plants, lamps)
+  · packaging, tags, receipts, paper, "MY CLOSET" / "VIEW DETAILS" buttons, prices, navigation chrome, or other UI text from screenshots
+  · physical screens or monitors visible IN a real-world scene that show unrelated content (this rule does NOT apply when the entire input image IS itself a screenshot of clothing — see SCREENSHOT rule above)
+  An "accessory" means a wearable accessory the user owns (belt, bag, hat, watch, jewelry, sunglasses, scarf) — not anything else that happens to look small or rectangular
 - Omit fields you are uncertain about (do not fabricate)
-- Never invent brands or models
+- Never invent brands or models — but if the screenshot has visible product titles like "Lululemon ABC Warpstreme Jogger", quote that into distinguishing_features verbatim
 Respond with JSON only.`;
 
         const startedAt = Date.now();
@@ -167,6 +176,24 @@ Respond with JSON only.`;
             distinguishing_features: item.distinguishing_features || null,
             detection_confidence: typeof item.detection_confidence === 'number' ? item.detection_confidence : 0
         };
+    }
+
+    /**
+     * Pick the best image to show / send to a model for a garment.
+     *
+     * Generated catalog images are preferred when present because they're the
+     * canonical clean view (uniform composition, no clutter, no human model).
+     * Falls back to the crop, then the source. Used wherever we display a
+     * garment OR send it to another model call as a reference.
+     *
+     * Exception: methods that derive a NEW image FROM the garment's true
+     * appearance (re-enrich's attribute pass on a new crop, image regeneration)
+     * deliberately read crop_image_path directly so they don't drift through
+     * generations.
+     */
+    _imageForGarment(g) {
+        if (!g) return null;
+        return g.generated_image_path || g.crop_image_path || g.source_image_path || null;
     }
 
     /**
@@ -593,6 +620,159 @@ Hard rules:
     }
 
     /**
+     * Fold one or more duplicate garment rows into a primary one. Used when the
+     * automatic match-against-existing didn't catch a duplicate at ingest time
+     * (e.g. the user uploaded the same shoes twice from different angles).
+     *
+     * Behavior:
+     * - Primary keeps its own image (crop / generated). Duplicates' image files
+     *   are deleted via deleteGarment.
+     * - Empty primary fields are filled in from the first duplicate that has a
+     *   value. Non-empty primary fields are never overwritten — primary wins.
+     * - times_worn is summed across all rows.
+     * - Every outfit / trip capsule / shopping resolution that referenced a
+     *   duplicate is rewritten to point at the primary (deduped per row).
+     * - Duplicates are then deleted.
+     *
+     * @param {string} primaryId
+     * @param {string[]} duplicateIds
+     * @returns {Object} the updated primary garment row
+     */
+    async mergeGarments(primaryId, duplicateIds) {
+        const TAG = '[wardrobe.merge]';
+        if (!primaryId) throw new Error('mergeGarments requires a primary id');
+        const dupIds = Array.isArray(duplicateIds)
+            ? duplicateIds.filter(id => typeof id === 'string' && id && id !== primaryId)
+            : [];
+        if (dupIds.length === 0) throw new Error('mergeGarments requires at least one duplicate id');
+
+        const primary = this.db.getGarment(primaryId);
+        if (!primary) throw new Error(`Primary garment ${primaryId} not found`);
+
+        const duplicates = [];
+        for (const id of dupIds) {
+            const g = this.db.getGarment(id);
+            if (!g) throw new Error(`Duplicate garment ${id} not found`);
+            duplicates.push(g);
+        }
+
+        console.log(`${TAG} start | primaryId=${primaryId} | duplicates=${dupIds.join(',')}`);
+
+        // Field merge: only fill primary blanks. Primary always wins on conflicts.
+        const TEXT_FIELDS = ['type', 'subtype', 'primary_color', 'pattern', 'material_guess',
+            'brand', 'model', 'size', 'fit_notes'];
+        const NUMERIC_FIELDS = ['warmth', 'formality'];
+        const isBlank = v => v === null || v === undefined || v === '';
+
+        const patch = {};
+        for (const field of TEXT_FIELDS) {
+            if (!isBlank(primary[field])) continue;
+            const filler = duplicates.find(d => !isBlank(d[field]));
+            if (filler) patch[field] = filler[field];
+        }
+        for (const field of NUMERIC_FIELDS) {
+            if (primary[field] !== null && primary[field] !== undefined) continue;
+            const filler = duplicates.find(d => d[field] !== null && d[field] !== undefined);
+            if (filler) patch[field] = filler[field];
+        }
+        // Union of season tags
+        if (Array.isArray(primary.season_tags)) {
+            const set = new Set(primary.season_tags);
+            for (const d of duplicates) {
+                if (Array.isArray(d.season_tags)) for (const t of d.season_tags) set.add(t);
+            }
+            patch.season_tags = Array.from(set);
+        }
+        // Sum times_worn across all rows
+        const totalWorn = (primary.times_worn || 0) + duplicates.reduce((s, d) => s + (d.times_worn || 0), 0);
+        if (totalWorn !== (primary.times_worn || 0)) patch.times_worn = totalWorn;
+        // Most recent last_worn_at across all rows
+        const allWornAt = [primary.last_worn_at, ...duplicates.map(d => d.last_worn_at)].filter(Boolean);
+        if (allWornAt.length > 0) {
+            const newest = allWornAt.sort().at(-1);
+            if (newest && newest !== primary.last_worn_at) patch.last_worn_at = newest;
+        }
+        // Track the merge in meta for audit
+        patch.meta = {
+            ...(primary.meta || {}),
+            mergedFrom: [...(primary.meta?.mergedFrom || []), ...dupIds],
+            lastMergedAt: new Date().toISOString()
+        };
+
+        if (Object.keys(patch).length > 0) {
+            this.db.updateGarment(primaryId, patch);
+        }
+
+        // Rewrite all references in outfits, trips, shopping list.
+        const idMap = new Map(dupIds.map(id => [id, primaryId]));
+        const rewriteIds = (arr) => {
+            if (!Array.isArray(arr)) return { changed: false, value: arr };
+            const next = [];
+            const seen = new Set();
+            let changed = false;
+            for (const id of arr) {
+                const mapped = idMap.has(id) ? primaryId : id;
+                if (mapped !== id) changed = true;
+                if (seen.has(mapped)) { changed = true; continue; }
+                seen.add(mapped);
+                next.push(mapped);
+            }
+            return { changed, value: next };
+        };
+
+        let outfitsRewritten = 0;
+        if (this.db.getOutfits && this.db.updateOutfit) {
+            const outfits = this.db.getOutfits({ limit: 10000 }) || [];
+            for (const o of outfits) {
+                const r = rewriteIds(o.garment_ids);
+                if (r.changed) {
+                    this.db.updateOutfit(o.id, { garment_ids: r.value });
+                    outfitsRewritten++;
+                }
+            }
+        }
+
+        let tripsRewritten = 0;
+        if (this.db.getTrips && this.db.updateTrip) {
+            const trips = this.db.getTrips({}) || [];
+            for (const t of trips) {
+                const update = {};
+                const planned = rewriteIds(t.planned_capsule);
+                if (planned.changed) update.planned_capsule = planned.value;
+                const actual = rewriteIds(t.actual_capsule);
+                if (actual.changed) update.actual_capsule = actual.value;
+                if (Object.keys(update).length > 0) {
+                    this.db.updateTrip(t.id, update);
+                    tripsRewritten++;
+                }
+            }
+        }
+
+        let shoppingRewritten = 0;
+        if (this.db.listShoppingItems && this.db.updateShoppingItem) {
+            const items = this.db.listShoppingItems({}) || [];
+            for (const item of items) {
+                if (item.resolved_garment_id && idMap.has(item.resolved_garment_id)) {
+                    this.db.updateShoppingItem(item.id, { resolved_garment_id: primaryId });
+                    shoppingRewritten++;
+                }
+            }
+        }
+
+        // Finally, drop the duplicate rows. deleteGarment handles file cleanup.
+        for (const id of dupIds) {
+            this.db.deleteGarment(id);
+            this._broadcast('wardrobe:garment:delete', { id });
+        }
+
+        const updated = this.db.getGarment(primaryId);
+        this._broadcast('wardrobe:garment:update', updated);
+
+        console.log(`${TAG} done | primaryId=${primaryId} | merged=${dupIds.length} | outfitsRewritten=${outfitsRewritten} | tripsRewritten=${tripsRewritten} | shoppingRewritten=${shoppingRewritten}`);
+        return updated;
+    }
+
+    /**
      * Re-run the attribute pass on an existing garment, optionally biased by a
      * user-supplied hint (e.g. "ABC Warpstreme Jogger Regular") and/or a new
      * reference photo. The hint is combined with whatever brand/model the user
@@ -895,7 +1075,18 @@ GENERAL RULES:
         const detections = await this._detectItems(base64Data, mimeType);
         if (!detections || detections.length === 0) {
             console.warn(`${TAG} no detections returned — nothing to save`);
-            return [];
+            return { garments: [], matched_existing: [] };
+        }
+
+        // Match against existing wardrobe to avoid duplicates when the user
+        // re-uploads a photo of something they already cataloged. This mirrors
+        // the matching already done by analyzeOutfitPhoto — every ingest path
+        // should respect "we might already have this."
+        const CAPS_SHORTLIST = 25;
+        const shortlist = this.db.getGarments({ limit: CAPS_SHORTLIST }) || [];
+        let matchPlan = null;
+        if (this.agent.client && shortlist.length > 0) {
+            matchPlan = await this._matchDetectionsToWardrobe(base64Data, mimeType, detections, shortlist);
         }
 
         const ext = mimeType.includes('png') ? 'png' : 'jpg';
@@ -903,15 +1094,33 @@ GENERAL RULES:
         const sourceDir = path.join(this._baseDir(), 'garments', sourceId);
         if (!fs.existsSync(sourceDir)) fs.mkdirSync(sourceDir, { recursive: true });
         const sourcePath = path.join(sourceDir, `original.${ext}`);
-        fs.writeFileSync(sourcePath, Buffer.from(base64Data, 'base64'));
-        console.log(`${TAG} wrote source image | sourceId=${sourceId} | path=${sourcePath}`);
+        let sourceWritten = false;
+        const writeSourceOnce = () => {
+            if (sourceWritten) return;
+            fs.writeFileSync(sourcePath, Buffer.from(base64Data, 'base64'));
+            sourceWritten = true;
+            console.log(`${TAG} wrote source image | sourceId=${sourceId} | path=${sourcePath}`);
+        };
 
         const created = [];
+        const matched_existing = [];
         let cropped = 0;
         let fullFrameCount = 0;
         for (let i = 0; i < detections.length; i++) {
             const det = detections[i];
+
+            // Skip if the model matched this detection to an existing wardrobe item
+            const plan = matchPlan?.[i];
+            if (plan && plan.match && plan.match !== 'NEW') {
+                if (shortlist.find(g => g.id === plan.match)) {
+                    matched_existing.push(plan.match);
+                    continue;
+                }
+                // hallucinated id → fall through and treat as NEW
+            }
+
             const fullFrame = det.bbox[0] < 0.02 && det.bbox[1] < 0.02 && det.bbox[2] > 0.98 && det.bbox[3] > 0.98;
+            writeSourceOnce();
             let cropPath = sourcePath;
             if (fullFrame) {
                 fullFrameCount++;
@@ -958,8 +1167,8 @@ GENERAL RULES:
                 console.error(`[wardrobe.attr] background pass crashed | garmentId=${id} | err=${err.message}`);
             });
         }
-        console.log(`${TAG} done | created=${created.length} | cropped=${cropped} | fullFrame=${fullFrameCount}${fullFrameCount > 0 ? ' (= detection failed to localize, see [wardrobe.detect] logs above)' : ''}`);
-        return created;
+        console.log(`${TAG} done | created=${created.length} | matched_existing=${matched_existing.length} | cropped=${cropped} | fullFrame=${fullFrameCount}${fullFrameCount > 0 ? ' (= detection failed to localize, see [wardrobe.detect] logs above)' : ''}`);
+        return { garments: created, matched_existing };
     }
 
     /**
@@ -1106,10 +1315,12 @@ GENERAL RULES:
         if (!this.agent.client) return null;
         const modelName = this.config.getModel('PRO');
 
-        // Read shortlist crops for the Pro call
+        // Read shortlist images for the Pro call. Prefer the clean generated
+        // catalog shot when available — it's a much better visual match signal
+        // than the cluttered original crop.
         const shortlistParts = [];
         for (const g of shortlist) {
-            const p = g.crop_image_path || g.source_image_path;
+            const p = this._imageForGarment(g);
             if (!p || !fs.existsSync(p)) continue;
             try {
                 const data = fs.readFileSync(p).toString('base64');
@@ -1394,7 +1605,10 @@ Do not propose items outside the pool. Respond with strict JSON:
             if (garments.length === 0) continue;
             const cropParts = [];
             for (const g of garments) {
-                const cp = g.crop_image_path || g.source_image_path;
+                // Prefer the clean generated catalog shot — it's a much cleaner
+                // reference for the virtual-mirror render than the original
+                // photo (which may have folds, hands, background clutter).
+                const cp = this._imageForGarment(g);
                 if (!cp || !fs.existsSync(cp)) continue;
                 const mt = cp.endsWith('.png') ? 'image/png' : 'image/jpeg';
                 cropParts.push({ inlineData: { data: fs.readFileSync(cp).toString('base64'), mimeType: mt } });

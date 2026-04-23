@@ -45,8 +45,8 @@ const createWardrobeRouter = (agent) => {
             if (!image) return res.status(400).json({ error: 'Missing image data (base64)' });
             if (!agent.wardrobeService) return res.status(503).json({ error: 'Wardrobe service not available' });
 
-            const results = await agent.wardrobeService.ingestGarmentFromBase64(image, mimeType || 'image/jpeg');
-            res.json({ success: true, garments: results });
+            const result = await agent.wardrobeService.ingestGarmentFromBase64(image, mimeType || 'image/jpeg');
+            res.json({ success: true, garments: result.garments, matched_existing: result.matched_existing });
         } catch (error) {
             console.error('[WardrobeRouter] Upload error:', error);
             res.status(500).json({ error: error.message });
@@ -113,6 +113,21 @@ const createWardrobeRouter = (agent) => {
         } catch (error) {
             console.error('[WardrobeRouter] Confirm brand error:', error);
             res.status(500).json({ error: error.message });
+        }
+    });
+
+    // POST /garments/:id/merge { duplicate_ids: [...] }
+    // Folds the listed duplicate garment rows into the path :id (the primary).
+    router.post('/garments/:id/merge', async (req, res) => {
+        try {
+            const { duplicate_ids } = req.body || {};
+            if (!agent.wardrobeService) return res.status(503).json({ error: 'Wardrobe service not available' });
+            const updated = await agent.wardrobeService.mergeGarments(req.params.id, duplicate_ids);
+            res.json({ success: true, garment: updated });
+        } catch (error) {
+            console.error('[WardrobeRouter] Merge error:', error);
+            const status = /not found|requires/i.test(error.message) ? 400 : 500;
+            res.status(status).json({ error: error.message });
         }
     });
 

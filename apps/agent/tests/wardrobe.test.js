@@ -71,6 +71,18 @@ describe('WardrobeService detection + bbox normalization', () => {
         expect(service._normalizeBbox(['a', 'b', 'c', 'd'])).toEqual([0, 0, 1, 1]);
     });
 
+    test('_imageForGarment prefers generated → crop → source', () => {
+        expect(service._imageForGarment(null)).toBeNull();
+        expect(service._imageForGarment({})).toBeNull();
+        expect(service._imageForGarment({ source_image_path: '/s.jpg' })).toBe('/s.jpg');
+        expect(service._imageForGarment({ crop_image_path: '/c.jpg', source_image_path: '/s.jpg' })).toBe('/c.jpg');
+        expect(service._imageForGarment({
+            generated_image_path: '/g.jpg',
+            crop_image_path: '/c.jpg',
+            source_image_path: '/s.jpg'
+        })).toBe('/g.jpg');
+    });
+
     test('_detectItems falls back when client missing', async () => {
         const agentNoClient = { ...mockAgent, client: null };
         const s = new WardrobeService(agentNoClient);
@@ -96,6 +108,29 @@ describe('WardrobeService detection + bbox normalization', () => {
         const r = await service._detectItems('AAAA');
         expect(r).toHaveLength(1);
         expect(r[0].bbox).toEqual([0, 0, 1, 1]);
+    });
+
+    test('_detectItems prompt explicitly excludes phones, hands, mirrors and furniture', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce(mockDetectResponse([]));
+        await service._detectItems('AAAA');
+        const promptText = mockAgent.client.models.generateContent.mock.calls[0][0]
+            .contents[0].parts.find(p => p.text)?.text || '';
+        expect(promptText).toMatch(/phone/i);
+        expect(promptText).toMatch(/hand/i);
+        expect(promptText).toMatch(/mirror/i);
+        // Make sure the accessory definition is narrowed to wearable accessories
+        expect(promptText).toMatch(/wearable accessory/);
+    });
+
+    test('_detectItems prompt tells the model to handle screenshots of product grids', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce(mockDetectResponse([]));
+        await service._detectItems('AAAA');
+        const promptText = mockAgent.client.models.generateContent.mock.calls[0][0]
+            .contents[0].parts.find(p => p.text)?.text || '';
+        expect(promptText).toMatch(/SCREENSHOT|screenshot/);
+        expect(promptText).toMatch(/product card/i);
+        // Must explicitly tell it not to skip just because it's a screen
+        expect(promptText).toMatch(/Do NOT skip the screenshot/i);
     });
 });
 
@@ -133,7 +168,7 @@ describe('WardrobeService ingest + background refinement', () => {
             .mockReturnValueOnce('g2')
             .mockReturnValueOnce('g3');
 
-        const created = await service.ingestGarmentFromBase64('AAAA', 'image/jpeg');
+        const result = await service.ingestGarmentFromBase64('AAAA', 'image/jpeg');
 
         expect(service._cropToFile).toHaveBeenCalledTimes(3);
         expect(mockAgent.db.addGarment).toHaveBeenCalledTimes(3);
@@ -143,7 +178,8 @@ describe('WardrobeService ingest + background refinement', () => {
         const broadcastEvents = mockAgent.interface.broadcast.mock.calls.map(c => c[0]);
         expect(broadcastEvents.filter(e => e === 'wardrobe:garment:detected')).toHaveLength(3);
         expect(service._runAttributePass).toHaveBeenCalledTimes(3);
-        expect(created).toHaveLength(3);
+        expect(result.garments).toHaveLength(3);
+        expect(result.matched_existing).toEqual([]);
     });
 
     test('full-frame bbox reuses source image without cropping', async () => {
@@ -169,16 +205,41 @@ describe('WardrobeService ingest + background refinement', () => {
         service._cropToFile = jest.fn().mockRejectedValue(new Error('sharp error'));
         mockAgent.db.addGarment.mockReturnValueOnce('gx');
 
-        const created = await service.ingestGarmentFromBase64('AAAA');
+        const result = await service.ingestGarmentFromBase64('AAAA');
 
         expect(mockAgent.db.addGarment).toHaveBeenCalled();
         const args = mockAgent.db.addGarment.mock.calls[0][0];
         expect(args.crop_image_path).toBe(args.source_image_path);
-        expect(created).toHaveLength(1);
+        expect(result.garments).toHaveLength(1);
     });
 
     test('empty image input throws', async () => {
         await expect(service.ingestGarmentFromBase64('')).rejects.toThrow('Missing image data');
+    });
+
+    test('skips detections that match existing wardrobe items (no silent duplicates)', async () => {
+        service._detectItems = jest.fn().mockResolvedValue([
+            { bbox: [0.1, 0.1, 0.4, 0.4], type: 'top', primary_color: 'white', secondary_colors: [], season_tags: [] },
+            { bbox: [0.5, 0.1, 0.9, 0.4], type: 'shoes', primary_color: 'black', secondary_colors: [], season_tags: [] }
+        ]);
+        // Existing wardrobe shortlist
+        mockAgent.db.getGarments.mockReturnValue([
+            { id: 'existing_top', type: 'top', primary_color: 'white', crop_image_path: '/x/top.jpg' }
+        ]);
+        // Match plan: index 0 → existing, index 1 → NEW
+        service._matchDetectionsToWardrobe = jest.fn().mockResolvedValue([
+            { match: 'existing_top' },
+            { match: 'NEW' }
+        ]);
+        mockAgent.db.addGarment.mockReturnValueOnce('new_shoes');
+
+        const result = await service.ingestGarmentFromBase64('AAAA');
+
+        // Only the unmatched detection became a new row
+        expect(mockAgent.db.addGarment).toHaveBeenCalledTimes(1);
+        expect(mockAgent.db.addGarment).toHaveBeenCalledWith(expect.objectContaining({ type: 'shoes' }));
+        expect(result.garments).toHaveLength(1);
+        expect(result.matched_existing).toEqual(['existing_top']);
     });
 });
 
@@ -425,6 +486,164 @@ describe('WardrobeService.confirmBrand (P3)', () => {
     test('throws for missing garment', async () => {
         mockAgent.db.getGarment.mockReturnValue(null);
         await expect(service.confirmBrand('bad_id', true)).rejects.toThrow('not found');
+    });
+});
+
+describe('WardrobeService.mergeGarments', () => {
+    let service;
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        service = new WardrobeService(mockAgent);
+        mockAgent.db.getOutfits = jest.fn().mockReturnValue([]);
+        mockAgent.db.updateOutfit = jest.fn().mockReturnValue(true);
+        mockAgent.db.getTrips = jest.fn().mockReturnValue([]);
+        mockAgent.db.updateTrip = jest.fn().mockReturnValue(true);
+        mockAgent.db.listShoppingItems = jest.fn().mockReturnValue([]);
+        mockAgent.db.updateShoppingItem = jest.fn().mockReturnValue(true);
+        mockAgent.db.deleteGarment = jest.fn().mockReturnValue(true);
+    });
+
+    const garmentRow = (overrides = {}) => ({
+        id: overrides.id,
+        type: null, subtype: null, primary_color: null, pattern: null,
+        material_guess: null, brand: null, model: null, size: null,
+        fit_notes: null, warmth: null, formality: null, season_tags: [],
+        times_worn: 0, last_worn_at: null,
+        crop_image_path: '/x.jpg', source_image_path: '/x.jpg',
+        meta: {},
+        ...overrides
+    });
+
+    test('throws when no duplicate ids supplied', async () => {
+        mockAgent.db.getGarment.mockReturnValue(garmentRow({ id: 'p1' }));
+        await expect(service.mergeGarments('p1', [])).rejects.toThrow('at least one duplicate');
+        await expect(service.mergeGarments('p1', null)).rejects.toThrow('at least one duplicate');
+    });
+
+    test('throws when primary or any duplicate is missing', async () => {
+        mockAgent.db.getGarment.mockImplementation(id => id === 'p1' ? garmentRow({ id: 'p1' }) : null);
+        await expect(service.mergeGarments('p1', ['ghost'])).rejects.toThrow('Duplicate garment ghost not found');
+
+        mockAgent.db.getGarment.mockReturnValue(null);
+        await expect(service.mergeGarments('missing_primary', ['d1'])).rejects.toThrow('Primary garment missing_primary not found');
+    });
+
+    test('only fills primary blanks — never overwrites existing primary fields', async () => {
+        const primary = garmentRow({
+            id: 'p1', type: 'top', subtype: 'tshirt', brand: 'CorrectBrand'
+        });
+        const dup = garmentRow({
+            id: 'd1', type: 'bottom', subtype: 'wrong', primary_color: 'blue', brand: 'WrongBrand', model: 'NewModel'
+        });
+        mockAgent.db.getGarment.mockImplementation(id => ({ p1: primary, d1: dup }[id]));
+
+        await service.mergeGarments('p1', ['d1']);
+
+        const patch = mockAgent.db.updateGarment.mock.calls.find(c => c[0] === 'p1')[1];
+        // Primary's existing values are preserved
+        expect(patch.type).toBeUndefined();
+        expect(patch.subtype).toBeUndefined();
+        expect(patch.brand).toBeUndefined();
+        // Primary's blanks are filled from the duplicate
+        expect(patch.primary_color).toBe('blue');
+        expect(patch.model).toBe('NewModel');
+    });
+
+    test('sums times_worn and takes the most recent last_worn_at', async () => {
+        const primary = garmentRow({ id: 'p1', times_worn: 3, last_worn_at: '2026-01-01T00:00:00Z' });
+        const dup1 = garmentRow({ id: 'd1', times_worn: 5, last_worn_at: '2026-04-22T00:00:00Z' });
+        const dup2 = garmentRow({ id: 'd2', times_worn: 2, last_worn_at: '2026-02-15T00:00:00Z' });
+        mockAgent.db.getGarment.mockImplementation(id => ({ p1: primary, d1: dup1, d2: dup2 }[id]));
+
+        await service.mergeGarments('p1', ['d1', 'd2']);
+
+        const patch = mockAgent.db.updateGarment.mock.calls.find(c => c[0] === 'p1')[1];
+        expect(patch.times_worn).toBe(10);
+        expect(patch.last_worn_at).toBe('2026-04-22T00:00:00Z');
+    });
+
+    test('unions season_tags across all rows without duplicates', async () => {
+        const primary = garmentRow({ id: 'p1', season_tags: ['spring', 'summer'] });
+        const dup = garmentRow({ id: 'd1', season_tags: ['summer', 'fall'] });
+        mockAgent.db.getGarment.mockImplementation(id => ({ p1: primary, d1: dup }[id]));
+
+        await service.mergeGarments('p1', ['d1']);
+
+        const patch = mockAgent.db.updateGarment.mock.calls.find(c => c[0] === 'p1')[1];
+        expect(patch.season_tags.sort()).toEqual(['fall', 'spring', 'summer']);
+    });
+
+    test('repoints outfits, trip capsules and shopping resolutions onto the primary', async () => {
+        const primary = garmentRow({ id: 'p1' });
+        const dup = garmentRow({ id: 'd1' });
+        mockAgent.db.getGarment.mockImplementation(id => ({ p1: primary, d1: dup }[id]));
+        mockAgent.db.getOutfits.mockReturnValue([
+            { id: 'o1', garment_ids: ['d1', 'g_other'] },
+            { id: 'o2', garment_ids: ['p1', 'd1'] }, // already has primary, dedup
+            { id: 'o3', garment_ids: ['g_unrelated'] }
+        ]);
+        mockAgent.db.getTrips.mockReturnValue([
+            { id: 't1', planned_capsule: ['d1', 'p1'], actual_capsule: ['d1', 'g_other'] },
+            { id: 't2', planned_capsule: ['g_other'], actual_capsule: [] }
+        ]);
+        mockAgent.db.listShoppingItems.mockReturnValue([
+            { id: 's1', resolved_garment_id: 'd1' },
+            { id: 's2', resolved_garment_id: 'unrelated' }
+        ]);
+
+        await service.mergeGarments('p1', ['d1']);
+
+        // Outfits: o1 swaps, o2 dedupes, o3 untouched
+        expect(mockAgent.db.updateOutfit).toHaveBeenCalledWith('o1', { garment_ids: ['p1', 'g_other'] });
+        expect(mockAgent.db.updateOutfit).toHaveBeenCalledWith('o2', { garment_ids: ['p1'] });
+        expect(mockAgent.db.updateOutfit).not.toHaveBeenCalledWith('o3', expect.anything());
+
+        // Trips: t1 both arrays change, t2 untouched
+        expect(mockAgent.db.updateTrip).toHaveBeenCalledWith('t1', expect.objectContaining({
+            planned_capsule: ['p1'],
+            actual_capsule: ['p1', 'g_other']
+        }));
+        expect(mockAgent.db.updateTrip).not.toHaveBeenCalledWith('t2', expect.anything());
+
+        // Shopping: only s1 swaps
+        expect(mockAgent.db.updateShoppingItem).toHaveBeenCalledWith('s1', { resolved_garment_id: 'p1' });
+        expect(mockAgent.db.updateShoppingItem).not.toHaveBeenCalledWith('s2', expect.anything());
+    });
+
+    test('deletes duplicate rows and broadcasts delete events', async () => {
+        const primary = garmentRow({ id: 'p1' });
+        const dup1 = garmentRow({ id: 'd1' });
+        const dup2 = garmentRow({ id: 'd2' });
+        mockAgent.db.getGarment.mockImplementation(id => ({ p1: primary, d1: dup1, d2: dup2 }[id]));
+
+        await service.mergeGarments('p1', ['d1', 'd2']);
+
+        expect(mockAgent.db.deleteGarment).toHaveBeenCalledWith('d1');
+        expect(mockAgent.db.deleteGarment).toHaveBeenCalledWith('d2');
+        const events = mockAgent.interface.broadcast.mock.calls.map(c => ({ event: c[0], payload: c[1] }));
+        expect(events).toContainEqual({ event: 'wardrobe:garment:delete', payload: { id: 'd1' } });
+        expect(events).toContainEqual({ event: 'wardrobe:garment:delete', payload: { id: 'd2' } });
+        expect(events.some(e => e.event === 'wardrobe:garment:update')).toBe(true);
+    });
+
+    test('records the merge in primary meta.mergedFrom for audit', async () => {
+        const primary = garmentRow({ id: 'p1', meta: { mergedFrom: ['old_x'] } });
+        const dup = garmentRow({ id: 'd1' });
+        mockAgent.db.getGarment.mockImplementation(id => ({ p1: primary, d1: dup }[id]));
+
+        await service.mergeGarments('p1', ['d1']);
+
+        const patch = mockAgent.db.updateGarment.mock.calls.find(c => c[0] === 'p1')[1];
+        expect(patch.meta.mergedFrom).toEqual(['old_x', 'd1']);
+        expect(patch.meta.lastMergedAt).toMatch(/\d{4}-\d{2}-\d{2}T/);
+    });
+
+    test('drops self-references in duplicateIds defensively', async () => {
+        const primary = garmentRow({ id: 'p1' });
+        mockAgent.db.getGarment.mockReturnValue(primary);
+
+        await expect(service.mergeGarments('p1', ['p1'])).rejects.toThrow('at least one duplicate');
     });
 });
 
@@ -1694,9 +1913,10 @@ describe('WardrobeExecutor', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         service = new WardrobeService(mockAgent);
-        service.ingestGarmentFromBase64 = jest.fn().mockResolvedValue([
-            { id: 'g1', type: 'shoes', subtype: 'sneakers', primary_color: 'white' }
-        ]);
+        service.ingestGarmentFromBase64 = jest.fn().mockResolvedValue({
+            garments: [{ id: 'g1', type: 'shoes', subtype: 'sneakers', primary_color: 'white' }],
+            matched_existing: []
+        });
         executor = new WardrobeExecutor({ wardrobe: service });
     });
 
