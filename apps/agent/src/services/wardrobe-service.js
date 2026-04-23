@@ -258,8 +258,12 @@ Respond with JSON only.`;
      *   Additional photos of the same garment (e.g. clearer angle the user
      *   uploaded for re-enrich). Sent alongside the existing crop so the model
      *   can resolve details the original photo missed.
+     * @param {boolean} [options.overwriteExisting=false] - When true, brand/model
+     *   from the analysis overwrite existing values (used by user-initiated
+     *   re-enrich, where stale wrong data should be corrected). When false (the
+     *   default for ingest), they only fill empty fields.
      */
-    async _runAttributePass(garmentId, { hint = null, extraReferences = [] } = {}) {
+    async _runAttributePass(garmentId, { hint = null, extraReferences = [], overwriteExisting = false } = {}) {
         const TAG = '[wardrobe.attr]';
         const garment = this.db.getGarment(garmentId);
         if (!garment) {
@@ -287,6 +291,12 @@ Respond with JSON only.`;
 
         console.log(`${TAG} start | garmentId=${garmentId} | hint=${hint ? `"${hint.slice(0, 80)}"` : '(none)'} | extraRefs=${extras.length} | cropPath=${cropPath}`);
 
+        // We ask the model to populate brand/model whenever the user explicitly
+        // initiated this pass (hint typed, or `overwriteExisting` set by re-enrich)
+        // — that's the user saying "redo this," and they want the new analysis to
+        // potentially correct stale stored values.
+        const wantBrandModel = !!hint || overwriteExisting;
+
         const modelName = this.config.getModel('FLASH');
         const prompt = `Analyze this single garment or accessory and return strict JSON:
 {
@@ -299,9 +309,9 @@ Respond with JSON only.`;
   "warmth": 1-5,
   "formality": 1-5,
   "season_tags": ["spring","summer","fall","winter"],
-  "distinguishing_features": "logos, stitching, named model, distinctive cut",${hint ? `
-  "brand": "brand name parsed from the user hint, or null",
-  "model": "specific model name parsed from the user hint, or null",` : ''}
+  "distinguishing_features": "logos, stitching, named model, distinctive cut",${wantBrandModel ? `
+  "brand": "brand name${hint ? ' parsed from the user hint or' : ''} visible in the image, or null if unsure",
+  "model": "specific model name${hint ? ' parsed from the user hint or' : ''} identifiable in the image, or null if unsure",` : ''}
   "confidence": 0..1
 }
 
@@ -365,10 +375,17 @@ Trust this hint as ground truth. Parse brand and model out of it (e.g. "ABC Warp
             const f = this._clampInt(data.formality, 1, 5);
             if (f !== null) patch.formality = f;
             if (Array.isArray(data.season_tags)) patch.season_tags = data.season_tags;
-            // When the user supplied a hint, the attribute pass is allowed to populate
-            // brand/model from it. Only fill missing fields — never clobber a value
-            // the user already typed in.
-            if (hint) {
+            // Brand/model overlay rules:
+            //   - On user-initiated re-enrich (`overwriteExisting`), overwrite
+            //     stale stored values when the model returns something. Only
+            //     overwrite with non-null values — if the model is unsure we'd
+            //     rather keep the user's old data than blank it out.
+            //   - With just a typed hint (no overwrite), only fill empties so we
+            //     don't clobber values the user already curated by hand.
+            if (overwriteExisting) {
+                if (data.brand) patch.brand = data.brand;
+                if (data.model) patch.model = data.model;
+            } else if (hint) {
                 if (data.brand && !garment.brand) patch.brand = data.brand;
                 if (data.model && !garment.model) patch.model = data.model;
             }
@@ -595,20 +612,13 @@ Hard rules:
         const garment = this.db.getGarment(garmentId);
         if (!garment) throw new Error(`Garment ${garmentId} not found`);
 
+        // Re-enrich is the user explicitly saying "redo the analysis." Don't bias
+        // the prompt with the existing brand/model — those may well be the wrong
+        // values the user is trying to correct. Only the typed hint goes in.
         const trimmed = (hint || '').trim();
-        const effectiveParts = [trimmed, garment.brand, garment.model]
-            .map(s => (s || '').trim())
-            .filter(Boolean);
-        // De-dupe so "ABC Warpstreme Jogger · ABC Warpstreme Jogger" doesn't happen
-        const seen = new Set();
-        const unique = [];
-        for (const p of effectiveParts) {
-            const k = p.toLowerCase();
-            if (!seen.has(k)) { seen.add(k); unique.push(p); }
-        }
-        const effectiveHint = unique.length ? unique.join(' · ') : null;
+        const effectiveHint = trimmed || null;
 
-        console.log(`${TAG} start | garmentId=${garmentId} | hint=${trimmed ? `"${trimmed.slice(0, 80)}"` : '(none)'} | effectiveHint=${effectiveHint ? `"${effectiveHint.slice(0, 100)}"` : '(none)'} | replacingCrop=${!!extraImageBase64}`);
+        console.log(`${TAG} start | garmentId=${garmentId} | hint=${trimmed ? `"${trimmed.slice(0, 80)}"` : '(none)'} | replacingCrop=${!!extraImageBase64} | existingBrand=${garment.brand || '(none)'} model=${garment.model || '(none)'}`);
 
         const metaPatch = { ...(garment.meta || {}) };
         if (trimmed) metaPatch.userHint = trimmed;
@@ -638,6 +648,12 @@ Hard rules:
             // The previous generated image was rendered from the OLD crop — it no
             // longer reflects what this garment looks like, so drop it.
             patch.generated_image_path = null;
+            // Replacing the photo is the strongest signal that the previous
+            // analysis is suspect. Clear brand/model so the upcoming attribute
+            // pass and brand-search start from a clean slate. (If the user typed
+            // a matching hint, the pass will re-set them to the correct value.)
+            patch.brand = null;
+            patch.model = null;
 
             // Cleanup: drop the old crop file unless it's the shared multi-garment
             // source image (full-frame ingests reuse source as crop).
@@ -648,7 +664,7 @@ Hard rules:
                 try { fs.unlinkSync(oldGenPath); } catch (e) { /* ignore */ }
             }
 
-            console.log(`${TAG} crop replaced | garmentId=${garmentId} | newCrop=${newCropPath}${oldGenPath ? ' | cleared stale generated image' : ''}`);
+            console.log(`${TAG} crop replaced | garmentId=${garmentId} | newCrop=${newCropPath}${oldGenPath ? ' | cleared stale generated image' : ''} | brand/model cleared for fresh analysis`);
         }
 
         this.db.updateGarment(garmentId, patch);
@@ -656,7 +672,14 @@ Hard rules:
 
         // Background refinement — the attribute pass reads the (possibly new)
         // crop_image_path from the row, so we don't need to forward extras.
-        this._runAttributePass(garmentId, { hint: effectiveHint }).catch(err => {
+        // Pass overwriteExisting so brand/model from the new analysis can replace
+        // wrong stored values (the whole point of a user-initiated re-enrich).
+        // Also clear the brand_search_done flag so the brand pass re-runs against
+        // the new image even if it ran before.
+        this._runAttributePass(garmentId, {
+            hint: effectiveHint,
+            overwriteExisting: true
+        }).catch(err => {
             console.error(`${TAG} background attribute pass crashed | garmentId=${garmentId} | err=${err.message}`);
         });
 
