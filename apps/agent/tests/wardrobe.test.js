@@ -688,7 +688,9 @@ describe('WardrobeService.generateGarmentImage', () => {
 
         expect(fs.writeFileSync).toHaveBeenCalled();
         expect(mockAgent.db.updateGarment).toHaveBeenCalledWith('g1', expect.objectContaining({
-            generated_image_path: expect.stringMatching(/generated_g1\.jpg$/)
+            // Filename includes a timestamp so each regeneration gets a unique URL,
+            // bypassing the immutable Cache-Control on the image route.
+            generated_image_path: expect.stringMatching(/generated_g1_\d+\.jpg$/)
         }));
         expect(mockAgent.interface.broadcast).toHaveBeenCalledWith('wardrobe:garment:update', expect.anything());
         expect(r).toBeTruthy();
@@ -728,6 +730,27 @@ describe('WardrobeService.generateGarmentImage', () => {
     test('throws when garment not found', async () => {
         mockAgent.db.getGarment.mockReturnValue(null);
         await expect(service.generateGarmentImage('ghost')).rejects.toThrow('not found');
+    });
+
+    test('regeneration deletes the previous generated file (no on-disk cruft)', async () => {
+        const previousPath = '/data/wardrobe/garments/src/generated_g1_111.jpg';
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1', type: 'top', subtype: 'tshirt',
+            crop_image_path: '/data/wardrobe/garments/src/crop_0.jpg',
+            source_image_path: '/data/wardrobe/garments/src/original.jpg',
+            generated_image_path: previousPath,
+            meta: {}
+        });
+        const unlinkSpy = jest.spyOn(fs, 'unlinkSync').mockImplementation(() => { });
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            candidates: [{ content: { parts: [
+                { inlineData: { mimeType: 'image/jpeg', data: 'NEW' } }
+            ]}}]
+        });
+
+        await service.generateGarmentImage('g1');
+
+        expect(unlinkSpy).toHaveBeenCalledWith(previousPath);
     });
 
     test('passes extra reference images to the model alongside the crop', async () => {

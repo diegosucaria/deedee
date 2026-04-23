@@ -712,6 +712,7 @@ Hard rules:
      *   Additional photos of the same garment encoded as base64.
      */
     async generateGarmentImage(garmentId, { extraReferences = [] } = {}) {
+        const TAG = '[wardrobe.imagegen]';
         const garment = this.db.getGarment(garmentId);
         if (!garment) throw new Error(`Garment ${garmentId} not found`);
         if (!this.agent.client) throw new Error('Gemini client not initialized');
@@ -720,6 +721,10 @@ Hard rules:
         if (!cropPath || !fs.existsSync(cropPath)) {
             throw new Error('Garment has no source image to reference');
         }
+
+        const extras = Array.isArray(extraReferences)
+            ? extraReferences.filter(r => r && typeof r.data === 'string' && r.data.length > 0)
+            : [];
 
         const descriptorBits = [
             garment.type,
@@ -732,9 +737,7 @@ Hard rules:
         ].filter(Boolean);
         const descriptor = descriptorBits.length ? descriptorBits.join(' ') : 'garment';
 
-        const extras = Array.isArray(extraReferences)
-            ? extraReferences.filter(r => r && typeof r.data === 'string' && r.data.length > 0)
-            : [];
+        console.log(`${TAG} start | garmentId=${garmentId} | descriptor="${descriptor}" | extraRefs=${extras.length} | hasExisting=${!!garment.generated_image_path}`);
 
         const referenceClause = extras.length === 0
             ? 'Use the single reference image to render the item.'
@@ -772,24 +775,50 @@ GENERAL RULES:
         parts.push({ text: prompt });
 
         const modelName = this.config.getModel('IMAGE');
-        const response = await this.agent.client.models.generateContent({
-            model: modelName,
-            contents: [{ role: 'user', parts }],
-            config: { responseModalities: ['TEXT', 'IMAGE'] }
-        });
+        const startedAt = Date.now();
+        let response;
+        try {
+            response = await this.agent.client.models.generateContent({
+                model: modelName,
+                contents: [{ role: 'user', parts }],
+                config: { responseModalities: ['TEXT', 'IMAGE'] }
+            });
+        } catch (apiErr) {
+            const elapsedMs = Date.now() - startedAt;
+            console.error(`${TAG} API call threw | garmentId=${garmentId} | model=${modelName} | elapsedMs=${elapsedMs} | err=${apiErr.message}`);
+            throw apiErr;
+        }
+        const elapsedMs = Date.now() - startedAt;
         try { this.config.logUsageFromResponse(this.db, modelName, response, null, 'wardrobe_generate_garment'); } catch (e) { /* ignore */ }
 
         const respParts = response?.candidates?.[0]?.content?.parts || [];
         const imagePart = respParts.find(p => p?.inlineData?.mimeType?.startsWith?.('image/'));
-        if (!imagePart) throw new Error('No image returned from image model');
+        if (!imagePart) {
+            const finishReason = response?.candidates?.[0]?.finishReason || 'unknown';
+            const textParts = respParts.filter(p => p?.text).map(p => p.text).join(' ').slice(0, 200);
+            console.error(`${TAG} no image in response | garmentId=${garmentId} | model=${modelName} | elapsedMs=${elapsedMs} | finishReason=${finishReason}${textParts ? ` | text="${textParts}"` : ''}`);
+            throw new Error('No image returned from image model');
+        }
 
+        // Write to a unique filename per regeneration so the browser can't serve a
+        // stale cached copy — image route uses Cache-Control: immutable. Delete the
+        // previous generated file (if any) so we don't leave cruft on disk.
+        const previousPath = garment.generated_image_path;
         const outDir = path.dirname(cropPath);
-        const outPath = path.join(outDir, `generated_${garmentId}.jpg`);
-        fs.writeFileSync(outPath, Buffer.from(imagePart.inlineData.data, 'base64'));
+        const ts = Date.now();
+        const outPath = path.join(outDir, `generated_${garmentId}_${ts}.jpg`);
+        const bytes = Buffer.from(imagePart.inlineData.data, 'base64');
+        fs.writeFileSync(outPath, bytes);
+
+        if (previousPath && previousPath !== outPath && fs.existsSync(previousPath)) {
+            try { fs.unlinkSync(previousPath); } catch (e) { /* ignore — cosmetic cleanup */ }
+        }
 
         this.db.updateGarment(garmentId, { generated_image_path: outPath });
         const updated = this.db.getGarment(garmentId);
         this._broadcast('wardrobe:garment:update', updated);
+
+        console.log(`${TAG} done | garmentId=${garmentId} | model=${modelName} | elapsedMs=${elapsedMs} | bytes=${bytes.length} | path=${outPath}${previousPath ? ` (replaced ${path.basename(previousPath)})` : ''}`);
         return updated;
     }
 
