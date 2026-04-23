@@ -148,6 +148,29 @@ const createWardrobeRouter = (agent) => {
         }
     });
 
+    // POST /garments/:id/duplicate
+    // Body: { image: base64, mimeType?: string }
+    // Creates a new garment inheriting brand/model/type/subtype/material/
+    // warmth/formality/size/season_tags from :id, re-detecting color+pattern
+    // from the supplied photo in the background.
+    router.post('/garments/:id/duplicate', async (req, res) => {
+        try {
+            const { image, mimeType } = req.body || {};
+            if (!image) return res.status(400).json({ error: 'Missing image data (base64)' });
+            if (!agent.wardrobeService) return res.status(503).json({ error: 'Wardrobe service not available' });
+            const garment = await agent.wardrobeService.duplicateGarment(
+                req.params.id,
+                image,
+                mimeType || 'image/jpeg'
+            );
+            res.json({ success: true, garment });
+        } catch (error) {
+            console.error('[WardrobeRouter] Duplicate error:', error);
+            const status = /not found|Missing/i.test(error.message) ? 400 : 500;
+            res.status(status).json({ error: error.message });
+        }
+    });
+
     // POST /garments/:id/generate-image
     // Body (all optional):
     //   extra_image: base64 — additional photo of the same garment to fill in

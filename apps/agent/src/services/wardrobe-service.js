@@ -1258,6 +1258,74 @@ GENERAL RULES:
     }
 
     /**
+     * "Add another like this." Given a source garment and a new photo (typically
+     * a folded-shirt flat-lay of the same product in a different color), create
+     * a new garment inheriting identity/size/material attributes from the source
+     * and re-detecting color/pattern from the new image in the background.
+     *
+     * We deliberately skip the usual multi-item detection pipeline — the photo
+     * already depicts a single known garment, so cropping or matching against
+     * existing wardrobe items would just add noise.
+     */
+    async duplicateGarment(sourceId, base64Data, mimeType = 'image/jpeg') {
+        const TAG = '[wardrobe.duplicate]';
+        if (!sourceId) throw new Error('Missing source garment id');
+        if (!base64Data) throw new Error('Missing image data');
+
+        const source = this.db.getGarment(sourceId);
+        if (!source) throw new Error(`Source garment "${sourceId}" not found`);
+
+        const ext = mimeType.includes('png') ? 'png' : 'jpg';
+        const newId = crypto.randomUUID();
+        const garmentDir = path.join(this._baseDir(), 'garments', newId);
+        if (!fs.existsSync(garmentDir)) fs.mkdirSync(garmentDir, { recursive: true });
+        const imagePath = path.join(garmentDir, `original.${ext}`);
+        fs.writeFileSync(imagePath, Buffer.from(base64Data, 'base64'));
+        console.log(`${TAG} wrote image | sourceId=${sourceId} | newId=${newId} | path=${imagePath}`);
+
+        const garment = {
+            id: newId,
+            type: source.type || null,
+            subtype: source.subtype || null,
+            brand: source.brand || null,
+            model: source.model || null,
+            material_guess: source.material_guess || null,
+            warmth: source.warmth || null,
+            formality: source.formality || null,
+            size: source.size || null,
+            season_tags: Array.isArray(source.season_tags) ? source.season_tags : [],
+            fit_notes: source.fit_notes || null,
+            source_image_path: imagePath,
+            crop_image_path: imagePath,
+            source: 'duplicated',
+            enrichment_status: 'enriching',
+            enrichment_confidence: 0,
+            meta: { duplicatedFrom: sourceId }
+        };
+
+        this.db.addGarment(garment);
+        const row = this.db.getGarment(newId);
+        this._broadcast('wardrobe:garment:detected', row);
+
+        // Background attribute pass. The hint tells the model brand/model/type
+        // are ground truth — it should spend its effort on color/pattern here.
+        const hintParts = [];
+        if (source.brand) hintParts.push(source.brand);
+        if (source.model) hintParts.push(source.model);
+        const typeBit = source.subtype ? `${source.type || 'item'} / ${source.subtype}` : (source.type || '');
+        if (typeBit) hintParts.push(`(${typeBit})`);
+        const hint = hintParts.length > 0
+            ? `${hintParts.join(' ')} — same product as an existing wardrobe item in a different color. Brand, model, type, and material are already known; focus the analysis on detecting primary_color, secondary_colors, and pattern from this photo.`
+            : null;
+
+        this._runAttributePass(newId, { hint, overwriteExisting: false }).catch(err => {
+            console.error(`${TAG} attribute pass crashed | newId=${newId} | err=${err.message}`);
+        });
+
+        return row;
+    }
+
+    /**
      * Hybrid primitive: given a photo of clothes, simultaneously match items to
      * the existing wardrobe AND auto-add any unmatched garments. Returns the
      * full set of garment ids for downstream reasoning.

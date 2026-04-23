@@ -1058,6 +1058,18 @@ export async function mergeGarments(primaryId, duplicateIds) {
     }
 }
 
+export async function duplicateGarment(sourceId, base64Data, mimeType) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/garments/${encodeURIComponent(sourceId)}/duplicate`, {
+            method: 'POST',
+            body: JSON.stringify({ image: base64Data, mimeType })
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function getWardrobeProfile() {
     try {
         const data = await fetchAPI('/v1/wardrobe/profile', { method: 'GET' });

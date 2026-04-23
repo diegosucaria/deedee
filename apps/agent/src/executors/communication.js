@@ -1,5 +1,7 @@
 const { BaseExecutor } = require('./base');
 const axios = require('axios');
+const fs = require('fs');
+const path = require('path');
 
 class CommunicationExecutor extends BaseExecutor {
     async execute(name, args, context, callServices) {
@@ -8,8 +10,8 @@ class CommunicationExecutor extends BaseExecutor {
 
         switch (name) {
             case 'sendMessage': {
-                const { to, content, session, service, type, force } = args;
-                console.log(`[CommunicationExecutor] Sending ${type || 'text'} to ${to} via ${service || 'whatsapp'} (Session: ${session || 'default'})`);
+                const { to, content, session, service, type, force, imagePath } = args;
+                console.log(`[CommunicationExecutor] Sending ${type || 'text'} to ${to} via ${service || 'whatsapp'} (Session: ${session || 'default'})${imagePath ? ` [imagePath=${imagePath}]` : ''}`);
 
                 const svc = service || 'whatsapp';
 
@@ -133,11 +135,30 @@ class CommunicationExecutor extends BaseExecutor {
                     session: session || 'assistant'
                 };
 
+                let resolvedContent = content;
+                let caption = null;
+                if (imagePath && (type === 'image' || type === 'audio')) {
+                    if (!path.isAbsolute(imagePath) || imagePath.includes('..')) {
+                        return { success: false, info: `Invalid imagePath: must be an absolute path without '..' segments.` };
+                    }
+                    if (!fs.existsSync(imagePath)) {
+                        return { success: false, info: `imagePath not found: ${imagePath}` };
+                    }
+                    try {
+                        resolvedContent = fs.readFileSync(imagePath).toString('base64');
+                    } catch (e) {
+                        return { success: false, info: `Failed to read imagePath: ${e.message}` };
+                    }
+                    // When imagePath is supplied, treat the caller's `content` as an optional caption.
+                    caption = typeof content === 'string' && content.length > 0 ? content : null;
+                }
+
                 const payload = {
                     source: svc,
-                    content: content,
+                    content: resolvedContent,
                     metadata: metadata,
-                    type: type || 'text'
+                    type: type || 'text',
+                    caption: caption
                 };
 
                 // Use the interface service if available to send
@@ -147,7 +168,8 @@ class CommunicationExecutor extends BaseExecutor {
                         console.log(`[CommunicationExecutor] Content: "${content}"`);
                         return { success: true, info: `Success (Dry Run): Message to ${cleanTo} skipped. Content: "${content.substring(0, 50)}..."` };
                     }
-                    console.log(`[CommunicationExecutor] Sending to ${cleanTo} (${svc}): "${content}"`);
+                    const logPreview = imagePath ? `[image: ${imagePath}${caption ? `; caption: "${caption}"` : ''}]` : `"${content}"`;
+                    console.log(`[CommunicationExecutor] Sending to ${cleanTo} (${svc}): ${logPreview}`);
                     await services.interface.send(payload);
 
                     // Verification handled above: 'force' marks verified, already-verified contacts skip check

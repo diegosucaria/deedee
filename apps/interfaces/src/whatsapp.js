@@ -1104,7 +1104,9 @@ class WhatsAppService {
                 await this.sock.sendMessage(targetJid, { audio: opusBuffer, mimetype: 'audio/ogg; codecs=opus', ptt: true });
             } else if (type === 'image') {
                 const buffer = Buffer.from(content, 'base64');
-                await this.sock.sendMessage(targetJid, { image: buffer });
+                const imagePayload = { image: buffer };
+                if (options.caption) imagePayload.caption = options.caption;
+                await this.sock.sendMessage(targetJid, imagePayload);
             }
 
         } catch (e) {

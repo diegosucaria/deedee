@@ -36,6 +36,7 @@ router.post('/garments/:id/confirm-brand', (req, res) => proxyRequest(req, res, 
 router.post('/garments/:id/merge', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/garments/${encodeURIComponent(req.params.id)}/merge`));
 router.post('/garments/:id/reenrich', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/garments/${encodeURIComponent(req.params.id)}/reenrich`, { largeBody: true }));
 router.post('/garments/:id/generate-image', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/garments/${encodeURIComponent(req.params.id)}/generate-image`, { largeBody: true }));
+router.post('/garments/:id/duplicate', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/garments/${encodeURIComponent(req.params.id)}/duplicate`, { largeBody: true }));
 
 // Outfits
 router.get('/outfits', (req, res) => proxyRequest(req, res, 'GET', '/internal/wardrobe/outfits'));

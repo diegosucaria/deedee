@@ -6,7 +6,7 @@ import { io } from 'socket.io-client';
 import { getSocketUrl } from '@/hooks/useSocket';
 import {
     Shirt, Camera, Trash2, X, Loader2, Check, Pencil, Settings, Heart,
-    Plane, ShoppingBag, MapPin, Calendar, Upload, User, Layers, Sparkles, RefreshCw, Paperclip, Combine
+    Plane, ShoppingBag, MapPin, Calendar, Upload, User, Layers, Sparkles, RefreshCw, Paperclip, Combine, Copy
 } from 'lucide-react';
 import PageShell from '@/components/PageShell';
 import {
@@ -18,6 +18,7 @@ import {
     reenrichGarment,
     generateGarmentImage,
     mergeGarments,
+    duplicateGarment,
     getWardrobeProfile,
     updateWardrobeProfile,
     uploadReferenceSelfie,
@@ -372,6 +373,17 @@ function GarmentsTab() {
                             }
                             return res;
                         }}
+                        onDuplicate={async (base64, mimeType) => {
+                            const sourceId = selected.id;
+                            const res = await duplicateGarment(sourceId, base64, mimeType);
+                            if (res.success && res.data?.garment) {
+                                setGarments(prev => {
+                                    if (prev.find(p => p.id === res.data.garment.id)) return prev;
+                                    return [res.data.garment, ...prev];
+                                });
+                            }
+                            return res;
+                        }}
                     />
                 )}
             </AnimatePresence>
@@ -390,7 +402,7 @@ const EDITABLE_TEXT = [
     { key: 'size', label: 'Size' }
 ];
 
-function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, onReenrich, onGenerateImage, otherGarments = [], onMerge }) {
+function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, onReenrich, onGenerateImage, otherGarments = [], onMerge, onDuplicate }) {
     const [editing, setEditing] = useState(null);
     const [draft, setDraft] = useState('');
     const [hint, setHint] = useState('');
@@ -401,8 +413,11 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
     const [genError, setGenError] = useState('');
     const [showOriginal, setShowOriginal] = useState(false);
     const [mergeOpen, setMergeOpen] = useState(false);
+    const [duplicating, setDuplicating] = useState(false);
+    const [duplicateStatus, setDuplicateStatus] = useState('');
     const extraPhotoInputRef = useRef(null);
     const hintImageInputRef = useRef(null);
+    const duplicateInputRef = useRef(null);
     const generatedUrl = pathToUrl(garment.generated_image_path);
     const originalUrl = pathToUrl(garment.crop_image_path || garment.source_image_path);
     const imgUrl = !showOriginal && generatedUrl ? generatedUrl : originalUrl;
@@ -452,6 +467,33 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
             const res = await onGenerateImage();
             if (!res?.success) setGenError(res?.error || 'Generate failed');
         } finally { setGenerating(false); }
+    };
+
+    const handleDuplicatePhotoSelect = async (e) => {
+        const file = e.target.files?.[0];
+        if (duplicateInputRef.current) duplicateInputRef.current.value = '';
+        if (!file || !onDuplicate) return;
+        setDuplicating(true);
+        setDuplicateStatus('');
+        try {
+            const base64 = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+            const res = await onDuplicate(base64, file.type);
+            if (res?.success) {
+                setDuplicateStatus('Added — analyzing color in background.');
+                setTimeout(() => setDuplicateStatus(''), 4000);
+            } else {
+                setDuplicateStatus(res?.error || 'Failed to duplicate.');
+            }
+        } catch (err) {
+            setDuplicateStatus(err.message || 'Failed to duplicate.');
+        } finally {
+            setDuplicating(false);
+        }
     };
 
     const handleExtraPhotoSelect = async (e) => {
@@ -665,7 +707,25 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
                     {reenrichError && <p className="mt-2 text-xs text-rose-400">{reenrichError}</p>}
                 </div>
 
+                <input
+                    ref={duplicateInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleDuplicatePhotoSelect}
+                    className="hidden"
+                />
                 <div className="flex items-center gap-2 flex-wrap">
+                    {onDuplicate && (
+                        <button
+                            onClick={() => duplicateInputRef.current?.click()}
+                            disabled={duplicating}
+                            className="inline-flex items-center gap-2 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-200 text-sm rounded-lg min-h-[44px]"
+                            title="Take/upload a photo of another unit of this garment (e.g. same shirt, different color). Inherits brand, model, type, material; re-detects color."
+                        >
+                            {duplicating ? <Loader2 className="w-4 h-4 animate-spin" /> : <Copy className="w-4 h-4" />}
+                            Add another like this
+                        </button>
+                    )}
                     <button
                         onClick={() => setMergeOpen(true)}
                         disabled={otherGarments.length === 0}
@@ -681,6 +741,9 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
                         <Trash2 className="w-4 h-4" /> Delete
                     </button>
                 </div>
+                {duplicateStatus && (
+                    <p className="mt-2 text-xs text-zinc-400">{duplicateStatus}</p>
+                )}
             </motion.div>
 
             <AnimatePresence>
@@ -878,6 +941,8 @@ function OutfitsTab() {
     const [garmentIndex, setGarmentIndex] = useState({});
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState('all'); // all | liked
+    const [selectedOutfit, setSelectedOutfit] = useState(null);
+    const [selectedGarment, setSelectedGarment] = useState(null);
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -898,6 +963,7 @@ function OutfitsTab() {
         const res = await likeOutfit(outfit.id, !outfit.liked);
         if (res.success && res.data?.outfit) {
             setOutfits(prev => prev.map(o => o.id === outfit.id ? res.data.outfit : o));
+            setSelectedOutfit(prev => prev?.id === outfit.id ? res.data.outfit : prev);
         }
     };
 
@@ -935,9 +1001,10 @@ function OutfitsTab() {
             ) : (
                 <div className="space-y-3">
                     {outfits.map(o => (
-                        <div
+                        <button
                             key={o.id}
-                            className="rounded-xl bg-zinc-900 border border-zinc-800 p-3 flex items-center gap-3"
+                            onClick={() => setSelectedOutfit(o)}
+                            className="w-full text-left rounded-xl bg-zinc-900 border border-zinc-800 p-3 flex items-center gap-3 hover:border-zinc-700 transition"
                         >
                             {o.rendered_image_path ? (
                                 // eslint-disable-next-line @next/next/no-img-element
@@ -969,18 +1036,245 @@ function OutfitsTab() {
                                     {o.occasion ? ` · ${o.occasion}` : ''}
                                 </p>
                             </div>
-                            <button
-                                onClick={() => toggleLike(o)}
-                                className={`p-2 rounded-lg ${o.liked ? 'text-rose-400' : 'text-zinc-600 hover:text-zinc-300'}`}
+                            <span
+                                role="button"
+                                tabIndex={0}
+                                onClick={(e) => { e.stopPropagation(); toggleLike(o); }}
+                                onKeyDown={(e) => {
+                                    if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); toggleLike(o); }
+                                }}
+                                className={`p-2 rounded-lg cursor-pointer ${o.liked ? 'text-rose-400' : 'text-zinc-600 hover:text-zinc-300'}`}
                                 title={o.liked ? 'Unlike' : 'Like'}
                             >
                                 <Heart className="w-5 h-5" fill={o.liked ? 'currentColor' : 'none'} />
-                            </button>
-                        </div>
+                            </span>
+                        </button>
                     ))}
                 </div>
             )}
+
+            <AnimatePresence>
+                {selectedOutfit && (
+                    <OutfitDetail
+                        outfit={selectedOutfit}
+                        garmentIndex={garmentIndex}
+                        onClose={() => setSelectedOutfit(null)}
+                        onToggleLike={() => toggleLike(selectedOutfit)}
+                        onSelectGarment={(g) => setSelectedGarment(g)}
+                    />
+                )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+                {selectedGarment && (
+                    <GarmentDetail
+                        garment={selectedGarment}
+                        onClose={() => setSelectedGarment(null)}
+                        onChange={async (patch) => {
+                            const targetId = selectedGarment.id;
+                            const res = await updateGarment(targetId, patch);
+                            if (res.success && res.data?.garment) {
+                                setSelectedGarment(prev => prev?.id === targetId ? res.data.garment : prev);
+                                setGarmentIndex(prev => ({ ...prev, [targetId]: res.data.garment }));
+                            }
+                        }}
+                        onDelete={async () => {
+                            if (!confirm('Delete this garment?')) return;
+                            const targetId = selectedGarment.id;
+                            const res = await deleteGarmentAction(targetId);
+                            if (res.success) {
+                                setSelectedGarment(null);
+                                setGarmentIndex(prev => {
+                                    const next = { ...prev };
+                                    delete next[targetId];
+                                    return next;
+                                });
+                            }
+                        }}
+                        onConfirmBrand={async (accept) => {
+                            const targetId = selectedGarment.id;
+                            const res = await confirmGarmentBrand(targetId, accept);
+                            if (res.success && res.data?.garment) {
+                                setSelectedGarment(prev => prev?.id === targetId ? res.data.garment : prev);
+                                setGarmentIndex(prev => ({ ...prev, [targetId]: res.data.garment }));
+                            }
+                        }}
+                        onReenrich={async (hint, opts) => {
+                            const targetId = selectedGarment.id;
+                            const res = await reenrichGarment(targetId, hint, opts || {});
+                            if (res.success && res.data?.garment) {
+                                setSelectedGarment(prev => prev?.id === targetId ? res.data.garment : prev);
+                                setGarmentIndex(prev => ({ ...prev, [targetId]: res.data.garment }));
+                            }
+                            return res;
+                        }}
+                        onGenerateImage={async (opts) => {
+                            const targetId = selectedGarment.id;
+                            const res = await generateGarmentImage(targetId, opts || {});
+                            if (res.success && res.data?.garment) {
+                                setSelectedGarment(prev => prev?.id === targetId ? res.data.garment : prev);
+                                setGarmentIndex(prev => ({ ...prev, [targetId]: res.data.garment }));
+                            }
+                            return res;
+                        }}
+                        otherGarments={Object.values(garmentIndex).filter(g => g.id !== selectedGarment.id)}
+                        onMerge={async (duplicateIds) => {
+                            const targetId = selectedGarment.id;
+                            const res = await mergeGarments(targetId, duplicateIds);
+                            if (res.success && res.data?.garment) {
+                                setSelectedGarment(prev => prev?.id === targetId ? res.data.garment : prev);
+                                setGarmentIndex(prev => ({ ...prev, [targetId]: res.data.garment }));
+                            }
+                            return res;
+                        }}
+                        onDuplicate={async (base64, mimeType) => {
+                            const sourceId = selectedGarment.id;
+                            const res = await duplicateGarment(sourceId, base64, mimeType);
+                            if (res.success && res.data?.garment) {
+                                setGarmentIndex(prev => ({ ...prev, [res.data.garment.id]: res.data.garment }));
+                            }
+                            return res;
+                        }}
+                    />
+                )}
+            </AnimatePresence>
         </>
+    );
+}
+
+function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGarment }) {
+    const [lightboxOpen, setLightboxOpen] = useState(false);
+    const renderUrl = pathToUrl(outfit.rendered_image_path);
+    const garments = (outfit.garment_ids || [])
+        .map(id => garmentIndex[id])
+        .filter(Boolean);
+    const missingCount = (outfit.garment_ids || []).length - garments.length;
+
+    return (
+        <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/60 flex items-end md:items-center justify-center"
+            onClick={onClose}
+        >
+            <motion.div
+                initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
+                transition={{ type: 'spring', damping: 28 }}
+                className="w-full md:max-w-lg bg-zinc-950 border-t md:border border-zinc-800 md:rounded-2xl rounded-t-2xl p-4 max-h-[90vh] overflow-y-auto"
+                onClick={e => e.stopPropagation()}
+            >
+                <div className="flex items-center justify-between mb-3">
+                    <h2 className="text-lg font-semibold text-white truncate">{outfit.name || 'Outfit'}</h2>
+                    <div className="flex items-center gap-1">
+                        <button
+                            onClick={onToggleLike}
+                            className={`p-2 rounded-lg ${outfit.liked ? 'text-rose-400' : 'text-zinc-500 hover:text-zinc-200'}`}
+                            title={outfit.liked ? 'Unlike' : 'Like'}
+                        >
+                            <Heart className="w-5 h-5" fill={outfit.liked ? 'currentColor' : 'none'} />
+                        </button>
+                        <button onClick={onClose} className="p-2 text-zinc-400 hover:text-white">
+                            <X className="w-5 h-5" />
+                        </button>
+                    </div>
+                </div>
+
+                {renderUrl ? (
+                    <button
+                        onClick={() => setLightboxOpen(true)}
+                        className="block w-full mb-4 rounded-xl overflow-hidden bg-zinc-900 border border-zinc-800"
+                        title="Tap to enlarge"
+                    >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={renderUrl} alt="" className="w-full max-h-[60vh] object-contain" />
+                    </button>
+                ) : garments.length > 0 ? (
+                    <div className="mb-4 grid grid-cols-2 gap-1 p-1 rounded-xl bg-zinc-900 border border-zinc-800">
+                        {garments.slice(0, 4).map(g => {
+                            const url = pathToUrl(g.generated_image_path || g.crop_image_path || g.source_image_path);
+                            return (
+                                <div key={g.id} className="aspect-square bg-zinc-950 rounded overflow-hidden">
+                                    {url && (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img src={url} alt="" className="w-full h-full object-cover" />
+                                    )}
+                                </div>
+                            );
+                        })}
+                    </div>
+                ) : null}
+
+                {outfit.occasion && (
+                    <p className="text-xs text-zinc-400 italic mb-4 p-3 rounded-lg bg-zinc-900 border border-zinc-800">
+                        {outfit.occasion}
+                    </p>
+                )}
+
+                <div className="mb-2">
+                    <h3 className="text-xs uppercase tracking-wide text-zinc-500 mb-2">
+                        Garments · {(outfit.garment_ids || []).length} item{(outfit.garment_ids || []).length === 1 ? '' : 's'}
+                    </h3>
+                    {garments.length === 0 ? (
+                        <p className="text-xs text-zinc-600">No garments to show.</p>
+                    ) : (
+                        <div className="space-y-2">
+                            {garments.map(g => {
+                                const url = pathToUrl(g.generated_image_path || g.crop_image_path || g.source_image_path);
+                                return (
+                                    <button
+                                        key={g.id}
+                                        onClick={() => onSelectGarment(g)}
+                                        className="w-full flex items-center gap-3 p-2 rounded-lg bg-zinc-900 border border-zinc-800 hover:border-zinc-700 text-left"
+                                    >
+                                        <div className="w-12 h-16 shrink-0 bg-zinc-950 rounded overflow-hidden">
+                                            {url ? (
+                                                // eslint-disable-next-line @next/next/no-img-element
+                                                <img src={url} alt="" className="w-full h-full object-cover" />
+                                            ) : (
+                                                <div className="w-full h-full flex items-center justify-center text-zinc-600">
+                                                    <Shirt className="w-5 h-5" />
+                                                </div>
+                                            )}
+                                        </div>
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-sm text-white truncate">{summarizeGarment(g)}</p>
+                                            {(g.pattern || g.material_guess) && (
+                                                <p className="text-xs text-zinc-500 truncate">
+                                                    {[g.pattern, g.material_guess].filter(Boolean).join(' · ')}
+                                                </p>
+                                            )}
+                                        </div>
+                                    </button>
+                                );
+                            })}
+                            {missingCount > 0 && (
+                                <p className="text-[11px] text-zinc-600 italic">
+                                    {missingCount} item{missingCount === 1 ? '' : 's'} no longer in wardrobe.
+                                </p>
+                            )}
+                        </div>
+                    )}
+                </div>
+            </motion.div>
+
+            <AnimatePresence>
+                {lightboxOpen && renderUrl && (
+                    <motion.div
+                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4"
+                        onClick={(e) => { e.stopPropagation(); setLightboxOpen(false); }}
+                    >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={renderUrl} alt="" className="max-w-full max-h-full object-contain" />
+                        <button
+                            onClick={(e) => { e.stopPropagation(); setLightboxOpen(false); }}
+                            className="absolute top-4 right-4 p-2 rounded-full bg-white/10 text-white hover:bg-white/20"
+                        >
+                            <X className="w-6 h-6" />
+                        </button>
+                    </motion.div>
+                )}
+            </AnimatePresence>
+        </motion.div>
     );
 }
 

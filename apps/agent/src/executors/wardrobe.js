@@ -220,7 +220,11 @@ class WardrobeExecutor extends BaseExecutor {
             if (result.needs_reference) {
                 return 'Please set a reference selfie first via set_reference_selfie.';
             }
-            return `Rendered outfit ${result.outfit.id} (${result.panels} panel${result.panels === 1 ? '' : 's'}, layout=${result.layout}).`;
+            const renderPath = result.outfit?.rendered_image_path || '';
+            const base = `Rendered outfit ${result.outfit.id} (${result.panels} panel${result.panels === 1 ? '' : 's'}, layout=${result.layout}).`;
+            return renderPath
+                ? `${base} Image saved at ${renderPath}. To attach it to a WhatsApp reply, call sendMessage with type='image', imagePath='${renderPath}', and put your outfit description in content (used as caption).`
+                : base;
         } catch (e) {
             return `Error rendering outfit: ${e.message}`;
         }
