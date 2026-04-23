@@ -363,6 +363,7 @@ class AgentDB {
         priority TEXT DEFAULT 'medium',
         status TEXT DEFAULT 'wanted',
         resolved_garment_id TEXT,
+        reference_image_path TEXT,
         added_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         purchased_at TEXT
       );
@@ -564,6 +565,12 @@ class AgentDB {
     // Migration: Add labels to wr_outfits (JSON array of user-defined tags)
     try {
       this.db.exec("ALTER TABLE wr_outfits ADD COLUMN labels TEXT");
+    } catch (err) { }
+
+    // Migration: Add reference_image_path to wr_shopping_list (AI-generated
+    // reference photo of the wanted item)
+    try {
+      this.db.exec("ALTER TABLE wr_shopping_list ADD COLUMN reference_image_path TEXT");
     } catch (err) { }
   }
 
@@ -3024,7 +3031,8 @@ class AgentDB {
 
   updateShoppingItem(id, fields) {
     const allowed = ['description', 'type', 'primary_color', 'pattern', 'material_hint',
-      'suggested_context', 'priority', 'status', 'resolved_garment_id', 'purchased_at'];
+      'suggested_context', 'priority', 'status', 'resolved_garment_id', 'purchased_at',
+      'reference_image_path'];
     const jsonCols = new Set(['suggested_context']);
     const sets = [];
     const values = [];

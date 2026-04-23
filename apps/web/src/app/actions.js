@@ -1093,6 +1093,26 @@ export async function updateOutfit(id, fields) {
     }
 }
 
+export async function generateShoppingReferenceImage(id) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/shopping/${encodeURIComponent(id)}/reference-image`, {
+            method: 'POST'
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function getOutfit(id) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/outfits/${encodeURIComponent(id)}`);
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function getWardrobeProfile() {
     try {
         const data = await fetchAPI('/v1/wardrobe/profile', { method: 'GET' });

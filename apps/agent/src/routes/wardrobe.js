@@ -260,6 +260,14 @@ const createWardrobeRouter = (agent) => {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
+    router.get('/outfits/:id', (req, res) => {
+        try {
+            const outfit = agent.db.getOutfit(req.params.id);
+            if (!outfit) return res.status(404).json({ error: 'Not found' });
+            res.json(outfit);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
     router.put('/outfits/:id', async (req, res) => {
         try {
             const { id } = req.params;
@@ -414,6 +422,17 @@ const createWardrobeRouter = (agent) => {
             const item = await agent.wardrobeService.dismissShoppingItem(req.params.id);
             res.json({ success: true, item });
         } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.post('/shopping/:id/reference-image', async (req, res) => {
+        try {
+            if (!agent.wardrobeService) return res.status(503).json({ error: 'Wardrobe service not available' });
+            const item = await agent.wardrobeService.generateShoppingReferenceImage(req.params.id);
+            res.json({ success: true, item });
+        } catch (e) {
+            const status = /not found/i.test(e.message) ? 404 : 500;
+            res.status(status).json({ error: e.message });
+        }
     });
 
     // POST /profile/reference-selfie

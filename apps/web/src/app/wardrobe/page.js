@@ -21,6 +21,8 @@ import {
     duplicateGarment,
     deleteOutfit as deleteOutfitAction,
     updateOutfit,
+    getOutfit,
+    generateShoppingReferenceImage,
     getWardrobeProfile,
     updateWardrobeProfile,
     uploadReferenceSelfie,
@@ -337,6 +339,9 @@ function GarmentsTab() {
                     {visible.map(g => {
                         const imgUrl = pathToUrl(g.generated_image_path || g.crop_image_path || g.source_image_path);
                         const enriching = g.enrichment_status === 'enriching';
+                        const detecting = g.enrichment_status === 'detecting';
+                        const generatingImage = !!g.meta?.generatingImage;
+                        const badge = detecting ? 'Uploading' : generatingImage ? 'Generating image' : enriching ? 'Analyzing' : null;
                         return (
                             <button
                                 key={g.id}
@@ -351,18 +356,27 @@ function GarmentsTab() {
                                         <Shirt className="w-8 h-8" />
                                     </div>
                                 )}
-                                {enriching && (
-                                    <div className="absolute top-2 right-2 flex items-center gap-1 px-2 py-0.5 rounded-full bg-black/70 text-[10px] text-indigo-300">
-                                        <Loader2 className="w-2.5 h-2.5 animate-spin" /> Analyzing
+                                {generatingImage && (
+                                    <div className="absolute inset-0 bg-black/40 flex items-center justify-center">
+                                        <Loader2 className="w-6 h-6 text-violet-300 animate-spin" />
                                     </div>
                                 )}
-                                {g.enrichment_status === 'needs_brand_confirm' && g.meta?.brandCandidate?.brand && (
+                                {badge && (
+                                    <div className={`absolute top-2 right-2 flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] ${
+                                        generatingImage ? 'bg-violet-500/30 text-violet-200 border border-violet-500/40' :
+                                        detecting ? 'bg-zinc-800/80 text-zinc-300 border border-zinc-600' :
+                                        'bg-black/70 text-indigo-300'
+                                    }`}>
+                                        <Loader2 className="w-2.5 h-2.5 animate-spin" /> {badge}
+                                    </div>
+                                )}
+                                {!badge && g.enrichment_status === 'needs_brand_confirm' && g.meta?.brandCandidate?.brand && (
                                     <div className="absolute top-2 right-2 flex items-center gap-1 px-2 py-0.5 rounded-full bg-amber-500/20 border border-amber-500/40 text-[10px] text-amber-300">
                                         {g.meta.brandCandidate.brand}?
                                     </div>
                                 )}
                                 <div className="absolute inset-x-0 bottom-0 p-2 bg-gradient-to-t from-black/80 to-transparent">
-                                    {enriching ? (
+                                    {enriching || detecting ? (
                                         <div className="flex gap-1">
                                             <span className="h-3 w-12 rounded bg-zinc-700/80 animate-pulse" />
                                             <span className="h-3 w-8 rounded bg-zinc-700/60 animate-pulse" />
@@ -397,6 +411,10 @@ function GarmentsTab() {
                             const targetId = selected.id;
                             const res = await deleteGarmentAction(targetId);
                             if (res.success) {
+                                // Optimistically drop from the grid — the socket
+                                // broadcast will otherwise race and the user sees
+                                // the card hang around for a moment.
+                                setGarments(prev => prev.filter(g => g.id !== targetId));
                                 setSelected(prev => prev?.id === targetId ? null : prev);
                             }
                         }}
@@ -1773,6 +1791,9 @@ function ShoppingTab() {
     const [items, setItems] = useState([]);
     const [loading, setLoading] = useState(true);
     const [filter, setFilter] = useState('wanted');
+    const [generatingRef, setGeneratingRef] = useState({}); // id → bool
+    const [openOutfit, setOpenOutfit] = useState(null);
+    const [openOutfitGarments, setOpenOutfitGarments] = useState({});
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -1791,6 +1812,31 @@ function ShoppingTab() {
     const dismiss = async (id) => {
         await dismissShoppingItem(id);
         load();
+    };
+
+    const generateRef = async (id) => {
+        setGeneratingRef(prev => ({ ...prev, [id]: true }));
+        try {
+            const res = await generateShoppingReferenceImage(id);
+            if (res.success && res.data?.item) {
+                setItems(prev => prev.map(it => it.id === id ? res.data.item : it));
+            }
+        } finally {
+            setGeneratingRef(prev => ({ ...prev, [id]: false }));
+        }
+    };
+
+    const openLinkedOutfit = async (outfitId) => {
+        const [outRes, garRes] = await Promise.all([
+            getOutfit(outfitId),
+            getWardrobe({ limit: 500 })
+        ]);
+        if (outRes.success && outRes.data) {
+            setOpenOutfit(outRes.data);
+            const idx = {};
+            for (const g of (garRes.success ? (garRes.data || []) : [])) idx[g.id] = g;
+            setOpenOutfitGarments(idx);
+        }
     };
 
     const priorityColor = p => ({
@@ -1826,47 +1872,90 @@ function ShoppingTab() {
                     <p className="text-xs">Outfit suggestions add missing pieces here automatically.</p>
                 </div>
             ) : (
+                <>
                 <div className="space-y-2">
-                    {items.map(item => (
-                        <div
-                            key={item.id}
-                            className="rounded-xl bg-zinc-900 border border-zinc-800 p-3 flex items-start gap-3"
-                        >
-                            <div className="flex-1 min-w-0">
-                                <p className="text-sm text-white">{item.description}</p>
-                                <div className="flex items-center gap-2 mt-1 flex-wrap">
-                                    {item.type && <span className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">{item.type}</span>}
-                                    {item.primary_color && <span className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">{item.primary_color}</span>}
-                                    <span className={`text-[10px] px-2 py-0.5 rounded border ${priorityColor(item.priority)}`}>{item.priority}</span>
-                                    {item.suggested_context?.outfit_id && (
-                                        <span className="text-[10px] text-zinc-500">for outfit {item.suggested_context.outfit_id}</span>
+                    {items.map(item => {
+                        const refUrl = pathToUrl(item.reference_image_path);
+                        const outfitId = item.suggested_context?.outfit_id;
+                        return (
+                            <div
+                                key={item.id}
+                                className="rounded-xl bg-zinc-900 border border-zinc-800 p-3 flex items-start gap-3"
+                            >
+                                <div className="w-20 h-24 shrink-0 bg-zinc-950 rounded-lg overflow-hidden flex items-center justify-center">
+                                    {refUrl ? (
+                                        // eslint-disable-next-line @next/next/no-img-element
+                                        <img src={refUrl} alt="" className="w-full h-full object-cover" />
+                                    ) : (
+                                        <ShoppingBag className="w-6 h-6 text-zinc-700" />
                                     )}
                                 </div>
-                            </div>
-                            {item.status === 'wanted' && (
-                                <div className="flex gap-1 shrink-0">
-                                    <button
-                                        onClick={() => markPurchased(item.id)}
-                                        className="p-2 rounded-lg text-emerald-400 hover:bg-emerald-500/10"
-                                        title="Mark purchased"
-                                    >
-                                        <Check className="w-4 h-4" />
-                                    </button>
-                                    <button
-                                        onClick={() => dismiss(item.id)}
-                                        className="p-2 rounded-lg text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
-                                        title="Dismiss"
-                                    >
-                                        <X className="w-4 h-4" />
-                                    </button>
+                                <div className="flex-1 min-w-0">
+                                    <p className="text-sm text-white">{item.description}</p>
+                                    <div className="flex items-center gap-2 mt-1 flex-wrap">
+                                        {item.type && <span className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">{item.type}</span>}
+                                        {item.primary_color && <span className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-400">{item.primary_color}</span>}
+                                        <span className={`text-[10px] px-2 py-0.5 rounded border ${priorityColor(item.priority)}`}>{item.priority}</span>
+                                    </div>
+                                    {outfitId && (
+                                        <button
+                                            onClick={() => openLinkedOutfit(outfitId)}
+                                            className="mt-1 inline-flex items-center gap-1 text-[11px] text-indigo-300 hover:text-indigo-200"
+                                            title="Open the outfit that triggered this item"
+                                        >
+                                            <Layers className="w-3 h-3" /> For outfit {outfitId.slice(0, 8)}…
+                                        </button>
+                                    )}
+                                    {item.status === 'wanted' && (
+                                        <button
+                                            onClick={() => generateRef(item.id)}
+                                            disabled={!!generatingRef[item.id]}
+                                            className="mt-2 inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-violet-600/80 hover:bg-violet-500 disabled:opacity-50 text-white text-[11px]"
+                                            title="Generate a reference photo from the description"
+                                        >
+                                            {generatingRef[item.id] ? <Loader2 className="w-3 h-3 animate-spin" /> : <Sparkles className="w-3 h-3" />}
+                                            {refUrl ? 'Regenerate reference' : 'Generate reference image'}
+                                        </button>
+                                    )}
                                 </div>
-                            )}
-                            {item.status !== 'wanted' && (
-                                <span className="text-[10px] text-zinc-500 capitalize mt-1">{item.status}</span>
-                            )}
-                        </div>
-                    ))}
+                                {item.status === 'wanted' && (
+                                    <div className="flex gap-1 shrink-0">
+                                        <button
+                                            onClick={() => markPurchased(item.id)}
+                                            className="p-2 rounded-lg text-emerald-400 hover:bg-emerald-500/10"
+                                            title="Mark purchased"
+                                        >
+                                            <Check className="w-4 h-4" />
+                                        </button>
+                                        <button
+                                            onClick={() => dismiss(item.id)}
+                                            className="p-2 rounded-lg text-zinc-500 hover:text-zinc-300 hover:bg-zinc-800"
+                                            title="Dismiss"
+                                        >
+                                            <X className="w-4 h-4" />
+                                        </button>
+                                    </div>
+                                )}
+                                {item.status !== 'wanted' && (
+                                    <span className="text-[10px] text-zinc-500 capitalize mt-1">{item.status}</span>
+                                )}
+                            </div>
+                        );
+                    })}
                 </div>
+
+                <AnimatePresence>
+                    {openOutfit && (
+                        <OutfitDetail
+                            outfit={openOutfit}
+                            garmentIndex={openOutfitGarments}
+                            onClose={() => setOpenOutfit(null)}
+                            onToggleLike={() => {}}
+                            onSelectGarment={() => {}}
+                        />
+                    )}
+                </AnimatePresence>
+                </>
             )}
         </>
     );
