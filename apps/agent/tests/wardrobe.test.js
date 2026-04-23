@@ -1565,6 +1565,29 @@ describe('WardrobeService.recommendOutfit (P6)', () => {
         expect(saved.garment_ids).toEqual(['g1', 'g2']);
     });
 
+    test('saved outfit name is a human-readable date + pretty bucket label', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            text: () => JSON.stringify({ proposals: [
+                { bucket: 'weather_anchored', garment_ids: ['g1', 'g2'], rationale: 'light' },
+                { bucket: 'occasion_anchored', garment_ids: ['g2', 'g3'], rationale: 'work' },
+                { bucket: 'safe_repeat', garment_ids: ['g1'], rationale: 'tried and true' }
+            ]}),
+            candidates: [{ content: { parts: [{ text: JSON.stringify({ proposals: [] }) }] } }]
+        });
+
+        await service.recommendOutfit({ context: 'today' });
+
+        const saved = mockAgent.db.addOutfit.mock.calls.map(c => c[0]);
+        // "Apr 23 · weather", "Apr 23 · occasion", "Apr 23 · safe repeat" — the
+        // exact month abbreviation is locale-dependent on the host machine but
+        // every title should share the same date prefix and end with the
+        // pretty-printed bucket (never the raw "weather_anchored").
+        const datePrefix = saved[0].name.split(' · ')[0];
+        expect(datePrefix).toMatch(/^[A-Za-z]{3,} \d{1,2}$/);
+        expect(saved.map(s => s.name.split(' · ')[1])).toEqual(['weather', 'occasion', 'safe repeat']);
+        for (const s of saved) expect(s.name).not.toMatch(/_anchored/);
+    });
+
     test('wants[] from proposal flow to shopping list when available', async () => {
         mockAgent.db.addShoppingItem = jest.fn().mockReturnValue('shop_1');
         mockAgent.client.models.generateContent.mockResolvedValueOnce({
@@ -1586,6 +1609,136 @@ describe('WardrobeService.recommendOutfit (P6)', () => {
             type: 'top',
             suggested_context: expect.objectContaining({ reason: 'completes outfit' })
         }));
+    });
+});
+
+describe('WardrobeService.generateOutfitVariations', () => {
+    let service;
+    const sourceOutfit = {
+        id: 'out1',
+        garment_ids: ['top1', 'bot1', 'sho1', 'jkt1']
+    };
+    const wardrobe = [
+        { id: 'top1', type: 'top', subtype: 'tshirt', primary_color: 'black', crop_image_path: '/c/top1.jpg' },
+        { id: 'top2', type: 'top', subtype: 'tshirt', primary_color: 'white', crop_image_path: '/c/top2.jpg' },
+        { id: 'top3', type: 'top', subtype: 'polo', primary_color: 'navy', crop_image_path: '/c/top3.jpg' },
+        { id: 'bot1', type: 'bottom', subtype: 'chinos', primary_color: 'black', crop_image_path: '/c/bot1.jpg' },
+        { id: 'bot2', type: 'bottom', subtype: 'jeans', primary_color: 'indigo', crop_image_path: '/c/bot2.jpg' },
+        { id: 'sho1', type: 'shoes', subtype: 'sneakers', primary_color: 'white', crop_image_path: '/c/sho1.jpg' },
+        { id: 'jkt1', type: 'outerwear', subtype: 'bomber', primary_color: 'tan', crop_image_path: '/c/jkt1.jpg' }
+    ];
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        service = new WardrobeService(mockAgent);
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        jest.spyOn(fs, 'mkdirSync').mockImplementation(() => { });
+        jest.spyOn(fs, 'writeFileSync').mockImplementation(() => { });
+        jest.spyOn(fs, 'readFileSync').mockReturnValue(Buffer.from('bytes'));
+        mockAgent.db.getUserProfile.mockReturnValue({ id: 1, reference_image_path: '/data/wardrobe/profile/reference.jpg' });
+        mockAgent.db.getOutfit = jest.fn().mockReturnValue(sourceOutfit);
+        mockAgent.db.updateOutfit = jest.fn().mockReturnValue(true);
+        mockAgent.db.addOutfit = jest.fn();
+        mockAgent.db.getGarment.mockImplementation(id => wardrobe.find(g => g.id === id) || null);
+        mockAgent.db.getGarments.mockReturnValue(wardrobe);
+    });
+
+    test('throws when outfit does not exist', async () => {
+        mockAgent.db.getOutfit.mockReturnValue(null);
+        await expect(service.generateOutfitVariations('missing')).rejects.toThrow(/not found/);
+    });
+
+    test('throws when source outfit has fewer than 2 items', async () => {
+        mockAgent.db.getOutfit.mockReturnValue({ id: 'out1', garment_ids: ['top1'] });
+        await expect(service.generateOutfitVariations('out1')).rejects.toThrow(/at least 2/);
+    });
+
+    test('LLM proposal renders as multi-panel and saves to variations_image_path', async () => {
+        // LLM returns two variations; both swap exactly one piece.
+        mockAgent.client.models.generateContent
+            .mockResolvedValueOnce({
+                text: () => JSON.stringify({ variations: [
+                    { garment_ids: ['top2', 'bot1', 'sho1', 'jkt1'], rationale: 'white tee instead of black' },
+                    { garment_ids: ['top1', 'bot2', 'sho1', 'jkt1'], rationale: 'jeans instead of chinos' }
+                ]}),
+                candidates: [{ content: { parts: [{ text: JSON.stringify({ variations: [
+                    { garment_ids: ['top2', 'bot1', 'sho1', 'jkt1'] },
+                    { garment_ids: ['top1', 'bot2', 'sho1', 'jkt1'] }
+                ]}) }] } }]
+            })
+            .mockResolvedValueOnce({
+                candidates: [{ content: { parts: [
+                    { inlineData: { mimeType: 'image/png', data: 'AAAAAA' } }
+                ] } }]
+            });
+
+        const r = await service.generateOutfitVariations('out1', { count: 2 });
+
+        expect(mockAgent.db.updateOutfit).toHaveBeenCalledWith('out1', expect.objectContaining({
+            variations_image_path: expect.stringMatching(/variations\.jpg$/)
+        }));
+        expect(mockAgent.interface.broadcast).toHaveBeenCalledWith(
+            'wardrobe:outfit:variations-rendered',
+            expect.anything()
+        );
+        expect(r.panels).toBe(3); // source + 2 variations
+    });
+
+    test('rejects a proposed variation that is identical to the source', async () => {
+        mockAgent.client.models.generateContent
+            .mockResolvedValueOnce({
+                text: () => JSON.stringify({ variations: [
+                    { garment_ids: ['top1', 'bot1', 'sho1', 'jkt1'] }, // exact source, order-independent
+                    { garment_ids: ['top2', 'bot1', 'sho1', 'jkt1'] }
+                ]}),
+                candidates: [{ content: { parts: [{ text: JSON.stringify({ variations: [] }) }] } }]
+            })
+            .mockResolvedValueOnce({
+                candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: 'AA' } }] } }]
+            });
+
+        const r = await service.generateOutfitVariations('out1', { count: 2 });
+
+        // Only the non-source variation should render → source + 1 = 2 panels.
+        expect(r.panels).toBe(2);
+    });
+
+    test('rejects garment ids not present in the wardrobe', async () => {
+        mockAgent.client.models.generateContent
+            .mockResolvedValueOnce({
+                text: () => JSON.stringify({ variations: [
+                    { garment_ids: ['ghost1', 'ghost2', 'sho1', 'jkt1'] },
+                    { garment_ids: ['top2', 'bot1', 'sho1', 'jkt1'] }
+                ]}),
+                candidates: [{ content: { parts: [{ text: JSON.stringify({ variations: [] }) }] } }]
+            })
+            .mockResolvedValueOnce({
+                candidates: [{ content: { parts: [{ inlineData: { mimeType: 'image/png', data: 'AA' } }] } }]
+            });
+
+        const r = await service.generateOutfitVariations('out1', { count: 2 });
+
+        // Ghost-ids variation drops below 2 valid items → filtered out. Only the clean
+        // variation survives → source + 1 = 2 panels.
+        expect(r.panels).toBe(2);
+    });
+
+    test('falls back to deterministic same-type swap when LLM unavailable', async () => {
+        const noClientAgent = { ...mockAgent, client: null };
+        const s = new WardrobeService(noClientAgent);
+        s.visualizeOutfit = jest.fn().mockResolvedValue({ outfit: { id: 'out1' }, panels: 3, layout: 'horizontal' });
+
+        await s.generateOutfitVariations('out1', { count: 2 });
+
+        const call = s.visualizeOutfit.mock.calls[0][0];
+        expect(call.saveAs).toBe('variations');
+        expect(call.outfitId).toBe('out1');
+        // First panel = source, subsequent panels are variations that each share 3/4 items with source.
+        const sourceSet = new Set(sourceOutfit.garment_ids);
+        for (let i = 1; i < call.garmentIdsPanels.length; i++) {
+            const shared = call.garmentIdsPanels[i].filter(id => sourceSet.has(id)).length;
+            expect(shared).toBeGreaterThanOrEqual(3);
+        }
     });
 });
 

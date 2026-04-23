@@ -251,6 +251,20 @@ const createWardrobeRouter = (agent) => {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
+    router.post('/outfits/:id/variations', async (req, res) => {
+        try {
+            if (!agent.wardrobeService) return res.status(503).json({ error: 'Wardrobe service not available' });
+            const { count } = req.body || {};
+            const result = await agent.wardrobeService.generateOutfitVariations(req.params.id, {
+                count: typeof count === 'number' ? count : 3
+            });
+            res.json({ success: true, ...result });
+        } catch (e) {
+            const status = /not found|too few|any variations/i.test(e.message) ? 400 : 500;
+            res.status(status).json({ error: e.message });
+        }
+    });
+
     router.delete('/outfits/:id', async (req, res) => {
         try {
             if (!agent.wardrobeService) return res.status(503).json({ error: 'Wardrobe service not available' });
