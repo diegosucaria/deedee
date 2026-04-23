@@ -159,7 +159,7 @@ describe('WardrobeService detection + bbox normalization', () => {
         expect(r[0]._fallback).toBeUndefined();
     });
 
-    test('_detectItems falls back when both passes return zero items', async () => {
+    test('_detectItems falls back when both passes return zero items, and the second pass uses screenshot-mode prompt', async () => {
         mockAgent.client.models.generateContent
             .mockResolvedValueOnce(mockDetectResponse([]))
             .mockResolvedValueOnce(mockDetectResponse([]));
@@ -167,6 +167,12 @@ describe('WardrobeService detection + bbox normalization', () => {
         const r = await service._detectItems('AAAA');
 
         expect(mockAgent.client.models.generateContent).toHaveBeenCalledTimes(2);
+        // Confirm the retry actually used the screenshot-explicit prompt — a future
+        // refactor that calls the wrong prompt on retry should fail this test.
+        const retryPrompt = mockAgent.client.models.generateContent.mock.calls[1][0]
+            .contents[0].parts.find(p => p.text)?.text || '';
+        expect(retryPrompt).toMatch(/THE INPUT IMAGE IS A SCREENSHOT/);
+        expect(retryPrompt).toMatch(/SCREENSHOT EXTRACTION RULES/);
         expect(r).toHaveLength(1);
         expect(r[0]._fallback).toBe(true);
     });
@@ -304,6 +310,22 @@ describe('WardrobeService ingest + background refinement', () => {
         expect(result.matched_existing).toEqual([]);
         // The placeholder still becomes one Unclassified row the user can manually fix
         expect(result.garments).toHaveLength(1);
+    });
+
+    test('_fallback sentinel does not leak into the persisted garment meta', async () => {
+        // Fallback detection from _detectItems (carries _fallback: true)
+        service._detectItems = jest.fn().mockResolvedValue([
+            { ...WardrobeService.FALLBACK_DETECTION, secondary_colors: [], season_tags: [] }
+        ]);
+        mockAgent.db.addGarment.mockReturnValueOnce('placeholder_row');
+
+        await service.ingestGarmentFromBase64('AAAA');
+
+        // Whatever lands in the DB (and gets broadcast to the frontend) must NOT
+        // carry the internal sentinel. It's a service-private routing flag.
+        const addArgs = mockAgent.db.addGarment.mock.calls[0][0];
+        expect(addArgs.meta).not.toHaveProperty('_fallback');
+        expect(addArgs.meta.detectionRaw).not.toHaveProperty('_fallback');
     });
 });
 

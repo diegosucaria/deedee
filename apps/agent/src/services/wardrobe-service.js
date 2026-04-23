@@ -61,6 +61,18 @@ class WardrobeService {
     }
 
     /**
+     * Strip the internal `_fallback` sentinel before persisting a detection
+     * into the DB row's meta.detectionRaw — that flag is for service-internal
+     * routing decisions only and shouldn't appear in API responses or socket
+     * broadcasts.
+     */
+    _detectionForPersist(det) {
+        if (!det) return det;
+        const { _fallback, ...rest } = det;
+        return rest;
+    }
+
+    /**
      * Build the detection prompt. We have two flavors:
      *   - default: handles both real-world photos and product-card screenshots
      *   - screenshotMode: explicitly tells the model the input IS a screenshot
@@ -172,8 +184,9 @@ Respond with JSON only.`;
 
     async _detectItems(base64Data, mimeType = 'image/jpeg') {
         const TAG = '[wardrobe.detect]';
+        const overallStartedAt = Date.now();
         const fallback = (reason) => {
-            console.warn(`${TAG} → returning fallback (single full-frame, all attrs null) | reason=${reason}`);
+            console.warn(`${TAG} → returning fallback (single full-frame, all attrs null) | reason=${reason} | totalElapsedMs=${Date.now() - overallStartedAt}`);
             return [{ ...WardrobeService.FALLBACK_DETECTION, secondary_colors: [], season_tags: [] }];
         };
 
@@ -186,6 +199,7 @@ Respond with JSON only.`;
 
         // First pass: default prompt (handles both real photos and screenshots).
         let res = await this._detectionCall(base64Data, mimeType);
+        let usedScreenshotRetry = false;
         if (!res.ok) {
             console.warn(`${TAG} pass-1 failed | model=${res.modelName} | elapsedMs=${res.elapsedMs} | ${res.errorReason}`);
             return fallback(res.errorReason);
@@ -206,11 +220,13 @@ Respond with JSON only.`;
             }
             console.log(`${TAG} pass-2 (screenshot mode) recovered | items=${retry.items.length} | elapsedMs=${retry.elapsedMs}`);
             res = retry;
+            usedScreenshotRetry = true;
         }
 
         const normalized = res.items.map(it => this._normalizeDetection(it)).filter(Boolean);
         const dropped = res.items.length - normalized.length;
-        console.log(`${TAG} ok | model=${res.modelName} | elapsedMs=${res.elapsedMs} | rawItems=${res.items.length} | normalized=${normalized.length}${dropped > 0 ? ` | dropped=${dropped}` : ''} | scene_notes="${res.sceneNotes}"`);
+        const totalElapsedMs = Date.now() - overallStartedAt;
+        console.log(`${TAG} ok | model=${res.modelName} | totalElapsedMs=${totalElapsedMs} | passes=${usedScreenshotRetry ? 2 : 1} | rawItems=${res.items.length} | normalized=${normalized.length}${dropped > 0 ? ` | dropped=${dropped}` : ''} | scene_notes="${res.sceneNotes}"`);
         normalized.forEach((det, i) => {
             const conf = typeof det.detection_confidence === 'number' ? det.detection_confidence.toFixed(2) : '?';
             const bbox = det.bbox.map(n => n.toFixed(2)).join(',');
@@ -1223,7 +1239,7 @@ GENERAL RULES:
                 enrichment_confidence: det.detection_confidence || 0,
                 meta: {
                     distinguishingFeatures: det.distinguishing_features || null,
-                    detectionRaw: det
+                    detectionRaw: this._detectionForPersist(det)
                 }
             };
 
@@ -1350,7 +1366,7 @@ GENERAL RULES:
                 enrichment_confidence: det.detection_confidence || 0,
                 meta: {
                     distinguishingFeatures: det.distinguishing_features || null,
-                    detectionRaw: det,
+                    detectionRaw: this._detectionForPersist(det),
                     ingestSource: 'analyze_outfit_photo',
                     caption: caption || null
                 }
