@@ -120,7 +120,7 @@ export default function WardrobePage() {
 function GarmentsTab() {
     const [garments, setGarments] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [uploading, setUploading] = useState(false);
+    const [pendingUploads, setPendingUploads] = useState(0);
     const [uploadStatus, setUploadStatus] = useState('');
     const [typeFilter, setTypeFilter] = useState(null);
     const [selected, setSelected] = useState(null);
@@ -158,11 +158,8 @@ function GarmentsTab() {
     const visible = typeFilter ? garments.filter(g => g.type === typeFilter) : garments;
     const enrichingCount = garments.filter(g => g.enrichment_status === 'enriching').length;
 
-    const handleFileSelect = async (e) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        setUploading(true);
-        setUploadStatus('Reading image...');
+    const uploadOne = async (file) => {
+        setPendingUploads(n => n + 1);
         try {
             const base64 = await new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -170,11 +167,10 @@ function GarmentsTab() {
                 reader.onerror = reject;
                 reader.readAsDataURL(file);
             });
-            setUploadStatus('Uploading...');
             const result = await uploadGarmentPhoto(base64, file.type);
             if (result.success) {
                 const newOnes = result.data?.garments || [];
-                setUploadStatus(`Added ${newOnes.length} garment(s).`);
+                setUploadStatus(`Added ${newOnes.length} garment(s) from ${file.name}.`);
                 if (newOnes.length) {
                     setGarments(prev => [
                         ...newOnes.filter(n => !prev.find(p => p.id === n.id)),
@@ -182,15 +178,23 @@ function GarmentsTab() {
                     ]);
                 }
             } else {
-                setUploadStatus(`Error: ${result.error}`);
+                setUploadStatus(`Error on ${file.name}: ${result.error}`);
             }
         } catch (err) {
-            setUploadStatus(`Error: ${err.message}`);
+            setUploadStatus(`Error on ${file.name}: ${err.message}`);
         } finally {
-            setUploading(false);
+            setPendingUploads(n => n - 1);
             setTimeout(() => setUploadStatus(''), 4000);
-            if (fileInputRef.current) fileInputRef.current.value = '';
         }
+    };
+
+    const handleFileSelect = (e) => {
+        const files = Array.from(e.target.files || []);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        if (files.length === 0) return;
+        // Fire and forget — each upload runs in parallel and the button stays
+        // available so the user can pick more without waiting.
+        for (const f of files) uploadOne(f);
     };
 
     return (
@@ -199,6 +203,7 @@ function GarmentsTab() {
                 ref={fileInputRef}
                 type="file"
                 accept="image/*"
+                multiple
                 onChange={handleFileSelect}
                 className="hidden"
             />
@@ -206,12 +211,17 @@ function GarmentsTab() {
             <div className="flex flex-wrap items-center gap-2 mb-4">
                 <button
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={uploading}
-                    className="inline-flex items-center gap-2 px-4 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-medium rounded-xl min-h-[44px]"
+                    className="inline-flex items-center gap-2 px-4 py-3 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-xl min-h-[44px]"
                 >
-                    {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
-                    {uploading ? 'Uploading' : 'Add photo'}
+                    <Camera className="w-4 h-4" />
+                    Add photo
                 </button>
+                {pendingUploads > 0 && (
+                    <span className="inline-flex items-center gap-1.5 text-xs text-indigo-300">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Uploading {pendingUploads}…
+                    </span>
+                )}
                 {uploadStatus && <span className="text-xs text-zinc-400">{uploadStatus}</span>}
             </div>
 

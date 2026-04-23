@@ -767,6 +767,65 @@ describe('WardrobeService.generateGarmentImage', () => {
         expect(inlineParts[1].inlineData.mimeType).toBe('image/jpeg');
     });
 
+    test('prompt embeds shoes-specific composition (pair, 3/4 angle) when garment is shoes', async () => {
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1', type: 'shoes', subtype: 'sneakers',
+            primary_color: 'white', brand: 'Nike',
+            crop_image_path: '/x.jpg', source_image_path: '/x.jpg', meta: {}
+        });
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            candidates: [{ content: { parts: [
+                { inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } }
+            ]}}]
+        });
+
+        await service.generateGarmentImage('g1');
+
+        const prompt = mockAgent.client.models.generateContent.mock.calls[0][0]
+            .contents[0].parts.find(p => p.text)?.text || '';
+        expect(prompt).toMatch(/BOTH shoes/);
+        expect(prompt).toMatch(/3\/4 front angle/);
+        expect(prompt).toMatch(/laces/i);
+    });
+
+    test('prompt embeds flat-lay composition for tops', async () => {
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1', type: 'top', subtype: 'polo',
+            crop_image_path: '/x.jpg', source_image_path: '/x.jpg', meta: {}
+        });
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            candidates: [{ content: { parts: [
+                { inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } }
+            ]}}]
+        });
+
+        await service.generateGarmentImage('g1');
+
+        const prompt = mockAgent.client.models.generateContent.mock.calls[0][0]
+            .contents[0].parts.find(p => p.text)?.text || '';
+        expect(prompt).toMatch(/flat lay/);
+        expect(prompt).toMatch(/collar/);
+    });
+
+    test('prompt embeds flat-lay composition for bottoms with drawcord hint for joggers', async () => {
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1', type: 'bottom', subtype: 'joggers',
+            crop_image_path: '/x.jpg', source_image_path: '/x.jpg', meta: {}
+        });
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            candidates: [{ content: { parts: [
+                { inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } }
+            ]}}]
+        });
+
+        await service.generateGarmentImage('g1');
+
+        const prompt = mockAgent.client.models.generateContent.mock.calls[0][0]
+            .contents[0].parts.find(p => p.text)?.text || '';
+        expect(prompt).toMatch(/flat lay/);
+        expect(prompt).toMatch(/[Dd]rawcord/);
+    });
+
     test('drops malformed extras (no data) silently', async () => {
         mockAgent.client.models.generateContent.mockResolvedValueOnce({
             candidates: [{ content: { parts: [

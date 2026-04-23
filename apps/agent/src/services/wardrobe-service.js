@@ -628,6 +628,79 @@ Hard rules:
     }
 
     /**
+     * Per-type framing/composition prescription for product image generation.
+     * The whole point is consistency across the grid: every shoe should look
+     * the same way (3/4 angle, pair, gum-sole-down) so two side-by-side tiles
+     * read as the same kind of object instead of two different photo styles.
+     */
+    _styleForType(type, subtype) {
+        const t = (type || '').toLowerCase();
+        const s = (subtype || '').toLowerCase();
+        if (t === 'shoes') {
+            return [
+                '- Render BOTH shoes of the pair, framed together — never a single shoe alone',
+                '- 3/4 front angle viewed from a slightly elevated viewpoint (camera roughly waist-height)',
+                '- Toes pointing toward camera-left at ~30° off-axis, heels toward camera-right',
+                '- Shoes overlap slightly with the right shoe set just behind and to the right of the left shoe',
+                '- Soles fully visible from this angle, ground line implied by a soft contact shadow',
+                '- Laces fully laced and tidy; tongue upright'
+            ].join('\n');
+        }
+        if (t === 'top') {
+            return [
+                '- Lay the garment flat as if photographed from directly above on a neutral surface (flat lay)',
+                '- Front of the garment facing the camera, fully visible from collar to hem',
+                '- Shoulders squared at the top of the frame, sleeves laid straight along the sides slightly outward',
+                s.includes('button') || s.includes('shirt') || s.includes('polo') ? '- Top button done up, collar laid flat and symmetrical' : null
+            ].filter(Boolean).join('\n');
+        }
+        if (t === 'bottom') {
+            return [
+                '- Lay the garment flat as if photographed from directly above on a neutral surface (flat lay)',
+                '- Front of the garment facing the camera, full length visible from waistband to hem',
+                '- Waistband at the top of the frame, legs straight and parallel, no folds or bunching',
+                s.includes('jogger') || s.includes('sweat') ? '- Drawcord centered and tied in a small symmetric bow' : null
+            ].filter(Boolean).join('\n');
+        }
+        if (t === 'outerwear') {
+            return [
+                '- Lay the garment flat front-up, fully buttoned/zipped (only if it has closures), on a neutral surface',
+                '- Shoulders squared at the top of the frame, sleeves laid straight along the sides slightly outward',
+                '- Collar/lapels symmetric, hood (if any) laid flat behind the shoulders'
+            ].join('\n');
+        }
+        if (t === 'accessory') {
+            if (s.includes('bag') || s.includes('backpack')) {
+                return [
+                    '- 3/4 front angle, item upright on its base, straps/handles visible and arranged neatly',
+                    '- Camera roughly at the item\'s mid-height'
+                ].join('\n');
+            }
+            if (s.includes('hat') || s.includes('cap') || s.includes('beanie')) {
+                return [
+                    '- 3/4 front angle, brim/visor pointing slightly toward camera-left, crown facing up',
+                    '- Item resting on the surface as if worn-side-up'
+                ].join('\n');
+            }
+            if (s.includes('belt')) {
+                return [
+                    '- Belt coiled in a neat single loop, buckle at top center facing camera',
+                    '- Top-down view'
+                ].join('\n');
+            }
+            if (s.includes('watch') || s.includes('jewelry') || s.includes('sunglass')) {
+                return [
+                    '- Top-down view, item centered and laid flat',
+                    '- Symmetric arrangement, all details (face, lenses, clasps) clearly visible'
+                ].join('\n');
+            }
+            return '- Top-down flat-lay view, item centered and laid out symmetrically with all features visible';
+        }
+        // Fallback for unknown / underwear / other
+        return '- Lay the garment flat front-up on a neutral surface (flat lay), centered and symmetric, all features visible';
+    }
+
+    /**
      * Generate a clean product-catalog image of the garment using the Gemini
      * image model. The garment's existing crop is always the primary
      * reference; callers can pass `extraReferences` (e.g. a fresh photo the
@@ -667,15 +740,22 @@ Hard rules:
             ? 'Use the single reference image to render the item.'
             : `Use ALL ${extras.length + 1} reference images — they show the same physical garment from different angles or with different details. Preserve every visible feature across all of them (logos, stitching, hardware, prints) in the final render. Do not invent or omit details based on a single image when other references contradict.`;
 
+        const styleClause = this._styleForType(garment.type, garment.subtype);
+
         const prompt = `Generate a clean product-catalog photo of the exact ${descriptor}.
 ${referenceClause}
-- Plain neutral off-white background
-- Single garment centered, well-lit with soft diffuse lighting
-- No human model, no mannequin, no hanger, no clutter
+
+COMPOSITION (mandatory — every garment of this type must look the same way so the wardrobe grid is uniform):
+${styleClause}
+
+GENERAL RULES:
+- Plain neutral off-white background (#F4F2EE), no gradient, no shadows beyond a soft contact shadow
+- Square 1:1 aspect ratio, item fills 75-85% of the frame, centered, small uniform margin
+- Soft diffuse studio lighting, no harsh highlights, no colored tints
+- No human model, no mannequin, no hanger, no clutter, no props
 - Preserve color, pattern, fit, fabric texture, and any visible logos or stitching faithfully
-- Full item visible in frame with small margin around the edges
-- Studio e-commerce aesthetic
-- No text overlays, no watermarks`;
+- Studio e-commerce aesthetic (think Nike/SSENSE/MR PORTER product page)
+- No text overlays, no watermarks, no borders`;
 
         const cropMime = cropPath.endsWith('.png') ? 'image/png' : 'image/jpeg';
         const cropBase64 = fs.readFileSync(cropPath).toString('base64');
