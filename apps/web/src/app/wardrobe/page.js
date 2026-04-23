@@ -6,7 +6,7 @@ import { io } from 'socket.io-client';
 import { getSocketUrl } from '@/hooks/useSocket';
 import {
     Shirt, Camera, Trash2, X, Loader2, Check, Pencil, Settings, Heart,
-    Plane, ShoppingBag, MapPin, Calendar, Upload, User, Layers, Sparkles, RefreshCw, Paperclip, Combine, Copy
+    Plane, ShoppingBag, MapPin, Calendar, Upload, User, Layers, Sparkles, RefreshCw, Paperclip, Combine, Copy, Tag, Plus, ArrowUpDown
 } from 'lucide-react';
 import PageShell from '@/components/PageShell';
 import {
@@ -19,6 +19,8 @@ import {
     generateGarmentImage,
     mergeGarments,
     duplicateGarment,
+    deleteOutfit as deleteOutfitAction,
+    updateOutfit,
     getWardrobeProfile,
     updateWardrobeProfile,
     uploadReferenceSelfie,
@@ -62,8 +64,17 @@ function pathToUrl(absolutePath) {
 }
 
 function summarizeGarment(g) {
-    const bits = [g.type, g.subtype, g.primary_color, g.brand].filter(Boolean);
+    // Model (e.g. "ABC Slim-Fit Trouser 30L") is the strongest differentiator when
+    // two garments share brand/subtype (a 5-pocket pant and a flat-front trouser
+    // both map to subtype "chinos"). Fall back to brand when model is absent.
+    const identity = g.model || g.brand || null;
+    const bits = [g.type, g.subtype, g.primary_color, identity].filter(Boolean);
     return bits.length ? bits.join(' · ') : 'Unclassified';
+}
+
+function summarizeGarmentShort(g) {
+    const bits = [g.subtype || g.type, g.primary_color].filter(Boolean);
+    return bits.join(' · ') || 'Unclassified';
 }
 
 function formatDate(iso) {
@@ -120,12 +131,23 @@ export default function WardrobePage() {
 
 // --- Garments tab ---
 
+const GARMENT_SORTS = [
+    { key: 'recent', label: 'Recent' },
+    { key: 'type', label: 'By type' },
+    { key: 'formality', label: 'Formality' },
+    { key: 'times_worn', label: 'Most worn' },
+    { key: 'brand', label: 'Brand' }
+];
+
+const TYPE_ORDER = ['outerwear', 'top', 'bottom', 'shoes', 'accessory', 'underwear', 'other'];
+
 function GarmentsTab() {
     const [garments, setGarments] = useState([]);
     const [loading, setLoading] = useState(true);
     const [pendingUploads, setPendingUploads] = useState(0);
     const [uploadStatus, setUploadStatus] = useState('');
     const [typeFilter, setTypeFilter] = useState(null);
+    const [sortBy, setSortBy] = useState('recent');
     const [selected, setSelected] = useState(null);
     const fileInputRef = useRef(null);
 
@@ -166,7 +188,29 @@ function GarmentsTab() {
         return () => socket.disconnect();
     }, [loadData]);
 
-    const visible = typeFilter ? garments.filter(g => g.type === typeFilter) : garments;
+    const filtered = typeFilter ? garments.filter(g => g.type === typeFilter) : garments;
+    const visible = [...filtered].sort((a, b) => {
+        if (sortBy === 'type') {
+            const ai = TYPE_ORDER.indexOf(a.type || 'other');
+            const bi = TYPE_ORDER.indexOf(b.type || 'other');
+            if (ai !== bi) return (ai < 0 ? 99 : ai) - (bi < 0 ? 99 : bi);
+            // Tiebreak by subtype so same-type items cluster by style.
+            return (a.subtype || '').localeCompare(b.subtype || '');
+        }
+        if (sortBy === 'formality') {
+            return (a.formality || 0) - (b.formality || 0);
+        }
+        if (sortBy === 'times_worn') {
+            return (b.times_worn || 0) - (a.times_worn || 0);
+        }
+        if (sortBy === 'brand') {
+            return (a.brand || '\uffff').localeCompare(b.brand || '\uffff');
+        }
+        // recent
+        const ta = new Date(a.created_at || 0).getTime();
+        const tb = new Date(b.created_at || 0).getTime();
+        return tb - ta;
+    });
     const enrichingCount = garments.filter(g => g.enrichment_status === 'enriching').length;
 
     const uploadOne = async (file) => {
@@ -248,20 +292,34 @@ function GarmentsTab() {
                 </div>
             )}
 
-            <div className="flex gap-2 overflow-x-auto touch-pan-x pb-3 mb-4 -mx-4 px-4 md:mx-0 md:px-0">
-                {TYPE_FILTERS.map(f => (
-                    <button
-                        key={f.label}
-                        onClick={() => setTypeFilter(f.key)}
-                        className={`shrink-0 px-3 py-2 rounded-full text-sm min-h-[36px] border transition ${
-                            typeFilter === f.key
-                                ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300'
-                                : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
-                        }`}
+            <div className="flex items-center gap-2 mb-3 flex-wrap">
+                <div className="flex gap-2 overflow-x-auto touch-pan-x flex-1 -mx-4 px-4 md:mx-0 md:px-0">
+                    {TYPE_FILTERS.map(f => (
+                        <button
+                            key={f.label}
+                            onClick={() => setTypeFilter(f.key)}
+                            className={`shrink-0 px-3 py-2 rounded-full text-sm min-h-[36px] border transition ${
+                                typeFilter === f.key
+                                    ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300'
+                                    : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                            }`}
+                        >
+                            {f.label}
+                        </button>
+                    ))}
+                </div>
+                <div className="shrink-0 inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-zinc-900 border border-zinc-800">
+                    <ArrowUpDown className="w-3.5 h-3.5 text-zinc-500" />
+                    <select
+                        value={sortBy}
+                        onChange={e => setSortBy(e.target.value)}
+                        className="bg-transparent text-xs text-zinc-300 focus:outline-none"
                     >
-                        {f.label}
-                    </button>
-                ))}
+                        {GARMENT_SORTS.map(s => (
+                            <option key={s.key} value={s.key} className="bg-zinc-900 text-zinc-200">{s.label}</option>
+                        ))}
+                    </select>
+                </div>
             </div>
 
             {loading ? (
@@ -332,6 +390,7 @@ function GarmentsTab() {
                             if (res.success && res.data?.garment) {
                                 setSelected(prev => prev?.id === targetId ? res.data.garment : prev);
                             }
+                            return res;
                         }}
                         onDelete={async () => {
                             if (!confirm('Delete this garment?')) return;
@@ -405,6 +464,8 @@ const EDITABLE_TEXT = [
 function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, onReenrich, onGenerateImage, otherGarments = [], onMerge, onDuplicate }) {
     const [editing, setEditing] = useState(null);
     const [draft, setDraft] = useState('');
+    const [savingField, setSavingField] = useState(null); // key currently being saved
+    const [fieldError, setFieldError] = useState(null); // { key, message }
     const [hint, setHint] = useState('');
     const [hintImage, setHintImage] = useState(null); // { base64, mimeType, name }
     const [reenriching, setReenriching] = useState(false);
@@ -418,6 +479,7 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
     const extraPhotoInputRef = useRef(null);
     const hintImageInputRef = useRef(null);
     const duplicateInputRef = useRef(null);
+    const busy = savingField !== null || reenriching || generating || duplicating;
     const generatedUrl = pathToUrl(garment.generated_image_path);
     const originalUrl = pathToUrl(garment.crop_image_path || garment.source_image_path);
     const imgUrl = !showOriginal && generatedUrl ? generatedUrl : originalUrl;
@@ -426,8 +488,22 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
         ? garment.meta?.brandCandidate : null;
 
     const save = async (key) => {
-        await onChange({ [key]: draft || null });
-        setEditing(null);
+        setSavingField(key);
+        setFieldError(null);
+        try {
+            const res = await onChange({ [key]: draft || null });
+            // onChange is allowed to return {success,error} but currently returns
+            // undefined on success. Surface any explicit failure.
+            if (res && res.success === false) {
+                setFieldError({ key, message: res.error || 'Save failed' });
+                return;
+            }
+            setEditing(null);
+        } catch (e) {
+            setFieldError({ key, message: e.message || 'Save failed' });
+        } finally {
+            setSavingField(null);
+        }
     };
 
     const handleHintImageSelect = async (e) => {
@@ -562,7 +638,7 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
                 <div className="flex flex-wrap gap-2 mb-4">
                     <button
                         onClick={handleGenerate}
-                        disabled={generating || enriching}
+                        disabled={busy || enriching}
                         className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-violet-600/90 hover:bg-violet-500 disabled:opacity-50 text-white text-xs min-h-[36px]"
                     >
                         {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
@@ -570,7 +646,7 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
                     </button>
                     <button
                         onClick={() => extraPhotoInputRef.current?.click()}
-                        disabled={generating || enriching}
+                        disabled={busy || enriching}
                         className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 text-xs min-h-[36px]"
                         title="Upload another photo of this garment as additional reference for the generator"
                     >
@@ -607,35 +683,43 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
                 )}
 
                 <div className="space-y-2 mb-4">
-                    {EDITABLE_TEXT.map(({ key, label }) => (
-                        <div key={key} className="flex items-center gap-2 py-2 border-b border-zinc-900">
-                            <span className="text-xs text-zinc-500 w-20 shrink-0">{label}</span>
-                            {editing === key ? (
-                                <div className="flex-1 flex gap-2">
-                                    <input
-                                        autoFocus
-                                        value={draft}
-                                        onChange={e => setDraft(e.target.value)}
-                                        onKeyDown={e => e.key === 'Enter' && save(key)}
-                                        className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-sm text-white"
-                                    />
-                                    <button onClick={() => save(key)} className="p-2 text-emerald-400 hover:text-emerald-300">
-                                        <Check className="w-4 h-4" />
-                                    </button>
+                    {EDITABLE_TEXT.map(({ key, label }) => {
+                        const saving = savingField === key;
+                        const err = fieldError && fieldError.key === key ? fieldError.message : null;
+                        return (
+                            <div key={key} className="py-2 border-b border-zinc-900">
+                                <div className="flex items-center gap-2">
+                                    <span className="text-xs text-zinc-500 w-20 shrink-0">{label}</span>
+                                    {editing === key ? (
+                                        <div className="flex-1 flex gap-2">
+                                            <input
+                                                autoFocus
+                                                value={draft}
+                                                onChange={e => setDraft(e.target.value)}
+                                                onKeyDown={e => e.key === 'Enter' && !saving && save(key)}
+                                                disabled={saving}
+                                                className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-2 py-1 text-sm text-white disabled:opacity-50"
+                                            />
+                                            <button onClick={() => save(key)} disabled={saving} className="p-2 text-emerald-400 hover:text-emerald-300 disabled:opacity-50">
+                                                {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Check className="w-4 h-4" />}
+                                            </button>
+                                        </div>
+                                    ) : (
+                                        <button
+                                            onClick={() => { setEditing(key); setDraft(garment[key] || ''); setFieldError(null); }}
+                                            className="flex-1 text-left text-sm text-white flex items-center gap-2 group min-h-[32px]"
+                                        >
+                                            <span className={garment[key] ? '' : 'text-zinc-600 italic'}>
+                                                {garment[key] || 'not set'}
+                                            </span>
+                                            <Pencil className="w-3 h-3 text-zinc-600 opacity-0 group-hover:opacity-100" />
+                                        </button>
+                                    )}
                                 </div>
-                            ) : (
-                                <button
-                                    onClick={() => { setEditing(key); setDraft(garment[key] || ''); }}
-                                    className="flex-1 text-left text-sm text-white flex items-center gap-2 group min-h-[32px]"
-                                >
-                                    <span className={garment[key] ? '' : 'text-zinc-600 italic'}>
-                                        {garment[key] || 'not set'}
-                                    </span>
-                                    <Pencil className="w-3 h-3 text-zinc-600 opacity-0 group-hover:opacity-100" />
-                                </button>
-                            )}
-                        </div>
-                    ))}
+                                {err && <p className="text-[11px] text-rose-400 mt-1 ml-[88px]">{err}</p>}
+                            </div>
+                        );
+                    })}
 
                     <SliderRow
                         label="Warmth"
@@ -668,11 +752,11 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
                             onChange={e => setHint(e.target.value)}
                             placeholder="e.g. ABC Warpstreme Jogger Regular"
                             className="flex-1 min-w-0 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600"
-                            disabled={reenriching || enriching}
+                            disabled={busy || enriching}
                         />
                         <button
                             onClick={() => hintImageInputRef.current?.click()}
-                            disabled={reenriching || enriching}
+                            disabled={busy || enriching}
                             className={`inline-flex items-center justify-center px-2 rounded-lg border text-xs min-h-[36px] ${
                                 hintImage
                                     ? 'bg-emerald-600/20 border-emerald-500/50 text-emerald-300'
@@ -684,7 +768,7 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
                         </button>
                         <button
                             onClick={handleReenrich}
-                            disabled={reenriching || enriching}
+                            disabled={busy || enriching}
                             className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs min-h-[36px]"
                         >
                             {reenriching || enriching ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <RefreshCw className="w-3.5 h-3.5" />}
@@ -718,7 +802,7 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
                     {onDuplicate && (
                         <button
                             onClick={() => duplicateInputRef.current?.click()}
-                            disabled={duplicating}
+                            disabled={busy}
                             className="inline-flex items-center gap-2 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-200 text-sm rounded-lg min-h-[44px]"
                             title="Take/upload a photo of another unit of this garment (e.g. same shirt, different color). Inherits brand, model, type, material; re-detects color."
                         >
@@ -728,15 +812,17 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
                     )}
                     <button
                         onClick={() => setMergeOpen(true)}
-                        disabled={otherGarments.length === 0}
+                        disabled={busy || otherGarments.length === 0}
                         className="inline-flex items-center gap-2 px-4 py-3 bg-zinc-800 hover:bg-zinc-700 disabled:opacity-40 disabled:cursor-not-allowed text-zinc-200 text-sm rounded-lg min-h-[44px]"
-                        title={otherGarments.length === 0 ? 'No other garments to merge with' : 'Fold one or more duplicate garments into this one'}
+                        title={otherGarments.length === 0 ? 'No other garments to merge with' : busy ? 'Wait for the current operation to finish' : 'Fold one or more duplicate garments into this one'}
                     >
                         <Combine className="w-4 h-4" /> Merge with…
                     </button>
                     <button
                         onClick={onDelete}
-                        className="flex items-center gap-2 px-4 py-3 text-red-400 hover:text-red-300 text-sm min-h-[44px]"
+                        disabled={busy}
+                        className="flex items-center gap-2 px-4 py-3 text-red-400 hover:text-red-300 disabled:opacity-40 disabled:cursor-not-allowed text-sm min-h-[44px]"
+                        title={busy ? 'Wait for the current operation to finish' : 'Delete this garment'}
                     >
                         <Trash2 className="w-4 h-4" /> Delete
                     </button>
@@ -936,18 +1022,26 @@ function SliderRow({ label, description, value, onCommit }) {
 
 // --- Outfits tab ---
 
+const OUTFIT_SORTS = [
+    { key: 'recent', label: 'Recent' },
+    { key: 'oldest', label: 'Oldest' },
+    { key: 'liked_first', label: 'Liked first' }
+];
+
 function OutfitsTab() {
     const [outfits, setOutfits] = useState([]);
     const [garmentIndex, setGarmentIndex] = useState({});
     const [loading, setLoading] = useState(true);
-    const [filter, setFilter] = useState('all'); // all | liked
+    const [likedOnly, setLikedOnly] = useState(false);
+    const [labelFilter, setLabelFilter] = useState(null); // null = all
+    const [sortBy, setSortBy] = useState('recent');
     const [selectedOutfit, setSelectedOutfit] = useState(null);
     const [selectedGarment, setSelectedGarment] = useState(null);
 
     const load = useCallback(async () => {
         setLoading(true);
         const [outRes, garRes] = await Promise.all([
-            getOutfits({ liked: filter === 'liked' ? true : null }),
+            getOutfits({ liked: likedOnly ? true : null }),
             getWardrobe({ limit: 500 })
         ]);
         setOutfits(outRes.success ? (outRes.data || []) : []);
@@ -955,9 +1049,14 @@ function OutfitsTab() {
         for (const g of (garRes.success ? (garRes.data || []) : [])) idx[g.id] = g;
         setGarmentIndex(idx);
         setLoading(false);
-    }, [filter]);
+    }, [likedOnly]);
 
     useEffect(() => { load(); }, [load]);
+
+    // All labels currently in use, for the filter row.
+    const allLabels = Array.from(new Set(
+        outfits.flatMap(o => Array.isArray(o.labels) ? o.labels : [])
+    )).sort();
 
     const toggleLike = async (outfit) => {
         const res = await likeOutfit(outfit.id, !outfit.liked);
@@ -967,40 +1066,109 @@ function OutfitsTab() {
         }
     };
 
+    const handleDeleteOutfit = async (outfit) => {
+        if (!confirm(`Delete outfit "${outfit.name || outfit.id}"?`)) return;
+        const res = await deleteOutfitAction(outfit.id);
+        if (res.success) {
+            setOutfits(prev => prev.filter(o => o.id !== outfit.id));
+            setSelectedOutfit(prev => prev?.id === outfit.id ? null : prev);
+        }
+    };
+
+    const handleLabelsChange = async (outfit, labels) => {
+        const res = await updateOutfit(outfit.id, { labels });
+        if (res.success && res.data?.outfit) {
+            setOutfits(prev => prev.map(o => o.id === outfit.id ? res.data.outfit : o));
+            setSelectedOutfit(prev => prev?.id === outfit.id ? res.data.outfit : prev);
+        }
+    };
+
+    const filtered = outfits.filter(o => {
+        if (labelFilter && !(o.labels || []).includes(labelFilter)) return false;
+        return true;
+    });
+    const sorted = [...filtered].sort((a, b) => {
+        if (sortBy === 'liked_first') {
+            if (!!a.liked !== !!b.liked) return a.liked ? -1 : 1;
+        }
+        const ta = new Date(a.last_suggested_at || a.created_at || 0).getTime();
+        const tb = new Date(b.last_suggested_at || b.created_at || 0).getTime();
+        if (sortBy === 'oldest') return ta - tb;
+        return tb - ta; // recent, liked_first tiebreaker
+    });
+
     return (
         <>
-            <div className="flex items-center gap-2 mb-4">
+            <div className="flex items-center gap-2 mb-3 flex-wrap">
                 <button
-                    onClick={() => setFilter('all')}
+                    onClick={() => setLikedOnly(false)}
                     className={`px-3 py-2 rounded-full text-sm min-h-[36px] border transition ${
-                        filter === 'all' ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300' : 'bg-zinc-900 border-zinc-800 text-zinc-400'
+                        !likedOnly ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300' : 'bg-zinc-900 border-zinc-800 text-zinc-400'
                     }`}
                 >
                     All
                 </button>
                 <button
-                    onClick={() => setFilter('liked')}
+                    onClick={() => setLikedOnly(true)}
                     className={`inline-flex items-center gap-1.5 px-3 py-2 rounded-full text-sm min-h-[36px] border transition ${
-                        filter === 'liked' ? 'bg-rose-500/20 border-rose-500/50 text-rose-300' : 'bg-zinc-900 border-zinc-800 text-zinc-400'
+                        likedOnly ? 'bg-rose-500/20 border-rose-500/50 text-rose-300' : 'bg-zinc-900 border-zinc-800 text-zinc-400'
                     }`}
                 >
                     <Heart className="w-3.5 h-3.5" /> Liked
                 </button>
+                <div className="ml-auto inline-flex items-center gap-1.5 px-2 py-1 rounded-lg bg-zinc-900 border border-zinc-800">
+                    <ArrowUpDown className="w-3.5 h-3.5 text-zinc-500" />
+                    <select
+                        value={sortBy}
+                        onChange={e => setSortBy(e.target.value)}
+                        className="bg-transparent text-xs text-zinc-300 focus:outline-none"
+                    >
+                        {OUTFIT_SORTS.map(s => (
+                            <option key={s.key} value={s.key} className="bg-zinc-900 text-zinc-200">{s.label}</option>
+                        ))}
+                    </select>
+                </div>
             </div>
+
+            {allLabels.length > 0 && (
+                <div className="flex items-center gap-2 overflow-x-auto touch-pan-x pb-3 mb-4 -mx-4 px-4 md:mx-0 md:px-0">
+                    <button
+                        onClick={() => setLabelFilter(null)}
+                        className={`shrink-0 px-3 py-2 rounded-full text-xs min-h-[32px] border transition ${
+                            !labelFilter ? 'bg-indigo-500/20 border-indigo-500/50 text-indigo-300' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                        }`}
+                    >
+                        All labels
+                    </button>
+                    {allLabels.map(lb => (
+                        <button
+                            key={lb}
+                            onClick={() => setLabelFilter(lb === labelFilter ? null : lb)}
+                            className={`shrink-0 inline-flex items-center gap-1 px-3 py-2 rounded-full text-xs min-h-[32px] border transition ${
+                                labelFilter === lb ? 'bg-violet-500/20 border-violet-500/50 text-violet-200' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                            }`}
+                        >
+                            <Tag className="w-3 h-3" /> {lb}
+                        </button>
+                    ))}
+                </div>
+            )}
 
             {loading ? (
                 <div className="flex items-center justify-center py-20 text-zinc-500">
                     <Loader2 className="w-5 h-5 animate-spin mr-2" /> Loading...
                 </div>
-            ) : outfits.length === 0 ? (
+            ) : sorted.length === 0 ? (
                 <div className="text-center py-20 text-zinc-500">
                     <Layers className="w-10 h-10 mx-auto mb-3 opacity-30" />
-                    <p className="mb-1">No outfits saved yet.</p>
-                    <p className="text-xs">Ask in chat: &ldquo;recommend an outfit for dinner tonight&rdquo;.</p>
+                    <p className="mb-1">{outfits.length === 0 ? 'No outfits saved yet.' : 'No outfits match the current filter.'}</p>
+                    {outfits.length === 0 && (
+                        <p className="text-xs">Ask in chat: &ldquo;recommend an outfit for dinner tonight&rdquo;.</p>
+                    )}
                 </div>
             ) : (
                 <div className="space-y-3">
-                    {outfits.map(o => (
+                    {sorted.map(o => (
                         <button
                             key={o.id}
                             onClick={() => setSelectedOutfit(o)}
@@ -1035,6 +1203,15 @@ function OutfitsTab() {
                                     {(o.garment_ids || []).length} item{(o.garment_ids || []).length === 1 ? '' : 's'}
                                     {o.occasion ? ` · ${o.occasion}` : ''}
                                 </p>
+                                {(o.labels || []).length > 0 && (
+                                    <div className="flex gap-1 mt-1 flex-wrap">
+                                        {(o.labels || []).slice(0, 4).map(lb => (
+                                            <span key={lb} className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 border border-violet-500/30">
+                                                {lb}
+                                            </span>
+                                        ))}
+                                    </div>
+                                )}
                             </div>
                             <span
                                 role="button"
@@ -1061,6 +1238,8 @@ function OutfitsTab() {
                         onClose={() => setSelectedOutfit(null)}
                         onToggleLike={() => toggleLike(selectedOutfit)}
                         onSelectGarment={(g) => setSelectedGarment(g)}
+                        onDelete={() => handleDeleteOutfit(selectedOutfit)}
+                        onLabelsChange={(labels) => handleLabelsChange(selectedOutfit, labels)}
                     />
                 )}
             </AnimatePresence>
@@ -1077,6 +1256,7 @@ function OutfitsTab() {
                                 setSelectedGarment(prev => prev?.id === targetId ? res.data.garment : prev);
                                 setGarmentIndex(prev => ({ ...prev, [targetId]: res.data.garment }));
                             }
+                            return res;
                         }}
                         onDelete={async () => {
                             if (!confirm('Delete this garment?')) return;
@@ -1142,13 +1322,30 @@ function OutfitsTab() {
     );
 }
 
-function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGarment }) {
+function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGarment, onDelete, onLabelsChange }) {
     const [lightboxOpen, setLightboxOpen] = useState(false);
+    const [labelDraft, setLabelDraft] = useState('');
+    const [savingLabel, setSavingLabel] = useState(false);
     const renderUrl = pathToUrl(outfit.rendered_image_path);
+    const labels = Array.isArray(outfit.labels) ? outfit.labels : [];
     const garments = (outfit.garment_ids || [])
         .map(id => garmentIndex[id])
         .filter(Boolean);
     const missingCount = (outfit.garment_ids || []).length - garments.length;
+
+    const handleAddLabel = async () => {
+        const clean = labelDraft.trim().toLowerCase();
+        if (!clean || labels.includes(clean) || !onLabelsChange) return;
+        setSavingLabel(true);
+        try {
+            await onLabelsChange([...labels, clean]);
+            setLabelDraft('');
+        } finally { setSavingLabel(false); }
+    };
+    const handleRemoveLabel = async (lb) => {
+        if (!onLabelsChange) return;
+        await onLabelsChange(labels.filter(x => x !== lb));
+    };
 
     return (
         <motion.div
@@ -1209,7 +1406,50 @@ function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGar
                     </p>
                 )}
 
-                <div className="mb-2">
+                {onLabelsChange && (
+                    <div className="mb-4">
+                        <h3 className="text-xs uppercase tracking-wide text-zinc-500 mb-2">Labels</h3>
+                        <div className="flex gap-1.5 mb-2 flex-wrap">
+                            {labels.length === 0 && (
+                                <span className="text-[11px] text-zinc-600 italic">None yet. Try &ldquo;business meeting&rdquo;, &ldquo;party&rdquo;, &ldquo;regular day&rdquo;.</span>
+                            )}
+                            {labels.map(lb => (
+                                <span key={lb} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-violet-500/15 text-violet-200 border border-violet-500/30">
+                                    <Tag className="w-3 h-3" />
+                                    {lb}
+                                    <button
+                                        onClick={() => handleRemoveLabel(lb)}
+                                        className="text-violet-300 hover:text-white ml-0.5"
+                                        title={`Remove ${lb}`}
+                                    >
+                                        <X className="w-3 h-3" />
+                                    </button>
+                                </span>
+                            ))}
+                        </div>
+                        <div className="flex gap-2">
+                            <input
+                                value={labelDraft}
+                                onChange={e => setLabelDraft(e.target.value)}
+                                onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); handleAddLabel(); } }}
+                                placeholder="Add a label (e.g. business meeting)"
+                                disabled={savingLabel}
+                                maxLength={32}
+                                className="flex-1 min-w-0 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600 disabled:opacity-50"
+                            />
+                            <button
+                                onClick={handleAddLabel}
+                                disabled={savingLabel || !labelDraft.trim()}
+                                className="inline-flex items-center gap-1 px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs min-h-[36px]"
+                            >
+                                {savingLabel ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Plus className="w-3.5 h-3.5" />}
+                                Add
+                            </button>
+                        </div>
+                    </div>
+                )}
+
+                <div className="mb-4">
                     <h3 className="text-xs uppercase tracking-wide text-zinc-500 mb-2">
                         Garments · {(outfit.garment_ids || []).length} item{(outfit.garment_ids || []).length === 1 ? '' : 's'}
                     </h3>
@@ -1254,6 +1494,17 @@ function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGar
                         </div>
                     )}
                 </div>
+
+                {onDelete && (
+                    <div className="flex items-center justify-end border-t border-zinc-900 pt-3">
+                        <button
+                            onClick={onDelete}
+                            className="flex items-center gap-2 px-4 py-3 text-red-400 hover:text-red-300 text-sm min-h-[44px]"
+                        >
+                            <Trash2 className="w-4 h-4" /> Delete outfit
+                        </button>
+                    </div>
+                )}
             </motion.div>
 
             <AnimatePresence>

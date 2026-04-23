@@ -138,14 +138,37 @@ class CommunicationExecutor extends BaseExecutor {
                 let resolvedContent = content;
                 let caption = null;
                 if (imagePath && (type === 'image' || type === 'audio')) {
+                    // Resolve through symlinks and pin to DATA_DIR. Without realpath,
+                    // a symlink inside the allowed dir could point at any file on disk.
+                    const dataRoot = process.env.DATA_DIR
+                        || ((fs.existsSync('/app') && process.platform !== 'darwin') ? '/app/data' : path.join(process.cwd(), 'data'));
                     if (!path.isAbsolute(imagePath) || imagePath.includes('..')) {
                         return { success: false, info: `Invalid imagePath: must be an absolute path without '..' segments.` };
                     }
                     if (!fs.existsSync(imagePath)) {
                         return { success: false, info: `imagePath not found: ${imagePath}` };
                     }
+                    let realPath;
                     try {
-                        resolvedContent = fs.readFileSync(imagePath).toString('base64');
+                        realPath = fs.realpathSync(imagePath);
+                    } catch (e) {
+                        return { success: false, info: `imagePath not readable: ${e.message}` };
+                    }
+                    const realRoot = fs.realpathSync(dataRoot);
+                    if (!realPath.startsWith(realRoot + path.sep) && realPath !== realRoot) {
+                        return { success: false, info: `imagePath must resolve inside DATA_DIR (${realRoot}).` };
+                    }
+                    let stat;
+                    try {
+                        stat = fs.statSync(realPath);
+                    } catch (e) {
+                        return { success: false, info: `imagePath stat failed: ${e.message}` };
+                    }
+                    if (!stat.isFile()) {
+                        return { success: false, info: `imagePath is not a regular file.` };
+                    }
+                    try {
+                        resolvedContent = fs.readFileSync(realPath).toString('base64');
                     } catch (e) {
                         return { success: false, info: `Failed to read imagePath: ${e.message}` };
                     }

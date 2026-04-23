@@ -251,6 +251,32 @@ const createWardrobeRouter = (agent) => {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
+    router.delete('/outfits/:id', async (req, res) => {
+        try {
+            if (!agent.wardrobeService) return res.status(503).json({ error: 'Wardrobe service not available' });
+            const ok = await agent.wardrobeService.deleteOutfit(req.params.id);
+            if (!ok) return res.status(404).json({ error: 'Not found' });
+            res.json({ success: true });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.put('/outfits/:id', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const fields = req.body || {};
+            if (!fields || typeof fields !== 'object' || Object.keys(fields).length === 0) {
+                return res.status(400).json({ error: 'Request body must contain fields to update' });
+            }
+            const changed = agent.db.updateOutfit(id, fields);
+            if (!changed) return res.status(404).json({ error: 'Not found or no updatable fields' });
+            const outfit = agent.db.getOutfit(id);
+            if (agent.interface && agent.interface.broadcast) {
+                agent.interface.broadcast('wardrobe:outfit:update', outfit);
+            }
+            res.json({ success: true, outfit });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
     router.post('/outfits/visualize', async (req, res) => {
         try {
             if (!agent.wardrobeService) return res.status(503).json({ error: 'Wardrobe service not available' });

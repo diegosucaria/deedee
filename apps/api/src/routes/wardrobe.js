@@ -42,6 +42,8 @@ router.post('/garments/:id/duplicate', (req, res) => proxyRequest(req, res, 'POS
 router.get('/outfits', (req, res) => proxyRequest(req, res, 'GET', '/internal/wardrobe/outfits'));
 router.post('/outfits/recommend', (req, res) => proxyRequest(req, res, 'POST', '/internal/wardrobe/outfits/recommend'));
 router.post('/outfits/:id/like', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/outfits/${encodeURIComponent(req.params.id)}/like`));
+router.delete('/outfits/:id', (req, res) => proxyRequest(req, res, 'DELETE', `/internal/wardrobe/outfits/${encodeURIComponent(req.params.id)}`));
+router.put('/outfits/:id', (req, res) => proxyRequest(req, res, 'PUT', `/internal/wardrobe/outfits/${encodeURIComponent(req.params.id)}`));
 router.post('/outfits/visualize', (req, res) => proxyRequest(req, res, 'POST', '/internal/wardrobe/outfits/visualize', { largeBody: true }));
 router.post('/outfits/critique', (req, res) => proxyRequest(req, res, 'POST', '/internal/wardrobe/outfits/critique', { largeBody: true }));
 

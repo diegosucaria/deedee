@@ -73,6 +73,78 @@ describe('CommunicationExecutor', () => {
         }));
     });
 
+    test('sendMessage imagePath: rejects non-absolute path', async () => {
+        const res = await executor.execute('sendMessage', {
+            to: '12345',
+            content: 'caption',
+            type: 'image',
+            imagePath: 'relative/path/render.jpg'
+        }, { message: {} });
+        expect(res).toEqual(expect.objectContaining({ success: false, info: expect.stringMatching(/absolute/i) }));
+        expect(mockInterfaceService.send).not.toHaveBeenCalled();
+    });
+
+    test('sendMessage imagePath: rejects traversal with ..', async () => {
+        const res = await executor.execute('sendMessage', {
+            to: '12345',
+            content: 'caption',
+            type: 'image',
+            imagePath: '/app/data/../etc/passwd'
+        }, { message: {} });
+        expect(res).toEqual(expect.objectContaining({ success: false, info: expect.stringMatching(/absolute|..|invalid/i) }));
+        expect(mockInterfaceService.send).not.toHaveBeenCalled();
+    });
+
+    test('sendMessage imagePath: rejects path that resolves outside DATA_DIR', async () => {
+        const fs = require('fs');
+        const os = require('os');
+        const path = require('path');
+        const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'commtest-'));
+        const outsideFile = path.join(tmpDir, 'outside.jpg');
+        fs.writeFileSync(outsideFile, 'x');
+        const originalDataDir = process.env.DATA_DIR;
+        process.env.DATA_DIR = fs.mkdtempSync(path.join(os.tmpdir(), 'commtest-data-'));
+        try {
+            const res = await executor.execute('sendMessage', {
+                to: '12345',
+                content: 'caption',
+                type: 'image',
+                imagePath: outsideFile
+            }, { message: {} });
+            expect(res).toEqual(expect.objectContaining({ success: false, info: expect.stringMatching(/DATA_DIR/i) }));
+            expect(mockInterfaceService.send).not.toHaveBeenCalled();
+        } finally {
+            process.env.DATA_DIR = originalDataDir;
+            try { fs.unlinkSync(outsideFile); fs.rmdirSync(tmpDir); } catch (e) { /* ignore */ }
+        }
+    });
+
+    test('sendMessage imagePath: reads file and sets caption from content', async () => {
+        const fs = require('fs');
+        const os = require('os');
+        const path = require('path');
+        const dataRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'commtest-data-'));
+        const renderPath = path.join(dataRoot, 'render.jpg');
+        fs.writeFileSync(renderPath, Buffer.from([0xff, 0xd8, 0xff, 0xe0]));
+        const originalDataDir = process.env.DATA_DIR;
+        process.env.DATA_DIR = dataRoot;
+        try {
+            await executor.execute('sendMessage', {
+                to: '12345',
+                content: 'Today\'s outfit',
+                type: 'image',
+                imagePath: renderPath
+            }, { message: {} });
+            const call = mockInterfaceService.send.mock.calls[0][0];
+            expect(call.type).toBe('image');
+            expect(call.caption).toBe('Today\'s outfit');
+            expect(Buffer.from(call.content, 'base64').equals(Buffer.from([0xff, 0xd8, 0xff, 0xe0]))).toBe(true);
+        } finally {
+            process.env.DATA_DIR = originalDataDir;
+            try { fs.unlinkSync(renderPath); fs.rmdirSync(dataRoot); } catch (e) { /* ignore */ }
+        }
+    });
+
     test('sendMessage should handle existing JID', async () => {
         const args = {
             to: '12345@s.whatsapp.net',

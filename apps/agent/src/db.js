@@ -334,6 +334,7 @@ class AgentDB {
         rendered_image_path TEXT,
         liked INTEGER DEFAULT 0,
         last_suggested_at TEXT,
+        labels TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -558,6 +559,11 @@ class AgentDB {
     // Migration: Add generated_image_path to wr_garments
     try {
       this.db.exec("ALTER TABLE wr_garments ADD COLUMN generated_image_path TEXT");
+    } catch (err) { }
+
+    // Migration: Add labels to wr_outfits (JSON array of user-defined tags)
+    try {
+      this.db.exec("ALTER TABLE wr_outfits ADD COLUMN labels TEXT");
     } catch (err) { }
   }
 
@@ -2831,8 +2837,8 @@ class AgentDB {
   addOutfit(outfit) {
     const id = outfit.id || crypto.randomUUID();
     this.db.prepare(`
-      INSERT INTO wr_outfits (id, name, occasion, weather_tags, garment_ids, rendered_image_path, liked, last_suggested_at)
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO wr_outfits (id, name, occasion, weather_tags, garment_ids, rendered_image_path, liked, last_suggested_at, labels)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       id,
       outfit.name || null,
@@ -2841,7 +2847,8 @@ class AgentDB {
       outfit.garment_ids ? JSON.stringify(outfit.garment_ids) : '[]',
       outfit.rendered_image_path || null,
       outfit.liked ? 1 : 0,
-      outfit.last_suggested_at || new Date().toISOString()
+      outfit.last_suggested_at || new Date().toISOString(),
+      Array.isArray(outfit.labels) ? JSON.stringify(outfit.labels) : null
     );
     return id;
   }
@@ -2864,8 +2871,8 @@ class AgentDB {
   }
 
   updateOutfit(id, fields) {
-    const allowed = ['name', 'occasion', 'weather_tags', 'garment_ids', 'rendered_image_path', 'liked', 'last_suggested_at'];
-    const jsonCols = new Set(['weather_tags', 'garment_ids']);
+    const allowed = ['name', 'occasion', 'weather_tags', 'garment_ids', 'rendered_image_path', 'liked', 'last_suggested_at', 'labels'];
+    const jsonCols = new Set(['weather_tags', 'garment_ids', 'labels']);
     const sets = [];
     const values = [];
     for (const [k, v] of Object.entries(fields)) {
@@ -2892,6 +2899,7 @@ class AgentDB {
       ...row,
       weather_tags: safeParse(row.weather_tags, []),
       garment_ids: safeParse(row.garment_ids, []),
+      labels: safeParse(row.labels, []),
       liked: !!row.liked
     };
   }

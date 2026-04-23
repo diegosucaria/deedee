@@ -1943,6 +1943,135 @@ describe('WardrobeService shopping list (P11)', () => {
     });
 });
 
+describe('WardrobeService._runAttributePass concurrency safety', () => {
+    let service;
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        service = new WardrobeService(mockAgent);
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        jest.spyOn(fs, 'readFileSync').mockReturnValue(Buffer.from('cropbytes'));
+    });
+
+    test('preserveFields prevents model output from overwriting inherited attrs', async () => {
+        const snapshot = {
+            id: 'g1',
+            type: 'bottom',
+            subtype: 'chinos',
+            brand: 'Lululemon',
+            model: 'ABC Trouser',
+            primary_color: null,
+            crop_image_path: '/data/crop.jpg',
+            enrichment_status: 'enriching',
+            meta: {}
+        };
+        mockAgent.db.getGarment.mockReturnValue(snapshot);
+        mockAgent.client.models.generateContent.mockResolvedValueOnce(mockAttrResponse({
+            type: 'top',           // model tries to change type
+            subtype: 'tshirt',     // model tries to change subtype
+            primary_color: 'black', // model re-detects color (this SHOULD apply)
+            pattern: 'solid',
+            material_guess: 'linen', // model tries to change material
+            warmth: 4,             // model tries to change warmth
+            confidence: 0.9
+        }));
+
+        await service._runAttributePass('g1', { preserveFields: ['type', 'subtype', 'material_guess', 'warmth'] });
+
+        const firstUpdate = mockAgent.db.updateGarment.mock.calls.find(c => c[0] === 'g1' && c[1].primary_color)[1];
+        expect(firstUpdate.primary_color).toBe('black');
+        expect(firstUpdate).not.toHaveProperty('type');
+        expect(firstUpdate).not.toHaveProperty('subtype');
+        expect(firstUpdate).not.toHaveProperty('material_guess');
+        expect(firstUpdate).not.toHaveProperty('warmth');
+    });
+
+    test('concurrent user edit during pass is detected and preserved', async () => {
+        const start = {
+            id: 'g1',
+            type: 'top',
+            subtype: 'tshirt',
+            primary_color: 'red',
+            crop_image_path: '/data/crop.jpg',
+            enrichment_status: 'enriching',
+            meta: {}
+        };
+        const afterUserEdit = { ...start, primary_color: 'hot pink' }; // user saved while pass was running
+        // First getGarment() call = snapshot at start; second = current state at patch time
+        mockAgent.db.getGarment
+            .mockReturnValueOnce(start)
+            .mockReturnValueOnce(afterUserEdit)
+            .mockReturnValue(afterUserEdit);
+        mockAgent.client.models.generateContent.mockResolvedValueOnce(mockAttrResponse({
+            type: 'top',
+            primary_color: 'red',  // model returns stale color
+            confidence: 0.8
+        }));
+
+        await service._runAttributePass('g1');
+
+        const attributePatch = mockAgent.db.updateGarment.mock.calls.find(c => c[0] === 'g1' && 'enrichment_confidence' in c[1])[1];
+        expect(attributePatch).not.toHaveProperty('primary_color');
+    });
+});
+
+describe('WardrobeService.duplicateGarment', () => {
+    let service;
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        service = new WardrobeService(mockAgent);
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        jest.spyOn(fs, 'mkdirSync').mockImplementation(() => { });
+        jest.spyOn(fs, 'writeFileSync').mockImplementation(() => { });
+        jest.spyOn(fs, 'readFileSync').mockReturnValue(Buffer.from('cropbytes'));
+        // duplicateGarment kicks off _runAttributePass in the background — stub out
+        // the model call so it resolves quickly and doesn't leak into later assertions.
+        mockAgent.client.models.generateContent.mockResolvedValue(mockAttrResponse({
+            primary_color: 'pink', pattern: 'graphic', confidence: 0.9
+        }));
+    });
+
+    test('throws when source garment is missing', async () => {
+        mockAgent.db.getGarment.mockReturnValue(null);
+        await expect(service.duplicateGarment('missing', 'AAAA', 'image/jpeg')).rejects.toThrow(/not found/);
+    });
+
+    test('throws on missing image data', async () => {
+        await expect(service.duplicateGarment('g1', null, 'image/jpeg')).rejects.toThrow(/image data/);
+    });
+
+    test('creates new garment inheriting brand/model/type and broadcasts detected', async () => {
+        const source = {
+            id: 'src1', type: 'top', subtype: 'tshirt',
+            brand: 'Lacoste', model: 'Club Lacoste Relaxed',
+            material_guess: 'cotton', warmth: 2, formality: 1,
+            size: 'M', season_tags: ['spring', 'summer'], fit_notes: null,
+            primary_color: 'black', secondary_colors: [], pattern: 'solid'
+        };
+        const created = { ...source, id: 'new1', primary_color: null, pattern: null, source: 'duplicated', enrichment_status: 'enriching' };
+        mockAgent.db.getGarment
+            .mockReturnValueOnce(source)       // lookup in duplicateGarment
+            .mockReturnValue(created);         // subsequent reads
+
+        const row = await service.duplicateGarment('src1', 'AAAA', 'image/jpeg');
+
+        const addCall = mockAgent.db.addGarment.mock.calls[0][0];
+        expect(addCall.type).toBe('top');
+        expect(addCall.subtype).toBe('tshirt');
+        expect(addCall.brand).toBe('Lacoste');
+        expect(addCall.model).toBe('Club Lacoste Relaxed');
+        expect(addCall.material_guess).toBe('cotton');
+        expect(addCall.warmth).toBe(2);
+        expect(addCall.source).toBe('duplicated');
+        expect(addCall.enrichment_status).toBe('enriching');
+        expect(addCall).not.toHaveProperty('primary_color');
+        expect(addCall).not.toHaveProperty('pattern');
+        expect(mockAgent.interface.broadcast).toHaveBeenCalledWith('wardrobe:garment:detected', expect.any(Object));
+        expect(row).toBe(created);
+    });
+});
+
 describe('WardrobeService misc', () => {
     let service;
 

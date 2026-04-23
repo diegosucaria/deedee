@@ -369,7 +369,7 @@ Respond with JSON only.`;
      *   re-enrich, where stale wrong data should be corrected). When false (the
      *   default for ingest), they only fill empty fields.
      */
-    async _runAttributePass(garmentId, { hint = null, extraReferences = [], overwriteExisting = false } = {}) {
+    async _runAttributePass(garmentId, { hint = null, extraReferences = [], overwriteExisting = false, preserveFields = [] } = {}) {
         const TAG = '[wardrobe.attr]';
         const garment = this.db.getGarment(garmentId);
         if (!garment) {
@@ -500,6 +500,24 @@ Trust this hint as ground truth. Parse brand and model out of it (e.g. "ABC Warp
                 distinguishingFeatures: data.distinguishing_features || garment.meta?.distinguishingFeatures || null,
                 attributePassRaw: data
             };
+
+            // Respect explicit preserveFields (caller says "don't touch these"), and
+            // any field the user edited in the DB while this pass was running. This
+            // prevents the attribute pass from silently overwriting hand-curated data.
+            const current = this.db.getGarment(garmentId) || garment;
+            const protectedFields = new Set(preserveFields);
+            for (const key of ['type', 'subtype', 'primary_color', 'secondary_colors', 'pattern', 'material_guess', 'warmth', 'formality', 'season_tags', 'brand', 'model']) {
+                const before = garment[key];
+                const after = current[key];
+                const changed = JSON.stringify(before ?? null) !== JSON.stringify(after ?? null);
+                if (changed) protectedFields.add(key);
+            }
+            for (const key of protectedFields) {
+                if (key in patch) delete patch[key];
+            }
+            if (protectedFields.size > 0) {
+                console.log(`${TAG} skipped fields (user-edited or explicitly preserved) | garmentId=${garmentId} | fields=${[...protectedFields].join(',')}`);
+            }
 
             // Keep status='enriching' while brand pass runs; _enrichBrand finalizes.
             patch.enrichment_status = 'enriching';
@@ -1318,7 +1336,14 @@ GENERAL RULES:
             ? `${hintParts.join(' ')} — same product as an existing wardrobe item in a different color. Brand, model, type, and material are already known; focus the analysis on detecting primary_color, secondary_colors, and pattern from this photo.`
             : null;
 
-        this._runAttributePass(newId, { hint, overwriteExisting: false }).catch(err => {
+        // Inherited fields are ground truth; the attribute pass should only fill in
+        // the re-detected color/pattern/secondary_colors. preserveFields makes this
+        // contract enforceable instead of relying on the model to follow the hint.
+        const preserveFields = [
+            'type', 'subtype', 'brand', 'model', 'material_guess',
+            'warmth', 'formality', 'season_tags'
+        ];
+        this._runAttributePass(newId, { hint, overwriteExisting: false, preserveFields }).catch(err => {
             console.error(`${TAG} attribute pass crashed | newId=${newId} | err=${err.message}`);
         });
 
@@ -2209,6 +2234,27 @@ Rules: only use ids from the wardrobe list above. No external items.`;
         const out = this.db.getOutfit(outfitId);
         this._broadcast('wardrobe:outfit:update', out);
         return out;
+    }
+
+    async deleteOutfit(outfitId) {
+        const out = this.db.getOutfit(outfitId);
+        if (!out) return false;
+        // Remove the render directory (and its contents) before dropping the row so a
+        // retry stays idempotent even if the DB delete succeeds and the FS cleanup races.
+        const outDir = path.join(this._baseDir(), 'outfits', outfitId);
+        if (fs.existsSync(outDir)) {
+            try {
+                for (const entry of fs.readdirSync(outDir)) {
+                    try { fs.unlinkSync(path.join(outDir, entry)); } catch (e) { /* ignore */ }
+                }
+                fs.rmdirSync(outDir);
+            } catch (e) {
+                console.warn(`[wardrobe] outfit render cleanup failed | outfitId=${outfitId} | err=${e.message}`);
+            }
+        }
+        this.db.deleteOutfit(outfitId);
+        this._broadcast('wardrobe:outfit:delete', { id: outfitId });
+        return true;
     }
 
     /**

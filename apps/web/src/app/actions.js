@@ -1070,6 +1070,29 @@ export async function duplicateGarment(sourceId, base64Data, mimeType) {
     }
 }
 
+export async function deleteOutfit(id) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/outfits/${encodeURIComponent(id)}`, {
+            method: 'DELETE'
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function updateOutfit(id, fields) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/outfits/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            body: JSON.stringify(fields)
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function getWardrobeProfile() {
     try {
         const data = await fetchAPI('/v1/wardrobe/profile', { method: 'GET' });
