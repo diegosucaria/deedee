@@ -1833,8 +1833,16 @@ Do not propose items outside the pool. Respond with strict JSON:
      *   - [["g1","g2"], ["g3","g4"]] → N panels (multi-mirror) [P8 shape]
      * @param {string} [opts.layout] - auto|single|horizontal|grid (default auto)
      * @param {string} [opts.outfitId] - If provided and single panel, updates this outfit's rendered_image_path
+     * @param {'render'|'variations'} [opts.saveAs] - Which slot to save under.
+     *   'render' (default) writes render.jpg + rendered_image_path.
+     *   'variations' writes variations.jpg + variations_image_path (for the
+     *    multi-panel "Generate variations" feature — keeps the original
+     *    single-panel render intact).
      */
-    async visualizeOutfit({ garmentIdsPanels, layout = 'auto', outfitId = null } = {}) {
+    async visualizeOutfit({ garmentIdsPanels, layout = 'auto', outfitId = null, saveAs = 'render' } = {}) {
+        if (saveAs === 'variations' && !outfitId) {
+            throw new Error('visualizeOutfit with saveAs="variations" requires outfitId');
+        }
         // Normalize to array-of-panels shape
         let panels;
         if (Array.isArray(garmentIdsPanels) && garmentIdsPanels.length > 0 && typeof garmentIdsPanels[0] === 'string') {
@@ -1951,7 +1959,8 @@ ${panelDescriptors.map(d => `  Panel ${d.index}: ${d.garments.join(', ')}`).join
 
         const outDir = path.join(this._baseDir(), 'outfits', targetOutfitId);
         if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
-        const renderPath = path.join(outDir, 'render.jpg');
+        const filename = saveAs === 'variations' ? 'variations.jpg' : 'render.jpg';
+        const savePath = path.join(outDir, filename);
         const renderBuffer = Buffer.from(imagePart.inlineData.data, 'base64');
 
         // Post-process: overlay a caption listing the garments so the image is
@@ -1964,17 +1973,182 @@ ${panelDescriptors.map(d => `  Panel ${d.index}: ${d.garments.join(', ')}`).join
             : panelDescriptors.map(d => `${d.index}. ${d.garments.slice(0, 3).join(', ')}`);
         try {
             const captioned = await this._addCaptionToImage(renderBuffer, captionLines);
-            fs.writeFileSync(renderPath, captioned);
+            fs.writeFileSync(savePath, captioned);
         } catch (captionErr) {
             console.warn(`[wardrobe.visualize] caption overlay failed, falling back to raw render | err=${captionErr.message}`);
-            fs.writeFileSync(renderPath, renderBuffer);
+            fs.writeFileSync(savePath, renderBuffer);
         }
 
-        this.db.updateOutfit(targetOutfitId, { rendered_image_path: renderPath });
+        const updateField = saveAs === 'variations' ? 'variations_image_path' : 'rendered_image_path';
+        this.db.updateOutfit(targetOutfitId, { [updateField]: savePath });
         const outfit = this.db.getOutfit(targetOutfitId);
-        this._broadcast('wardrobe:outfit:rendered', outfit);
+        const eventName = saveAs === 'variations' ? 'wardrobe:outfit:variations-rendered' : 'wardrobe:outfit:rendered';
+        this._broadcast(eventName, outfit);
 
         return { outfit, panels: N, layout: resolvedLayout };
+    }
+
+    /**
+     * Generate N variation outfits off a source, render them all side-by-side
+     * in one multi-panel mirror image, and store under variations_image_path.
+     *
+     * Variations share 2+ items with the source (so they feel like "small
+     * swaps, same vibe"). The LLM picks the swaps from the user's wardrobe;
+     * a deterministic fallback swaps one same-type item if the LLM is
+     * unavailable or returns nothing usable.
+     */
+    async generateOutfitVariations(outfitId, { count = 3 } = {}) {
+        const TAG = '[wardrobe.variations]';
+        const source = this.db.getOutfit(outfitId);
+        if (!source) throw new Error(`Outfit ${outfitId} not found`);
+
+        const sourceIds = Array.isArray(source.garment_ids) ? source.garment_ids : [];
+        if (sourceIds.length < 2) {
+            throw new Error('Source outfit needs at least 2 items to build variations');
+        }
+
+        const pool = this.db.getGarments({ limit: 500 }) || [];
+        const poolById = Object.fromEntries(pool.map(g => [g.id, g]));
+        // Drop panels we can't build (ids no longer in wardrobe) so the LLM
+        // doesn't anchor on ghosts.
+        const validSourceIds = sourceIds.filter(id => poolById[id]);
+        if (validSourceIds.length < 2) {
+            throw new Error('Source outfit has too few garments still in the wardrobe');
+        }
+
+        let variations = [];
+        if (this.agent.client) {
+            try {
+                variations = await this._proposeOutfitVariations(source, validSourceIds, pool, count);
+            } catch (e) {
+                console.warn(`${TAG} LLM proposer failed, falling back | err=${e.message}`);
+            }
+        }
+        if (variations.length === 0) {
+            variations = this._fallbackOutfitVariations(validSourceIds, pool, count);
+        }
+
+        // Cap at 3 variations so the final strip stays at 4 panels (source + 3).
+        variations = variations.slice(0, 3);
+
+        if (variations.length === 0) {
+            throw new Error('Could not build any variations — not enough alternatives in the wardrobe');
+        }
+
+        const panels = [validSourceIds, ...variations];
+        console.log(`${TAG} rendering | outfitId=${outfitId} | panels=${panels.length}`);
+        return this.visualizeOutfit({
+            garmentIdsPanels: panels,
+            layout: panels.length === 4 ? 'grid' : 'horizontal',
+            outfitId,
+            saveAs: 'variations'
+        });
+    }
+
+    async _proposeOutfitVariations(source, validSourceIds, pool, count) {
+        const g = (id) => pool.find(x => x.id === id);
+        const describe = (garment) => {
+            if (!garment) return '';
+            const bits = [garment.type, garment.subtype, garment.primary_color, garment.brand].filter(Boolean);
+            return bits.join(' ');
+        };
+
+        const sourceSummary = validSourceIds.map(id => {
+            const row = g(id);
+            return `- ${id}: ${describe(row)}${row?.formality ? ` [formality ${row.formality}/5]` : ''}`;
+        }).join('\n');
+
+        const poolSummary = pool
+            .filter(row => !validSourceIds.includes(row.id))
+            .slice(0, 80) // keep prompt tight
+            .map(row => `- ${row.id}: ${describe(row)}${row.formality ? ` [formality ${row.formality}/5]` : ''}`)
+            .join('\n');
+
+        const prompt = `You are a personal stylist. Propose ${count} outfit variations off a source outfit.
+
+SOURCE OUTFIT:
+${sourceSummary}
+
+AVAILABLE WARDROBE (other items, same user):
+${poolSummary}
+
+RULES:
+- Each variation must be a complete outfit (top + bottom + shoes at minimum; outerwear optional).
+- Each variation must share AT LEAST half of the source items (e.g. same shoes + same pants, change the top).
+- Use ONLY garment ids that appear in the SOURCE or AVAILABLE lists above — never invent ids.
+- Do NOT return the source outfit verbatim.
+- Keep formality within ±1 of the source's average formality.
+
+Return STRICT JSON:
+{
+  "variations": [
+    { "garment_ids": ["id1","id2",...], "rationale": "same shoes + pants, swapped top for a pattern variation" }
+  ]
+}`;
+
+        const modelName = this.config.getModel('FLASH');
+        const response = await this.agent.client.models.generateContent({
+            model: modelName,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            config: { responseMimeType: 'application/json' }
+        });
+        try { this.config.logUsageFromResponse(this.db, modelName, response, null, 'wardrobe_variations'); } catch (e) { /* ignore */ }
+
+        const text = this._extractText(response);
+        if (!text) return [];
+        let data;
+        try {
+            data = JSON.parse(String(text).replace(/```json|```/g, '').trim());
+        } catch (e) {
+            console.warn(`[wardrobe.variations] JSON parse failed | snippet="${String(text).slice(0, 200).replace(/\s+/g, ' ')}"`);
+            return [];
+        }
+
+        const rawList = Array.isArray(data?.variations) ? data.variations : [];
+        const validIds = new Set(pool.map(p => p.id));
+        const source_serialized = JSON.stringify([...validSourceIds].sort());
+        const seen = new Set([source_serialized]);
+        // A variation needs to be a believable outfit — at least 3 items if the
+        // source had 4+, else at least 2. Anything smaller is the model
+        // hallucinating garment ids that got filtered out.
+        const minItems = validSourceIds.length >= 4 ? 3 : 2;
+        const out = [];
+        for (const item of rawList) {
+            const ids = Array.isArray(item?.garment_ids) ? item.garment_ids.filter(id => validIds.has(id)) : [];
+            if (ids.length < minItems) continue;
+            const serialized = JSON.stringify([...ids].sort());
+            if (seen.has(serialized)) continue; // dedupe + skip exact source
+            seen.add(serialized);
+            out.push(ids);
+            if (out.length >= count) break;
+        }
+        return out;
+    }
+
+    _fallbackOutfitVariations(sourceIds, pool, count) {
+        // Build variations by swapping ONE garment per variation for a same-type
+        // alternative from the wardrobe. Simple, deterministic, and good enough
+        // when the LLM call can't run (tests, offline, quota exhausted).
+        const byId = Object.fromEntries(pool.map(g => [g.id, g]));
+        const sourceSet = new Set(sourceIds);
+        const variations = [];
+        const usedSerializations = new Set([JSON.stringify([...sourceIds].sort())]);
+
+        for (let swapIdx = 0; swapIdx < sourceIds.length && variations.length < count; swapIdx++) {
+            const original = byId[sourceIds[swapIdx]];
+            if (!original?.type) continue;
+            const alternatives = pool.filter(p => p.type === original.type && !sourceSet.has(p.id));
+            for (const alt of alternatives) {
+                const varIds = [...sourceIds];
+                varIds[swapIdx] = alt.id;
+                const serialized = JSON.stringify([...varIds].sort());
+                if (usedSerializations.has(serialized)) continue;
+                usedSerializations.add(serialized);
+                variations.push(varIds);
+                if (variations.length >= count) break;
+            }
+        }
+        return variations;
     }
 
     /**

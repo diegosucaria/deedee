@@ -43,6 +43,7 @@ router.get('/outfits', (req, res) => proxyRequest(req, res, 'GET', '/internal/wa
 router.post('/outfits/recommend', (req, res) => proxyRequest(req, res, 'POST', '/internal/wardrobe/outfits/recommend'));
 router.get('/outfits/:id', (req, res) => proxyRequest(req, res, 'GET', `/internal/wardrobe/outfits/${encodeURIComponent(req.params.id)}`));
 router.post('/outfits/:id/like', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/outfits/${encodeURIComponent(req.params.id)}/like`));
+router.post('/outfits/:id/variations', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/outfits/${encodeURIComponent(req.params.id)}/variations`));
 router.delete('/outfits/:id', (req, res) => proxyRequest(req, res, 'DELETE', `/internal/wardrobe/outfits/${encodeURIComponent(req.params.id)}`));
 router.put('/outfits/:id', (req, res) => proxyRequest(req, res, 'PUT', `/internal/wardrobe/outfits/${encodeURIComponent(req.params.id)}`));
 router.post('/outfits/visualize', (req, res) => proxyRequest(req, res, 'POST', '/internal/wardrobe/outfits/visualize', { largeBody: true }));

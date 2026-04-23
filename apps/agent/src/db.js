@@ -332,6 +332,7 @@ class AgentDB {
         weather_tags TEXT,
         garment_ids TEXT,
         rendered_image_path TEXT,
+        variations_image_path TEXT,
         liked INTEGER DEFAULT 0,
         last_suggested_at TEXT,
         labels TEXT,
@@ -571,6 +572,12 @@ class AgentDB {
     // reference photo of the wanted item)
     try {
       this.db.exec("ALTER TABLE wr_shopping_list ADD COLUMN reference_image_path TEXT");
+    } catch (err) { }
+
+    // Migration: Add variations_image_path to wr_outfits (multi-panel mirror
+    // render showing the source outfit + variations side-by-side)
+    try {
+      this.db.exec("ALTER TABLE wr_outfits ADD COLUMN variations_image_path TEXT");
     } catch (err) { }
   }
 
@@ -2878,7 +2885,7 @@ class AgentDB {
   }
 
   updateOutfit(id, fields) {
-    const allowed = ['name', 'occasion', 'weather_tags', 'garment_ids', 'rendered_image_path', 'liked', 'last_suggested_at', 'labels'];
+    const allowed = ['name', 'occasion', 'weather_tags', 'garment_ids', 'rendered_image_path', 'variations_image_path', 'liked', 'last_suggested_at', 'labels'];
     const jsonCols = new Set(['weather_tags', 'garment_ids', 'labels']);
     const sets = [];
     const values = [];

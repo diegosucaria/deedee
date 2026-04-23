@@ -1093,6 +1093,18 @@ export async function updateOutfit(id, fields) {
     }
 }
 
+export async function generateOutfitVariations(id, count = 3) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/outfits/${encodeURIComponent(id)}/variations`, {
+            method: 'POST',
+            body: JSON.stringify({ count })
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function generateShoppingReferenceImage(id) {
     try {
         const data = await fetchAPI(`/v1/wardrobe/shopping/${encodeURIComponent(id)}/reference-image`, {

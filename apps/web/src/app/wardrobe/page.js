@@ -22,6 +22,7 @@ import {
     deleteOutfit as deleteOutfitAction,
     updateOutfit,
     getOutfit,
+    generateOutfitVariations,
     generateShoppingReferenceImage,
     getWardrobeProfile,
     updateWardrobeProfile,
@@ -1152,6 +1153,15 @@ function OutfitsTab() {
         }
     };
 
+    const handleGenerateVariations = async (outfit) => {
+        const res = await generateOutfitVariations(outfit.id);
+        if (res.success && res.data?.outfit) {
+            setOutfits(prev => prev.map(o => o.id === outfit.id ? res.data.outfit : o));
+            setSelectedOutfit(prev => prev?.id === outfit.id ? res.data.outfit : prev);
+        }
+        return res;
+    };
+
     const filtered = outfits.filter(o => {
         if (labelFilter && !(o.labels || []).includes(labelFilter)) return false;
         return true;
@@ -1310,6 +1320,7 @@ function OutfitsTab() {
                         onDelete={() => handleDeleteOutfit(selectedOutfit)}
                         onLabelsChange={(labels) => handleLabelsChange(selectedOutfit, labels)}
                         onRename={(name) => handleRename(selectedOutfit, name)}
+                        onGenerateVariations={() => handleGenerateVariations(selectedOutfit)}
                     />
                 )}
             </AnimatePresence>
@@ -1419,19 +1430,35 @@ function OutfitsTab() {
     );
 }
 
-function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGarment, onDelete, onLabelsChange, onRename }) {
+function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGarment, onDelete, onLabelsChange, onRename, onGenerateVariations }) {
     const [lightboxOpen, setLightboxOpen] = useState(false);
+    const [lightboxSrc, setLightboxSrc] = useState(null);
     const [labelDraft, setLabelDraft] = useState('');
     const [savingLabel, setSavingLabel] = useState(false);
     const [editingName, setEditingName] = useState(false);
     const [nameDraft, setNameDraft] = useState(outfit.name || '');
     const [savingName, setSavingName] = useState(false);
+    const [generatingVariations, setGeneratingVariations] = useState(false);
+    const [variationsError, setVariationsError] = useState('');
     const renderUrl = pathToUrl(outfit.rendered_image_path);
+    const variationsUrl = pathToUrl(outfit.variations_image_path);
     const labels = Array.isArray(outfit.labels) ? outfit.labels : [];
     const garments = (outfit.garment_ids || [])
         .map(id => garmentIndex[id])
         .filter(Boolean);
     const missingCount = (outfit.garment_ids || []).length - garments.length;
+
+    const openLightbox = (src) => { setLightboxSrc(src); setLightboxOpen(true); };
+
+    const handleGenerateVariations = async () => {
+        if (!onGenerateVariations) return;
+        setGeneratingVariations(true);
+        setVariationsError('');
+        try {
+            const res = await onGenerateVariations();
+            if (!res?.success) setVariationsError(res?.error || 'Failed to generate variations');
+        } finally { setGeneratingVariations(false); }
+    };
 
     const handleAddLabel = async () => {
         const clean = labelDraft.trim().toLowerCase();
@@ -1524,7 +1551,7 @@ function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGar
 
                 {renderUrl ? (
                     <button
-                        onClick={() => setLightboxOpen(true)}
+                        onClick={() => openLightbox(renderUrl)}
                         className="block w-full mb-4 rounded-xl overflow-hidden bg-zinc-900 border border-zinc-800"
                         title="Tap to enlarge"
                     >
@@ -1551,6 +1578,40 @@ function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGar
                     <p className="text-xs text-zinc-400 italic mb-4 p-3 rounded-lg bg-zinc-900 border border-zinc-800">
                         {outfit.occasion}
                     </p>
+                )}
+
+                {onGenerateVariations && (
+                    <div className="mb-4">
+                        <div className="flex items-center justify-between mb-2">
+                            <h3 className="text-xs uppercase tracking-wide text-zinc-500">Variations</h3>
+                            <button
+                                onClick={handleGenerateVariations}
+                                disabled={generatingVariations}
+                                className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-600/80 hover:bg-violet-500 disabled:opacity-50 text-white text-xs"
+                                title="Render a side-by-side mirror image with outfit variations that share pieces with this one"
+                            >
+                                {generatingVariations ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                                {variationsUrl ? 'Regenerate' : 'Generate variations'}
+                            </button>
+                        </div>
+                        {variationsUrl ? (
+                            <button
+                                onClick={() => openLightbox(variationsUrl)}
+                                className="block w-full rounded-xl overflow-hidden bg-zinc-900 border border-zinc-800"
+                                title="Tap to enlarge"
+                            >
+                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                <img src={variationsUrl} alt="" className="w-full max-h-[40vh] object-contain" />
+                            </button>
+                        ) : (
+                            <p className="text-[11px] text-zinc-600 italic">
+                                {generatingVariations
+                                    ? 'Proposing swaps and rendering the mirror strip — this can take ~30s.'
+                                    : 'See this outfit side-by-side with 2–3 small swaps from your wardrobe.'}
+                            </p>
+                        )}
+                        {variationsError && <p className="mt-1 text-[11px] text-rose-400">{variationsError}</p>}
+                    </div>
                 )}
 
                 {onLabelsChange && (
@@ -1655,14 +1716,14 @@ function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGar
             </motion.div>
 
             <AnimatePresence>
-                {lightboxOpen && renderUrl && (
+                {lightboxOpen && lightboxSrc && (
                     <motion.div
                         initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                         className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4"
                         onClick={(e) => { e.stopPropagation(); setLightboxOpen(false); }}
                     >
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={renderUrl} alt="" className="max-w-full max-h-full object-contain" />
+                        <img src={lightboxSrc} alt="" className="max-w-full max-h-full object-contain" />
                         <button
                             onClick={(e) => { e.stopPropagation(); setLightboxOpen(false); }}
                             className="absolute top-4 right-4 p-2 rounded-full bg-white/10 text-white hover:bg-white/20"
