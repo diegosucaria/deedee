@@ -577,17 +577,21 @@ Hard rules:
 
     /**
      * Re-run the attribute pass on an existing garment, optionally biased by a
-     * user-supplied hint (e.g. "ABC Warpstreme Jogger Regular") and/or an extra
+     * user-supplied hint (e.g. "ABC Warpstreme Jogger Regular") and/or a new
      * reference photo. The hint is combined with whatever brand/model the user
      * has already set so the model reshapes the subtype/material/season tags
-     * around that identity instead of guessing from scratch. The extra photo
-     * is sent to the model alongside the original crop so it can resolve
-     * details the original missed.
+     * around that identity.
+     *
+     * If `extraImageBase64` is provided it REPLACES the garment's crop — the
+     * user is saying "this is a better photo of this item." The previous crop
+     * file and any stale generated image are unlinked so we don't leak storage
+     * or serve a cached old image.
      *
      * Returns the garment row immediately; the refinement runs in the background
      * and broadcasts wardrobe:garment:attributes / :enriched when complete.
      */
     async reenrichGarment(garmentId, { hint = '', extraImageBase64 = null, mimeType = 'image/jpeg' } = {}) {
+        const TAG = '[wardrobe.reenrich]';
         const garment = this.db.getGarment(garmentId);
         if (!garment) throw new Error(`Garment ${garmentId} not found`);
 
@@ -604,24 +608,56 @@ Hard rules:
         }
         const effectiveHint = unique.length ? unique.join(' · ') : null;
 
+        console.log(`${TAG} start | garmentId=${garmentId} | hint=${trimmed ? `"${trimmed.slice(0, 80)}"` : '(none)'} | effectiveHint=${effectiveHint ? `"${effectiveHint.slice(0, 100)}"` : '(none)'} | replacingCrop=${!!extraImageBase64}`);
+
         const metaPatch = { ...(garment.meta || {}) };
         if (trimmed) metaPatch.userHint = trimmed;
         // Clear any stale brand candidate — user-driven re-enrich supersedes it
         metaPatch.brandCandidate = null;
 
-        this.db.updateGarment(garmentId, {
+        const patch = {
             enrichment_status: 'enriching',
             meta: metaPatch
-        });
+        };
+
+        // If the user uploaded a new image, swap the garment's crop for it. This
+        // is what makes the wardrobe tile actually update — without this we'd
+        // only refresh attributes and the user would think "nothing changed."
+        if (extraImageBase64) {
+            const ext = (mimeType || 'image/jpeg').includes('png') ? 'png' : 'jpg';
+            const oldCropPath = garment.crop_image_path;
+            const oldGenPath = garment.generated_image_path;
+            const sourceDirRef = oldCropPath || garment.source_image_path;
+            const sourceDir = sourceDirRef ? path.dirname(sourceDirRef) : path.join(this._baseDir(), 'garments', crypto.randomUUID());
+            if (!fs.existsSync(sourceDir)) fs.mkdirSync(sourceDir, { recursive: true });
+            const ts = Date.now();
+            const newCropPath = path.join(sourceDir, `crop_${garmentId}_${ts}.${ext}`);
+            fs.writeFileSync(newCropPath, Buffer.from(extraImageBase64, 'base64'));
+
+            patch.crop_image_path = newCropPath;
+            // The previous generated image was rendered from the OLD crop — it no
+            // longer reflects what this garment looks like, so drop it.
+            patch.generated_image_path = null;
+
+            // Cleanup: drop the old crop file unless it's the shared multi-garment
+            // source image (full-frame ingests reuse source as crop).
+            if (oldCropPath && oldCropPath !== garment.source_image_path && fs.existsSync(oldCropPath)) {
+                try { fs.unlinkSync(oldCropPath); } catch (e) { /* ignore — cosmetic cleanup */ }
+            }
+            if (oldGenPath && fs.existsSync(oldGenPath)) {
+                try { fs.unlinkSync(oldGenPath); } catch (e) { /* ignore */ }
+            }
+
+            console.log(`${TAG} crop replaced | garmentId=${garmentId} | newCrop=${newCropPath}${oldGenPath ? ' | cleared stale generated image' : ''}`);
+        }
+
+        this.db.updateGarment(garmentId, patch);
         this._broadcast('wardrobe:garment:update', this.db.getGarment(garmentId));
 
-        const extraReferences = extraImageBase64
-            ? [{ data: extraImageBase64, mimeType: mimeType || 'image/jpeg' }]
-            : [];
-
-        // Background refinement — caller gets the "enriching" state immediately
-        this._runAttributePass(garmentId, { hint: effectiveHint, extraReferences }).catch(err => {
-            console.error(`[WardrobeService] reenrichGarment failed for ${garmentId}:`, err.message);
+        // Background refinement — the attribute pass reads the (possibly new)
+        // crop_image_path from the row, so we don't need to forward extras.
+        this._runAttributePass(garmentId, { hint: effectiveHint }).catch(err => {
+            console.error(`${TAG} background attribute pass crashed | garmentId=${garmentId} | err=${err.message}`);
         });
 
         return this.db.getGarment(garmentId);

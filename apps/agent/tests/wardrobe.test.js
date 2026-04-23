@@ -487,10 +487,19 @@ describe('WardrobeService.reenrichGarment', () => {
         await expect(service.reenrichGarment('ghost', {})).rejects.toThrow('not found');
     });
 
-    test('forwards an extra reference image to the attribute pass', async () => {
+    test('replaces the garment crop when an extra image is supplied', async () => {
+        const oldCropPath = '/data/wardrobe/garments/src/crop_old.jpg';
         mockAgent.db.getGarment.mockReturnValue({
-            id: 'g1', brand: null, model: null, meta: {}
+            id: 'g1', brand: null, model: null,
+            crop_image_path: oldCropPath,
+            source_image_path: '/data/wardrobe/garments/src/original.jpg',
+            generated_image_path: null,
+            meta: {}
         });
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        jest.spyOn(fs, 'mkdirSync').mockImplementation(() => { });
+        const writeSpy = jest.spyOn(fs, 'writeFileSync').mockImplementation(() => { });
+        const unlinkSpy = jest.spyOn(fs, 'unlinkSync').mockImplementation(() => { });
         service._runAttributePass = jest.fn().mockResolvedValue(undefined);
 
         await service.reenrichGarment('g1', {
@@ -499,19 +508,78 @@ describe('WardrobeService.reenrichGarment', () => {
             mimeType: 'image/png'
         });
 
-        expect(service._runAttributePass).toHaveBeenCalledWith('g1', expect.objectContaining({
-            extraReferences: [{ data: 'PHOTODATA', mimeType: 'image/png' }]
-        }));
+        // Wrote the new crop to disk under the existing source dir
+        expect(writeSpy).toHaveBeenCalledWith(
+            expect.stringMatching(/crop_g1_\d+\.png$/),
+            expect.any(Buffer)
+        );
+        // Updated the row to point at the new crop (and dropped any stale generated image)
+        const patch = mockAgent.db.updateGarment.mock.calls[0][1];
+        expect(patch.crop_image_path).toMatch(/crop_g1_\d+\.png$/);
+        expect(patch.generated_image_path).toBeNull();
+        // Old crop file unlinked
+        expect(unlinkSpy).toHaveBeenCalledWith(oldCropPath);
     });
 
-    test('default mimeType for re-enrich extra image is image/jpeg', async () => {
-        mockAgent.db.getGarment.mockReturnValue({ id: 'g1', meta: {} });
+    test('clears stale generated image when crop is replaced', async () => {
+        const oldGenPath = '/data/wardrobe/garments/src/generated_g1_111.jpg';
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1',
+            crop_image_path: '/data/wardrobe/garments/src/crop_old.jpg',
+            source_image_path: '/data/wardrobe/garments/src/original.jpg',
+            generated_image_path: oldGenPath,
+            meta: {}
+        });
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        jest.spyOn(fs, 'mkdirSync').mockImplementation(() => { });
+        jest.spyOn(fs, 'writeFileSync').mockImplementation(() => { });
+        const unlinkSpy = jest.spyOn(fs, 'unlinkSync').mockImplementation(() => { });
+        service._runAttributePass = jest.fn().mockResolvedValue(undefined);
+
+        await service.reenrichGarment('g1', { extraImageBase64: 'PHOTODATA' });
+
+        expect(unlinkSpy).toHaveBeenCalledWith(oldGenPath);
+    });
+
+    test('does not delete the source image even when it equals crop_image_path (full-frame ingest)', async () => {
+        const sharedPath = '/data/wardrobe/garments/src/original.jpg';
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1',
+            crop_image_path: sharedPath,
+            source_image_path: sharedPath,
+            generated_image_path: null,
+            meta: {}
+        });
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        jest.spyOn(fs, 'mkdirSync').mockImplementation(() => { });
+        jest.spyOn(fs, 'writeFileSync').mockImplementation(() => { });
+        const unlinkSpy = jest.spyOn(fs, 'unlinkSync').mockImplementation(() => { });
+        service._runAttributePass = jest.fn().mockResolvedValue(undefined);
+
+        await service.reenrichGarment('g1', { extraImageBase64: 'PHOTODATA' });
+
+        // Source image must survive — full-frame ingests share it across rows
+        expect(unlinkSpy).not.toHaveBeenCalledWith(sharedPath);
+    });
+
+    test('runs attribute pass without extraReferences (the new image IS the new crop)', async () => {
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1', brand: null, model: null,
+            crop_image_path: '/data/wardrobe/garments/src/crop_old.jpg',
+            source_image_path: '/data/wardrobe/garments/src/original.jpg',
+            meta: {}
+        });
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        jest.spyOn(fs, 'mkdirSync').mockImplementation(() => { });
+        jest.spyOn(fs, 'writeFileSync').mockImplementation(() => { });
+        jest.spyOn(fs, 'unlinkSync').mockImplementation(() => { });
         service._runAttributePass = jest.fn().mockResolvedValue(undefined);
 
         await service.reenrichGarment('g1', { extraImageBase64: 'PHOTODATA' });
 
         const opts = service._runAttributePass.mock.calls[0][1];
-        expect(opts.extraReferences[0].mimeType).toBe('image/jpeg');
+        // No extraReferences anymore — the new image now lives at crop_image_path
+        expect(opts.extraReferences).toBeUndefined();
     });
 
     test('_enrichBrand skips web search when user brand already set', async () => {
