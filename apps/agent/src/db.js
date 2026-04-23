@@ -375,6 +375,7 @@ class AgentDB {
         preferred_brands TEXT,
         sizing TEXT,
         style_notes TEXT,
+        style_preferences TEXT,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -578,6 +579,12 @@ class AgentDB {
     // render showing the source outfit + variations side-by-side)
     try {
       this.db.exec("ALTER TABLE wr_outfits ADD COLUMN variations_image_path TEXT");
+    } catch (err) { }
+
+    // Migration: Add style_preferences to wr_user_profile (JSON with fit,
+    // colors_loved, colors_avoided, formality_bias — feeds the proposer)
+    try {
+      this.db.exec("ALTER TABLE wr_user_profile ADD COLUMN style_preferences TEXT");
     } catch (err) { }
   }
 
@@ -3094,6 +3101,7 @@ class AgentDB {
         SET reference_image_path = NULL,
             sizing = '{}',
             style_notes = '',
+            style_preferences = '{}',
             preferred_brands = ?,
             updated_at = CURRENT_TIMESTAMP
         WHERE id = 1
@@ -3113,13 +3121,14 @@ class AgentDB {
     return {
       ...row,
       preferred_brands: safeParse(row.preferred_brands, []),
-      sizing: safeParse(row.sizing, {})
+      sizing: safeParse(row.sizing, {}),
+      style_preferences: safeParse(row.style_preferences, {})
     };
   }
 
   updateUserProfile(fields) {
-    const allowed = ['reference_image_path', 'preferred_brands', 'sizing', 'style_notes'];
-    const jsonCols = new Set(['preferred_brands', 'sizing']);
+    const allowed = ['reference_image_path', 'preferred_brands', 'sizing', 'style_notes', 'style_preferences'];
+    const jsonCols = new Set(['preferred_brands', 'sizing', 'style_preferences']);
     const sets = [];
     const values = [];
     for (const [k, v] of Object.entries(fields)) {

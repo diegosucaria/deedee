@@ -1105,6 +1105,18 @@ export async function generateOutfitVariations(id, count = 3) {
     }
 }
 
+export async function generateOutfitsForGarment(garmentId, count = 4) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/garments/${encodeURIComponent(garmentId)}/outfits`, {
+            method: 'POST',
+            body: JSON.stringify({ count })
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function generateShoppingReferenceImage(id) {
     try {
         const data = await fetchAPI(`/v1/wardrobe/shopping/${encodeURIComponent(id)}/reference-image`, {

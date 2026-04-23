@@ -1704,6 +1704,8 @@ Respond with strict JSON:
             ? liked.map(o => `  - ${o.name || 'unnamed'} (${(o.garment_ids || []).join(', ')}): ${o.occasion || ''}`).join('\n')
             : '  (none yet)';
 
+        const profileSummary = this._formatProfileForPrompt();
+
         if (!this.agent.client) {
             // Stub fallback: pick the first N garments as a single proposal per bucket
             const fallbackIds = pool.slice(0, Math.min(4, pool.length)).map(g => g.id);
@@ -1720,6 +1722,7 @@ Respond with strict JSON:
 Context: ${context || '(no additional context provided)'}
 ${trip?.destination ? `Trip: ${trip.destination} (${trip.start_date} → ${trip.end_date})` : ''}
 
+${profileSummary}
 Available garments:
 ${poolSummary}
 
@@ -2123,6 +2126,205 @@ Return STRICT JSON:
             if (out.length >= count) break;
         }
         return out;
+    }
+
+    /**
+     * Render the user's profile preferences as a compact block for the
+     * proposer prompt. Kept ≤10 lines so it doesn't crowd out the garment
+     * pool when the wardrobe is large. Returns '' if nothing is configured.
+     */
+    _formatProfileForPrompt() {
+        let profile;
+        try { profile = this.db.getUserProfile?.(); } catch { profile = null; }
+        if (!profile) return '';
+        const prefs = profile.style_preferences || {};
+        const sizing = profile.sizing || {};
+        const brands = Array.isArray(profile.preferred_brands) ? profile.preferred_brands : [];
+        const lines = [];
+        if (prefs.fit) lines.push(`  - preferred fit: ${prefs.fit}`);
+        if (prefs.formality_bias) lines.push(`  - formality bias: ${prefs.formality_bias}`);
+        if (Array.isArray(prefs.colors_loved) && prefs.colors_loved.length) {
+            lines.push(`  - loves these colors: ${prefs.colors_loved.join(', ')}`);
+        }
+        if (Array.isArray(prefs.colors_avoided) && prefs.colors_avoided.length) {
+            lines.push(`  - avoids these colors (do NOT feature as the dominant piece): ${prefs.colors_avoided.join(', ')}`);
+        }
+        if (brands.length) lines.push(`  - preferred brands: ${brands.join(', ')}`);
+        const sizeEntries = Object.entries(sizing).filter(([, v]) => v && String(v).trim() !== '');
+        if (sizeEntries.length) {
+            lines.push(`  - sizing: ${sizeEntries.map(([k, v]) => `${k} ${v}`).join(', ')}`);
+        }
+        if (profile.style_notes && String(profile.style_notes).trim()) {
+            lines.push(`  - free-form notes: ${String(profile.style_notes).trim()}`);
+        }
+        if (lines.length === 0) return '';
+        return `User style profile (use as soft guidance, not hard filter):\n${lines.join('\n')}\n`;
+    }
+
+    /**
+     * Generate N complete outfit proposals built around a specific pinned
+     * garment. Each saved outfit includes the pinned garment; other pieces
+     * come from the rest of the wardrobe. Used by the "Generate outfits with
+     * this" button on a garment.
+     */
+    async generateOutfitsForGarment(garmentId, { count = 4 } = {}) {
+        const TAG = '[wardrobe.outfitsForGarment]';
+        const pinned = this.db.getGarment(garmentId);
+        if (!pinned) throw new Error(`Garment ${garmentId} not found`);
+
+        const pool = this.db.getGarments({ limit: 500 }) || [];
+        const others = pool.filter(g => g.id !== garmentId);
+        if (others.length < 1) {
+            throw new Error('Need at least one other garment in the wardrobe to build outfits');
+        }
+
+        let proposals = [];
+        if (this.agent.client) {
+            try {
+                proposals = await this._proposeOutfitsForGarment(pinned, others, count);
+            } catch (e) {
+                console.warn(`${TAG} LLM proposer failed, falling back | err=${e.message}`);
+            }
+        }
+        if (proposals.length === 0) {
+            proposals = this._fallbackOutfitsForGarment(pinned, others, count);
+        }
+        // Guarantee the pinned garment sits first in each outfit so it's
+        // visually obvious which piece was anchored.
+        proposals = proposals
+            .slice(0, count)
+            .map(ids => {
+                const deduped = Array.from(new Set(ids));
+                const withoutPinned = deduped.filter(id => id !== pinned.id);
+                return [pinned.id, ...withoutPinned];
+            })
+            .filter(ids => ids.length >= 2);
+
+        if (proposals.length === 0) {
+            throw new Error('Could not build any outfits — not enough complementary pieces in the wardrobe');
+        }
+
+        const describe = (g) => [g.type, g.subtype, g.primary_color, g.brand].filter(Boolean).join(' ');
+        const pinnedLabel = describe(pinned) || 'item';
+        const datePart = new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        const saved = [];
+        proposals.forEach((ids, idx) => {
+            const id = this.db.addOutfit({
+                name: `${datePart} · with ${pinnedLabel} #${idx + 1}`,
+                occasion: null,
+                garment_ids: ids,
+                weather_tags: [],
+                liked: false
+            });
+            const outfit = this.db.getOutfit(id);
+            saved.push({ outfit, bucket: 'item_anchored', rationale: `Built around ${pinnedLabel}`, wants: [] });
+            if (this.agent.interface?.broadcast) {
+                this.agent.interface.broadcast('wardrobe:outfit:create', outfit);
+            }
+        });
+
+        console.log(`${TAG} created | garmentId=${garmentId} | count=${saved.length}`);
+        return { proposals: saved, notes: '' };
+    }
+
+    async _proposeOutfitsForGarment(pinned, others, count) {
+        const describe = (g) => [g.type, g.subtype, g.primary_color, g.brand].filter(Boolean).join(' ');
+        const profileSummary = this._formatProfileForPrompt();
+        const pinnedLine = `- ${pinned.id}: ${describe(pinned)}${pinned.formality ? ` [formality ${pinned.formality}/5]` : ''}`;
+        const poolSummary = others
+            .slice(0, 120)
+            .map(g => `- ${g.id}: ${describe(g)}${g.formality ? ` [formality ${g.formality}/5]` : ''}`)
+            .join('\n');
+
+        const prompt = `You are a personal stylist. Build ${count} distinct complete outfits, each anchored around a specific PINNED garment.
+
+${profileSummary}PINNED GARMENT (must appear in every outfit):
+${pinnedLine}
+
+OTHER WARDROBE ITEMS:
+${poolSummary}
+
+RULES:
+- Every outfit MUST include the pinned garment id (${pinned.id}).
+- Each outfit must be complete: top + bottom + shoes at minimum; outerwear optional.
+- Use ONLY ids listed above (pinned or other). Never invent ids.
+- Make the ${count} outfits meaningfully different (e.g. vary formality, weather, or color story).
+- Keep each outfit's formality self-consistent (±1 across pieces).
+
+Return STRICT JSON:
+{
+  "outfits": [
+    { "garment_ids": ["${pinned.id}", "otherId1", "otherId2", ...], "rationale": "short sentence citing specific pieces" }
+  ]
+}`;
+
+        const modelName = this.config.getModel('FLASH');
+        const response = await this.agent.client.models.generateContent({
+            model: modelName,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            config: { responseMimeType: 'application/json' }
+        });
+        try { this.config.logUsageFromResponse(this.db, modelName, response, null, 'wardrobe_outfits_for_garment'); } catch (e) { /* ignore */ }
+
+        const text = this._extractText(response);
+        if (!text) return [];
+        let data;
+        try {
+            data = JSON.parse(String(text).replace(/```json|```/g, '').trim());
+        } catch (e) {
+            console.warn(`[wardrobe.outfitsForGarment] JSON parse failed | snippet="${String(text).slice(0, 200).replace(/\s+/g, ' ')}"`);
+            return [];
+        }
+
+        const rawList = Array.isArray(data?.outfits) ? data.outfits : [];
+        const validIds = new Set([pinned.id, ...others.map(o => o.id)]);
+        const seen = new Set();
+        const out = [];
+        for (const item of rawList) {
+            const ids = Array.isArray(item?.garment_ids) ? item.garment_ids.filter(id => validIds.has(id)) : [];
+            if (!ids.includes(pinned.id)) continue;
+            if (ids.length < 2) continue;
+            const serialized = JSON.stringify([...ids].sort());
+            if (seen.has(serialized)) continue;
+            seen.add(serialized);
+            out.push(ids);
+            if (out.length >= count) break;
+        }
+        return out;
+    }
+
+    /**
+     * Deterministic fallback: pair the pinned garment with one piece per
+     * missing slot (top/bottom/shoes/outerwear) — vary one slot across
+     * outfits so they don't all look identical.
+     */
+    _fallbackOutfitsForGarment(pinned, others, count) {
+        const byType = (type) => others.filter(g => g.type === type);
+        const pinnedType = pinned.type;
+        const slots = ['top', 'bottom', 'shoes'].filter(t => t !== pinnedType);
+        const outfits = [];
+        const seen = new Set();
+
+        const base = {};
+        for (const slot of slots) {
+            const picks = byType(slot);
+            if (picks.length === 0) return [];
+            base[slot] = picks[0].id;
+        }
+
+        // Vary whichever non-pinned slot has the most alternatives.
+        const varySlot = slots
+            .map(s => ({ slot: s, alts: byType(s) }))
+            .sort((a, b) => b.alts.length - a.alts.length)[0];
+
+        for (const alt of varySlot.alts.slice(0, count)) {
+            const ids = [pinned.id, ...slots.map(s => s === varySlot.slot ? alt.id : base[s])];
+            const serialized = JSON.stringify([...ids].sort());
+            if (seen.has(serialized)) continue;
+            seen.add(serialized);
+            outfits.push(ids);
+        }
+        return outfits;
     }
 
     _fallbackOutfitVariations(sourceIds, pool, count) {
