@@ -207,26 +207,63 @@ describe('WardrobeService ingest + background refinement', () => {
         service._runAttributePass = jest.fn().mockResolvedValue(undefined);
     });
 
-    test('multi-item ingest creates one row per detection, each with its own crop', async () => {
+    // The ingest flow creates a refresh-safe placeholder row BEFORE running
+    // Gemini detection. Detection fills the placeholder in with the first
+    // matching detection and adds extra rows for any additional detections.
+    // These helpers let each test assert behavior against the combined effect
+    // of addGarment + updateGarment calls.
+    const collectPersistedGarments = () => {
+        const placeholderCalls = mockAgent.db.addGarment.mock.calls;
+        const updateCalls = mockAgent.db.updateGarment.mock.calls;
+        const results = [];
+        // Additional detections get their own addGarment call with full data.
+        for (let i = 1; i < placeholderCalls.length; i++) {
+            results.push(placeholderCalls[i][0]);
+        }
+        // The first detection rewrites the placeholder via updateGarment. The
+        // update we care about is the one that introduces detection-derived fields.
+        const enrichingUpdate = updateCalls.find(c => c[1]?.enrichment_status === 'enriching' && c[1]?.source === 'manual_upload');
+        if (enrichingUpdate) results.unshift(enrichingUpdate[1]);
+        return results;
+    };
+
+    test('opens a detecting placeholder before running detection (refresh-safe)', async () => {
+        service._detectItems = jest.fn().mockImplementation(async () => {
+            // By the time detection runs, the placeholder must already exist.
+            expect(mockAgent.db.addGarment).toHaveBeenCalledWith(expect.objectContaining({
+                enrichment_status: 'detecting'
+            }));
+            return [
+                { bbox: [0.05, 0.05, 0.45, 0.45], type: 'top', subtype: 'tshirt', primary_color: 'white', secondary_colors: [], season_tags: [], detection_confidence: 0.9 }
+            ];
+        });
+        mockAgent.db.addGarment.mockReturnValue('placeholder_id');
+
+        await service.ingestGarmentFromBase64('AAAA', 'image/jpeg');
+
+        // Placeholder broadcast uses wardrobe:garment:detected so the grid
+        // shows a skeleton card immediately.
+        const firstBroadcast = mockAgent.interface.broadcast.mock.calls[0];
+        expect(firstBroadcast[0]).toBe('wardrobe:garment:detected');
+    });
+
+    test('multi-item ingest produces one persisted row per detection', async () => {
         service._detectItems = jest.fn().mockResolvedValue([
             { bbox: [0.05, 0.05, 0.45, 0.45], type: 'top', subtype: 'tshirt', primary_color: 'white', secondary_colors: [], season_tags: [], detection_confidence: 0.9 },
             { bbox: [0.55, 0.05, 0.95, 0.45], type: 'bottom', subtype: 'chinos', primary_color: 'khaki', secondary_colors: [], season_tags: [], detection_confidence: 0.85 },
             { bbox: [0.3, 0.5, 0.7, 0.95], type: 'shoes', primary_color: 'white', secondary_colors: [], season_tags: [], detection_confidence: 0.88 }
         ]);
         mockAgent.db.addGarment
-            .mockReturnValueOnce('g1')
+            .mockReturnValueOnce('placeholder_id')
             .mockReturnValueOnce('g2')
             .mockReturnValueOnce('g3');
 
         const result = await service.ingestGarmentFromBase64('AAAA', 'image/jpeg');
 
         expect(service._cropToFile).toHaveBeenCalledTimes(3);
-        expect(mockAgent.db.addGarment).toHaveBeenCalledTimes(3);
-        expect(mockAgent.db.addGarment).toHaveBeenNthCalledWith(1, expect.objectContaining({
-            type: 'top', enrichment_status: 'enriching'
-        }));
-        const broadcastEvents = mockAgent.interface.broadcast.mock.calls.map(c => c[0]);
-        expect(broadcastEvents.filter(e => e === 'wardrobe:garment:detected')).toHaveLength(3);
+        const persisted = collectPersistedGarments();
+        expect(persisted).toHaveLength(3);
+        expect(persisted.map(p => p.type)).toEqual(['top', 'bottom', 'shoes']);
         expect(service._runAttributePass).toHaveBeenCalledTimes(3);
         expect(result.garments).toHaveLength(3);
         expect(result.matched_existing).toEqual([]);
@@ -236,16 +273,14 @@ describe('WardrobeService ingest + background refinement', () => {
         service._detectItems = jest.fn().mockResolvedValue([
             { bbox: [0, 0, 1, 1], type: null, secondary_colors: [], season_tags: [] }
         ]);
-        mockAgent.db.addGarment.mockReturnValueOnce('gfull');
+        mockAgent.db.addGarment.mockReturnValueOnce('placeholder_id');
 
         await service.ingestGarmentFromBase64('AAAA');
 
         expect(service._cropToFile).not.toHaveBeenCalled();
-        expect(mockAgent.db.addGarment).toHaveBeenCalledWith(expect.objectContaining({
-            source_image_path: expect.any(String)
-        }));
-        const addArgs = mockAgent.db.addGarment.mock.calls[0][0];
-        expect(addArgs.crop_image_path).toBe(addArgs.source_image_path);
+        // Placeholder is created with crop_image_path = source_image_path.
+        const placeholderArgs = mockAgent.db.addGarment.mock.calls[0][0];
+        expect(placeholderArgs.crop_image_path).toBe(placeholderArgs.source_image_path);
     });
 
     test('crop failure does not abort ingestion; row still created using source image', async () => {
@@ -253,13 +288,14 @@ describe('WardrobeService ingest + background refinement', () => {
             { bbox: [0.1, 0.1, 0.5, 0.5], type: 'top', secondary_colors: [], season_tags: [] }
         ]);
         service._cropToFile = jest.fn().mockRejectedValue(new Error('sharp error'));
-        mockAgent.db.addGarment.mockReturnValueOnce('gx');
+        mockAgent.db.addGarment.mockReturnValueOnce('placeholder_id');
 
         const result = await service.ingestGarmentFromBase64('AAAA');
 
-        expect(mockAgent.db.addGarment).toHaveBeenCalled();
-        const args = mockAgent.db.addGarment.mock.calls[0][0];
-        expect(args.crop_image_path).toBe(args.source_image_path);
+        // The detection-apply update falls back to source path when cropping fails.
+        const updateCalls = mockAgent.db.updateGarment.mock.calls;
+        const detectionUpdate = updateCalls.find(c => c[1]?.enrichment_status === 'enriching');
+        expect(detectionUpdate[1].crop_image_path).toBe(detectionUpdate[1].source_image_path);
         expect(result.garments).toHaveLength(1);
     });
 
@@ -272,60 +308,95 @@ describe('WardrobeService ingest + background refinement', () => {
             { bbox: [0.1, 0.1, 0.4, 0.4], type: 'top', primary_color: 'white', secondary_colors: [], season_tags: [] },
             { bbox: [0.5, 0.1, 0.9, 0.4], type: 'shoes', primary_color: 'black', secondary_colors: [], season_tags: [] }
         ]);
-        // Existing wardrobe shortlist
         mockAgent.db.getGarments.mockReturnValue([
             { id: 'existing_top', type: 'top', primary_color: 'white', crop_image_path: '/x/top.jpg' }
         ]);
-        // Match plan: index 0 → existing, index 1 → NEW
         service._matchDetectionsToWardrobe = jest.fn().mockResolvedValue([
             { match: 'existing_top' },
             { match: 'NEW' }
         ]);
-        mockAgent.db.addGarment.mockReturnValueOnce('new_shoes');
+        mockAgent.db.addGarment.mockReturnValueOnce('placeholder_id');
 
         const result = await service.ingestGarmentFromBase64('AAAA');
 
-        // Only the unmatched detection became a new row
+        // Placeholder becomes the 'shoes' detection; no additional addGarment calls.
         expect(mockAgent.db.addGarment).toHaveBeenCalledTimes(1);
-        expect(mockAgent.db.addGarment).toHaveBeenCalledWith(expect.objectContaining({ type: 'shoes' }));
+        const detectionUpdate = mockAgent.db.updateGarment.mock.calls
+            .find(c => c[1]?.enrichment_status === 'enriching');
+        expect(detectionUpdate[1].type).toBe('shoes');
         expect(result.garments).toHaveLength(1);
         expect(result.matched_existing).toEqual(['existing_top']);
     });
 
+    test('deletes placeholder when every detection matched an existing garment', async () => {
+        service._detectItems = jest.fn().mockResolvedValue([
+            { bbox: [0.1, 0.1, 0.4, 0.4], type: 'top', primary_color: 'white', secondary_colors: [], season_tags: [] }
+        ]);
+        mockAgent.db.getGarments.mockReturnValue([
+            { id: 'existing_top', type: 'top', primary_color: 'white', crop_image_path: '/x/top.jpg' }
+        ]);
+        service._matchDetectionsToWardrobe = jest.fn().mockResolvedValue([{ match: 'existing_top' }]);
+        mockAgent.db.addGarment.mockReturnValueOnce('placeholder_id');
+        mockAgent.db.deleteGarment = jest.fn().mockReturnValue(true);
+
+        const result = await service.ingestGarmentFromBase64('AAAA');
+
+        expect(mockAgent.db.deleteGarment).toHaveBeenCalledWith('placeholder_id');
+        expect(mockAgent.interface.broadcast).toHaveBeenCalledWith('wardrobe:garment:delete', { id: 'placeholder_id' });
+        expect(result.garments).toHaveLength(0);
+        expect(result.matched_existing).toEqual(['existing_top']);
+    });
+
     test('does NOT match the fallback placeholder against existing wardrobe', async () => {
-        // Detection failed for whatever reason → only the placeholder came back
         service._detectItems = jest.fn().mockResolvedValue([
             { ...WardrobeService.FALLBACK_DETECTION, secondary_colors: [], season_tags: [] }
         ]);
         mockAgent.db.getGarments.mockReturnValue([
             { id: 'existing_top', type: 'top', crop_image_path: '/x/top.jpg' }
         ]);
-        // If the matcher runs, it'd find spurious matches against the placeholder
         service._matchDetectionsToWardrobe = jest.fn();
-        mockAgent.db.addGarment.mockReturnValueOnce('placeholder_row');
+        mockAgent.db.addGarment.mockReturnValueOnce('placeholder_id');
 
         const result = await service.ingestGarmentFromBase64('AAAA');
 
         expect(service._matchDetectionsToWardrobe).not.toHaveBeenCalled();
         expect(result.matched_existing).toEqual([]);
-        // The placeholder still becomes one Unclassified row the user can manually fix
         expect(result.garments).toHaveLength(1);
     });
 
     test('_fallback sentinel does not leak into the persisted garment meta', async () => {
-        // Fallback detection from _detectItems (carries _fallback: true)
         service._detectItems = jest.fn().mockResolvedValue([
             { ...WardrobeService.FALLBACK_DETECTION, secondary_colors: [], season_tags: [] }
         ]);
-        mockAgent.db.addGarment.mockReturnValueOnce('placeholder_row');
+        mockAgent.db.addGarment.mockReturnValueOnce('placeholder_id');
 
         await service.ingestGarmentFromBase64('AAAA');
 
-        // Whatever lands in the DB (and gets broadcast to the frontend) must NOT
-        // carry the internal sentinel. It's a service-private routing flag.
-        const addArgs = mockAgent.db.addGarment.mock.calls[0][0];
-        expect(addArgs.meta).not.toHaveProperty('_fallback');
-        expect(addArgs.meta.detectionRaw).not.toHaveProperty('_fallback');
+        // The detection-apply update carries the persisted meta; the internal
+        // _fallback sentinel must be stripped before it ever touches the DB.
+        const detectionUpdate = mockAgent.db.updateGarment.mock.calls
+            .find(c => c[1]?.enrichment_status === 'enriching');
+        expect(detectionUpdate[1].meta).not.toHaveProperty('_fallback');
+        expect(detectionUpdate[1].meta.detectionRaw).not.toHaveProperty('_fallback');
+    });
+
+    test('detection failure leaves placeholder in complete state for manual editing', async () => {
+        service._detectItems = jest.fn().mockRejectedValue(new Error('model offline'));
+        mockAgent.db.addGarment.mockReturnValueOnce('placeholder_id');
+
+        await expect(service.ingestGarmentFromBase64('AAAA')).rejects.toThrow('model offline');
+
+        expect(mockAgent.db.updateGarment).toHaveBeenCalledWith('placeholder_id', { enrichment_status: 'complete' });
+    });
+
+    test('zero detections leaves placeholder for manual classification instead of abandoning upload', async () => {
+        service._detectItems = jest.fn().mockResolvedValue([]);
+        mockAgent.db.addGarment.mockReturnValueOnce('placeholder_id');
+
+        const result = await service.ingestGarmentFromBase64('AAAA');
+
+        expect(mockAgent.db.updateGarment).toHaveBeenCalledWith('placeholder_id', { enrichment_status: 'complete' });
+        expect(result.garments).toHaveLength(1);
     });
 });
 
@@ -1940,6 +2011,135 @@ describe('WardrobeService shopping list (P11)', () => {
         ]);
         const hit = service._matchNewGarmentToShoppingList({ type: 'bottom', primary_color: 'green' });
         expect(hit).toBeNull();
+    });
+});
+
+describe('WardrobeService._runAttributePass concurrency safety', () => {
+    let service;
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        service = new WardrobeService(mockAgent);
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        jest.spyOn(fs, 'readFileSync').mockReturnValue(Buffer.from('cropbytes'));
+    });
+
+    test('preserveFields prevents model output from overwriting inherited attrs', async () => {
+        const snapshot = {
+            id: 'g1',
+            type: 'bottom',
+            subtype: 'chinos',
+            brand: 'Lululemon',
+            model: 'ABC Trouser',
+            primary_color: null,
+            crop_image_path: '/data/crop.jpg',
+            enrichment_status: 'enriching',
+            meta: {}
+        };
+        mockAgent.db.getGarment.mockReturnValue(snapshot);
+        mockAgent.client.models.generateContent.mockResolvedValueOnce(mockAttrResponse({
+            type: 'top',           // model tries to change type
+            subtype: 'tshirt',     // model tries to change subtype
+            primary_color: 'black', // model re-detects color (this SHOULD apply)
+            pattern: 'solid',
+            material_guess: 'linen', // model tries to change material
+            warmth: 4,             // model tries to change warmth
+            confidence: 0.9
+        }));
+
+        await service._runAttributePass('g1', { preserveFields: ['type', 'subtype', 'material_guess', 'warmth'] });
+
+        const firstUpdate = mockAgent.db.updateGarment.mock.calls.find(c => c[0] === 'g1' && c[1].primary_color)[1];
+        expect(firstUpdate.primary_color).toBe('black');
+        expect(firstUpdate).not.toHaveProperty('type');
+        expect(firstUpdate).not.toHaveProperty('subtype');
+        expect(firstUpdate).not.toHaveProperty('material_guess');
+        expect(firstUpdate).not.toHaveProperty('warmth');
+    });
+
+    test('concurrent user edit during pass is detected and preserved', async () => {
+        const start = {
+            id: 'g1',
+            type: 'top',
+            subtype: 'tshirt',
+            primary_color: 'red',
+            crop_image_path: '/data/crop.jpg',
+            enrichment_status: 'enriching',
+            meta: {}
+        };
+        const afterUserEdit = { ...start, primary_color: 'hot pink' }; // user saved while pass was running
+        // First getGarment() call = snapshot at start; second = current state at patch time
+        mockAgent.db.getGarment
+            .mockReturnValueOnce(start)
+            .mockReturnValueOnce(afterUserEdit)
+            .mockReturnValue(afterUserEdit);
+        mockAgent.client.models.generateContent.mockResolvedValueOnce(mockAttrResponse({
+            type: 'top',
+            primary_color: 'red',  // model returns stale color
+            confidence: 0.8
+        }));
+
+        await service._runAttributePass('g1');
+
+        const attributePatch = mockAgent.db.updateGarment.mock.calls.find(c => c[0] === 'g1' && 'enrichment_confidence' in c[1])[1];
+        expect(attributePatch).not.toHaveProperty('primary_color');
+    });
+});
+
+describe('WardrobeService.duplicateGarment', () => {
+    let service;
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        service = new WardrobeService(mockAgent);
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        jest.spyOn(fs, 'mkdirSync').mockImplementation(() => { });
+        jest.spyOn(fs, 'writeFileSync').mockImplementation(() => { });
+        jest.spyOn(fs, 'readFileSync').mockReturnValue(Buffer.from('cropbytes'));
+        // duplicateGarment kicks off _runAttributePass in the background — stub out
+        // the model call so it resolves quickly and doesn't leak into later assertions.
+        mockAgent.client.models.generateContent.mockResolvedValue(mockAttrResponse({
+            primary_color: 'pink', pattern: 'graphic', confidence: 0.9
+        }));
+    });
+
+    test('throws when source garment is missing', async () => {
+        mockAgent.db.getGarment.mockReturnValue(null);
+        await expect(service.duplicateGarment('missing', 'AAAA', 'image/jpeg')).rejects.toThrow(/not found/);
+    });
+
+    test('throws on missing image data', async () => {
+        await expect(service.duplicateGarment('g1', null, 'image/jpeg')).rejects.toThrow(/image data/);
+    });
+
+    test('creates new garment inheriting brand/model/type and broadcasts detected', async () => {
+        const source = {
+            id: 'src1', type: 'top', subtype: 'tshirt',
+            brand: 'Lacoste', model: 'Club Lacoste Relaxed',
+            material_guess: 'cotton', warmth: 2, formality: 1,
+            size: 'M', season_tags: ['spring', 'summer'], fit_notes: null,
+            primary_color: 'black', secondary_colors: [], pattern: 'solid'
+        };
+        const created = { ...source, id: 'new1', primary_color: null, pattern: null, source: 'duplicated', enrichment_status: 'enriching' };
+        mockAgent.db.getGarment
+            .mockReturnValueOnce(source)       // lookup in duplicateGarment
+            .mockReturnValue(created);         // subsequent reads
+
+        const row = await service.duplicateGarment('src1', 'AAAA', 'image/jpeg');
+
+        const addCall = mockAgent.db.addGarment.mock.calls[0][0];
+        expect(addCall.type).toBe('top');
+        expect(addCall.subtype).toBe('tshirt');
+        expect(addCall.brand).toBe('Lacoste');
+        expect(addCall.model).toBe('Club Lacoste Relaxed');
+        expect(addCall.material_guess).toBe('cotton');
+        expect(addCall.warmth).toBe(2);
+        expect(addCall.source).toBe('duplicated');
+        expect(addCall.enrichment_status).toBe('enriching');
+        expect(addCall).not.toHaveProperty('primary_color');
+        expect(addCall).not.toHaveProperty('pattern');
+        expect(mockAgent.interface.broadcast).toHaveBeenCalledWith('wardrobe:garment:detected', expect.any(Object));
+        expect(row).toBe(created);
     });
 });
 

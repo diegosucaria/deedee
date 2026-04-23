@@ -1058,6 +1058,61 @@ export async function mergeGarments(primaryId, duplicateIds) {
     }
 }
 
+export async function duplicateGarment(sourceId, base64Data, mimeType) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/garments/${encodeURIComponent(sourceId)}/duplicate`, {
+            method: 'POST',
+            body: JSON.stringify({ image: base64Data, mimeType })
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function deleteOutfit(id) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/outfits/${encodeURIComponent(id)}`, {
+            method: 'DELETE'
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function updateOutfit(id, fields) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/outfits/${encodeURIComponent(id)}`, {
+            method: 'PUT',
+            body: JSON.stringify(fields)
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function generateShoppingReferenceImage(id) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/shopping/${encodeURIComponent(id)}/reference-image`, {
+            method: 'POST'
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+export async function getOutfit(id) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/outfits/${encodeURIComponent(id)}`);
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function getWardrobeProfile() {
     try {
         const data = await fetchAPI('/v1/wardrobe/profile', { method: 'GET' });

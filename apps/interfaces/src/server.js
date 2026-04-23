@@ -585,7 +585,7 @@ app.post('/slack/monitored-channels', (req, res) => {
 // Endpoint for Agent to send messages out
 app.post('/send', async (req, res) => {
   try {
-    const { source, content, metadata, type } = req.body;
+    const { source, content, metadata, type, caption } = req.body;
     console.log(`[Interfaces] /send called. Source: ${source}, Type: ${type}, Meta:`, JSON.stringify(metadata));
 
     // WEB / SOCKET
@@ -665,7 +665,7 @@ app.post('/send', async (req, res) => {
         throw new Error('Missing chatId in metadata for WhatsApp message');
       }
 
-      const options = { type: type || 'text' };
+      const options = { type: type || 'text', caption: caption || null };
       await finalService.sendMessage(metadata.chatId, content, options);
 
       return res.json({ success: true });

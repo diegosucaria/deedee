@@ -351,7 +351,8 @@ const toolDefinitions = [
           type: "OBJECT",
           properties: {
             to: { type: "STRING", description: "The recipient's phone number or ID. For WhatsApp, just the number (e.g. 15550001234)." },
-            content: { type: "STRING", description: "The message content. If type is 'image' or 'audio', this must be a base64 encoded string." },
+            content: { type: "STRING", description: "The message content. For 'text': the text to send. For 'image' or 'audio' with imagePath: a caption (optional). For 'image'/'audio' without imagePath: a base64-encoded payload." },
+            imagePath: { type: "STRING", description: "Optional. Absolute local file path to an image on disk (e.g. '/app/data/wardrobe/outfits/<id>/render.jpg'). When provided with type='image', the server reads the file and attaches it — avoids piping base64 through tool output. 'content' becomes the caption." },
             service: { type: "STRING", description: "Optional. Service to use. Default: 'whatsapp'." },
             session: { type: "STRING", description: "Optional. The identity/session to send FROM. Values: 'assistant' (default), 'user' (impersonation)." },
             type: { type: "STRING", description: "Optional. The type of message. Values: 'text' (default), 'image', 'audio'." },

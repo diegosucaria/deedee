@@ -36,11 +36,15 @@ router.post('/garments/:id/confirm-brand', (req, res) => proxyRequest(req, res, 
 router.post('/garments/:id/merge', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/garments/${encodeURIComponent(req.params.id)}/merge`));
 router.post('/garments/:id/reenrich', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/garments/${encodeURIComponent(req.params.id)}/reenrich`, { largeBody: true }));
 router.post('/garments/:id/generate-image', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/garments/${encodeURIComponent(req.params.id)}/generate-image`, { largeBody: true }));
+router.post('/garments/:id/duplicate', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/garments/${encodeURIComponent(req.params.id)}/duplicate`, { largeBody: true }));
 
 // Outfits
 router.get('/outfits', (req, res) => proxyRequest(req, res, 'GET', '/internal/wardrobe/outfits'));
 router.post('/outfits/recommend', (req, res) => proxyRequest(req, res, 'POST', '/internal/wardrobe/outfits/recommend'));
+router.get('/outfits/:id', (req, res) => proxyRequest(req, res, 'GET', `/internal/wardrobe/outfits/${encodeURIComponent(req.params.id)}`));
 router.post('/outfits/:id/like', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/outfits/${encodeURIComponent(req.params.id)}/like`));
+router.delete('/outfits/:id', (req, res) => proxyRequest(req, res, 'DELETE', `/internal/wardrobe/outfits/${encodeURIComponent(req.params.id)}`));
+router.put('/outfits/:id', (req, res) => proxyRequest(req, res, 'PUT', `/internal/wardrobe/outfits/${encodeURIComponent(req.params.id)}`));
 router.post('/outfits/visualize', (req, res) => proxyRequest(req, res, 'POST', '/internal/wardrobe/outfits/visualize', { largeBody: true }));
 router.post('/outfits/critique', (req, res) => proxyRequest(req, res, 'POST', '/internal/wardrobe/outfits/critique', { largeBody: true }));
 
@@ -59,6 +63,7 @@ router.get('/shopping', (req, res) => proxyRequest(req, res, 'GET', '/internal/w
 router.post('/shopping', (req, res) => proxyRequest(req, res, 'POST', '/internal/wardrobe/shopping'));
 router.post('/shopping/:id/purchased', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/shopping/${encodeURIComponent(req.params.id)}/purchased`));
 router.post('/shopping/:id/dismiss', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/shopping/${encodeURIComponent(req.params.id)}/dismiss`));
+router.post('/shopping/:id/reference-image', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/shopping/${encodeURIComponent(req.params.id)}/reference-image`));
 
 // Profile
 router.get('/profile', (req, res) => proxyRequest(req, res, 'GET', '/internal/wardrobe/profile'));

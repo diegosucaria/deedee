@@ -369,7 +369,7 @@ Respond with JSON only.`;
      *   re-enrich, where stale wrong data should be corrected). When false (the
      *   default for ingest), they only fill empty fields.
      */
-    async _runAttributePass(garmentId, { hint = null, extraReferences = [], overwriteExisting = false } = {}) {
+    async _runAttributePass(garmentId, { hint = null, extraReferences = [], overwriteExisting = false, preserveFields = [] } = {}) {
         const TAG = '[wardrobe.attr]';
         const garment = this.db.getGarment(garmentId);
         if (!garment) {
@@ -500,6 +500,24 @@ Trust this hint as ground truth. Parse brand and model out of it (e.g. "ABC Warp
                 distinguishingFeatures: data.distinguishing_features || garment.meta?.distinguishingFeatures || null,
                 attributePassRaw: data
             };
+
+            // Respect explicit preserveFields (caller says "don't touch these"), and
+            // any field the user edited in the DB while this pass was running. This
+            // prevents the attribute pass from silently overwriting hand-curated data.
+            const current = this.db.getGarment(garmentId) || garment;
+            const protectedFields = new Set(preserveFields);
+            for (const key of ['type', 'subtype', 'primary_color', 'secondary_colors', 'pattern', 'material_guess', 'warmth', 'formality', 'season_tags', 'brand', 'model']) {
+                const before = garment[key];
+                const after = current[key];
+                const changed = JSON.stringify(before ?? null) !== JSON.stringify(after ?? null);
+                if (changed) protectedFields.add(key);
+            }
+            for (const key of protectedFields) {
+                if (key in patch) delete patch[key];
+            }
+            if (protectedFields.size > 0) {
+                console.log(`${TAG} skipped fields (user-edited or explicitly preserved) | garmentId=${garmentId} | fields=${[...protectedFields].join(',')}`);
+            }
 
             // Keep status='enriching' while brand pass runs; _enrichBrand finalizes.
             patch.enrichment_status = 'enriching';
@@ -1057,6 +1075,13 @@ Hard rules:
 
         console.log(`${TAG} start | garmentId=${garmentId} | descriptor="${descriptor}" | extraRefs=${extras.length} | hasExisting=${!!garment.generated_image_path}`);
 
+        // Mark the garment as generating so every connected client can show a
+        // spinner on the grid card. Cleared in the finally-block below.
+        this.db.updateGarment(garmentId, {
+            meta: { ...(garment.meta || {}), generatingImage: true, generatingImageStartedAt: Date.now() }
+        });
+        this._broadcast('wardrobe:garment:update', this.db.getGarment(garmentId));
+
         const referenceClause = extras.length === 0
             ? 'Use the single reference image to render the item.'
             : `Use ALL ${extras.length + 1} reference images — they show the same physical garment from different angles or with different details. Preserve every visible feature across all of them (logos, stitching, hardware, prints) in the final render. Do not invent or omit details based on a single image when other references contradict.`;
@@ -1094,50 +1119,72 @@ GENERAL RULES:
 
         const modelName = this.config.getModel('IMAGE');
         const startedAt = Date.now();
-        let response;
         try {
-            response = await this.agent.client.models.generateContent({
-                model: modelName,
-                contents: [{ role: 'user', parts }],
-                config: { responseModalities: ['TEXT', 'IMAGE'] }
-            });
-        } catch (apiErr) {
+            let response;
+            try {
+                response = await this.agent.client.models.generateContent({
+                    model: modelName,
+                    contents: [{ role: 'user', parts }],
+                    config: { responseModalities: ['TEXT', 'IMAGE'] }
+                });
+            } catch (apiErr) {
+                const elapsedMs = Date.now() - startedAt;
+                console.error(`${TAG} API call threw | garmentId=${garmentId} | model=${modelName} | elapsedMs=${elapsedMs} | err=${apiErr.message}`);
+                throw apiErr;
+            }
             const elapsedMs = Date.now() - startedAt;
-            console.error(`${TAG} API call threw | garmentId=${garmentId} | model=${modelName} | elapsedMs=${elapsedMs} | err=${apiErr.message}`);
-            throw apiErr;
+            try { this.config.logUsageFromResponse(this.db, modelName, response, null, 'wardrobe_generate_garment'); } catch (e) { /* ignore */ }
+
+            const respParts = response?.candidates?.[0]?.content?.parts || [];
+            const imagePart = respParts.find(p => p?.inlineData?.mimeType?.startsWith?.('image/'));
+            if (!imagePart) {
+                const finishReason = response?.candidates?.[0]?.finishReason || 'unknown';
+                const textParts = respParts.filter(p => p?.text).map(p => p.text).join(' ').slice(0, 200);
+                console.error(`${TAG} no image in response | garmentId=${garmentId} | model=${modelName} | elapsedMs=${elapsedMs} | finishReason=${finishReason}${textParts ? ` | text="${textParts}"` : ''}`);
+                throw new Error('No image returned from image model');
+            }
+
+            // Write to a unique filename per regeneration so the browser can't serve a
+            // stale cached copy — image route uses Cache-Control: immutable. Delete the
+            // previous generated file (if any) so we don't leave cruft on disk.
+            const previousPath = garment.generated_image_path;
+            const outDir = path.dirname(cropPath);
+            const ts = Date.now();
+            const outPath = path.join(outDir, `generated_${garmentId}_${ts}.jpg`);
+            const bytes = Buffer.from(imagePart.inlineData.data, 'base64');
+            fs.writeFileSync(outPath, bytes);
+
+            if (previousPath && previousPath !== outPath && fs.existsSync(previousPath)) {
+                try { fs.unlinkSync(previousPath); } catch (e) { /* ignore — cosmetic cleanup */ }
+            }
+
+            // Clear the generatingImage flag alongside the new path in one write so the
+            // client sees a consistent "done" state.
+            const currentMeta = this.db.getGarment(garmentId)?.meta || {};
+            const clearedMeta = { ...currentMeta };
+            delete clearedMeta.generatingImage;
+            delete clearedMeta.generatingImageStartedAt;
+            this.db.updateGarment(garmentId, { generated_image_path: outPath, meta: clearedMeta });
+            const updated = this.db.getGarment(garmentId);
+            this._broadcast('wardrobe:garment:update', updated);
+
+            console.log(`${TAG} done | garmentId=${garmentId} | model=${modelName} | elapsedMs=${elapsedMs} | bytes=${bytes.length} | path=${outPath}${previousPath ? ` (replaced ${path.basename(previousPath)})` : ''}`);
+            return updated;
+        } catch (err) {
+            // Always clear the generating flag — otherwise a crashed/abandoned
+            // generation leaves the grid spinning forever.
+            try {
+                const currentMeta = this.db.getGarment(garmentId)?.meta || {};
+                const clearedMeta = { ...currentMeta };
+                delete clearedMeta.generatingImage;
+                delete clearedMeta.generatingImageStartedAt;
+                this.db.updateGarment(garmentId, { meta: clearedMeta });
+                this._broadcast('wardrobe:garment:update', this.db.getGarment(garmentId));
+            } catch (cleanupErr) {
+                console.warn(`${TAG} cleanup failed after error | garmentId=${garmentId} | err=${cleanupErr.message}`);
+            }
+            throw err;
         }
-        const elapsedMs = Date.now() - startedAt;
-        try { this.config.logUsageFromResponse(this.db, modelName, response, null, 'wardrobe_generate_garment'); } catch (e) { /* ignore */ }
-
-        const respParts = response?.candidates?.[0]?.content?.parts || [];
-        const imagePart = respParts.find(p => p?.inlineData?.mimeType?.startsWith?.('image/'));
-        if (!imagePart) {
-            const finishReason = response?.candidates?.[0]?.finishReason || 'unknown';
-            const textParts = respParts.filter(p => p?.text).map(p => p.text).join(' ').slice(0, 200);
-            console.error(`${TAG} no image in response | garmentId=${garmentId} | model=${modelName} | elapsedMs=${elapsedMs} | finishReason=${finishReason}${textParts ? ` | text="${textParts}"` : ''}`);
-            throw new Error('No image returned from image model');
-        }
-
-        // Write to a unique filename per regeneration so the browser can't serve a
-        // stale cached copy — image route uses Cache-Control: immutable. Delete the
-        // previous generated file (if any) so we don't leave cruft on disk.
-        const previousPath = garment.generated_image_path;
-        const outDir = path.dirname(cropPath);
-        const ts = Date.now();
-        const outPath = path.join(outDir, `generated_${garmentId}_${ts}.jpg`);
-        const bytes = Buffer.from(imagePart.inlineData.data, 'base64');
-        fs.writeFileSync(outPath, bytes);
-
-        if (previousPath && previousPath !== outPath && fs.existsSync(previousPath)) {
-            try { fs.unlinkSync(previousPath); } catch (e) { /* ignore — cosmetic cleanup */ }
-        }
-
-        this.db.updateGarment(garmentId, { generated_image_path: outPath });
-        const updated = this.db.getGarment(garmentId);
-        this._broadcast('wardrobe:garment:update', updated);
-
-        console.log(`${TAG} done | garmentId=${garmentId} | model=${modelName} | elapsedMs=${elapsedMs} | bytes=${bytes.length} | path=${outPath}${previousPath ? ` (replaced ${path.basename(previousPath)})` : ''}`);
-        return updated;
     }
 
     /**
@@ -1151,10 +1198,45 @@ GENERAL RULES:
 
         console.log(`${TAG} start | mimeType=${mimeType} | imageBytes≈${Math.floor(base64Data.length * 0.75)}`);
 
-        const detections = await this._detectItems(base64Data, mimeType);
+        // Write the source image + create a "detecting" placeholder row BEFORE
+        // the slow Gemini detection call. A page refresh during detection will
+        // now see a skeleton card for the upload in progress instead of losing
+        // track of it entirely.
+        const ext = mimeType.includes('png') ? 'png' : 'jpg';
+        const sourceId = crypto.randomUUID();
+        const sourceDir = path.join(this._baseDir(), 'garments', sourceId);
+        if (!fs.existsSync(sourceDir)) fs.mkdirSync(sourceDir, { recursive: true });
+        const sourcePath = path.join(sourceDir, `original.${ext}`);
+        fs.writeFileSync(sourcePath, Buffer.from(base64Data, 'base64'));
+        console.log(`${TAG} wrote source image | sourceId=${sourceId} | path=${sourcePath}`);
+
+        const placeholderId = this.db.addGarment({
+            source_image_path: sourcePath,
+            crop_image_path: sourcePath,
+            source: 'manual_upload',
+            enrichment_status: 'detecting',
+            enrichment_confidence: 0,
+            meta: {}
+        });
+        this._broadcast('wardrobe:garment:detected', this.db.getGarment(placeholderId));
+
+        let detections;
+        try {
+            detections = await this._detectItems(base64Data, mimeType);
+        } catch (detectErr) {
+            // Detection failed entirely — leave a complete (empty) row the user
+            // can classify by hand rather than abandoning the upload.
+            this.db.updateGarment(placeholderId, { enrichment_status: 'complete' });
+            this._broadcast('wardrobe:garment:update', this.db.getGarment(placeholderId));
+            throw detectErr;
+        }
+
         if (!detections || detections.length === 0) {
-            console.warn(`${TAG} no detections returned — nothing to save`);
-            return { garments: [], matched_existing: [] };
+            console.warn(`${TAG} no detections returned — keeping placeholder for manual classification`);
+            this.db.updateGarment(placeholderId, { enrichment_status: 'complete' });
+            const row = this.db.getGarment(placeholderId);
+            this._broadcast('wardrobe:garment:update', row);
+            return { garments: [row], matched_existing: [] };
         }
 
         // Match against existing wardrobe to avoid duplicates when the user
@@ -1167,7 +1249,8 @@ GENERAL RULES:
         // detection against the wardrobe just produces spurious matches.
         const allFallback = detections.every(d => this._isFallbackDetection(d));
         const CAPS_SHORTLIST = 25;
-        const shortlist = this.db.getGarments({ limit: CAPS_SHORTLIST }) || [];
+        // Exclude our own placeholder from the matcher — it's not a real item.
+        const shortlist = (this.db.getGarments({ limit: CAPS_SHORTLIST }) || []).filter(g => g.id !== placeholderId);
         let matchPlan = null;
         if (!allFallback && this.agent.client && shortlist.length > 0) {
             matchPlan = await this._matchDetectionsToWardrobe(base64Data, mimeType, detections, shortlist);
@@ -1175,23 +1258,11 @@ GENERAL RULES:
             console.log(`${TAG} skipping wardrobe match — detection fell back to placeholder (no real items to match)`);
         }
 
-        const ext = mimeType.includes('png') ? 'png' : 'jpg';
-        const sourceId = crypto.randomUUID();
-        const sourceDir = path.join(this._baseDir(), 'garments', sourceId);
-        if (!fs.existsSync(sourceDir)) fs.mkdirSync(sourceDir, { recursive: true });
-        const sourcePath = path.join(sourceDir, `original.${ext}`);
-        let sourceWritten = false;
-        const writeSourceOnce = () => {
-            if (sourceWritten) return;
-            fs.writeFileSync(sourcePath, Buffer.from(base64Data, 'base64'));
-            sourceWritten = true;
-            console.log(`${TAG} wrote source image | sourceId=${sourceId} | path=${sourcePath}`);
-        };
-
         const created = [];
         const matched_existing = [];
         let cropped = 0;
         let fullFrameCount = 0;
+        let placeholderUsed = false;
         for (let i = 0; i < detections.length; i++) {
             const det = detections[i];
 
@@ -1206,7 +1277,6 @@ GENERAL RULES:
             }
 
             const fullFrame = det.bbox[0] < 0.02 && det.bbox[1] < 0.02 && det.bbox[2] > 0.98 && det.bbox[3] > 0.98;
-            writeSourceOnce();
             let cropPath = sourcePath;
             if (fullFrame) {
                 fullFrameCount++;
@@ -1243,9 +1313,20 @@ GENERAL RULES:
                 }
             };
 
-            const id = this.db.addGarment(garment);
+            // Reuse the placeholder for the first new detection so the refresh-
+            // safe card created up-front transitions smoothly into the real row.
+            // Additional detections get their own rows.
+            let id;
+            if (!placeholderUsed) {
+                this.db.updateGarment(placeholderId, garment);
+                id = placeholderId;
+                placeholderUsed = true;
+                this._broadcast('wardrobe:garment:update', this.db.getGarment(id));
+            } else {
+                id = this.db.addGarment(garment);
+                this._broadcast('wardrobe:garment:detected', this.db.getGarment(id));
+            }
             const row = this.db.getGarment(id);
-            this._broadcast('wardrobe:garment:detected', row);
             created.push(row);
 
             // Fire-and-forget attribute pass
@@ -1253,8 +1334,91 @@ GENERAL RULES:
                 console.error(`[wardrobe.attr] background pass crashed | garmentId=${id} | err=${err.message}`);
             });
         }
+
+        // Every detection matched an existing garment — drop the placeholder so
+        // the grid doesn't keep a ghost "complete/empty" row.
+        if (!placeholderUsed) {
+            this.db.deleteGarment(placeholderId);
+            this._broadcast('wardrobe:garment:delete', { id: placeholderId });
+        }
+
         console.log(`${TAG} done | created=${created.length} | matched_existing=${matched_existing.length} | cropped=${cropped} | fullFrame=${fullFrameCount}${fullFrameCount > 0 ? ' (= detection failed to localize, see [wardrobe.detect] logs above)' : ''}`);
         return { garments: created, matched_existing };
+    }
+
+    /**
+     * "Add another like this." Given a source garment and a new photo (typically
+     * a folded-shirt flat-lay of the same product in a different color), create
+     * a new garment inheriting identity/size/material attributes from the source
+     * and re-detecting color/pattern from the new image in the background.
+     *
+     * We deliberately skip the usual multi-item detection pipeline — the photo
+     * already depicts a single known garment, so cropping or matching against
+     * existing wardrobe items would just add noise.
+     */
+    async duplicateGarment(sourceId, base64Data, mimeType = 'image/jpeg') {
+        const TAG = '[wardrobe.duplicate]';
+        if (!sourceId) throw new Error('Missing source garment id');
+        if (!base64Data) throw new Error('Missing image data');
+
+        const source = this.db.getGarment(sourceId);
+        if (!source) throw new Error(`Source garment "${sourceId}" not found`);
+
+        const ext = mimeType.includes('png') ? 'png' : 'jpg';
+        const newId = crypto.randomUUID();
+        const garmentDir = path.join(this._baseDir(), 'garments', newId);
+        if (!fs.existsSync(garmentDir)) fs.mkdirSync(garmentDir, { recursive: true });
+        const imagePath = path.join(garmentDir, `original.${ext}`);
+        fs.writeFileSync(imagePath, Buffer.from(base64Data, 'base64'));
+        console.log(`${TAG} wrote image | sourceId=${sourceId} | newId=${newId} | path=${imagePath}`);
+
+        const garment = {
+            id: newId,
+            type: source.type || null,
+            subtype: source.subtype || null,
+            brand: source.brand || null,
+            model: source.model || null,
+            material_guess: source.material_guess || null,
+            warmth: source.warmth || null,
+            formality: source.formality || null,
+            size: source.size || null,
+            season_tags: Array.isArray(source.season_tags) ? source.season_tags : [],
+            fit_notes: source.fit_notes || null,
+            source_image_path: imagePath,
+            crop_image_path: imagePath,
+            source: 'duplicated',
+            enrichment_status: 'enriching',
+            enrichment_confidence: 0,
+            meta: { duplicatedFrom: sourceId }
+        };
+
+        this.db.addGarment(garment);
+        const row = this.db.getGarment(newId);
+        this._broadcast('wardrobe:garment:detected', row);
+
+        // Background attribute pass. The hint tells the model brand/model/type
+        // are ground truth — it should spend its effort on color/pattern here.
+        const hintParts = [];
+        if (source.brand) hintParts.push(source.brand);
+        if (source.model) hintParts.push(source.model);
+        const typeBit = source.subtype ? `${source.type || 'item'} / ${source.subtype}` : (source.type || '');
+        if (typeBit) hintParts.push(`(${typeBit})`);
+        const hint = hintParts.length > 0
+            ? `${hintParts.join(' ')} — same product as an existing wardrobe item in a different color. Brand, model, type, and material are already known; focus the analysis on detecting primary_color, secondary_colors, and pattern from this photo.`
+            : null;
+
+        // Inherited fields are ground truth; the attribute pass should only fill in
+        // the re-detected color/pattern/secondary_colors. preserveFields makes this
+        // contract enforceable instead of relying on the model to follow the hint.
+        const preserveFields = [
+            'type', 'subtype', 'brand', 'model', 'material_guess',
+            'warmth', 'formality', 'season_tags'
+        ];
+        this._runAttributePass(newId, { hint, overwriteExisting: false, preserveFields }).catch(err => {
+            console.error(`${TAG} attribute pass crashed | newId=${newId} | err=${err.message}`);
+        });
+
+        return row;
     }
 
     /**
@@ -1713,11 +1877,15 @@ Do not propose items outside the pool. Respond with strict JSON:
             ? (N === 1 ? 'single' : N <= 3 ? 'horizontal' : 'grid')
             : layout;
 
+        // Fitting-room backdrop gives the render a "I'm actually trying this on"
+        // feel vs. the old studio-neutral look, which the user felt was flat.
+        const FITTING_ROOM_BACKDROP = `Fitting-room setting: warm boutique lighting, a full-length mirror visible in the background, a light natural wood floor, subtle fabric or curtain detail on one side. Clean but textured — not a sterile studio.`;
+
         let prompt;
         if (N === 1) {
             prompt = `Generate a realistic mirror photo of the person shown in the reference image, wearing exactly the clothing items pictured in the subsequent reference crops.
 - Full-body standing mirror-selfie framing
-- Clean neutral setting, soft natural lighting
+- ${FITTING_ROOM_BACKDROP}
 - Preserve the person's face, build, and proportions faithfully
 - Garments must match color, pattern, fit, and visible detailing of the crops
 - No text overlays, no watermarks
@@ -1726,7 +1894,8 @@ Outfit: ${panelDescriptors[0].garments.join(', ')}`;
             prompt = `Generate a single wide photo containing ${N} vertical mirror panels side-by-side.
 Each panel shows the reference person in a different outfit, numbered left to right.
 ${panelDescriptors.map(d => `  Panel ${d.index}: ${d.garments.join(', ')}`).join('\n')}
-- Consistent lighting, background, and pose across panels
+- ${FITTING_ROOM_BACKDROP}
+- Consistent lighting, pose, and mirror framing across panels
 - Label the bottom of each panel with its number
 - Preserve face, build, and proportions faithfully across all panels
 - Thin gap between panels, uniform framing
@@ -1767,13 +1936,82 @@ ${panelDescriptors.map(d => `  Panel ${d.index}: ${d.garments.join(', ')}`).join
         const outDir = path.join(this._baseDir(), 'outfits', targetOutfitId);
         if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
         const renderPath = path.join(outDir, 'render.jpg');
-        fs.writeFileSync(renderPath, Buffer.from(imagePart.inlineData.data, 'base64'));
+        const renderBuffer = Buffer.from(imagePart.inlineData.data, 'base64');
+
+        // Post-process: overlay a caption listing the garments so the image is
+        // self-describing (useful when shared on WhatsApp where the caption isn't
+        // attached to the photo in a forward). Caption text is drawn
+        // programmatically rather than asked of the image model — the model tends
+        // to garble or stylize text instead of rendering it cleanly.
+        const captionLines = N === 1
+            ? this._captionFromPanel(panelDescriptors[0])
+            : panelDescriptors.map(d => `${d.index}. ${d.garments.slice(0, 3).join(', ')}`);
+        try {
+            const captioned = await this._addCaptionToImage(renderBuffer, captionLines);
+            fs.writeFileSync(renderPath, captioned);
+        } catch (captionErr) {
+            console.warn(`[wardrobe.visualize] caption overlay failed, falling back to raw render | err=${captionErr.message}`);
+            fs.writeFileSync(renderPath, renderBuffer);
+        }
 
         this.db.updateOutfit(targetOutfitId, { rendered_image_path: renderPath });
         const outfit = this.db.getOutfit(targetOutfitId);
         this._broadcast('wardrobe:outfit:rendered', outfit);
 
         return { outfit, panels: N, layout: resolvedLayout };
+    }
+
+    /**
+     * Produce a short caption describing the garments in a single-outfit panel.
+     * Returns an array of ≤2 lines so the overlay stays compact.
+     */
+    _captionFromPanel(panel) {
+        const garments = panel.garments || [];
+        const joined = garments.join(' · ');
+        if (joined.length <= 60) return [joined];
+        // Split across two lines on a separator boundary.
+        const half = Math.ceil(garments.length / 2);
+        const line1 = garments.slice(0, half).join(' · ');
+        const line2 = garments.slice(half).join(' · ');
+        return [line1, line2];
+    }
+
+    /**
+     * Overlay a dark translucent strip + white caption text on the bottom of
+     * an image buffer. Uses Jimp (already a wardrobe dep for cropping).
+     */
+    async _addCaptionToImage(imageBuffer, lines) {
+        // Skip overlay for obviously-non-image buffers (e.g. test stubs). Jimp's
+        // font/image loaders don't throw here — they trip a V8 assertion when the
+        // mock module graph in Jest holds a non-string argument, crashing the
+        // whole process. Guarding on size keeps the prod path untouched.
+        if (!Buffer.isBuffer(imageBuffer) || imageBuffer.length < 1024) {
+            throw new Error('caption overlay skipped — buffer too small to be a real image');
+        }
+        const Jimp = require('jimp');
+        const image = await Jimp.read(imageBuffer);
+        const W = image.bitmap.width;
+        const H = image.bitmap.height;
+        const font = await Jimp.loadFont(Jimp.FONT_SANS_16_WHITE);
+        const padding = 14;
+        const lineHeight = 22;
+        const effectiveLines = lines.slice(0, 3);
+        const stripHeight = padding * 2 + lineHeight * effectiveLines.length;
+        const stripY = H - stripHeight;
+        // Semi-transparent dark strip: 70% black.
+        const strip = new Jimp(W, stripHeight, 0x000000B2);
+        image.composite(strip, 0, stripY);
+        for (let i = 0; i < effectiveLines.length; i++) {
+            image.print(
+                font,
+                padding,
+                stripY + padding + i * lineHeight,
+                { text: effectiveLines[i], alignmentX: Jimp.HORIZONTAL_ALIGN_LEFT, alignmentY: Jimp.VERTICAL_ALIGN_TOP },
+                W - padding * 2,
+                lineHeight
+            );
+        }
+        return image.quality(90).getBufferAsync(Jimp.MIME_JPEG);
     }
 
     /**
@@ -2135,12 +2373,99 @@ Rules: only use ids from the wardrobe list above. No external items.`;
         return updated;
     }
 
+    /**
+     * Generate a reference photo for a wanted shopping item using the stored
+     * description + type + color + pattern. Handy when the user is about to go
+     * buy the item and wants a visual they can show or match against in-store.
+     */
+    async generateShoppingReferenceImage(shoppingId) {
+        const TAG = '[wardrobe.shopref]';
+        const item = this.db.getShoppingItem(shoppingId);
+        if (!item) throw new Error(`Shopping item ${shoppingId} not found`);
+        if (!this.agent.client) throw new Error('Gemini client not initialized');
+
+        const descriptorBits = [
+            item.primary_color,
+            item.pattern && item.pattern !== 'solid' ? item.pattern : null,
+            item.material_hint,
+            item.type,
+            item.description
+        ].filter(Boolean);
+        const descriptor = descriptorBits.join(' ');
+
+        const prompt = `Generate a clean product-catalog photo of: ${descriptor}.
+
+COMPOSITION:
+- Plain off-white background (#F4F2EE), no gradient, no shadows beyond a soft contact shadow
+- Square 1:1 aspect ratio, item fills 70-85% of the frame, centered
+- Soft diffuse studio lighting, no harsh highlights, no colored tints
+- No human model, no mannequin, no hanger, no clutter, no props
+- Studio e-commerce aesthetic (Nike / SSENSE / MR PORTER product page)
+- No text overlays, no watermarks, no borders`;
+
+        const modelName = this.config.getModel('IMAGE');
+        const startedAt = Date.now();
+        console.log(`${TAG} start | shoppingId=${shoppingId} | descriptor="${descriptor}"`);
+
+        const response = await this.agent.client.models.generateContent({
+            model: modelName,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            config: { responseModalities: ['TEXT', 'IMAGE'] }
+        });
+        try { this.config.logUsageFromResponse(this.db, modelName, response, null, 'wardrobe_shopping_ref'); } catch (e) { /* ignore */ }
+
+        const respParts = response?.candidates?.[0]?.content?.parts || [];
+        const imagePart = respParts.find(p => p?.inlineData?.mimeType?.startsWith?.('image/'));
+        if (!imagePart) {
+            const finishReason = response?.candidates?.[0]?.finishReason || 'unknown';
+            console.error(`${TAG} no image returned | shoppingId=${shoppingId} | finishReason=${finishReason}`);
+            throw new Error('No image returned from image model');
+        }
+
+        const outDir = path.join(this._baseDir(), 'shopping', shoppingId);
+        if (!fs.existsSync(outDir)) fs.mkdirSync(outDir, { recursive: true });
+        const outPath = path.join(outDir, `reference_${Date.now()}.jpg`);
+        fs.writeFileSync(outPath, Buffer.from(imagePart.inlineData.data, 'base64'));
+
+        // Replace any prior reference so we don't leave cruft on disk.
+        if (item.reference_image_path && item.reference_image_path !== outPath && fs.existsSync(item.reference_image_path)) {
+            try { fs.unlinkSync(item.reference_image_path); } catch (e) { /* ignore */ }
+        }
+
+        this.db.updateShoppingItem(shoppingId, { reference_image_path: outPath });
+        const updated = this.db.getShoppingItem(shoppingId);
+        this._broadcast('wardrobe:shopping:update', updated);
+        console.log(`${TAG} done | shoppingId=${shoppingId} | elapsedMs=${Date.now() - startedAt} | path=${outPath}`);
+        return updated;
+    }
+
     async likeOutfit(outfitId, liked = true) {
         if (!this.db.updateOutfit) return null;
         this.db.updateOutfit(outfitId, { liked });
         const out = this.db.getOutfit(outfitId);
         this._broadcast('wardrobe:outfit:update', out);
         return out;
+    }
+
+    async deleteOutfit(outfitId) {
+        const out = this.db.getOutfit(outfitId);
+        if (!out) return false;
+        // Remove the render directory (and its contents) before dropping the row so a
+        // retry stays idempotent even if the DB delete succeeds and the FS cleanup races.
+        const outDir = path.join(this._baseDir(), 'outfits', outfitId);
+        if (fs.existsSync(outDir)) {
+            try {
+                for (const entry of fs.readdirSync(outDir)) {
+                    try { fs.unlinkSync(path.join(outDir, entry)); } catch (e) { /* ignore */ }
+                }
+                fs.rmdirSync(outDir);
+            } catch (e) {
+                console.warn(`[wardrobe] outfit render cleanup failed | outfitId=${outfitId} | err=${e.message}`);
+            }
+        }
+        this.db.deleteOutfit(outfitId);
+        this._broadcast('wardrobe:outfit:delete', { id: outfitId });
+        return true;
     }
 
     /**

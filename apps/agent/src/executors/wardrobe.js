@@ -220,7 +220,16 @@ class WardrobeExecutor extends BaseExecutor {
             if (result.needs_reference) {
                 return 'Please set a reference selfie first via set_reference_selfie.';
             }
-            return `Rendered outfit ${result.outfit.id} (${result.panels} panel${result.panels === 1 ? '' : 's'}, layout=${result.layout}).`;
+            const renderPath = result.outfit?.rendered_image_path || '';
+            const base = `Rendered outfit ${result.outfit.id} (${result.panels} panel${result.panels === 1 ? '' : 's'}, layout=${result.layout}).`;
+            if (!renderPath) return base;
+            // Put the path on its own line so the model can extract it verbatim
+            // without having to parse it out of prose or quoting.
+            return [
+                base,
+                `IMAGE_PATH: ${renderPath}`,
+                `To attach this to a WhatsApp reply, call sendMessage with type="image", imagePath equal to the IMAGE_PATH above, and put your outfit description in content (used as caption).`
+            ].join('\n');
         } catch (e) {
             return `Error rendering outfit: ${e.message}`;
         }

@@ -148,6 +148,29 @@ const createWardrobeRouter = (agent) => {
         }
     });
 
+    // POST /garments/:id/duplicate
+    // Body: { image: base64, mimeType?: string }
+    // Creates a new garment inheriting brand/model/type/subtype/material/
+    // warmth/formality/size/season_tags from :id, re-detecting color+pattern
+    // from the supplied photo in the background.
+    router.post('/garments/:id/duplicate', async (req, res) => {
+        try {
+            const { image, mimeType } = req.body || {};
+            if (!image) return res.status(400).json({ error: 'Missing image data (base64)' });
+            if (!agent.wardrobeService) return res.status(503).json({ error: 'Wardrobe service not available' });
+            const garment = await agent.wardrobeService.duplicateGarment(
+                req.params.id,
+                image,
+                mimeType || 'image/jpeg'
+            );
+            res.json({ success: true, garment });
+        } catch (error) {
+            console.error('[WardrobeRouter] Duplicate error:', error);
+            const status = /not found|Missing/i.test(error.message) ? 400 : 500;
+            res.status(status).json({ error: error.message });
+        }
+    });
+
     // POST /garments/:id/generate-image
     // Body (all optional):
     //   extra_image: base64 — additional photo of the same garment to fill in
@@ -225,6 +248,40 @@ const createWardrobeRouter = (agent) => {
             const out = await agent.wardrobeService.likeOutfit(req.params.id, liked);
             if (!out) return res.status(404).json({ error: 'Not found' });
             res.json({ success: true, outfit: out });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.delete('/outfits/:id', async (req, res) => {
+        try {
+            if (!agent.wardrobeService) return res.status(503).json({ error: 'Wardrobe service not available' });
+            const ok = await agent.wardrobeService.deleteOutfit(req.params.id);
+            if (!ok) return res.status(404).json({ error: 'Not found' });
+            res.json({ success: true });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.get('/outfits/:id', (req, res) => {
+        try {
+            const outfit = agent.db.getOutfit(req.params.id);
+            if (!outfit) return res.status(404).json({ error: 'Not found' });
+            res.json(outfit);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.put('/outfits/:id', async (req, res) => {
+        try {
+            const { id } = req.params;
+            const fields = req.body || {};
+            if (!fields || typeof fields !== 'object' || Object.keys(fields).length === 0) {
+                return res.status(400).json({ error: 'Request body must contain fields to update' });
+            }
+            const changed = agent.db.updateOutfit(id, fields);
+            if (!changed) return res.status(404).json({ error: 'Not found or no updatable fields' });
+            const outfit = agent.db.getOutfit(id);
+            if (agent.interface && agent.interface.broadcast) {
+                agent.interface.broadcast('wardrobe:outfit:update', outfit);
+            }
+            res.json({ success: true, outfit });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
@@ -365,6 +422,17 @@ const createWardrobeRouter = (agent) => {
             const item = await agent.wardrobeService.dismissShoppingItem(req.params.id);
             res.json({ success: true, item });
         } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.post('/shopping/:id/reference-image', async (req, res) => {
+        try {
+            if (!agent.wardrobeService) return res.status(503).json({ error: 'Wardrobe service not available' });
+            const item = await agent.wardrobeService.generateShoppingReferenceImage(req.params.id);
+            res.json({ success: true, item });
+        } catch (e) {
+            const status = /not found/i.test(e.message) ? 404 : 500;
+            res.status(status).json({ error: e.message });
+        }
     });
 
     // POST /profile/reference-selfie

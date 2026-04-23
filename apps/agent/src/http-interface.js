@@ -64,6 +64,7 @@ class HttpInterface extends EventEmitter {
         content: content,
         metadata: metadata,
         type: type,
+        caption: message.caption || null,
         isNotification: message.isNotification,
         platform: message.platform
       }, {
