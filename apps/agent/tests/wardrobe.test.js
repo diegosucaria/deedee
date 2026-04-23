@@ -487,6 +487,33 @@ describe('WardrobeService.reenrichGarment', () => {
         await expect(service.reenrichGarment('ghost', {})).rejects.toThrow('not found');
     });
 
+    test('forwards an extra reference image to the attribute pass', async () => {
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1', brand: null, model: null, meta: {}
+        });
+        service._runAttributePass = jest.fn().mockResolvedValue(undefined);
+
+        await service.reenrichGarment('g1', {
+            hint: 'jogger',
+            extraImageBase64: 'PHOTODATA',
+            mimeType: 'image/png'
+        });
+
+        expect(service._runAttributePass).toHaveBeenCalledWith('g1', expect.objectContaining({
+            extraReferences: [{ data: 'PHOTODATA', mimeType: 'image/png' }]
+        }));
+    });
+
+    test('default mimeType for re-enrich extra image is image/jpeg', async () => {
+        mockAgent.db.getGarment.mockReturnValue({ id: 'g1', meta: {} });
+        service._runAttributePass = jest.fn().mockResolvedValue(undefined);
+
+        await service.reenrichGarment('g1', { extraImageBase64: 'PHOTODATA' });
+
+        const opts = service._runAttributePass.mock.calls[0][1];
+        expect(opts.extraReferences[0].mimeType).toBe('image/jpeg');
+    });
+
     test('_enrichBrand skips web search when user brand already set', async () => {
         mockAgent.db.getGarment.mockReturnValue({
             id: 'g1',
@@ -523,6 +550,32 @@ describe('WardrobeService.reenrichGarment', () => {
 
         expect(mockAgent.client.models.generateContent).not.toHaveBeenCalled();
         expect(mockAgent.db.updateGarment).toHaveBeenCalledWith('g1', { enrichment_status: 'complete' });
+    });
+
+    test('_runAttributePass passes extraReferences to the model alongside the crop', async () => {
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1',
+            crop_image_path: '/c.jpg',
+            source_image_path: '/s.jpg',
+            enrichment_status: 'enriching',
+            meta: {}
+        });
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        jest.spyOn(fs, 'readFileSync').mockReturnValue(Buffer.from('cropbytes'));
+        mockAgent.client.models.generateContent.mockResolvedValueOnce(mockAttrResponse({
+            type: 'top', confidence: 0.9
+        }));
+
+        await service._runAttributePass('g1', {
+            extraReferences: [{ data: 'EXTRA', mimeType: 'image/png' }]
+        });
+
+        const callArgs = mockAgent.client.models.generateContent.mock.calls[0][0];
+        const inlineParts = callArgs.contents[0].parts.filter(p => p.inlineData);
+        expect(inlineParts).toHaveLength(2);
+        expect(inlineParts[1].inlineData).toEqual({ data: 'EXTRA', mimeType: 'image/png' });
+        const promptText = callArgs.contents[0].parts.find(p => p.text)?.text || '';
+        expect(promptText).toMatch(/IMAGES PROVIDED: 2/);
     });
 
     test('_runAttributePass prompt includes the hint when provided', async () => {

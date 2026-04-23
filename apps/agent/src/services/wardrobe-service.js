@@ -222,8 +222,12 @@ Respond with JSON only.`;
      * @param {string} [options.hint] - user-supplied known brand/model (e.g.
      *   "ABC Warpstreme Jogger Regular by Lululemon"). When present it biases
      *   the model toward that identity instead of guessing from scratch.
+     * @param {Array<{ data: string, mimeType?: string }>} [options.extraReferences]
+     *   Additional photos of the same garment (e.g. clearer angle the user
+     *   uploaded for re-enrich). Sent alongside the existing crop so the model
+     *   can resolve details the original photo missed.
      */
-    async _runAttributePass(garmentId, { hint = null } = {}) {
+    async _runAttributePass(garmentId, { hint = null, extraReferences = [] } = {}) {
         const garment = this.db.getGarment(garmentId);
         if (!garment) return;
         if (!this.agent.client) {
@@ -239,6 +243,10 @@ Respond with JSON only.`;
             this._broadcast('wardrobe:garment:update', this.db.getGarment(garmentId));
             return;
         }
+
+        const extras = Array.isArray(extraReferences)
+            ? extraReferences.filter(r => r && typeof r.data === 'string' && r.data.length > 0)
+            : [];
 
         const modelName = this.config.getModel('FLASH');
         const prompt = `Analyze this single garment or accessory and return strict JSON:
@@ -258,22 +266,27 @@ Respond with JSON only.`;
   "confidence": 0..1
 }
 
-${hint ? `USER-SUPPLIED IDENTITY: "${hint}".
+${extras.length ? `IMAGES PROVIDED: ${extras.length + 1} photos of the same garment — the first is the original wardrobe crop, the remainder are additional references the user supplied for clarity. Combine evidence from all of them; trust the clearer view when they disagree on a detail.
+` : ''}${hint ? `USER-SUPPLIED IDENTITY: "${hint}".
 Trust this hint as ground truth. Parse brand and model out of it (e.g. "ABC Warpstreme Jogger Regular · Lululemon" → brand: "Lululemon", model: "ABC Warpstreme Jogger Regular") and shape subtype/material/season_tags around that identity (e.g. "ABC Warpstreme Jogger" → subtype: "joggers", material: a synthetic blend). Only override the hint if the image is clearly inconsistent with it.
 ` : ''}Rules: omit fields you cannot confidently determine. Do not invent brands${hint ? ' beyond what the hint states' : ''}. Respond with JSON only.`;
 
         try {
             const base64 = fs.readFileSync(cropPath).toString('base64');
             const mimeType = cropPath.endsWith('.png') ? 'image/png' : 'image/jpeg';
+            const parts = [{ inlineData: { data: base64, mimeType } }];
+            for (const ref of extras) {
+                parts.push({
+                    inlineData: {
+                        data: ref.data,
+                        mimeType: ref.mimeType || 'image/jpeg'
+                    }
+                });
+            }
+            parts.push({ text: prompt });
             const result = await this.agent.client.models.generateContent({
                 model: modelName,
-                contents: [{
-                    role: 'user',
-                    parts: [
-                        { inlineData: { data: base64, mimeType } },
-                        { text: prompt }
-                    ]
-                }],
+                contents: [{ role: 'user', parts }],
                 config: { responseMimeType: 'application/json' }
             });
             try { this.config.logUsageFromResponse(this.db, modelName, result, null, 'wardrobe_attrs'); } catch (e) { /* ignore */ }
@@ -491,15 +504,17 @@ Hard rules:
 
     /**
      * Re-run the attribute pass on an existing garment, optionally biased by a
-     * user-supplied hint (e.g. "ABC Warpstreme Jogger Regular"). The hint is
-     * combined with whatever brand/model the user has already set so the model
-     * reshapes the subtype/material/season tags around that identity instead of
-     * guessing from scratch.
+     * user-supplied hint (e.g. "ABC Warpstreme Jogger Regular") and/or an extra
+     * reference photo. The hint is combined with whatever brand/model the user
+     * has already set so the model reshapes the subtype/material/season tags
+     * around that identity instead of guessing from scratch. The extra photo
+     * is sent to the model alongside the original crop so it can resolve
+     * details the original missed.
      *
      * Returns the garment row immediately; the refinement runs in the background
      * and broadcasts wardrobe:garment:attributes / :enriched when complete.
      */
-    async reenrichGarment(garmentId, { hint = '' } = {}) {
+    async reenrichGarment(garmentId, { hint = '', extraImageBase64 = null, mimeType = 'image/jpeg' } = {}) {
         const garment = this.db.getGarment(garmentId);
         if (!garment) throw new Error(`Garment ${garmentId} not found`);
 
@@ -527,8 +542,12 @@ Hard rules:
         });
         this._broadcast('wardrobe:garment:update', this.db.getGarment(garmentId));
 
+        const extraReferences = extraImageBase64
+            ? [{ data: extraImageBase64, mimeType: mimeType || 'image/jpeg' }]
+            : [];
+
         // Background refinement — caller gets the "enriching" state immediately
-        this._runAttributePass(garmentId, { hint: effectiveHint }).catch(err => {
+        this._runAttributePass(garmentId, { hint: effectiveHint, extraReferences }).catch(err => {
             console.error(`[WardrobeService] reenrichGarment failed for ${garmentId}:`, err.message);
         });
 

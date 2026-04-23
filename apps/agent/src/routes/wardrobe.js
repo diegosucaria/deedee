@@ -116,12 +116,16 @@ const createWardrobeRouter = (agent) => {
         }
     });
 
-    // POST /garments/:id/reenrich { hint?: string }
+    // POST /garments/:id/reenrich { hint?: string, extra_image?: base64, mimeType?: string }
     router.post('/garments/:id/reenrich', async (req, res) => {
         try {
-            const { hint } = req.body || {};
+            const { hint, extra_image, mimeType } = req.body || {};
             if (!agent.wardrobeService) return res.status(503).json({ error: 'Wardrobe service not available' });
-            const updated = await agent.wardrobeService.reenrichGarment(req.params.id, { hint: hint || '' });
+            const updated = await agent.wardrobeService.reenrichGarment(req.params.id, {
+                hint: hint || '',
+                extraImageBase64: extra_image || null,
+                mimeType: mimeType || 'image/jpeg'
+            });
             res.json({ success: true, garment: updated });
         } catch (error) {
             console.error('[WardrobeRouter] Re-enrich error:', error);
