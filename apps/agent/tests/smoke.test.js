@@ -16,6 +16,7 @@ jest.mock('../src/db', () => ({
     getKey: jest.fn(),
     setKey: jest.fn(),
     addGoal: jest.fn().mockReturnValue({ lastInsertRowid: 1 }),
+    updateGoalProgress: jest.fn().mockReturnValue({ changes: 1 }),
     completeGoal: jest.fn(),
     getPendingGoals: jest.fn().mockReturnValue([]),
     saveScheduledJob: jest.fn(),

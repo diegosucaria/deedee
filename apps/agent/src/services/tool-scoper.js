@@ -10,7 +10,7 @@ const { ConfigService } = require('./config-service');
 // Category descriptions for the LLM prompt
 const CATEGORY_DESCRIPTIONS = {
     memory: 'Remember/recall facts, search history, journal logging, memory consolidation',
-    goals: 'Add/complete/list goals and task tracking',
+    goals: "Register/checkpoint/complete the agent's own multi-session work (NOT user TODOs — use scheduler for reminders)",
     scheduler: 'Schedule jobs, set reminders, manage job state between runs',
     filesystem: 'Read/write files, run shell commands, git operations',
     search: 'Google Search for web lookups, weather, news',

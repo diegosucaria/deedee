@@ -132,11 +132,18 @@ class AgentDB {
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
+      -- Goals: multi-day/multi-session work the agent itself is executing.
+      -- progress is a free-form checkpoint string the agent writes (e.g.
+      -- "Processed 40/200 Slack msgs, cursor=1711234567") so it can resume
+      -- after a restart. NOT for user TODOs — those belong in scheduleJob
+      -- (reminders) or are surfaced live by proactive_thought (no persistence).
       CREATE TABLE IF NOT EXISTS goals (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         description TEXT NOT NULL,
         status TEXT DEFAULT 'pending', -- pending, completed, failed
         metadata TEXT, -- JSON string for context (chatId, etc)
+        progress TEXT, -- latest checkpoint / resume state
+        last_activity_at DATETIME,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
@@ -431,6 +438,13 @@ class AgentDB {
     } catch (err) {
       // Ignore error if column already exists
     }
+    // Migration: Add goal progress / activity columns
+    try {
+      this.db.exec("ALTER TABLE goals ADD COLUMN progress TEXT");
+    } catch (err) { }
+    try {
+      this.db.exec("ALTER TABLE goals ADD COLUMN last_activity_at DATETIME");
+    } catch (err) { }
     // Migration: Add parts column if it doesn't exist
     try {
       this.db.exec("ALTER TABLE messages ADD COLUMN parts TEXT");
@@ -1227,15 +1241,17 @@ class AgentDB {
     console.log(`[DB] Deleted ${info.changes} facts for job '${jobName}'.`);
   }
 
-  // --- Goals ---
-  addGoal(description, metadata = {}) {
+  // --- Goals (agent's multi-session work) ---
+  addGoal(description, metadata = {}, progress = null) {
     const metaStr = JSON.stringify(metadata);
-    const stmt = this.db.prepare('INSERT INTO goals (description, metadata) VALUES (?, ?)');
-    return stmt.run(description, metaStr);
+    const stmt = this.db.prepare(
+      "INSERT INTO goals (description, metadata, progress, last_activity_at) VALUES (?, ?, ?, CURRENT_TIMESTAMP)"
+    );
+    return stmt.run(description, metaStr, progress);
   }
 
   getPendingGoals() {
-    const stmt = this.db.prepare("SELECT * FROM goals WHERE status = 'pending'");
+    const stmt = this.db.prepare("SELECT * FROM goals WHERE status = 'pending' ORDER BY last_activity_at DESC, id DESC");
     const rows = stmt.all();
     return rows.map(row => ({
       ...row,
@@ -1243,8 +1259,17 @@ class AgentDB {
     }));
   }
 
+  updateGoalProgress(id, progress) {
+    const stmt = this.db.prepare(
+      "UPDATE goals SET progress = ?, last_activity_at = CURRENT_TIMESTAMP WHERE id = ?"
+    );
+    return stmt.run(progress, id);
+  }
+
   completeGoal(id) {
-    const stmt = this.db.prepare("UPDATE goals SET status = 'completed' WHERE id = ?");
+    const stmt = this.db.prepare(
+      "UPDATE goals SET status = 'completed', last_activity_at = CURRENT_TIMESTAMP WHERE id = ?"
+    );
     stmt.run(id);
   }
 

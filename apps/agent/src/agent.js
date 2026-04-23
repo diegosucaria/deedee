@@ -225,15 +225,21 @@ class Agent {
       console.warn('[Agent] Failed to dump system prompt:', e);
     }
 
-    // Check Goals
+    // Check Goals (agent's own resumable multi-session work)
     const pendingGoals = this.db.getPendingGoals();
     if (pendingGoals.length > 0) {
       console.log(`[Memory] I have ${pendingGoals.length} pending goals.`);
 
       for (const goal of pendingGoals) {
-        console.log(` - Resuming: ${goal.description}`);
+        const progressLine = goal.progress ? ` | checkpoint: ${goal.progress}` : '';
+        console.log(` - Resuming: ${goal.description}${progressLine}`);
         if (goal.metadata && goal.metadata.chatId) {
-          const msg = createAssistantMessage(`I am back online. Resuming task: "${goal.description}"`);
+          const progressPart = goal.progress
+            ? `\nLast checkpoint: ${goal.progress}`
+            : '\n(No checkpoint saved — starting fresh from where context allows.)';
+          const msg = createAssistantMessage(
+            `I am back online. Resuming goal #${goal.id}: "${goal.description}".${progressPart}`
+          );
           msg.metadata = { chatId: goal.metadata.chatId };
           this.interface.send(msg).catch(err => console.error('[Agent] Failed to send resume msg:', err));
         }
@@ -1024,7 +1030,9 @@ class Agent {
         // --- PREPARE SYSTEM PROMPT FOR GROK ---
         const contextQuery = message.content || (message.parts ? message.parts.map(p => p.text).join(' ') : '');
         const facts = this.db.getFactsFormatted(contextQuery);
-        const activeGoals = this.db.getPendingGoals().map(g => `- [${g.id}] ${g.description}`).join('\n');
+        const activeGoals = this.db.getPendingGoals()
+          .map(g => `- [${g.id}] ${g.description}${g.progress ? `\n    checkpoint: ${g.progress}` : ''}`)
+          .join('\n');
 
         let vaultContext = null;
         const activeTopic = this.activeTopics.get(chatId);
@@ -1049,7 +1057,7 @@ class Agent {
           `- googleSearch: Search the web.\n` +
           `- replyWithAudio: Speak to the user.\n` +
           `- rememberFact / getFact: Memory.\n` +
-          `- addGoal / completeGoal: Task tracking.\n` +
+          `- addGoal / updateGoalProgress / completeGoal: Resumable multi-session work (your own tasks only).\n` +
           `- Smart Home: Control lights, vacuum, etc.\n`;
 
         this.currentSystemPrompt = grokSystemPrompt;
@@ -1273,7 +1281,9 @@ class Agent {
       // Lightweight sub-agents skip expensive context loading (facts, goals, skills, vault)
       const contextQuery = message.content || (message.parts ? message.parts.map(p => p.text).join(' ') : '');
       const facts = isLightweight ? '' : this.db.getFactsFormatted(contextQuery);
-      const activeGoals = isLightweight ? '' : this.db.getPendingGoals().map(g => `- [${g.id}] ${g.description} `).join('\n');
+      const activeGoals = isLightweight ? '' : this.db.getPendingGoals()
+        .map(g => `- [${g.id}] ${g.description}${g.progress ? `\n    checkpoint: ${g.progress}` : ''}`)
+        .join('\n');
       const skillsContext = isLightweight ? null : this.skillService.getContextualInstructions(contextQuery);
 
       let vaultContext = null;
@@ -2054,8 +2064,13 @@ class Agent {
     }
     if (executionName === 'addGoal') {
       const metadata = { chatId: message.metadata?.chatId };
-      const info = this.db.addGoal(args.description, metadata);
+      const info = this.db.addGoal(args.description, metadata, args.progress || null);
       return { success: true, id: info.lastInsertRowid };
+    }
+    if (executionName === 'updateGoalProgress') {
+      const res = this.db.updateGoalProgress(args.id, args.progress);
+      if (!res.changes) return { success: false, error: `Goal ${args.id} not found` };
+      return { success: true };
     }
     if (executionName === 'completeGoal') {
       this.db.completeGoal(args.id);

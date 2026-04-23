@@ -48,6 +48,7 @@ function getThinkingMessage(calls) {
         case 'rememberFact':
         case 'getFact': return 'Accessing memory...';
         case 'addGoal':
+        case 'updateGoalProgress':
         case 'completeGoal': return 'Updating goals...';
         case 'replyWithAudio': return null; // Suppress display for audio generation
         default: return `Executing ${name}...`;
