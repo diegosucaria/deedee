@@ -97,6 +97,18 @@ describe('WardrobeService detection + bbox normalization', () => {
         expect(r).toHaveLength(1);
         expect(r[0].bbox).toEqual([0, 0, 1, 1]);
     });
+
+    test('_detectItems prompt explicitly excludes phones, hands, mirrors and furniture', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce(mockDetectResponse([]));
+        await service._detectItems('AAAA');
+        const promptText = mockAgent.client.models.generateContent.mock.calls[0][0]
+            .contents[0].parts.find(p => p.text)?.text || '';
+        expect(promptText).toMatch(/phone/i);
+        expect(promptText).toMatch(/hand/i);
+        expect(promptText).toMatch(/mirror/i);
+        // Make sure the accessory definition is narrowed to wearable accessories
+        expect(promptText).toMatch(/wearable accessory/);
+    });
 });
 
 describe('WardrobeService ingest + background refinement', () => {
@@ -133,7 +145,7 @@ describe('WardrobeService ingest + background refinement', () => {
             .mockReturnValueOnce('g2')
             .mockReturnValueOnce('g3');
 
-        const created = await service.ingestGarmentFromBase64('AAAA', 'image/jpeg');
+        const result = await service.ingestGarmentFromBase64('AAAA', 'image/jpeg');
 
         expect(service._cropToFile).toHaveBeenCalledTimes(3);
         expect(mockAgent.db.addGarment).toHaveBeenCalledTimes(3);
@@ -143,7 +155,8 @@ describe('WardrobeService ingest + background refinement', () => {
         const broadcastEvents = mockAgent.interface.broadcast.mock.calls.map(c => c[0]);
         expect(broadcastEvents.filter(e => e === 'wardrobe:garment:detected')).toHaveLength(3);
         expect(service._runAttributePass).toHaveBeenCalledTimes(3);
-        expect(created).toHaveLength(3);
+        expect(result.garments).toHaveLength(3);
+        expect(result.matched_existing).toEqual([]);
     });
 
     test('full-frame bbox reuses source image without cropping', async () => {
@@ -169,16 +182,41 @@ describe('WardrobeService ingest + background refinement', () => {
         service._cropToFile = jest.fn().mockRejectedValue(new Error('sharp error'));
         mockAgent.db.addGarment.mockReturnValueOnce('gx');
 
-        const created = await service.ingestGarmentFromBase64('AAAA');
+        const result = await service.ingestGarmentFromBase64('AAAA');
 
         expect(mockAgent.db.addGarment).toHaveBeenCalled();
         const args = mockAgent.db.addGarment.mock.calls[0][0];
         expect(args.crop_image_path).toBe(args.source_image_path);
-        expect(created).toHaveLength(1);
+        expect(result.garments).toHaveLength(1);
     });
 
     test('empty image input throws', async () => {
         await expect(service.ingestGarmentFromBase64('')).rejects.toThrow('Missing image data');
+    });
+
+    test('skips detections that match existing wardrobe items (no silent duplicates)', async () => {
+        service._detectItems = jest.fn().mockResolvedValue([
+            { bbox: [0.1, 0.1, 0.4, 0.4], type: 'top', primary_color: 'white', secondary_colors: [], season_tags: [] },
+            { bbox: [0.5, 0.1, 0.9, 0.4], type: 'shoes', primary_color: 'black', secondary_colors: [], season_tags: [] }
+        ]);
+        // Existing wardrobe shortlist
+        mockAgent.db.getGarments.mockReturnValue([
+            { id: 'existing_top', type: 'top', primary_color: 'white', crop_image_path: '/x/top.jpg' }
+        ]);
+        // Match plan: index 0 → existing, index 1 → NEW
+        service._matchDetectionsToWardrobe = jest.fn().mockResolvedValue([
+            { match: 'existing_top' },
+            { match: 'NEW' }
+        ]);
+        mockAgent.db.addGarment.mockReturnValueOnce('new_shoes');
+
+        const result = await service.ingestGarmentFromBase64('AAAA');
+
+        // Only the unmatched detection became a new row
+        expect(mockAgent.db.addGarment).toHaveBeenCalledTimes(1);
+        expect(mockAgent.db.addGarment).toHaveBeenCalledWith(expect.objectContaining({ type: 'shoes' }));
+        expect(result.garments).toHaveLength(1);
+        expect(result.matched_existing).toEqual(['existing_top']);
     });
 });
 
@@ -1852,9 +1890,10 @@ describe('WardrobeExecutor', () => {
     beforeEach(() => {
         jest.clearAllMocks();
         service = new WardrobeService(mockAgent);
-        service.ingestGarmentFromBase64 = jest.fn().mockResolvedValue([
-            { id: 'g1', type: 'shoes', subtype: 'sneakers', primary_color: 'white' }
-        ]);
+        service.ingestGarmentFromBase64 = jest.fn().mockResolvedValue({
+            garments: [{ id: 'g1', type: 'shoes', subtype: 'sneakers', primary_color: 'white' }],
+            matched_existing: []
+        });
         executor = new WardrobeExecutor({ wardrobe: service });
     });
 

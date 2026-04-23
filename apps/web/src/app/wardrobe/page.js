@@ -171,7 +171,12 @@ function GarmentsTab() {
             const result = await uploadGarmentPhoto(base64, file.type);
             if (result.success) {
                 const newOnes = result.data?.garments || [];
-                setUploadStatus(`Added ${newOnes.length} garment(s) from ${file.name}.`);
+                const matched = result.data?.matched_existing || [];
+                const parts = [];
+                if (newOnes.length) parts.push(`Added ${newOnes.length} new`);
+                if (matched.length) parts.push(`matched ${matched.length} existing`);
+                if (parts.length === 0) parts.push('No items detected');
+                setUploadStatus(`${file.name}: ${parts.join(', ')}.`);
                 if (newOnes.length) {
                     setGarments(prev => [
                         ...newOnes.filter(n => !prev.find(p => p.id === n.id)),
@@ -310,32 +315,52 @@ function GarmentsTab() {
                         garment={selected}
                         onClose={() => setSelected(null)}
                         onChange={async (patch) => {
-                            const res = await updateGarment(selected.id, patch);
-                            if (res.success && res.data?.garment) setSelected(res.data.garment);
+                            const targetId = selected.id;
+                            const res = await updateGarment(targetId, patch);
+                            // Only apply if user is still viewing the same garment.
+                            // The grid still gets the update via the socket broadcast.
+                            if (res.success && res.data?.garment) {
+                                setSelected(prev => prev?.id === targetId ? res.data.garment : prev);
+                            }
                         }}
                         onDelete={async () => {
                             if (!confirm('Delete this garment?')) return;
-                            const res = await deleteGarmentAction(selected.id);
-                            if (res.success) setSelected(null);
+                            const targetId = selected.id;
+                            const res = await deleteGarmentAction(targetId);
+                            if (res.success) {
+                                setSelected(prev => prev?.id === targetId ? null : prev);
+                            }
                         }}
                         onConfirmBrand={async (accept) => {
-                            const res = await confirmGarmentBrand(selected.id, accept);
-                            if (res.success && res.data?.garment) setSelected(res.data.garment);
+                            const targetId = selected.id;
+                            const res = await confirmGarmentBrand(targetId, accept);
+                            if (res.success && res.data?.garment) {
+                                setSelected(prev => prev?.id === targetId ? res.data.garment : prev);
+                            }
                         }}
                         onReenrich={async (hint, opts) => {
-                            const res = await reenrichGarment(selected.id, hint, opts || {});
-                            if (res.success && res.data?.garment) setSelected(res.data.garment);
+                            const targetId = selected.id;
+                            const res = await reenrichGarment(targetId, hint, opts || {});
+                            if (res.success && res.data?.garment) {
+                                setSelected(prev => prev?.id === targetId ? res.data.garment : prev);
+                            }
                             return res;
                         }}
                         onGenerateImage={async (opts) => {
-                            const res = await generateGarmentImage(selected.id, opts || {});
-                            if (res.success && res.data?.garment) setSelected(res.data.garment);
+                            const targetId = selected.id;
+                            const res = await generateGarmentImage(targetId, opts || {});
+                            if (res.success && res.data?.garment) {
+                                setSelected(prev => prev?.id === targetId ? res.data.garment : prev);
+                            }
                             return res;
                         }}
                         otherGarments={garments.filter(g => g.id !== selected.id)}
                         onMerge={async (duplicateIds) => {
-                            const res = await mergeGarments(selected.id, duplicateIds);
-                            if (res.success && res.data?.garment) setSelected(res.data.garment);
+                            const targetId = selected.id;
+                            const res = await mergeGarments(targetId, duplicateIds);
+                            if (res.success && res.data?.garment) {
+                                setSelected(prev => prev?.id === targetId ? res.data.garment : prev);
+                            }
                             return res;
                         }}
                     />

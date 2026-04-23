@@ -87,6 +87,13 @@ RULES:
 - box_2d is [ymin, xmin, ymax, xmax] normalized to 0-1000 — this is Gemini's canonical bbox format; do not use any other ordering or range
 - The box must tightly enclose the garment itself (no background padding beyond the edges of the fabric)
 - Only include items clearly visible and identifiable; skip partial glimpses of background or furniture
+- HARD EXCLUDE — never return any of the following as items:
+  · the phone or camera taking the photo, including its case, lens, and on-screen reflection
+  · hands, fingers, arms, legs, faces, hair, skin, or any other body part
+  · mirrors, mirror frames, or anything that is only visible as a reflection
+  · room contents (bed, sofa, desk, hangers, walls, floor, doors, plants, lamps)
+  · packaging, tags, receipts, paper, screens, or other non-clothing objects
+  An "accessory" means a wearable accessory the user owns (belt, bag, hat, watch, jewelry, sunglasses, scarf) — not anything else that happens to look small or rectangular
 - Omit fields you are uncertain about (do not fabricate)
 - Never invent brands or models
 Respond with JSON only.`;
@@ -1048,7 +1055,18 @@ GENERAL RULES:
         const detections = await this._detectItems(base64Data, mimeType);
         if (!detections || detections.length === 0) {
             console.warn(`${TAG} no detections returned — nothing to save`);
-            return [];
+            return { garments: [], matched_existing: [] };
+        }
+
+        // Match against existing wardrobe to avoid duplicates when the user
+        // re-uploads a photo of something they already cataloged. This mirrors
+        // the matching already done by analyzeOutfitPhoto — every ingest path
+        // should respect "we might already have this."
+        const CAPS_SHORTLIST = 25;
+        const shortlist = this.db.getGarments({ limit: CAPS_SHORTLIST }) || [];
+        let matchPlan = null;
+        if (this.agent.client && shortlist.length > 0) {
+            matchPlan = await this._matchDetectionsToWardrobe(base64Data, mimeType, detections, shortlist);
         }
 
         const ext = mimeType.includes('png') ? 'png' : 'jpg';
@@ -1056,15 +1074,33 @@ GENERAL RULES:
         const sourceDir = path.join(this._baseDir(), 'garments', sourceId);
         if (!fs.existsSync(sourceDir)) fs.mkdirSync(sourceDir, { recursive: true });
         const sourcePath = path.join(sourceDir, `original.${ext}`);
-        fs.writeFileSync(sourcePath, Buffer.from(base64Data, 'base64'));
-        console.log(`${TAG} wrote source image | sourceId=${sourceId} | path=${sourcePath}`);
+        let sourceWritten = false;
+        const writeSourceOnce = () => {
+            if (sourceWritten) return;
+            fs.writeFileSync(sourcePath, Buffer.from(base64Data, 'base64'));
+            sourceWritten = true;
+            console.log(`${TAG} wrote source image | sourceId=${sourceId} | path=${sourcePath}`);
+        };
 
         const created = [];
+        const matched_existing = [];
         let cropped = 0;
         let fullFrameCount = 0;
         for (let i = 0; i < detections.length; i++) {
             const det = detections[i];
+
+            // Skip if the model matched this detection to an existing wardrobe item
+            const plan = matchPlan?.[i];
+            if (plan && plan.match && plan.match !== 'NEW') {
+                if (shortlist.find(g => g.id === plan.match)) {
+                    matched_existing.push(plan.match);
+                    continue;
+                }
+                // hallucinated id → fall through and treat as NEW
+            }
+
             const fullFrame = det.bbox[0] < 0.02 && det.bbox[1] < 0.02 && det.bbox[2] > 0.98 && det.bbox[3] > 0.98;
+            writeSourceOnce();
             let cropPath = sourcePath;
             if (fullFrame) {
                 fullFrameCount++;
@@ -1111,8 +1147,8 @@ GENERAL RULES:
                 console.error(`[wardrobe.attr] background pass crashed | garmentId=${id} | err=${err.message}`);
             });
         }
-        console.log(`${TAG} done | created=${created.length} | cropped=${cropped} | fullFrame=${fullFrameCount}${fullFrameCount > 0 ? ' (= detection failed to localize, see [wardrobe.detect] logs above)' : ''}`);
-        return created;
+        console.log(`${TAG} done | created=${created.length} | matched_existing=${matched_existing.length} | cropped=${cropped} | fullFrame=${fullFrameCount}${fullFrameCount > 0 ? ' (= detection failed to localize, see [wardrobe.detect] logs above)' : ''}`);
+        return { garments: created, matched_existing };
     }
 
     /**

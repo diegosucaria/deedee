@@ -353,13 +353,22 @@ class WardrobeExecutor extends BaseExecutor {
     async add_garment({ image_base64, mime_type }, wardrobe) {
         if (!image_base64) return 'Please provide a base64-encoded image (image_base64).';
         try {
-            const created = await wardrobe.ingestGarmentFromBase64(image_base64, mime_type || 'image/jpeg');
-            if (created.length === 0) return 'No garments detected in the image.';
-            const list = created.map(g => {
-                const bits = [g.type, g.subtype, g.primary_color].filter(Boolean).join(' ');
-                return `- ${bits || 'unclassified garment'} (id: ${g.id})`;
-            }).join('\n');
-            return `Added ${created.length} garment(s) to your wardrobe:\n${list}`;
+            const result = await wardrobe.ingestGarmentFromBase64(image_base64, mime_type || 'image/jpeg');
+            const created = Array.isArray(result?.garments) ? result.garments : [];
+            const matchedExisting = Array.isArray(result?.matched_existing) ? result.matched_existing : [];
+            if (created.length === 0 && matchedExisting.length === 0) return 'No garments detected in the image.';
+            const lines = [];
+            if (created.length > 0) {
+                const list = created.map(g => {
+                    const bits = [g.type, g.subtype, g.primary_color].filter(Boolean).join(' ');
+                    return `- ${bits || 'unclassified garment'} (id: ${g.id})`;
+                }).join('\n');
+                lines.push(`Added ${created.length} garment(s) to your wardrobe:\n${list}`);
+            }
+            if (matchedExisting.length > 0) {
+                lines.push(`Matched ${matchedExisting.length} existing item(s): ${matchedExisting.join(', ')}`);
+            }
+            return lines.join('\n');
         } catch (e) {
             return `Failed to add garment: ${e.message}`;
         }

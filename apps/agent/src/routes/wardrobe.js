@@ -45,8 +45,8 @@ const createWardrobeRouter = (agent) => {
             if (!image) return res.status(400).json({ error: 'Missing image data (base64)' });
             if (!agent.wardrobeService) return res.status(503).json({ error: 'Wardrobe service not available' });
 
-            const results = await agent.wardrobeService.ingestGarmentFromBase64(image, mimeType || 'image/jpeg');
-            res.json({ success: true, garments: results });
+            const result = await agent.wardrobeService.ingestGarmentFromBase64(image, mimeType || 'image/jpeg');
+            res.json({ success: true, garments: result.garments, matched_existing: result.matched_existing });
         } catch (error) {
             console.error('[WardrobeRouter] Upload error:', error);
             res.status(500).json({ error: error.message });
