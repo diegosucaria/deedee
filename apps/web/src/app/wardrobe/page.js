@@ -316,8 +316,8 @@ function GarmentsTab() {
                             if (res.success && res.data?.garment) setSelected(res.data.garment);
                             return res;
                         }}
-                        onGenerateImage={async () => {
-                            const res = await generateGarmentImage(selected.id);
+                        onGenerateImage={async (opts) => {
+                            const res = await generateGarmentImage(selected.id, opts || {});
                             if (res.success && res.data?.garment) setSelected(res.data.garment);
                             return res;
                         }}
@@ -347,6 +347,7 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
     const [generating, setGenerating] = useState(false);
     const [genError, setGenError] = useState('');
     const [showOriginal, setShowOriginal] = useState(false);
+    const extraPhotoInputRef = useRef(null);
     const generatedUrl = pathToUrl(garment.generated_image_path);
     const originalUrl = pathToUrl(garment.crop_image_path || garment.source_image_path);
     const imgUrl = !showOriginal && generatedUrl ? generatedUrl : originalUrl;
@@ -372,6 +373,28 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
             const res = await onGenerateImage();
             if (!res?.success) setGenError(res?.error || 'Generate failed');
         } finally { setGenerating(false); }
+    };
+
+    const handleExtraPhotoSelect = async (e) => {
+        const file = e.target.files?.[0];
+        if (extraPhotoInputRef.current) extraPhotoInputRef.current.value = '';
+        if (!file) return;
+        setGenerating(true);
+        setGenError('');
+        try {
+            const extraImageBase64 = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+            const res = await onGenerateImage({ extraImageBase64, mimeType: file.type });
+            if (!res?.success) setGenError(res?.error || 'Generate failed');
+        } catch (err) {
+            setGenError(err.message);
+        } finally {
+            setGenerating(false);
+        }
     };
 
     return (
@@ -408,6 +431,13 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
                     </div>
                 )}
 
+                <input
+                    ref={extraPhotoInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleExtraPhotoSelect}
+                    className="hidden"
+                />
                 <div className="flex flex-wrap gap-2 mb-4">
                     <button
                         onClick={handleGenerate}
@@ -416,6 +446,15 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
                     >
                         {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
                         {generatedUrl ? 'Regenerate image' : 'Generate clean image'}
+                    </button>
+                    <button
+                        onClick={() => extraPhotoInputRef.current?.click()}
+                        disabled={generating || enriching}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 text-xs min-h-[36px]"
+                        title="Upload another photo of this garment as additional reference for the generator"
+                    >
+                        <Upload className="w-3.5 h-3.5" />
+                        Use another photo
                     </button>
                     {genError && <span className="text-xs text-rose-400 self-center">{genError}</span>}
                 </div>

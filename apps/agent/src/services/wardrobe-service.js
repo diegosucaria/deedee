@@ -537,11 +537,16 @@ Hard rules:
 
     /**
      * Generate a clean product-catalog image of the garment using the Gemini
-     * image model. Uses the existing crop as the reference and writes the
-     * output alongside the source image. The garment row's
-     * `generated_image_path` is updated when the render lands.
+     * image model. The garment's existing crop is always the primary
+     * reference; callers can pass `extraReferences` (e.g. a fresh photo the
+     * user just took to fill in details the original crop missed).
+     *
+     * @param {string} garmentId
+     * @param {Object} [opts]
+     * @param {Array<{ data: string, mimeType?: string }>} [opts.extraReferences]
+     *   Additional photos of the same garment encoded as base64.
      */
-    async generateGarmentImage(garmentId) {
+    async generateGarmentImage(garmentId, { extraReferences = [] } = {}) {
         const garment = this.db.getGarment(garmentId);
         if (!garment) throw new Error(`Garment ${garmentId} not found`);
         if (!this.agent.client) throw new Error('Gemini client not initialized');
@@ -562,7 +567,16 @@ Hard rules:
         ].filter(Boolean);
         const descriptor = descriptorBits.length ? descriptorBits.join(' ') : 'garment';
 
-        const prompt = `Generate a clean product-catalog photo of the exact ${descriptor} shown in the reference image.
+        const extras = Array.isArray(extraReferences)
+            ? extraReferences.filter(r => r && typeof r.data === 'string' && r.data.length > 0)
+            : [];
+
+        const referenceClause = extras.length === 0
+            ? 'Use the single reference image to render the item.'
+            : `Use ALL ${extras.length + 1} reference images — they show the same physical garment from different angles or with different details. Preserve every visible feature across all of them (logos, stitching, hardware, prints) in the final render. Do not invent or omit details based on a single image when other references contradict.`;
+
+        const prompt = `Generate a clean product-catalog photo of the exact ${descriptor}.
+${referenceClause}
 - Plain neutral off-white background
 - Single garment centered, well-lit with soft diffuse lighting
 - No human model, no mannequin, no hanger, no clutter
@@ -571,19 +585,24 @@ Hard rules:
 - Studio e-commerce aesthetic
 - No text overlays, no watermarks`;
 
-        const mimeType = cropPath.endsWith('.png') ? 'image/png' : 'image/jpeg';
-        const base64 = fs.readFileSync(cropPath).toString('base64');
+        const cropMime = cropPath.endsWith('.png') ? 'image/png' : 'image/jpeg';
+        const cropBase64 = fs.readFileSync(cropPath).toString('base64');
+
+        const parts = [{ inlineData: { data: cropBase64, mimeType: cropMime } }];
+        for (const ref of extras) {
+            parts.push({
+                inlineData: {
+                    data: ref.data,
+                    mimeType: ref.mimeType || 'image/jpeg'
+                }
+            });
+        }
+        parts.push({ text: prompt });
 
         const modelName = this.config.getModel('IMAGE');
         const response = await this.agent.client.models.generateContent({
             model: modelName,
-            contents: [{
-                role: 'user',
-                parts: [
-                    { inlineData: { data: base64, mimeType } },
-                    { text: prompt }
-                ]
-            }],
+            contents: [{ role: 'user', parts }],
             config: { responseModalities: ['TEXT', 'IMAGE'] }
         });
         try { this.config.logUsageFromResponse(this.db, modelName, response, null, 'wardrobe_generate_garment'); } catch (e) { /* ignore */ }

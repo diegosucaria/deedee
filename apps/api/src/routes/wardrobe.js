@@ -34,7 +34,7 @@ router.put('/garments/:id', (req, res) => proxyRequest(req, res, 'PUT', `/intern
 router.delete('/garments/:id', (req, res) => proxyRequest(req, res, 'DELETE', `/internal/wardrobe/garments/${encodeURIComponent(req.params.id)}`));
 router.post('/garments/:id/confirm-brand', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/garments/${encodeURIComponent(req.params.id)}/confirm-brand`));
 router.post('/garments/:id/reenrich', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/garments/${encodeURIComponent(req.params.id)}/reenrich`));
-router.post('/garments/:id/generate-image', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/garments/${encodeURIComponent(req.params.id)}/generate-image`));
+router.post('/garments/:id/generate-image', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/garments/${encodeURIComponent(req.params.id)}/generate-image`, { largeBody: true }));
 
 // Outfits
 router.get('/outfits', (req, res) => proxyRequest(req, res, 'GET', '/internal/wardrobe/outfits'));

@@ -676,6 +676,60 @@ describe('WardrobeService.generateGarmentImage', () => {
         mockAgent.db.getGarment.mockReturnValue(null);
         await expect(service.generateGarmentImage('ghost')).rejects.toThrow('not found');
     });
+
+    test('passes extra reference images to the model alongside the crop', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            candidates: [{ content: { parts: [
+                { inlineData: { mimeType: 'image/jpeg', data: 'BBBB' } }
+            ]}}]
+        });
+
+        await service.generateGarmentImage('g1', {
+            extraReferences: [{ data: 'EXTRADATA', mimeType: 'image/png' }]
+        });
+
+        const callArgs = mockAgent.client.models.generateContent.mock.calls[0][0];
+        const parts = callArgs.contents[0].parts;
+        const inlineParts = parts.filter(p => p.inlineData);
+        // crop + 1 extra reference
+        expect(inlineParts).toHaveLength(2);
+        expect(inlineParts[1].inlineData).toEqual({ data: 'EXTRADATA', mimeType: 'image/png' });
+        const prompt = parts.find(p => p.text)?.text || '';
+        expect(prompt).toMatch(/2 reference images/);
+    });
+
+    test('default mimeType for extra reference is image/jpeg', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            candidates: [{ content: { parts: [
+                { inlineData: { mimeType: 'image/jpeg', data: 'BBBB' } }
+            ]}}]
+        });
+
+        await service.generateGarmentImage('g1', {
+            extraReferences: [{ data: 'EXTRADATA' }]
+        });
+
+        const inlineParts = mockAgent.client.models.generateContent.mock.calls[0][0]
+            .contents[0].parts.filter(p => p.inlineData);
+        expect(inlineParts[1].inlineData.mimeType).toBe('image/jpeg');
+    });
+
+    test('drops malformed extras (no data) silently', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            candidates: [{ content: { parts: [
+                { inlineData: { mimeType: 'image/jpeg', data: 'BBBB' } }
+            ]}}]
+        });
+
+        await service.generateGarmentImage('g1', {
+            extraReferences: [null, {}, { mimeType: 'image/png' }, { data: '' }]
+        });
+
+        const inlineParts = mockAgent.client.models.generateContent.mock.calls[0][0]
+            .contents[0].parts.filter(p => p.inlineData);
+        // Only the crop, all extras filtered
+        expect(inlineParts).toHaveLength(1);
+    });
 });
 
 describe('WardrobeService.analyzeOutfitPhoto (P5)', () => {
