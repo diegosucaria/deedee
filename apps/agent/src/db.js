@@ -29,6 +29,16 @@ const SERVICE_CATEGORIES = {
   dj_enrich: 'DJ',
   dj_history: 'DJ',
   dj_track_enrich: 'DJ',
+  // Wardrobe
+  wardrobe_detect: 'Wardrobe',
+  wardrobe_attrs: 'Wardrobe',
+  wardrobe_brand: 'Wardrobe',
+  wardrobe_match: 'Wardrobe',
+  wardrobe_recommend: 'Wardrobe',
+  wardrobe_critique: 'Wardrobe',
+  wardrobe_pack: 'Wardrobe',
+  wardrobe_generate_garment: 'Wardrobe',
+  wardrobe_visualize: 'Wardrobe',
   // Memory
   embedding: 'Memory',
   summarization: 'Memory',
