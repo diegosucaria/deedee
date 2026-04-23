@@ -258,8 +258,12 @@ Respond with JSON only.`;
      *   Additional photos of the same garment (e.g. clearer angle the user
      *   uploaded for re-enrich). Sent alongside the existing crop so the model
      *   can resolve details the original photo missed.
+     * @param {boolean} [options.overwriteExisting=false] - When true, brand/model
+     *   from the analysis overwrite existing values (used by user-initiated
+     *   re-enrich, where stale wrong data should be corrected). When false (the
+     *   default for ingest), they only fill empty fields.
      */
-    async _runAttributePass(garmentId, { hint = null, extraReferences = [] } = {}) {
+    async _runAttributePass(garmentId, { hint = null, extraReferences = [], overwriteExisting = false } = {}) {
         const TAG = '[wardrobe.attr]';
         const garment = this.db.getGarment(garmentId);
         if (!garment) {
@@ -287,6 +291,12 @@ Respond with JSON only.`;
 
         console.log(`${TAG} start | garmentId=${garmentId} | hint=${hint ? `"${hint.slice(0, 80)}"` : '(none)'} | extraRefs=${extras.length} | cropPath=${cropPath}`);
 
+        // We ask the model to populate brand/model whenever the user explicitly
+        // initiated this pass (hint typed, or `overwriteExisting` set by re-enrich)
+        // — that's the user saying "redo this," and they want the new analysis to
+        // potentially correct stale stored values.
+        const wantBrandModel = !!hint || overwriteExisting;
+
         const modelName = this.config.getModel('FLASH');
         const prompt = `Analyze this single garment or accessory and return strict JSON:
 {
@@ -299,9 +309,9 @@ Respond with JSON only.`;
   "warmth": 1-5,
   "formality": 1-5,
   "season_tags": ["spring","summer","fall","winter"],
-  "distinguishing_features": "logos, stitching, named model, distinctive cut",${hint ? `
-  "brand": "brand name parsed from the user hint, or null",
-  "model": "specific model name parsed from the user hint, or null",` : ''}
+  "distinguishing_features": "logos, stitching, named model, distinctive cut",${wantBrandModel ? `
+  "brand": "brand name${hint ? ' parsed from the user hint or' : ''} visible in the image, or null if unsure",
+  "model": "specific model name${hint ? ' parsed from the user hint or' : ''} identifiable in the image, or null if unsure",` : ''}
   "confidence": 0..1
 }
 
@@ -365,10 +375,17 @@ Trust this hint as ground truth. Parse brand and model out of it (e.g. "ABC Warp
             const f = this._clampInt(data.formality, 1, 5);
             if (f !== null) patch.formality = f;
             if (Array.isArray(data.season_tags)) patch.season_tags = data.season_tags;
-            // When the user supplied a hint, the attribute pass is allowed to populate
-            // brand/model from it. Only fill missing fields — never clobber a value
-            // the user already typed in.
-            if (hint) {
+            // Brand/model overlay rules:
+            //   - On user-initiated re-enrich (`overwriteExisting`), overwrite
+            //     stale stored values when the model returns something. Only
+            //     overwrite with non-null values — if the model is unsure we'd
+            //     rather keep the user's old data than blank it out.
+            //   - With just a typed hint (no overwrite), only fill empties so we
+            //     don't clobber values the user already curated by hand.
+            if (overwriteExisting) {
+                if (data.brand) patch.brand = data.brand;
+                if (data.model) patch.model = data.model;
+            } else if (hint) {
                 if (data.brand && !garment.brand) patch.brand = data.brand;
                 if (data.model && !garment.model) patch.model = data.model;
             }
@@ -577,51 +594,93 @@ Hard rules:
 
     /**
      * Re-run the attribute pass on an existing garment, optionally biased by a
-     * user-supplied hint (e.g. "ABC Warpstreme Jogger Regular") and/or an extra
+     * user-supplied hint (e.g. "ABC Warpstreme Jogger Regular") and/or a new
      * reference photo. The hint is combined with whatever brand/model the user
      * has already set so the model reshapes the subtype/material/season tags
-     * around that identity instead of guessing from scratch. The extra photo
-     * is sent to the model alongside the original crop so it can resolve
-     * details the original missed.
+     * around that identity.
+     *
+     * If `extraImageBase64` is provided it REPLACES the garment's crop — the
+     * user is saying "this is a better photo of this item." The previous crop
+     * file and any stale generated image are unlinked so we don't leak storage
+     * or serve a cached old image.
      *
      * Returns the garment row immediately; the refinement runs in the background
      * and broadcasts wardrobe:garment:attributes / :enriched when complete.
      */
     async reenrichGarment(garmentId, { hint = '', extraImageBase64 = null, mimeType = 'image/jpeg' } = {}) {
+        const TAG = '[wardrobe.reenrich]';
         const garment = this.db.getGarment(garmentId);
         if (!garment) throw new Error(`Garment ${garmentId} not found`);
 
+        // Re-enrich is the user explicitly saying "redo the analysis." Don't bias
+        // the prompt with the existing brand/model — those may well be the wrong
+        // values the user is trying to correct. Only the typed hint goes in.
         const trimmed = (hint || '').trim();
-        const effectiveParts = [trimmed, garment.brand, garment.model]
-            .map(s => (s || '').trim())
-            .filter(Boolean);
-        // De-dupe so "ABC Warpstreme Jogger · ABC Warpstreme Jogger" doesn't happen
-        const seen = new Set();
-        const unique = [];
-        for (const p of effectiveParts) {
-            const k = p.toLowerCase();
-            if (!seen.has(k)) { seen.add(k); unique.push(p); }
-        }
-        const effectiveHint = unique.length ? unique.join(' · ') : null;
+        const effectiveHint = trimmed || null;
+
+        console.log(`${TAG} start | garmentId=${garmentId} | hint=${trimmed ? `"${trimmed.slice(0, 80)}"` : '(none)'} | replacingCrop=${!!extraImageBase64} | existingBrand=${garment.brand || '(none)'} model=${garment.model || '(none)'}`);
 
         const metaPatch = { ...(garment.meta || {}) };
         if (trimmed) metaPatch.userHint = trimmed;
         // Clear any stale brand candidate — user-driven re-enrich supersedes it
         metaPatch.brandCandidate = null;
 
-        this.db.updateGarment(garmentId, {
+        const patch = {
             enrichment_status: 'enriching',
             meta: metaPatch
-        });
+        };
+
+        // If the user uploaded a new image, swap the garment's crop for it. This
+        // is what makes the wardrobe tile actually update — without this we'd
+        // only refresh attributes and the user would think "nothing changed."
+        if (extraImageBase64) {
+            const ext = (mimeType || 'image/jpeg').includes('png') ? 'png' : 'jpg';
+            const oldCropPath = garment.crop_image_path;
+            const oldGenPath = garment.generated_image_path;
+            const sourceDirRef = oldCropPath || garment.source_image_path;
+            const sourceDir = sourceDirRef ? path.dirname(sourceDirRef) : path.join(this._baseDir(), 'garments', crypto.randomUUID());
+            if (!fs.existsSync(sourceDir)) fs.mkdirSync(sourceDir, { recursive: true });
+            const ts = Date.now();
+            const newCropPath = path.join(sourceDir, `crop_${garmentId}_${ts}.${ext}`);
+            fs.writeFileSync(newCropPath, Buffer.from(extraImageBase64, 'base64'));
+
+            patch.crop_image_path = newCropPath;
+            // The previous generated image was rendered from the OLD crop — it no
+            // longer reflects what this garment looks like, so drop it.
+            patch.generated_image_path = null;
+            // Replacing the photo is the strongest signal that the previous
+            // analysis is suspect. Clear brand/model so the upcoming attribute
+            // pass and brand-search start from a clean slate. (If the user typed
+            // a matching hint, the pass will re-set them to the correct value.)
+            patch.brand = null;
+            patch.model = null;
+
+            // Cleanup: drop the old crop file unless it's the shared multi-garment
+            // source image (full-frame ingests reuse source as crop).
+            if (oldCropPath && oldCropPath !== garment.source_image_path && fs.existsSync(oldCropPath)) {
+                try { fs.unlinkSync(oldCropPath); } catch (e) { /* ignore — cosmetic cleanup */ }
+            }
+            if (oldGenPath && fs.existsSync(oldGenPath)) {
+                try { fs.unlinkSync(oldGenPath); } catch (e) { /* ignore */ }
+            }
+
+            console.log(`${TAG} crop replaced | garmentId=${garmentId} | newCrop=${newCropPath}${oldGenPath ? ' | cleared stale generated image' : ''} | brand/model cleared for fresh analysis`);
+        }
+
+        this.db.updateGarment(garmentId, patch);
         this._broadcast('wardrobe:garment:update', this.db.getGarment(garmentId));
 
-        const extraReferences = extraImageBase64
-            ? [{ data: extraImageBase64, mimeType: mimeType || 'image/jpeg' }]
-            : [];
-
-        // Background refinement — caller gets the "enriching" state immediately
-        this._runAttributePass(garmentId, { hint: effectiveHint, extraReferences }).catch(err => {
-            console.error(`[WardrobeService] reenrichGarment failed for ${garmentId}:`, err.message);
+        // Background refinement — the attribute pass reads the (possibly new)
+        // crop_image_path from the row, so we don't need to forward extras.
+        // Pass overwriteExisting so brand/model from the new analysis can replace
+        // wrong stored values (the whole point of a user-initiated re-enrich).
+        // Also clear the brand_search_done flag so the brand pass re-runs against
+        // the new image even if it ran before.
+        this._runAttributePass(garmentId, {
+            hint: effectiveHint,
+            overwriteExisting: true
+        }).catch(err => {
+            console.error(`${TAG} background attribute pass crashed | garmentId=${garmentId} | err=${err.message}`);
         });
 
         return this.db.getGarment(garmentId);
@@ -712,6 +771,7 @@ Hard rules:
      *   Additional photos of the same garment encoded as base64.
      */
     async generateGarmentImage(garmentId, { extraReferences = [] } = {}) {
+        const TAG = '[wardrobe.imagegen]';
         const garment = this.db.getGarment(garmentId);
         if (!garment) throw new Error(`Garment ${garmentId} not found`);
         if (!this.agent.client) throw new Error('Gemini client not initialized');
@@ -720,6 +780,10 @@ Hard rules:
         if (!cropPath || !fs.existsSync(cropPath)) {
             throw new Error('Garment has no source image to reference');
         }
+
+        const extras = Array.isArray(extraReferences)
+            ? extraReferences.filter(r => r && typeof r.data === 'string' && r.data.length > 0)
+            : [];
 
         const descriptorBits = [
             garment.type,
@@ -732,9 +796,7 @@ Hard rules:
         ].filter(Boolean);
         const descriptor = descriptorBits.length ? descriptorBits.join(' ') : 'garment';
 
-        const extras = Array.isArray(extraReferences)
-            ? extraReferences.filter(r => r && typeof r.data === 'string' && r.data.length > 0)
-            : [];
+        console.log(`${TAG} start | garmentId=${garmentId} | descriptor="${descriptor}" | extraRefs=${extras.length} | hasExisting=${!!garment.generated_image_path}`);
 
         const referenceClause = extras.length === 0
             ? 'Use the single reference image to render the item.'
@@ -772,24 +834,50 @@ GENERAL RULES:
         parts.push({ text: prompt });
 
         const modelName = this.config.getModel('IMAGE');
-        const response = await this.agent.client.models.generateContent({
-            model: modelName,
-            contents: [{ role: 'user', parts }],
-            config: { responseModalities: ['TEXT', 'IMAGE'] }
-        });
+        const startedAt = Date.now();
+        let response;
+        try {
+            response = await this.agent.client.models.generateContent({
+                model: modelName,
+                contents: [{ role: 'user', parts }],
+                config: { responseModalities: ['TEXT', 'IMAGE'] }
+            });
+        } catch (apiErr) {
+            const elapsedMs = Date.now() - startedAt;
+            console.error(`${TAG} API call threw | garmentId=${garmentId} | model=${modelName} | elapsedMs=${elapsedMs} | err=${apiErr.message}`);
+            throw apiErr;
+        }
+        const elapsedMs = Date.now() - startedAt;
         try { this.config.logUsageFromResponse(this.db, modelName, response, null, 'wardrobe_generate_garment'); } catch (e) { /* ignore */ }
 
         const respParts = response?.candidates?.[0]?.content?.parts || [];
         const imagePart = respParts.find(p => p?.inlineData?.mimeType?.startsWith?.('image/'));
-        if (!imagePart) throw new Error('No image returned from image model');
+        if (!imagePart) {
+            const finishReason = response?.candidates?.[0]?.finishReason || 'unknown';
+            const textParts = respParts.filter(p => p?.text).map(p => p.text).join(' ').slice(0, 200);
+            console.error(`${TAG} no image in response | garmentId=${garmentId} | model=${modelName} | elapsedMs=${elapsedMs} | finishReason=${finishReason}${textParts ? ` | text="${textParts}"` : ''}`);
+            throw new Error('No image returned from image model');
+        }
 
+        // Write to a unique filename per regeneration so the browser can't serve a
+        // stale cached copy — image route uses Cache-Control: immutable. Delete the
+        // previous generated file (if any) so we don't leave cruft on disk.
+        const previousPath = garment.generated_image_path;
         const outDir = path.dirname(cropPath);
-        const outPath = path.join(outDir, `generated_${garmentId}.jpg`);
-        fs.writeFileSync(outPath, Buffer.from(imagePart.inlineData.data, 'base64'));
+        const ts = Date.now();
+        const outPath = path.join(outDir, `generated_${garmentId}_${ts}.jpg`);
+        const bytes = Buffer.from(imagePart.inlineData.data, 'base64');
+        fs.writeFileSync(outPath, bytes);
+
+        if (previousPath && previousPath !== outPath && fs.existsSync(previousPath)) {
+            try { fs.unlinkSync(previousPath); } catch (e) { /* ignore — cosmetic cleanup */ }
+        }
 
         this.db.updateGarment(garmentId, { generated_image_path: outPath });
         const updated = this.db.getGarment(garmentId);
         this._broadcast('wardrobe:garment:update', updated);
+
+        console.log(`${TAG} done | garmentId=${garmentId} | model=${modelName} | elapsedMs=${elapsedMs} | bytes=${bytes.length} | path=${outPath}${previousPath ? ` (replaced ${path.basename(previousPath)})` : ''}`);
         return updated;
     }
 
