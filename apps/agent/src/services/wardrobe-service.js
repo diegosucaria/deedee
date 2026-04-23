@@ -593,6 +593,159 @@ Hard rules:
     }
 
     /**
+     * Fold one or more duplicate garment rows into a primary one. Used when the
+     * automatic match-against-existing didn't catch a duplicate at ingest time
+     * (e.g. the user uploaded the same shoes twice from different angles).
+     *
+     * Behavior:
+     * - Primary keeps its own image (crop / generated). Duplicates' image files
+     *   are deleted via deleteGarment.
+     * - Empty primary fields are filled in from the first duplicate that has a
+     *   value. Non-empty primary fields are never overwritten — primary wins.
+     * - times_worn is summed across all rows.
+     * - Every outfit / trip capsule / shopping resolution that referenced a
+     *   duplicate is rewritten to point at the primary (deduped per row).
+     * - Duplicates are then deleted.
+     *
+     * @param {string} primaryId
+     * @param {string[]} duplicateIds
+     * @returns {Object} the updated primary garment row
+     */
+    async mergeGarments(primaryId, duplicateIds) {
+        const TAG = '[wardrobe.merge]';
+        if (!primaryId) throw new Error('mergeGarments requires a primary id');
+        const dupIds = Array.isArray(duplicateIds)
+            ? duplicateIds.filter(id => typeof id === 'string' && id && id !== primaryId)
+            : [];
+        if (dupIds.length === 0) throw new Error('mergeGarments requires at least one duplicate id');
+
+        const primary = this.db.getGarment(primaryId);
+        if (!primary) throw new Error(`Primary garment ${primaryId} not found`);
+
+        const duplicates = [];
+        for (const id of dupIds) {
+            const g = this.db.getGarment(id);
+            if (!g) throw new Error(`Duplicate garment ${id} not found`);
+            duplicates.push(g);
+        }
+
+        console.log(`${TAG} start | primaryId=${primaryId} | duplicates=${dupIds.join(',')}`);
+
+        // Field merge: only fill primary blanks. Primary always wins on conflicts.
+        const TEXT_FIELDS = ['type', 'subtype', 'primary_color', 'pattern', 'material_guess',
+            'brand', 'model', 'size', 'fit_notes'];
+        const NUMERIC_FIELDS = ['warmth', 'formality'];
+        const isBlank = v => v === null || v === undefined || v === '';
+
+        const patch = {};
+        for (const field of TEXT_FIELDS) {
+            if (!isBlank(primary[field])) continue;
+            const filler = duplicates.find(d => !isBlank(d[field]));
+            if (filler) patch[field] = filler[field];
+        }
+        for (const field of NUMERIC_FIELDS) {
+            if (primary[field] !== null && primary[field] !== undefined) continue;
+            const filler = duplicates.find(d => d[field] !== null && d[field] !== undefined);
+            if (filler) patch[field] = filler[field];
+        }
+        // Union of season tags
+        if (Array.isArray(primary.season_tags)) {
+            const set = new Set(primary.season_tags);
+            for (const d of duplicates) {
+                if (Array.isArray(d.season_tags)) for (const t of d.season_tags) set.add(t);
+            }
+            patch.season_tags = Array.from(set);
+        }
+        // Sum times_worn across all rows
+        const totalWorn = (primary.times_worn || 0) + duplicates.reduce((s, d) => s + (d.times_worn || 0), 0);
+        if (totalWorn !== (primary.times_worn || 0)) patch.times_worn = totalWorn;
+        // Most recent last_worn_at across all rows
+        const allWornAt = [primary.last_worn_at, ...duplicates.map(d => d.last_worn_at)].filter(Boolean);
+        if (allWornAt.length > 0) {
+            const newest = allWornAt.sort().at(-1);
+            if (newest && newest !== primary.last_worn_at) patch.last_worn_at = newest;
+        }
+        // Track the merge in meta for audit
+        patch.meta = {
+            ...(primary.meta || {}),
+            mergedFrom: [...(primary.meta?.mergedFrom || []), ...dupIds],
+            lastMergedAt: new Date().toISOString()
+        };
+
+        if (Object.keys(patch).length > 0) {
+            this.db.updateGarment(primaryId, patch);
+        }
+
+        // Rewrite all references in outfits, trips, shopping list.
+        const idMap = new Map(dupIds.map(id => [id, primaryId]));
+        const rewriteIds = (arr) => {
+            if (!Array.isArray(arr)) return { changed: false, value: arr };
+            const next = [];
+            const seen = new Set();
+            let changed = false;
+            for (const id of arr) {
+                const mapped = idMap.has(id) ? primaryId : id;
+                if (mapped !== id) changed = true;
+                if (seen.has(mapped)) { changed = true; continue; }
+                seen.add(mapped);
+                next.push(mapped);
+            }
+            return { changed, value: next };
+        };
+
+        let outfitsRewritten = 0;
+        if (this.db.getOutfits && this.db.updateOutfit) {
+            const outfits = this.db.getOutfits({ limit: 10000 }) || [];
+            for (const o of outfits) {
+                const r = rewriteIds(o.garment_ids);
+                if (r.changed) {
+                    this.db.updateOutfit(o.id, { garment_ids: r.value });
+                    outfitsRewritten++;
+                }
+            }
+        }
+
+        let tripsRewritten = 0;
+        if (this.db.getTrips && this.db.updateTrip) {
+            const trips = this.db.getTrips({}) || [];
+            for (const t of trips) {
+                const update = {};
+                const planned = rewriteIds(t.planned_capsule);
+                if (planned.changed) update.planned_capsule = planned.value;
+                const actual = rewriteIds(t.actual_capsule);
+                if (actual.changed) update.actual_capsule = actual.value;
+                if (Object.keys(update).length > 0) {
+                    this.db.updateTrip(t.id, update);
+                    tripsRewritten++;
+                }
+            }
+        }
+
+        let shoppingRewritten = 0;
+        if (this.db.listShoppingItems && this.db.updateShoppingItem) {
+            const items = this.db.listShoppingItems({}) || [];
+            for (const item of items) {
+                if (item.resolved_garment_id && idMap.has(item.resolved_garment_id)) {
+                    this.db.updateShoppingItem(item.id, { resolved_garment_id: primaryId });
+                    shoppingRewritten++;
+                }
+            }
+        }
+
+        // Finally, drop the duplicate rows. deleteGarment handles file cleanup.
+        for (const id of dupIds) {
+            this.db.deleteGarment(id);
+            this._broadcast('wardrobe:garment:delete', { id });
+        }
+
+        const updated = this.db.getGarment(primaryId);
+        this._broadcast('wardrobe:garment:update', updated);
+
+        console.log(`${TAG} done | primaryId=${primaryId} | merged=${dupIds.length} | outfitsRewritten=${outfitsRewritten} | tripsRewritten=${tripsRewritten} | shoppingRewritten=${shoppingRewritten}`);
+        return updated;
+    }
+
+    /**
      * Re-run the attribute pass on an existing garment, optionally biased by a
      * user-supplied hint (e.g. "ABC Warpstreme Jogger Regular") and/or a new
      * reference photo. The hint is combined with whatever brand/model the user

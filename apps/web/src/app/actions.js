@@ -1046,6 +1046,18 @@ export async function generateGarmentImage(id, { extraImageBase64 = null, mimeTy
     }
 }
 
+export async function mergeGarments(primaryId, duplicateIds) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/garments/${encodeURIComponent(primaryId)}/merge`, {
+            method: 'POST',
+            body: JSON.stringify({ duplicate_ids: duplicateIds })
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function getWardrobeProfile() {
     try {
         const data = await fetchAPI('/v1/wardrobe/profile', { method: 'GET' });

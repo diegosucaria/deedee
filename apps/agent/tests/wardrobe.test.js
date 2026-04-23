@@ -428,6 +428,164 @@ describe('WardrobeService.confirmBrand (P3)', () => {
     });
 });
 
+describe('WardrobeService.mergeGarments', () => {
+    let service;
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        service = new WardrobeService(mockAgent);
+        mockAgent.db.getOutfits = jest.fn().mockReturnValue([]);
+        mockAgent.db.updateOutfit = jest.fn().mockReturnValue(true);
+        mockAgent.db.getTrips = jest.fn().mockReturnValue([]);
+        mockAgent.db.updateTrip = jest.fn().mockReturnValue(true);
+        mockAgent.db.listShoppingItems = jest.fn().mockReturnValue([]);
+        mockAgent.db.updateShoppingItem = jest.fn().mockReturnValue(true);
+        mockAgent.db.deleteGarment = jest.fn().mockReturnValue(true);
+    });
+
+    const garmentRow = (overrides = {}) => ({
+        id: overrides.id,
+        type: null, subtype: null, primary_color: null, pattern: null,
+        material_guess: null, brand: null, model: null, size: null,
+        fit_notes: null, warmth: null, formality: null, season_tags: [],
+        times_worn: 0, last_worn_at: null,
+        crop_image_path: '/x.jpg', source_image_path: '/x.jpg',
+        meta: {},
+        ...overrides
+    });
+
+    test('throws when no duplicate ids supplied', async () => {
+        mockAgent.db.getGarment.mockReturnValue(garmentRow({ id: 'p1' }));
+        await expect(service.mergeGarments('p1', [])).rejects.toThrow('at least one duplicate');
+        await expect(service.mergeGarments('p1', null)).rejects.toThrow('at least one duplicate');
+    });
+
+    test('throws when primary or any duplicate is missing', async () => {
+        mockAgent.db.getGarment.mockImplementation(id => id === 'p1' ? garmentRow({ id: 'p1' }) : null);
+        await expect(service.mergeGarments('p1', ['ghost'])).rejects.toThrow('Duplicate garment ghost not found');
+
+        mockAgent.db.getGarment.mockReturnValue(null);
+        await expect(service.mergeGarments('missing_primary', ['d1'])).rejects.toThrow('Primary garment missing_primary not found');
+    });
+
+    test('only fills primary blanks — never overwrites existing primary fields', async () => {
+        const primary = garmentRow({
+            id: 'p1', type: 'top', subtype: 'tshirt', brand: 'CorrectBrand'
+        });
+        const dup = garmentRow({
+            id: 'd1', type: 'bottom', subtype: 'wrong', primary_color: 'blue', brand: 'WrongBrand', model: 'NewModel'
+        });
+        mockAgent.db.getGarment.mockImplementation(id => ({ p1: primary, d1: dup }[id]));
+
+        await service.mergeGarments('p1', ['d1']);
+
+        const patch = mockAgent.db.updateGarment.mock.calls.find(c => c[0] === 'p1')[1];
+        // Primary's existing values are preserved
+        expect(patch.type).toBeUndefined();
+        expect(patch.subtype).toBeUndefined();
+        expect(patch.brand).toBeUndefined();
+        // Primary's blanks are filled from the duplicate
+        expect(patch.primary_color).toBe('blue');
+        expect(patch.model).toBe('NewModel');
+    });
+
+    test('sums times_worn and takes the most recent last_worn_at', async () => {
+        const primary = garmentRow({ id: 'p1', times_worn: 3, last_worn_at: '2026-01-01T00:00:00Z' });
+        const dup1 = garmentRow({ id: 'd1', times_worn: 5, last_worn_at: '2026-04-22T00:00:00Z' });
+        const dup2 = garmentRow({ id: 'd2', times_worn: 2, last_worn_at: '2026-02-15T00:00:00Z' });
+        mockAgent.db.getGarment.mockImplementation(id => ({ p1: primary, d1: dup1, d2: dup2 }[id]));
+
+        await service.mergeGarments('p1', ['d1', 'd2']);
+
+        const patch = mockAgent.db.updateGarment.mock.calls.find(c => c[0] === 'p1')[1];
+        expect(patch.times_worn).toBe(10);
+        expect(patch.last_worn_at).toBe('2026-04-22T00:00:00Z');
+    });
+
+    test('unions season_tags across all rows without duplicates', async () => {
+        const primary = garmentRow({ id: 'p1', season_tags: ['spring', 'summer'] });
+        const dup = garmentRow({ id: 'd1', season_tags: ['summer', 'fall'] });
+        mockAgent.db.getGarment.mockImplementation(id => ({ p1: primary, d1: dup }[id]));
+
+        await service.mergeGarments('p1', ['d1']);
+
+        const patch = mockAgent.db.updateGarment.mock.calls.find(c => c[0] === 'p1')[1];
+        expect(patch.season_tags.sort()).toEqual(['fall', 'spring', 'summer']);
+    });
+
+    test('repoints outfits, trip capsules and shopping resolutions onto the primary', async () => {
+        const primary = garmentRow({ id: 'p1' });
+        const dup = garmentRow({ id: 'd1' });
+        mockAgent.db.getGarment.mockImplementation(id => ({ p1: primary, d1: dup }[id]));
+        mockAgent.db.getOutfits.mockReturnValue([
+            { id: 'o1', garment_ids: ['d1', 'g_other'] },
+            { id: 'o2', garment_ids: ['p1', 'd1'] }, // already has primary, dedup
+            { id: 'o3', garment_ids: ['g_unrelated'] }
+        ]);
+        mockAgent.db.getTrips.mockReturnValue([
+            { id: 't1', planned_capsule: ['d1', 'p1'], actual_capsule: ['d1', 'g_other'] },
+            { id: 't2', planned_capsule: ['g_other'], actual_capsule: [] }
+        ]);
+        mockAgent.db.listShoppingItems.mockReturnValue([
+            { id: 's1', resolved_garment_id: 'd1' },
+            { id: 's2', resolved_garment_id: 'unrelated' }
+        ]);
+
+        await service.mergeGarments('p1', ['d1']);
+
+        // Outfits: o1 swaps, o2 dedupes, o3 untouched
+        expect(mockAgent.db.updateOutfit).toHaveBeenCalledWith('o1', { garment_ids: ['p1', 'g_other'] });
+        expect(mockAgent.db.updateOutfit).toHaveBeenCalledWith('o2', { garment_ids: ['p1'] });
+        expect(mockAgent.db.updateOutfit).not.toHaveBeenCalledWith('o3', expect.anything());
+
+        // Trips: t1 both arrays change, t2 untouched
+        expect(mockAgent.db.updateTrip).toHaveBeenCalledWith('t1', expect.objectContaining({
+            planned_capsule: ['p1'],
+            actual_capsule: ['p1', 'g_other']
+        }));
+        expect(mockAgent.db.updateTrip).not.toHaveBeenCalledWith('t2', expect.anything());
+
+        // Shopping: only s1 swaps
+        expect(mockAgent.db.updateShoppingItem).toHaveBeenCalledWith('s1', { resolved_garment_id: 'p1' });
+        expect(mockAgent.db.updateShoppingItem).not.toHaveBeenCalledWith('s2', expect.anything());
+    });
+
+    test('deletes duplicate rows and broadcasts delete events', async () => {
+        const primary = garmentRow({ id: 'p1' });
+        const dup1 = garmentRow({ id: 'd1' });
+        const dup2 = garmentRow({ id: 'd2' });
+        mockAgent.db.getGarment.mockImplementation(id => ({ p1: primary, d1: dup1, d2: dup2 }[id]));
+
+        await service.mergeGarments('p1', ['d1', 'd2']);
+
+        expect(mockAgent.db.deleteGarment).toHaveBeenCalledWith('d1');
+        expect(mockAgent.db.deleteGarment).toHaveBeenCalledWith('d2');
+        const events = mockAgent.interface.broadcast.mock.calls.map(c => ({ event: c[0], payload: c[1] }));
+        expect(events).toContainEqual({ event: 'wardrobe:garment:delete', payload: { id: 'd1' } });
+        expect(events).toContainEqual({ event: 'wardrobe:garment:delete', payload: { id: 'd2' } });
+        expect(events.some(e => e.event === 'wardrobe:garment:update')).toBe(true);
+    });
+
+    test('records the merge in primary meta.mergedFrom for audit', async () => {
+        const primary = garmentRow({ id: 'p1', meta: { mergedFrom: ['old_x'] } });
+        const dup = garmentRow({ id: 'd1' });
+        mockAgent.db.getGarment.mockImplementation(id => ({ p1: primary, d1: dup }[id]));
+
+        await service.mergeGarments('p1', ['d1']);
+
+        const patch = mockAgent.db.updateGarment.mock.calls.find(c => c[0] === 'p1')[1];
+        expect(patch.meta.mergedFrom).toEqual(['old_x', 'd1']);
+        expect(patch.meta.lastMergedAt).toMatch(/\d{4}-\d{2}-\d{2}T/);
+    });
+
+    test('drops self-references in duplicateIds defensively', async () => {
+        const primary = garmentRow({ id: 'p1' });
+        mockAgent.db.getGarment.mockReturnValue(primary);
+
+        await expect(service.mergeGarments('p1', ['p1'])).rejects.toThrow('at least one duplicate');
+    });
+});
+
 describe('WardrobeService.reenrichGarment', () => {
     let service;
 
