@@ -1016,11 +1016,14 @@ export async function confirmGarmentBrand(id, accept) {
     }
 }
 
-export async function reenrichGarment(id, hint = '') {
+export async function reenrichGarment(id, hint = '', { extraImageBase64 = null, mimeType = null } = {}) {
     try {
+        const body = { hint };
+        if (extraImageBase64) body.extra_image = extraImageBase64;
+        if (mimeType) body.mimeType = mimeType;
         const data = await fetchAPI(`/v1/wardrobe/garments/${encodeURIComponent(id)}/reenrich`, {
             method: 'POST',
-            body: JSON.stringify({ hint })
+            body: JSON.stringify(body)
         });
         return { success: true, data };
     } catch (error) {
@@ -1028,10 +1031,14 @@ export async function reenrichGarment(id, hint = '') {
     }
 }
 
-export async function generateGarmentImage(id) {
+export async function generateGarmentImage(id, { extraImageBase64 = null, mimeType = null } = {}) {
     try {
+        const body = {};
+        if (extraImageBase64) body.extra_image = extraImageBase64;
+        if (mimeType) body.mimeType = mimeType;
         const data = await fetchAPI(`/v1/wardrobe/garments/${encodeURIComponent(id)}/generate-image`, {
-            method: 'POST'
+            method: 'POST',
+            body: JSON.stringify(body)
         });
         return { success: true, data };
     } catch (error) {

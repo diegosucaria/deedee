@@ -487,6 +487,33 @@ describe('WardrobeService.reenrichGarment', () => {
         await expect(service.reenrichGarment('ghost', {})).rejects.toThrow('not found');
     });
 
+    test('forwards an extra reference image to the attribute pass', async () => {
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1', brand: null, model: null, meta: {}
+        });
+        service._runAttributePass = jest.fn().mockResolvedValue(undefined);
+
+        await service.reenrichGarment('g1', {
+            hint: 'jogger',
+            extraImageBase64: 'PHOTODATA',
+            mimeType: 'image/png'
+        });
+
+        expect(service._runAttributePass).toHaveBeenCalledWith('g1', expect.objectContaining({
+            extraReferences: [{ data: 'PHOTODATA', mimeType: 'image/png' }]
+        }));
+    });
+
+    test('default mimeType for re-enrich extra image is image/jpeg', async () => {
+        mockAgent.db.getGarment.mockReturnValue({ id: 'g1', meta: {} });
+        service._runAttributePass = jest.fn().mockResolvedValue(undefined);
+
+        await service.reenrichGarment('g1', { extraImageBase64: 'PHOTODATA' });
+
+        const opts = service._runAttributePass.mock.calls[0][1];
+        expect(opts.extraReferences[0].mimeType).toBe('image/jpeg');
+    });
+
     test('_enrichBrand skips web search when user brand already set', async () => {
         mockAgent.db.getGarment.mockReturnValue({
             id: 'g1',
@@ -523,6 +550,32 @@ describe('WardrobeService.reenrichGarment', () => {
 
         expect(mockAgent.client.models.generateContent).not.toHaveBeenCalled();
         expect(mockAgent.db.updateGarment).toHaveBeenCalledWith('g1', { enrichment_status: 'complete' });
+    });
+
+    test('_runAttributePass passes extraReferences to the model alongside the crop', async () => {
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1',
+            crop_image_path: '/c.jpg',
+            source_image_path: '/s.jpg',
+            enrichment_status: 'enriching',
+            meta: {}
+        });
+        jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        jest.spyOn(fs, 'readFileSync').mockReturnValue(Buffer.from('cropbytes'));
+        mockAgent.client.models.generateContent.mockResolvedValueOnce(mockAttrResponse({
+            type: 'top', confidence: 0.9
+        }));
+
+        await service._runAttributePass('g1', {
+            extraReferences: [{ data: 'EXTRA', mimeType: 'image/png' }]
+        });
+
+        const callArgs = mockAgent.client.models.generateContent.mock.calls[0][0];
+        const inlineParts = callArgs.contents[0].parts.filter(p => p.inlineData);
+        expect(inlineParts).toHaveLength(2);
+        expect(inlineParts[1].inlineData).toEqual({ data: 'EXTRA', mimeType: 'image/png' });
+        const promptText = callArgs.contents[0].parts.find(p => p.text)?.text || '';
+        expect(promptText).toMatch(/IMAGES PROVIDED: 2/);
     });
 
     test('_runAttributePass prompt includes the hint when provided', async () => {
@@ -675,6 +728,119 @@ describe('WardrobeService.generateGarmentImage', () => {
     test('throws when garment not found', async () => {
         mockAgent.db.getGarment.mockReturnValue(null);
         await expect(service.generateGarmentImage('ghost')).rejects.toThrow('not found');
+    });
+
+    test('passes extra reference images to the model alongside the crop', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            candidates: [{ content: { parts: [
+                { inlineData: { mimeType: 'image/jpeg', data: 'BBBB' } }
+            ]}}]
+        });
+
+        await service.generateGarmentImage('g1', {
+            extraReferences: [{ data: 'EXTRADATA', mimeType: 'image/png' }]
+        });
+
+        const callArgs = mockAgent.client.models.generateContent.mock.calls[0][0];
+        const parts = callArgs.contents[0].parts;
+        const inlineParts = parts.filter(p => p.inlineData);
+        // crop + 1 extra reference
+        expect(inlineParts).toHaveLength(2);
+        expect(inlineParts[1].inlineData).toEqual({ data: 'EXTRADATA', mimeType: 'image/png' });
+        const prompt = parts.find(p => p.text)?.text || '';
+        expect(prompt).toMatch(/2 reference images/);
+    });
+
+    test('default mimeType for extra reference is image/jpeg', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            candidates: [{ content: { parts: [
+                { inlineData: { mimeType: 'image/jpeg', data: 'BBBB' } }
+            ]}}]
+        });
+
+        await service.generateGarmentImage('g1', {
+            extraReferences: [{ data: 'EXTRADATA' }]
+        });
+
+        const inlineParts = mockAgent.client.models.generateContent.mock.calls[0][0]
+            .contents[0].parts.filter(p => p.inlineData);
+        expect(inlineParts[1].inlineData.mimeType).toBe('image/jpeg');
+    });
+
+    test('prompt embeds shoes-specific composition (pair, 3/4 angle) when garment is shoes', async () => {
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1', type: 'shoes', subtype: 'sneakers',
+            primary_color: 'white', brand: 'Nike',
+            crop_image_path: '/x.jpg', source_image_path: '/x.jpg', meta: {}
+        });
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            candidates: [{ content: { parts: [
+                { inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } }
+            ]}}]
+        });
+
+        await service.generateGarmentImage('g1');
+
+        const prompt = mockAgent.client.models.generateContent.mock.calls[0][0]
+            .contents[0].parts.find(p => p.text)?.text || '';
+        expect(prompt).toMatch(/BOTH shoes/);
+        expect(prompt).toMatch(/3\/4 front angle/);
+        expect(prompt).toMatch(/laces/i);
+    });
+
+    test('prompt embeds flat-lay composition for tops', async () => {
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1', type: 'top', subtype: 'polo',
+            crop_image_path: '/x.jpg', source_image_path: '/x.jpg', meta: {}
+        });
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            candidates: [{ content: { parts: [
+                { inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } }
+            ]}}]
+        });
+
+        await service.generateGarmentImage('g1');
+
+        const prompt = mockAgent.client.models.generateContent.mock.calls[0][0]
+            .contents[0].parts.find(p => p.text)?.text || '';
+        expect(prompt).toMatch(/flat lay/);
+        expect(prompt).toMatch(/collar/);
+    });
+
+    test('prompt embeds flat-lay composition for bottoms with drawcord hint for joggers', async () => {
+        mockAgent.db.getGarment.mockReturnValue({
+            id: 'g1', type: 'bottom', subtype: 'joggers',
+            crop_image_path: '/x.jpg', source_image_path: '/x.jpg', meta: {}
+        });
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            candidates: [{ content: { parts: [
+                { inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } }
+            ]}}]
+        });
+
+        await service.generateGarmentImage('g1');
+
+        const prompt = mockAgent.client.models.generateContent.mock.calls[0][0]
+            .contents[0].parts.find(p => p.text)?.text || '';
+        expect(prompt).toMatch(/flat lay/);
+        expect(prompt).toMatch(/[Dd]rawcord/);
+    });
+
+    test('drops malformed extras (no data) silently', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            candidates: [{ content: { parts: [
+                { inlineData: { mimeType: 'image/jpeg', data: 'BBBB' } }
+            ]}}]
+        });
+
+        await service.generateGarmentImage('g1', {
+            extraReferences: [null, {}, { mimeType: 'image/png' }, { data: '' }]
+        });
+
+        const inlineParts = mockAgent.client.models.generateContent.mock.calls[0][0]
+            .contents[0].parts.filter(p => p.inlineData);
+        // Only the crop, all extras filtered
+        expect(inlineParts).toHaveLength(1);
     });
 });
 

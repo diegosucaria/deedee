@@ -5,7 +5,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
 import {
     Shirt, Camera, Trash2, X, Loader2, Check, Pencil, Settings, Heart,
-    Plane, ShoppingBag, MapPin, Calendar, Upload, User, Layers, Sparkles, RefreshCw
+    Plane, ShoppingBag, MapPin, Calendar, Upload, User, Layers, Sparkles, RefreshCw, Paperclip
 } from 'lucide-react';
 import PageShell from '@/components/PageShell';
 import {
@@ -120,7 +120,7 @@ export default function WardrobePage() {
 function GarmentsTab() {
     const [garments, setGarments] = useState([]);
     const [loading, setLoading] = useState(true);
-    const [uploading, setUploading] = useState(false);
+    const [pendingUploads, setPendingUploads] = useState(0);
     const [uploadStatus, setUploadStatus] = useState('');
     const [typeFilter, setTypeFilter] = useState(null);
     const [selected, setSelected] = useState(null);
@@ -158,11 +158,8 @@ function GarmentsTab() {
     const visible = typeFilter ? garments.filter(g => g.type === typeFilter) : garments;
     const enrichingCount = garments.filter(g => g.enrichment_status === 'enriching').length;
 
-    const handleFileSelect = async (e) => {
-        const file = e.target.files?.[0];
-        if (!file) return;
-        setUploading(true);
-        setUploadStatus('Reading image...');
+    const uploadOne = async (file) => {
+        setPendingUploads(n => n + 1);
         try {
             const base64 = await new Promise((resolve, reject) => {
                 const reader = new FileReader();
@@ -170,11 +167,10 @@ function GarmentsTab() {
                 reader.onerror = reject;
                 reader.readAsDataURL(file);
             });
-            setUploadStatus('Uploading...');
             const result = await uploadGarmentPhoto(base64, file.type);
             if (result.success) {
                 const newOnes = result.data?.garments || [];
-                setUploadStatus(`Added ${newOnes.length} garment(s).`);
+                setUploadStatus(`Added ${newOnes.length} garment(s) from ${file.name}.`);
                 if (newOnes.length) {
                     setGarments(prev => [
                         ...newOnes.filter(n => !prev.find(p => p.id === n.id)),
@@ -182,15 +178,23 @@ function GarmentsTab() {
                     ]);
                 }
             } else {
-                setUploadStatus(`Error: ${result.error}`);
+                setUploadStatus(`Error on ${file.name}: ${result.error}`);
             }
         } catch (err) {
-            setUploadStatus(`Error: ${err.message}`);
+            setUploadStatus(`Error on ${file.name}: ${err.message}`);
         } finally {
-            setUploading(false);
+            setPendingUploads(n => n - 1);
             setTimeout(() => setUploadStatus(''), 4000);
-            if (fileInputRef.current) fileInputRef.current.value = '';
         }
+    };
+
+    const handleFileSelect = (e) => {
+        const files = Array.from(e.target.files || []);
+        if (fileInputRef.current) fileInputRef.current.value = '';
+        if (files.length === 0) return;
+        // Fire and forget — each upload runs in parallel and the button stays
+        // available so the user can pick more without waiting.
+        for (const f of files) uploadOne(f);
     };
 
     return (
@@ -199,6 +203,7 @@ function GarmentsTab() {
                 ref={fileInputRef}
                 type="file"
                 accept="image/*"
+                multiple
                 onChange={handleFileSelect}
                 className="hidden"
             />
@@ -206,12 +211,17 @@ function GarmentsTab() {
             <div className="flex flex-wrap items-center gap-2 mb-4">
                 <button
                     onClick={() => fileInputRef.current?.click()}
-                    disabled={uploading}
-                    className="inline-flex items-center gap-2 px-4 py-3 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-sm font-medium rounded-xl min-h-[44px]"
+                    className="inline-flex items-center gap-2 px-4 py-3 bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-medium rounded-xl min-h-[44px]"
                 >
-                    {uploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Camera className="w-4 h-4" />}
-                    {uploading ? 'Uploading' : 'Add photo'}
+                    <Camera className="w-4 h-4" />
+                    Add photo
                 </button>
+                {pendingUploads > 0 && (
+                    <span className="inline-flex items-center gap-1.5 text-xs text-indigo-300">
+                        <Loader2 className="w-3 h-3 animate-spin" />
+                        Uploading {pendingUploads}…
+                    </span>
+                )}
                 {uploadStatus && <span className="text-xs text-zinc-400">{uploadStatus}</span>}
             </div>
 
@@ -311,13 +321,13 @@ function GarmentsTab() {
                             const res = await confirmGarmentBrand(selected.id, accept);
                             if (res.success && res.data?.garment) setSelected(res.data.garment);
                         }}
-                        onReenrich={async (hint) => {
-                            const res = await reenrichGarment(selected.id, hint);
+                        onReenrich={async (hint, opts) => {
+                            const res = await reenrichGarment(selected.id, hint, opts || {});
                             if (res.success && res.data?.garment) setSelected(res.data.garment);
                             return res;
                         }}
-                        onGenerateImage={async () => {
-                            const res = await generateGarmentImage(selected.id);
+                        onGenerateImage={async (opts) => {
+                            const res = await generateGarmentImage(selected.id, opts || {});
                             if (res.success && res.data?.garment) setSelected(res.data.garment);
                             return res;
                         }}
@@ -343,10 +353,14 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
     const [editing, setEditing] = useState(null);
     const [draft, setDraft] = useState('');
     const [hint, setHint] = useState('');
+    const [hintImage, setHintImage] = useState(null); // { base64, mimeType, name }
     const [reenriching, setReenriching] = useState(false);
+    const [reenrichError, setReenrichError] = useState('');
     const [generating, setGenerating] = useState(false);
     const [genError, setGenError] = useState('');
     const [showOriginal, setShowOriginal] = useState(false);
+    const extraPhotoInputRef = useRef(null);
+    const hintImageInputRef = useRef(null);
     const generatedUrl = pathToUrl(garment.generated_image_path);
     const originalUrl = pathToUrl(garment.crop_image_path || garment.source_image_path);
     const imgUrl = !showOriginal && generatedUrl ? generatedUrl : originalUrl;
@@ -359,10 +373,34 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
         setEditing(null);
     };
 
+    const handleHintImageSelect = async (e) => {
+        const file = e.target.files?.[0];
+        if (hintImageInputRef.current) hintImageInputRef.current.value = '';
+        if (!file) return;
+        try {
+            const base64 = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+            setHintImage({ base64, mimeType: file.type, name: file.name });
+        } catch (err) {
+            setReenrichError(err.message);
+        }
+    };
+
     const handleReenrich = async () => {
         setReenriching(true);
-        try { await onReenrich(hint); setHint(''); }
-        finally { setReenriching(false); }
+        setReenrichError('');
+        try {
+            const opts = hintImage
+                ? { extraImageBase64: hintImage.base64, mimeType: hintImage.mimeType }
+                : {};
+            const res = await onReenrich(hint, opts);
+            if (!res?.success) setReenrichError(res?.error || 'Re-enrich failed');
+            else { setHint(''); setHintImage(null); }
+        } finally { setReenriching(false); }
     };
 
     const handleGenerate = async () => {
@@ -372,6 +410,28 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
             const res = await onGenerateImage();
             if (!res?.success) setGenError(res?.error || 'Generate failed');
         } finally { setGenerating(false); }
+    };
+
+    const handleExtraPhotoSelect = async (e) => {
+        const file = e.target.files?.[0];
+        if (extraPhotoInputRef.current) extraPhotoInputRef.current.value = '';
+        if (!file) return;
+        setGenerating(true);
+        setGenError('');
+        try {
+            const extraImageBase64 = await new Promise((resolve, reject) => {
+                const reader = new FileReader();
+                reader.onload = () => resolve(reader.result.split(',')[1]);
+                reader.onerror = reject;
+                reader.readAsDataURL(file);
+            });
+            const res = await onGenerateImage({ extraImageBase64, mimeType: file.type });
+            if (!res?.success) setGenError(res?.error || 'Generate failed');
+        } catch (err) {
+            setGenError(err.message);
+        } finally {
+            setGenerating(false);
+        }
     };
 
     return (
@@ -408,6 +468,13 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
                     </div>
                 )}
 
+                <input
+                    ref={extraPhotoInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleExtraPhotoSelect}
+                    className="hidden"
+                />
                 <div className="flex flex-wrap gap-2 mb-4">
                     <button
                         onClick={handleGenerate}
@@ -416,6 +483,15 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
                     >
                         {generating ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
                         {generatedUrl ? 'Regenerate image' : 'Generate clean image'}
+                    </button>
+                    <button
+                        onClick={() => extraPhotoInputRef.current?.click()}
+                        disabled={generating || enriching}
+                        className="inline-flex items-center gap-1.5 px-3 py-2 rounded-lg bg-zinc-800 hover:bg-zinc-700 disabled:opacity-50 text-zinc-200 text-xs min-h-[36px]"
+                        title="Upload another photo of this garment as additional reference for the generator"
+                    >
+                        <Upload className="w-3.5 h-3.5" />
+                        Use another photo
                     </button>
                     {genError && <span className="text-xs text-rose-400 self-center">{genError}</span>}
                 </div>
@@ -479,28 +555,49 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
 
                     <SliderRow
                         label="Warmth"
+                        description="How insulating · 1 light (linen tee) → 5 heavy (parka)"
                         value={garment.warmth}
                         onCommit={v => onChange({ warmth: v })}
                     />
                     <SliderRow
                         label="Formality"
+                        description="Dress code · 1 athletic/lounge → 3 smart casual → 5 formal"
                         value={garment.formality}
                         onCommit={v => onChange({ formality: v })}
                     />
                 </div>
 
+                <input
+                    ref={hintImageInputRef}
+                    type="file"
+                    accept="image/*"
+                    onChange={handleHintImageSelect}
+                    className="hidden"
+                />
                 <div className="mb-4 p-3 rounded-xl bg-zinc-900 border border-zinc-800">
                     <p className="text-xs text-zinc-400 mb-2">
-                        Re-analyze with a known model or brand. Leave blank to just refresh attributes using the fields above.
+                        Re-analyze with a known model/brand and/or an extra reference photo. Leave both blank to just refresh attributes using the fields above.
                     </p>
                     <div className="flex gap-2">
                         <input
                             value={hint}
                             onChange={e => setHint(e.target.value)}
                             placeholder="e.g. ABC Warpstreme Jogger Regular"
-                            className="flex-1 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600"
+                            className="flex-1 min-w-0 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600"
                             disabled={reenriching || enriching}
                         />
+                        <button
+                            onClick={() => hintImageInputRef.current?.click()}
+                            disabled={reenriching || enriching}
+                            className={`inline-flex items-center justify-center px-2 rounded-lg border text-xs min-h-[36px] ${
+                                hintImage
+                                    ? 'bg-emerald-600/20 border-emerald-500/50 text-emerald-300'
+                                    : 'bg-zinc-950 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                            } disabled:opacity-50`}
+                            title={hintImage ? `Attached: ${hintImage.name}` : 'Attach a reference photo'}
+                        >
+                            <Paperclip className="w-3.5 h-3.5" />
+                        </button>
                         <button
                             onClick={handleReenrich}
                             disabled={reenriching || enriching}
@@ -510,6 +607,20 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
                             Re-enrich
                         </button>
                     </div>
+                    {hintImage && (
+                        <div className="mt-2 flex items-center gap-2 text-[11px] text-emerald-300">
+                            <Paperclip className="w-3 h-3" />
+                            <span className="truncate flex-1">{hintImage.name}</span>
+                            <button
+                                onClick={() => setHintImage(null)}
+                                className="text-zinc-500 hover:text-zinc-300"
+                                title="Remove attachment"
+                            >
+                                <X className="w-3 h-3" />
+                            </button>
+                        </div>
+                    )}
+                    {reenrichError && <p className="mt-2 text-xs text-rose-400">{reenrichError}</p>}
                 </div>
 
                 <div className="flex gap-2">
@@ -525,25 +636,35 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
     );
 }
 
-function SliderRow({ label, value, onCommit }) {
+function SliderRow({ label, description, value, onCommit }) {
     return (
-        <div className="flex items-center gap-2 py-2 border-b border-zinc-900">
-            <span className="text-xs text-zinc-500 w-20 shrink-0">{label}</span>
-            <div className="flex-1 flex items-center gap-2">
-                {[1, 2, 3, 4, 5].map(n => (
-                    <button
-                        key={n}
-                        onClick={() => onCommit(n)}
-                        className={`w-8 h-8 rounded-full text-xs ${
-                            value === n
-                                ? 'bg-indigo-500 text-white'
-                                : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'
-                        }`}
-                    >
-                        {n}
-                    </button>
-                ))}
+        <div className="py-2 border-b border-zinc-900">
+            <div className="flex items-center gap-2">
+                <span
+                    className="text-xs text-zinc-500 w-20 shrink-0"
+                    title={description || undefined}
+                >
+                    {label}
+                </span>
+                <div className="flex-1 flex items-center gap-2">
+                    {[1, 2, 3, 4, 5].map(n => (
+                        <button
+                            key={n}
+                            onClick={() => onCommit(n)}
+                            className={`w-8 h-8 rounded-full text-xs ${
+                                value === n
+                                    ? 'bg-indigo-500 text-white'
+                                    : 'bg-zinc-900 text-zinc-500 hover:text-zinc-300'
+                            }`}
+                        >
+                            {n}
+                        </button>
+                    ))}
+                </div>
             </div>
+            {description && (
+                <p className="text-[10px] text-zinc-600 mt-1 ml-[88px]">{description}</p>
+            )}
         </div>
     );
 }

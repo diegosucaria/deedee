@@ -34,24 +34,30 @@ class WardrobeService {
      * passthrough detection covering the full frame so ingestion still succeeds.
      */
     async _detectItems(base64Data, mimeType = 'image/jpeg') {
-        const fallback = () => ([{
-            bbox: [0, 0, 1, 1],
-            type: null,
-            subtype: null,
-            primary_color: null,
-            secondary_colors: [],
-            pattern: null,
-            material_guess: null,
-            warmth: null,
-            formality: null,
-            season_tags: [],
-            distinguishing_features: null,
-            detection_confidence: 0
-        }]);
+        const TAG = '[wardrobe.detect]';
+        const fallback = (reason) => {
+            console.warn(`${TAG} → returning fallback (single full-frame, all attrs null) | reason=${reason}`);
+            return [{
+                bbox: [0, 0, 1, 1],
+                type: null,
+                subtype: null,
+                primary_color: null,
+                secondary_colors: [],
+                pattern: null,
+                material_guess: null,
+                warmth: null,
+                formality: null,
+                season_tags: [],
+                distinguishing_features: null,
+                detection_confidence: 0
+            }];
+        };
+
+        const imgBytes = base64Data ? Math.floor(base64Data.length * 0.75) : 0;
+        console.log(`${TAG} start | mimeType=${mimeType} | imageBytes≈${imgBytes}`);
 
         if (!this.agent.client) {
-            console.warn('[WardrobeService] Gemini client not initialized — using fallback detection');
-            return fallback();
+            return fallback('no Gemini client');
         }
 
         const modelName = this.config.getModel('FLASH');
@@ -85,6 +91,7 @@ RULES:
 - Never invent brands or models
 Respond with JSON only.`;
 
+        const startedAt = Date.now();
         try {
             const result = await this.agent.client.models.generateContent({
                 model: modelName,
@@ -97,21 +104,46 @@ Respond with JSON only.`;
                 }],
                 config: { responseMimeType: 'application/json' }
             });
+            const elapsedMs = Date.now() - startedAt;
 
             try { this.config.logUsageFromResponse(this.db, modelName, result, null, 'wardrobe_detect'); } catch (e) { /* ignore */ }
 
             const text = this._extractText(result);
             if (!text) {
-                console.warn('[WardrobeService] Empty detection response — fallback');
-                return fallback();
+                const finishReason = result?.candidates?.[0]?.finishReason || 'unknown';
+                console.warn(`${TAG} empty text response | model=${modelName} | elapsedMs=${elapsedMs} | finishReason=${finishReason}`);
+                return fallback('empty response text');
             }
-            const data = this._safeParseJson(text);
+
+            let data;
+            try {
+                const cleaned = String(text).replace(/```json/g, '').replace(/```/g, '').trim();
+                data = JSON.parse(cleaned);
+            } catch (parseErr) {
+                console.warn(`${TAG} JSON parse failed | model=${modelName} | elapsedMs=${elapsedMs} | textLen=${text.length} | err=${parseErr.message} | snippet="${text.slice(0, 240).replace(/\s+/g, ' ')}"`);
+                return fallback('JSON parse failed');
+            }
+
             const items = Array.isArray(data?.items) ? data.items : [];
-            if (items.length === 0) return fallback();
-            return items.map(it => this._normalizeDetection(it)).filter(Boolean);
+            const sceneNotes = (data?.scene_notes || '').toString().slice(0, 160);
+            if (items.length === 0) {
+                console.warn(`${TAG} model returned zero items | model=${modelName} | elapsedMs=${elapsedMs} | scene_notes="${sceneNotes}"`);
+                return fallback('zero items');
+            }
+
+            const normalized = items.map(it => this._normalizeDetection(it)).filter(Boolean);
+            const dropped = items.length - normalized.length;
+            console.log(`${TAG} ok | model=${modelName} | elapsedMs=${elapsedMs} | rawItems=${items.length} | normalized=${normalized.length}${dropped > 0 ? ` | dropped=${dropped}` : ''} | scene_notes="${sceneNotes}"`);
+            normalized.forEach((det, i) => {
+                const conf = typeof det.detection_confidence === 'number' ? det.detection_confidence.toFixed(2) : '?';
+                const bbox = det.bbox.map(n => n.toFixed(2)).join(',');
+                console.log(`${TAG}   item[${i}] type=${det.type || '?'} subtype=${det.subtype || '?'} color=${det.primary_color || '?'} conf=${conf} bbox=[${bbox}]`);
+            });
+            return normalized;
         } catch (e) {
-            console.error('[WardrobeService] Detection failed:', e.message);
-            return fallback();
+            const elapsedMs = Date.now() - startedAt;
+            console.error(`${TAG} API call threw | model=${modelName} | elapsedMs=${elapsedMs} | err=${e.message}`);
+            return fallback(`API error: ${e.message}`);
         }
     }
 
@@ -222,12 +254,20 @@ Respond with JSON only.`;
      * @param {string} [options.hint] - user-supplied known brand/model (e.g.
      *   "ABC Warpstreme Jogger Regular by Lululemon"). When present it biases
      *   the model toward that identity instead of guessing from scratch.
+     * @param {Array<{ data: string, mimeType?: string }>} [options.extraReferences]
+     *   Additional photos of the same garment (e.g. clearer angle the user
+     *   uploaded for re-enrich). Sent alongside the existing crop so the model
+     *   can resolve details the original photo missed.
      */
-    async _runAttributePass(garmentId, { hint = null } = {}) {
+    async _runAttributePass(garmentId, { hint = null, extraReferences = [] } = {}) {
+        const TAG = '[wardrobe.attr]';
         const garment = this.db.getGarment(garmentId);
-        if (!garment) return;
+        if (!garment) {
+            console.warn(`${TAG} skip — garment not found | garmentId=${garmentId}`);
+            return;
+        }
         if (!this.agent.client) {
-            // No client available — mark complete with what we have
+            console.warn(`${TAG} skip — no Gemini client | garmentId=${garmentId} → marking complete`);
             this.db.updateGarment(garmentId, { enrichment_status: 'complete' });
             this._broadcast('wardrobe:garment:update', this.db.getGarment(garmentId));
             return;
@@ -235,10 +275,17 @@ Respond with JSON only.`;
 
         const cropPath = garment.crop_image_path || garment.source_image_path;
         if (!cropPath || !fs.existsSync(cropPath)) {
+            console.warn(`${TAG} skip — no readable crop | garmentId=${garmentId} | cropPath=${cropPath || '(null)'} → marking complete`);
             this.db.updateGarment(garmentId, { enrichment_status: 'complete' });
             this._broadcast('wardrobe:garment:update', this.db.getGarment(garmentId));
             return;
         }
+
+        const extras = Array.isArray(extraReferences)
+            ? extraReferences.filter(r => r && typeof r.data === 'string' && r.data.length > 0)
+            : [];
+
+        console.log(`${TAG} start | garmentId=${garmentId} | hint=${hint ? `"${hint.slice(0, 80)}"` : '(none)'} | extraRefs=${extras.length} | cropPath=${cropPath}`);
 
         const modelName = this.config.getModel('FLASH');
         const prompt = `Analyze this single garment or accessory and return strict JSON:
@@ -258,28 +305,49 @@ Respond with JSON only.`;
   "confidence": 0..1
 }
 
-${hint ? `USER-SUPPLIED IDENTITY: "${hint}".
+${extras.length ? `IMAGES PROVIDED: ${extras.length + 1} photos of the same garment — the first is the original wardrobe crop, the remainder are additional references the user supplied for clarity. Combine evidence from all of them; trust the clearer view when they disagree on a detail.
+` : ''}${hint ? `USER-SUPPLIED IDENTITY: "${hint}".
 Trust this hint as ground truth. Parse brand and model out of it (e.g. "ABC Warpstreme Jogger Regular · Lululemon" → brand: "Lululemon", model: "ABC Warpstreme Jogger Regular") and shape subtype/material/season_tags around that identity (e.g. "ABC Warpstreme Jogger" → subtype: "joggers", material: a synthetic blend). Only override the hint if the image is clearly inconsistent with it.
 ` : ''}Rules: omit fields you cannot confidently determine. Do not invent brands${hint ? ' beyond what the hint states' : ''}. Respond with JSON only.`;
 
+        const startedAt = Date.now();
         try {
             const base64 = fs.readFileSync(cropPath).toString('base64');
             const mimeType = cropPath.endsWith('.png') ? 'image/png' : 'image/jpeg';
+            const parts = [{ inlineData: { data: base64, mimeType } }];
+            for (const ref of extras) {
+                parts.push({
+                    inlineData: {
+                        data: ref.data,
+                        mimeType: ref.mimeType || 'image/jpeg'
+                    }
+                });
+            }
+            parts.push({ text: prompt });
             const result = await this.agent.client.models.generateContent({
                 model: modelName,
-                contents: [{
-                    role: 'user',
-                    parts: [
-                        { inlineData: { data: base64, mimeType } },
-                        { text: prompt }
-                    ]
-                }],
+                contents: [{ role: 'user', parts }],
                 config: { responseMimeType: 'application/json' }
             });
+            const elapsedMs = Date.now() - startedAt;
             try { this.config.logUsageFromResponse(this.db, modelName, result, null, 'wardrobe_attrs'); } catch (e) { /* ignore */ }
 
             const text = this._extractText(result);
-            const data = this._safeParseJson(text) || {};
+            let data;
+            if (!text) {
+                const finishReason = result?.candidates?.[0]?.finishReason || 'unknown';
+                console.warn(`${TAG} empty text response | garmentId=${garmentId} | model=${modelName} | elapsedMs=${elapsedMs} | finishReason=${finishReason}`);
+                data = {};
+            } else {
+                try {
+                    const cleaned = String(text).replace(/```json/g, '').replace(/```/g, '').trim();
+                    data = JSON.parse(cleaned);
+                } catch (parseErr) {
+                    console.warn(`${TAG} JSON parse failed | garmentId=${garmentId} | model=${modelName} | elapsedMs=${elapsedMs} | err=${parseErr.message} | snippet="${text.slice(0, 200).replace(/\s+/g, ' ')}"`);
+                    data = {};
+                }
+            }
+            console.log(`${TAG} model returned | garmentId=${garmentId} | model=${modelName} | elapsedMs=${elapsedMs} | type=${data.type || '?'} subtype=${data.subtype || '?'} color=${data.primary_color || '?'} confidence=${data.confidence ?? '?'}${data.brand ? ` brand=${data.brand}` : ''}${data.model ? ` model=${data.model}` : ''}`);
 
             const patch = {
                 enrichment_status: 'complete',
@@ -328,13 +396,13 @@ Trust this hint as ground truth. Parse brand and model out of it (e.g. "ABC Warp
             try {
                 await this._enrichBrand(garmentId);
             } catch (brandErr) {
-                console.warn(`[WardrobeService] Brand enrichment failed for ${garmentId}:`, brandErr.message);
-                // If brand pass failed, still complete the garment with attributes we have
+                console.warn(`${TAG} brand enrichment failed | garmentId=${garmentId} | err=${brandErr.message} → marking complete with attrs only`);
                 this.db.updateGarment(garmentId, { enrichment_status: 'complete' });
                 this._broadcast('wardrobe:garment:enriched', this.db.getGarment(garmentId));
             }
         } catch (e) {
-            console.error(`[WardrobeService] Attribute pass failed for ${garmentId}:`, e.message);
+            const elapsedMs = Date.now() - startedAt;
+            console.error(`${TAG} pass crashed | garmentId=${garmentId} | elapsedMs=${elapsedMs} | err=${e.message}`);
             this.db.updateGarment(garmentId, { enrichment_status: 'failed' });
             this._broadcast('wardrobe:garment:update', this.db.getGarment(garmentId));
         }
@@ -349,12 +417,18 @@ Trust this hint as ground truth. Parse brand and model out of it (e.g. "ABC Warp
      *   (user input is authoritative)
      */
     async _enrichBrand(garmentId) {
+        const TAG = '[wardrobe.brand]';
         const garment = this.db.getGarment(garmentId);
-        if (!garment) return;
+        if (!garment) {
+            console.warn(`${TAG} skip — garment not found | garmentId=${garmentId}`);
+            return;
+        }
 
         // Respect user input: if they set brand, confirmed one, or supplied a hint,
         // there's nothing for the search to add.
         if (garment.brand || garment.meta?.userHint || garment.meta?.brandUserConfirmed) {
+            const reason = garment.brand ? 'brand already set' : garment.meta?.userHint ? 'user hint present' : 'brand user-confirmed';
+            console.log(`${TAG} skip — ${reason} | garmentId=${garmentId}`);
             this.db.updateGarment(garmentId, { enrichment_status: 'complete' });
             this._broadcast('wardrobe:garment:enriched', this.db.getGarment(garmentId));
             return;
@@ -365,10 +439,16 @@ Trust this hint as ground truth. Parse brand and model out of it (e.g. "ABC Warp
 
         // Nothing to search on, or no client — just complete what we have.
         if (!distinguishing || !this.agent.client || !cropPath || !fs.existsSync(cropPath)) {
+            const reason = !distinguishing ? 'no distinguishing features'
+                : !this.agent.client ? 'no Gemini client'
+                : 'crop unreadable';
+            console.log(`${TAG} skip — ${reason} | garmentId=${garmentId}`);
             this.db.updateGarment(garmentId, { enrichment_status: 'complete' });
             this._broadcast('wardrobe:garment:enriched', this.db.getGarment(garmentId));
             return;
         }
+
+        console.log(`${TAG} start | garmentId=${garmentId} | distinguishing="${(distinguishing || '').slice(0, 100)}"`);
 
         const profile = this.db.getUserProfile();
         const preferred = Array.isArray(profile?.preferred_brands) ? profile.preferred_brands : [];
@@ -399,6 +479,7 @@ Hard rules:
         const mimeType = cropPath.endsWith('.png') ? 'image/png' : 'image/jpeg';
         const base64 = fs.readFileSync(cropPath).toString('base64');
         let data = {};
+        const startedAt = Date.now();
         try {
             const result = await this.agent.client.models.generateContent({
                 model: modelName,
@@ -415,11 +496,13 @@ Hard rules:
             const text = this._extractText(result);
             data = this._safeParseJson(text) || {};
         } catch (e) {
-            console.warn(`[WardrobeService] Brand search failed for ${garmentId}:`, e.message);
+            const elapsedMs = Date.now() - startedAt;
+            console.warn(`${TAG} search threw | garmentId=${garmentId} | elapsedMs=${elapsedMs} | err=${e.message} → marking complete with no brand`);
             this.db.updateGarment(garmentId, { enrichment_status: 'complete' });
             this._broadcast('wardrobe:garment:enriched', this.db.getGarment(garmentId));
             return;
         }
+        const elapsedMs = Date.now() - startedAt;
 
         const brand = (typeof data.brand === 'string' && data.brand.trim()) ? data.brand.trim() : null;
         const model = (typeof data.model === 'string' && data.model.trim()) ? data.model.trim() : null;
@@ -430,6 +513,7 @@ Hard rules:
         const THRESHOLD = 0.95;
 
         if (brand && confidence >= THRESHOLD && visualCite) {
+            console.log(`${TAG} auto-accept | garmentId=${garmentId} | elapsedMs=${elapsedMs} | brand="${brand}" model="${model || ''}" confidence=${confidence.toFixed(2)} cite="${visualCite.slice(0, 80)}"`);
             this.db.updateGarment(garmentId, {
                 brand,
                 model,
@@ -443,6 +527,7 @@ Hard rules:
                 }
             });
         } else if (brand) {
+            console.log(`${TAG} needs confirm | garmentId=${garmentId} | elapsedMs=${elapsedMs} | brand="${brand}" confidence=${confidence.toFixed(2)} below threshold ${THRESHOLD}${visualCite ? '' : ' (no visual identifier cited)'}`);
             this.db.updateGarment(garmentId, {
                 enrichment_status: 'needs_brand_confirm',
                 meta: {
@@ -456,6 +541,7 @@ Hard rules:
                 }
             });
         } else {
+            console.log(`${TAG} no brand identified | garmentId=${garmentId} | elapsedMs=${elapsedMs} | confidence=${confidence.toFixed(2)}`);
             this.db.updateGarment(garmentId, { enrichment_status: 'complete' });
         }
         this._broadcast('wardrobe:garment:enriched', this.db.getGarment(garmentId));
@@ -491,15 +577,17 @@ Hard rules:
 
     /**
      * Re-run the attribute pass on an existing garment, optionally biased by a
-     * user-supplied hint (e.g. "ABC Warpstreme Jogger Regular"). The hint is
-     * combined with whatever brand/model the user has already set so the model
-     * reshapes the subtype/material/season tags around that identity instead of
-     * guessing from scratch.
+     * user-supplied hint (e.g. "ABC Warpstreme Jogger Regular") and/or an extra
+     * reference photo. The hint is combined with whatever brand/model the user
+     * has already set so the model reshapes the subtype/material/season tags
+     * around that identity instead of guessing from scratch. The extra photo
+     * is sent to the model alongside the original crop so it can resolve
+     * details the original missed.
      *
      * Returns the garment row immediately; the refinement runs in the background
      * and broadcasts wardrobe:garment:attributes / :enriched when complete.
      */
-    async reenrichGarment(garmentId, { hint = '' } = {}) {
+    async reenrichGarment(garmentId, { hint = '', extraImageBase64 = null, mimeType = 'image/jpeg' } = {}) {
         const garment = this.db.getGarment(garmentId);
         if (!garment) throw new Error(`Garment ${garmentId} not found`);
 
@@ -527,8 +615,12 @@ Hard rules:
         });
         this._broadcast('wardrobe:garment:update', this.db.getGarment(garmentId));
 
+        const extraReferences = extraImageBase64
+            ? [{ data: extraImageBase64, mimeType: mimeType || 'image/jpeg' }]
+            : [];
+
         // Background refinement — caller gets the "enriching" state immediately
-        this._runAttributePass(garmentId, { hint: effectiveHint }).catch(err => {
+        this._runAttributePass(garmentId, { hint: effectiveHint, extraReferences }).catch(err => {
             console.error(`[WardrobeService] reenrichGarment failed for ${garmentId}:`, err.message);
         });
 
@@ -536,12 +628,90 @@ Hard rules:
     }
 
     /**
-     * Generate a clean product-catalog image of the garment using the Gemini
-     * image model. Uses the existing crop as the reference and writes the
-     * output alongside the source image. The garment row's
-     * `generated_image_path` is updated when the render lands.
+     * Per-type framing/composition prescription for product image generation.
+     * The whole point is consistency across the grid: every shoe should look
+     * the same way (3/4 angle, pair, gum-sole-down) so two side-by-side tiles
+     * read as the same kind of object instead of two different photo styles.
      */
-    async generateGarmentImage(garmentId) {
+    _styleForType(type, subtype) {
+        const t = (type || '').toLowerCase();
+        const s = (subtype || '').toLowerCase();
+        if (t === 'shoes') {
+            return [
+                '- Render BOTH shoes of the pair, framed together — never a single shoe alone',
+                '- 3/4 front angle viewed from a slightly elevated viewpoint (camera roughly waist-height)',
+                '- Toes pointing toward camera-left at ~30° off-axis, heels toward camera-right',
+                '- Shoes overlap slightly with the right shoe set just behind and to the right of the left shoe',
+                '- Soles fully visible from this angle, ground line implied by a soft contact shadow',
+                '- Laces fully laced and tidy; tongue upright'
+            ].join('\n');
+        }
+        if (t === 'top') {
+            return [
+                '- Lay the garment flat as if photographed from directly above on a neutral surface (flat lay)',
+                '- Front of the garment facing the camera, fully visible from collar to hem',
+                '- Shoulders squared at the top of the frame, sleeves laid straight along the sides slightly outward',
+                s.includes('button') || s.includes('shirt') || s.includes('polo') ? '- Top button done up, collar laid flat and symmetrical' : null
+            ].filter(Boolean).join('\n');
+        }
+        if (t === 'bottom') {
+            return [
+                '- Lay the garment flat as if photographed from directly above on a neutral surface (flat lay)',
+                '- Front of the garment facing the camera, full length visible from waistband to hem',
+                '- Waistband at the top of the frame, legs straight and parallel, no folds or bunching',
+                s.includes('jogger') || s.includes('sweat') ? '- Drawcord centered and tied in a small symmetric bow' : null
+            ].filter(Boolean).join('\n');
+        }
+        if (t === 'outerwear') {
+            return [
+                '- Lay the garment flat front-up, fully buttoned/zipped (only if it has closures), on a neutral surface',
+                '- Shoulders squared at the top of the frame, sleeves laid straight along the sides slightly outward',
+                '- Collar/lapels symmetric, hood (if any) laid flat behind the shoulders'
+            ].join('\n');
+        }
+        if (t === 'accessory') {
+            if (s.includes('bag') || s.includes('backpack')) {
+                return [
+                    '- 3/4 front angle, item upright on its base, straps/handles visible and arranged neatly',
+                    '- Camera roughly at the item\'s mid-height'
+                ].join('\n');
+            }
+            if (s.includes('hat') || s.includes('cap') || s.includes('beanie')) {
+                return [
+                    '- 3/4 front angle, brim/visor pointing slightly toward camera-left, crown facing up',
+                    '- Item resting on the surface as if worn-side-up'
+                ].join('\n');
+            }
+            if (s.includes('belt')) {
+                return [
+                    '- Belt coiled in a neat single loop, buckle at top center facing camera',
+                    '- Top-down view'
+                ].join('\n');
+            }
+            if (s.includes('watch') || s.includes('jewelry') || s.includes('sunglass')) {
+                return [
+                    '- Top-down view, item centered and laid flat',
+                    '- Symmetric arrangement, all details (face, lenses, clasps) clearly visible'
+                ].join('\n');
+            }
+            return '- Top-down flat-lay view, item centered and laid out symmetrically with all features visible';
+        }
+        // Fallback for unknown / underwear / other
+        return '- Lay the garment flat front-up on a neutral surface (flat lay), centered and symmetric, all features visible';
+    }
+
+    /**
+     * Generate a clean product-catalog image of the garment using the Gemini
+     * image model. The garment's existing crop is always the primary
+     * reference; callers can pass `extraReferences` (e.g. a fresh photo the
+     * user just took to fill in details the original crop missed).
+     *
+     * @param {string} garmentId
+     * @param {Object} [opts]
+     * @param {Array<{ data: string, mimeType?: string }>} [opts.extraReferences]
+     *   Additional photos of the same garment encoded as base64.
+     */
+    async generateGarmentImage(garmentId, { extraReferences = [] } = {}) {
         const garment = this.db.getGarment(garmentId);
         if (!garment) throw new Error(`Garment ${garmentId} not found`);
         if (!this.agent.client) throw new Error('Gemini client not initialized');
@@ -562,28 +732,49 @@ Hard rules:
         ].filter(Boolean);
         const descriptor = descriptorBits.length ? descriptorBits.join(' ') : 'garment';
 
-        const prompt = `Generate a clean product-catalog photo of the exact ${descriptor} shown in the reference image.
-- Plain neutral off-white background
-- Single garment centered, well-lit with soft diffuse lighting
-- No human model, no mannequin, no hanger, no clutter
-- Preserve color, pattern, fit, fabric texture, and any visible logos or stitching faithfully
-- Full item visible in frame with small margin around the edges
-- Studio e-commerce aesthetic
-- No text overlays, no watermarks`;
+        const extras = Array.isArray(extraReferences)
+            ? extraReferences.filter(r => r && typeof r.data === 'string' && r.data.length > 0)
+            : [];
 
-        const mimeType = cropPath.endsWith('.png') ? 'image/png' : 'image/jpeg';
-        const base64 = fs.readFileSync(cropPath).toString('base64');
+        const referenceClause = extras.length === 0
+            ? 'Use the single reference image to render the item.'
+            : `Use ALL ${extras.length + 1} reference images — they show the same physical garment from different angles or with different details. Preserve every visible feature across all of them (logos, stitching, hardware, prints) in the final render. Do not invent or omit details based on a single image when other references contradict.`;
+
+        const styleClause = this._styleForType(garment.type, garment.subtype);
+
+        const prompt = `Generate a clean product-catalog photo of the exact ${descriptor}.
+${referenceClause}
+
+COMPOSITION (mandatory — every garment of this type must look the same way so the wardrobe grid is uniform):
+${styleClause}
+
+GENERAL RULES:
+- Plain neutral off-white background (#F4F2EE), no gradient, no shadows beyond a soft contact shadow
+- Square 1:1 aspect ratio, item fills 75-85% of the frame, centered, small uniform margin
+- Soft diffuse studio lighting, no harsh highlights, no colored tints
+- No human model, no mannequin, no hanger, no clutter, no props
+- Preserve color, pattern, fit, fabric texture, and any visible logos or stitching faithfully
+- Studio e-commerce aesthetic (think Nike/SSENSE/MR PORTER product page)
+- No text overlays, no watermarks, no borders`;
+
+        const cropMime = cropPath.endsWith('.png') ? 'image/png' : 'image/jpeg';
+        const cropBase64 = fs.readFileSync(cropPath).toString('base64');
+
+        const parts = [{ inlineData: { data: cropBase64, mimeType: cropMime } }];
+        for (const ref of extras) {
+            parts.push({
+                inlineData: {
+                    data: ref.data,
+                    mimeType: ref.mimeType || 'image/jpeg'
+                }
+            });
+        }
+        parts.push({ text: prompt });
 
         const modelName = this.config.getModel('IMAGE');
         const response = await this.agent.client.models.generateContent({
             model: modelName,
-            contents: [{
-                role: 'user',
-                parts: [
-                    { inlineData: { data: base64, mimeType } },
-                    { text: prompt }
-                ]
-            }],
+            contents: [{ role: 'user', parts }],
             config: { responseModalities: ['TEXT', 'IMAGE'] }
         });
         try { this.config.logUsageFromResponse(this.db, modelName, response, null, 'wardrobe_generate_garment'); } catch (e) { /* ignore */ }
@@ -608,10 +799,16 @@ Hard rules:
      * background and broadcasts `wardrobe:garment:attributes` when complete.
      */
     async ingestGarmentFromBase64(base64Data, mimeType = 'image/jpeg') {
+        const TAG = '[wardrobe.ingest]';
         if (!base64Data) throw new Error('Missing image data');
 
+        console.log(`${TAG} start | mimeType=${mimeType} | imageBytes≈${Math.floor(base64Data.length * 0.75)}`);
+
         const detections = await this._detectItems(base64Data, mimeType);
-        if (!detections || detections.length === 0) return [];
+        if (!detections || detections.length === 0) {
+            console.warn(`${TAG} no detections returned — nothing to save`);
+            return [];
+        }
 
         const ext = mimeType.includes('png') ? 'png' : 'jpg';
         const sourceId = crypto.randomUUID();
@@ -619,21 +816,25 @@ Hard rules:
         if (!fs.existsSync(sourceDir)) fs.mkdirSync(sourceDir, { recursive: true });
         const sourcePath = path.join(sourceDir, `original.${ext}`);
         fs.writeFileSync(sourcePath, Buffer.from(base64Data, 'base64'));
+        console.log(`${TAG} wrote source image | sourceId=${sourceId} | path=${sourcePath}`);
 
         const created = [];
+        let cropped = 0;
+        let fullFrameCount = 0;
         for (let i = 0; i < detections.length; i++) {
             const det = detections[i];
-            // Determine crop path: full-frame bboxes (≈ [0,0,1,1]) reuse the source;
-            // otherwise crop to a per-garment file.
             const fullFrame = det.bbox[0] < 0.02 && det.bbox[1] < 0.02 && det.bbox[2] > 0.98 && det.bbox[3] > 0.98;
             let cropPath = sourcePath;
-            if (!fullFrame) {
+            if (fullFrame) {
+                fullFrameCount++;
+            } else {
                 const cropFile = path.join(sourceDir, `crop_${i}.jpg`);
                 try {
                     await this._cropToFile(sourcePath, det.bbox, cropFile);
                     cropPath = cropFile;
+                    cropped++;
                 } catch (e) {
-                    console.warn(`[WardrobeService] Crop failed for detection ${i}:`, e.message);
+                    console.warn(`${TAG} crop failed for detection[${i}] bbox=[${det.bbox.join(',')}] | err=${e.message} — falling back to source image`);
                 }
             }
 
@@ -666,9 +867,10 @@ Hard rules:
 
             // Fire-and-forget attribute pass
             this._runAttributePass(id).catch(err => {
-                console.error(`[WardrobeService] Background attribute pass failed for ${id}:`, err.message);
+                console.error(`[wardrobe.attr] background pass crashed | garmentId=${id} | err=${err.message}`);
             });
         }
+        console.log(`${TAG} done | created=${created.length} | cropped=${cropped} | fullFrame=${fullFrameCount}${fullFrameCount > 0 ? ' (= detection failed to localize, see [wardrobe.detect] logs above)' : ''}`);
         return created;
     }
 
