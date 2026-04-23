@@ -1251,7 +1251,9 @@ class AgentDB {
   }
 
   getPendingGoals() {
-    const stmt = this.db.prepare("SELECT * FROM goals WHERE status = 'pending' ORDER BY last_activity_at DESC, id DESC");
+    // Fall back to created_at for rows predating the last_activity_at column
+    // so old goals don't all bunch at the bottom with NULL activity.
+    const stmt = this.db.prepare("SELECT * FROM goals WHERE status = 'pending' ORDER BY COALESCE(last_activity_at, created_at) DESC, id DESC");
     const rows = stmt.all();
     return rows.map(row => ({
       ...row,
@@ -1750,7 +1752,7 @@ class AgentDB {
          UPDATE goals SET status = 'failed' 
          WHERE status = 'pending' AND metadata LIKE ?
   `);
-      stmt.run(`% ${chatId}% `);
+      stmt.run(`%${chatId}%`);
       console.log(`[DB] Failed pending goals for chat ${chatId}`);
     } else {
       console.warn(`[DB] clearGoals called without chatId, no action taken.`);

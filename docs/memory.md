@@ -71,9 +71,10 @@ DeeDee uses a multi-tiered memory architecture to maintain state, context, and l
 - **Automation**: `nightly_consolidation` at 2AM, manual via `/consolidate`
 
 ### 4. Intentional Memory (Goals)
-- **Table**: `goals`
-- **Content**: Persistent tasks/intentions spanning sessions and restarts
-- **Solves**: The "Amnesia Problem" — on boot, agent checks pending goals and resumes
+- **Table**: `goals` (columns: `description`, `status`, `metadata`, `progress`, `last_activity_at`, `created_at`)
+- **Content**: Multi-session work the AGENT is executing that must survive a restart. NOT for user TODOs — those go through `scheduleJob` (reminders) or stay as chat responses.
+- **Checkpoints**: Agent calls `updateGoalProgress` after each significant step, writing a free-form state string (cursors, IDs, counts) that future-agent reads to resume.
+- **Solves**: The "Amnesia Problem" — on boot, agent reads each pending goal's last checkpoint and resumes from there. Rule of thumb: if restarting wouldn't lose progress, it's not a goal.
 
 ### 5. Social Memory (People)
 - **Table**: `people`
@@ -114,11 +115,11 @@ The RAG service uses a dual search strategy:
 | 4:30 AM | `nightly_dream` | Creative synthesis from recent memories |
 
 ## Self-Improvement Workflow
-1. **Plan**: Agent decides to add a feature
-2. **Persist**: Creates a goal via `db.updateGoal`
-3. **Execute**: Instructs Supervisor to update codebase
-4. **Restart**: Supervisor pushes → Balena updates → container restarts
-5. **Resume**: Agent reads goals table and resumes pending work
+1. **Plan**: Agent decides to do multi-session work it might not finish in one session
+2. **Persist**: Creates a goal via `addGoal` tool
+3. **Checkpoint**: Calls `updateGoalProgress` after each step with enough state to resume cold
+4. **Restart**: Supervisor/deploy/crash → container restarts
+5. **Resume**: Agent reads each pending goal's `progress` string and continues from the checkpoint
 
 ## Schema Reference
 ```sql
@@ -137,7 +138,8 @@ CREATE TABLE summaries (
   content TEXT NOT NULL, range_end TEXT, summary_tokens INTEGER
 );
 CREATE TABLE goals (
-  id INTEGER PRIMARY KEY, description TEXT, status TEXT, metadata TEXT
+  id INTEGER PRIMARY KEY, description TEXT, status TEXT, metadata TEXT,
+  progress TEXT, last_activity_at DATETIME, created_at DATETIME
 );
 CREATE TABLE people (
   id TEXT PRIMARY KEY, name TEXT, phone TEXT, relationship TEXT,

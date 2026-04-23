@@ -82,6 +82,15 @@ describe('AgentDB', () => {
     expect(res.changes).toBe(0);
   });
 
+  test('clearGoals(chatId) marks pending goals for that chat as failed', () => {
+    db.addGoal('In chat A', { chatId: '12345@s.whatsapp.net' });
+    db.addGoal('In chat B', { chatId: 'other-chat' });
+    db.clearGoals('12345@s.whatsapp.net');
+    const pending = db.getPendingGoals();
+    expect(pending).toHaveLength(1);
+    expect(pending[0].description).toBe('In chat B');
+  });
+
   describe('Chat Sessions', () => {
     it('should create and retrieve a session', () => {
       const session = db.createSession({ id: 'test-session', title: 'Test Chat' });

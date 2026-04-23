@@ -225,24 +225,49 @@ class Agent {
       console.warn('[Agent] Failed to dump system prompt:', e);
     }
 
-    // Check Goals (agent's own resumable multi-session work)
+    // Check Goals (agent's own resumable multi-session work).
+    // Crash-loop-safe: batch one message per chatId, and skip the chat notification
+    // entirely for goals active within RECENT_ACTIVITY_MS — user already knows we're
+    // in the middle of it, no point re-announcing on a fast restart.
     const pendingGoals = this.db.getPendingGoals();
     if (pendingGoals.length > 0) {
       console.log(`[Memory] I have ${pendingGoals.length} pending goals.`);
 
+      const RECENT_ACTIVITY_MS = 30 * 60 * 1000;
+      const now = Date.now();
+      const byChatId = new Map();
+
       for (const goal of pendingGoals) {
         const progressLine = goal.progress ? ` | checkpoint: ${goal.progress}` : '';
-        console.log(` - Resuming: ${goal.description}${progressLine}`);
-        if (goal.metadata && goal.metadata.chatId) {
-          const progressPart = goal.progress
-            ? `\nLast checkpoint: ${goal.progress}`
-            : '\n(No checkpoint saved — starting fresh from where context allows.)';
-          const msg = createAssistantMessage(
-            `I am back online. Resuming goal #${goal.id}: "${goal.description}".${progressPart}`
-          );
-          msg.metadata = { chatId: goal.metadata.chatId };
-          this.interface.send(msg).catch(err => console.error('[Agent] Failed to send resume msg:', err));
+        console.log(` - Pending: ${goal.description}${progressLine}`);
+
+        const chatId = goal.metadata && goal.metadata.chatId;
+        if (!chatId) continue;
+
+        if (goal.last_activity_at) {
+          // SQLite stores UTC strings like "2026-01-02 13:24:28" — make it an ISO UTC string.
+          const t = new Date(goal.last_activity_at.replace(' ', 'T') + 'Z').getTime();
+          if (!isNaN(t) && now - t < RECENT_ACTIVITY_MS) {
+            console.log('   (skipping resume msg — active recently)');
+            continue;
+          }
         }
+
+        if (!byChatId.has(chatId)) byChatId.set(chatId, []);
+        byChatId.get(chatId).push(goal);
+      }
+
+      for (const [chatId, goals] of byChatId) {
+        const lines = goals.map(g => {
+          const progressPart = g.progress ? ` — last checkpoint: ${g.progress}` : ' — no checkpoint saved';
+          return `• [#${g.id}] ${g.description}${progressPart}`;
+        });
+        const header = goals.length === 1
+          ? 'I am back online. Resuming this goal:'
+          : `I am back online. Resuming ${goals.length} goals:`;
+        const msg = createAssistantMessage(`${header}\n${lines.join('\n')}`);
+        msg.metadata = { chatId };
+        this.interface.send(msg).catch(err => console.error('[Agent] Failed to send resume msg:', err));
       }
     }
 
