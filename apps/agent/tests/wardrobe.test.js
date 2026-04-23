@@ -111,26 +111,76 @@ describe('WardrobeService detection + bbox normalization', () => {
     });
 
     test('_detectItems prompt explicitly excludes phones, hands, mirrors and furniture', async () => {
-        mockAgent.client.models.generateContent.mockResolvedValueOnce(mockDetectResponse([]));
+        // Both pass-1 and pass-2 (the retry) will fire because pass-1 returns zero items.
+        mockAgent.client.models.generateContent
+            .mockResolvedValueOnce(mockDetectResponse([]))
+            .mockResolvedValueOnce(mockDetectResponse([]));
         await service._detectItems('AAAA');
         const promptText = mockAgent.client.models.generateContent.mock.calls[0][0]
             .contents[0].parts.find(p => p.text)?.text || '';
         expect(promptText).toMatch(/phone/i);
         expect(promptText).toMatch(/hand/i);
         expect(promptText).toMatch(/mirror/i);
-        // Make sure the accessory definition is narrowed to wearable accessories
         expect(promptText).toMatch(/wearable accessory/);
     });
 
-    test('_detectItems prompt tells the model to handle screenshots of product grids', async () => {
-        mockAgent.client.models.generateContent.mockResolvedValueOnce(mockDetectResponse([]));
+    test('_detectItems first-pass prompt covers both real-world photos and screenshots', async () => {
+        mockAgent.client.models.generateContent
+            .mockResolvedValueOnce(mockDetectResponse([]))
+            .mockResolvedValueOnce(mockDetectResponse([]));
         await service._detectItems('AAAA');
         const promptText = mockAgent.client.models.generateContent.mock.calls[0][0]
             .contents[0].parts.find(p => p.text)?.text || '';
-        expect(promptText).toMatch(/SCREENSHOT|screenshot/);
+        // Default prompt must cover both scenarios so the model doesn't bail on screenshots
+        expect(promptText).toMatch(/real-world photo/i);
+        expect(promptText).toMatch(/screenshot/i);
+        expect(promptText).toMatch(/wardrobe inventory/i);
         expect(promptText).toMatch(/product card/i);
-        // Must explicitly tell it not to skip just because it's a screen
-        expect(promptText).toMatch(/Do NOT skip the screenshot/i);
+    });
+
+    test('_detectItems retries with screenshot-explicit prompt when first pass returns zero items', async () => {
+        mockAgent.client.models.generateContent
+            .mockResolvedValueOnce(mockDetectResponse([]))
+            .mockResolvedValueOnce(mockDetectResponse([
+                { box_2d: [50, 50, 500, 500], type: 'top', subtype: 'polo', primary_color: 'orange', distinguishing_features: 'Lululemon ShowZero Polo' }
+            ]));
+
+        const r = await service._detectItems('AAAA');
+
+        expect(mockAgent.client.models.generateContent).toHaveBeenCalledTimes(2);
+        // The retry prompt asserts the input IS a screenshot
+        const retryPrompt = mockAgent.client.models.generateContent.mock.calls[1][0]
+            .contents[0].parts.find(p => p.text)?.text || '';
+        expect(retryPrompt).toMatch(/THE INPUT IMAGE IS A SCREENSHOT/);
+        expect(retryPrompt).toMatch(/SCREENSHOT EXTRACTION RULES/);
+        // And recovered items are returned (not the fallback)
+        expect(r).toHaveLength(1);
+        expect(r[0].type).toBe('top');
+        expect(r[0]._fallback).toBeUndefined();
+    });
+
+    test('_detectItems falls back when both passes return zero items, and the second pass uses screenshot-mode prompt', async () => {
+        mockAgent.client.models.generateContent
+            .mockResolvedValueOnce(mockDetectResponse([]))
+            .mockResolvedValueOnce(mockDetectResponse([]));
+
+        const r = await service._detectItems('AAAA');
+
+        expect(mockAgent.client.models.generateContent).toHaveBeenCalledTimes(2);
+        // Confirm the retry actually used the screenshot-explicit prompt — a future
+        // refactor that calls the wrong prompt on retry should fail this test.
+        const retryPrompt = mockAgent.client.models.generateContent.mock.calls[1][0]
+            .contents[0].parts.find(p => p.text)?.text || '';
+        expect(retryPrompt).toMatch(/THE INPUT IMAGE IS A SCREENSHOT/);
+        expect(retryPrompt).toMatch(/SCREENSHOT EXTRACTION RULES/);
+        expect(r).toHaveLength(1);
+        expect(r[0]._fallback).toBe(true);
+    });
+
+    test('_isFallbackDetection identifies the placeholder', () => {
+        expect(service._isFallbackDetection({ _fallback: true })).toBe(true);
+        expect(service._isFallbackDetection({ type: 'top' })).toBe(false);
+        expect(service._isFallbackDetection(null)).toBe(false);
     });
 });
 
@@ -240,6 +290,42 @@ describe('WardrobeService ingest + background refinement', () => {
         expect(mockAgent.db.addGarment).toHaveBeenCalledWith(expect.objectContaining({ type: 'shoes' }));
         expect(result.garments).toHaveLength(1);
         expect(result.matched_existing).toEqual(['existing_top']);
+    });
+
+    test('does NOT match the fallback placeholder against existing wardrobe', async () => {
+        // Detection failed for whatever reason → only the placeholder came back
+        service._detectItems = jest.fn().mockResolvedValue([
+            { ...WardrobeService.FALLBACK_DETECTION, secondary_colors: [], season_tags: [] }
+        ]);
+        mockAgent.db.getGarments.mockReturnValue([
+            { id: 'existing_top', type: 'top', crop_image_path: '/x/top.jpg' }
+        ]);
+        // If the matcher runs, it'd find spurious matches against the placeholder
+        service._matchDetectionsToWardrobe = jest.fn();
+        mockAgent.db.addGarment.mockReturnValueOnce('placeholder_row');
+
+        const result = await service.ingestGarmentFromBase64('AAAA');
+
+        expect(service._matchDetectionsToWardrobe).not.toHaveBeenCalled();
+        expect(result.matched_existing).toEqual([]);
+        // The placeholder still becomes one Unclassified row the user can manually fix
+        expect(result.garments).toHaveLength(1);
+    });
+
+    test('_fallback sentinel does not leak into the persisted garment meta', async () => {
+        // Fallback detection from _detectItems (carries _fallback: true)
+        service._detectItems = jest.fn().mockResolvedValue([
+            { ...WardrobeService.FALLBACK_DETECTION, secondary_colors: [], season_tags: [] }
+        ]);
+        mockAgent.db.addGarment.mockReturnValueOnce('placeholder_row');
+
+        await service.ingestGarmentFromBase64('AAAA');
+
+        // Whatever lands in the DB (and gets broadcast to the frontend) must NOT
+        // carry the internal sentinel. It's a service-private routing flag.
+        const addArgs = mockAgent.db.addGarment.mock.calls[0][0];
+        expect(addArgs.meta).not.toHaveProperty('_fallback');
+        expect(addArgs.meta.detectionRaw).not.toHaveProperty('_fallback');
     });
 });
 

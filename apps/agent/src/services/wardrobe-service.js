@@ -33,36 +33,64 @@ class WardrobeService {
      * (see spec Appendix A.1). On failure or empty response, returns a single
      * passthrough detection covering the full frame so ingestion still succeeds.
      */
-    async _detectItems(base64Data, mimeType = 'image/jpeg') {
-        const TAG = '[wardrobe.detect]';
-        const fallback = (reason) => {
-            console.warn(`${TAG} → returning fallback (single full-frame, all attrs null) | reason=${reason}`);
-            return [{
-                bbox: [0, 0, 1, 1],
-                type: null,
-                subtype: null,
-                primary_color: null,
-                secondary_colors: [],
-                pattern: null,
-                material_guess: null,
-                warmth: null,
-                formality: null,
-                season_tags: [],
-                distinguishing_features: null,
-                detection_confidence: 0
-            }];
-        };
+    /**
+     * Sentinel returned by _detectItems when nothing usable came back. The
+     * single placeholder item lets ingest still create one row the user can
+     * manually classify, but callers can spot it and skip downstream work
+     * (matching against existing wardrobe, brand search, etc.) that would only
+     * make sense on real detections.
+     */
+    static FALLBACK_DETECTION = Object.freeze({
+        bbox: [0, 0, 1, 1],
+        type: null,
+        subtype: null,
+        primary_color: null,
+        secondary_colors: [],
+        pattern: null,
+        material_guess: null,
+        warmth: null,
+        formality: null,
+        season_tags: [],
+        distinguishing_features: null,
+        detection_confidence: 0,
+        _fallback: true
+    });
 
-        const imgBytes = base64Data ? Math.floor(base64Data.length * 0.75) : 0;
-        console.log(`${TAG} start | mimeType=${mimeType} | imageBytes≈${imgBytes}`);
+    _isFallbackDetection(d) {
+        return !!(d && d._fallback === true);
+    }
 
-        if (!this.agent.client) {
-            return fallback('no Gemini client');
-        }
+    /**
+     * Strip the internal `_fallback` sentinel before persisting a detection
+     * into the DB row's meta.detectionRaw — that flag is for service-internal
+     * routing decisions only and shouldn't appear in API responses or socket
+     * broadcasts.
+     */
+    _detectionForPersist(det) {
+        if (!det) return det;
+        const { _fallback, ...rest } = det;
+        return rest;
+    }
 
-        const modelName = this.config.getModel('FLASH');
-        const prompt = `Identify every distinguishable garment or accessory in this photo.
-Return strict JSON with this shape:
+    /**
+     * Build the detection prompt. We have two flavors:
+     *   - default: handles both real-world photos and product-card screenshots
+     *   - screenshotMode: explicitly tells the model the input IS a screenshot
+     *     and to return one item per product card. Used as a retry when the
+     *     default returned zero items.
+     */
+    _detectionPrompt({ screenshotMode = false } = {}) {
+        const intro = screenshotMode
+            ? `THE INPUT IMAGE IS A SCREENSHOT of a clothing retailer / order history / lookbook page that the user took to inventory their wardrobe. Every visible product card / product photo represents one garment they own. Your job is to extract one item per product card.`
+            : `Extract every wearable garment or accessory from this image so it can be added to the user's personal wardrobe inventory.
+
+The input is one of two scenarios — handle BOTH, never refuse either:
+  (A) A real-world photo: clothes laid on a bed, on a hanger, in a closet, or being worn.
+  (B) A screenshot of the user's clothes on a website or app: a retailer order history page (Lululemon, Nike, Zara, Uniqlo …), a "My Closet" / "My Orders" view, a lookbook, an outfit board, or a product catalog page. The screenshot ITSELF is the wardrobe inventory — extract one item per visible product card or product photo.`;
+
+        return `${intro}
+
+Return strict JSON:
 {
   "items": [
     {
@@ -76,30 +104,47 @@ Return strict JSON with this shape:
       "warmth": 1-5,
       "formality": 1-5,
       "season_tags": ["spring","summer","fall","winter"],
-      "distinguishing_features": "logos, stitching, named model, distinctive cut",
+      "distinguishing_features": "logos, stitching, named model, distinctive cut, OR the product title text from a screenshot product card verbatim",
       "detection_confidence": 0..1
     }
   ],
-  "scene_notes": "overall framing notes"
+  "scene_notes": "overall framing notes (mention if this is a real-world photo or a website screenshot)"
 }
 
-RULES:
-- box_2d is [ymin, xmin, ymax, xmax] normalized to 0-1000 — this is Gemini's canonical bbox format; do not use any other ordering or range
-- The box must tightly enclose the garment itself (no background padding beyond the edges of the fabric)
-- Only include items clearly visible and identifiable; skip partial glimpses of background or furniture
-- INPUT CAN BE A SCREENSHOT: the photo may be a real-world scene (clothes laid on a bed, on a hanger, being worn) OR a screenshot of a clothing retailer / order history / lookbook showing a grid of product cards. When it's a product-card grid, treat each card as one item — return one detection per card with box_2d enclosing the product photo of that card. Use the product title text on the card to populate brand/model in distinguishing_features (e.g. "Lululemon ABC Warpstreme Jogger Regular"). Do NOT skip the screenshot just because it shows a screen — the screenshot itself IS the catalog of clothing.
-- HARD EXCLUDE — never return any of the following as items:
+BBOX RULES:
+- box_2d is [ymin, xmin, ymax, xmax] normalized to 0-1000 — Gemini's canonical bbox format
+- Box tightly encloses the garment itself (or the product photo within a screenshot card) — no extra background padding
+
+${screenshotMode ? `SCREENSHOT EXTRACTION RULES:
+- Return ONE item per product card visible in the screenshot, even if the layout is dense
+- box_2d should enclose the product PHOTO (not the whole card with title and buttons)
+- Quote the product title verbatim into distinguishing_features (e.g. "ABC Warpstreme Jogger Regular", "Men's ShowZero Slim-Fit Polo Shirt")
+- Ignore UI chrome ("MY CLOSET", "VIEW PURCHASE DETAILS", prices, dates, navigation) — these are NOT items
+- Even if the screenshot has 6+ products tightly packed, return all of them
+- "scene_notes" should describe this is a website screenshot
+` : `HARD EXCLUDE — never return any of the following as items:
   · the phone or camera taking the photo, including its case, lens, and on-screen reflection
   · hands, fingers, arms, legs, faces, hair, skin, or any other body part
-  · mirrors, mirror frames, or anything that is only visible as a reflection
+  · mirrors, mirror frames, or anything visible only as a reflection
   · room contents in the scene (bed, sofa, desk, hangers, walls, floor, doors, plants, lamps)
-  · packaging, tags, receipts, paper, "MY CLOSET" / "VIEW DETAILS" buttons, prices, navigation chrome, or other UI text from screenshots
-  · physical screens or monitors visible IN a real-world scene that show unrelated content (this rule does NOT apply when the entire input image IS itself a screenshot of clothing — see SCREENSHOT rule above)
+  · packaging, tags, receipts, paper
+  · UI chrome from a screenshot ("MY CLOSET" / "VIEW DETAILS" buttons, prices, dates, navigation, search bars)
+  · physical screens or monitors visible IN a real-world scene that show unrelated content (this rule does NOT apply when the input itself is a screenshot of clothing — that's scenario B above; extract from it)
   An "accessory" means a wearable accessory the user owns (belt, bag, hat, watch, jewelry, sunglasses, scarf) — not anything else that happens to look small or rectangular
-- Omit fields you are uncertain about (do not fabricate)
-- Never invent brands or models — but if the screenshot has visible product titles like "Lululemon ABC Warpstreme Jogger", quote that into distinguishing_features verbatim
+`}
+GENERAL RULES:
+- Omit fields you cannot confidently determine (do not fabricate)
+- Never invent brands — but if a screenshot card has a visible product title, quote it verbatim into distinguishing_features
 Respond with JSON only.`;
+    }
 
+    /**
+     * Single Gemini call for detection. Returns { ok, items, sceneNotes,
+     * elapsedMs, errorReason } so the caller can decide whether to retry.
+     */
+    async _detectionCall(base64Data, mimeType, { screenshotMode = false } = {}) {
+        const modelName = this.config.getModel('FLASH');
+        const prompt = this._detectionPrompt({ screenshotMode });
         const startedAt = Date.now();
         try {
             const result = await this.agent.client.models.generateContent({
@@ -114,46 +159,80 @@ Respond with JSON only.`;
                 config: { responseMimeType: 'application/json' }
             });
             const elapsedMs = Date.now() - startedAt;
-
             try { this.config.logUsageFromResponse(this.db, modelName, result, null, 'wardrobe_detect'); } catch (e) { /* ignore */ }
 
             const text = this._extractText(result);
             if (!text) {
                 const finishReason = result?.candidates?.[0]?.finishReason || 'unknown';
-                console.warn(`${TAG} empty text response | model=${modelName} | elapsedMs=${elapsedMs} | finishReason=${finishReason}`);
-                return fallback('empty response text');
+                return { ok: false, items: [], sceneNotes: '', elapsedMs, modelName, errorReason: `empty text (finishReason=${finishReason})` };
             }
-
             let data;
             try {
                 const cleaned = String(text).replace(/```json/g, '').replace(/```/g, '').trim();
                 data = JSON.parse(cleaned);
             } catch (parseErr) {
-                console.warn(`${TAG} JSON parse failed | model=${modelName} | elapsedMs=${elapsedMs} | textLen=${text.length} | err=${parseErr.message} | snippet="${text.slice(0, 240).replace(/\s+/g, ' ')}"`);
-                return fallback('JSON parse failed');
+                return { ok: false, items: [], sceneNotes: '', elapsedMs, modelName, errorReason: `JSON parse failed: ${parseErr.message} | snippet="${text.slice(0, 200).replace(/\s+/g, ' ')}"` };
             }
-
             const items = Array.isArray(data?.items) ? data.items : [];
-            const sceneNotes = (data?.scene_notes || '').toString().slice(0, 160);
-            if (items.length === 0) {
-                console.warn(`${TAG} model returned zero items | model=${modelName} | elapsedMs=${elapsedMs} | scene_notes="${sceneNotes}"`);
-                return fallback('zero items');
-            }
-
-            const normalized = items.map(it => this._normalizeDetection(it)).filter(Boolean);
-            const dropped = items.length - normalized.length;
-            console.log(`${TAG} ok | model=${modelName} | elapsedMs=${elapsedMs} | rawItems=${items.length} | normalized=${normalized.length}${dropped > 0 ? ` | dropped=${dropped}` : ''} | scene_notes="${sceneNotes}"`);
-            normalized.forEach((det, i) => {
-                const conf = typeof det.detection_confidence === 'number' ? det.detection_confidence.toFixed(2) : '?';
-                const bbox = det.bbox.map(n => n.toFixed(2)).join(',');
-                console.log(`${TAG}   item[${i}] type=${det.type || '?'} subtype=${det.subtype || '?'} color=${det.primary_color || '?'} conf=${conf} bbox=[${bbox}]`);
-            });
-            return normalized;
+            const sceneNotes = (data?.scene_notes || '').toString().slice(0, 200);
+            return { ok: true, items, sceneNotes, elapsedMs, modelName };
         } catch (e) {
             const elapsedMs = Date.now() - startedAt;
-            console.error(`${TAG} API call threw | model=${modelName} | elapsedMs=${elapsedMs} | err=${e.message}`);
-            return fallback(`API error: ${e.message}`);
+            return { ok: false, items: [], sceneNotes: '', elapsedMs, modelName, errorReason: `API error: ${e.message}` };
         }
+    }
+
+    async _detectItems(base64Data, mimeType = 'image/jpeg') {
+        const TAG = '[wardrobe.detect]';
+        const overallStartedAt = Date.now();
+        const fallback = (reason) => {
+            console.warn(`${TAG} → returning fallback (single full-frame, all attrs null) | reason=${reason} | totalElapsedMs=${Date.now() - overallStartedAt}`);
+            return [{ ...WardrobeService.FALLBACK_DETECTION, secondary_colors: [], season_tags: [] }];
+        };
+
+        const imgBytes = base64Data ? Math.floor(base64Data.length * 0.75) : 0;
+        console.log(`${TAG} start | mimeType=${mimeType} | imageBytes≈${imgBytes}`);
+
+        if (!this.agent.client) {
+            return fallback('no Gemini client');
+        }
+
+        // First pass: default prompt (handles both real photos and screenshots).
+        let res = await this._detectionCall(base64Data, mimeType);
+        let usedScreenshotRetry = false;
+        if (!res.ok) {
+            console.warn(`${TAG} pass-1 failed | model=${res.modelName} | elapsedMs=${res.elapsedMs} | ${res.errorReason}`);
+            return fallback(res.errorReason);
+        }
+        if (res.items.length === 0) {
+            // Models often misread retailer screenshots as "browsing" rather than
+            // "inventorying" and bail. Retry once with a prompt that asserts the
+            // input IS a screenshot and demands per-card extraction.
+            console.warn(`${TAG} pass-1 returned zero items | model=${res.modelName} | elapsedMs=${res.elapsedMs} | scene_notes="${res.sceneNotes}" → retrying in screenshot mode`);
+            const retry = await this._detectionCall(base64Data, mimeType, { screenshotMode: true });
+            if (!retry.ok) {
+                console.warn(`${TAG} pass-2 (screenshot mode) failed | ${retry.errorReason}`);
+                return fallback(`zero items, retry: ${retry.errorReason}`);
+            }
+            if (retry.items.length === 0) {
+                console.warn(`${TAG} pass-2 (screenshot mode) also returned zero items | scene_notes="${retry.sceneNotes}"`);
+                return fallback('zero items in both passes');
+            }
+            console.log(`${TAG} pass-2 (screenshot mode) recovered | items=${retry.items.length} | elapsedMs=${retry.elapsedMs}`);
+            res = retry;
+            usedScreenshotRetry = true;
+        }
+
+        const normalized = res.items.map(it => this._normalizeDetection(it)).filter(Boolean);
+        const dropped = res.items.length - normalized.length;
+        const totalElapsedMs = Date.now() - overallStartedAt;
+        console.log(`${TAG} ok | model=${res.modelName} | totalElapsedMs=${totalElapsedMs} | passes=${usedScreenshotRetry ? 2 : 1} | rawItems=${res.items.length} | normalized=${normalized.length}${dropped > 0 ? ` | dropped=${dropped}` : ''} | scene_notes="${res.sceneNotes}"`);
+        normalized.forEach((det, i) => {
+            const conf = typeof det.detection_confidence === 'number' ? det.detection_confidence.toFixed(2) : '?';
+            const bbox = det.bbox.map(n => n.toFixed(2)).join(',');
+            console.log(`${TAG}   item[${i}] type=${det.type || '?'} subtype=${det.subtype || '?'} color=${det.primary_color || '?'} conf=${conf} bbox=[${bbox}]`);
+        });
+        return normalized;
     }
 
     _normalizeDetection(item) {
@@ -1082,11 +1161,18 @@ GENERAL RULES:
         // re-uploads a photo of something they already cataloged. This mirrors
         // the matching already done by analyzeOutfitPhoto — every ingest path
         // should respect "we might already have this."
+        //
+        // Skip matching when ALL we got is the fallback placeholder (detection
+        // failed). Asking the matcher to compare a generic "[0,0,1,1] all-null"
+        // detection against the wardrobe just produces spurious matches.
+        const allFallback = detections.every(d => this._isFallbackDetection(d));
         const CAPS_SHORTLIST = 25;
         const shortlist = this.db.getGarments({ limit: CAPS_SHORTLIST }) || [];
         let matchPlan = null;
-        if (this.agent.client && shortlist.length > 0) {
+        if (!allFallback && this.agent.client && shortlist.length > 0) {
             matchPlan = await this._matchDetectionsToWardrobe(base64Data, mimeType, detections, shortlist);
+        } else if (allFallback) {
+            console.log(`${TAG} skipping wardrobe match — detection fell back to placeholder (no real items to match)`);
         }
 
         const ext = mimeType.includes('png') ? 'png' : 'jpg';
@@ -1153,7 +1239,7 @@ GENERAL RULES:
                 enrichment_confidence: det.detection_confidence || 0,
                 meta: {
                     distinguishingFeatures: det.distinguishing_features || null,
-                    detectionRaw: det
+                    detectionRaw: this._detectionForPersist(det)
                 }
             };
 
@@ -1215,8 +1301,10 @@ GENERAL RULES:
         }
 
         // Try a single-call Pro match. If client missing, fall back to "all NEW".
+        // Skip when detection is the placeholder fallback — see ingestGarmentFromBase64.
+        const allFallback = detections.every(d => this._isFallbackDetection(d));
         let matchPlan = null;
-        if (this.agent.client && shortlist.length > 0) {
+        if (!allFallback && this.agent.client && shortlist.length > 0) {
             matchPlan = await this._matchDetectionsToWardrobe(base64Data, mimeType, detections, shortlist);
         }
 
@@ -1278,7 +1366,7 @@ GENERAL RULES:
                 enrichment_confidence: det.detection_confidence || 0,
                 meta: {
                     distinguishingFeatures: det.distinguishing_features || null,
-                    detectionRaw: det,
+                    detectionRaw: this._detectionForPersist(det),
                     ingestSource: 'analyze_outfit_photo',
                     caption: caption || null
                 }
