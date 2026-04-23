@@ -34,24 +34,30 @@ class WardrobeService {
      * passthrough detection covering the full frame so ingestion still succeeds.
      */
     async _detectItems(base64Data, mimeType = 'image/jpeg') {
-        const fallback = () => ([{
-            bbox: [0, 0, 1, 1],
-            type: null,
-            subtype: null,
-            primary_color: null,
-            secondary_colors: [],
-            pattern: null,
-            material_guess: null,
-            warmth: null,
-            formality: null,
-            season_tags: [],
-            distinguishing_features: null,
-            detection_confidence: 0
-        }]);
+        const TAG = '[wardrobe.detect]';
+        const fallback = (reason) => {
+            console.warn(`${TAG} → returning fallback (single full-frame, all attrs null) | reason=${reason}`);
+            return [{
+                bbox: [0, 0, 1, 1],
+                type: null,
+                subtype: null,
+                primary_color: null,
+                secondary_colors: [],
+                pattern: null,
+                material_guess: null,
+                warmth: null,
+                formality: null,
+                season_tags: [],
+                distinguishing_features: null,
+                detection_confidence: 0
+            }];
+        };
+
+        const imgBytes = base64Data ? Math.floor(base64Data.length * 0.75) : 0;
+        console.log(`${TAG} start | mimeType=${mimeType} | imageBytes≈${imgBytes}`);
 
         if (!this.agent.client) {
-            console.warn('[WardrobeService] Gemini client not initialized — using fallback detection');
-            return fallback();
+            return fallback('no Gemini client');
         }
 
         const modelName = this.config.getModel('FLASH');
@@ -85,6 +91,7 @@ RULES:
 - Never invent brands or models
 Respond with JSON only.`;
 
+        const startedAt = Date.now();
         try {
             const result = await this.agent.client.models.generateContent({
                 model: modelName,
@@ -97,21 +104,46 @@ Respond with JSON only.`;
                 }],
                 config: { responseMimeType: 'application/json' }
             });
+            const elapsedMs = Date.now() - startedAt;
 
             try { this.config.logUsageFromResponse(this.db, modelName, result, null, 'wardrobe_detect'); } catch (e) { /* ignore */ }
 
             const text = this._extractText(result);
             if (!text) {
-                console.warn('[WardrobeService] Empty detection response — fallback');
-                return fallback();
+                const finishReason = result?.candidates?.[0]?.finishReason || 'unknown';
+                console.warn(`${TAG} empty text response | model=${modelName} | elapsedMs=${elapsedMs} | finishReason=${finishReason}`);
+                return fallback('empty response text');
             }
-            const data = this._safeParseJson(text);
+
+            let data;
+            try {
+                const cleaned = String(text).replace(/```json/g, '').replace(/```/g, '').trim();
+                data = JSON.parse(cleaned);
+            } catch (parseErr) {
+                console.warn(`${TAG} JSON parse failed | model=${modelName} | elapsedMs=${elapsedMs} | textLen=${text.length} | err=${parseErr.message} | snippet="${text.slice(0, 240).replace(/\s+/g, ' ')}"`);
+                return fallback('JSON parse failed');
+            }
+
             const items = Array.isArray(data?.items) ? data.items : [];
-            if (items.length === 0) return fallback();
-            return items.map(it => this._normalizeDetection(it)).filter(Boolean);
+            const sceneNotes = (data?.scene_notes || '').toString().slice(0, 160);
+            if (items.length === 0) {
+                console.warn(`${TAG} model returned zero items | model=${modelName} | elapsedMs=${elapsedMs} | scene_notes="${sceneNotes}"`);
+                return fallback('zero items');
+            }
+
+            const normalized = items.map(it => this._normalizeDetection(it)).filter(Boolean);
+            const dropped = items.length - normalized.length;
+            console.log(`${TAG} ok | model=${modelName} | elapsedMs=${elapsedMs} | rawItems=${items.length} | normalized=${normalized.length}${dropped > 0 ? ` | dropped=${dropped}` : ''} | scene_notes="${sceneNotes}"`);
+            normalized.forEach((det, i) => {
+                const conf = typeof det.detection_confidence === 'number' ? det.detection_confidence.toFixed(2) : '?';
+                const bbox = det.bbox.map(n => n.toFixed(2)).join(',');
+                console.log(`${TAG}   item[${i}] type=${det.type || '?'} subtype=${det.subtype || '?'} color=${det.primary_color || '?'} conf=${conf} bbox=[${bbox}]`);
+            });
+            return normalized;
         } catch (e) {
-            console.error('[WardrobeService] Detection failed:', e.message);
-            return fallback();
+            const elapsedMs = Date.now() - startedAt;
+            console.error(`${TAG} API call threw | model=${modelName} | elapsedMs=${elapsedMs} | err=${e.message}`);
+            return fallback(`API error: ${e.message}`);
         }
     }
 
@@ -228,10 +260,14 @@ Respond with JSON only.`;
      *   can resolve details the original photo missed.
      */
     async _runAttributePass(garmentId, { hint = null, extraReferences = [] } = {}) {
+        const TAG = '[wardrobe.attr]';
         const garment = this.db.getGarment(garmentId);
-        if (!garment) return;
+        if (!garment) {
+            console.warn(`${TAG} skip — garment not found | garmentId=${garmentId}`);
+            return;
+        }
         if (!this.agent.client) {
-            // No client available — mark complete with what we have
+            console.warn(`${TAG} skip — no Gemini client | garmentId=${garmentId} → marking complete`);
             this.db.updateGarment(garmentId, { enrichment_status: 'complete' });
             this._broadcast('wardrobe:garment:update', this.db.getGarment(garmentId));
             return;
@@ -239,6 +275,7 @@ Respond with JSON only.`;
 
         const cropPath = garment.crop_image_path || garment.source_image_path;
         if (!cropPath || !fs.existsSync(cropPath)) {
+            console.warn(`${TAG} skip — no readable crop | garmentId=${garmentId} | cropPath=${cropPath || '(null)'} → marking complete`);
             this.db.updateGarment(garmentId, { enrichment_status: 'complete' });
             this._broadcast('wardrobe:garment:update', this.db.getGarment(garmentId));
             return;
@@ -247,6 +284,8 @@ Respond with JSON only.`;
         const extras = Array.isArray(extraReferences)
             ? extraReferences.filter(r => r && typeof r.data === 'string' && r.data.length > 0)
             : [];
+
+        console.log(`${TAG} start | garmentId=${garmentId} | hint=${hint ? `"${hint.slice(0, 80)}"` : '(none)'} | extraRefs=${extras.length} | cropPath=${cropPath}`);
 
         const modelName = this.config.getModel('FLASH');
         const prompt = `Analyze this single garment or accessory and return strict JSON:
@@ -271,6 +310,7 @@ ${extras.length ? `IMAGES PROVIDED: ${extras.length + 1} photos of the same garm
 Trust this hint as ground truth. Parse brand and model out of it (e.g. "ABC Warpstreme Jogger Regular · Lululemon" → brand: "Lululemon", model: "ABC Warpstreme Jogger Regular") and shape subtype/material/season_tags around that identity (e.g. "ABC Warpstreme Jogger" → subtype: "joggers", material: a synthetic blend). Only override the hint if the image is clearly inconsistent with it.
 ` : ''}Rules: omit fields you cannot confidently determine. Do not invent brands${hint ? ' beyond what the hint states' : ''}. Respond with JSON only.`;
 
+        const startedAt = Date.now();
         try {
             const base64 = fs.readFileSync(cropPath).toString('base64');
             const mimeType = cropPath.endsWith('.png') ? 'image/png' : 'image/jpeg';
@@ -289,10 +329,25 @@ Trust this hint as ground truth. Parse brand and model out of it (e.g. "ABC Warp
                 contents: [{ role: 'user', parts }],
                 config: { responseMimeType: 'application/json' }
             });
+            const elapsedMs = Date.now() - startedAt;
             try { this.config.logUsageFromResponse(this.db, modelName, result, null, 'wardrobe_attrs'); } catch (e) { /* ignore */ }
 
             const text = this._extractText(result);
-            const data = this._safeParseJson(text) || {};
+            let data;
+            if (!text) {
+                const finishReason = result?.candidates?.[0]?.finishReason || 'unknown';
+                console.warn(`${TAG} empty text response | garmentId=${garmentId} | model=${modelName} | elapsedMs=${elapsedMs} | finishReason=${finishReason}`);
+                data = {};
+            } else {
+                try {
+                    const cleaned = String(text).replace(/```json/g, '').replace(/```/g, '').trim();
+                    data = JSON.parse(cleaned);
+                } catch (parseErr) {
+                    console.warn(`${TAG} JSON parse failed | garmentId=${garmentId} | model=${modelName} | elapsedMs=${elapsedMs} | err=${parseErr.message} | snippet="${text.slice(0, 200).replace(/\s+/g, ' ')}"`);
+                    data = {};
+                }
+            }
+            console.log(`${TAG} model returned | garmentId=${garmentId} | model=${modelName} | elapsedMs=${elapsedMs} | type=${data.type || '?'} subtype=${data.subtype || '?'} color=${data.primary_color || '?'} confidence=${data.confidence ?? '?'}${data.brand ? ` brand=${data.brand}` : ''}${data.model ? ` model=${data.model}` : ''}`);
 
             const patch = {
                 enrichment_status: 'complete',
@@ -341,13 +396,13 @@ Trust this hint as ground truth. Parse brand and model out of it (e.g. "ABC Warp
             try {
                 await this._enrichBrand(garmentId);
             } catch (brandErr) {
-                console.warn(`[WardrobeService] Brand enrichment failed for ${garmentId}:`, brandErr.message);
-                // If brand pass failed, still complete the garment with attributes we have
+                console.warn(`${TAG} brand enrichment failed | garmentId=${garmentId} | err=${brandErr.message} → marking complete with attrs only`);
                 this.db.updateGarment(garmentId, { enrichment_status: 'complete' });
                 this._broadcast('wardrobe:garment:enriched', this.db.getGarment(garmentId));
             }
         } catch (e) {
-            console.error(`[WardrobeService] Attribute pass failed for ${garmentId}:`, e.message);
+            const elapsedMs = Date.now() - startedAt;
+            console.error(`${TAG} pass crashed | garmentId=${garmentId} | elapsedMs=${elapsedMs} | err=${e.message}`);
             this.db.updateGarment(garmentId, { enrichment_status: 'failed' });
             this._broadcast('wardrobe:garment:update', this.db.getGarment(garmentId));
         }
@@ -362,12 +417,18 @@ Trust this hint as ground truth. Parse brand and model out of it (e.g. "ABC Warp
      *   (user input is authoritative)
      */
     async _enrichBrand(garmentId) {
+        const TAG = '[wardrobe.brand]';
         const garment = this.db.getGarment(garmentId);
-        if (!garment) return;
+        if (!garment) {
+            console.warn(`${TAG} skip — garment not found | garmentId=${garmentId}`);
+            return;
+        }
 
         // Respect user input: if they set brand, confirmed one, or supplied a hint,
         // there's nothing for the search to add.
         if (garment.brand || garment.meta?.userHint || garment.meta?.brandUserConfirmed) {
+            const reason = garment.brand ? 'brand already set' : garment.meta?.userHint ? 'user hint present' : 'brand user-confirmed';
+            console.log(`${TAG} skip — ${reason} | garmentId=${garmentId}`);
             this.db.updateGarment(garmentId, { enrichment_status: 'complete' });
             this._broadcast('wardrobe:garment:enriched', this.db.getGarment(garmentId));
             return;
@@ -378,10 +439,16 @@ Trust this hint as ground truth. Parse brand and model out of it (e.g. "ABC Warp
 
         // Nothing to search on, or no client — just complete what we have.
         if (!distinguishing || !this.agent.client || !cropPath || !fs.existsSync(cropPath)) {
+            const reason = !distinguishing ? 'no distinguishing features'
+                : !this.agent.client ? 'no Gemini client'
+                : 'crop unreadable';
+            console.log(`${TAG} skip — ${reason} | garmentId=${garmentId}`);
             this.db.updateGarment(garmentId, { enrichment_status: 'complete' });
             this._broadcast('wardrobe:garment:enriched', this.db.getGarment(garmentId));
             return;
         }
+
+        console.log(`${TAG} start | garmentId=${garmentId} | distinguishing="${(distinguishing || '').slice(0, 100)}"`);
 
         const profile = this.db.getUserProfile();
         const preferred = Array.isArray(profile?.preferred_brands) ? profile.preferred_brands : [];
@@ -412,6 +479,7 @@ Hard rules:
         const mimeType = cropPath.endsWith('.png') ? 'image/png' : 'image/jpeg';
         const base64 = fs.readFileSync(cropPath).toString('base64');
         let data = {};
+        const startedAt = Date.now();
         try {
             const result = await this.agent.client.models.generateContent({
                 model: modelName,
@@ -428,11 +496,13 @@ Hard rules:
             const text = this._extractText(result);
             data = this._safeParseJson(text) || {};
         } catch (e) {
-            console.warn(`[WardrobeService] Brand search failed for ${garmentId}:`, e.message);
+            const elapsedMs = Date.now() - startedAt;
+            console.warn(`${TAG} search threw | garmentId=${garmentId} | elapsedMs=${elapsedMs} | err=${e.message} → marking complete with no brand`);
             this.db.updateGarment(garmentId, { enrichment_status: 'complete' });
             this._broadcast('wardrobe:garment:enriched', this.db.getGarment(garmentId));
             return;
         }
+        const elapsedMs = Date.now() - startedAt;
 
         const brand = (typeof data.brand === 'string' && data.brand.trim()) ? data.brand.trim() : null;
         const model = (typeof data.model === 'string' && data.model.trim()) ? data.model.trim() : null;
@@ -443,6 +513,7 @@ Hard rules:
         const THRESHOLD = 0.95;
 
         if (brand && confidence >= THRESHOLD && visualCite) {
+            console.log(`${TAG} auto-accept | garmentId=${garmentId} | elapsedMs=${elapsedMs} | brand="${brand}" model="${model || ''}" confidence=${confidence.toFixed(2)} cite="${visualCite.slice(0, 80)}"`);
             this.db.updateGarment(garmentId, {
                 brand,
                 model,
@@ -456,6 +527,7 @@ Hard rules:
                 }
             });
         } else if (brand) {
+            console.log(`${TAG} needs confirm | garmentId=${garmentId} | elapsedMs=${elapsedMs} | brand="${brand}" confidence=${confidence.toFixed(2)} below threshold ${THRESHOLD}${visualCite ? '' : ' (no visual identifier cited)'}`);
             this.db.updateGarment(garmentId, {
                 enrichment_status: 'needs_brand_confirm',
                 meta: {
@@ -469,6 +541,7 @@ Hard rules:
                 }
             });
         } else {
+            console.log(`${TAG} no brand identified | garmentId=${garmentId} | elapsedMs=${elapsedMs} | confidence=${confidence.toFixed(2)}`);
             this.db.updateGarment(garmentId, { enrichment_status: 'complete' });
         }
         this._broadcast('wardrobe:garment:enriched', this.db.getGarment(garmentId));
@@ -646,10 +719,16 @@ ${referenceClause}
      * background and broadcasts `wardrobe:garment:attributes` when complete.
      */
     async ingestGarmentFromBase64(base64Data, mimeType = 'image/jpeg') {
+        const TAG = '[wardrobe.ingest]';
         if (!base64Data) throw new Error('Missing image data');
 
+        console.log(`${TAG} start | mimeType=${mimeType} | imageBytes≈${Math.floor(base64Data.length * 0.75)}`);
+
         const detections = await this._detectItems(base64Data, mimeType);
-        if (!detections || detections.length === 0) return [];
+        if (!detections || detections.length === 0) {
+            console.warn(`${TAG} no detections returned — nothing to save`);
+            return [];
+        }
 
         const ext = mimeType.includes('png') ? 'png' : 'jpg';
         const sourceId = crypto.randomUUID();
@@ -657,21 +736,25 @@ ${referenceClause}
         if (!fs.existsSync(sourceDir)) fs.mkdirSync(sourceDir, { recursive: true });
         const sourcePath = path.join(sourceDir, `original.${ext}`);
         fs.writeFileSync(sourcePath, Buffer.from(base64Data, 'base64'));
+        console.log(`${TAG} wrote source image | sourceId=${sourceId} | path=${sourcePath}`);
 
         const created = [];
+        let cropped = 0;
+        let fullFrameCount = 0;
         for (let i = 0; i < detections.length; i++) {
             const det = detections[i];
-            // Determine crop path: full-frame bboxes (≈ [0,0,1,1]) reuse the source;
-            // otherwise crop to a per-garment file.
             const fullFrame = det.bbox[0] < 0.02 && det.bbox[1] < 0.02 && det.bbox[2] > 0.98 && det.bbox[3] > 0.98;
             let cropPath = sourcePath;
-            if (!fullFrame) {
+            if (fullFrame) {
+                fullFrameCount++;
+            } else {
                 const cropFile = path.join(sourceDir, `crop_${i}.jpg`);
                 try {
                     await this._cropToFile(sourcePath, det.bbox, cropFile);
                     cropPath = cropFile;
+                    cropped++;
                 } catch (e) {
-                    console.warn(`[WardrobeService] Crop failed for detection ${i}:`, e.message);
+                    console.warn(`${TAG} crop failed for detection[${i}] bbox=[${det.bbox.join(',')}] | err=${e.message} — falling back to source image`);
                 }
             }
 
@@ -704,9 +787,10 @@ ${referenceClause}
 
             // Fire-and-forget attribute pass
             this._runAttributePass(id).catch(err => {
-                console.error(`[WardrobeService] Background attribute pass failed for ${id}:`, err.message);
+                console.error(`[wardrobe.attr] background pass crashed | garmentId=${id} | err=${err.message}`);
             });
         }
+        console.log(`${TAG} done | created=${created.length} | cropped=${cropped} | fullFrame=${fullFrameCount}${fullFrameCount > 0 ? ' (= detection failed to localize, see [wardrobe.detect] logs above)' : ''}`);
         return created;
     }
 
