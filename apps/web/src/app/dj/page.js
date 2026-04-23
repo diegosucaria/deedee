@@ -6,6 +6,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
 import { Upload, Disc, Disc3, Music, ExternalLink, Loader2, Search, X, AlertTriangle, Check, Pencil, Trash2, LayoutGrid, List, ArrowUpDown, RefreshCw, Plus, FolderPlus, TrendingUp, BookOpen, Sparkles, Camera } from 'lucide-react';
 import PageShell from '@/components/PageShell';
+import { getSocketUrl } from '@/hooks/useSocket';
 
 export default function DJCratePage() {
     const [vinyls, setVinyls] = useState([]);
@@ -44,7 +45,14 @@ export default function DJCratePage() {
 
     useEffect(() => {
         loadData();
-        const socket = io();
+        // Bare io() connects to the page origin where no socket server lives —
+        // events from the agent never arrived. Use the public SOCKET_URL.
+        const socket = io(getSocketUrl(), {
+            path: '/socket.io',
+            transports: ['websocket', 'polling'],
+            reconnection: true,
+            reconnectionAttempts: 10
+        });
         socket.on('dj:vinyl:update', (v) => {
             setEnrichingIds(prev => { const s = new Set(prev); s.delete(v.id); return s; });
             setVinyls((prev) => {
