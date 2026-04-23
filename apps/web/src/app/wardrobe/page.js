@@ -3,6 +3,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
+import { getSocketUrl } from '@/hooks/useSocket';
 import {
     Shirt, Camera, Trash2, X, Loader2, Check, Pencil, Settings, Heart,
     Plane, ShoppingBag, MapPin, Calendar, Upload, User, Layers, Sparkles, RefreshCw, Paperclip
@@ -77,7 +78,7 @@ export default function WardrobePage() {
 
     return (
         <PageShell icon={Shirt} title="Wardrobe" subtitle="Your clothes, cataloged.">
-            <div className="flex items-center gap-2 mb-4 -mx-4 px-4 md:mx-0 md:px-0 overflow-x-auto">
+            <div className="flex items-center gap-2 mb-4 -mx-4 px-4 md:mx-0 md:px-0 overflow-x-auto touch-pan-x">
                 <div className="flex gap-2 flex-1">
                     {TABS.map(t => (
                         <button
@@ -135,7 +136,15 @@ function GarmentsTab() {
 
     useEffect(() => {
         loadData();
-        const socket = io();
+        // Bare io() connects to the page origin (web container, port 3000) where
+        // no socket.io server lives — events from the agent never arrived. Use
+        // the public SOCKET_URL (api gateway → interfaces) like the chat page.
+        const socket = io(getSocketUrl(), {
+            path: '/socket.io',
+            transports: ['websocket', 'polling'],
+            reconnection: true,
+            reconnectionAttempts: 10
+        });
         const upsert = (g) => {
             setGarments(prev => {
                 const idx = prev.findIndex(x => x.id === g.id);
@@ -232,7 +241,7 @@ function GarmentsTab() {
                 </div>
             )}
 
-            <div className="flex gap-2 overflow-x-auto pb-3 mb-4 -mx-4 px-4 md:mx-0 md:px-0">
+            <div className="flex gap-2 overflow-x-auto touch-pan-x pb-3 mb-4 -mx-4 px-4 md:mx-0 md:px-0">
                 {TYPE_FILTERS.map(f => (
                     <button
                         key={f.label}
@@ -944,7 +953,7 @@ function TripDetail({ trip, onClose, onRefresh }) {
                 {days.length > 0 && (
                     <div className="mb-4">
                         <h3 className="text-xs uppercase tracking-wide text-zinc-500 mb-2">Forecast</h3>
-                        <div className="flex gap-2 overflow-x-auto pb-1">
+                        <div className="flex gap-2 overflow-x-auto touch-pan-x pb-1">
                             {days.map((d, i) => (
                                 <div key={i} className="shrink-0 w-20 p-2 rounded-lg bg-zinc-900 border border-zinc-800 text-center">
                                     <p className="text-[10px] text-zinc-500">{formatDate(d.date)}</p>
