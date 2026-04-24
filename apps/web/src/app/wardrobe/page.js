@@ -547,6 +547,7 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
     const [generatingOutfits, setGeneratingOutfits] = useState(false);
     const [outfitsError, setOutfitsError] = useState('');
     const [generatedOutfits, setGeneratedOutfits] = useState([]);
+    const [lightboxSrc, setLightboxSrc] = useState(null);
     const extraPhotoInputRef = useRef(null);
     const hintImageInputRef = useRef(null);
     const duplicateInputRef = useRef(null);
@@ -706,10 +707,15 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
                 {imgUrl && (
                     <div className="relative mb-4">
                         {/* eslint-disable-next-line @next/next/no-img-element */}
-                        <img src={imgUrl} alt="" className="w-full rounded-xl object-cover max-h-80" />
+                        <img
+                            src={imgUrl}
+                            alt=""
+                            onClick={() => setLightboxSrc(imgUrl)}
+                            className="w-full rounded-xl object-cover max-h-80 cursor-zoom-in"
+                        />
                         {generatedUrl && (
                             <button
-                                onClick={() => setShowOriginal(v => !v)}
+                                onClick={(e) => { e.stopPropagation(); setShowOriginal(v => !v); }}
                                 className="absolute top-2 right-2 px-2 py-1 rounded-full bg-black/70 text-[10px] text-white backdrop-blur"
                             >
                                 {showOriginal ? 'Generated' : 'Original'}
@@ -965,6 +971,26 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
                             return res;
                         }}
                     />
+                )}
+            </AnimatePresence>
+
+            <AnimatePresence>
+                {lightboxSrc && (
+                    <motion.div
+                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[70] bg-black/90 flex items-center justify-center p-4"
+                        onClick={() => setLightboxSrc(null)}
+                    >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={lightboxSrc} alt="" className="max-w-full max-h-full object-contain" />
+                        <button
+                            onClick={(e) => { e.stopPropagation(); setLightboxSrc(null); }}
+                            className="absolute top-4 right-4 p-2 rounded-full bg-white/10 text-white hover:bg-white/20"
+                            aria-label="Close"
+                        >
+                            <X className="w-6 h-6" />
+                        </button>
+                    </motion.div>
                 )}
             </AnimatePresence>
         </motion.div>

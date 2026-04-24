@@ -10,13 +10,21 @@ export const metadata = {
   icons: {
     icon: "/favicon-32x32.png",
     shortcut: "/favicon.ico",
-    apple: "/apple-touch-icon.png",
-    other: {
-      rel: "apple-touch-icon-precomposed",
-      url: "/apple-touch-icon.png",
-    },
   },
   manifest: "/site.webmanifest",
+  appleWebApp: {
+    capable: true,
+    title: "DeeDee",
+    statusBarStyle: "black-translucent",
+  },
+};
+
+export const viewport = {
+  width: "device-width",
+  initialScale: 1,
+  maximumScale: 1,
+  userScalable: false,
+  viewportFit: "cover",
 };
 
 export default function RootLayout({ children }) {

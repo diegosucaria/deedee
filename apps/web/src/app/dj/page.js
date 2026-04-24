@@ -660,6 +660,8 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
     const confInfo = getConfidenceInfo(conf);
     const isEnriching = vinyl.enrichment_status === 'enriching';
     const [showCrateMenu, setShowCrateMenu] = useState(false);
+    const [lightboxSrc, setLightboxSrc] = useState(null);
+    const coverUrl = vinyl.cover_image_url || '/vinyl_covers/default.png';
 
     return (
         <div className="p-4 sm:p-6 space-y-4 sm:space-y-5">
@@ -667,7 +669,12 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
             <div className="flex items-start justify-between gap-3">
                 <div className="flex gap-3 sm:gap-4 items-start flex-1 min-w-0">
                     <div className="w-20 h-20 sm:w-28 sm:h-28 rounded-lg overflow-hidden shrink-0 border border-zinc-700/50 relative group/cover">
-                        <img src={vinyl.cover_image_url || '/vinyl_covers/default.png'} alt={vinyl.title} className="w-full h-full object-cover" />
+                        <img
+                            src={coverUrl}
+                            alt={vinyl.title}
+                            onClick={() => setLightboxSrc(coverUrl)}
+                            className="w-full h-full object-cover cursor-zoom-in"
+                        />
                         {meta.originalCoverUrl && meta.originalCoverUrl !== vinyl.cover_image_url && (
                             <a href={meta.originalCoverUrl} target="_blank" rel="noopener"
                                 className="absolute bottom-1 right-1 p-1 rounded bg-black/70 text-zinc-300 hover:text-white hover:bg-black/90 transition-all opacity-0 group-hover/cover:opacity-100 sm:opacity-0 sm:group-hover/cover:opacity-100"
@@ -905,6 +912,26 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
                     </button>
                 </div>
             )}
+
+            <AnimatePresence>
+                {lightboxSrc && (
+                    <motion.div
+                        initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                        className="fixed inset-0 z-[70] bg-black/90 flex items-center justify-center p-4"
+                        onClick={() => setLightboxSrc(null)}
+                    >
+                        {/* eslint-disable-next-line @next/next/no-img-element */}
+                        <img src={lightboxSrc} alt="" className="max-w-full max-h-full object-contain" />
+                        <button
+                            onClick={(e) => { e.stopPropagation(); setLightboxSrc(null); }}
+                            className="absolute top-4 right-4 p-2 rounded-full bg-white/10 text-white hover:bg-white/20"
+                            aria-label="Close"
+                        >
+                            <X className="w-6 h-6" />
+                        </button>
+                    </motion.div>
+                )}
+            </AnimatePresence>
         </div>
     );
 }
