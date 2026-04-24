@@ -94,8 +94,8 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - `DELETE /v1/notifications/:id`: Delete a notification.
     - `/v1/dj/*`: DJ crate management (vinyls, crates). Agent-backed. See [docs/dj-assistant.md](dj-assistant.md).
     - `/v1/wardrobe/*`: Wardrobe service (garments, outfits, trips, shopping list, profile). Agent-backed. See [docs/wardrobe.md](wardrobe.md).
-- **Socket.io Proxy**: `/socket.io` path is proxied to `interfaces:5000` via `http-proxy-middleware` with full WebSocket upgrade support. This bypasses Next.js (can't handle WS upgrades) and Traefik forward-auth (generates CSRF cookies on HTTP polls). Auth is handled by Interfaces, not the API gateway.
-- **Auth**: Bearer Token (`DEEDEE_API_TOKEN`). All `/v1` routes protected. `/health` and `/socket.io` are public (socket auth delegated to Interfaces).
+- **Socket.io Proxy**: `/socket.io` path is proxied to `interfaces:5000` via `http-proxy-middleware` with full WebSocket upgrade support. Traefik's `google-auth` middleware gates the path on the reverse proxy and stamps `X-Forwarded-User` on authenticated requests. The API gateway requires that header (defense-in-depth) and injects `DEEDEE_API_TOKEN` into the upstream URL so Interfaces accepts the connection. The browser never holds the API token — auth is the `_forward_auth` cookie. Clients use `transports: ['websocket']` to keep traffic to a single WS upgrade per connection (no polling, no forward-auth cookie spam).
+- **Auth**: Bearer Token (`DEEDEE_API_TOKEN`) for `/v1/*`. `/socket.io` requires `X-Forwarded-User` (set by Traefik forward-auth). `/health` is public.
 - **Security**: All route parameters are encoded with `encodeURIComponent()` to prevent injection via crafted job names or IDs.
 - **Flow**: Client -> API -> Agent (Waits for full processing) -> API -> Client JSON Response.
 
@@ -105,7 +105,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 - **Port**: `5000`
 - **Supported Channels**:
     - **Socket.io**: Real-time event-based communication for Web Interface. Browser clients connect via the API gateway (`/socket.io` proxy) which handles WebSocket upgrades.
-        - **Auth**: Dual-path — internal services authenticate with `DEEDEE_API_TOKEN`, browser clients validated by `Origin` header against `ALLOWED_SOCKET_ORIGINS` allowlist.
+        - **Auth**: Two paths, both backed by `DEEDEE_API_TOKEN`. Internal services (agent, browser screencast tools) connect with the token in `handshake.auth.token` and are marked `isTrusted` (only these can emit `browser:frame`). Browser clients receive the token from the API gateway as a query param after Traefik's forward-auth accepts the user — they can connect but are NOT trusted.
         - Emits: `agent:message` (Stream), `agent:thinking` (Status), `session:update` (Auto-Title), `subagent:update` (Sub-agent status change), `notification:new` (System notifications).
     - **Telegram**: Long-Polling Bot. Supports Global Stop (`/stop`) and Audio Messages.
     - **WhatsApp**:
@@ -148,7 +148,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 1.  **Network Isolation**: No container relies on public ingress. All inter-service communication is internal Docker networking.
 2.  **Authentication**:
     -   API: Bearer Token (`DEEDEE_API_TOKEN`).
-    -   Socket.io: Origin allowlist (`ALLOWED_SOCKET_ORIGINS`) for browser clients, token auth for internal services.
+    -   Socket.io: Traefik forward-auth (`X-Forwarded-User`) for browser clients gated at the API gateway; the gateway injects `DEEDEE_API_TOKEN` into the upstream handshake so Interfaces accepts the connection. Internal services authenticate directly with `DEEDEE_API_TOKEN` in `handshake.auth.token`.
     -   Telegram: `ALLOWED_TELEGRAM_IDS` allowlist.
 3.  **Safety Mechanisms**:
     -   **Global Stop**: `/stop` command halts all active execution loops instantly.

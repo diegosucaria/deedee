@@ -28,29 +28,33 @@ app.use(express.json({ limit: '50mb' }));
 
 // --- SOCKET.IO ---
 
-// Auth Middleware — two paths:
-// 1. Token auth: internal services (agent, supervisor) send DEEDEE_API_TOKEN → trusted producer
-// 2. Origin auth: browser clients come from an allowed origin (behind Traefik forward-auth)
-// All other connections are rejected.
-const ALLOWED_ORIGINS = (process.env.ALLOWED_SOCKET_ORIGINS || '').split(',').map(s => s.trim()).filter(Boolean);
-
+// Auth Middleware — two paths, both backed by DEEDEE_API_TOKEN:
+// 1. Trusted producer (handshake.auth.token): internal services (agent,
+//    browser screencast tools) connect with the token in the auth payload.
+//    Marked `isTrusted` — only these can emit `browser:frame`.
+// 2. Authenticated browser (handshake.query.token): the API gateway injects
+//    the token as a query param after Traefik's forward-auth middleware
+//    accepts the user. Allowed to connect, NOT marked trusted (cannot
+//    broadcast frames). Browser clients themselves never see the token.
+// Origin-header allowlisting was removed — the Origin header is
+// attacker-controlled from any non-browser client and not a security boundary.
 io.use((socket, next) => {
-  // Path 1: Token auth (internal services)
-  const token = socket.handshake.auth?.token || socket.handshake.query?.token;
-  if (token && token === process.env.DEEDEE_API_TOKEN) {
+  const token = process.env.DEEDEE_API_TOKEN;
+
+  // Path 1: trusted producer
+  if (token && socket.handshake.auth?.token === token) {
     socket.isTrusted = true;
     console.log(`[Interfaces] Trusted producer connected: ${socket.id}`);
     return next();
   }
 
-  // Path 2: Origin auth (browser clients behind forward-auth)
-  const origin = socket.handshake.headers?.origin;
-  if (origin && ALLOWED_ORIGINS.includes(origin)) {
-    console.log(`[Interfaces] Browser client connected: ${socket.id} (origin: ${origin})`);
+  // Path 2: authenticated browser (token injected by API gateway)
+  if (token && socket.handshake.query?.token === token) {
+    console.log(`[Interfaces] Browser client connected: ${socket.id}`);
     return next();
   }
 
-  console.warn(`[Interfaces] Rejected socket: ${socket.id} (origin: ${origin || 'none'}, token: ${token ? 'invalid' : 'none'})`);
+  console.warn(`[Interfaces] Rejected socket: ${socket.id}`);
   return next(new Error('authentication_error'));
 });
 

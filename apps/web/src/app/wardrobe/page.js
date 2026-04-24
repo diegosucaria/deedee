@@ -170,9 +170,10 @@ function GarmentsTab() {
         // the public SOCKET_URL (api gateway → interfaces) like the chat page.
         const socket = io(getSocketUrl(), {
             path: '/socket.io',
-            transports: ['websocket', 'polling'],
+            transports: ['websocket'],
             reconnection: true,
-            reconnectionAttempts: 10
+            reconnectionAttempts: 10,
+            withCredentials: true,
         });
         const upsert = (g) => {
             setGarments(prev => {
