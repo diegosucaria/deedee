@@ -133,7 +133,7 @@ export function SmartLearnModal({ isOpen, onClose, onLearned }) {
                 </div>
 
                 {/* Content */}
-                <div className="p-6 overflow-y-auto flex-1">
+                <div className="p-6 overflow-y-auto overscroll-contain flex-1">
                     {status === 'idle' && (
                         <div className="text-center py-8">
                             <Sparkles className="mx-auto w-12 h-12 text-primary/50 mb-4" />

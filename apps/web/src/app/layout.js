@@ -1,6 +1,7 @@
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/Sidebar";
+import ZoomLock from "@/components/ZoomLock";
 
 const inter = Inter({ subsets: ["latin"], display: 'swap', preload: true });
 
@@ -16,6 +17,12 @@ export const metadata = {
     capable: true,
     title: "DeeDee",
     statusBarStyle: "black-translucent",
+  },
+  // `apple-mobile-web-app-capable` (emitted by appleWebApp.capable above) is
+  // deprecated in Chrome; the standard name is `mobile-web-app-capable`.
+  // Emit both so old iOS + new Chrome both see it.
+  other: {
+    "mobile-web-app-capable": "yes",
   },
 };
 
@@ -48,6 +55,7 @@ export default function RootLayout({ children }) {
       <body
         className={`${inter.className} antialiased`}
       >
+        <ZoomLock />
         <div className="flex h-screen bg-black text-zinc-200 selection:bg-indigo-500 selection:text-white">
           <Sidebar />
           <main className="flex-1 min-w-0 overflow-y-auto relative flex flex-col overflow-x-hidden">

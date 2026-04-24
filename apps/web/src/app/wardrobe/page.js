@@ -695,12 +695,12 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
             <motion.div
                 initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                 transition={{ type: 'spring', damping: 28 }}
-                className="w-full md:max-w-lg bg-zinc-950 border-t md:border border-zinc-800 md:rounded-2xl rounded-t-2xl p-4 max-h-[90vh] overflow-y-auto"
+                className="w-full md:max-w-lg bg-zinc-950 border-t md:border border-zinc-800 md:rounded-2xl rounded-t-2xl px-4 pb-4 max-h-[90vh] overflow-y-auto overscroll-contain"
                 onClick={e => e.stopPropagation()}
             >
-                <div className="flex items-center justify-between mb-3">
-                    <h2 className="text-lg font-semibold text-white">Garment</h2>
-                    <button onClick={onClose} className="p-2 text-zinc-400 hover:text-white">
+                <div className="sticky top-0 z-10 -mx-4 px-4 py-2 mb-3 bg-zinc-950 border-b border-zinc-800 flex items-center justify-between">
+                    <h2 className="text-base font-semibold text-white">Garment</h2>
+                    <button onClick={onClose} className="p-1.5 text-zinc-400 hover:text-white">
                         <X className="w-5 h-5" />
                     </button>
                 </div>
@@ -1068,7 +1068,7 @@ function MergePicker({ primary, candidates, onCancel, onConfirm }) {
                     className="w-full bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600 mb-3"
                 />
 
-                <div className="flex-1 overflow-y-auto -mx-1 px-1">
+                <div className="flex-1 overflow-y-auto overscroll-contain -mx-1 px-1">
                     {visible.length === 0 ? (
                         <p className="text-center text-xs text-zinc-600 py-10">No matching garments.</p>
                     ) : (
@@ -1582,10 +1582,10 @@ function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGar
             <motion.div
                 initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                 transition={{ type: 'spring', damping: 28 }}
-                className="w-full md:max-w-lg bg-zinc-950 border-t md:border border-zinc-800 md:rounded-2xl rounded-t-2xl p-4 max-h-[90vh] overflow-y-auto"
+                className="w-full md:max-w-lg bg-zinc-950 border-t md:border border-zinc-800 md:rounded-2xl rounded-t-2xl px-4 pb-4 max-h-[90vh] overflow-y-auto overscroll-contain"
                 onClick={e => e.stopPropagation()}
             >
-                <div className="flex items-center justify-between mb-3 gap-2">
+                <div className="sticky top-0 z-10 -mx-4 px-4 py-2 mb-3 bg-zinc-950 border-b border-zinc-800 flex items-center justify-between gap-2">
                     {editingName && onRename ? (
                         <div className="flex-1 flex items-center gap-2 min-w-0">
                             <input
@@ -1997,12 +1997,12 @@ function TripDetail({ trip, onClose, onRefresh }) {
             <motion.div
                 initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                 transition={{ type: 'spring', damping: 28 }}
-                className="w-full md:max-w-lg bg-zinc-950 border-t md:border border-zinc-800 md:rounded-2xl rounded-t-2xl p-4 max-h-[90vh] overflow-y-auto"
+                className="w-full md:max-w-lg bg-zinc-950 border-t md:border border-zinc-800 md:rounded-2xl rounded-t-2xl px-4 pb-4 max-h-[90vh] overflow-y-auto overscroll-contain"
                 onClick={e => e.stopPropagation()}
             >
-                <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-lg font-semibold text-white truncate">{trip.destination}</h2>
-                    <button onClick={onClose} className="p-2 text-zinc-400 hover:text-white">
+                <div className="sticky top-0 z-10 -mx-4 px-4 py-2 mb-4 bg-zinc-950 border-b border-zinc-800 flex items-center justify-between">
+                    <h2 className="text-base font-semibold text-white truncate">{trip.destination}</h2>
+                    <button onClick={onClose} className="p-1.5 text-zinc-400 hover:text-white">
                         <X className="w-5 h-5" />
                     </button>
                 </div>
@@ -2595,7 +2595,7 @@ function ProfileSheet({ onClose }) {
             <motion.div
                 initial={{ y: '100%' }} animate={{ y: 0 }} exit={{ y: '100%' }}
                 transition={{ type: 'spring', damping: 28 }}
-                className="w-full md:max-w-lg bg-zinc-950 border-t md:border border-zinc-800 md:rounded-2xl rounded-t-2xl p-4 max-h-[90vh] overflow-y-auto"
+                className="w-full md:max-w-lg bg-zinc-950 border-t md:border border-zinc-800 md:rounded-2xl rounded-t-2xl px-4 pb-4 max-h-[90vh] overflow-y-auto overscroll-contain"
                 onClick={e => e.stopPropagation()}
             >
                 <input
@@ -2606,9 +2606,9 @@ function ProfileSheet({ onClose }) {
                     className="hidden"
                 />
 
-                <div className="flex items-center justify-between mb-4">
-                    <h2 className="text-lg font-semibold text-white">Wardrobe profile</h2>
-                    <button onClick={onClose} className="p-2 text-zinc-400 hover:text-white">
+                <div className="sticky top-0 z-10 -mx-4 px-4 py-2 mb-4 bg-zinc-950 border-b border-zinc-800 flex items-center justify-between">
+                    <h2 className="text-base font-semibold text-white">Wardrobe profile</h2>
+                    <button onClick={onClose} className="p-1.5 text-zinc-400 hover:text-white">
                         <X className="w-5 h-5" />
                     </button>
                 </div>
