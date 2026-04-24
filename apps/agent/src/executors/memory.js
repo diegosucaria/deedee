@@ -82,7 +82,7 @@ class MemoryExecutor extends BaseExecutor {
                 const resolvePhone = (meta) => {
                     // Agent DB messages use phoneNumber or contactId
                     if (meta.phoneNumber || meta.contactId) return meta.phoneNumber || meta.contactId;
-                    // WhatsApp messages use chatId (e.g. 5491130579025@s.whatsapp.net)
+                    // WhatsApp messages use chatId (e.g. 15555550123@s.whatsapp.net)
                     if (meta.chatId) return meta.chatId.replace(/@.*$/, '');
                     return null;
                 };

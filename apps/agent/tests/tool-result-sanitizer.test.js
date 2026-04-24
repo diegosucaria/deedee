@@ -490,8 +490,8 @@ describe('Tool Result Sanitizer', () => {
         it('should compact Google People API connections format', () => {
             const apiResponse = {
                 connections: [
-                    makeGooglePerson('Marcelo Hini', '+543546659932', 'marcelo@test.com'),
-                    makeGooglePerson('Ana Lopez', '+5491155556666', null),
+                    makeGooglePerson('Marcelo Hini', '+15555550123', 'marcelo@test.com'),
+                    makeGooglePerson('Ana Lopez', '+15555550124', null),
                 ],
                 totalPeople: 2,
                 totalItems: 2,
@@ -507,7 +507,7 @@ describe('Tool Result Sanitizer', () => {
             // First person: should have compacted fields
             const person1 = parsed.connections[0];
             expect(person1.name).toBe('Marcelo Hini');
-            expect(person1.phones).toEqual([{ number: '+543546659932', type: 'Mobile' }]);
+            expect(person1.phones).toEqual([{ number: '+15555550123', type: 'Mobile' }]);
             expect(person1.emails).toEqual(['marcelo@test.com']);
             expect(person1.organization).toBe('Acme Corp');
             expect(person1.jobTitle).toBe('Engineer');
