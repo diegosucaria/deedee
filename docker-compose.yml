@@ -85,7 +85,7 @@ services:
       - AGENT_URL=http://agent:3000
       - INTERFACES_URL=http://interfaces:5000
       - PORT=3001
-      # DEEDEE_API_TOKEN injected by Balena
+      # DEEDEE_API_TOKEN, WEB_ORIGIN injected by Balena
     ports:
       - "3001:3001"
     networks:

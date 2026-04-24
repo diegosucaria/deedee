@@ -10,7 +10,9 @@ const dashboardRouter = require('./dashboard');
 
 const app = express();
 const port = process.env.PORT || 3001;
-const WEB_ORIGIN = process.env.WEB_ORIGIN || 'https://dd.diegosucaria.info';
+// Production must set WEB_ORIGIN to the UI origin so CORS allows credentials
+// (cookie auth) on cross-origin socket.io connects. Default is local dev only.
+const WEB_ORIGIN = process.env.WEB_ORIGIN || 'http://localhost:3000';
 
 // Increase body limit to support large audio/image payloads (matches Agent)
 app.use(express.json({ limit: '50mb' }));
