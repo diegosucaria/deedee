@@ -319,8 +319,9 @@ export default function ChatSessionPage({ params }) {
             newSocket = io(getSocketUrl(), {
                 path: '/socket.io',
                 reconnectionAttempts: 10,
-                transports: ['websocket', 'polling'],
+                transports: ['websocket'],
                 query: { chatId },
+                withCredentials: true,
             });
 
             newSocket.on('connect_error', (err) => {

@@ -49,9 +49,10 @@ export default function DJCratePage() {
         // events from the agent never arrived. Use the public SOCKET_URL.
         const socket = io(getSocketUrl(), {
             path: '/socket.io',
-            transports: ['websocket', 'polling'],
+            transports: ['websocket'],
             reconnection: true,
-            reconnectionAttempts: 10
+            reconnectionAttempts: 10,
+            withCredentials: true,
         });
         socket.on('dj:vinyl:update', (v) => {
             setEnrichingIds(prev => { const s = new Set(prev); s.delete(v.id); return s; });

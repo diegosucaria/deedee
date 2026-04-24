@@ -4,11 +4,13 @@ import { io } from 'socket.io-client';
 let socket;
 
 // Resolve socket URL once.
-// SOCKET_URL points to the API gateway which proxies socket.io to the
-// Interfaces service with full WebSocket support.  This bypasses Next.js
-// rewrites (can't upgrade WS) and Traefik forward-auth (generates CSRF
-// cookies on every HTTP poll).
-// Auth: interfaces validates the browser Origin header against an allowlist.
+// SOCKET_URL points to the API gateway. Traefik's google-auth middleware
+// gates the /socket.io path on that domain; the API then injects
+// DEEDEE_API_TOKEN into the upstream handshake. The browser never holds
+// the API token — auth is the _forward_auth cookie (parent-domain scoped,
+// so it's sent cross-origin to the API host).
+// We force websocket-only transport: a single WS upgrade per connection
+// means forward-auth runs once, no polling = no CSRF cookie spam.
 export function getSocketUrl() {
     // 1. Runtime config injected by layout.js (reads server-side env at render
     //    time).  Primary path for Balena/Docker where env vars are set at
@@ -34,8 +36,9 @@ export function useSocket() {
                 reconnection: true,
                 reconnectionAttempts: 5,
                 reconnectionDelay: 1000,
-                transports: ['websocket', 'polling'],
+                transports: ['websocket'],
                 path: '/socket.io',
+                withCredentials: true,
             });
         }
 

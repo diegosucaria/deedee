@@ -68,7 +68,7 @@ services:
       - AGENT_URL=http://agent:3000
       - PORT=5000
       - DATA_DIR=/app/data
-      # ALLOWED_SOCKET_ORIGINS, TELEGRAM_TOKEN, SLACK_TOKEN injected by Balena
+      # TELEGRAM_TOKEN, SLACK_TOKEN, DEEDEE_API_TOKEN injected by Balena
     volumes:
       - interfaces-data:/app/data
     networks:

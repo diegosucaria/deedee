@@ -10,10 +10,15 @@ const dashboardRouter = require('./dashboard');
 
 const app = express();
 const port = process.env.PORT || 3001;
+const WEB_ORIGIN = process.env.WEB_ORIGIN || 'https://dd.diegosucaria.info';
 
 // Increase body limit to support large audio/image payloads (matches Agent)
 app.use(express.json({ limit: '50mb' }));
-app.use(cors());
+// CORS scoped to the UI origin so the _forward_auth cookie can ride along
+// on cross-origin socket.io connects. Wildcard origin + credentials is
+// rejected by browsers, so the origin must be explicit. Non-browser callers
+// (iOS Shortcuts etc.) authenticate via Bearer token and don't need CORS.
+app.use(cors({ origin: WEB_ORIGIN, credentials: true }));
 
 // Public Routes (No Auth)
 app.use('/health', require('./routes/health'));
@@ -47,18 +52,42 @@ app.use('/v1/browser-secrets', require('./routes/secrets'));
 app.use('/v1/mcp', require('./routes/mcp'));
 
 // --- Socket.io Proxy to Interfaces ---
-// Proxies WebSocket + HTTP transport directly to interfaces:5000.
-// This bypasses the Next.js rewrite layer (which can't handle WS upgrades)
-// and avoids Traefik forward-auth CSRF cookie spam from polling.
+// Auth model:
+//   - Traefik's google-auth middleware gates this path on the reverse proxy
+//     and stamps `X-Forwarded-User` on authenticated requests.
+//   - We require that header here as defense-in-depth: if the API container
+//     is ever reached without going through Traefik (direct port exposure,
+//     misconfigured router), the proxy refuses to relay.
+//   - We inject DEEDEE_API_TOKEN into the upstream URL so Interfaces accepts
+//     via its query-param token path. The token never reaches the browser.
+//   - Polling stays disabled on the client (transports: ['websocket']) so a
+//     successful WS upgrade is the only HTTP request that hits Traefik per
+//     connection — no forward-auth cookie spam.
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const INTERFACES_URL = process.env.INTERFACES_URL || 'http://interfaces:5000';
+
+const injectUpstreamToken = (path) => {
+    const token = process.env.DEEDEE_API_TOKEN;
+    if (!token) return path;
+    const sep = path.includes('?') ? '&' : '?';
+    return `${path}${sep}token=${encodeURIComponent(token)}`;
+};
 
 const socketProxy = createProxyMiddleware({
     target: INTERFACES_URL,
     ws: true,
     changeOrigin: true,
+    pathRewrite: injectUpstreamToken,
 });
-app.use('/socket.io', socketProxy);
+
+const socketAuthGate = (req, res, next) => {
+    if (!req.headers['x-forwarded-user']) {
+        return res.status(401).json({ error: 'Socket.io requires authenticated session via reverse proxy' });
+    }
+    next();
+};
+
+app.use('/socket.io', socketAuthGate, socketProxy);
 
 const http = require('http');
 // Protected Log Stream
@@ -129,8 +158,21 @@ app.get('/v1/logs/:container', authMiddleware, (req, res) => {
 
 if (require.main === module) {
     const server = http.createServer(app);
-    // Attach socket.io proxy to handle WebSocket upgrade requests
-    server.on('upgrade', socketProxy.upgrade);
+    // Express middleware does not run for raw WebSocket `upgrade` events,
+    // so we gate on `X-Forwarded-User` here in addition to the HTTP middleware
+    // before delegating to the proxy.
+    server.on('upgrade', (req, socket, head) => {
+        if (!req.url || !req.url.startsWith('/socket.io')) {
+            socket.destroy();
+            return;
+        }
+        if (!req.headers['x-forwarded-user']) {
+            socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
+            socket.destroy();
+            return;
+        }
+        socketProxy.upgrade(req, socket, head);
+    });
     server.listen(port, () => {
         console.log(`API Service listening on port ${port}`);
     });
