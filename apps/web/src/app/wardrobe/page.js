@@ -23,6 +23,7 @@ import {
     updateOutfit,
     getOutfit,
     generateOutfitVariations,
+    generateOutfitsForGarment,
     generateShoppingReferenceImage,
     getWardrobeProfile,
     updateWardrobeProfile,
@@ -505,6 +506,10 @@ function GarmentsTab() {
                             }
                             return res;
                         }}
+                        onGenerateOutfits={async (count) => {
+                            const sourceId = selected.id;
+                            return generateOutfitsForGarment(sourceId, count || 4);
+                        }}
                     />
                 )}
             </AnimatePresence>
@@ -523,7 +528,7 @@ const EDITABLE_TEXT = [
     { key: 'size', label: 'Size' }
 ];
 
-function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, onReenrich, onGenerateImage, otherGarments = [], onMerge, onDuplicate }) {
+function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, onReenrich, onGenerateImage, otherGarments = [], onMerge, onDuplicate, onGenerateOutfits }) {
     const [editing, setEditing] = useState(null);
     const [draft, setDraft] = useState('');
     const [savingField, setSavingField] = useState(null); // key currently being saved
@@ -538,10 +543,13 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
     const [mergeOpen, setMergeOpen] = useState(false);
     const [duplicating, setDuplicating] = useState(false);
     const [duplicateStatus, setDuplicateStatus] = useState('');
+    const [generatingOutfits, setGeneratingOutfits] = useState(false);
+    const [outfitsError, setOutfitsError] = useState('');
+    const [generatedOutfits, setGeneratedOutfits] = useState([]);
     const extraPhotoInputRef = useRef(null);
     const hintImageInputRef = useRef(null);
     const duplicateInputRef = useRef(null);
-    const busy = savingField !== null || reenriching || generating || duplicating;
+    const busy = savingField !== null || reenriching || generating || duplicating || generatingOutfits;
     const generatedUrl = pathToUrl(garment.generated_image_path);
     const originalUrl = pathToUrl(garment.crop_image_path || garment.source_image_path);
     const imgUrl = !showOriginal && generatedUrl ? generatedUrl : originalUrl;
@@ -631,6 +639,25 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
             setDuplicateStatus(err.message || 'Failed to duplicate.');
         } finally {
             setDuplicating(false);
+        }
+    };
+
+    const handleGenerateOutfits = async () => {
+        if (!onGenerateOutfits) return;
+        setGeneratingOutfits(true);
+        setOutfitsError('');
+        try {
+            const res = await onGenerateOutfits(4);
+            if (res?.success) {
+                const proposals = Array.isArray(res.data?.proposals) ? res.data.proposals : [];
+                setGeneratedOutfits(proposals.map(p => p.outfit).filter(Boolean));
+            } else {
+                setOutfitsError(res?.error || 'Could not build outfits');
+            }
+        } catch (err) {
+            setOutfitsError(err.message || 'Could not build outfits');
+        } finally {
+            setGeneratingOutfits(false);
         }
     };
 
@@ -852,6 +879,37 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
                     )}
                     {reenrichError && <p className="mt-2 text-xs text-rose-400">{reenrichError}</p>}
                 </div>
+
+                {onGenerateOutfits && (
+                    <div className="mb-4">
+                        <div className="flex items-center justify-between mb-2">
+                            <h3 className="text-xs uppercase tracking-wide text-zinc-500">Outfit ideas</h3>
+                            <button
+                                onClick={handleGenerateOutfits}
+                                disabled={busy}
+                                className="inline-flex items-center gap-1.5 text-xs px-2.5 py-1 rounded-md bg-indigo-600 hover:bg-indigo-500 disabled:opacity-40 text-white"
+                                title="Build complete outfits using this garment as the anchor"
+                            >
+                                {generatingOutfits ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
+                                {generatedOutfits.length > 0 ? 'Regenerate' : 'Generate outfits with this'}
+                            </button>
+                        </div>
+                        {outfitsError && <p className="text-xs text-rose-400 mb-2">{outfitsError}</p>}
+                        {generatedOutfits.length > 0 ? (
+                            <div className="space-y-1">
+                                {generatedOutfits.map((o) => (
+                                    <div key={o.id} className="flex items-center justify-between gap-2 text-xs text-zinc-300 bg-zinc-900/60 border border-zinc-800 rounded-md px-2.5 py-1.5">
+                                        <span className="truncate">{o.name || 'Outfit'} · {(o.garment_ids || []).length} pieces</span>
+                                        <span className="text-zinc-500 shrink-0">Saved</span>
+                                    </div>
+                                ))}
+                                <p className="text-[10px] text-zinc-500 mt-1">Open the Outfits tab to view them in the mirror.</p>
+                            </div>
+                        ) : (
+                            <p className="text-xs text-zinc-600">Builds 4 complete outfits pinned around this piece.</p>
+                        )}
+                    </div>
+                )}
 
                 <input
                     ref={duplicateInputRef}
@@ -2153,6 +2211,55 @@ function ShoppingTab() {
 
 // --- Profile sheet ---
 
+function ProfilePrefsReadout({ prefs }) {
+    const fitLabel = FIT_OPTIONS.find(o => o.key === prefs.fit)?.label;
+    const formalityLabel = FORMALITY_OPTIONS.find(o => o.key === prefs.formality_bias)?.label;
+    const loved = Array.isArray(prefs.colors_loved) ? prefs.colors_loved : [];
+    const avoided = Array.isArray(prefs.colors_avoided) ? prefs.colors_avoided : [];
+    const nothing = !fitLabel && !formalityLabel && loved.length === 0 && avoided.length === 0;
+    if (nothing) return <p className="text-xs text-zinc-600">No preferences set.</p>;
+    return (
+        <div className="space-y-1.5 text-xs text-zinc-300">
+            {fitLabel && <div><span className="text-zinc-500">Fit:</span> {fitLabel}</div>}
+            {formalityLabel && <div><span className="text-zinc-500">Formality:</span> {formalityLabel}</div>}
+            {loved.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-zinc-500">Loves:</span>
+                    {loved.map(c => <span key={c} className="px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/30 text-emerald-300">{c}</span>)}
+                </div>
+            )}
+            {avoided.length > 0 && (
+                <div className="flex flex-wrap items-center gap-1.5">
+                    <span className="text-zinc-500">Avoids:</span>
+                    {avoided.map(c => <span key={c} className="px-2 py-0.5 rounded-full bg-rose-500/10 border border-rose-500/30 text-rose-300">{c}</span>)}
+                </div>
+            )}
+        </div>
+    );
+}
+
+const SIZE_FIELDS = [
+    { key: 'tops', label: 'Tops' },
+    { key: 'bottoms', label: 'Bottoms / waist' },
+    { key: 'inseam', label: 'Inseam' },
+    { key: 'shoes', label: 'Shoes' },
+    { key: 'jackets', label: 'Jackets' }
+];
+
+const FIT_OPTIONS = [
+    { key: '', label: '—' },
+    { key: 'slim', label: 'Slim' },
+    { key: 'regular', label: 'Regular' },
+    { key: 'relaxed', label: 'Relaxed' }
+];
+
+const FORMALITY_OPTIONS = [
+    { key: '', label: '—' },
+    { key: 'casual', label: 'Casual' },
+    { key: 'smart_casual', label: 'Smart casual' },
+    { key: 'business', label: 'Business' }
+];
+
 function ProfileSheet({ onClose }) {
     const [profile, setProfile] = useState(null);
     const [loading, setLoading] = useState(true);
@@ -2160,16 +2267,22 @@ function ProfileSheet({ onClose }) {
     const [uploadStatus, setUploadStatus] = useState('');
     const [brandsDraft, setBrandsDraft] = useState('');
     const [notesDraft, setNotesDraft] = useState('');
-    const [editing, setEditing] = useState(null); // 'brands' | 'notes' | null
+    const [sizingDraft, setSizingDraft] = useState({});
+    const [prefsDraft, setPrefsDraft] = useState({});
+    // Only one section is ever editable at once. Extends the old 'brands' | 'notes' union.
+    const [editing, setEditing] = useState(null);
     const selfieInputRef = useRef(null);
 
     useEffect(() => {
         (async () => {
             const res = await getWardrobeProfile();
             if (res.success) {
-                setProfile(res.data || {});
-                setBrandsDraft((res.data?.preferred_brands || []).join(', '));
-                setNotesDraft(res.data?.style_notes || '');
+                const p = res.data || {};
+                setProfile(p);
+                setBrandsDraft((p.preferred_brands || []).join(', '));
+                setNotesDraft(p.style_notes || '');
+                setSizingDraft(p.sizing || {});
+                setPrefsDraft(p.style_preferences || {});
             }
             setLoading(false);
         })();
@@ -2218,6 +2331,37 @@ function ProfileSheet({ onClose }) {
         const res = await updateWardrobeProfile({ style_notes: notesDraft });
         if (res.success) {
             setProfile(res.data?.profile || { ...profile, style_notes: notesDraft });
+        }
+        setEditing(null);
+    };
+
+    const saveSizing = async () => {
+        // Strip empty strings so the JSON stays compact and getUserProfile
+        // returns only the fields the user actually filled in.
+        const cleaned = {};
+        for (const [k, v] of Object.entries(sizingDraft)) {
+            if (v && String(v).trim() !== '') cleaned[k] = String(v).trim();
+        }
+        const res = await updateWardrobeProfile({ sizing: cleaned });
+        if (res.success) {
+            setProfile(res.data?.profile || { ...profile, sizing: cleaned });
+            setSizingDraft(cleaned);
+        }
+        setEditing(null);
+    };
+
+    const savePrefs = async () => {
+        const toList = (v) => (Array.isArray(v) ? v : String(v || '').split(',').map(s => s.trim()).filter(Boolean));
+        const cleaned = {
+            fit: prefsDraft.fit || '',
+            formality_bias: prefsDraft.formality_bias || '',
+            colors_loved: toList(prefsDraft.colors_loved),
+            colors_avoided: toList(prefsDraft.colors_avoided)
+        };
+        const res = await updateWardrobeProfile({ style_preferences: cleaned });
+        if (res.success) {
+            setProfile(res.data?.profile || { ...profile, style_preferences: cleaned });
+            setPrefsDraft(cleaned);
         }
         setEditing(null);
     };
@@ -2321,6 +2465,117 @@ function ProfileSheet({ onClose }) {
                                         ))
                                     )}
                                 </div>
+                            )}
+                        </section>
+
+                        <section>
+                            <div className="flex items-center justify-between mb-2">
+                                <h3 className="text-xs uppercase tracking-wide text-zinc-500">Sizes</h3>
+                                {editing !== 'sizing' && (
+                                    <button
+                                        onClick={() => setEditing('sizing')}
+                                        className="text-xs text-indigo-400 hover:text-indigo-300"
+                                    >
+                                        Edit
+                                    </button>
+                                )}
+                            </div>
+                            {editing === 'sizing' ? (
+                                <div className="space-y-2">
+                                    {SIZE_FIELDS.map(({ key, label }) => (
+                                        <div key={key} className="flex items-center gap-2">
+                                            <label className="w-32 text-xs text-zinc-500 shrink-0">{label}</label>
+                                            <input
+                                                value={sizingDraft[key] || ''}
+                                                onChange={e => setSizingDraft(prev => ({ ...prev, [key]: e.target.value }))}
+                                                placeholder={key === 'shoes' ? '10, 43, …' : 'M, 32, …'}
+                                                className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-sm text-white"
+                                            />
+                                        </div>
+                                    ))}
+                                    <p className="text-[10px] text-zinc-600">Free-form — use whatever the brands you buy actually print on the tag.</p>
+                                    <div className="flex gap-2">
+                                        <button onClick={saveSizing} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded-lg">Save</button>
+                                        <button onClick={() => { setEditing(null); setSizingDraft(profile?.sizing || {}); }} className="px-3 py-1.5 bg-zinc-800 text-zinc-300 text-xs rounded-lg">Cancel</button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <div className="flex flex-wrap gap-2">
+                                    {SIZE_FIELDS.every(({ key }) => !profile?.sizing?.[key]) ? (
+                                        <p className="text-xs text-zinc-600">No sizes set.</p>
+                                    ) : (
+                                        SIZE_FIELDS
+                                            .filter(({ key }) => profile?.sizing?.[key])
+                                            .map(({ key, label }) => (
+                                                <span key={key} className="text-xs px-2 py-1 rounded-full bg-zinc-900 border border-zinc-800 text-zinc-300">
+                                                    <span className="text-zinc-500">{label}:</span> {profile.sizing[key]}
+                                                </span>
+                                            ))
+                                    )}
+                                </div>
+                            )}
+                        </section>
+
+                        <section>
+                            <div className="flex items-center justify-between mb-2">
+                                <h3 className="text-xs uppercase tracking-wide text-zinc-500">Style preferences</h3>
+                                {editing !== 'prefs' && (
+                                    <button
+                                        onClick={() => setEditing('prefs')}
+                                        className="text-xs text-indigo-400 hover:text-indigo-300"
+                                    >
+                                        Edit
+                                    </button>
+                                )}
+                            </div>
+                            {editing === 'prefs' ? (
+                                <div className="space-y-2">
+                                    <div className="flex items-center gap-2">
+                                        <label className="w-32 text-xs text-zinc-500 shrink-0">Fit</label>
+                                        <select
+                                            value={prefsDraft.fit || ''}
+                                            onChange={e => setPrefsDraft(prev => ({ ...prev, fit: e.target.value }))}
+                                            className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-sm text-white"
+                                        >
+                                            {FIT_OPTIONS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+                                        </select>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <label className="w-32 text-xs text-zinc-500 shrink-0">Formality</label>
+                                        <select
+                                            value={prefsDraft.formality_bias || ''}
+                                            onChange={e => setPrefsDraft(prev => ({ ...prev, formality_bias: e.target.value }))}
+                                            className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-sm text-white"
+                                        >
+                                            {FORMALITY_OPTIONS.map(o => <option key={o.key} value={o.key}>{o.label}</option>)}
+                                        </select>
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <label className="w-32 text-xs text-zinc-500 shrink-0">Loves colors</label>
+                                        <input
+                                            value={Array.isArray(prefsDraft.colors_loved) ? prefsDraft.colors_loved.join(', ') : (prefsDraft.colors_loved || '')}
+                                            onChange={e => setPrefsDraft(prev => ({ ...prev, colors_loved: e.target.value }))}
+                                            placeholder="navy, olive, cream"
+                                            className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-sm text-white"
+                                        />
+                                    </div>
+                                    <div className="flex items-center gap-2">
+                                        <label className="w-32 text-xs text-zinc-500 shrink-0">Avoids colors</label>
+                                        <input
+                                            value={Array.isArray(prefsDraft.colors_avoided) ? prefsDraft.colors_avoided.join(', ') : (prefsDraft.colors_avoided || '')}
+                                            onChange={e => setPrefsDraft(prev => ({ ...prev, colors_avoided: e.target.value }))}
+                                            placeholder="neon, pink"
+                                            className="flex-1 bg-zinc-900 border border-zinc-800 rounded-lg px-3 py-1.5 text-sm text-white"
+                                        />
+                                    </div>
+                                    <p className="text-[10px] text-zinc-600">Color lists are comma-separated. These soft-bias the stylist — they don't hard-filter garments.</p>
+                                    <div className="flex gap-2">
+                                        <button onClick={savePrefs} className="px-3 py-1.5 bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded-lg">Save</button>
+                                        <button onClick={() => { setEditing(null); setPrefsDraft(profile?.style_preferences || {}); }} className="px-3 py-1.5 bg-zinc-800 text-zinc-300 text-xs rounded-lg">Cancel</button>
+                                    </div>
+                                </div>
+                            ) : (
+                                <ProfilePrefsReadout prefs={profile?.style_preferences || {}} />
                             )}
                         </section>
 

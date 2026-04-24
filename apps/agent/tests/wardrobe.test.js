@@ -1742,6 +1742,167 @@ describe('WardrobeService.generateOutfitVariations', () => {
     });
 });
 
+describe('WardrobeService.generateOutfitsForGarment', () => {
+    let service;
+    const wardrobe = [
+        { id: 'top1', type: 'top', subtype: 'tshirt', primary_color: 'black' },
+        { id: 'top2', type: 'top', subtype: 'polo', primary_color: 'navy' },
+        { id: 'bot1', type: 'bottom', subtype: 'chinos', primary_color: 'khaki' },
+        { id: 'bot2', type: 'bottom', subtype: 'jeans', primary_color: 'indigo' },
+        { id: 'sho1', type: 'shoes', subtype: 'sneakers', primary_color: 'white' },
+        { id: 'sho2', type: 'shoes', subtype: 'loafers', primary_color: 'brown' }
+    ];
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        service = new WardrobeService(mockAgent);
+        mockAgent.db.getGarment.mockImplementation(id => wardrobe.find(g => g.id === id) || null);
+        mockAgent.db.getGarments.mockReturnValue(wardrobe);
+        mockAgent.db.getUserProfile.mockReturnValue({ id: 1, preferred_brands: [] });
+        mockAgent.db.addOutfit = jest.fn().mockImplementation(o => `out_${Math.random().toString(36).slice(2, 7)}`);
+        mockAgent.db.getOutfit = jest.fn().mockImplementation(id => ({ id, garment_ids: [] }));
+    });
+
+    test('throws when pinned garment does not exist', async () => {
+        mockAgent.db.getGarment.mockReturnValueOnce(null);
+        await expect(service.generateOutfitsForGarment('missing')).rejects.toThrow(/not found/);
+    });
+
+    test('throws when wardrobe has no other garments to combine', async () => {
+        mockAgent.db.getGarments.mockReturnValueOnce([{ id: 'top1', type: 'top' }]);
+        mockAgent.db.getGarment.mockImplementation(id => id === 'top1' ? { id: 'top1', type: 'top' } : null);
+        await expect(service.generateOutfitsForGarment('top1')).rejects.toThrow(/at least one/);
+    });
+
+    test('every saved outfit contains the pinned garment, and it sits first', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            text: () => JSON.stringify({ outfits: [
+                { garment_ids: ['bot1', 'top1', 'sho1'] }, // pinned provided out of order
+                { garment_ids: ['top1', 'bot2', 'sho2'] }
+            ] }),
+            candidates: [{ content: { parts: [{ text: JSON.stringify({ outfits: [] }) }] } }]
+        });
+
+        const r = await service.generateOutfitsForGarment('top1', { count: 2 });
+
+        expect(r.proposals).toHaveLength(2);
+        const savedOutfits = mockAgent.db.addOutfit.mock.calls.map(c => c[0]);
+        for (const o of savedOutfits) {
+            expect(o.garment_ids[0]).toBe('top1'); // pinned first
+            expect(o.garment_ids.includes('top1')).toBe(true);
+        }
+        // Broadcasts a create event per outfit so the outfits grid refreshes.
+        expect(mockAgent.interface.broadcast).toHaveBeenCalledWith('wardrobe:outfit:create', expect.anything());
+    });
+
+    test('rejects proposals that drop the pinned garment', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            text: () => JSON.stringify({ outfits: [
+                { garment_ids: ['bot1', 'sho1'] }, // missing pinned top1 → invalid
+                { garment_ids: ['top1', 'bot2', 'sho2'] }
+            ] }),
+            candidates: [{ content: { parts: [{ text: JSON.stringify({ outfits: [] }) }] } }]
+        });
+
+        const r = await service.generateOutfitsForGarment('top1', { count: 4 });
+
+        // Only the valid proposal survives; no hallucination fallback on LLM success path.
+        expect(r.proposals).toHaveLength(1);
+    });
+
+    test('fallback builds outfits without the LLM by swapping one slot', async () => {
+        const noClient = { ...mockAgent, client: null };
+        const s = new WardrobeService(noClient);
+
+        const r = await s.generateOutfitsForGarment('top1', { count: 3 });
+
+        const savedOutfits = noClient.db.addOutfit.mock.calls.map(c => c[0]);
+        expect(savedOutfits.length).toBeGreaterThan(0);
+        for (const o of savedOutfits) {
+            expect(o.garment_ids[0]).toBe('top1');
+            // Minimum viable outfit: pinned + bottom + shoes.
+            expect(o.garment_ids.length).toBeGreaterThanOrEqual(2);
+        }
+        expect(r.proposals.length).toBe(savedOutfits.length);
+    });
+
+    test('outfit name is prefixed with today\'s date and the pinned garment descriptor', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            text: () => JSON.stringify({ outfits: [
+                { garment_ids: ['top1', 'bot1', 'sho1'] }
+            ] }),
+            candidates: [{ content: { parts: [{ text: JSON.stringify({ outfits: [] }) }] } }]
+        });
+
+        await service.generateOutfitsForGarment('top1', { count: 1 });
+
+        const saved = mockAgent.db.addOutfit.mock.calls[0][0];
+        // "Apr 23 · with top tshirt black #1" — date prefix, the word "with", and
+        // something identifying the pinned garment so users can tell at a glance.
+        expect(saved.name).toMatch(/^[A-Za-z]{3,} \d{1,2} · with .+ #1$/);
+    });
+});
+
+describe('WardrobeService._formatProfileForPrompt', () => {
+    let service;
+    beforeEach(() => {
+        jest.clearAllMocks();
+        service = new WardrobeService(mockAgent);
+    });
+
+    test('returns empty string when profile has no configured prefs', () => {
+        mockAgent.db.getUserProfile.mockReturnValue({ id: 1, preferred_brands: [] });
+        expect(service._formatProfileForPrompt()).toBe('');
+    });
+
+    test('formats sizing, fit, formality bias, and color lists into the prompt block', () => {
+        mockAgent.db.getUserProfile.mockReturnValue({
+            id: 1,
+            preferred_brands: ['Lacoste'],
+            sizing: { tops: 'M', shoes: '10' },
+            style_preferences: {
+                fit: 'slim',
+                formality_bias: 'smart_casual',
+                colors_loved: ['navy', 'olive'],
+                colors_avoided: ['neon']
+            }
+        });
+
+        const block = service._formatProfileForPrompt();
+        expect(block).toMatch(/preferred fit: slim/);
+        expect(block).toMatch(/formality bias: smart_casual/);
+        expect(block).toMatch(/loves these colors: navy, olive/);
+        expect(block).toMatch(/avoids these colors.*neon/);
+        expect(block).toMatch(/preferred brands: Lacoste/);
+        expect(block).toMatch(/tops M/);
+        expect(block).toMatch(/shoes 10/);
+    });
+
+    test('recommendOutfit prompt includes profile block when configured', async () => {
+        mockAgent.db.getUserProfile.mockReturnValue({
+            id: 1,
+            preferred_brands: [],
+            style_preferences: { colors_avoided: ['hot pink'] }
+        });
+        mockAgent.db.getGarments.mockReturnValue([
+            { id: 'g1', type: 'top' }, { id: 'g2', type: 'bottom' }
+        ]);
+        mockAgent.db.getOutfits = jest.fn().mockReturnValue([]);
+        mockAgent.db.addOutfit = jest.fn().mockReturnValue('o1');
+        mockAgent.db.getOutfit = jest.fn().mockReturnValue({ id: 'o1', garment_ids: ['g1'] });
+
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            text: () => JSON.stringify({ proposals: [] }),
+            candidates: [{ content: { parts: [{ text: JSON.stringify({ proposals: [] }) }] } }]
+        });
+
+        await service.recommendOutfit({ context: 'testing' });
+
+        const prompt = mockAgent.client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
+        expect(prompt).toMatch(/avoids these colors.*hot pink/);
+    });
+});
+
 describe('WardrobeService.visualizeOutfit (P7/P8)', () => {
     let service;
 

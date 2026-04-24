@@ -194,6 +194,24 @@ const createWardrobeRouter = (agent) => {
         }
     });
 
+    // POST /garments/:id/outfits
+    // Body: { count?: number }
+    // Generates N complete outfits built around this garment.
+    router.post('/garments/:id/outfits', async (req, res) => {
+        try {
+            if (!agent.wardrobeService) return res.status(503).json({ error: 'Wardrobe service not available' });
+            const { count } = req.body || {};
+            const result = await agent.wardrobeService.generateOutfitsForGarment(req.params.id, {
+                count: typeof count === 'number' ? count : 4
+            });
+            res.json({ success: true, ...result });
+        } catch (error) {
+            console.error('[WardrobeRouter] Outfits for garment error:', error);
+            const status = /not found|at least one|any outfits/i.test(error.message) ? 400 : 500;
+            res.status(status).json({ error: error.message });
+        }
+    });
+
     // GET /profile
     router.get('/profile', (req, res) => {
         try {
