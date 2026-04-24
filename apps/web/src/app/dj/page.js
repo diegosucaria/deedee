@@ -592,7 +592,7 @@ export default function DJCratePage() {
                             animate={{ y: 0, opacity: 1 }}
                             exit={{ y: 100, opacity: 0 }}
                             transition={{ type: 'spring', damping: 25, stiffness: 300 }}
-                            className="bg-zinc-900 border border-zinc-700/50 rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-2xl max-h-[92vh] sm:max-h-[85vh] overflow-y-auto sm:mx-4">
+                            className="bg-zinc-900 border border-zinc-700/50 rounded-t-2xl sm:rounded-2xl shadow-2xl w-full sm:max-w-2xl max-h-[92vh] sm:max-h-[85vh] overflow-y-auto overscroll-contain sm:mx-4">
 
                             {/* Mobile drag handle */}
                             <div className="sm:hidden flex justify-center pt-2 pb-1">
@@ -665,9 +665,20 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
     const coverUrl = vinyl.cover_image_url || '/vinyl_covers/default.png';
 
     return (
-        <div className="p-4 sm:p-6 space-y-4 sm:space-y-5">
-            {/* Header */}
-            <div className="flex items-start justify-between gap-3">
+        <div className="px-4 sm:px-6 pb-4 sm:pb-6 space-y-4 sm:space-y-5">
+            {/* Slim sticky close bar — keeps close/edit always reachable without making the big cover+title header sticky */}
+            <div className="sticky top-0 z-20 -mx-4 sm:-mx-6 px-4 sm:px-6 py-1.5 bg-zinc-900 border-b border-zinc-800/50 flex items-center justify-end gap-1">
+                {!editing && !isEnriching && (
+                    <button onClick={onEdit} className="p-1.5 rounded-lg hover:bg-zinc-800 text-muted-foreground hover:text-foreground transition-colors" title="Edit">
+                        <Pencil className="w-4 h-4" />
+                    </button>
+                )}
+                <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-zinc-800 text-muted-foreground hover:text-foreground transition-colors" aria-label="Close">
+                    <X className="w-4 h-4" />
+                </button>
+            </div>
+            {/* Cover + title + badges — normal flow */}
+            <div className="flex items-start gap-3">
                 <div className="flex gap-3 sm:gap-4 items-start flex-1 min-w-0">
                     <div className="w-20 h-20 sm:w-28 sm:h-28 rounded-lg overflow-hidden shrink-0 border border-zinc-700/50 relative group/cover">
                         <img
@@ -719,16 +730,6 @@ function VinylDetailModal({ vinyl, editing, editFields, saving, onClose, onEdit,
                             )}
                         </div>
                     </div>
-                </div>
-                <div className="flex items-center gap-1 shrink-0">
-                    {!editing && !isEnriching && (
-                        <button onClick={onEdit} className="p-2 rounded-lg hover:bg-zinc-800 text-muted-foreground hover:text-foreground transition-colors" title="Edit">
-                            <Pencil className="w-4 h-4" />
-                        </button>
-                    )}
-                    <button onClick={onClose} className="p-2 rounded-lg hover:bg-zinc-800 text-muted-foreground hover:text-foreground transition-colors">
-                        <X className="w-4 h-4" />
-                    </button>
                 </div>
             </div>
 

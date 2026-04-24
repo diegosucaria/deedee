@@ -61,7 +61,7 @@ export default function ContactList({ session, onClose }) {
                 </div>
 
                 {/* List */}
-                <div className="overflow-y-auto flex-1 p-2 space-y-1">
+                <div className="overflow-y-auto overscroll-contain flex-1 p-2 space-y-1">
                     {loading ? (
                         <div className="flex justify-center p-8 text-zinc-500">
                             <Loader2 className="w-6 h-6 animate-spin mr-2" /> Loading...
