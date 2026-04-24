@@ -1233,6 +1233,18 @@ export async function completeTrip(id) {
     }
 }
 
+export async function renderTripDailyOutfits(id, { force = false } = {}) {
+    try {
+        const data = await fetchAPI(`/v1/wardrobe/trips/${encodeURIComponent(id)}/render-daily`, {
+            method: 'POST',
+            body: JSON.stringify({ force })
+        });
+        return { success: true, data };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function setTripCapsule(id, garmentIds) {
     try {
         const data = await fetchAPI(`/v1/wardrobe/trips/${encodeURIComponent(id)}/capsule`, {

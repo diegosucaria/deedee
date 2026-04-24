@@ -2266,6 +2266,171 @@ describe('WardrobeService trips (P10a/P10b)', () => {
         await service.completeTrip('t1');
         expect(mockAgent.db.updateTrip).toHaveBeenCalledWith('t1', { status: 'completed' });
     });
+
+    describe('renderTripDailyOutfits', () => {
+        beforeEach(() => {
+            mockAgent.db.addOutfit = jest.fn().mockReturnValue('o_new');
+            mockAgent.db.getOutfit = jest.fn();
+            mockAgent.db.updateOutfit = jest.fn().mockReturnValue(true);
+            mockAgent.db.getUserProfile = jest.fn().mockReturnValue({ reference_image_path: '/fake/selfie.jpg' });
+            jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+        });
+
+        test('throws when trip not found', async () => {
+            mockAgent.db.getTrip.mockReturnValue(null);
+            await expect(service.renderTripDailyOutfits('missing')).rejects.toThrow(/not found/);
+        });
+
+        test('returns zero counts when daily_plan is empty', async () => {
+            mockAgent.db.getTrip.mockReturnValue({ id: 't1', weather_snapshot: { daily_plan: [] } });
+            const res = await service.renderTripDailyOutfits('t1');
+            expect(res).toEqual(expect.objectContaining({ rendered: 0, skipped: 0, needs_reference: false }));
+        });
+
+        test('returns needs_reference when user has no reference selfie', async () => {
+            mockAgent.db.getTrip.mockReturnValue({
+                id: 't1', destination: 'Porto',
+                weather_snapshot: { daily_plan: [{ date: '2026-05-01', garment_ids: ['g1'] }] }
+            });
+            mockAgent.db.getUserProfile.mockReturnValue({ reference_image_path: null });
+            const res = await service.renderTripDailyOutfits('t1');
+            expect(res.needs_reference).toBe(true);
+            expect(res.rendered).toBe(0);
+        });
+
+        test('creates outfit per day, calls visualize, writes outfit_id back', async () => {
+            mockAgent.db.getTrip
+                .mockReturnValueOnce({
+                    id: 't1', destination: 'Porto',
+                    weather_snapshot: { daily_plan: [
+                        { date: '2026-05-01', garment_ids: ['g1', 'g2'] },
+                        { date: '2026-05-02', garment_ids: ['g1', 'g3'] }
+                    ] }
+                })
+                .mockReturnValue({ id: 't1', weather_snapshot: {} });
+            mockAgent.db.addOutfit.mockReturnValueOnce('o_day1').mockReturnValueOnce('o_day2');
+            mockAgent.db.getOutfit.mockReturnValue({ id: 'o_stub', garment_ids: [], rendered_image_path: null });
+            const visSpy = jest.spyOn(service, 'visualizeOutfit').mockResolvedValue({ outfit: {}, panels: 1, layout: 'single' });
+
+            const res = await service.renderTripDailyOutfits('t1');
+
+            expect(mockAgent.db.addOutfit).toHaveBeenCalledTimes(2);
+            expect(visSpy).toHaveBeenCalledTimes(2);
+            expect(visSpy).toHaveBeenCalledWith(expect.objectContaining({ outfitId: 'o_day1', saveAs: 'render' }));
+            expect(visSpy).toHaveBeenCalledWith(expect.objectContaining({ outfitId: 'o_day2', saveAs: 'render' }));
+            const updateCall = mockAgent.db.updateTrip.mock.calls.find(c => c[1].weather_snapshot);
+            expect(updateCall[1].weather_snapshot.daily_plan[0].outfit_id).toBe('o_day1');
+            expect(updateCall[1].weather_snapshot.daily_plan[1].outfit_id).toBe('o_day2');
+            expect(res.rendered).toBe(2);
+            expect(res.skipped).toBe(0);
+        });
+
+        test('skips days with existing rendered_image_path (idempotent)', async () => {
+            mockAgent.db.getTrip
+                .mockReturnValueOnce({
+                    id: 't1', destination: 'Porto',
+                    weather_snapshot: { daily_plan: [
+                        { date: '2026-05-01', garment_ids: ['g1'], outfit_id: 'o_existing' }
+                    ] }
+                })
+                .mockReturnValue({ id: 't1', weather_snapshot: {} });
+            mockAgent.db.getOutfit.mockReturnValue({
+                id: 'o_existing', garment_ids: ['g1'], rendered_image_path: '/cached/render.jpg'
+            });
+            const visSpy = jest.spyOn(service, 'visualizeOutfit').mockResolvedValue({});
+
+            const res = await service.renderTripDailyOutfits('t1');
+
+            expect(visSpy).not.toHaveBeenCalled();
+            expect(mockAgent.db.addOutfit).not.toHaveBeenCalled();
+            expect(res.rendered).toBe(0);
+            expect(res.skipped).toBe(1);
+        });
+
+        test('force: true re-renders even when path exists', async () => {
+            mockAgent.db.getTrip
+                .mockReturnValueOnce({
+                    id: 't1', destination: 'Porto',
+                    weather_snapshot: { daily_plan: [
+                        { date: '2026-05-01', garment_ids: ['g1'], outfit_id: 'o_existing' }
+                    ] }
+                })
+                .mockReturnValue({ id: 't1' });
+            mockAgent.db.getOutfit.mockReturnValue({
+                id: 'o_existing', garment_ids: ['g1'], rendered_image_path: '/cached/render.jpg'
+            });
+            const visSpy = jest.spyOn(service, 'visualizeOutfit').mockResolvedValue({});
+
+            const res = await service.renderTripDailyOutfits('t1', { force: true });
+
+            expect(visSpy).toHaveBeenCalledTimes(1);
+            expect(res.rendered).toBe(1);
+        });
+
+        test('recreates outfit when linked outfit_id no longer exists', async () => {
+            mockAgent.db.getTrip
+                .mockReturnValueOnce({
+                    id: 't1', destination: 'Porto',
+                    weather_snapshot: { daily_plan: [
+                        { date: '2026-05-01', garment_ids: ['g1'], outfit_id: 'o_deleted' }
+                    ] }
+                })
+                .mockReturnValue({ id: 't1' });
+            // Outfit lookup returns null — simulates a prior delete.
+            mockAgent.db.getOutfit.mockReturnValue(null);
+            mockAgent.db.addOutfit.mockReturnValue('o_fresh');
+            const visSpy = jest.spyOn(service, 'visualizeOutfit').mockResolvedValue({});
+
+            const res = await service.renderTripDailyOutfits('t1');
+
+            expect(mockAgent.db.addOutfit).toHaveBeenCalledTimes(1);
+            expect(visSpy).toHaveBeenCalledWith(expect.objectContaining({ outfitId: 'o_fresh' }));
+            expect(res.rendered).toBe(1);
+        });
+
+        test('continues loop and still writes outfit_id when visualize throws', async () => {
+            mockAgent.db.getTrip
+                .mockReturnValueOnce({
+                    id: 't1', destination: 'Porto',
+                    weather_snapshot: { daily_plan: [
+                        { date: '2026-05-01', garment_ids: ['g1'] },
+                        { date: '2026-05-02', garment_ids: ['g2'] }
+                    ] }
+                })
+                .mockReturnValue({ id: 't1' });
+            mockAgent.db.getOutfit.mockReturnValue({ id: 'o', garment_ids: [], rendered_image_path: null });
+            mockAgent.db.addOutfit.mockReturnValueOnce('o_a').mockReturnValueOnce('o_b');
+            const visSpy = jest.spyOn(service, 'visualizeOutfit')
+                .mockRejectedValueOnce(new Error('model unavailable'))
+                .mockResolvedValueOnce({});
+
+            const res = await service.renderTripDailyOutfits('t1');
+
+            expect(visSpy).toHaveBeenCalledTimes(2);
+            const updateCall = mockAgent.db.updateTrip.mock.calls.find(c => c[1].weather_snapshot);
+            expect(updateCall[1].weather_snapshot.daily_plan[0].outfit_id).toBe('o_a');
+            expect(updateCall[1].weather_snapshot.daily_plan[1].outfit_id).toBe('o_b');
+            expect(res.rendered).toBe(1);
+        });
+
+        test('skips days with empty garment_ids without creating outfits', async () => {
+            mockAgent.db.getTrip
+                .mockReturnValueOnce({
+                    id: 't1', destination: 'Porto',
+                    weather_snapshot: { daily_plan: [
+                        { date: '2026-05-01', garment_ids: [] }
+                    ] }
+                })
+                .mockReturnValue({ id: 't1' });
+            const visSpy = jest.spyOn(service, 'visualizeOutfit').mockResolvedValue({});
+
+            const res = await service.renderTripDailyOutfits('t1');
+
+            expect(mockAgent.db.addOutfit).not.toHaveBeenCalled();
+            expect(visSpy).not.toHaveBeenCalled();
+            expect(res.rendered).toBe(0);
+        });
+    });
 });
 
 describe('WardrobeService shopping list (P11)', () => {

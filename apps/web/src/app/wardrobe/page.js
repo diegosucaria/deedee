@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
 import { getSocketUrl } from '@/hooks/useSocket';
@@ -34,6 +34,7 @@ import {
     getTrip as getTripAction,
     startTrip,
     completeTrip,
+    renderTripDailyOutfits,
     setTripCapsule,
     removeFromTripCapsule,
     getShoppingList,
@@ -1878,6 +1879,11 @@ function TripsTab() {
 function TripDetail({ trip, onClose, onRefresh }) {
     const [garmentIndex, setGarmentIndex] = useState({});
     const [busy, setBusy] = useState(false);
+    const [selectedGarment, setSelectedGarment] = useState(null);
+    const [outfitByDate, setOutfitByDate] = useState({});
+    const [rendering, setRendering] = useState(false);
+    const [renderMsg, setRenderMsg] = useState('');
+    const [lightboxSrc, setLightboxSrc] = useState(null);
 
     useEffect(() => {
         getWardrobe({ limit: 500 }).then(res => {
@@ -1887,10 +1893,33 @@ function TripDetail({ trip, onClose, onRefresh }) {
         });
     }, []);
 
-    const daily = trip.weather_snapshot?.daily_plan || [];
+    // Memoized so `[]` fallback stays referentially stable when daily_plan is
+    // missing — otherwise the useEffect below would fire every render and loop
+    // against its own setState.
+    const daily = useMemo(
+        () => trip.weather_snapshot?.daily_plan || [],
+        [trip.weather_snapshot?.daily_plan]
+    );
     const days = trip.weather_snapshot?.days || [];
     const rationale = trip.weather_snapshot?.pack_rationale;
     const capsuleIds = (trip.status === 'planned' ? trip.planned_capsule : trip.actual_capsule) || [];
+
+    // Load outfit records for any daily entries that have an outfit_id, so we
+    // can show thumbnails and route clicks to the rendered image.
+    useEffect(() => {
+        const ids = Array.from(new Set(daily.map(d => d?.outfit_id).filter(Boolean)));
+        if (ids.length === 0) { setOutfitByDate({}); return; }
+        let cancelled = false;
+        Promise.all(ids.map(id => getOutfit(id))).then(results => {
+            if (cancelled) return;
+            const byDate = {};
+            results.forEach(r => {
+                if (r?.success && r.data) byDate[r.data.id] = r.data;
+            });
+            setOutfitByDate(byDate);
+        });
+        return () => { cancelled = true; };
+    }, [daily]);
 
     const doAction = async (fn) => {
         setBusy(true);
@@ -1900,6 +1929,37 @@ function TripDetail({ trip, onClose, onRefresh }) {
     const removeFromCapsule = async (garmentId) => {
         await doAction(() => removeFromTripCapsule(trip.id, [garmentId]));
     };
+
+    const handleRenderDaily = async () => {
+        setRendering(true);
+        setRenderMsg('');
+        try {
+            const res = await renderTripDailyOutfits(trip.id);
+            if (!res.success) {
+                setRenderMsg(res.error || 'Failed to render');
+            } else if (res.data?.needs_reference) {
+                setRenderMsg('Add a reference selfie in your profile first.');
+            } else {
+                const r = res.data?.rendered || 0;
+                const s = res.data?.skipped || 0;
+                setRenderMsg(r === 0 && s === 0 ? 'Nothing to render.' : `Rendered ${r}${s ? `, ${s} already up to date` : ''}.`);
+                await onRefresh();
+            }
+        } finally {
+            setRendering(false);
+        }
+    };
+
+    const patchLocalGarment = (g) => {
+        if (!g?.id) return;
+        setGarmentIndex(prev => ({ ...prev, [g.id]: g }));
+        setSelectedGarment(prev => (prev?.id === g.id ? g : prev));
+    };
+
+    const daysWithoutRender = daily.filter(d => {
+        const o = d?.outfit_id ? outfitByDate[d.outfit_id] : null;
+        return (Array.isArray(d?.garment_ids) && d.garment_ids.length > 0) && !o?.rendered_image_path;
+    }).length;
 
     return (
         <motion.div
@@ -1980,23 +2040,33 @@ function TripDetail({ trip, onClose, onRefresh }) {
                             {capsuleIds.map(gid => {
                                 const g = garmentIndex[gid];
                                 const url = g ? pathToUrl(g.generated_image_path || g.crop_image_path || g.source_image_path) : null;
+                                const label = g ? summarizeGarment(g) : 'Garment';
                                 return (
                                     <div key={gid} className="relative group aspect-[3/4] bg-zinc-900 rounded-lg overflow-hidden border border-zinc-800">
-                                        {url ? (
-                                            // eslint-disable-next-line @next/next/no-img-element
-                                            <img src={url} alt="" className="w-full h-full object-cover" />
-                                        ) : (
-                                            <div className="w-full h-full flex items-center justify-center text-zinc-600">
-                                                <Shirt className="w-5 h-5" />
-                                            </div>
-                                        )}
+                                        <button
+                                            type="button"
+                                            onClick={() => g && setSelectedGarment(g)}
+                                            disabled={!g}
+                                            title={label}
+                                            aria-label={label}
+                                            className="absolute inset-0 w-full h-full"
+                                        >
+                                            {url ? (
+                                                // eslint-disable-next-line @next/next/no-img-element
+                                                <img src={url} alt={label} className="w-full h-full object-cover" />
+                                            ) : (
+                                                <div className="w-full h-full flex items-center justify-center text-zinc-600">
+                                                    <Shirt className="w-5 h-5" />
+                                                </div>
+                                            )}
+                                        </button>
                                         {trip.status === 'active' && (
                                             <button
                                                 onClick={() => removeFromCapsule(gid)}
-                                                className="absolute inset-0 bg-black/0 hover:bg-black/60 transition flex items-center justify-center opacity-0 group-hover:opacity-100"
+                                                className="absolute top-1 right-1 p-1 rounded-full bg-black/70 hover:bg-black/90 transition opacity-0 group-hover:opacity-100"
                                                 title="Remove from capsule"
                                             >
-                                                <Trash2 className="w-4 h-4 text-red-400" />
+                                                <Trash2 className="w-3.5 h-3.5 text-red-400" />
                                             </button>
                                         )}
                                     </div>
@@ -2008,27 +2078,150 @@ function TripDetail({ trip, onClose, onRefresh }) {
 
                 {daily.length > 0 && (
                     <div>
-                        <h3 className="text-xs uppercase tracking-wide text-zinc-500 mb-2">Daily plan</h3>
+                        <div className="flex items-center justify-between mb-2">
+                            <h3 className="text-xs uppercase tracking-wide text-zinc-500">Daily plan</h3>
+                            <button
+                                onClick={handleRenderDaily}
+                                disabled={rendering}
+                                className="inline-flex items-center gap-1 text-[11px] px-2 py-1 rounded-md bg-indigo-500/15 hover:bg-indigo-500/25 text-indigo-300 border border-indigo-500/30 disabled:opacity-50"
+                                title={daysWithoutRender > 0 ? `Render ${daysWithoutRender} day(s)` : 'Re-render all'}
+                            >
+                                {rendering
+                                    ? <Loader2 className="w-3 h-3 animate-spin" />
+                                    : <Sparkles className="w-3 h-3" />}
+                                <span>{daysWithoutRender > 0 ? 'Generate looks' : 'Looks ready'}</span>
+                            </button>
+                        </div>
+                        {renderMsg && (
+                            <p className="text-[11px] text-zinc-400 mb-2">{renderMsg}</p>
+                        )}
                         <div className="space-y-2">
-                            {daily.map((d, i) => (
-                                <div key={i} className="p-2 rounded-lg bg-zinc-900 border border-zinc-800">
-                                    <p className="text-xs text-zinc-400 mb-1">{formatDate(d.date)}</p>
-                                    <div className="flex gap-1 flex-wrap">
-                                        {(d.garment_ids || []).map(gid => {
-                                            const g = garmentIndex[gid];
-                                            return (
-                                                <span key={gid} className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-300">
-                                                    {g ? summarizeGarment(g) : gid}
-                                                </span>
-                                            );
-                                        })}
+                            {daily.map((d, i) => {
+                                const outfit = d?.outfit_id ? outfitByDate[d.outfit_id] : null;
+                                const renderUrl = outfit?.rendered_image_path ? pathToUrl(outfit.rendered_image_path) : null;
+                                return (
+                                    <div key={i} className="p-2 rounded-lg bg-zinc-900 border border-zinc-800 flex gap-2">
+                                        {renderUrl ? (
+                                            <button
+                                                type="button"
+                                                onClick={() => setLightboxSrc(renderUrl)}
+                                                className="shrink-0 w-16 h-20 rounded-md overflow-hidden bg-zinc-950 border border-zinc-800 hover:border-zinc-600 transition"
+                                                title="Enlarge"
+                                            >
+                                                {/* eslint-disable-next-line @next/next/no-img-element */}
+                                                <img src={renderUrl} alt={outfit?.name || 'Daily look'} className="w-full h-full object-cover" />
+                                            </button>
+                                        ) : (
+                                            <div className="shrink-0 w-16 h-20 rounded-md bg-zinc-950 border border-zinc-800 flex items-center justify-center text-zinc-700">
+                                                <User className="w-5 h-5" />
+                                            </div>
+                                        )}
+                                        <div className="flex-1 min-w-0">
+                                            <p className="text-xs text-zinc-400 mb-1">{formatDate(d.date)}</p>
+                                            <div className="flex gap-1 flex-wrap">
+                                                {(d.garment_ids || []).map(gid => {
+                                                    const g = garmentIndex[gid];
+                                                    return (
+                                                        <button
+                                                            key={gid}
+                                                            type="button"
+                                                            onClick={() => g && setSelectedGarment(g)}
+                                                            disabled={!g}
+                                                            title={g ? summarizeGarment(g) : gid}
+                                                            className="text-[10px] px-2 py-0.5 rounded bg-zinc-800 text-zinc-300 hover:bg-zinc-700 disabled:opacity-70"
+                                                        >
+                                                            {g ? summarizeGarment(g) : gid}
+                                                        </button>
+                                                    );
+                                                })}
+                                            </div>
+                                        </div>
                                     </div>
-                                </div>
-                            ))}
+                                );
+                            })}
                         </div>
                     </div>
                 )}
             </motion.div>
+
+            {/* Nested modals are siblings of the trip panel but children of the
+                outer backdrop. Wrap in a stop-propagation div so clicks on their
+                backdrops don't also close the trip modal via bubbling. */}
+            <div onClick={(e) => e.stopPropagation()}>
+                <AnimatePresence>
+                    {selectedGarment && (
+                        <GarmentDetail
+                            garment={selectedGarment}
+                            onClose={() => setSelectedGarment(null)}
+                            onChange={async (patch) => {
+                                const targetId = selectedGarment.id;
+                                const res = await updateGarment(targetId, patch);
+                                if (res.success && res.data?.garment) patchLocalGarment(res.data.garment);
+                                return res;
+                            }}
+                            onDelete={async () => {
+                                if (!confirm('Delete this garment?')) return;
+                                const targetId = selectedGarment.id;
+                                const res = await deleteGarmentAction(targetId);
+                                if (res.success) {
+                                    setSelectedGarment(null);
+                                    setGarmentIndex(prev => {
+                                        const next = { ...prev };
+                                        delete next[targetId];
+                                        return next;
+                                    });
+                                }
+                            }}
+                            onConfirmBrand={async (accept) => {
+                                const targetId = selectedGarment.id;
+                                const res = await confirmGarmentBrand(targetId, accept);
+                                if (res.success && res.data?.garment) patchLocalGarment(res.data.garment);
+                            }}
+                            onReenrich={async (hint, opts) => {
+                                // Snapshot the garment here — the closure's
+                                // `selectedGarment` reference would drift if
+                                // the user opens a different tile while the
+                                // re-enrich is in flight, and the error path
+                                // would then spread the *wrong* garment's data
+                                // onto the original id.
+                                const snapshot = selectedGarment;
+                                const targetId = snapshot.id;
+                                patchLocalGarment({ ...snapshot, enrichment_status: 'enriching' });
+                                const res = await reenrichGarment(targetId, hint, opts || {});
+                                if (res.success && res.data?.garment) patchLocalGarment(res.data.garment);
+                                else patchLocalGarment({ ...snapshot, enrichment_status: 'complete' });
+                                return res;
+                            }}
+                            onGenerateImage={async (opts) => {
+                                const targetId = selectedGarment.id;
+                                const res = await generateGarmentImage(targetId, opts || {});
+                                if (res.success && res.data?.garment) patchLocalGarment(res.data.garment);
+                                return res;
+                            }}
+                        />
+                    )}
+                </AnimatePresence>
+
+                <AnimatePresence>
+                    {lightboxSrc && (
+                        <motion.div
+                            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                            className="fixed inset-0 z-[60] bg-black/90 flex items-center justify-center p-4"
+                            onClick={() => setLightboxSrc(null)}
+                        >
+                            {/* eslint-disable-next-line @next/next/no-img-element */}
+                            <img src={lightboxSrc} alt="" className="max-w-full max-h-full object-contain" />
+                            <button
+                                onClick={() => setLightboxSrc(null)}
+                                className="absolute top-4 right-4 p-2 rounded-full bg-black/60 text-white hover:bg-black/80"
+                                aria-label="Close"
+                            >
+                                <X className="w-5 h-5" />
+                            </button>
+                        </motion.div>
+                    )}
+                </AnimatePresence>
+            </div>
         </motion.div>
     );
 }
