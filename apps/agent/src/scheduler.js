@@ -717,10 +717,11 @@ FORMAT (when you do notify):
    spawnAgent(task: "List personal_calendar events in the next 7 days. Return STRICT JSON: [{summary, location, start_date, end_date}] ONLY for events that look like multi-day trips (end date > start date + 1 day OR location is clearly a different city/country). Skip routine meetings, recurring items, and 1-day outings. Dates MUST be in YYYY-MM-DD format (no times, no timezones). If none, return [SILENT].", model: "FLASH", lightweight: true, tools: ["server:gws_personal"])
 3. For each trip found that (a) starts 2-4 days from today AND (b) is not already in list_wardrobe_trips output by destination/dates:
    - Call wardrobe_pack_for_trip(destination, start_date, end_date, activities if inferable). start_date and end_date must be YYYY-MM-DD strings. The weather subagent runs inside that call.
-4. If any new trips were planned, send ONE concise message to the owner:
-   "Trip to <destination> in <N> days — drafted a capsule with X items. Review in /wardrobe or ask me to adjust."
+4. If any new trips were planned, deliver ONE concise message to the owner via an explicit sendMessage call (do NOT rely on the scheduler reply):
+   sendMessage(to: "me", type: "text", content: "Trip to <destination> in <N> days — drafted a capsule with X items. Review in /wardrobe or ask me to adjust.")
    List up to 3 trips max.
-5. If no new trips needed planning, output [SILENT].
+5. After sendMessage succeeds, respond with exactly: [SILENT] Pretrip notified. This prevents the scheduler from double-sending.
+6. If no new trips needed planning, respond with [SILENT] and do not call sendMessage.
 
 NEVER contact anyone other than the owner.`,
                 silent: false

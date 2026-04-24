@@ -27,7 +27,13 @@ class FileSystemExecutor extends BaseExecutor {
             case 'readFile': return await local.readFile(args.path);
             case 'writeFile': return await local.writeFile(args.path, args.content);
             case 'listDirectory': return await local.listDirectory(args.path);
-            case 'runShellCommand': return await local.runShellCommand(args.command);
+            case 'runShellCommand': {
+                const opts = {};
+                if (typeof args.timeoutMs === 'number' && args.timeoutMs > 0) {
+                    opts.timeout = Math.min(args.timeoutMs, 300000);
+                }
+                return await local.runShellCommand(args.command, opts);
+            }
 
             // Git Ops via Supervisor
             case 'commitAndPush':
