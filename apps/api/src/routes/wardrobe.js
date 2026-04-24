@@ -56,6 +56,7 @@ router.get('/trips/:id', (req, res) => proxyRequest(req, res, 'GET', `/internal/
 router.post('/trips/pack', (req, res) => proxyRequest(req, res, 'POST', '/internal/wardrobe/trips/pack'));
 router.post('/trips/:id/start', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/trips/${encodeURIComponent(req.params.id)}/start`));
 router.post('/trips/:id/complete', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/trips/${encodeURIComponent(req.params.id)}/complete`));
+router.post('/trips/:id/render-daily', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/trips/${encodeURIComponent(req.params.id)}/render-daily`));
 router.put('/trips/:id/capsule', (req, res) => proxyRequest(req, res, 'PUT', `/internal/wardrobe/trips/${encodeURIComponent(req.params.id)}/capsule`));
 router.post('/trips/:id/capsule/add', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/trips/${encodeURIComponent(req.params.id)}/capsule/add`, { largeBody: true }));
 router.post('/trips/:id/capsule/remove', (req, res) => proxyRequest(req, res, 'POST', `/internal/wardrobe/trips/${encodeURIComponent(req.params.id)}/capsule/remove`));

@@ -2686,6 +2686,96 @@ Rules: only use ids from the wardrobe list above. No external items.`;
         return updated;
     }
 
+    /**
+     * Materialize one Outfit entity per day in the trip's daily_plan and render
+     * a virtual-mirror image for each. The outfit_id is written back onto
+     * weather_snapshot.daily_plan[i] so the UI can look up the render.
+     *
+     * Idempotent by default: days that already have a rendered_image_path are
+     * skipped. Pass { force: true } to re-render everything.
+     */
+    async renderTripDailyOutfits(tripId, { force = false } = {}) {
+        const trip = this.db.getTrip(tripId);
+        if (!trip) throw new Error(`Trip ${tripId} not found`);
+        const snapshot = trip.weather_snapshot || {};
+        const daily = Array.isArray(snapshot.daily_plan) ? snapshot.daily_plan : [];
+        if (daily.length === 0) {
+            return { trip, rendered: 0, skipped: 0, needs_reference: false };
+        }
+
+        const profile = this.db.getUserProfile();
+        if (!profile?.reference_image_path || !fs.existsSync(profile.reference_image_path)) {
+            return { trip, rendered: 0, skipped: 0, needs_reference: true };
+        }
+
+        const label = `trip:${tripId}`;
+        const updatedDaily = [];
+        let rendered = 0;
+        let skipped = 0;
+        for (const day of daily) {
+            const entry = { ...day };
+            const garmentIds = Array.isArray(day.garment_ids) ? day.garment_ids : [];
+            if (garmentIds.length === 0) {
+                updatedDaily.push(entry);
+                continue;
+            }
+
+            let outfitId = day.outfit_id || null;
+            if (outfitId && !this.db.getOutfit(outfitId)) outfitId = null;
+
+            if (!outfitId) {
+                const dateLabel = this._formatDailyOutfitDate(day.date);
+                outfitId = this.db.addOutfit({
+                    name: `${dateLabel} · ${trip.destination || 'Trip'}`,
+                    occasion: trip.destination || null,
+                    garment_ids: garmentIds,
+                    labels: [label],
+                    liked: false
+                });
+            } else {
+                const existing = this.db.getOutfit(outfitId);
+                const sameIds = Array.isArray(existing?.garment_ids)
+                    && existing.garment_ids.length === garmentIds.length
+                    && existing.garment_ids.every((id, i) => id === garmentIds[i]);
+                if (!sameIds) this.db.updateOutfit(outfitId, { garment_ids: garmentIds });
+            }
+
+            const outfit = this.db.getOutfit(outfitId);
+            const hasRender = outfit?.rendered_image_path && fs.existsSync(outfit.rendered_image_path);
+            if (force || !hasRender) {
+                try {
+                    await this.visualizeOutfit({
+                        garmentIdsPanels: garmentIds,
+                        outfitId,
+                        saveAs: 'render'
+                    });
+                    rendered += 1;
+                } catch (e) {
+                    console.warn(`[WardrobeService] renderTripDailyOutfits: visualize failed for ${day.date}: ${e.message}`);
+                }
+            } else {
+                skipped += 1;
+            }
+
+            entry.outfit_id = outfitId;
+            updatedDaily.push(entry);
+        }
+
+        this.db.updateTrip(tripId, {
+            weather_snapshot: { ...snapshot, daily_plan: updatedDaily }
+        });
+        const refreshed = this.db.getTrip(tripId);
+        this._broadcast('wardrobe:trip:update', refreshed);
+        return { trip: refreshed, rendered, skipped, needs_reference: false };
+    }
+
+    _formatDailyOutfitDate(dateStr) {
+        if (!dateStr) return new Date().toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+        const d = new Date(`${dateStr}T00:00:00`);
+        if (Number.isNaN(d.getTime())) return dateStr;
+        return d.toLocaleDateString(undefined, { month: 'short', day: 'numeric' });
+    }
+
     async setTripCapsule(tripId, garmentIds) {
         const trip = this.db.getTrip(tripId);
         if (!trip) throw new Error(`Trip ${tripId} not found`);

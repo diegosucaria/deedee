@@ -392,6 +392,15 @@ const createWardrobeRouter = (agent) => {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
+    router.post('/trips/:id/render-daily', async (req, res) => {
+        try {
+            if (!agent.wardrobeService) return res.status(503).json({ error: 'Wardrobe service not available' });
+            const force = !!(req.body && req.body.force);
+            const result = await agent.wardrobeService.renderTripDailyOutfits(req.params.id, { force });
+            res.json({ success: true, ...result });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
     router.put('/trips/:id/capsule', async (req, res) => {
         try {
             if (!agent.wardrobeService) return res.status(503).json({ error: 'Wardrobe service not available' });
