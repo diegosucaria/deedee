@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef, useCallback } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
 import { getSocketUrl } from '@/hooks/useSocket';
@@ -1893,7 +1893,13 @@ function TripDetail({ trip, onClose, onRefresh }) {
         });
     }, []);
 
-    const daily = trip.weather_snapshot?.daily_plan || [];
+    // Memoized so `[]` fallback stays referentially stable when daily_plan is
+    // missing — otherwise the useEffect below would fire every render and loop
+    // against its own setState.
+    const daily = useMemo(
+        () => trip.weather_snapshot?.daily_plan || [],
+        [trip.weather_snapshot?.daily_plan]
+    );
     const days = trip.weather_snapshot?.days || [];
     const rationale = trip.weather_snapshot?.pack_rationale;
     const capsuleIds = (trip.status === 'planned' ? trip.planned_capsule : trip.actual_capsule) || [];
@@ -2172,11 +2178,18 @@ function TripDetail({ trip, onClose, onRefresh }) {
                                 if (res.success && res.data?.garment) patchLocalGarment(res.data.garment);
                             }}
                             onReenrich={async (hint, opts) => {
-                                const targetId = selectedGarment.id;
-                                patchLocalGarment({ ...selectedGarment, id: targetId, enrichment_status: 'enriching' });
+                                // Snapshot the garment here — the closure's
+                                // `selectedGarment` reference would drift if
+                                // the user opens a different tile while the
+                                // re-enrich is in flight, and the error path
+                                // would then spread the *wrong* garment's data
+                                // onto the original id.
+                                const snapshot = selectedGarment;
+                                const targetId = snapshot.id;
+                                patchLocalGarment({ ...snapshot, enrichment_status: 'enriching' });
                                 const res = await reenrichGarment(targetId, hint, opts || {});
                                 if (res.success && res.data?.garment) patchLocalGarment(res.data.garment);
-                                else patchLocalGarment({ ...selectedGarment, id: targetId, enrichment_status: 'complete' });
+                                else patchLocalGarment({ ...snapshot, enrichment_status: 'complete' });
                                 return res;
                             }}
                             onGenerateImage={async (opts) => {
