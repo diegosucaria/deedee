@@ -161,10 +161,13 @@ const toolDefinitions = [
       {
         name: "runShellCommand",
         category: "filesystem",
-        description: "Run a shell command",
+        description: "Run a shell command. Default timeout is 30000ms (30s); pass timeoutMs up to 300000 (5 min) for slower operations like image generation or large downloads.",
         parameters: {
           type: "OBJECT",
-          properties: { command: { type: "STRING" } },
+          properties: {
+            command: { type: "STRING" },
+            timeoutMs: { type: "NUMBER", description: "Optional. Max execution time in ms. Default 30000, max 300000." }
+          },
           required: ["command"]
         }
       },
