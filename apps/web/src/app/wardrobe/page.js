@@ -1645,20 +1645,15 @@ function TripGroupRow({ tripId, trip, outfits, expanded, onToggle, onOpenTrip, g
     const count = outfits.length;
     return (
         <div className="rounded-xl bg-zinc-900 border border-violet-500/40 overflow-hidden">
-            <div className="flex items-center gap-3 p-3">
-                <button
-                    type="button"
-                    onClick={onToggle}
-                    className="shrink-0 cursor-pointer"
-                    aria-label={expanded ? 'Collapse trip outfits' : 'Expand trip outfits'}
-                >
-                    <OutfitThumb outfit={previewOutfit} garmentIndex={garmentIndex} />
-                </button>
-                <button
-                    type="button"
-                    onClick={onToggle}
-                    className="flex-1 min-w-0 text-left"
-                >
+            <button
+                type="button"
+                onClick={onToggle}
+                className="w-full flex items-center gap-3 p-3 text-left"
+                aria-label={expanded ? 'Collapse trip outfits' : 'Expand trip outfits'}
+                aria-expanded={expanded}
+            >
+                <OutfitThumb outfit={previewOutfit} garmentIndex={garmentIndex} />
+                <div className="flex-1 min-w-0">
                     <p className="text-sm text-white truncate inline-flex items-center gap-1.5">
                         <Plane className="w-3.5 h-3.5 text-violet-300 shrink-0" />
                         <span className="truncate">{tripName}</span>
@@ -1667,27 +1662,26 @@ function TripGroupRow({ tripId, trip, outfits, expanded, onToggle, onOpenTrip, g
                         {count} outfit{count === 1 ? '' : 's'}{dateRange ? ` · ${dateRange}` : ''}
                         {trip?.status ? ` · ${trip.status}` : ''}
                     </p>
-                </button>
+                </div>
                 {trip && (
-                    <button
-                        type="button"
-                        onClick={onOpenTrip}
-                        className="p-2 rounded-lg text-violet-300 hover:text-white hover:bg-violet-500/15"
+                    <span
+                        role="button"
+                        tabIndex={0}
+                        onClick={(e) => { e.stopPropagation(); onOpenTrip(); }}
+                        onKeyDown={(e) => {
+                            if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onOpenTrip(); }
+                        }}
+                        className="p-2 rounded-lg text-violet-300 hover:text-white hover:bg-violet-500/15 cursor-pointer"
                         title="Open trip"
                         aria-label="Open trip"
                     >
                         <ExternalLink className="w-4 h-4" />
-                    </button>
+                    </span>
                 )}
-                <button
-                    type="button"
-                    onClick={onToggle}
-                    className="p-2 rounded-lg text-zinc-500 hover:text-zinc-200"
-                    aria-label={expanded ? 'Collapse' : 'Expand'}
-                >
+                <span className="p-2 text-zinc-500" aria-hidden="true">
                     <ChevronDown className={`w-4 h-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
-                </button>
-            </div>
+                </span>
+            </button>
             {expanded && (
                 <div className="border-t border-zinc-800 p-2 space-y-2 bg-zinc-950/40">
                     {outfits.map(o => (
