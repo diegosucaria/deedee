@@ -1062,7 +1062,8 @@ const toolDefinitions = [
             },
             trip_id: { type: "STRING", description: "Optional. Scope to an active trip's capsule." },
             context: { type: "STRING", description: "Free-text context: weather, occasion, vibe, dress code." },
-            count: { type: "NUMBER", description: "Max proposals (default 4)." }
+            count: { type: "NUMBER", description: "Max proposals (default 4)." },
+            render: { type: "BOOLEAN", description: "Render every proposal as a virtual-mirror image (sets rendered_image_path on each outfit; an IMAGE_PATH line is included per proposal). Default true. Pass false only when the user explicitly asks for a quick/text-only recommendation, since rendering adds ~30s per proposal." }
           },
           required: []
         }

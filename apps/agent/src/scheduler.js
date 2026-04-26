@@ -737,12 +737,11 @@ NEVER contact anyone other than the owner.`,
    spawnAgent(task: "Get today's weather for <home_city>. Use the weather skill (wttr.in compact format). Return one short line: 'tempC condition'.", model: "FLASH", lightweight: true, tools: ["runShellCommand"])
 3. Spawn a FLASH sub-agent to summarize today's calendar for occasion/dress-code signal:
    spawnAgent(task: "List today's personal and work calendar events. Return a 1-2 line summary focused on the nature (work meeting, casual, gym, formal dinner, etc.) — NOT the full list.", model: "FLASH", lightweight: true, tools: ["server:gws_personal", "server:gws_work"])
-4. Call recommend_outfit(context: "today, <weather>, <occasion summary>", count: 2).
-5. Call get_wardrobe_profile. If the reference selfie is set, call visualize_outfit with the top proposal's garment_ids (single panel) — it will return the absolute file path of the render. If not set, skip the render.
-6. Send the suggestion to the owner via WhatsApp (do NOT rely on the scheduler reply — call sendMessage explicitly). The daily briefing already fired at 07:10 with a greeting + weather + calendar recap, so DO NOT greet again ("Good morning", "Hi", etc.) and DO NOT restate the weather or schedule. Open directly with the outfit pick, e.g. "Today's look: tan bomber over black tee, black chinos, white sneakers — warm enough for an 11°C clear day." One or two sentences, cite specific pieces.
-   - If visualize_outfit produced a render, call sendMessage(to: "me", type: "image", imagePath: "<the absolute path returned by visualize_outfit>", content: "<outfit sentence>"). The content becomes the image caption, so you get text + image in one WhatsApp message.
-   - If there is no render (no reference selfie or visualize_outfit failed), call sendMessage(to: "me", type: "text", content: "<outfit sentence>").
-7. After sendMessage succeeds, respond with the single token [SILENT] so no duplicate status summary is sent. If recommend_outfit returned zero proposals, also respond with [SILENT].
+4. Call recommend_outfit(context: "today, <weather>, <occasion summary>", count: 2). Rendering is on by default — every proposal in the response will include an "IMAGE_PATH:" line if a virtual-mirror render was produced (none if the reference selfie isn't set).
+5. Send the suggestion to the owner via WhatsApp (do NOT rely on the scheduler reply — call sendMessage explicitly). The daily briefing already fired at 07:10 with a greeting + weather + calendar recap, so DO NOT greet again ("Good morning", "Hi", etc.) and DO NOT restate the weather or schedule. Open directly with the outfit pick from the TOP (first) proposal, e.g. "Today's look: tan bomber over black tee, black chinos, white sneakers — warm enough for an 11°C clear day." One or two sentences, cite specific pieces. Send only ONE message to the owner — the top proposal's render — even though multiple were rendered.
+   - If the top proposal has an IMAGE_PATH line, call sendMessage(to: "me", type: "image", imagePath: "<that path>", content: "<outfit sentence>"). The content becomes the image caption, so you get text + image in one WhatsApp message.
+   - If there is no IMAGE_PATH (no reference selfie set, or render failed), call sendMessage(to: "me", type: "text", content: "<outfit sentence>").
+6. After sendMessage succeeds, respond with the single token [SILENT] so no duplicate status summary is sent. If recommend_outfit returned zero proposals, also respond with [SILENT].
 
 NEVER contact anyone other than the owner.`,
                 silent: false

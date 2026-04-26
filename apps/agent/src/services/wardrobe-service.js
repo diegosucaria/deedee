@@ -1663,7 +1663,7 @@ Respond with strict JSON:
      * Generate outfit proposals across 4 buckets (weather/occasion/item/safe_repeat).
      * Saves each proposal as a wr_outfits row and returns the saved outfits.
      */
-    async recommendOutfit({ garmentIds = null, tripId = null, context = '', count = 4 } = {}) {
+    async recommendOutfit({ garmentIds = null, tripId = null, context = '', count = 4, render = true } = {}) {
         // Resolve candidate pool
         let pool = [];
         let trip = null;
@@ -1771,7 +1771,38 @@ Do not propose items outside the pool. Respond with strict JSON:
             }))
             .filter(p => p.garment_ids.length > 0);
 
-        return this._saveProposals(cleaned, context);
+        const saved = this._saveProposals(cleaned, context);
+        if (render && saved.proposals.length > 0) {
+            await this._renderProposals(saved.proposals);
+        }
+        return saved;
+    }
+
+    /**
+     * Render every saved proposal into a virtual-mirror image, in parallel.
+     * If the user has no reference selfie, skips entirely (the daily job will
+     * still send a text-only WhatsApp message).
+     * Per-proposal failures are logged and swallowed so one bad render does
+     * not nuke the whole batch.
+     */
+    async _renderProposals(proposalsRefs) {
+        const profile = this.db.getUserProfile();
+        if (!profile?.reference_image_path || !fs.existsSync(profile.reference_image_path)) {
+            return;
+        }
+        await Promise.all(proposalsRefs.map(async (p) => {
+            try {
+                await this.visualizeOutfit({
+                    garmentIdsPanels: p.outfit.garment_ids,
+                    outfitId: p.outfit.id,
+                    saveAs: 'render'
+                });
+                const refreshed = this.db.getOutfit(p.outfit.id);
+                if (refreshed) p.outfit = refreshed;
+            } catch (e) {
+                console.warn(`[WardrobeService] proposal render failed for ${p.outfit.id}: ${e.message}`);
+            }
+        }));
     }
 
     // Turn internal bucket labels ("weather_anchored") into something that

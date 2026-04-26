@@ -273,13 +273,14 @@ class WardrobeExecutor extends BaseExecutor {
         }
     }
 
-    async recommend_outfit({ garment_ids, trip_id, context, count } = {}, wardrobe) {
+    async recommend_outfit({ garment_ids, trip_id, context, count, render } = {}, wardrobe) {
         try {
             const result = await wardrobe.recommendOutfit({
                 garmentIds: Array.isArray(garment_ids) ? garment_ids : null,
                 tripId: trip_id || null,
                 context: context || '',
-                count: count || 4
+                count: count || 4,
+                render: render !== false
             });
             if (!result.proposals || result.proposals.length === 0) {
                 return result.notes || 'No proposals generated.';
@@ -287,6 +288,9 @@ class WardrobeExecutor extends BaseExecutor {
             const lines = result.proposals.map(p => {
                 const ids = (p.outfit.garment_ids || []).join(', ');
                 let line = `- [${p.bucket}] outfit ${p.outfit.id}: ${ids}\n  ${p.rationale}`;
+                if (p.outfit.rendered_image_path) {
+                    line += `\n  IMAGE_PATH: ${p.outfit.rendered_image_path}`;
+                }
                 if (p.wants?.length) {
                     line += `\n  Wants: ${p.wants.map(w => w.description).join('; ')}`;
                 }
