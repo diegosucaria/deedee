@@ -101,6 +101,8 @@ export default function ChatSessionPage({ params }) {
     const mediaRecorderRef = useRef(null);
     const audioChunksRef = useRef([]);
     const [selectedFiles, setSelectedFiles] = useState([]); // [{ file, name, size }]
+    const [isSending, setIsSending] = useState(false);
+    const isSendingRef = useRef(false);
     const attachmentCount = selectedImages.length + selectedFiles.length + (audioBlob ? 1 : 0);
     const attachmentSlotsLeft = Math.max(0, MAX_ATTACHMENTS - attachmentCount);
 
@@ -161,7 +163,17 @@ export default function ChatSessionPage({ params }) {
         }
     };
 
-    // Paste Handler
+    // Refs mirroring attachment state so the paste handler can read current values
+    // without re-registering the listener on every state change (which would create
+    // a small drop-window between cleanup and re-add).
+    const selectedImagesRef = useRef(selectedImages);
+    const selectedFilesRef = useRef(selectedFiles);
+    const audioBlobRef = useRef(audioBlob);
+    useEffect(() => { selectedImagesRef.current = selectedImages; }, [selectedImages]);
+    useEffect(() => { selectedFilesRef.current = selectedFiles; }, [selectedFiles]);
+    useEffect(() => { audioBlobRef.current = audioBlob; }, [audioBlob]);
+
+    // Paste Handler — registered once on mount; reads state via refs
     useEffect(() => {
         const handlePaste = (e) => {
             const items = e.clipboardData.items;
@@ -175,7 +187,7 @@ export default function ChatSessionPage({ params }) {
             if (imageBlobs.length === 0) return;
             e.preventDefault();
 
-            const slots = MAX_ATTACHMENTS - selectedImages.length - selectedFiles.length - (audioBlob ? 1 : 0);
+            const slots = MAX_ATTACHMENTS - selectedImagesRef.current.length - selectedFilesRef.current.length - (audioBlobRef.current ? 1 : 0);
             if (slots <= 0) {
                 console.warn(`[Chat] Attachment cap (${MAX_ATTACHMENTS}) reached — pasted images dropped`);
                 return;
@@ -188,7 +200,7 @@ export default function ChatSessionPage({ params }) {
                 reader.readAsDataURL(blob);
             }))).then(newItems => {
                 setSelectedImages(curr => {
-                    const remaining = MAX_ATTACHMENTS - curr.length - selectedFiles.length - (audioBlob ? 1 : 0);
+                    const remaining = MAX_ATTACHMENTS - curr.length - selectedFilesRef.current.length - (audioBlobRef.current ? 1 : 0);
                     return remaining > 0 ? [...curr, ...newItems.slice(0, remaining)] : curr;
                 });
             });
@@ -196,7 +208,7 @@ export default function ChatSessionPage({ params }) {
 
         window.addEventListener('paste', handlePaste);
         return () => window.removeEventListener('paste', handlePaste);
-    }, [selectedImages, selectedFiles, audioBlob]);
+    }, []);
 
     // safe message normalizer
     const normalizeMessage = (m) => {
@@ -261,12 +273,15 @@ export default function ChatSessionPage({ params }) {
 
             // 3. User Multimodal
             let attachments = null;
+            let extraAudioMessage = null;
             if (m.role === 'user' && hasParts) {
                 // Join text parts
                 content = parts.filter(p => p.text).map(p => p.text).join(' ');
 
                 const inlineParts = parts.filter(p => p.inlineData && p.inlineData.mimeType);
+                const audioPart = inlineParts.find(p => p.inlineData.mimeType.startsWith('audio/'));
                 const visualParts = inlineParts.filter(p => !p.inlineData.mimeType.startsWith('audio/'));
+
                 if (visualParts.length > 0) {
                     type = 'attachments';
                     attachments = visualParts.map(p => {
@@ -276,6 +291,26 @@ export default function ChatSessionPage({ params }) {
                         }
                         return { kind: 'file', name: p.inlineData.name || 'File', mimeType: mime };
                     });
+                }
+
+                if (audioPart) {
+                    if (visualParts.length === 0 && !content) {
+                        // Audio-only user message — render as a single audio bubble.
+                        type = 'audio';
+                        content = `data:${audioPart.inlineData.mimeType};base64,${audioPart.inlineData.data}`;
+                    } else {
+                        // Audio mixed with text/visuals — emit a separate audio message
+                        // so the optimistic two-bubble layout matches what's reloaded
+                        // from the DB. No id on the spawned message so the rewind/fork
+                        // hover-actions only appear on the main bubble.
+                        extraAudioMessage = {
+                            role,
+                            content: `data:${audioPart.inlineData.mimeType};base64,${audioPart.inlineData.data}`,
+                            type: 'audio',
+                            timestamp: m.timestamp,
+                            metadata
+                        };
+                    }
                 }
 
                 if (!content && m.content) content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
@@ -300,7 +335,8 @@ export default function ChatSessionPage({ params }) {
             if (!content && typeof m.content === 'string') content = m.content;
             if (!content) content = '';
 
-            return { id: m.id, role, content, type, timestamp: m.timestamp, metadata, attachments };
+            const main = { id: m.id, role, content, type, timestamp: m.timestamp, metadata, attachments };
+            return extraAudioMessage ? [extraAudioMessage, main] : main;
 
         } catch (error) {
             console.error('[Chat] Message Normalization Failed:', error, m);
@@ -318,7 +354,12 @@ export default function ChatSessionPage({ params }) {
             const data = await getSession(chatId);
             if (data) {
                 setSessionTitle(data.title);
-                const history = (data.messages || []).map(normalizeMessage);
+                // normalizeMessage may return a single message or an array (e.g., when
+                // a user message bundles audio with images and we want two bubbles).
+                const history = (data.messages || []).flatMap(m => {
+                    const norm = normalizeMessage(m);
+                    return Array.isArray(norm) ? norm : [norm];
+                });
                 setMessages(history);
             }
         } catch (err) {
@@ -621,7 +662,10 @@ export default function ChatSessionPage({ params }) {
             name: file.name,
             size: (file.size / 1024 / 1024).toFixed(2) + ' MB'
         }));
-        setSelectedFiles(curr => [...curr, ...accepted]);
+        setSelectedFiles(curr => {
+            const remaining = MAX_ATTACHMENTS - curr.length - selectedImages.length - (audioBlob ? 1 : 0);
+            return remaining > 0 ? [...curr, ...accepted.slice(0, remaining)] : curr;
+        });
     };
 
     const removeImageAt = (idx) => setSelectedImages(curr => curr.filter((_, i) => i !== idx));
@@ -649,109 +693,120 @@ export default function ChatSessionPage({ params }) {
 
     const handleSendMessage = async (e) => {
         e.preventDefault();
+        if (isSendingRef.current) return; // synchronous guard against double-submit
         const hasAttachments = selectedImages.length > 0 || selectedFiles.length > 0 || !!audioBlob;
         if ((!inputValue.trim() && !hasAttachments) || !socket) return;
 
-        const content = inputValue;
-        const files = [];
-        const timestamp = new Date().toISOString();
+        isSendingRef.current = true;
+        setIsSending(true);
+        try {
+            const content = inputValue;
+            const files = [];
+            const timestamp = new Date().toISOString();
 
-        // 1. Audio (kept as its own optimistic bubble — separate UX affordance)
-        if (audioBlob) {
-            const base64Audio = await blobToBase64(audioBlob);
-            files.push({
-                mimeType: audioBlob.type || 'audio/webm',
-                data: base64Audio
-            });
+            // 1. Audio — convert to base64 now, but defer the optimistic bubble until
+            //    after all uploads succeed so a later upload failure doesn't leave
+            //    a phantom audio bubble behind.
+            let audioOptimistic = null;
+            if (audioBlob) {
+                const base64Audio = await blobToBase64(audioBlob);
+                files.push({
+                    mimeType: audioBlob.type || 'audio/webm',
+                    data: base64Audio
+                });
+                audioOptimistic = {
+                    role: 'user',
+                    content: `data:${audioBlob.type};base64,${base64Audio}`,
+                    type: 'audio',
+                    timestamp
+                };
+            }
 
-            addMessage({
-                role: 'user',
-                content: `data:${audioBlob.type};base64,${base64Audio}`,
-                type: 'audio',
-                timestamp
-            });
-        }
+            // 2. Images — push one part per image, accumulate into the unified bubble
+            const optimisticAttachments = [];
+            for (const img of selectedImages) {
+                const base64Image = img.preview.split(',')[1];
+                files.push({
+                    mimeType: img.file.type,
+                    data: base64Image
+                });
+                optimisticAttachments.push({ kind: 'image', preview: img.preview });
+            }
 
-        // 2. Images — push one part per image, accumulate into the unified bubble
-        const optimisticAttachments = [];
-        for (const img of selectedImages) {
-            const base64Image = img.preview.split(',')[1];
-            files.push({
-                mimeType: img.file.type,
-                data: base64Image
-            });
-            optimisticAttachments.push({ kind: 'image', preview: img.preview });
-        }
+            // 3. Generic files — upload in parallel, then push parts + chips
+            if (selectedFiles.length > 0) {
+                try {
+                    const uploadResults = await Promise.all(selectedFiles.map(async (sf) => {
+                        const formData = new FormData();
+                        formData.append('file', sf.file);
+                        const uploadRes = await uploadChatFile(chatId, formData);
+                        if (!uploadRes.success) throw new Error(uploadRes.error || `Upload failed: ${sf.name}`);
 
-        // 3. Generic files — upload in parallel, then push parts + chips
-        if (selectedFiles.length > 0) {
-            try {
-                const uploadResults = await Promise.all(selectedFiles.map(async (sf) => {
-                    const formData = new FormData();
-                    formData.append('file', sf.file);
-                    const uploadRes = await uploadChatFile(chatId, formData);
-                    if (!uploadRes.success) throw new Error(uploadRes.error || `Upload failed: ${sf.name}`);
+                        const base64File = await new Promise((resolve) => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                            reader.readAsDataURL(sf.file);
+                        });
 
-                    const base64File = await new Promise((resolve) => {
-                        const reader = new FileReader();
-                        reader.onloadend = () => resolve(reader.result.split(',')[1]);
-                        reader.readAsDataURL(sf.file);
-                    });
+                        return {
+                            mimeType: sf.file.type || 'application/octet-stream',
+                            data: base64File,
+                            name: sf.name,
+                            size: sf.size
+                        };
+                    }));
 
-                    return {
-                        mimeType: sf.file.type || 'application/octet-stream',
-                        data: base64File,
-                        name: sf.name,
-                        size: sf.size
-                    };
-                }));
-
-                for (const r of uploadResults) {
-                    files.push({ mimeType: r.mimeType, data: r.data });
-                    optimisticAttachments.push({ kind: 'file', name: r.name, size: r.size, mimeType: r.mimeType });
+                    for (const r of uploadResults) {
+                        files.push({ mimeType: r.mimeType, data: r.data });
+                        optimisticAttachments.push({ kind: 'file', name: r.name, size: r.size, mimeType: r.mimeType });
+                    }
+                } catch (err) {
+                    console.error('File Upload Error:', err);
+                    alert(`Failed to upload file: ${err.message}`);
+                    return; // keep attachments so user can retry; no optimistic bubbles pushed yet
                 }
-            } catch (err) {
-                console.error('File Upload Error:', err);
-                alert(`Failed to upload file: ${err.message}`);
-                return; // keep attachments so user can retry
             }
-        }
 
-        // 4. Build the unified user bubble
-        if (optimisticAttachments.length > 0) {
-            addMessage({
-                role: 'user',
+            // 4. All uploads succeeded — push optimistic UI now
+            if (audioOptimistic) addMessage(audioOptimistic);
+            if (optimisticAttachments.length > 0) {
+                addMessage({
+                    role: 'user',
+                    content: content,
+                    type: 'attachments',
+                    attachments: optimisticAttachments,
+                    timestamp
+                });
+            } else if (content.trim()) {
+                addMessage({
+                    role: 'user',
+                    content,
+                    type: 'text',
+                    timestamp
+                });
+            }
+
+            setInputValue('');
+            clearAttachments();
+            setIsWaiting(true);
+
+            // Auto-collapse sidebar on first message
+            if (messages.length === 0) setCollapsed(true);
+
+            socket.emit('chat:message', {
                 content: content,
-                type: 'attachments',
-                attachments: optimisticAttachments,
-                timestamp
+                files: files,
+                chatId: chatId,
+                metadata: {
+                    location: userLocation,
+                    vaultId: selectedVault !== 'none' ? selectedVault : undefined,
+                    model: selectedModel !== 'auto' ? selectedModel : undefined
+                }
             });
-        } else if (content.trim()) {
-            addMessage({
-                role: 'user',
-                content,
-                type: 'text',
-                timestamp
-            });
+        } finally {
+            isSendingRef.current = false;
+            setIsSending(false);
         }
-
-        setInputValue('');
-        clearAttachments();
-        setIsWaiting(true);
-
-        // Auto-collapse sidebar on first message
-        if (messages.length === 0) setCollapsed(true);
-
-        socket.emit('chat:message', {
-            content: content,
-            files: files,
-            chatId: chatId,
-            metadata: {
-                location: userLocation,
-                vaultId: selectedVault !== 'none' ? selectedVault : undefined,
-                model: selectedModel !== 'auto' ? selectedModel : undefined
-            }
-        });
     };
 
     return (
@@ -1179,10 +1234,10 @@ export default function ChatSessionPage({ params }) {
                         {/* Send Button */}
                         <button
                             type="submit"
-                            disabled={!isConnected || (!inputValue.trim() && attachmentCount === 0)}
+                            disabled={!isConnected || isSending || (!inputValue.trim() && attachmentCount === 0)}
                             className="flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-indigo-600 text-white transition-colors hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            <Send className="h-5 w-5" />
+                            {isSending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
                         </button>
                     </div>
                 </form>
