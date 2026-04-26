@@ -695,16 +695,15 @@ class Agent {
 
         // Suppress for Passive Mode
         if (message.parts && message.role === 'user' && !isPassiveMode && !isSubAgent) {
-          const attachment = message.parts.find(p => p.inlineData && !p.inlineData.mimeType.startsWith('audio/') && !p.inlineData.mimeType.startsWith('image/'));
-          // Classify anything substantive (PDF, Text, Images) but exclude audio (voice notes)
-
-          const candidatePart = message.parts.find(p =>
+          // Classify anything substantive (PDF, Text, Images) but exclude audio (voice notes).
+          // With multi-attachment support, analyze each non-audio attachment in parallel.
+          const candidates = message.parts.filter(p =>
             p.inlineData && !p.inlineData.mimeType.startsWith('audio/')
           );
 
-          if (candidatePart) {
+          for (const part of candidates) {
             // Run in background to not block chat latency
-            this.analysisService.analyzeAttachment(chatId, candidatePart, message.metadata?.vaultId || 'none').catch(console.error);
+            this.analysisService.analyzeAttachment(chatId, part, message.metadata?.vaultId || 'none').catch(console.error);
           }
         }
       }
