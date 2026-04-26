@@ -93,6 +93,17 @@ export default function ChatSessionPage({ params }) {
         if (saved) setSelectedModel(saved);
     }, []);
 
+    // One-shot prefill (e.g. from wardrobe "ask about this outfit")
+    useEffect(() => {
+        try {
+            const prefill = sessionStorage.getItem('deedee_chat_prefill');
+            if (prefill) {
+                setInputValue(prefill);
+                sessionStorage.removeItem('deedee_chat_prefill');
+            }
+        } catch (_) { /* ignore */ }
+    }, []);
+
     // Multimodal State
     const [isRecording, setIsRecording] = useState(false);
     const [audioBlob, setAudioBlob] = useState(null);
