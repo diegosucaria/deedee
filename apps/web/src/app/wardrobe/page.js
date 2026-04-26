@@ -6,7 +6,7 @@ import { io } from 'socket.io-client';
 import { getSocketUrl } from '@/hooks/useSocket';
 import {
     Shirt, Camera, Trash2, X, Loader2, Check, Pencil, Settings, Heart,
-    Plane, ShoppingBag, MapPin, Calendar, Upload, User, Layers, Sparkles, RefreshCw, Paperclip, Combine, Copy, Tag, Plus, ArrowUpDown
+    Plane, ShoppingBag, MapPin, Calendar, Upload, User, Layers, Sparkles, RefreshCw, Paperclip, Combine, Copy, Tag, Plus, ArrowUpDown, ChevronDown, ExternalLink
 } from 'lucide-react';
 import PageShell from '@/components/PageShell';
 import {
@@ -86,6 +86,20 @@ function formatDate(iso) {
     if (!iso) return '';
     try { return new Date(iso).toLocaleDateString(undefined, { month: 'short', day: 'numeric' }); }
     catch { return iso; }
+}
+
+function parseTripLabel(label) {
+    if (typeof label !== 'string' || !label.startsWith('trip:')) return null;
+    const id = label.slice('trip:'.length);
+    return id || null;
+}
+
+function tripLabelDisplay(label, tripById) {
+    const tripId = parseTripLabel(label);
+    if (!tripId) return label;
+    const trip = tripById?.[tripId];
+    if (trip?.destination) return trip.destination;
+    return `Trip ${tripId.slice(0, 8)}…`;
 }
 
 // --- Main page ---
@@ -1178,6 +1192,7 @@ const OUTFIT_SORTS = [
 
 function OutfitsTab() {
     const [outfits, setOutfits] = useState([]);
+    const [trips, setTrips] = useState([]);
     const [garmentIndex, setGarmentIndex] = useState({});
     const [loading, setLoading] = useState(true);
     const [likedOnly, setLikedOnly] = useState(false);
@@ -1185,14 +1200,18 @@ function OutfitsTab() {
     const [sortBy, setSortBy] = useState('recent');
     const [selectedOutfit, setSelectedOutfit] = useState(null);
     const [selectedGarment, setSelectedGarment] = useState(null);
+    const [selectedTrip, setSelectedTrip] = useState(null);
+    const [expandedTripGroups, setExpandedTripGroups] = useState({}); // tripId -> bool
 
     const load = useCallback(async () => {
         setLoading(true);
-        const [outRes, garRes] = await Promise.all([
+        const [outRes, garRes, tripRes] = await Promise.all([
             getOutfits({ liked: likedOnly ? true : null }),
-            getWardrobe({ limit: 500 })
+            getWardrobe({ limit: 500 }),
+            getTrips({})
         ]);
         setOutfits(outRes.success ? (outRes.data || []) : []);
+        setTrips(tripRes.success ? (tripRes.data || []) : []);
         const idx = {};
         for (const g of (garRes.success ? (garRes.data || []) : [])) idx[g.id] = g;
         setGarmentIndex(idx);
@@ -1201,10 +1220,28 @@ function OutfitsTab() {
 
     useEffect(() => { load(); }, [load]);
 
+    const tripById = useMemo(() => {
+        const idx = {};
+        for (const t of trips) idx[t.id] = t;
+        return idx;
+    }, [trips]);
+
     // All labels currently in use, for the filter row.
     const allLabels = Array.from(new Set(
         outfits.flatMap(o => Array.isArray(o.labels) ? o.labels : [])
     )).sort();
+
+    const openTrip = async (tripId) => {
+        const res = await getTripAction(tripId);
+        if (res.success) {
+            setSelectedTrip(res.data);
+            setSelectedOutfit(null);
+        }
+    };
+
+    const toggleTripGroup = (tripId) => {
+        setExpandedTripGroups(prev => ({ ...prev, [tripId]: !prev[tripId] }));
+    };
 
     const toggleLike = async (outfit) => {
         const res = await likeOutfit(outfit.id, !outfit.liked);
@@ -1262,6 +1299,32 @@ function OutfitsTab() {
         return tb - ta; // recent, liked_first tiebreaker
     });
 
+    // Walk sorted outfits, collapsing all outfits sharing a trip:<id> label into
+    // one expandable group. Group is positioned at its first occurrence in sort
+    // order, so the most recent (or oldest, depending on sort) trip outfit
+    // anchors it.
+    const grouped = [];
+    const tripGroupIndex = new Map();
+    for (const o of sorted) {
+        const tripId = (o.labels || []).map(parseTripLabel).find(Boolean) || null;
+        if (tripId) {
+            let group = tripGroupIndex.get(tripId);
+            if (!group) {
+                group = { type: 'trip', tripId, outfits: [] };
+                tripGroupIndex.set(tripId, group);
+                grouped.push(group);
+            }
+            group.outfits.push(o);
+        } else {
+            grouped.push({ type: 'outfit', outfit: o });
+        }
+    }
+
+    // Auto-expand a trip group when it's the only one selected via filter.
+    const isTripGroupExpanded = (tripId) => (
+        labelFilter === `trip:${tripId}` || !!expandedTripGroups[tripId]
+    );
+
     return (
         <>
             <div className="flex items-center gap-2 mb-3 flex-wrap">
@@ -1305,17 +1368,21 @@ function OutfitsTab() {
                     >
                         All labels
                     </button>
-                    {allLabels.map(lb => (
-                        <button
-                            key={lb}
-                            onClick={() => setLabelFilter(lb === labelFilter ? null : lb)}
-                            className={`shrink-0 inline-flex items-center gap-1 px-3 py-2 rounded-full text-xs min-h-[32px] border transition ${
-                                labelFilter === lb ? 'bg-violet-500/20 border-violet-500/50 text-violet-200' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
-                            }`}
-                        >
-                            <Tag className="w-3 h-3" /> {lb}
-                        </button>
-                    ))}
+                    {allLabels.map(lb => {
+                        const isTrip = !!parseTripLabel(lb);
+                        const Icon = isTrip ? Plane : Tag;
+                        return (
+                            <button
+                                key={lb}
+                                onClick={() => setLabelFilter(lb === labelFilter ? null : lb)}
+                                className={`shrink-0 inline-flex items-center gap-1 px-3 py-2 rounded-full text-xs min-h-[32px] border transition ${
+                                    labelFilter === lb ? 'bg-violet-500/20 border-violet-500/50 text-violet-200' : 'bg-zinc-900 border-zinc-800 text-zinc-400 hover:text-zinc-200'
+                                }`}
+                            >
+                                <Icon className="w-3 h-3" /> {tripLabelDisplay(lb, tripById)}
+                            </button>
+                        );
+                    })}
                 </div>
             )}
 
@@ -1333,65 +1400,35 @@ function OutfitsTab() {
                 </div>
             ) : (
                 <div className="space-y-3">
-                    {sorted.map(o => (
-                        <button
-                            key={o.id}
-                            onClick={() => setSelectedOutfit(o)}
-                            className="w-full text-left rounded-xl bg-zinc-900 border border-zinc-800 p-3 flex items-center gap-3 hover:border-zinc-700 transition"
-                        >
-                            {o.rendered_image_path ? (
-                                // eslint-disable-next-line @next/next/no-img-element
-                                <img
-                                    src={pathToUrl(o.rendered_image_path)}
-                                    alt=""
-                                    className="w-16 h-20 object-cover rounded-lg shrink-0"
+                    {grouped.map(item => {
+                        if (item.type === 'outfit') {
+                            return (
+                                <OutfitRow
+                                    key={item.outfit.id}
+                                    outfit={item.outfit}
+                                    garmentIndex={garmentIndex}
+                                    tripById={tripById}
+                                    onSelect={() => setSelectedOutfit(item.outfit)}
+                                    onToggleLike={() => toggleLike(item.outfit)}
                                 />
-                            ) : (
-                                <div className="w-16 h-20 shrink-0 bg-zinc-950 rounded-lg grid grid-cols-2 gap-0.5 p-0.5">
-                                    {(o.garment_ids || []).slice(0, 4).map(gid => {
-                                        const g = garmentIndex[gid];
-                                        const url = g ? pathToUrl(g.generated_image_path || g.crop_image_path || g.source_image_path) : null;
-                                        return (
-                                            <div key={gid} className="bg-zinc-900 rounded overflow-hidden">
-                                                {url && (
-                                                    // eslint-disable-next-line @next/next/no-img-element
-                                                    <img src={url} alt="" className="w-full h-full object-cover" />
-                                                )}
-                                            </div>
-                                        );
-                                    })}
-                                </div>
-                            )}
-                            <div className="flex-1 min-w-0">
-                                <p className="text-sm text-white truncate">{o.name || 'Outfit'}</p>
-                                <p className="text-xs text-zinc-500 truncate">
-                                    {(o.garment_ids || []).length} item{(o.garment_ids || []).length === 1 ? '' : 's'}
-                                    {o.occasion ? ` · ${o.occasion}` : ''}
-                                </p>
-                                {(o.labels || []).length > 0 && (
-                                    <div className="flex gap-1 mt-1 flex-wrap">
-                                        {(o.labels || []).slice(0, 4).map(lb => (
-                                            <span key={lb} className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 border border-violet-500/30">
-                                                {lb}
-                                            </span>
-                                        ))}
-                                    </div>
-                                )}
-                            </div>
-                            <span
-                                role="button"
-                                tabIndex={0}
-                                onClick={(e) => { e.stopPropagation(); toggleLike(o); }}
-                                onKeyDown={(e) => {
-                                    if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); toggleLike(o); }
-                                }}
-                                className={`p-2 rounded-lg cursor-pointer ${o.liked ? 'text-rose-400' : 'text-zinc-600 hover:text-zinc-300'}`}
-                                title={o.liked ? 'Unlike' : 'Like'}
-                            >
-                                <Heart className="w-5 h-5" fill={o.liked ? 'currentColor' : 'none'} />
-                            </span>
-                        </button>
-                    ))}
+                            );
+                        }
+                        return (
+                            <TripGroupRow
+                                key={`trip-${item.tripId}`}
+                                tripId={item.tripId}
+                                trip={tripById[item.tripId]}
+                                outfits={item.outfits}
+                                expanded={isTripGroupExpanded(item.tripId)}
+                                onToggle={() => toggleTripGroup(item.tripId)}
+                                onOpenTrip={() => openTrip(item.tripId)}
+                                garmentIndex={garmentIndex}
+                                tripById={tripById}
+                                onSelectOutfit={(o) => setSelectedOutfit(o)}
+                                onToggleLike={(o) => toggleLike(o)}
+                            />
+                        );
+                    })}
                 </div>
             )}
 
@@ -1400,9 +1437,11 @@ function OutfitsTab() {
                     <OutfitDetail
                         outfit={selectedOutfit}
                         garmentIndex={garmentIndex}
+                        tripById={tripById}
                         onClose={() => setSelectedOutfit(null)}
                         onToggleLike={() => toggleLike(selectedOutfit)}
                         onSelectGarment={(g) => setSelectedGarment(g)}
+                        onSelectTrip={openTrip}
                         onDelete={() => handleDeleteOutfit(selectedOutfit)}
                         onLabelsChange={(labels) => handleLabelsChange(selectedOutfit, labels)}
                         onRename={(name) => handleRename(selectedOutfit, name)}
@@ -1512,11 +1551,163 @@ function OutfitsTab() {
                     />
                 )}
             </AnimatePresence>
+
+            <AnimatePresence>
+                {selectedTrip && (
+                    <TripDetail
+                        trip={selectedTrip}
+                        onClose={() => setSelectedTrip(null)}
+                        onRefresh={async () => {
+                            const res = await getTripAction(selectedTrip.id);
+                            if (res.success) setSelectedTrip(res.data);
+                            load();
+                        }}
+                    />
+                )}
+            </AnimatePresence>
         </>
     );
 }
 
-function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGarment, onDelete, onLabelsChange, onRename, onGenerateVariations }) {
+function OutfitThumb({ outfit, garmentIndex }) {
+    if (outfit.rendered_image_path) {
+        return (
+            // eslint-disable-next-line @next/next/no-img-element
+            <img
+                src={pathToUrl(outfit.rendered_image_path)}
+                alt=""
+                className="w-16 h-20 object-cover rounded-lg shrink-0"
+            />
+        );
+    }
+    return (
+        <div className="w-16 h-20 shrink-0 bg-zinc-950 rounded-lg grid grid-cols-2 gap-0.5 p-0.5">
+            {(outfit.garment_ids || []).slice(0, 4).map(gid => {
+                const g = garmentIndex[gid];
+                const url = g ? pathToUrl(g.generated_image_path || g.crop_image_path || g.source_image_path) : null;
+                return (
+                    <div key={gid} className="bg-zinc-900 rounded overflow-hidden">
+                        {url && (
+                            // eslint-disable-next-line @next/next/no-img-element
+                            <img src={url} alt="" className="w-full h-full object-cover" />
+                        )}
+                    </div>
+                );
+            })}
+        </div>
+    );
+}
+
+function OutfitRow({ outfit, garmentIndex, tripById, onSelect, onToggleLike, hideTripLabels = false }) {
+    const labels = (outfit.labels || []).filter(lb => !hideTripLabels || !parseTripLabel(lb));
+    return (
+        <button
+            onClick={onSelect}
+            className="w-full text-left rounded-xl bg-zinc-900 border border-zinc-800 p-3 flex items-center gap-3 hover:border-zinc-700 transition"
+        >
+            <OutfitThumb outfit={outfit} garmentIndex={garmentIndex} />
+            <div className="flex-1 min-w-0">
+                <p className="text-sm text-white truncate">{outfit.name || 'Outfit'}</p>
+                <p className="text-xs text-zinc-500 truncate">
+                    {(outfit.garment_ids || []).length} item{(outfit.garment_ids || []).length === 1 ? '' : 's'}
+                    {outfit.occasion ? ` · ${outfit.occasion}` : ''}
+                </p>
+                {labels.length > 0 && (
+                    <div className="flex gap-1 mt-1 flex-wrap">
+                        {labels.slice(0, 4).map(lb => (
+                            <span key={lb} className="text-[10px] px-1.5 py-0.5 rounded bg-violet-500/15 text-violet-300 border border-violet-500/30">
+                                {tripLabelDisplay(lb, tripById)}
+                            </span>
+                        ))}
+                    </div>
+                )}
+            </div>
+            <span
+                role="button"
+                tabIndex={0}
+                onClick={(e) => { e.stopPropagation(); onToggleLike(); }}
+                onKeyDown={(e) => {
+                    if (e.key === 'Enter' || e.key === ' ') { e.stopPropagation(); onToggleLike(); }
+                }}
+                className={`p-2 rounded-lg cursor-pointer ${outfit.liked ? 'text-rose-400' : 'text-zinc-600 hover:text-zinc-300'}`}
+                title={outfit.liked ? 'Unlike' : 'Like'}
+            >
+                <Heart className="w-5 h-5" fill={outfit.liked ? 'currentColor' : 'none'} />
+            </span>
+        </button>
+    );
+}
+
+function TripGroupRow({ tripId, trip, outfits, expanded, onToggle, onOpenTrip, garmentIndex, tripById, onSelectOutfit, onToggleLike }) {
+    const previewOutfit = outfits.find(o => o.rendered_image_path) || outfits[0];
+    const tripName = trip?.destination || `Trip ${tripId.slice(0, 8)}…`;
+    const dateRange = trip ? `${formatDate(trip.start_date)} – ${formatDate(trip.end_date)}` : '';
+    const count = outfits.length;
+    return (
+        <div className="rounded-xl bg-zinc-900 border border-violet-500/40 overflow-hidden">
+            <div className="flex items-center gap-3 p-3">
+                <button
+                    type="button"
+                    onClick={onToggle}
+                    className="shrink-0 cursor-pointer"
+                    aria-label={expanded ? 'Collapse trip outfits' : 'Expand trip outfits'}
+                >
+                    <OutfitThumb outfit={previewOutfit} garmentIndex={garmentIndex} />
+                </button>
+                <button
+                    type="button"
+                    onClick={onToggle}
+                    className="flex-1 min-w-0 text-left"
+                >
+                    <p className="text-sm text-white truncate inline-flex items-center gap-1.5">
+                        <Plane className="w-3.5 h-3.5 text-violet-300 shrink-0" />
+                        <span className="truncate">{tripName}</span>
+                    </p>
+                    <p className="text-xs text-zinc-500 truncate">
+                        {count} outfit{count === 1 ? '' : 's'}{dateRange ? ` · ${dateRange}` : ''}
+                        {trip?.status ? ` · ${trip.status}` : ''}
+                    </p>
+                </button>
+                {trip && (
+                    <button
+                        type="button"
+                        onClick={onOpenTrip}
+                        className="p-2 rounded-lg text-violet-300 hover:text-white hover:bg-violet-500/15"
+                        title="Open trip"
+                        aria-label="Open trip"
+                    >
+                        <ExternalLink className="w-4 h-4" />
+                    </button>
+                )}
+                <button
+                    type="button"
+                    onClick={onToggle}
+                    className="p-2 rounded-lg text-zinc-500 hover:text-zinc-200"
+                    aria-label={expanded ? 'Collapse' : 'Expand'}
+                >
+                    <ChevronDown className={`w-4 h-4 transition-transform ${expanded ? 'rotate-180' : ''}`} />
+                </button>
+            </div>
+            {expanded && (
+                <div className="border-t border-zinc-800 p-2 space-y-2 bg-zinc-950/40">
+                    {outfits.map(o => (
+                        <OutfitRow
+                            key={o.id}
+                            outfit={o}
+                            garmentIndex={garmentIndex}
+                            tripById={tripById}
+                            onSelect={() => onSelectOutfit(o)}
+                            onToggleLike={() => onToggleLike(o)}
+                            hideTripLabels
+                        />
+                    ))}
+                </div>
+            )}
+        </div>
+    );
+}
+
+function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGarment, onDelete, onLabelsChange, onRename, onGenerateVariations, tripById, onSelectTrip }) {
     const [lightboxOpen, setLightboxOpen] = useState(false);
     const [lightboxSrc, setLightboxSrc] = useState(null);
     const [labelDraft, setLabelDraft] = useState('');
@@ -1707,19 +1898,39 @@ function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGar
                             {labels.length === 0 && (
                                 <span className="text-[11px] text-zinc-600 italic">None yet. Try &ldquo;business meeting&rdquo;, &ldquo;party&rdquo;, &ldquo;regular day&rdquo;.</span>
                             )}
-                            {labels.map(lb => (
-                                <span key={lb} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-violet-500/15 text-violet-200 border border-violet-500/30">
-                                    <Tag className="w-3 h-3" />
-                                    {lb}
-                                    <button
-                                        onClick={() => handleRemoveLabel(lb)}
-                                        className="text-violet-300 hover:text-white ml-0.5"
-                                        title={`Remove ${lb}`}
-                                    >
-                                        <X className="w-3 h-3" />
-                                    </button>
-                                </span>
-                            ))}
+                            {labels.map(lb => {
+                                const tripId = parseTripLabel(lb);
+                                const display = tripLabelDisplay(lb, tripById);
+                                const Icon = tripId ? Plane : Tag;
+                                const clickable = !!tripId && !!onSelectTrip;
+                                return (
+                                    <span key={lb} className="inline-flex items-center gap-1 px-2 py-1 rounded-full text-xs bg-violet-500/15 text-violet-200 border border-violet-500/30">
+                                        {clickable ? (
+                                            <button
+                                                onClick={() => onSelectTrip(tripId)}
+                                                className="inline-flex items-center gap-1 hover:text-white"
+                                                title={`Open trip: ${display}`}
+                                            >
+                                                <Icon className="w-3 h-3" />
+                                                {display}
+                                                <ExternalLink className="w-2.5 h-2.5 opacity-70" />
+                                            </button>
+                                        ) : (
+                                            <span className="inline-flex items-center gap-1">
+                                                <Icon className="w-3 h-3" />
+                                                {display}
+                                            </span>
+                                        )}
+                                        <button
+                                            onClick={() => handleRemoveLabel(lb)}
+                                            className="text-violet-300 hover:text-white ml-0.5"
+                                            title={`Remove ${display}`}
+                                        >
+                                            <X className="w-3 h-3" />
+                                        </button>
+                                    </span>
+                                );
+                            })}
                         </div>
                         <div className="flex gap-2">
                             <input
