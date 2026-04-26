@@ -186,6 +186,10 @@ export default function ChatSessionPage({ params }) {
             }
             if (imageBlobs.length === 0) return;
             e.preventDefault();
+            if (isSendingRef.current) {
+                console.warn('[Chat] Send in progress — pasted images dropped');
+                return;
+            }
 
             const slots = MAX_ATTACHMENTS - selectedImagesRef.current.length - selectedFilesRef.current.length - (audioBlobRef.current ? 1 : 0);
             if (slots <= 0) {
@@ -928,7 +932,11 @@ export default function ChatSessionPage({ params }) {
                                                 <div className="h-10 w-10 bg-indigo-500/20 rounded-full flex items-center justify-center">
                                                     <Play className="h-5 w-5 text-indigo-400" />
                                                 </div>
-                                                <span className="text-sm italic text-indigo-200">Audio Message</span>
+                                                <audio
+                                                    controls
+                                                    src={typeof msg.content === 'string' && msg.content.startsWith('data:') ? msg.content : `data:audio/webm;base64,${msg.content}`}
+                                                    className="h-8 max-w-[220px]"
+                                                />
                                             </div>
                                         ) : msg.type === 'attachments' ? (
                                             <div className="flex flex-col gap-2">
@@ -1179,14 +1187,14 @@ export default function ChatSessionPage({ params }) {
                                 onChange={handleImageSelect}
                                 className="hidden"
                                 id="image-upload"
-                                disabled={attachmentSlotsLeft === 0}
+                                disabled={attachmentSlotsLeft === 0 || isSending}
                             />
                             <label
                                 htmlFor="image-upload"
-                                title={attachmentSlotsLeft === 0 ? `Max ${MAX_ATTACHMENTS} attachments reached` : 'Attach images'}
+                                title={isSending ? 'Send in progress…' : attachmentSlotsLeft === 0 ? `Max ${MAX_ATTACHMENTS} attachments reached` : 'Attach images'}
                                 className={clsx(
                                     "flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 transition-all cursor-pointer",
-                                    attachmentSlotsLeft === 0 ? "opacity-30 cursor-not-allowed" : "hover:text-pink-400 hover:border-pink-500/50"
+                                    (attachmentSlotsLeft === 0 || isSending) ? "opacity-30 cursor-not-allowed" : "hover:text-pink-400 hover:border-pink-500/50"
                                 )}
                             >
                                 <ImageIcon className="h-5 w-5" />
@@ -1201,14 +1209,14 @@ export default function ChatSessionPage({ params }) {
                                 onChange={handleFileSelect}
                                 className="hidden"
                                 id="file-upload"
-                                disabled={attachmentSlotsLeft === 0}
+                                disabled={attachmentSlotsLeft === 0 || isSending}
                             />
                             <label
                                 htmlFor="file-upload"
-                                title={attachmentSlotsLeft === 0 ? `Max ${MAX_ATTACHMENTS} attachments reached` : 'Attach files'}
+                                title={isSending ? 'Send in progress…' : attachmentSlotsLeft === 0 ? `Max ${MAX_ATTACHMENTS} attachments reached` : 'Attach files'}
                                 className={clsx(
                                     "flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 transition-all cursor-pointer",
-                                    attachmentSlotsLeft === 0 ? "opacity-30 cursor-not-allowed" : "hover:text-emerald-400 hover:border-emerald-500/50"
+                                    (attachmentSlotsLeft === 0 || isSending) ? "opacity-30 cursor-not-allowed" : "hover:text-emerald-400 hover:border-emerald-500/50"
                                 )}
                             >
                                 <Paperclip className="h-5 w-5" />
