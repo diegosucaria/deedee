@@ -1663,7 +1663,7 @@ Respond with strict JSON:
      * Generate outfit proposals across 4 buckets (weather/occasion/item/safe_repeat).
      * Saves each proposal as a wr_outfits row and returns the saved outfits.
      */
-    async recommendOutfit({ garmentIds = null, tripId = null, context = '', count = 4, render = false } = {}) {
+    async recommendOutfit({ garmentIds = null, tripId = null, context = '', count = 4, render = true } = {}) {
         // Resolve candidate pool
         let pool = [];
         let trip = null;

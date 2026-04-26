@@ -280,7 +280,7 @@ class WardrobeExecutor extends BaseExecutor {
                 tripId: trip_id || null,
                 context: context || '',
                 count: count || 4,
-                render: !!render
+                render: render !== false
             });
             if (!result.proposals || result.proposals.length === 0) {
                 return result.notes || 'No proposals generated.';
