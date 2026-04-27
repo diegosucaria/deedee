@@ -65,8 +65,17 @@ app.use('/v1/mcp', require('./routes/mcp'));
 //   - Polling stays disabled on the client (transports: ['websocket']) so a
 //     successful WS upgrade is the only HTTP request that hits Traefik per
 //     connection — no forward-auth cookie spam.
+//   - Escape hatch: setting DISABLE_SOCKET_AUTH_GATE=1 skips the header check
+//     so plain `docker-compose up` self-hosters (no Traefik forward-auth) can
+//     reach `/socket.io`. Only safe on a trusted LAN — it removes the only
+//     auth layer in front of the socket proxy.
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const INTERFACES_URL = process.env.INTERFACES_URL || 'http://interfaces:5000';
+const SOCKET_AUTH_GATE_DISABLED = process.env.DISABLE_SOCKET_AUTH_GATE === '1';
+
+if (SOCKET_AUTH_GATE_DISABLED) {
+    console.warn('[API] DISABLE_SOCKET_AUTH_GATE=1 — /socket.io reachable without X-Forwarded-User. Use only on trusted networks.');
+}
 
 const injectUpstreamToken = (path) => {
     const token = process.env.DEEDEE_API_TOKEN;
@@ -83,6 +92,7 @@ const socketProxy = createProxyMiddleware({
 });
 
 const socketAuthGate = (req, res, next) => {
+    if (SOCKET_AUTH_GATE_DISABLED) return next();
     if (!req.headers['x-forwarded-user']) {
         return res.status(401).json({ error: 'Socket.io requires authenticated session via reverse proxy' });
     }
@@ -168,7 +178,7 @@ if (require.main === module) {
             socket.destroy();
             return;
         }
-        if (!req.headers['x-forwarded-user']) {
+        if (!SOCKET_AUTH_GATE_DISABLED && !req.headers['x-forwarded-user']) {
             socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
             socket.destroy();
             return;

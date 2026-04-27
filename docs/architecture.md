@@ -95,7 +95,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - `/v1/dj/*`: DJ crate management (vinyls, crates). Agent-backed. See [docs/dj-assistant.md](dj-assistant.md).
     - `/v1/wardrobe/*`: Wardrobe service (garments, outfits, trips, shopping list, profile). Agent-backed. See [docs/wardrobe.md](wardrobe.md).
 - **Socket.io Proxy**: `/socket.io` path is proxied to `interfaces:5000` via `http-proxy-middleware` with full WebSocket upgrade support. Traefik's `google-auth` middleware gates the path on the reverse proxy and stamps `X-Forwarded-User` on authenticated requests. The API gateway requires that header (defense-in-depth) and injects `DEEDEE_API_TOKEN` into the upstream URL so Interfaces accepts the connection. The browser never holds the API token — auth is the `_forward_auth` cookie. Clients use `transports: ['websocket']` to keep traffic to a single WS upgrade per connection (no polling, no forward-auth cookie spam).
-- **Auth**: Bearer Token (`DEEDEE_API_TOKEN`) for `/v1/*`. `/socket.io` requires `X-Forwarded-User` (set by Traefik forward-auth). `/health` is public.
+- **Auth**: Bearer Token (`DEEDEE_API_TOKEN`) for `/v1/*`. `/socket.io` requires `X-Forwarded-User` (set by Traefik forward-auth). `/health` is public. Self-host escape hatch: `DISABLE_SOCKET_AUTH_GATE=1` on the API service skips the header check for plain `docker-compose up` runs without a reverse proxy. Trusted LAN only.
 - **Security**: All route parameters are encoded with `encodeURIComponent()` to prevent injection via crafted job names or IDs.
 - **Flow**: Client -> API -> Agent (Waits for full processing) -> API -> Client JSON Response.
 
