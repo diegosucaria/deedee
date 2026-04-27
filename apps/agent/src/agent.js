@@ -385,7 +385,7 @@ class Agent {
   /**
    * Helper to send message efficiently with streaming and token broadcasting
    */
-  async _generateStream(session, payload, chatId, source) {
+  async _generateStream(session, payload, chatId, source, turnId) {
     // Retry helper for transient errors (up to 8 retries with longer backoff)
     const MAX_RETRIES = 8;
     const REQUEST_TIMEOUT_MS = 120000; // 120 seconds per attempt
@@ -483,7 +483,7 @@ class Agent {
             fullText += "\n\n*[Stopped by User]*";
             // Broadcast stop
             if (this.interface.broadcast) {
-              this.interface.broadcast('agent:token', { chatId, content: "\n\n*[Stopped by User]*", timestamp: Date.now() });
+              this.interface.broadcast('agent:token', { chatId, turnId, content: "\n\n*[Stopped by User]*", timestamp: Date.now() });
             }
             break; // Exit loop
           }
@@ -526,6 +526,7 @@ class Agent {
           if (chunkThoughtText && this.interface.broadcast) {
             this.interface.broadcast('agent:thought', {
               chatId,
+              turnId,
               content: chunkThoughtText,
               timestamp: Date.now()
             });
@@ -536,6 +537,7 @@ class Agent {
             if (this.interface.broadcast) {
               this.interface.broadcast('agent:token', {
                 chatId,
+                turnId,
                 content: chunkAnswerText,
                 timestamp: Date.now()
               });
@@ -543,6 +545,7 @@ class Agent {
               // Fallback for tests/mocks
               this.interface.emit('agent:token', {
                 chatId,
+                turnId,
                 content: chunkAnswerText,
                 timestamp: Date.now()
               });
@@ -600,7 +603,7 @@ class Agent {
   /**
    * Generates stream from Grok/OpenAI client and broadcasts tokens.
    */
-  async _generateStreamGrok(client, model, userContent, history, chatId) {
+  async _generateStreamGrok(client, model, userContent, history, chatId, turnId) {
     try {
       // 1. Map History
       const messages = geminiToOpenAIHistory(history);
@@ -630,12 +633,14 @@ class Agent {
           if (this.interface.broadcast) {
             this.interface.broadcast('agent:token', {
               chatId,
+              turnId,
               content: content,
               timestamp: Date.now()
             });
           } else {
             this.interface.emit('agent:token', {
               chatId,
+              turnId,
               content: content,
               timestamp: Date.now()
             });
@@ -697,6 +702,10 @@ class Agent {
       this.smartContext.client = this.client;
 
       const chatId = message.metadata?.chatId;
+      // Client-supplied turn id for live-event correlation. The frontend tags
+      // each user message with a fresh id so it can ignore stale events from
+      // a previous turn if the user sent again before chat:ack arrived.
+      const turnId = message.metadata?.turnId;
       const isSubAgent = !!message.metadata?.isSubAgent;
       const isLightweight = isSubAgent && !!message.metadata?.lightweight;
       const taskId = message.metadata?.taskId;
@@ -1155,7 +1164,7 @@ class Agent {
 
         this.currentSystemPrompt = grokSystemPrompt;
 
-        const stream = await this._generateStreamGrok(this.xaiClient, targetModel, message.content, history, chatId);
+        const stream = await this._generateStreamGrok(this.xaiClient, targetModel, message.content, history, chatId, turnId);
 
         // Handle stream and callback similar to _generateStream but adapted
         // _generateStreamGrok handles streaming and broadcasting directly
@@ -1478,7 +1487,7 @@ class Agent {
         const modelStart = Date.now();
         try {
           // STREAMING IMPLEMENTATION
-          response = await this._generateStream(session, message.parts || message.content, chatId, message.source);
+          response = await this._generateStream(session, message.parts || message.content, chatId, message.source, turnId);
 
           const modelDuration = Date.now() - modelStart;
           console.timeEnd(timerLabel);
@@ -1769,6 +1778,7 @@ class Agent {
           if (this.interface.broadcast) {
             this.interface.broadcast('agent:tool_call', {
               chatId,
+              turnId,
               callId,
               name: executionName,
               args: previewForUI(call.args, 600),
@@ -1777,7 +1787,7 @@ class Agent {
           }
 
           let toolResult;
-          let ok = true;
+          let toolStatus = 'ok'; // 'ok' | 'error' | 'paused'
           try {
             // SENSITIVE GUARD CHECK
             const guard = this.confirmationManager.check(executionName, call.args);
@@ -1792,6 +1802,7 @@ class Agent {
               await activeSendCallback(confirmMsg).catch(console.error);
 
               toolResult = { info: `Action PAUSED. ${guard.message} User must confirm.` };
+              toolStatus = 'paused';
             } else {
               // Execute normally
               toolResult = await this._executeTool(executionName, call.args, message, activeSendCallback, (model, pTokens, cTokens, cached = 0, thoughts = 0, tag = null) => {
@@ -1806,11 +1817,14 @@ class Agent {
                   tag, cachedTokens: cached, thoughtsTokens: thoughts
                 });
               });
+              if (toolResult && typeof toolResult === 'object' && toolResult.error) {
+                toolStatus = 'error';
+              }
             }
           } catch (toolErr) {
             console.warn(`${logPrefix} Tool execution failed (${executionName}): ${toolErr.message}`);
             toolResult = { error: `Tool execution failed: ${toolErr.message}` };
-            ok = false;
+            toolStatus = 'error';
           }
 
           if (toolResult === undefined || toolResult === null) {
@@ -1820,9 +1834,11 @@ class Agent {
           if (this.interface.broadcast) {
             this.interface.broadcast('agent:tool_result', {
               chatId,
+              turnId,
               callId,
               name: executionName,
-              ok: ok && !(toolResult && toolResult.error),
+              status: toolStatus,
+              ok: toolStatus === 'ok',
               preview: previewForUI(toolResult, 800),
               durationMs: Date.now() - startedAt,
               timestamp: Date.now()
@@ -1954,7 +1970,7 @@ class Agent {
 
           // ENABLE STREAMING for Tool Responses
           // This allows "Thinking..." or large function arguments (JSON) to be visible to the user
-          response = await this._generateStream(session, payload, chatId, message.source);
+          response = await this._generateStream(session, payload, chatId, message.source, turnId);
 
         } catch (e) {
           console.error('[Agent] Tool response failed:', e);

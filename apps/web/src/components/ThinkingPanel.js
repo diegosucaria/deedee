@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useMemo } from 'react';
-import { ChevronRight, Wrench, CheckCircle2, XCircle, Loader2, Sparkles, Brain } from 'lucide-react';
+import { ChevronRight, Wrench, CheckCircle2, XCircle, Loader2, Sparkles, Brain, PauseCircle } from 'lucide-react';
 import clsx from 'clsx';
 
 /**
@@ -9,7 +9,7 @@ import clsx from 'clsx';
  * tool calls, tool results, and thought summaries.
  *
  * `entries` is an ordered array of:
- *   { kind: 'tool', id, name, args, status: 'pending'|'ok'|'error', result?, durationMs? }
+ *   { kind: 'tool', id, name, args, status: 'pending'|'ok'|'error'|'paused', result?, durationMs? }
  *   { kind: 'thought', id, text }
  *
  * `live=true` shows a spinner header and auto-expands so the user can watch progress.
@@ -23,8 +23,9 @@ export default function ThinkingPanel({ entries, live = false, statusText = '' }
         const thoughts = entries.filter(e => e.kind === 'thought');
         const pending = tools.filter(t => t.status === 'pending').length;
         const errors = tools.filter(t => t.status === 'error').length;
+        const paused = tools.filter(t => t.status === 'paused').length;
         const ok = tools.filter(t => t.status === 'ok').length;
-        return { toolCount: tools.length, thoughtCount: thoughts.length, pending, errors, ok };
+        return { toolCount: tools.length, thoughtCount: thoughts.length, pending, errors, paused, ok };
     }, [entries]);
 
     if (entries.length === 0 && !live && !statusText) return null;
@@ -35,6 +36,7 @@ export default function ThinkingPanel({ entries, live = false, statusText = '' }
             const lastTool = [...entries].reverse().find(e => e.kind === 'tool');
             if (lastTool) {
                 if (lastTool.status === 'pending') return `Calling ${lastTool.name}…`;
+                if (lastTool.status === 'paused') return `Awaiting confirmation: ${lastTool.name}`;
                 return `Used ${lastTool.name}`;
             }
             const lastThought = [...entries].reverse().find(e => e.kind === 'thought');
@@ -45,7 +47,10 @@ export default function ThinkingPanel({ entries, live = false, statusText = '' }
         if (summary.toolCount > 0) parts.push(`${summary.toolCount} tool${summary.toolCount === 1 ? '' : 's'}`);
         if (summary.thoughtCount > 0) parts.push('reasoning');
         if (parts.length === 0) parts.push('activity');
-        const detail = summary.errors > 0 ? ` · ${summary.errors} error${summary.errors === 1 ? '' : 's'}` : '';
+        const tail = [];
+        if (summary.errors > 0) tail.push(`${summary.errors} error${summary.errors === 1 ? '' : 's'}`);
+        if (summary.paused > 0) tail.push(`${summary.paused} paused`);
+        const detail = tail.length > 0 ? ` · ${tail.join(', ')}` : '';
         return parts.join(' + ') + detail;
     })();
 
@@ -72,6 +77,8 @@ export default function ThinkingPanel({ entries, live = false, statusText = '' }
                     )
                 ) : summary.errors > 0 ? (
                     <XCircle className="h-3.5 w-3.5 text-rose-400 shrink-0" />
+                ) : summary.paused > 0 ? (
+                    <PauseCircle className="h-3.5 w-3.5 text-amber-400 shrink-0" />
                 ) : (
                     <Brain className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
                 )}
@@ -119,6 +126,8 @@ function ActivityEntry({ entry }) {
         <Loader2 className="h-3 w-3 text-indigo-400 animate-spin shrink-0" />
     ) : entry.status === 'error' ? (
         <XCircle className="h-3 w-3 text-rose-400 shrink-0" />
+    ) : entry.status === 'paused' ? (
+        <PauseCircle className="h-3 w-3 text-amber-400 shrink-0" />
     ) : (
         <CheckCircle2 className="h-3 w-3 text-emerald-400 shrink-0" />
     );
@@ -160,9 +169,17 @@ function ActivityEntry({ entry }) {
                     )}
                     {resultStr && (
                         <DetailBlock
-                            label={entry.status === 'error' ? 'error' : 'result'}
+                            label={
+                                entry.status === 'error' ? 'error'
+                                    : entry.status === 'paused' ? 'paused'
+                                        : 'result'
+                            }
                             body={resultStr}
-                            tone={entry.status === 'error' ? 'rose' : 'emerald'}
+                            tone={
+                                entry.status === 'error' ? 'rose'
+                                    : entry.status === 'paused' ? 'amber'
+                                        : 'emerald'
+                            }
                         />
                     )}
                 </div>
@@ -176,6 +193,7 @@ function DetailBlock({ label, body, tone }) {
         indigo: 'text-indigo-300',
         emerald: 'text-emerald-300',
         rose: 'text-rose-300',
+        amber: 'text-amber-300',
     }[tone] || 'text-zinc-300';
 
     return (

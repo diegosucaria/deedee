@@ -4,7 +4,7 @@ import { useState, useEffect, useRef, useMemo } from 'react';
 import { io } from 'socket.io-client';
 import { getSocketUrl } from '@/hooks/useSocket';
 import ReactMarkdown from 'react-markdown';
-import { Send, Play, Wifi, WifiOff, Mic, Image as ImageIcon, X, Loader2, StopCircle, Box, ChevronDown, Activity, DollarSign, Wallet, Code2, CheckCircle2, Paperclip, FileIcon, Menu } from 'lucide-react';
+import { Send, Play, Wifi, WifiOff, Mic, Image as ImageIcon, X, Loader2, StopCircle, Box, ChevronDown, Activity, DollarSign, Code2, Paperclip, FileIcon, Menu } from 'lucide-react';
 import clsx from 'clsx';
 import { getSession, getUserLocation, getVaults, updateSession, uploadChatFile, getAgentConfig, rewindChat, forkChat, stopChat } from '../../actions';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
@@ -79,6 +79,11 @@ export default function ChatSessionPage({ params }) {
     // Live agent reasoning stream for the in-flight turn:
     // entries: { id, kind: 'tool'|'thought', name?, args?, status?, result?, durationMs?, text? }
     const [liveActivity, setLiveActivity] = useState([]);
+    // Per-turn correlation id. Generated client-side on each send and echoed
+    // back by the agent in token/thought/tool_call/tool_result events. Used
+    // to drop stale events from a previous turn if the user sent again before
+    // chat:ack arrived.
+    const turnIdRef = useRef(null);
     const [sessionTitle, setSessionTitle] = useState('');
     const [userLocation, setUserLocation] = useState(null);
     const messagesEndRef = useRef(null);
@@ -177,6 +182,7 @@ export default function ChatSessionPage({ params }) {
             setIsWaiting(false); // Optimistic stop
             setThinkingStatus('Stopped.');
             setLiveActivity([]);
+            turnIdRef.current = null;
         } catch (e) {
             console.error('Stop error:', e);
         }
@@ -430,6 +436,8 @@ export default function ChatSessionPage({ params }) {
                 // Persisted history will now carry the tool/thought activity inline.
                 setLiveActivity([]);
                 setThinkingStatus('');
+                // Late events for this turn (post-ack) will now be filtered.
+                turnIdRef.current = null;
             });
 
             // Handle Session Updates (Auto-Titling)
@@ -520,9 +528,19 @@ export default function ChatSessionPage({ params }) {
             });
 
             // Live tool call (Phase 2)
+            // Drop events that don't belong to the current turn (the user
+            // may have sent another message before the previous turn's
+            // chat:ack arrived, or we just reloaded mid-generation).
+            // turnId is set fresh on each send and echoed back by the agent.
+            // Events without turnId (legacy / agent:thinking) are not filtered.
+            const isStaleTurn = (data) => (
+                data.turnId != null && data.turnId !== turnIdRef.current
+            );
+
             newSocket.on('agent:tool_call', (data) => {
                 if (!isMounted) return;
                 if (data.chatId && data.chatId !== chatId) return;
+                if (isStaleTurn(data)) return;
                 setIsWaiting(true);
                 setLiveActivity(prev => {
                     if (prev.some(e => e.id === data.callId)) return prev; // dedup
@@ -541,9 +559,11 @@ export default function ChatSessionPage({ params }) {
             newSocket.on('agent:tool_result', (data) => {
                 if (!isMounted) return;
                 if (data.chatId && data.chatId !== chatId) return;
+                if (isStaleTurn(data)) return;
+                const nextStatus = data.status || (data.ok ? 'ok' : 'error');
                 setLiveActivity(prev => prev.map(e => (
                     e.id === data.callId
-                        ? { ...e, status: data.ok ? 'ok' : 'error', result: data.preview, durationMs: data.durationMs }
+                        ? { ...e, status: nextStatus, result: data.preview, durationMs: data.durationMs }
                         : e
                 )));
             });
@@ -552,6 +572,7 @@ export default function ChatSessionPage({ params }) {
             newSocket.on('agent:thought', (data) => {
                 if (!isMounted) return;
                 if (data.chatId && data.chatId !== chatId) return;
+                if (isStaleTurn(data)) return;
                 setIsWaiting(true);
                 setLiveActivity(prev => {
                     const last = prev[prev.length - 1];
@@ -574,6 +595,7 @@ export default function ChatSessionPage({ params }) {
             newSocket.on('agent:token', (data) => {
                 if (!isMounted) return;
                 if (data.chatId !== chatId) return;
+                if (isStaleTurn(data)) return;
 
                 setIsWaiting(false); // Stop waiting indicator
 
@@ -608,6 +630,7 @@ export default function ChatSessionPage({ params }) {
                 setIsWaiting(false);
                 setThinkingStatus('');
                 setLiveActivity([]);
+                turnIdRef.current = null;
                 setMessages((prev) => {
                     // Remove any in-progress streaming message
                     const cleaned = prev.filter(m => m.isFinal !== false || m.role !== 'assistant');
@@ -862,6 +885,12 @@ export default function ChatSessionPage({ params }) {
             setLiveActivity([]);
             setThinkingStatus('');
 
+            // Fresh turn id; events from prior turns will be ignored by listeners.
+            const newTurnId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+                ? crypto.randomUUID()
+                : `turn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+            turnIdRef.current = newTurnId;
+
             // Auto-collapse sidebar on first message
             if (messages.length === 0) setCollapsed(true);
 
@@ -872,7 +901,8 @@ export default function ChatSessionPage({ params }) {
                 metadata: {
                     location: userLocation,
                     vaultId: selectedVault !== 'none' ? selectedVault : undefined,
-                    model: selectedModel !== 'auto' ? selectedModel : undefined
+                    model: selectedModel !== 'auto' ? selectedModel : undefined,
+                    turnId: newTurnId
                 }
             });
         } finally {
@@ -914,11 +944,15 @@ export default function ChatSessionPage({ params }) {
                 msg._toolResponses.forEach((r, i) => {
                     const resultStr = typeof r.result === 'string' ? r.result : JSON.stringify(r.result ?? {});
                     const isError = !!(r.result && typeof r.result === 'object' && (r.result.error || r.result._error));
+                    // Confirmation guard pauses save the literal "Action PAUSED" marker as the
+                    // function response — surface that as a distinct status in history too.
+                    const isPaused = !isError && typeof r.result === 'object' && r.result?.info && /^Action PAUSED/i.test(r.result.info);
+                    const status = isError ? 'error' : isPaused ? 'paused' : 'ok';
                     const idx = toolBuf.findIndex(t => t.kind === 'tool' && t.name === r.name && t.status === 'pending');
                     if (idx >= 0) {
                         toolBuf[idx] = {
                             ...toolBuf[idx],
-                            status: isError ? 'error' : 'ok',
+                            status,
                             result: resultStr
                         };
                     } else {
@@ -926,7 +960,7 @@ export default function ChatSessionPage({ params }) {
                             id: `${msg.id || msg.timestamp}-resp-${i}`,
                             kind: 'tool',
                             name: r.name,
-                            status: isError ? 'error' : 'ok',
+                            status,
                             result: resultStr
                         });
                     }
