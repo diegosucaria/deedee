@@ -1,6 +1,6 @@
 'use client';
 
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { io } from 'socket.io-client';
 import { getSocketUrl } from '@/hooks/useSocket';
 import ReactMarkdown from 'react-markdown';
@@ -13,6 +13,7 @@ import { useChatSidebar } from '@/components/ChatSidebarProvider';
 import { useRouter } from 'next/navigation';
 import { Pencil, GitFork, Trash2, Square } from 'lucide-react'; // Added Square
 import LiveBrowserWidget from '@/components/LiveBrowserWidget';
+import ThinkingPanel from '@/components/ThinkingPanel';
 
 export default function ChatSessionPage({ params }) {
     const { id: chatId } = params;
@@ -75,6 +76,9 @@ export default function ChatSessionPage({ params }) {
     };
 
     const [thinkingStatus, setThinkingStatus] = useState('');
+    // Live agent reasoning stream for the in-flight turn:
+    // entries: { id, kind: 'tool'|'thought', name?, args?, status?, result?, durationMs?, text? }
+    const [liveActivity, setLiveActivity] = useState([]);
     const [sessionTitle, setSessionTitle] = useState('');
     const [userLocation, setUserLocation] = useState(null);
     const messagesEndRef = useRef(null);
@@ -172,6 +176,7 @@ export default function ChatSessionPage({ params }) {
             await stopChat(chatId);
             setIsWaiting(false); // Optimistic stop
             setThinkingStatus('Stopped.');
+            setLiveActivity([]);
         } catch (e) {
             console.error('Stop error:', e);
         }
@@ -255,37 +260,29 @@ export default function ChatSessionPage({ params }) {
 
             const hasParts = parts && Array.isArray(parts);
 
-            // 1. Function Call
+            // 1. Function Call(s) — preserve ALL calls in this turn, not just the first
             if (hasParts && parts.some(p => p.functionCall)) {
-                const fc = parts.find(p => p.functionCall)?.functionCall;
-                if (fc) {
+                const calls = parts
+                    .filter(p => p.functionCall)
+                    .map(p => ({ name: p.functionCall.name, args: p.functionCall.args }));
+                if (calls.length > 0) {
                     type = 'function_call';
-                    content = JSON.stringify({
-                        type: 'function_call',
-                        name: fc.name,
-                        args: fc.args
-                    });
-                    return { id: m.id, role, content, type, timestamp: m.timestamp };
-
+                    content = JSON.stringify({ type: 'function_call', name: calls[0].name, args: calls[0].args });
+                    return { id: m.id, role, content, type, timestamp: m.timestamp, _toolCalls: calls };
                 }
             }
 
-            // 2. Function Response
+            // 2. Function Response(s) — preserve ALL responses
             if (m.role === 'function' || (hasParts && parts.some(p => p.functionResponse))) {
-                // Safe extraction
-                const part = hasParts ? parts.find(p => p.functionResponse) : null;
-                // Fallback if role is function but no parts (unlikely in Gemini but possible in DB)
-                const fr = part?.functionResponse || m.functionResponse;
-
-                if (fr) {
+                const responses = hasParts
+                    ? parts
+                        .filter(p => p.functionResponse)
+                        .map(p => ({ name: p.functionResponse.name, result: p.functionResponse.response }))
+                    : (m.functionResponse ? [{ name: m.functionResponse.name, result: m.functionResponse.response }] : []);
+                if (responses.length > 0) {
                     type = 'function_response';
-                    content = JSON.stringify({
-                        type: 'function_response',
-                        name: fr.name,
-                        result: fr.response
-                    });
-                    return { id: m.id, role, content, type, timestamp: m.timestamp };
-
+                    content = JSON.stringify({ type: 'function_response', name: responses[0].name, result: responses[0].result });
+                    return { id: m.id, role, content, type, timestamp: m.timestamp, _toolResponses: responses };
                 }
             }
 
@@ -430,6 +427,9 @@ export default function ChatSessionPage({ params }) {
                 if (!isMounted) return;
                 console.log('[Chat] Message acknowledged. Refreshing history...');
                 loadSession();
+                // Persisted history will now carry the tool/thought activity inline.
+                setLiveActivity([]);
+                setThinkingStatus('');
             });
 
             // Handle Session Updates (Auto-Titling)
@@ -519,6 +519,57 @@ export default function ChatSessionPage({ params }) {
                 setThinkingStatus(data.status);
             });
 
+            // Live tool call (Phase 2)
+            newSocket.on('agent:tool_call', (data) => {
+                if (!isMounted) return;
+                if (data.chatId && data.chatId !== chatId) return;
+                setIsWaiting(true);
+                setLiveActivity(prev => {
+                    if (prev.some(e => e.id === data.callId)) return prev; // dedup
+                    return [...prev, {
+                        id: data.callId,
+                        kind: 'tool',
+                        name: data.name,
+                        args: data.args,
+                        status: 'pending',
+                        ts: data.timestamp
+                    }];
+                });
+            });
+
+            // Live tool result (Phase 2)
+            newSocket.on('agent:tool_result', (data) => {
+                if (!isMounted) return;
+                if (data.chatId && data.chatId !== chatId) return;
+                setLiveActivity(prev => prev.map(e => (
+                    e.id === data.callId
+                        ? { ...e, status: data.ok ? 'ok' : 'error', result: data.preview, durationMs: data.durationMs }
+                        : e
+                )));
+            });
+
+            // Live thought summary (Phase 3) — coalesce consecutive chunks into one entry
+            newSocket.on('agent:thought', (data) => {
+                if (!isMounted) return;
+                if (data.chatId && data.chatId !== chatId) return;
+                setIsWaiting(true);
+                setLiveActivity(prev => {
+                    const last = prev[prev.length - 1];
+                    if (last && last.kind === 'thought') {
+                        return [
+                            ...prev.slice(0, -1),
+                            { ...last, text: (last.text || '') + (data.content || '') }
+                        ];
+                    }
+                    return [...prev, {
+                        id: `thought-${data.timestamp}-${Math.random().toString(36).slice(2, 6)}`,
+                        kind: 'thought',
+                        text: data.content || '',
+                        ts: data.timestamp
+                    }];
+                });
+            });
+
             // STREAMING HANDLER
             newSocket.on('agent:token', (data) => {
                 if (!isMounted) return;
@@ -556,6 +607,7 @@ export default function ChatSessionPage({ params }) {
                 console.error('[Chat] Agent error:', data.message);
                 setIsWaiting(false);
                 setThinkingStatus('');
+                setLiveActivity([]);
                 setMessages((prev) => {
                     // Remove any in-progress streaming message
                     const cleaned = prev.filter(m => m.isFinal !== false || m.role !== 'assistant');
@@ -807,6 +859,8 @@ export default function ChatSessionPage({ params }) {
             setInputValue('');
             clearAttachments();
             setIsWaiting(true);
+            setLiveActivity([]);
+            setThinkingStatus('');
 
             // Auto-collapse sidebar on first message
             if (messages.length === 0) setCollapsed(true);
@@ -826,6 +880,75 @@ export default function ChatSessionPage({ params }) {
             setIsSending(false);
         }
     };
+
+    // Group consecutive function_call/function_response messages into the
+    // assistant text turn that follows them, so the UI can render a single
+    // collapsible "thinking" panel above each assistant bubble.
+    const displayItems = useMemo(() => {
+        const items = [];
+        let toolBuf = [];
+
+        const flushOrphan = (anchorId) => {
+            if (toolBuf.length === 0) return;
+            items.push({ kind: 'orphan', id: `orphan-${anchorId || items.length}`, tools: toolBuf });
+            toolBuf = [];
+        };
+
+        for (const msg of messages) {
+            if (msg.role === 'tool') continue;
+
+            if (msg.type === 'function_call' && Array.isArray(msg._toolCalls)) {
+                msg._toolCalls.forEach((c, i) => {
+                    toolBuf.push({
+                        id: `${msg.id || msg.timestamp}-call-${i}`,
+                        kind: 'tool',
+                        name: c.name,
+                        args: typeof c.args === 'string' ? c.args : JSON.stringify(c.args ?? {}),
+                        status: 'pending'
+                    });
+                });
+                continue;
+            }
+
+            if (msg.type === 'function_response' && Array.isArray(msg._toolResponses)) {
+                msg._toolResponses.forEach((r, i) => {
+                    const resultStr = typeof r.result === 'string' ? r.result : JSON.stringify(r.result ?? {});
+                    const isError = !!(r.result && typeof r.result === 'object' && (r.result.error || r.result._error));
+                    const idx = toolBuf.findIndex(t => t.kind === 'tool' && t.name === r.name && t.status === 'pending');
+                    if (idx >= 0) {
+                        toolBuf[idx] = {
+                            ...toolBuf[idx],
+                            status: isError ? 'error' : 'ok',
+                            result: resultStr
+                        };
+                    } else {
+                        toolBuf.push({
+                            id: `${msg.id || msg.timestamp}-resp-${i}`,
+                            kind: 'tool',
+                            name: r.name,
+                            status: isError ? 'error' : 'ok',
+                            result: resultStr
+                        });
+                    }
+                });
+                continue;
+            }
+
+            // Real message
+            if (msg.role === 'user') {
+                flushOrphan(msg.id);
+                items.push({ kind: 'message', id: msg.id || `m-${items.length}`, message: msg });
+            } else {
+                // assistant — attach buffered tools as preceding activity
+                const enriched = toolBuf.length > 0 ? { ...msg, precedingTools: toolBuf } : msg;
+                toolBuf = [];
+                items.push({ kind: 'message', id: msg.id || `m-${items.length}`, message: enriched });
+            }
+        }
+
+        flushOrphan('trailing');
+        return items;
+    }, [messages]);
 
     return (
         <div className="flex h-full flex-col">
@@ -911,16 +1034,18 @@ export default function ChatSessionPage({ params }) {
             {/* Messages */}
             <div className="flex-1 overflow-y-auto p-4 md:p-6 space-y-6">
 
-                {messages
-                    .filter(msg => {
-                        // Hide tool calls/responses by default as requested
-                        if (msg.type === 'function_call' || msg.type === 'function_response') return false;
-                        if (msg.role === 'tool') return false; // Gemini tool responses
-                        return true;
-                    })
-                    .map((msg, idx) => (
+                {displayItems.map((item, idx) => {
+                    if (item.kind === 'orphan') {
+                        return (
+                            <div key={item.id || idx} className="flex w-full justify-start">
+                                <ThinkingPanel entries={item.tools} live={false} />
+                            </div>
+                        );
+                    }
+                    const msg = item.message;
+                    return (
                         <div
-                            key={idx}
+                            key={item.id || idx}
                             className={clsx(
                                 'flex w-full',
                                 msg.role === 'user' ? 'justify-end' : 'justify-start'
@@ -1018,7 +1143,10 @@ export default function ChatSessionPage({ params }) {
                                 </div>
                             ) : (
                                 // Assistant Message
-                                <div className="flex flex-col gap-1 items-start relative group">
+                                <div className="flex flex-col gap-2 items-start relative group">
+                                    {msg.precedingTools && msg.precedingTools.length > 0 && (
+                                        <ThinkingPanel entries={msg.precedingTools} live={false} />
+                                    )}
                                     <div className="bg-zinc-800 text-zinc-200 rounded-2xl rounded-tl-none border border-zinc-700 px-5 py-3 shadow-sm max-w-[90%] md:max-w-[70%] relative break-words">
                                         {/* Actions on Hover */}
                                         {msg.id && (
@@ -1043,32 +1171,6 @@ export default function ChatSessionPage({ params }) {
                                                     alt="Generated Image"
                                                     className="w-full h-auto max-h-96 object-cover"
                                                 />
-                                            </div>
-                                        ) : msg.type === 'function_call' ? (
-                                            <div className="font-mono text-xs">
-                                                <div className="flex items-center gap-2 text-indigo-300 mb-1">
-                                                    <Code2 className="h-3 w-3" />
-                                                    <span>Using Tool: {JSON.parse(msg.content).name}</span>
-                                                </div>
-                                                <div className="bg-black/20 rounded p-2 overflow-x-auto text-zinc-400">
-                                                    {JSON.stringify(JSON.parse(msg.content).args)}
-                                                </div>
-                                            </div>
-                                        ) : msg.type === 'function_response' ? (
-                                            <div className="font-mono text-xs">
-                                                <div className="flex items-center gap-2 text-emerald-400 mb-1">
-                                                    <CheckCircle2 className="h-3 w-3" />
-                                                    <span>Tool Result: {JSON.parse(msg.content).name}</span>
-                                                </div>
-                                                <details className="cursor-pointer group">
-                                                    <summary className="text-zinc-500 hover:text-zinc-300 transition-colors list-none p-2 -ml-2 cursor-pointer select-none">
-                                                        <span className="group-open:hidden">View Output</span>
-                                                        <span className="hidden group-open:inline">Hide Output</span>
-                                                    </summary>
-                                                    <div className="mt-2 bg-black/20 rounded p-2 overflow-x-auto text-zinc-400 whitespace-pre-wrap max-h-48 overflow-y-auto">
-                                                        {JSON.stringify(JSON.parse(msg.content).result, null, 2)}
-                                                    </div>
-                                                </details>
                                             </div>
                                         ) : (
                                             <div className="markdown prose prose-invert prose-sm max-w-none break-words">
@@ -1095,28 +1197,26 @@ export default function ChatSessionPage({ params }) {
                                 </div>
                             )}
                         </div>
-                    ))}
+                    );
+                })}
 
                 {/* Live Browser (Always visible, bottom of chat) */}
                 <LiveBrowserWidget />
 
-                {/* Typing Indicator */}
-                {isWaiting && (
-                    <div className="flex w-full justify-start items-center gap-2">
-                        <div className="max-w-[85%] rounded-2xl px-5 py-4 shadow-sm md:max-w-[70%] bg-zinc-800 rounded-tl-none border border-zinc-700">
-                            <div className="flex space-x-2 items-center h-4">
-                                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:-0.3s]"></div>
-                                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce [animation-delay:-0.15s]"></div>
-                                <div className="w-2 h-2 bg-zinc-400 rounded-full animate-bounce"></div>
-                                {thinkingStatus && (
-                                    <span className="ml-3 text-xs text-zinc-400 font-mono animate-pulse">{thinkingStatus}</span>
-                                )}
-                            </div>
+                {/* Live Thinking Panel — shows tool calls, results, and reasoning summaries
+                    while the agent is working. Replaced by persisted history once chat:ack fires. */}
+                {(isWaiting || liveActivity.length > 0) && (
+                    <div className="flex w-full justify-start items-start gap-2">
+                        <div className="flex-1 min-w-0 flex justify-start">
+                            <ThinkingPanel
+                                entries={liveActivity}
+                                live={true}
+                                statusText={thinkingStatus}
+                            />
                         </div>
-                        {/* Stop Button */}
                         <button
                             onClick={handleStop}
-                            className="p-2 bg-zinc-800 hover:bg-rose-500/20 hover:text-rose-500 text-zinc-400 rounded-full border border-zinc-700 transition-colors"
+                            className="p-2 bg-zinc-800 hover:bg-rose-500/20 hover:text-rose-500 text-zinc-400 rounded-full border border-zinc-700 transition-colors shrink-0"
                             title="Stop Generating"
                             type="button"
                         >

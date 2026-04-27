@@ -41,6 +41,58 @@ const { filterCalendarResult } = require('./utils/calendar-filter');
 const { NotificationService } = require('./utils/notifications');
 
 
+// Compact, redacted JSON-ish preview of tool args/results for the chat UI.
+// We strip large base64 blobs, drop image-like keys, and cap total length.
+// The full payload is still saved to the DB and visible via the system history view.
+function previewForUI(value, maxLen = 600) {
+  const SECRET_KEY = /^(password|passcode|token|api[_-]?key|secret|authorization|cookie|access[_-]?token|refresh[_-]?token)$/i;
+  const BASE64ISH = /^[A-Za-z0-9+/=]{200,}$/;
+
+  const visit = (v, depth) => {
+    if (v === null || v === undefined) return v;
+    if (typeof v === 'string') {
+      if (BASE64ISH.test(v)) return `<base64:${v.length}b>`;
+      return v.length > 240 ? v.slice(0, 240) + '…' : v;
+    }
+    if (typeof v === 'number' || typeof v === 'boolean') return v;
+    if (depth > 3) return Array.isArray(v) ? `[…${v.length} items]` : '{…}';
+    if (Array.isArray(v)) {
+      const slice = v.slice(0, 8).map(item => visit(item, depth + 1));
+      if (v.length > 8) slice.push(`…+${v.length - 8} more`);
+      return slice;
+    }
+    if (typeof v === 'object') {
+      const out = {};
+      let count = 0;
+      for (const [k, val] of Object.entries(v)) {
+        if (count >= 20) { out['…'] = `+${Object.keys(v).length - count} more`; break; }
+        if (SECRET_KEY.test(k)) { out[k] = '<redacted>'; count++; continue; }
+        if (k === 'image_base64' || k === 'inlineData') { out[k] = '<image>'; count++; continue; }
+        out[k] = visit(val, depth + 1);
+        count++;
+      }
+      return out;
+    }
+    return String(v);
+  };
+
+  let preview;
+  try {
+    preview = visit(value, 0);
+  } catch (e) {
+    preview = String(value);
+  }
+
+  let json;
+  try {
+    json = typeof preview === 'string' ? preview : JSON.stringify(preview);
+  } catch (e) {
+    json = '<unserializable>';
+  }
+  if (json.length > maxLen) json = json.slice(0, maxLen) + '…';
+  return json;
+}
+
 
 class Agent {
   constructor(config) {
@@ -436,45 +488,62 @@ class Agent {
             break; // Exit loop
           }
 
-          let text = '';
-          try {
-            // chunk.text() throws if the chunk has no text (e.g. only function call)
-            if (typeof chunk.text === 'function') {
-              text = chunk.text();
-            }
-          } catch (e) { /* ignore */ }
-
-          // Fallback extraction if text() failed or wasn't available
-          if (!text && chunk.candidates?.[0]?.content?.parts) {
-            const part = chunk.candidates[0].content.parts.find(p => p.text);
-            if (part) text = part.text;
-          }
-
           // Capture usage metadata (SDK includes it on the last chunk)
           if (chunk.usageMetadata) streamUsageMetadata = chunk.usageMetadata;
 
-          // Aggregate parts for final response (Function Calls etc.)
+          // Walk parts: distinguish thought summaries from answer text from function calls.
+          // Per Gemini 3 docs, parts with `thought: true` carry summarized reasoning —
+          // we surface those separately to the UI and keep them out of the final answer text.
+          let chunkAnswerText = '';
+          let chunkThoughtText = '';
           if (chunk.candidates?.[0]?.content?.parts) {
-            chunk.candidates[0].content.parts.forEach(p => {
-              // Deduplicate text parts if possible, or just push.
-              // For function calls, we MUST preserve them.
-              if (p.functionCall) aggregatedParts.push(p);
+            for (const p of chunk.candidates[0].content.parts) {
+              if (p.functionCall) {
+                aggregatedParts.push(p);
+                continue;
+              }
+              if (typeof p.text === 'string' && p.text.length > 0) {
+                if (p.thought) {
+                  chunkThoughtText += p.text;
+                } else {
+                  chunkAnswerText += p.text;
+                }
+              }
+            }
+          }
+
+          // Fallback: chunk.text() concatenates answer text only (skips thoughts).
+          // Use it when no structured parts were available.
+          if (!chunkAnswerText && !chunkThoughtText) {
+            try {
+              if (typeof chunk.text === 'function') {
+                const t = chunk.text();
+                if (t) chunkAnswerText = t;
+              }
+            } catch (e) { /* ignore */ }
+          }
+
+          if (chunkThoughtText && this.interface.broadcast) {
+            this.interface.broadcast('agent:thought', {
+              chatId,
+              content: chunkThoughtText,
+              timestamp: Date.now()
             });
           }
 
-          if (text) {
-            fullText += text;
+          if (chunkAnswerText) {
+            fullText += chunkAnswerText;
             if (this.interface.broadcast) {
               this.interface.broadcast('agent:token', {
                 chatId,
-                content: text,
+                content: chunkAnswerText,
                 timestamp: Date.now()
               });
             } else {
               // Fallback for tests/mocks
               this.interface.emit('agent:token', {
                 chatId,
-                content: text,
+                content: chunkAnswerText,
                 timestamp: Date.now()
               });
             }
@@ -1397,6 +1466,7 @@ class Agent {
           config: {
             tools: geminiTools,
             systemInstruction: systemInstruction,
+            thinkingConfig: { includeThoughts: true },
           },
           history: history
         });
@@ -1692,7 +1762,22 @@ class Agent {
             executionName = executionName.replace('default_api:', '');
           }
 
+          // Stable id used by the UI to pair the call with its result event.
+          const callId = `${chatId || 'nochat'}-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+          const startedAt = Date.now();
+
+          if (this.interface.broadcast) {
+            this.interface.broadcast('agent:tool_call', {
+              chatId,
+              callId,
+              name: executionName,
+              args: previewForUI(call.args, 600),
+              timestamp: startedAt
+            }).catch(() => { });
+          }
+
           let toolResult;
+          let ok = true;
           try {
             // SENSITIVE GUARD CHECK
             const guard = this.confirmationManager.check(executionName, call.args);
@@ -1725,10 +1810,23 @@ class Agent {
           } catch (toolErr) {
             console.warn(`${logPrefix} Tool execution failed (${executionName}): ${toolErr.message}`);
             toolResult = { error: `Tool execution failed: ${toolErr.message}` };
+            ok = false;
           }
 
           if (toolResult === undefined || toolResult === null) {
             toolResult = { info: 'No output from tool execution.' };
+          }
+
+          if (this.interface.broadcast) {
+            this.interface.broadcast('agent:tool_result', {
+              chatId,
+              callId,
+              name: executionName,
+              ok: ok && !(toolResult && toolResult.error),
+              preview: previewForUI(toolResult, 800),
+              durationMs: Date.now() - startedAt,
+              timestamp: Date.now()
+            }).catch(() => { });
           }
 
           return { call, executionName, result: toolResult };
