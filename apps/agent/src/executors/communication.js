@@ -197,6 +197,47 @@ class CommunicationExecutor extends BaseExecutor {
 
                     // Verification handled above: 'force' marks verified, already-verified contacts skip check
 
+                    // Mirror scheduler→owner sends into the owner's chat thread so the agent
+                    // can reference them when the user replies later in WhatsApp.
+                    const isFromScheduler = context?.message?.source === 'scheduler';
+                    const ownerDigits = (ownerPhone || '').replace(/[^0-9]/g, '');
+                    const isToOwner = !!ownerDigits && cleanTo === ownerDigits;
+
+                    if (isFromScheduler && isToOwner && svc === 'whatsapp') {
+                        let chatId = `${cleanTo}@s.whatsapp.net`;
+                        try {
+                            const interfacesUrl = process.env.INTERFACES_URL || 'http://interfaces:5000';
+                            const r = await axios.get(`${interfacesUrl}/whatsapp/resolve`, {
+                                params: { identifier: chatId, session: 'assistant' },
+                                headers: { Authorization: `Bearer ${process.env.DEEDEE_API_TOKEN}` }
+                            });
+                            chatId = r.data?.lid || r.data?.phoneJid || chatId;
+                        } catch (e) {
+                            console.warn('[Communication] resolveIdentity failed; using phone JID:', e.message);
+                        }
+
+                        const originChatId = context?.message?.metadata?.chatId;
+                        const jobMatch = originChatId?.match(/^(?:system|scheduled)_(.+)_\d+$/);
+
+                        try {
+                            services.db.saveMessage({
+                                role: 'assistant',
+                                content: caption || (type === 'text' ? content : ''),
+                                source: `${svc}:assistant`,
+                                chatId,
+                                metadata: {
+                                    type: type || 'text',
+                                    imagePath: imagePath || null,
+                                    originSessionId: originChatId,
+                                    originJob: jobMatch ? jobMatch[1] : null
+                                }
+                            });
+                            console.log(`[CommunicationExecutor] Mirrored scheduler→owner send to thread ${chatId}`);
+                        } catch (e) {
+                            console.warn('[Communication] Mirror save failed:', e.message);
+                        }
+                    }
+
                 } else {
                     throw new Error('Interface service not available');
                 }
