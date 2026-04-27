@@ -730,18 +730,27 @@ NEVER contact anyone other than the owner.`,
                 name: 'wardrobe_morning_outfit',
                 cron: '15 7 * * *', // Daily at 07:15
                 // Opt-out: toggle this job's enabled flag off via the /tasks UI if you don't want morning nudges.
-                task: `[WARDROBE MORNING] Suggest today's outfit.
+                task: `[WARDROBE MORNING] Suggest today's outfit. You MUST pass 'lightweight: true' and 'tools' for each sub-agent.
 
-1. Look up the user's home city (searchMemory for "home city" / "lives in" / "location" — or getFact "home_city"). If unknown, proceed without weather.
-2. If home city is known, spawn a FLASH sub-agent to fetch today's weather via the weather skill:
-   spawnAgent(task: "Get today's weather for <home_city>. Use the weather skill (wttr.in compact format). Return one short line: 'tempC condition'.", model: "FLASH", lightweight: true, tools: ["runShellCommand"])
-3. Spawn a FLASH sub-agent to summarize today's calendar for occasion/dress-code signal:
-   spawnAgent(task: "List today's personal and work calendar events. Return a 1-2 line summary focused on the nature (work meeting, casual, gym, formal dinner, etc.) — NOT the full list.", model: "FLASH", lightweight: true, tools: ["server:gws_personal", "server:gws_work"])
-4. Call recommend_outfit(context: "today, <weather>, <occasion summary>", count: 2). Rendering is on by default — every proposal in the response will include an "IMAGE_PATH:" line if a virtual-mirror render was produced (none if the reference selfie isn't set).
-5. Send the suggestion to the owner via WhatsApp (do NOT rely on the scheduler reply — call sendMessage explicitly). The daily briefing already fired at 07:10 with a greeting + weather + calendar recap, so DO NOT greet again ("Good morning", "Hi", etc.) and DO NOT restate the weather or schedule. Open directly with the outfit pick from the TOP (first) proposal, e.g. "Today's look: tan bomber over black tee, black chinos, white sneakers — warm enough for an 11°C clear day." One or two sentences, cite specific pieces. Send only ONE message to the owner — the top proposal's render — even though multiple were rendered.
+STEP 1 — Spawn CALENDAR sub-agent to fetch today's events:
+spawnAgent(task: "Get today's events from Google Calendar.\\n1. Call calendarList.list for each account (work and personal) to discover available calendars.\\n2. For EACH returned calendar, call events.list with timeMin set to today 00:00 and timeMax set to tomorrow 00:00. This date range is CRITICAL — never omit it.\\n3. Return events with: calendar name, title, time, and location.\\n4. Flag flights and all-day travel events with the destination city.\\n5. HARD LIMIT: 12 tool calls.", model: "FLASH", lightweight: true, tools: ["server:gws_personal", "server:gws_work"])
+
+STEP 2 — After STEP 1 completes, you (the parent) synthesize two things from the calendar — NO tool calls needed:
+- Current location: check calendar results for travel indicators (flights from TripIt, all-day events like "Stay at...", "Hotel...", "Airbnb...", or location fields with a foreign city). For flights: if the user has arrived somewhere and hasn't departed yet, they're at the arrival city. If no travel is detected, default to the home city from your USER FACTS (key: user_home_city).
+- Occasion: 1-2 lines characterizing the day's nature (work sync, casual, gym, formal dinner, packing day, travel day, etc.) — NOT a meeting list.
+
+STEP 3 — Spawn WEATHER sub-agent with the resolved location. Substitute <RESOLVED_LOCATION> with the city verbatim (keep commas, replace spaces with +):
+spawnAgent(task: "Get today's weather using wttr.in via runShellCommand. Run BOTH commands and return their raw output:\\n1. Current conditions: runShellCommand('curl -s \\"wttr.in/<RESOLVED_LOCATION>?format=%l:+%c+%t+%h+%w\\"')\\n2. Day forecast: runShellCommand('curl -s \\"wttr.in/<RESOLVED_LOCATION>?format=Morning:+%c+%t+|+Afternoon:+%C+High:+%T\\"')\\nReturn both result lines verbatim.", model: "FLASH", lightweight: true, tools: ["runShellCommand"])
+
+STEP 4 — Call recommend_outfit with the rich context from STEP 2 + STEP 3:
+recommend_outfit(context: "Location: <resolved location>. Today's weather: <weather sub-agent output verbatim>. Occasion: <occasion from STEP 2>.", count: 2)
+Rendering is on by default — every proposal in the response will include an "IMAGE_PATH:" line if a virtual-mirror render was produced (none if the reference selfie isn't set).
+
+STEP 5 — Send the suggestion to the owner via WhatsApp (do NOT rely on the scheduler reply — call sendMessage explicitly). The daily briefing already fired at 07:10 with a greeting + weather + calendar recap, so DO NOT greet again ("Good morning", "Hi", etc.) and DO NOT restate the weather or schedule. Open directly with the outfit pick from the TOP (first) proposal, e.g. "Today's look: tan bomber over black tee, black chinos, white sneakers — warm enough for an 11°C clear day." One or two sentences, cite specific pieces. Send only ONE message to the owner — the top proposal's render — even though multiple were rendered.
    - If the top proposal has an IMAGE_PATH line, call sendMessage(to: "me", type: "image", imagePath: "<that path>", content: "<outfit sentence>"). The content becomes the image caption, so you get text + image in one WhatsApp message.
    - If there is no IMAGE_PATH (no reference selfie set, or render failed), call sendMessage(to: "me", type: "text", content: "<outfit sentence>").
-6. After sendMessage succeeds, respond with the single token [SILENT] so no duplicate status summary is sent. If recommend_outfit returned zero proposals, also respond with [SILENT].
+
+STEP 6 — After sendMessage succeeds, respond with the single token [SILENT] so no duplicate status summary is sent. If recommend_outfit returned zero proposals, also respond with [SILENT].
 
 NEVER contact anyone other than the owner.`,
                 silent: false
