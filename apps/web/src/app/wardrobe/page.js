@@ -1,15 +1,17 @@
 'use client';
 
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
+import { useRouter } from 'next/navigation';
 import { motion, AnimatePresence } from 'framer-motion';
 import { io } from 'socket.io-client';
 import { getSocketUrl } from '@/hooks/useSocket';
 import {
     Shirt, Camera, Trash2, X, Loader2, Check, Pencil, Settings, Heart,
-    Plane, ShoppingBag, MapPin, Calendar, Upload, User, Layers, Sparkles, RefreshCw, Paperclip, Combine, Copy, Tag, Plus, ArrowUpDown, ChevronDown, ExternalLink
+    Plane, ShoppingBag, MapPin, Calendar, Upload, User, Layers, Sparkles, RefreshCw, Paperclip, Combine, Copy, Tag, Plus, ArrowUpDown, ChevronDown, ExternalLink, MessageSquare, Send
 } from 'lucide-react';
 import PageShell from '@/components/PageShell';
 import {
+    createSession,
     getWardrobe,
     uploadGarmentPhoto,
     updateGarment,
@@ -1702,6 +1704,7 @@ function TripGroupRow({ tripId, trip, outfits, expanded, onToggle, onOpenTrip, g
 }
 
 function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGarment, onDelete, onLabelsChange, onRename, onGenerateVariations, tripById, onSelectTrip }) {
+    const router = useRouter();
     const [lightboxOpen, setLightboxOpen] = useState(false);
     const [lightboxSrc, setLightboxSrc] = useState(null);
     const [labelDraft, setLabelDraft] = useState('');
@@ -1711,6 +1714,9 @@ function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGar
     const [savingName, setSavingName] = useState(false);
     const [generatingVariations, setGeneratingVariations] = useState(false);
     const [variationsError, setVariationsError] = useState('');
+    const [questionDraft, setQuestionDraft] = useState('');
+    const [asking, setAsking] = useState(false);
+    const [askError, setAskError] = useState('');
     const renderUrl = pathToUrl(outfit.rendered_image_path);
     const variationsUrl = pathToUrl(outfit.variations_image_path);
     const labels = Array.isArray(outfit.labels) ? outfit.labels : [];
@@ -1756,6 +1762,40 @@ function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGar
             await onRename(clean || null);
             setEditingName(false);
         } finally { setSavingName(false); }
+    };
+
+    const handleAskQuestion = async (e) => {
+        e.preventDefault();
+        const q = questionDraft.trim();
+        if (!q || asking) return;
+        setAsking(true);
+        setAskError('');
+        try {
+            const garmentLines = garments.map(g => `- ${summarizeGarment(g)}`).join('\n');
+            const occasionPart = outfit.occasion ? ` (occasion: ${outfit.occasion})` : '';
+            const outfitName = outfit.name || 'this outfit';
+            const preamble = garmentLines
+                ? `About my outfit "${outfitName}"${occasionPart}, which contains:\n${garmentLines}\n\n`
+                : `About my outfit "${outfitName}"${occasionPart}.\n\n`;
+            const message = preamble + q;
+
+            const res = await createSession();
+            if (!res.success || !res.session?.id) {
+                setAskError(res.error || 'Failed to start chat');
+                return;
+            }
+            try {
+                sessionStorage.setItem(
+                    'deedee_chat_prefill',
+                    JSON.stringify({ chatId: res.session.id, message })
+                );
+            } catch (_) { /* ignore */ }
+            router.push(`/chat/${res.session.id}`);
+        } catch (err) {
+            setAskError(err?.message || 'Failed to start chat');
+        } finally {
+            setAsking(false);
+        }
     };
 
     return (
@@ -1850,6 +1890,32 @@ function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGar
                         {outfit.occasion}
                     </p>
                 )}
+
+                <div className="mb-4">
+                    <h3 className="text-xs uppercase tracking-wide text-zinc-500 mb-2 flex items-center gap-1.5">
+                        <MessageSquare className="w-3 h-3" /> Ask about this outfit
+                    </h3>
+                    <form onSubmit={handleAskQuestion} className="flex gap-2">
+                        <input
+                            value={questionDraft}
+                            onChange={e => setQuestionDraft(e.target.value)}
+                            placeholder="e.g. can I swap the jeans for my black pants?"
+                            disabled={asking}
+                            maxLength={500}
+                            className="flex-1 min-w-0 bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-sm text-white placeholder-zinc-600 disabled:opacity-50"
+                        />
+                        <button
+                            type="submit"
+                            disabled={asking || !questionDraft.trim()}
+                            className="inline-flex items-center gap-1 px-3 py-2 rounded-lg bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white text-xs min-h-[36px]"
+                            title="Ask the agent"
+                        >
+                            {asking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                            Ask
+                        </button>
+                    </form>
+                    {askError && <p className="mt-1 text-[11px] text-rose-400">{askError}</p>}
+                </div>
 
                 {onGenerateVariations && (
                     <div className="mb-4">

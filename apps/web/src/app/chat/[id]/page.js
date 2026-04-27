@@ -93,6 +93,20 @@ export default function ChatSessionPage({ params }) {
         if (saved) setSelectedModel(saved);
     }, []);
 
+    // One-shot prefill (e.g. from wardrobe "ask about this outfit").
+    // Bound to a chatId so a stale stash can't leak into an unrelated chat.
+    useEffect(() => {
+        try {
+            const raw = sessionStorage.getItem('deedee_chat_prefill');
+            if (!raw) return;
+            sessionStorage.removeItem('deedee_chat_prefill');
+            const parsed = JSON.parse(raw);
+            if (parsed?.chatId === chatId && typeof parsed.message === 'string') {
+                setInputValue(parsed.message);
+            }
+        } catch (_) { /* ignore */ }
+    }, [chatId]);
+
     // Multimodal State
     const MAX_ATTACHMENTS = 10;
     const [isRecording, setIsRecording] = useState(false);
