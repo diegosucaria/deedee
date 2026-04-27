@@ -532,9 +532,15 @@ export default function ChatSessionPage({ params }) {
             // may have sent another message before the previous turn's
             // chat:ack arrived, or we just reloaded mid-generation).
             // turnId is set fresh on each send and echoed back by the agent.
-            // Events without turnId (legacy / agent:thinking) are not filtered.
+            // - data.turnId == null (legacy / agent:thinking): always accept.
+            // - turnIdRef.current == null (this tab never sent — e.g. a second
+            //   tab observing the same chat, or a fresh reload): accept all,
+            //   so observers still see live activity.
+            // - otherwise require an exact match.
             const isStaleTurn = (data) => (
-                data.turnId != null && data.turnId !== turnIdRef.current
+                data.turnId != null
+                && turnIdRef.current != null
+                && data.turnId !== turnIdRef.current
             );
 
             newSocket.on('agent:tool_call', (data) => {
