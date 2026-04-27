@@ -1784,7 +1784,12 @@ function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGar
                 setAskError(res.error || 'Failed to start chat');
                 return;
             }
-            try { sessionStorage.setItem('deedee_chat_prefill', message); } catch (_) { /* ignore */ }
+            try {
+                sessionStorage.setItem(
+                    'deedee_chat_prefill',
+                    JSON.stringify({ chatId: res.session.id, message })
+                );
+            } catch (_) { /* ignore */ }
             router.push(`/chat/${res.session.id}`);
         } catch (err) {
             setAskError(err?.message || 'Failed to start chat');
