@@ -112,8 +112,12 @@ class AnalysisService {
                         console.error('[AnalysisService] DJ ingestion failed:', djErr.message);
                     }
                 } else {
-                    // Store in Vault Notes for non-DJ vaults
-                    const filename = `analysis_${Date.now()}.md`;
+                    // Store in Vault Notes for non-DJ vaults.
+                    // Date.now() alone collides when multiple attachments from the same
+                    // message complete analysis within the same millisecond — add a
+                    // random suffix so concurrent writes don't silently overwrite.
+                    const suffix = Math.random().toString(36).slice(2, 10);
+                    const filename = `analysis_${Date.now()}_${suffix}.md`;
                     await this.agent.vaults.updateVaultPage(analysis.vaultId, filename, `# Analyzed File\n\n${analysis.summary}`);
                 }
             }

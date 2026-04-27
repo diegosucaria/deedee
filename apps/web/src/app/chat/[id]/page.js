@@ -94,12 +94,17 @@ export default function ChatSessionPage({ params }) {
     }, []);
 
     // Multimodal State
+    const MAX_ATTACHMENTS = 10;
     const [isRecording, setIsRecording] = useState(false);
     const [audioBlob, setAudioBlob] = useState(null);
-    const [selectedImage, setSelectedImage] = useState(null); // { file, preview }
+    const [selectedImages, setSelectedImages] = useState([]); // [{ file, preview }]
     const mediaRecorderRef = useRef(null);
     const audioChunksRef = useRef([]);
-    const [selectedFile, setSelectedFile] = useState(null); // { file, name, size }
+    const [selectedFiles, setSelectedFiles] = useState([]); // [{ file, name, size }]
+    const [isSending, setIsSending] = useState(false);
+    const isSendingRef = useRef(false);
+    const attachmentCount = selectedImages.length + selectedFiles.length + (audioBlob ? 1 : 0);
+    const attachmentSlotsLeft = Math.max(0, MAX_ATTACHMENTS - attachmentCount);
 
     // Fetch Vaults & Config
     useEffect(() => {
@@ -158,27 +163,51 @@ export default function ChatSessionPage({ params }) {
         }
     };
 
-    // Paste Handler
+    // Refs mirroring attachment state so the paste handler can read current values
+    // without re-registering the listener on every state change (which would create
+    // a small drop-window between cleanup and re-add).
+    const selectedImagesRef = useRef(selectedImages);
+    const selectedFilesRef = useRef(selectedFiles);
+    const audioBlobRef = useRef(audioBlob);
+    useEffect(() => { selectedImagesRef.current = selectedImages; }, [selectedImages]);
+    useEffect(() => { selectedFilesRef.current = selectedFiles; }, [selectedFiles]);
+    useEffect(() => { audioBlobRef.current = audioBlob; }, [audioBlob]);
+
+    // Paste Handler — registered once on mount; reads state via refs
     useEffect(() => {
         const handlePaste = (e) => {
-            // Only handle paste if user is not focused on an input that handles paste itself (optional, but good for UX)
-            // But here we want to capture images anywhere
             const items = e.clipboardData.items;
+            const imageBlobs = [];
             for (let i = 0; i < items.length; i++) {
                 if (items[i].type.indexOf('image') !== -1) {
                     const blob = items[i].getAsFile();
-                    const reader = new FileReader();
-                    reader.onload = (event) => {
-                        const base64Info = event.target.result;
-                        setSelectedImage({
-                            file: blob,
-                            preview: base64Info
-                        });
-                    };
-                    reader.readAsDataURL(blob);
-                    e.preventDefault();
+                    if (blob) imageBlobs.push(blob);
                 }
             }
+            if (imageBlobs.length === 0) return;
+            e.preventDefault();
+            if (isSendingRef.current) {
+                console.warn('[Chat] Send in progress — pasted images dropped');
+                return;
+            }
+
+            const slots = MAX_ATTACHMENTS - selectedImagesRef.current.length - selectedFilesRef.current.length - (audioBlobRef.current ? 1 : 0);
+            if (slots <= 0) {
+                console.warn(`[Chat] Attachment cap (${MAX_ATTACHMENTS}) reached — pasted images dropped`);
+                return;
+            }
+            const accepted = imageBlobs.slice(0, slots);
+
+            Promise.all(accepted.map(blob => new Promise((resolve) => {
+                const reader = new FileReader();
+                reader.onload = (ev) => resolve({ file: blob, preview: ev.target.result });
+                reader.readAsDataURL(blob);
+            }))).then(newItems => {
+                setSelectedImages(curr => {
+                    const remaining = MAX_ATTACHMENTS - curr.length - selectedFilesRef.current.length - (audioBlobRef.current ? 1 : 0);
+                    return remaining > 0 ? [...curr, ...newItems.slice(0, remaining)] : curr;
+                });
+            });
         };
 
         window.addEventListener('paste', handlePaste);
@@ -247,13 +276,47 @@ export default function ChatSessionPage({ params }) {
             }
 
             // 3. User Multimodal
+            let attachments = null;
+            let extraAudioMessage = null;
             if (m.role === 'user' && hasParts) {
                 // Join text parts
                 content = parts.filter(p => p.text).map(p => p.text).join(' ');
-                // If content is empty/missing, it might be purely attachment.
-                // The current UI handles separate messages for attachments usually, 
-                // but this history comes from DB/Gemini which groups them.
-                // For now, let's ensure we return string content.
+
+                const inlineParts = parts.filter(p => p.inlineData && p.inlineData.mimeType);
+                const audioPart = inlineParts.find(p => p.inlineData.mimeType.startsWith('audio/'));
+                const visualParts = inlineParts.filter(p => !p.inlineData.mimeType.startsWith('audio/'));
+
+                if (visualParts.length > 0) {
+                    type = 'attachments';
+                    attachments = visualParts.map(p => {
+                        const mime = p.inlineData.mimeType;
+                        if (mime.startsWith('image/')) {
+                            return { kind: 'image', preview: `data:${mime};base64,${p.inlineData.data}` };
+                        }
+                        return { kind: 'file', name: p.inlineData.name || 'File', mimeType: mime };
+                    });
+                }
+
+                if (audioPart) {
+                    if (visualParts.length === 0 && !content) {
+                        // Audio-only user message — render as a single audio bubble.
+                        type = 'audio';
+                        content = `data:${audioPart.inlineData.mimeType};base64,${audioPart.inlineData.data}`;
+                    } else {
+                        // Audio mixed with text/visuals — emit a separate audio message
+                        // so the optimistic two-bubble layout matches what's reloaded
+                        // from the DB. No id on the spawned message so the rewind/fork
+                        // hover-actions only appear on the main bubble.
+                        extraAudioMessage = {
+                            role,
+                            content: `data:${audioPart.inlineData.mimeType};base64,${audioPart.inlineData.data}`,
+                            type: 'audio',
+                            timestamp: m.timestamp,
+                            metadata
+                        };
+                    }
+                }
+
                 if (!content && m.content) content = typeof m.content === 'string' ? m.content : JSON.stringify(m.content);
             } else if (m.role === 'assistant' && hasParts) {
                 // Check for Media (Audio/Image) in parts
@@ -276,7 +339,8 @@ export default function ChatSessionPage({ params }) {
             if (!content && typeof m.content === 'string') content = m.content;
             if (!content) content = '';
 
-            return { id: m.id, role, content, type, timestamp: m.timestamp, metadata };
+            const main = { id: m.id, role, content, type, timestamp: m.timestamp, metadata, attachments };
+            return extraAudioMessage ? [extraAudioMessage, main] : main;
 
         } catch (error) {
             console.error('[Chat] Message Normalization Failed:', error, m);
@@ -294,7 +358,12 @@ export default function ChatSessionPage({ params }) {
             const data = await getSession(chatId);
             if (data) {
                 setSessionTitle(data.title);
-                const history = (data.messages || []).map(normalizeMessage);
+                // normalizeMessage may return a single message or an array (e.g., when
+                // a user message bundles audio with images and we want two bubbles).
+                const history = (data.messages || []).flatMap(m => {
+                    const norm = normalizeMessage(m);
+                    return Array.isArray(norm) ? norm : [norm];
+                });
                 setMessages(history);
             }
         } catch (err) {
@@ -559,34 +628,57 @@ export default function ChatSessionPage({ params }) {
     };
 
     const handleImageSelect = (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            const reader = new FileReader();
-            reader.onloadend = () => {
-                setSelectedImage({
-                    file,
-                    preview: reader.result
-                });
-            };
-            reader.readAsDataURL(file);
+        const picked = Array.from(e.target.files || []);
+        e.target.value = ''; // allow re-picking the same file later
+        if (picked.length === 0) return;
+
+        const slots = MAX_ATTACHMENTS - selectedImages.length - selectedFiles.length - (audioBlob ? 1 : 0);
+        if (slots <= 0) {
+            console.warn(`[Chat] Attachment cap (${MAX_ATTACHMENTS}) reached — images ignored`);
+            return;
         }
+        const accepted = picked.slice(0, slots);
+
+        Promise.all(accepted.map(file => new Promise((resolve) => {
+            const reader = new FileReader();
+            reader.onloadend = () => resolve({ file, preview: reader.result });
+            reader.readAsDataURL(file);
+        }))).then(newItems => {
+            setSelectedImages(curr => {
+                const remaining = MAX_ATTACHMENTS - curr.length - selectedFiles.length - (audioBlob ? 1 : 0);
+                return remaining > 0 ? [...curr, ...newItems.slice(0, remaining)] : curr;
+            });
+        });
     };
 
     const handleFileSelect = (e) => {
-        const file = e.target.files[0];
-        if (file) {
-            setSelectedFile({
-                file,
-                name: file.name,
-                size: (file.size / 1024 / 1024).toFixed(2) + ' MB'
-            });
+        const picked = Array.from(e.target.files || []);
+        e.target.value = ''; // allow re-picking the same file later
+        if (picked.length === 0) return;
+
+        const slots = MAX_ATTACHMENTS - selectedImages.length - selectedFiles.length - (audioBlob ? 1 : 0);
+        if (slots <= 0) {
+            console.warn(`[Chat] Attachment cap (${MAX_ATTACHMENTS}) reached — files ignored`);
+            return;
         }
+        const accepted = picked.slice(0, slots).map(file => ({
+            file,
+            name: file.name,
+            size: (file.size / 1024 / 1024).toFixed(2) + ' MB'
+        }));
+        setSelectedFiles(curr => {
+            const remaining = MAX_ATTACHMENTS - curr.length - selectedImages.length - (audioBlob ? 1 : 0);
+            return remaining > 0 ? [...curr, ...accepted.slice(0, remaining)] : curr;
+        });
     };
 
+    const removeImageAt = (idx) => setSelectedImages(curr => curr.filter((_, i) => i !== idx));
+    const removeFileAt = (idx) => setSelectedFiles(curr => curr.filter((_, i) => i !== idx));
+
     const clearAttachments = () => {
-        setSelectedImage(null);
+        setSelectedImages([]);
         setAudioBlob(null);
-        setSelectedFile(null);
+        setSelectedFiles([]);
     };
 
     const blobToBase64 = (blob) => {
@@ -605,136 +697,120 @@ export default function ChatSessionPage({ params }) {
 
     const handleSendMessage = async (e) => {
         e.preventDefault();
-        e.preventDefault();
-        if ((!inputValue.trim() && !audioBlob && !selectedImage && !selectedFile) || !socket) return;
+        if (isSendingRef.current) return; // synchronous guard against double-submit
+        const hasAttachments = selectedImages.length > 0 || selectedFiles.length > 0 || !!audioBlob;
+        if ((!inputValue.trim() && !hasAttachments) || !socket) return;
 
-        const content = inputValue;
-        const files = [];
+        isSendingRef.current = true;
+        setIsSending(true);
+        try {
+            const content = inputValue;
+            const files = [];
+            const timestamp = new Date().toISOString();
 
-        // UI Optimistic Updates
-        const optimisticMsg = {
-            role: 'user',
-            content: content,
-            type: 'text',
-            timestamp: new Date().toISOString()
-        };
-
-        // Process Audio
-        if (audioBlob) {
-            const base64Audio = await blobToBase64(audioBlob);
-            files.push({
-                mimeType: audioBlob.type || 'audio/webm',
-                data: base64Audio
-            });
-            // Add optimistic audio msg (separate or combined? existing UI handles separate msgs better)
-            // Let's attach to the main message or create a separate one? 
-            // The current UI renderer handles single type. Let's start with pushing separate messages for UI if mixed, 
-            // OR we just assume the main message is the type.
-            // Actually, for simplicity, if we have audio, we push an audio message. 
-            // If we have text, we push text.
-
-            addMessage({
-                role: 'user',
-                content: `data:${audioBlob.type};base64,${base64Audio}`,
-                type: 'audio',
-                timestamp: new Date().toISOString()
-            });
-        }
-
-        // Process Image
-        if (selectedImage) {
-            const base64Image = selectedImage.preview.split(',')[1]; // remove prefix
-            files.push({
-                mimeType: selectedImage.file.type,
-                data: base64Image
-            });
-
-            addMessage({
-                role: 'user',
-                content: selectedImage.preview,
-                type: 'image',
-                timestamp: new Date().toISOString()
-            });
-        }
-
-        // Process Generic File
-        if (selectedFile) {
-            // 1. Upload File first to get "path" if needed, OR send inlineData.
-            // Plan: Upload via Action -> Get Path/Metadata -> Send Msg with Metadata + InlineData (for immediate Analysis).
-            // Actually, we need to send inlineData for Gemini to analyze it immediately without re-reading from disk if possible?
-            // BUT: Large files? 
-            // Agent._analyzeAttachment relies on `part.inlineData`. 
-            // So we MUST send inlineData.
-            // AND we should probably upload it for persistence.
-
-            try {
-                // Upload in background or await? Await to ensure success?
-                const formData = new FormData();
-                formData.append('file', selectedFile.file);
-
-                // Optimistic UI for file?
-                addMessage({
-                    role: 'user',
-                    content: `📎 Uploading: ${selectedFile.name}...`,
-                    type: 'text',
-                    timestamp: new Date().toISOString()
-                });
-
-                const uploadRes = await uploadChatFile(chatId, formData);
-                if (!uploadRes.success) throw new Error(uploadRes.error);
-
-                // Convert to Base64 for analysis
-                const base64File = await new Promise((resolve) => {
-                    const reader = new FileReader();
-                    reader.onloadend = () => resolve(reader.result.split(',')[1]);
-                    reader.readAsDataURL(selectedFile.file);
-                });
-
+            // 1. Audio — convert to base64 now, but defer the optimistic bubble until
+            //    after all uploads succeed so a later upload failure doesn't leave
+            //    a phantom audio bubble behind.
+            let audioOptimistic = null;
+            if (audioBlob) {
+                const base64Audio = await blobToBase64(audioBlob);
                 files.push({
-                    mimeType: selectedFile.file.type || 'application/octet-stream',
-                    data: base64File
+                    mimeType: audioBlob.type || 'audio/webm',
+                    data: base64Audio
                 });
+                audioOptimistic = {
+                    role: 'user',
+                    content: `data:${audioBlob.type};base64,${base64Audio}`,
+                    type: 'audio',
+                    timestamp
+                };
+            }
 
-                // Update optimistic message? Or just let the main flow proceed.
-                // We'll let the main flow send the actual message with attachment data.
+            // 2. Images — push one part per image, accumulate into the unified bubble
+            const optimisticAttachments = [];
+            for (const img of selectedImages) {
+                const base64Image = img.preview.split(',')[1];
+                files.push({
+                    mimeType: img.file.type,
+                    data: base64Image
+                });
+                optimisticAttachments.push({ kind: 'image', preview: img.preview });
+            }
 
+            // 3. Generic files — upload in parallel, then push parts + chips
+            if (selectedFiles.length > 0) {
+                try {
+                    const uploadResults = await Promise.all(selectedFiles.map(async (sf) => {
+                        const formData = new FormData();
+                        formData.append('file', sf.file);
+                        const uploadRes = await uploadChatFile(chatId, formData);
+                        if (!uploadRes.success) throw new Error(uploadRes.error || `Upload failed: ${sf.name}`);
+
+                        const base64File = await new Promise((resolve) => {
+                            const reader = new FileReader();
+                            reader.onloadend = () => resolve(reader.result.split(',')[1]);
+                            reader.readAsDataURL(sf.file);
+                        });
+
+                        return {
+                            mimeType: sf.file.type || 'application/octet-stream',
+                            data: base64File,
+                            name: sf.name,
+                            size: sf.size
+                        };
+                    }));
+
+                    for (const r of uploadResults) {
+                        files.push({ mimeType: r.mimeType, data: r.data });
+                        optimisticAttachments.push({ kind: 'file', name: r.name, size: r.size, mimeType: r.mimeType });
+                    }
+                } catch (err) {
+                    console.error('File Upload Error:', err);
+                    alert(`Failed to upload file: ${err.message}`);
+                    return; // keep attachments so user can retry; no optimistic bubbles pushed yet
+                }
+            }
+
+            // 4. All uploads succeeded — push optimistic UI now
+            if (audioOptimistic) addMessage(audioOptimistic);
+            if (optimisticAttachments.length > 0) {
                 addMessage({
                     role: 'user',
-                    content: `📄 Sent file: ${selectedFile.name}`,
-                    type: 'text', // Simple representation for now
-                    timestamp: new Date().toISOString()
+                    content: content,
+                    type: 'attachments',
+                    attachments: optimisticAttachments,
+                    timestamp
                 });
-
-            } catch (err) {
-                console.error('File Upload Error:', err);
-                alert('Failed to upload file');
-                return;
+            } else if (content.trim()) {
+                addMessage({
+                    role: 'user',
+                    content,
+                    type: 'text',
+                    timestamp
+                });
             }
+
+            setInputValue('');
+            clearAttachments();
+            setIsWaiting(true);
+
+            // Auto-collapse sidebar on first message
+            if (messages.length === 0) setCollapsed(true);
+
+            socket.emit('chat:message', {
+                content: content,
+                files: files,
+                chatId: chatId,
+                metadata: {
+                    location: userLocation,
+                    vaultId: selectedVault !== 'none' ? selectedVault : undefined,
+                    model: selectedModel !== 'auto' ? selectedModel : undefined
+                }
+            });
+        } finally {
+            isSendingRef.current = false;
+            setIsSending(false);
         }
-
-        // If text exists and we haven't just sent attachments solely...
-        // Actually, if we have text, we show it. 
-        if (content.trim()) {
-            addMessage(optimisticMsg);
-        }
-
-        setInputValue('');
-        clearAttachments();
-        setIsWaiting(true);
-
-        // Auto-collapse sidebar on first message
-        if (messages.length === 0) setCollapsed(true);
-
-        socket.emit('chat:message', {
-            content: content,
-            files: files,
-            chatId: chatId,
-            metadata: {
-                location: userLocation,
-                vaultId: selectedVault !== 'none' ? selectedVault : undefined,
-                model: selectedModel !== 'auto' ? selectedModel : undefined
-            }
-        });
     };
 
     return (
@@ -856,7 +932,48 @@ export default function ChatSessionPage({ params }) {
                                                 <div className="h-10 w-10 bg-indigo-500/20 rounded-full flex items-center justify-center">
                                                     <Play className="h-5 w-5 text-indigo-400" />
                                                 </div>
-                                                <span className="text-sm italic text-indigo-200">Audio Message</span>
+                                                <audio
+                                                    controls
+                                                    src={typeof msg.content === 'string' && msg.content.startsWith('data:') ? msg.content : `data:audio/webm;base64,${msg.content}`}
+                                                    className="h-8 max-w-[220px]"
+                                                />
+                                            </div>
+                                        ) : msg.type === 'attachments' ? (
+                                            <div className="flex flex-col gap-2">
+                                                {msg.attachments && msg.attachments.length > 0 && (
+                                                    <div className="flex flex-wrap gap-2">
+                                                        {msg.attachments.map((att, i) => att.kind === 'image' ? (
+                                                            <div key={i} className="rounded-lg overflow-hidden border border-indigo-500/30">
+                                                                <img
+                                                                    src={att.preview}
+                                                                    alt={`Attachment ${i + 1}`}
+                                                                    className="h-24 w-24 object-cover bg-black/20"
+                                                                />
+                                                            </div>
+                                                        ) : (
+                                                            <div key={i} className="flex items-center gap-2 px-2 py-1.5 bg-indigo-500/15 border border-indigo-500/30 rounded-lg">
+                                                                <FileIcon className="h-5 w-5 text-indigo-200 flex-shrink-0" />
+                                                                <div className="flex flex-col min-w-0">
+                                                                    <span className="text-xs text-indigo-100 font-medium truncate max-w-[160px]">{att.name || 'File'}</span>
+                                                                    {att.size && <span className="text-[10px] text-indigo-200/70">{att.size}</span>}
+                                                                </div>
+                                                            </div>
+                                                        ))}
+                                                    </div>
+                                                )}
+                                                {msg.content && msg.content.trim() && (
+                                                    <div className="markdown prose prose-invert prose-sm max-w-none break-words">
+                                                        <ReactMarkdown
+                                                            components={{
+                                                                a: ({ node, ...props }) => (
+                                                                    <a {...props} target="_blank" rel="noopener noreferrer" className="text-indigo-400 hover:underline" />
+                                                                )
+                                                            }}
+                                                        >
+                                                            {msg.content}
+                                                        </ReactMarkdown>
+                                                    </div>
+                                                )}
                                             </div>
                                         ) : (msg.type === 'image' || (typeof msg.content === 'string' && msg.content.startsWith('data:image'))) ? (
                                             <div className="rounded-lg overflow-hidden border border-indigo-500/30">
@@ -1002,16 +1119,28 @@ export default function ChatSessionPage({ params }) {
                 <form onSubmit={handleSendMessage} className="mx-auto max-w-4xl">
 
                     {/* Attachments Preview */}
-                    {(selectedImage || audioBlob) && (
-                        <div className="flex gap-4 mb-3 px-2">
-                            {selectedImage && (
-                                <div className="relative group">
-                                    <img src={selectedImage.preview} alt="Selected" className="h-20 w-20 object-cover rounded-lg border border-zinc-700" />
-                                    <button onClick={() => setSelectedImage(null)} type="button" className="absolute -top-2 -right-2 bg-zinc-800 rounded-full p-1 border border-zinc-600 hover:bg-zinc-700">
+                    {(selectedImages.length > 0 || selectedFiles.length > 0 || audioBlob) && (
+                        <div className="flex flex-wrap gap-3 mb-3 px-2 items-start">
+                            {selectedImages.map((img, idx) => (
+                                <div key={`img-${idx}`} className="relative group">
+                                    <img src={img.preview} alt={`Selected ${idx + 1}`} className="h-20 w-20 object-cover rounded-lg border border-zinc-700" />
+                                    <button onClick={() => removeImageAt(idx)} type="button" className="absolute -top-2 -right-2 bg-zinc-800 rounded-full p-1 border border-zinc-600 hover:bg-zinc-700">
                                         <X className="w-3 h-3 text-white" />
                                     </button>
                                 </div>
-                            )}
+                            ))}
+                            {selectedFiles.map((sf, idx) => (
+                                <div key={`file-${idx}`} className="relative flex items-center p-3 bg-zinc-900 border border-zinc-700 rounded-lg gap-3">
+                                    <FileIcon className="h-8 w-8 text-indigo-400" />
+                                    <div className="flex flex-col">
+                                        <span className="text-sm text-zinc-200 font-medium truncate max-w-[150px]">{sf.name}</span>
+                                        <span className="text-xs text-zinc-500">{sf.size}</span>
+                                    </div>
+                                    <button onClick={() => removeFileAt(idx)} type="button" className="absolute -top-2 -right-2 bg-zinc-800 rounded-full p-1 border border-zinc-600 hover:bg-zinc-700">
+                                        <X className="w-3 h-3 text-white" />
+                                    </button>
+                                </div>
+                            ))}
                             {audioBlob && (
                                 <div className="relative flex items-center justify-center h-20 w-20 bg-zinc-900 border border-zinc-700 rounded-lg">
                                     <div className="text-xs text-indigo-400 font-semibold">Voice Note</div>
@@ -1020,21 +1149,11 @@ export default function ChatSessionPage({ params }) {
                                     </button>
                                 </div>
                             )}
-                        </div>
-                    )}
-
-                    {selectedFile && (
-                        <div className="flex gap-4 mb-3 px-2">
-                            <div className="relative flex items-center justify-center p-3 bg-zinc-900 border border-zinc-700 rounded-lg gap-3">
-                                <FileIcon className="h-8 w-8 text-indigo-400" />
-                                <div className="flex flex-col">
-                                    <span className="text-sm text-zinc-200 font-medium truncate max-w-[150px]">{selectedFile.name}</span>
-                                    <span className="text-xs text-zinc-500">{selectedFile.size}</span>
+                            {attachmentCount > 0 && (
+                                <div className="flex items-center text-[11px] text-zinc-500 self-center">
+                                    {attachmentCount} / {MAX_ATTACHMENTS}
                                 </div>
-                                <button onClick={() => setSelectedFile(null)} type="button" className="absolute -top-2 -right-2 bg-zinc-800 rounded-full p-1 border border-zinc-600 hover:bg-zinc-700">
-                                    <X className="w-3 h-3 text-white" />
-                                </button>
-                            </div>
+                            )}
                         </div>
                     )}
 
@@ -1064,16 +1183,18 @@ export default function ChatSessionPage({ params }) {
                             <input
                                 type="file"
                                 accept="image/*"
+                                multiple
                                 onChange={handleImageSelect}
                                 className="hidden"
                                 id="image-upload"
-                                disabled={!!selectedImage}
+                                disabled={attachmentSlotsLeft === 0 || isSending}
                             />
                             <label
                                 htmlFor="image-upload"
+                                title={isSending ? 'Send in progress…' : attachmentSlotsLeft === 0 ? `Max ${MAX_ATTACHMENTS} attachments reached` : 'Attach images'}
                                 className={clsx(
                                     "flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 transition-all cursor-pointer",
-                                    selectedImage ? "opacity-30 cursor-not-allowed" : "hover:text-pink-400 hover:border-pink-500/50"
+                                    (attachmentSlotsLeft === 0 || isSending) ? "opacity-30 cursor-not-allowed" : "hover:text-pink-400 hover:border-pink-500/50"
                                 )}
                             >
                                 <ImageIcon className="h-5 w-5" />
@@ -1084,16 +1205,18 @@ export default function ChatSessionPage({ params }) {
                         <div className="relative">
                             <input
                                 type="file"
+                                multiple
                                 onChange={handleFileSelect}
                                 className="hidden"
                                 id="file-upload"
-                                disabled={!!selectedFile}
+                                disabled={attachmentSlotsLeft === 0 || isSending}
                             />
                             <label
                                 htmlFor="file-upload"
+                                title={isSending ? 'Send in progress…' : attachmentSlotsLeft === 0 ? `Max ${MAX_ATTACHMENTS} attachments reached` : 'Attach files'}
                                 className={clsx(
                                     "flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-zinc-900 border border-zinc-700 text-zinc-400 transition-all cursor-pointer",
-                                    selectedFile ? "opacity-30 cursor-not-allowed" : "hover:text-emerald-400 hover:border-emerald-500/50"
+                                    (attachmentSlotsLeft === 0 || isSending) ? "opacity-30 cursor-not-allowed" : "hover:text-emerald-400 hover:border-emerald-500/50"
                                 )}
                             >
                                 <Paperclip className="h-5 w-5" />
@@ -1119,10 +1242,10 @@ export default function ChatSessionPage({ params }) {
                         {/* Send Button */}
                         <button
                             type="submit"
-                            disabled={!isConnected || (!inputValue.trim() && !audioBlob && !selectedImage && !selectedFile)}
+                            disabled={!isConnected || isSending || (!inputValue.trim() && attachmentCount === 0)}
                             className="flex items-center justify-center h-10 w-10 md:h-12 md:w-12 rounded-xl bg-indigo-600 text-white transition-colors hover:bg-indigo-500 disabled:opacity-50 disabled:cursor-not-allowed"
                         >
-                            <Send className="h-5 w-5" />
+                            {isSending ? <Loader2 className="h-5 w-5 animate-spin" /> : <Send className="h-5 w-5" />}
                         </button>
                     </div>
                 </form>
