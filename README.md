@@ -53,6 +53,11 @@ nano .env
 docker-compose up --build
 ```
 
+**Self-hosting on a LAN (e.g. Raspberry Pi)?** The default setup assumes a Traefik reverse proxy with Google forward-auth in front of the API gateway. If you're running plain `docker-compose up` with no reverse proxy, the `/socket.io` endpoint will reject every connection because `X-Forwarded-User` is never set, and the web UI shows repeated `WebSocket connection ... failed` errors. Set `DISABLE_SOCKET_AUTH_GATE=1` on the `api` service to bypass that check. Trusted LAN only — it removes the only auth layer in front of the socket proxy. While you're at it, also set:
+
+- `WEB_ORIGIN=http://<your-host>:3002` on the `api` service (CORS origin for the web UI cookie).
+- `SOCKET_URL=ws://<your-host>:3001` on the `web` service (browser WebSocket target).
+
 ### 3. Usage
 Open Telegram and message your bot:
 > *"Hello! Who are you?"*

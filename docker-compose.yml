@@ -86,6 +86,9 @@ services:
       - INTERFACES_URL=http://interfaces:5000
       - PORT=3001
       # DEEDEE_API_TOKEN, WEB_ORIGIN injected by Balena
+      # DISABLE_SOCKET_AUTH_GATE=1 — set this for plain self-host runs
+      # (no Traefik forward-auth in front). Skips the X-Forwarded-User
+      # check on /socket.io. Trusted LAN only.
     ports:
       - "3001:3001"
     networks:
