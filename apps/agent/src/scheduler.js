@@ -710,18 +710,20 @@ FORMAT (when you do notify):
             {
                 name: 'wardrobe_pretrip_check',
                 cron: '0 8 * * *', // Daily at 08:00
-                task: `[WARDROBE PRETRIP] Draft packing lists for upcoming trips.
+                task: `[WARDROBE PRETRIP] Draft packing lists for upcoming trips AND auto-start trips that begin today.
 
 1. Call list_wardrobe_trips(status: "planned"). Remember the set of already-planned destinations+dates so you do not duplicate.
-2. Spawn a lightweight FLASH sub-agent to scan the next 7 days of personal calendar for multi-day travel:
+2. AUTO-START SAME-DAY TRIPS: For every planned trip whose start_date equals today's date, call start_wardrobe_trip(trip_id) immediately. This flips the trip to active so today's outfit suggestions use the packed capsule instead of the full wardrobe. Note which trips you started — you'll mention them in the owner notification (step 5).
+3. Spawn a lightweight FLASH sub-agent to scan the next 7 days of personal calendar for multi-day travel:
    spawnAgent(task: "List personal_calendar events in the next 7 days. Return STRICT JSON: [{summary, location, start_date, end_date}] ONLY for events that look like multi-day trips (end date > start date + 1 day OR location is clearly a different city/country). Skip routine meetings, recurring items, and 1-day outings. Dates MUST be in YYYY-MM-DD format (no times, no timezones). If none, return [SILENT].", model: "FLASH", lightweight: true, tools: ["server:gws_personal"])
-3. For each trip found that (a) starts 2-4 days from today AND (b) is not already in list_wardrobe_trips output by destination/dates:
+4. For each trip found that (a) starts 2-4 days from today AND (b) is not already in list_wardrobe_trips output by destination/dates:
    - Call wardrobe_pack_for_trip(destination, start_date, end_date, activities if inferable). start_date and end_date must be YYYY-MM-DD strings. The weather subagent runs inside that call.
-4. If any new trips were planned, deliver ONE concise message to the owner via an explicit sendMessage call (do NOT rely on the scheduler reply):
-   sendMessage(to: "me", type: "text", content: "Trip to <destination> in <N> days — drafted a capsule with X items. Review in /wardrobe or ask me to adjust.")
-   List up to 3 trips max.
-5. After sendMessage succeeds, respond with exactly: [SILENT] Pretrip notified. This prevents the scheduler from double-sending.
-6. If no new trips needed planning, respond with [SILENT] and do not call sendMessage.
+5. If any trips were started in step 2 OR newly planned in step 4, deliver ONE concise message to the owner via an explicit sendMessage call (do NOT rely on the scheduler reply):
+   - Started trips: sendMessage(to: "me", type: "text", content: "Trip to <destination> starts today — switched to your packed capsule. Today's outfit will pull from those items.")
+   - Newly planned trips: sendMessage(to: "me", type: "text", content: "Trip to <destination> in <N> days — drafted a capsule with X items. Review in /wardrobe or ask me to adjust.")
+   - If both happened, combine into a single message. List up to 3 items total.
+6. After sendMessage succeeds, respond with exactly: [SILENT] Pretrip notified. This prevents the scheduler from double-sending.
+7. If nothing was started AND nothing new was planned, respond with [SILENT] and do not call sendMessage.
 
 NEVER contact anyone other than the owner.`,
                 silent: false

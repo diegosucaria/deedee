@@ -2050,33 +2050,46 @@ ${panelDescriptors.map(d => `  Panel ${d.index}: ${d.garments.join(', ')}`).join
             throw new Error('Source outfit has too few garments still in the wardrobe');
         }
 
-        let variations = [];
-        if (this.agent.client) {
-            try {
-                variations = await this._proposeOutfitVariations(source, validSourceIds, pool, count);
-            } catch (e) {
-                console.warn(`${TAG} LLM proposer failed, falling back | err=${e.message}`);
+        // Outfits don't have a meta column we can flip a flag on, so emit a
+        // dedicated pending event before the slow LLM + render begins. The web
+        // client uses this to show a spinner without holding a Server Action
+        // transition open. We always emit a terminal event afterward
+        // (variations-rendered on success, variations-failed on error) so the
+        // client can clear the spinner reliably.
+        this._broadcast('wardrobe:outfit:variations-pending', { id: outfitId });
+
+        try {
+            let variations = [];
+            if (this.agent.client) {
+                try {
+                    variations = await this._proposeOutfitVariations(source, validSourceIds, pool, count);
+                } catch (e) {
+                    console.warn(`${TAG} LLM proposer failed, falling back | err=${e.message}`);
+                }
             }
-        }
-        if (variations.length === 0) {
-            variations = this._fallbackOutfitVariations(validSourceIds, pool, count);
-        }
+            if (variations.length === 0) {
+                variations = this._fallbackOutfitVariations(validSourceIds, pool, count);
+            }
 
-        // Cap at 3 variations so the final strip stays at 4 panels (source + 3).
-        variations = variations.slice(0, 3);
+            // Cap at 3 variations so the final strip stays at 4 panels (source + 3).
+            variations = variations.slice(0, 3);
 
-        if (variations.length === 0) {
-            throw new Error('Could not build any variations — not enough alternatives in the wardrobe');
+            if (variations.length === 0) {
+                throw new Error('Could not build any variations — not enough alternatives in the wardrobe');
+            }
+
+            const panels = [validSourceIds, ...variations];
+            console.log(`${TAG} rendering | outfitId=${outfitId} | panels=${panels.length}`);
+            return await this.visualizeOutfit({
+                garmentIdsPanels: panels,
+                layout: panels.length === 4 ? 'grid' : 'horizontal',
+                outfitId,
+                saveAs: 'variations'
+            });
+        } catch (err) {
+            this._broadcast('wardrobe:outfit:variations-failed', { id: outfitId, error: err.message });
+            throw err;
         }
-
-        const panels = [validSourceIds, ...variations];
-        console.log(`${TAG} rendering | outfitId=${outfitId} | panels=${panels.length}`);
-        return this.visualizeOutfit({
-            garmentIdsPanels: panels,
-            layout: panels.length === 4 ? 'grid' : 'horizontal',
-            outfitId,
-            saveAs: 'variations'
-        });
     }
 
     async _proposeOutfitVariations(source, validSourceIds, pool, count) {
