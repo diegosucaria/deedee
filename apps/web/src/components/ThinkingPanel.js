@@ -56,30 +56,34 @@ export default function ThinkingPanel({ entries, live = false, statusText = '' }
         return { text: parts.join(' + ') + detail, animateDots: false };
     })();
 
-    // The last thought entry, if any — the live caret is appended to it so
-    // the user sees text actively arriving.
-    const lastThoughtId = live
-        ? [...entries].reverse().find(e => e.kind === 'thought')?.id
-        : null;
+    // The caret is meant to signal "this thought is actively streaming". Only
+    // attach it when a thought is the actual *latest* entry — if a tool_call
+    // has already landed after it, that thought is closed and the caret would
+    // mislead.
+    const lastEntry = entries[entries.length - 1];
+    const lastThoughtId = (live && lastEntry?.kind === 'thought') ? lastEntry.id : null;
 
     return (
         <div
             className={clsx(
-                'relative overflow-hidden rounded-xl border text-xs transition-colors',
+                'relative rounded-xl border text-xs transition-colors',
                 live
                     ? 'border-indigo-500/40 bg-indigo-500/5'
                     : 'border-zinc-700/70 bg-zinc-800/40 hover:border-zinc-600',
                 'max-w-[90%] md:max-w-[70%]'
             )}
         >
-            {/* Subtle indigo shimmer sweeping across the live panel — pure
-                decoration, never covers content (low opacity, pointer-events
-                disabled, sits behind the button via z-index). */}
+            {/* Subtle indigo shimmer sweeping across the live panel. Wrapped
+                in its own overflow-hidden + rounded-xl container so the root
+                stays unconstrained — DetailBlock's nested scroll containers
+                are finicky on iOS Safari under overflow-hidden ancestors. */}
             {live && (
                 <div
                     aria-hidden="true"
-                    className="thinking-shimmer pointer-events-none absolute inset-y-0 -left-1/2 w-1/2 bg-gradient-to-r from-transparent via-indigo-400/15 to-transparent"
-                />
+                    className="absolute inset-0 overflow-hidden rounded-xl pointer-events-none"
+                >
+                    <div className="thinking-shimmer absolute inset-y-0 -left-1/2 w-1/2 bg-gradient-to-r from-transparent via-indigo-400/15 to-transparent" />
+                </div>
             )}
             <button
                 type="button"

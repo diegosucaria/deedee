@@ -65,12 +65,14 @@ main > * {
 }
 
 /* A soft indigo gradient sweeps across the panel to signal "active". The
-   parent must be `relative overflow-hidden`; this fills it absolutely and
-   moves -100% → 100% on the X axis. Low opacity so it never competes with
-   text. */
+   band is `w-1/2 -left-1/2` so its idle position is half a panel-width to
+   the left. Translating -200% → 300% of its own width = -100% → 150% of
+   parent width, so the band enters from off-screen-left, traverses the
+   FULL panel, and exits past the right edge. Low opacity so it never
+   competes with text. */
 @keyframes thinking-shimmer {
-  0% { transform: translateX(-100%); }
-  100% { transform: translateX(100%); }
+  0% { transform: translateX(-200%); }
+  100% { transform: translateX(300%); }
 }
 .thinking-shimmer {
   animation: thinking-shimmer 2.6s ease-in-out infinite;
@@ -94,4 +96,15 @@ main > * {
 }
 .thinking-breathe {
   animation: thinking-breathe 2s ease-in-out infinite;
+}
+
+/* Honor user's reduced-motion preference — disable all four ThinkingPanel
+   animations while keeping the icons / dots / caret rendered statically. */
+@media (prefers-reduced-motion: reduce) {
+  .thinking-dot,
+  .thinking-shimmer,
+  .thinking-caret,
+  .thinking-breathe {
+    animation: none;
+  }
 }
