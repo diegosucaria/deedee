@@ -191,7 +191,12 @@ function GarmentsTab() {
             reconnectionAttempts: 10,
             withCredentials: true,
         });
+        // Defensive against malformed payloads: the agent service guards its
+        // broadcasts but a stale agent (or a future regression) could still
+        // emit a null/missing-id event. Drop those instead of crashing the
+        // setState reducer with `null.id`.
         const upsert = (g) => {
+            if (!g?.id) return;
             setGarments(prev => {
                 const idx = prev.findIndex(x => x.id === g.id);
                 if (idx >= 0) { const next = [...prev]; next[idx] = g; return next; }
@@ -203,7 +208,9 @@ function GarmentsTab() {
         socket.on('wardrobe:garment:attributes', upsert);
         socket.on('wardrobe:garment:enriched', upsert);
         socket.on('wardrobe:garment:update', upsert);
-        socket.on('wardrobe:garment:delete', ({ id }) => {
+        socket.on('wardrobe:garment:delete', (payload) => {
+            const id = payload?.id;
+            if (!id) return;
             setGarments(prev => prev.filter(g => g.id !== id));
             setSelected(prev => prev?.id === id ? null : prev);
         });
@@ -1262,11 +1269,15 @@ function OutfitsTab() {
             upsertOutfit(outfit);
             clearPending(outfit?.id);
         });
-        socket.on('wardrobe:outfit:variations-pending', ({ id }) => {
+        // Use payload?.id rather than destructuring — destructuring a null
+        // payload would throw inside the socket event handler and fall through
+        // to socket.io's default error path.
+        socket.on('wardrobe:outfit:variations-pending', (payload) => {
+            const id = payload?.id;
             if (!id) return;
             setPendingVariations(prev => prev[id] ? prev : { ...prev, [id]: true });
         });
-        socket.on('wardrobe:outfit:variations-failed', ({ id }) => clearPending(id));
+        socket.on('wardrobe:outfit:variations-failed', (payload) => clearPending(payload?.id));
         return () => socket.disconnect();
     }, []);
 

@@ -709,11 +709,16 @@ FORMAT (when you do notify):
             },
             {
                 name: 'wardrobe_pretrip_check',
-                // Runs at 07:00, 15 min before wardrobe_morning_outfit at 07:15.
+                // Runs at 06:45, 30 min before wardrobe_morning_outfit at 07:15.
                 // Auto-starting same-day trips MUST happen before the morning
                 // outfit job, otherwise that day's recommendation pulls from
-                // the full wardrobe instead of the packed capsule.
-                cron: '0 7 * * *', // Daily at 07:00
+                // the full wardrobe instead of the packed capsule. The
+                // scheduler doesn't queue or lock concurrent jobs, so the
+                // headroom needs to absorb LLM latency and sub-agent spawns
+                // (the prompt does step 2 — auto-start — first, but the
+                // overall job can run several minutes when planning new
+                // trips).
+                cron: '45 6 * * *', // Daily at 06:45
                 task: `[WARDROBE PRETRIP] Draft packing lists for upcoming trips AND auto-start trips that begin today.
 
 1. Call list_wardrobe_trips(status: "planned"). Remember the set of already-planned destinations+dates so you do not duplicate.

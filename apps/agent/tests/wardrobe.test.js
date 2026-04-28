@@ -1259,18 +1259,85 @@ describe('WardrobeService.generateGarmentImage', () => {
         // try/catch must clear the flag — otherwise the route returned 202
         // success and the grid would spin forever with no socket terminal
         // event to clear it.
+        //
+        // The mock tracks state across calls: getGarment reflects whatever
+        // updateGarment last wrote, so when the cleanup catch reads the row
+        // it sees generatingImage: true (set by the in-flight flag-set write)
+        // and must produce a patch where that flag is gone. Without the
+        // state-tracking, the test would pass trivially even if the cleanup
+        // logic was a no-op.
+        let storedMeta = {};
+        const baseRow = {
+            id: 'g1',
+            type: 'bottom',
+            subtype: 'joggers',
+            primary_color: 'black',
+            crop_image_path: '/data/wardrobe/garments/src/crop_0.jpg',
+            source_image_path: '/data/wardrobe/garments/src/original.jpg'
+        };
+        mockAgent.db.getGarment.mockImplementation((id) => id === 'g1' ? { ...baseRow, meta: { ...storedMeta } } : null);
+        mockAgent.db.updateGarment.mockImplementation((id, patch) => {
+            if (id === 'g1' && patch && patch.meta !== undefined) storedMeta = patch.meta;
+            return true;
+        });
+
         fs.readFileSync.mockImplementationOnce(() => { throw new Error('ENOENT: file vanished'); });
 
         await expect(service.generateGarmentImage('g1')).rejects.toThrow(/ENOENT/);
 
-        // Cleanup write: meta.generatingImage must be absent in the patch.
-        const cleanupCalls = mockAgent.db.updateGarment.mock.calls.filter(
-            ([id, patch]) => id === 'g1' && patch.meta && !('generated_image_path' in patch)
-        );
-        // The flag-set call has generatingImage: true; the cleanup call must
-        // have it absent.
-        const sawCleanupClear = cleanupCalls.some(([, patch]) => !patch.meta.generatingImage);
-        expect(sawCleanupClear).toBe(true);
+        // After the throw + cleanup runs, the persisted meta must NOT carry
+        // the generating flag — otherwise the grid stays in spinner state
+        // even though the render has long since failed.
+        expect(storedMeta.generatingImage).toBeUndefined();
+        expect(storedMeta.generatingImageStartedAt).toBeUndefined();
+
+        // The cleanup must have observed and overwritten the flag-set state,
+        // not just skipped because the row was empty. Verify the sequence of
+        // writes: flag-set first (generatingImage: true), then cleanup
+        // (generatingImage cleared).
+        const writes = mockAgent.db.updateGarment.mock.calls
+            .filter(([id]) => id === 'g1')
+            .map(([, patch]) => patch);
+        expect(writes.length).toBeGreaterThanOrEqual(2);
+        expect(writes[0].meta.generatingImage).toBe(true);
+        expect(writes[writes.length - 1].meta.generatingImage).toBeUndefined();
+    });
+
+    test('skips cleanup broadcast when garment is concurrently deleted during render', async () => {
+        // Catch-path null guard: if the row is removed from the DB between
+        // the flag-set and the post-throw cleanup, broadcasting an update
+        // with a null payload would crash the client's listener. The service
+        // must skip the broadcast in that case (the deletion already
+        // broadcast wardrobe:garment:delete, so the client already knows
+        // the row is gone).
+        let getGarmentCalls = 0;
+        const baseRow = {
+            id: 'g1',
+            type: 'bottom',
+            subtype: 'joggers',
+            crop_image_path: '/data/wardrobe/garments/src/crop_0.jpg',
+            source_image_path: '/data/wardrobe/garments/src/original.jpg',
+            meta: {}
+        };
+        mockAgent.db.getGarment.mockImplementation(() => {
+            getGarmentCalls += 1;
+            // First two reads (entry validation + flag-set broadcast) see
+            // the row; subsequent reads (cleanup catch) see null because the
+            // row was deleted concurrently.
+            return getGarmentCalls <= 2 ? baseRow : null;
+        });
+
+        fs.readFileSync.mockImplementationOnce(() => { throw new Error('ENOENT: file vanished'); });
+
+        await expect(service.generateGarmentImage('g1')).rejects.toThrow(/ENOENT/);
+
+        // No broadcast should carry a null payload.
+        const updateBroadcasts = mockAgent.interface.broadcast.mock.calls
+            .filter(([event]) => event === 'wardrobe:garment:update')
+            .map(([, payload]) => payload);
+        for (const payload of updateBroadcasts) {
+            expect(payload).not.toBeNull();
+        }
     });
 
     test('regeneration deletes the previous generated file (no on-disk cruft)', async () => {
