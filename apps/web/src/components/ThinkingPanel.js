@@ -30,18 +30,20 @@ export default function ThinkingPanel({ entries, live = false, statusText = '' }
 
     if (entries.length === 0 && !live && !statusText) return null;
 
-    const headerLine = (() => {
+    // Returns { text, animateDots } so we can render trailing animated dots
+    // in live mode without baking them into the string.
+    const header = (() => {
         if (live) {
-            if (statusText) return statusText;
+            if (statusText) return { text: statusText, animateDots: true };
             const lastTool = [...entries].reverse().find(e => e.kind === 'tool');
             if (lastTool) {
-                if (lastTool.status === 'pending') return `Calling ${lastTool.name}…`;
-                if (lastTool.status === 'paused') return `Awaiting confirmation: ${lastTool.name}`;
-                return `Used ${lastTool.name}`;
+                if (lastTool.status === 'pending') return { text: `Calling ${lastTool.name}`, animateDots: true };
+                if (lastTool.status === 'paused') return { text: `Awaiting confirmation: ${lastTool.name}`, animateDots: false };
+                return { text: `Used ${lastTool.name}`, animateDots: false };
             }
             const lastThought = [...entries].reverse().find(e => e.kind === 'thought');
-            if (lastThought) return 'Thinking…';
-            return 'Working…';
+            if (lastThought) return { text: 'Thinking', animateDots: true };
+            return { text: 'Working', animateDots: true };
         }
         const parts = [];
         if (summary.toolCount > 0) parts.push(`${summary.toolCount} tool${summary.toolCount === 1 ? '' : 's'}`);
@@ -51,29 +53,44 @@ export default function ThinkingPanel({ entries, live = false, statusText = '' }
         if (summary.errors > 0) tail.push(`${summary.errors} error${summary.errors === 1 ? '' : 's'}`);
         if (summary.paused > 0) tail.push(`${summary.paused} paused`);
         const detail = tail.length > 0 ? ` · ${tail.join(', ')}` : '';
-        return parts.join(' + ') + detail;
+        return { text: parts.join(' + ') + detail, animateDots: false };
     })();
+
+    // The last thought entry, if any — the live caret is appended to it so
+    // the user sees text actively arriving.
+    const lastThoughtId = live
+        ? [...entries].reverse().find(e => e.kind === 'thought')?.id
+        : null;
 
     return (
         <div
             className={clsx(
-                'rounded-xl border text-xs transition-colors',
+                'relative overflow-hidden rounded-xl border text-xs transition-colors',
                 live
                     ? 'border-indigo-500/40 bg-indigo-500/5'
                     : 'border-zinc-700/70 bg-zinc-800/40 hover:border-zinc-600',
                 'max-w-[90%] md:max-w-[70%]'
             )}
         >
+            {/* Subtle indigo shimmer sweeping across the live panel — pure
+                decoration, never covers content (low opacity, pointer-events
+                disabled, sits behind the button via z-index). */}
+            {live && (
+                <div
+                    aria-hidden="true"
+                    className="thinking-shimmer pointer-events-none absolute inset-y-0 -left-1/2 w-1/2 bg-gradient-to-r from-transparent via-indigo-400/15 to-transparent"
+                />
+            )}
             <button
                 type="button"
                 onClick={() => setExpanded(v => !v)}
-                className="w-full flex items-center gap-2 px-3 py-2 text-left"
+                className="relative w-full flex items-center gap-2 px-3 py-2 text-left"
             >
                 {live ? (
                     summary.pending > 0 ? (
                         <Loader2 className="h-3.5 w-3.5 text-indigo-400 animate-spin shrink-0" />
                     ) : (
-                        <Sparkles className="h-3.5 w-3.5 text-indigo-400 shrink-0" />
+                        <Sparkles className="thinking-breathe h-3.5 w-3.5 text-indigo-400 shrink-0" />
                     )
                 ) : summary.errors > 0 ? (
                     <XCircle className="h-3.5 w-3.5 text-rose-400 shrink-0" />
@@ -83,7 +100,8 @@ export default function ThinkingPanel({ entries, live = false, statusText = '' }
                     <Brain className="h-3.5 w-3.5 text-zinc-400 shrink-0" />
                 )}
                 <span className={clsx('flex-1 truncate', live ? 'text-indigo-100' : 'text-zinc-300')}>
-                    {headerLine}
+                    {header.text}
+                    {header.animateDots && <AnimatedDots />}
                 </span>
                 <ChevronRight
                     className={clsx(
@@ -94,12 +112,18 @@ export default function ThinkingPanel({ entries, live = false, statusText = '' }
             </button>
 
             {expanded && (
-                <div className="px-3 pb-3 pt-0 space-y-2 border-t border-zinc-700/40">
+                <div className="relative px-3 pb-3 pt-0 space-y-2 border-t border-zinc-700/40">
                     {entries.map((entry, idx) => (
-                        <ActivityEntry key={entry.id || idx} entry={entry} />
+                        <ActivityEntry
+                            key={entry.id || idx}
+                            entry={entry}
+                            showCaret={live && entry.id === lastThoughtId}
+                        />
                     ))}
                     {entries.length === 0 && live && (
-                        <div className="text-zinc-500 italic py-1">Waiting for the model…</div>
+                        <div className="text-zinc-500 italic py-1">
+                            Waiting for the model<AnimatedDots />
+                        </div>
                     )}
                 </div>
             )}
@@ -107,7 +131,22 @@ export default function ThinkingPanel({ entries, live = false, statusText = '' }
     );
 }
 
-function ActivityEntry({ entry }) {
+/**
+ * Three trailing dots that fade in sequentially. Use to suffix any "Thinking",
+ * "Calling X", "Working" header — the staggered opacity gives a left-to-right
+ * wave so the user knows the panel is alive even before any events arrive.
+ */
+function AnimatedDots() {
+    return (
+        <span aria-hidden="true" className="inline-flex ml-0.5">
+            <span className="thinking-dot">.</span>
+            <span className="thinking-dot" style={{ animationDelay: '0.2s' }}>.</span>
+            <span className="thinking-dot" style={{ animationDelay: '0.4s' }}>.</span>
+        </span>
+    );
+}
+
+function ActivityEntry({ entry, showCaret = false }) {
     const [open, setOpen] = useState(false);
 
     if (entry.kind === 'thought') {
@@ -116,6 +155,9 @@ function ActivityEntry({ entry }) {
                 <Sparkles className="h-3 w-3 text-indigo-400/70 shrink-0 mt-0.5" />
                 <div className="text-zinc-400 italic leading-relaxed whitespace-pre-wrap break-words">
                     {entry.text}
+                    {showCaret && (
+                        <span aria-hidden="true" className="thinking-caret inline-block w-[6px] h-[1em] bg-indigo-400/80 align-[-2px] ml-0.5" />
+                    )}
                 </div>
             </div>
         );
