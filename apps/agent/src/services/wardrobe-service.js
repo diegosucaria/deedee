@@ -1167,27 +1167,42 @@ GENERAL RULES:
             }
 
             // Clear the generatingImage flag alongside the new path in one write so the
-            // client sees a consistent "done" state.
-            const currentMeta = this.db.getGarment(garmentId)?.meta || {};
-            const clearedMeta = { ...currentMeta };
+            // client sees a consistent "done" state. Same null-guard as the
+            // catch path: if the garment was deleted while the render was in
+            // flight, broadcasting a null payload would crash listeners.
+            const current = this.db.getGarment(garmentId);
+            if (!current) {
+                console.warn(`${TAG} garment ${garmentId} was deleted during render — discarding result`);
+                try { fs.unlinkSync(outPath); } catch (e) { /* best effort */ }
+                return null;
+            }
+            const clearedMeta = { ...(current.meta || {}) };
             delete clearedMeta.generatingImage;
             delete clearedMeta.generatingImageStartedAt;
             this.db.updateGarment(garmentId, { generated_image_path: outPath, meta: clearedMeta });
             const updated = this.db.getGarment(garmentId);
-            this._broadcast('wardrobe:garment:update', updated);
+            if (updated) this._broadcast('wardrobe:garment:update', updated);
 
             console.log(`${TAG} done | garmentId=${garmentId} | model=${modelName} | elapsedMs=${elapsedMs} | bytes=${bytes.length} | path=${outPath}${previousPath ? ` (replaced ${path.basename(previousPath)})` : ''}`);
             return updated;
         } catch (err) {
             // Always clear the generating flag — otherwise a crashed/abandoned
-            // generation leaves the grid spinning forever.
+            // generation leaves the grid spinning forever. Guard against the
+            // garment having been deleted concurrently during the render: in
+            // that case getGarment returns null and we'd otherwise broadcast
+            // wardrobe:garment:update with a null payload, crashing the
+            // client's listener. The deletion already broadcast
+            // wardrobe:garment:delete, so there's nothing to update — skip.
             try {
-                const currentMeta = this.db.getGarment(garmentId)?.meta || {};
-                const clearedMeta = { ...currentMeta };
-                delete clearedMeta.generatingImage;
-                delete clearedMeta.generatingImageStartedAt;
-                this.db.updateGarment(garmentId, { meta: clearedMeta });
-                this._broadcast('wardrobe:garment:update', this.db.getGarment(garmentId));
+                const current = this.db.getGarment(garmentId);
+                if (current) {
+                    const clearedMeta = { ...(current.meta || {}) };
+                    delete clearedMeta.generatingImage;
+                    delete clearedMeta.generatingImageStartedAt;
+                    this.db.updateGarment(garmentId, { meta: clearedMeta });
+                    const updated = this.db.getGarment(garmentId);
+                    if (updated) this._broadcast('wardrobe:garment:update', updated);
+                }
             } catch (cleanupErr) {
                 console.warn(`${TAG} cleanup failed after error | garmentId=${garmentId} | err=${cleanupErr.message}`);
             }
@@ -2042,17 +2057,16 @@ ${panelDescriptors.map(d => `  Panel ${d.index}: ${d.garments.join(', ')}`).join
     async generateOutfitVariations(outfitId, { count = 3 } = {}) {
         const TAG = '[wardrobe.variations]';
 
-        // Emit pending up-front so the client always receives a terminal event
-        // (variations-rendered on success or variations-failed on error) after
-        // this. The route layer pre-validates the obvious cases (outfit exists,
-        // sourceIds.length >= 2) for fast 4xx; everything else lives inside the
-        // try block so a throw here always reaches the failed broadcast.
-        // Without this, the client's optimistic pendingVariations flag could
-        // hang forever after a 202 response since no socket terminal event
-        // would arrive.
-        this._broadcast('wardrobe:outfit:variations-pending', { id: outfitId });
-
+        // Pending broadcast and all validation live INSIDE the try so that
+        // any throw — including a rare broadcast failure (socket teardown,
+        // serializer error) — always reaches the failed broadcast in the
+        // catch. The client's optimistic pendingVariations flag depends on
+        // that terminal event arriving; if pending escaped the try and threw,
+        // the spinner would hang forever. The route layer pre-validates the
+        // cheap cases (outfit exists, sourceIds.length >= 2) for fast 4xx.
         try {
+            this._broadcast('wardrobe:outfit:variations-pending', { id: outfitId });
+
             const source = this.db.getOutfit(outfitId);
             if (!source) throw new Error(`Outfit ${outfitId} not found`);
 
