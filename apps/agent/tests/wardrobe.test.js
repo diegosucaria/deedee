@@ -1253,6 +1253,26 @@ describe('WardrobeService.generateGarmentImage', () => {
         await expect(service.generateGarmentImage('ghost')).rejects.toThrow('not found');
     });
 
+    test('clears meta.generatingImage when fs.readFileSync throws after the flag was set', async () => {
+        // Simulates the race where the crop file passes existsSync but is gone
+        // by readFileSync (concurrent cleanup, permission flap). The outer
+        // try/catch must clear the flag — otherwise the route returned 202
+        // success and the grid would spin forever with no socket terminal
+        // event to clear it.
+        fs.readFileSync.mockImplementationOnce(() => { throw new Error('ENOENT: file vanished'); });
+
+        await expect(service.generateGarmentImage('g1')).rejects.toThrow(/ENOENT/);
+
+        // Cleanup write: meta.generatingImage must be absent in the patch.
+        const cleanupCalls = mockAgent.db.updateGarment.mock.calls.filter(
+            ([id, patch]) => id === 'g1' && patch.meta && !('generated_image_path' in patch)
+        );
+        // The flag-set call has generatingImage: true; the cleanup call must
+        // have it absent.
+        const sawCleanupClear = cleanupCalls.some(([, patch]) => !patch.meta.generatingImage);
+        expect(sawCleanupClear).toBe(true);
+    });
+
     test('regeneration deletes the previous generated file (no on-disk cruft)', async () => {
         const previousPath = '/data/wardrobe/garments/src/generated_g1_111.jpg';
         mockAgent.db.getGarment.mockReturnValue({
@@ -1739,6 +1759,25 @@ describe('WardrobeService.generateOutfitVariations', () => {
             const shared = call.garmentIdsPanels[i].filter(id => sourceSet.has(id)).length;
             expect(shared).toBeGreaterThanOrEqual(3);
         }
+    });
+
+    test('emits variations-pending up-front and variations-failed when validation throws after route 202', async () => {
+        // Outfit references garments that have been deleted from the wardrobe —
+        // the route can't catch this synchronously (it would need to load the
+        // full wardrobe), so the service throws and MUST emit a terminal
+        // failed event so the client's optimistic spinner clears.
+        mockAgent.db.getOutfit.mockReturnValue({ id: 'out1', garment_ids: ['ghost1', 'ghost2'] });
+        mockAgent.db.getGarments.mockReturnValue([]); // wardrobe is empty
+
+        await expect(service.generateOutfitVariations('out1')).rejects.toThrow(/too few/);
+
+        const events = mockAgent.interface.broadcast.mock.calls.map(c => c[0]);
+        expect(events).toContain('wardrobe:outfit:variations-pending');
+        expect(events).toContain('wardrobe:outfit:variations-failed');
+        // Pending must precede failed so the client's spinner shows then clears,
+        // not the reverse.
+        expect(events.indexOf('wardrobe:outfit:variations-pending'))
+            .toBeLessThan(events.indexOf('wardrobe:outfit:variations-failed'));
     });
 });
 

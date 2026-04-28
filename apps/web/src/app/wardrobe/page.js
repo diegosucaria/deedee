@@ -555,7 +555,6 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
     const [hintImage, setHintImage] = useState(null); // { base64, mimeType, name }
     const [reenriching, setReenriching] = useState(false);
     const [reenrichError, setReenrichError] = useState('');
-    const [generating, setGenerating] = useState(false);
     const [genError, setGenError] = useState('');
     const [showOriginal, setShowOriginal] = useState(false);
     const [mergeOpen, setMergeOpen] = useState(false);
@@ -568,6 +567,11 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
     const extraPhotoInputRef = useRef(null);
     const hintImageInputRef = useRef(null);
     const duplicateInputRef = useRef(null);
+    // Image generation runs in the background — derive the spinner from the
+    // garment row's flag (set by the service before its first await, cleared
+    // when the render finishes) instead of a local flag tied to the Server
+    // Action's await. Keeps the in-button spinner visible for the full render.
+    const generating = !!garment.meta?.generatingImage;
     const busy = savingField !== null || reenriching || generating || duplicating || generatingOutfits;
     const generatedUrl = pathToUrl(garment.generated_image_path);
     const originalUrl = pathToUrl(garment.crop_image_path || garment.source_image_path);
@@ -626,12 +630,9 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
     };
 
     const handleGenerate = async () => {
-        setGenerating(true);
         setGenError('');
-        try {
-            const res = await onGenerateImage();
-            if (!res?.success) setGenError(res?.error || 'Generate failed');
-        } finally { setGenerating(false); }
+        const res = await onGenerateImage();
+        if (!res?.success) setGenError(res?.error || 'Generate failed');
     };
 
     const handleDuplicatePhotoSelect = async (e) => {
@@ -684,7 +685,6 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
         const file = e.target.files?.[0];
         if (extraPhotoInputRef.current) extraPhotoInputRef.current.value = '';
         if (!file) return;
-        setGenerating(true);
         setGenError('');
         try {
             const extraImageBase64 = await new Promise((resolve, reject) => {
@@ -697,8 +697,6 @@ function GarmentDetail({ garment, onClose, onChange, onDelete, onConfirmBrand, o
             if (!res?.success) setGenError(res?.error || 'Generate failed');
         } catch (err) {
             setGenError(err.message);
-        } finally {
-            setGenerating(false);
         }
     };
 
@@ -1204,6 +1202,11 @@ function OutfitsTab() {
     const [selectedGarment, setSelectedGarment] = useState(null);
     const [selectedTrip, setSelectedTrip] = useState(null);
     const [expandedTripGroups, setExpandedTripGroups] = useState({}); // tripId -> bool
+    // Outfits where a variations render is in flight, populated by
+    // wardrobe:outfit:variations-pending and cleared by -rendered/-failed.
+    // Used so OutfitDetail can keep its spinner visible after the Server
+    // Action returns 202 (the actual render finishes via WebSocket later).
+    const [pendingVariations, setPendingVariations] = useState({}); // id -> true
 
     const load = useCallback(async () => {
         setLoading(true);
@@ -1221,6 +1224,51 @@ function OutfitsTab() {
     }, [likedOnly]);
 
     useEffect(() => { load(); }, [load]);
+
+    // Subscribe to outfit events so async generations (variations renders,
+    // outfits-for-garment proposals) propagate without the Server Action
+    // having to await them. Generate routes return 202 immediately; the work
+    // completes in the background and lands here over the socket.
+    useEffect(() => {
+        const socket = io(getSocketUrl(), {
+            path: '/socket.io',
+            transports: ['websocket'],
+            reconnection: true,
+            reconnectionAttempts: 10,
+            withCredentials: true,
+        });
+        const upsertOutfit = (outfit) => {
+            if (!outfit?.id) return;
+            setOutfits(prev => {
+                const idx = prev.findIndex(o => o.id === outfit.id);
+                if (idx >= 0) { const next = [...prev]; next[idx] = outfit; return next; }
+                return [outfit, ...prev];
+            });
+            setSelectedOutfit(prev => prev?.id === outfit.id ? outfit : prev);
+        };
+        const clearPending = (id) => {
+            if (!id) return;
+            setPendingVariations(prev => {
+                if (!prev[id]) return prev;
+                const next = { ...prev };
+                delete next[id];
+                return next;
+            });
+        };
+        socket.on('wardrobe:outfit:create', upsertOutfit);
+        socket.on('wardrobe:outfit:update', upsertOutfit);
+        socket.on('wardrobe:outfit:rendered', upsertOutfit);
+        socket.on('wardrobe:outfit:variations-rendered', (outfit) => {
+            upsertOutfit(outfit);
+            clearPending(outfit?.id);
+        });
+        socket.on('wardrobe:outfit:variations-pending', ({ id }) => {
+            if (!id) return;
+            setPendingVariations(prev => prev[id] ? prev : { ...prev, [id]: true });
+        });
+        socket.on('wardrobe:outfit:variations-failed', ({ id }) => clearPending(id));
+        return () => socket.disconnect();
+    }, []);
 
     const tripById = useMemo(() => {
         const idx = {};
@@ -1279,10 +1327,19 @@ function OutfitsTab() {
     };
 
     const handleGenerateVariations = async (outfit) => {
+        // Optimistic: mark this outfit as variations-pending immediately so the
+        // detail modal's spinner doesn't blink off when the 202 returns. The
+        // socket's variations-pending event will flip the same flag, and the
+        // -rendered/-failed event clears it.
+        setPendingVariations(prev => prev[outfit.id] ? prev : { ...prev, [outfit.id]: true });
         const res = await generateOutfitVariations(outfit.id);
-        if (res.success && res.data?.outfit) {
-            setOutfits(prev => prev.map(o => o.id === outfit.id ? res.data.outfit : o));
-            setSelectedOutfit(prev => prev?.id === outfit.id ? res.data.outfit : prev);
+        if (!res.success) {
+            setPendingVariations(prev => {
+                if (!prev[outfit.id]) return prev;
+                const next = { ...prev };
+                delete next[outfit.id];
+                return next;
+            });
         }
         return res;
     };
@@ -1448,6 +1505,7 @@ function OutfitsTab() {
                         onLabelsChange={(labels) => handleLabelsChange(selectedOutfit, labels)}
                         onRename={(name) => handleRename(selectedOutfit, name)}
                         onGenerateVariations={() => handleGenerateVariations(selectedOutfit)}
+                        variationsPending={!!pendingVariations[selectedOutfit.id]}
                     />
                 )}
             </AnimatePresence>
@@ -1703,7 +1761,7 @@ function TripGroupRow({ tripId, trip, outfits, expanded, onToggle, onOpenTrip, g
     );
 }
 
-function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGarment, onDelete, onLabelsChange, onRename, onGenerateVariations, tripById, onSelectTrip }) {
+function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGarment, onDelete, onLabelsChange, onRename, onGenerateVariations, tripById, onSelectTrip, variationsPending = false }) {
     const router = useRouter();
     const [lightboxOpen, setLightboxOpen] = useState(false);
     const [lightboxSrc, setLightboxSrc] = useState(null);
@@ -1712,7 +1770,6 @@ function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGar
     const [editingName, setEditingName] = useState(false);
     const [nameDraft, setNameDraft] = useState(outfit.name || '');
     const [savingName, setSavingName] = useState(false);
-    const [generatingVariations, setGeneratingVariations] = useState(false);
     const [variationsError, setVariationsError] = useState('');
     const [questionDraft, setQuestionDraft] = useState('');
     const [asking, setAsking] = useState(false);
@@ -1724,17 +1781,17 @@ function OutfitDetail({ outfit, garmentIndex, onClose, onToggleLike, onSelectGar
         .map(id => garmentIndex[id])
         .filter(Boolean);
     const missingCount = (outfit.garment_ids || []).length - garments.length;
+    // Spinner is now driven by parent (which tracks the outfit's pending state
+    // across the WebSocket lifecycle), not by the awaited Server Action.
+    const generatingVariations = variationsPending;
 
     const openLightbox = (src) => { setLightboxSrc(src); setLightboxOpen(true); };
 
     const handleGenerateVariations = async () => {
         if (!onGenerateVariations) return;
-        setGeneratingVariations(true);
         setVariationsError('');
-        try {
-            const res = await onGenerateVariations();
-            if (!res?.success) setVariationsError(res?.error || 'Failed to generate variations');
-        } finally { setGeneratingVariations(false); }
+        const res = await onGenerateVariations();
+        if (!res?.success) setVariationsError(res?.error || 'Failed to generate variations');
     };
 
     const handleAddLabel = async () => {
