@@ -138,6 +138,9 @@ class DJExecutor {
     }
 
     async ingest_dj_history({ content, venue, date, party }) {
+        if (this.djService.disabled) {
+            return 'DJ history is disabled because DISCOGS_TOKEN is not configured.';
+        }
         try {
             const filename = await this.djService.ingestHistory(content, { venue, date, party });
             return `History saved to DJ Vault as \`${filename}\` with context: ${venue} / ${party} (${date}).`;

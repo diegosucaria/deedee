@@ -15,21 +15,26 @@ class MCPManager {
     }
 
     /**
-     * Returns the names of any ${VAR} placeholders in the server config that
-     * resolve to an empty value in process.env. We use this to skip MCP servers
-     * cleanly in slim installs instead of letting them spawn and crash.
+     * Returns the missing ${VAR} placeholders ONLY when the server is fully
+     * unconfigured — i.e. not a single placeholder resolves to a value. That
+     * keeps the prior behavior for partially-configured servers (e.g.
+     * browser-use with GOOGLE_API_KEY set but BROWSER_EXECUTABLE_PATH unset)
+     * where the server has its own defaults and would otherwise spawn fine.
+     * Returns [] when the server should still be attempted.
      */
     _findMissingEnvVars(serverConfig) {
         const missing = new Set();
+        let present = 0;
         const check = (val) => {
             if (typeof val !== 'string') return;
             for (const m of val.matchAll(/\$\{([^}]+)\}/g)) {
-                if (!process.env[m[1]]) missing.add(m[1]);
+                if (process.env[m[1]]) present++;
+                else missing.add(m[1]);
             }
         };
         if (serverConfig.env) Object.values(serverConfig.env).forEach(check);
         if (serverConfig.url) check(serverConfig.url);
-        return [...missing];
+        return present === 0 && missing.size > 0 ? [...missing] : [];
     }
 
     // ... (init method remains same)
