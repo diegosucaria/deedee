@@ -183,11 +183,22 @@ const createWardrobeRouter = (agent) => {
     // synchronously sets meta.generatingImage + broadcasts wardrobe:garment:update
     // before its first await, then broadcasts again on completion (or failure,
     // which clears the flag). Connected clients see start → end via WebSocket.
+    //
+    // All preconditions that would cause the service to throw before the flag
+    // is set (no Gemini client, missing crop file) MUST be validated
+    // synchronously here. If they're not, the route would return 202 success,
+    // the service would throw asynchronously, and the client would see no
+    // spinner, no error, and no socket event — a silent failure.
     router.post('/garments/:id/generate-image', (req, res) => {
         try {
             if (!agent.wardrobeService) return res.status(503).json({ error: 'Wardrobe service not available' });
+            if (!agent.client) return res.status(503).json({ error: 'Image model client not initialized' });
             const existing = agent.db.getGarment(req.params.id);
             if (!existing) return res.status(404).json({ error: 'Garment not found' });
+            const cropPath = existing.crop_image_path || existing.source_image_path;
+            if (!cropPath || !fs.existsSync(cropPath)) {
+                return res.status(400).json({ error: 'Garment has no source image to reference' });
+            }
 
             const { extra_image, mimeType } = req.body || {};
             const extraReferences = extra_image
@@ -289,11 +300,21 @@ const createWardrobeRouter = (agent) => {
     // wardrobe:outfit:variations-rendered (on success) or
     // wardrobe:outfit:variations-failed (on error) so the client can update
     // its UI via WebSocket without holding a Server Action transition open.
+    //
+    // Pre-validate the cheap cases synchronously so the client gets a 4xx
+    // immediately for malformed requests. The expensive
+    // "<2 valid garments still in wardrobe" check stays in the service (it
+    // requires loading the full garment pool) and the service's outer catch
+    // emits variations-failed if it fires.
     router.post('/outfits/:id/variations', (req, res) => {
         try {
             if (!agent.wardrobeService) return res.status(503).json({ error: 'Wardrobe service not available' });
             const existing = agent.db.getOutfit(req.params.id);
             if (!existing) return res.status(404).json({ error: 'Outfit not found' });
+            const sourceIds = Array.isArray(existing.garment_ids) ? existing.garment_ids : [];
+            if (sourceIds.length < 2) {
+                return res.status(400).json({ error: 'Source outfit needs at least 2 items to build variations' });
+            }
 
             const { count } = req.body || {};
             agent.wardrobeService.generateOutfitVariations(req.params.id, {

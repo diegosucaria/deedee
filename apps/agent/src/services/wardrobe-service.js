@@ -1075,20 +1075,31 @@ Hard rules:
 
         console.log(`${TAG} start | garmentId=${garmentId} | descriptor="${descriptor}" | extraRefs=${extras.length} | hasExisting=${!!garment.generated_image_path}`);
 
-        // Mark the garment as generating so every connected client can show a
-        // spinner on the grid card. Cleared in the finally-block below.
-        this.db.updateGarment(garmentId, {
-            meta: { ...(garment.meta || {}), generatingImage: true, generatingImageStartedAt: Date.now() }
-        });
-        this._broadcast('wardrobe:garment:update', this.db.getGarment(garmentId));
+        // Outer try wraps from the flag-set onward so any throw in the
+        // synchronous prefix (e.g. fs.readFileSync racing a file delete) goes
+        // through the catch below, which clears the flag and broadcasts an
+        // update. Without this, a throw between the flag-set at the top of
+        // this block and the model call further down would leave
+        // meta.generatingImage stuck on the row and the grid spinner running
+        // forever.
+        const modelName = this.config.getModel('IMAGE');
+        const startedAt = Date.now();
+        try {
+            // Mark the garment as generating so every connected client can show
+            // a spinner on the grid card. Cleared in the catch below on error
+            // and inline with the new path on success.
+            this.db.updateGarment(garmentId, {
+                meta: { ...(garment.meta || {}), generatingImage: true, generatingImageStartedAt: Date.now() }
+            });
+            this._broadcast('wardrobe:garment:update', this.db.getGarment(garmentId));
 
-        const referenceClause = extras.length === 0
-            ? 'Use the single reference image to render the item.'
-            : `Use ALL ${extras.length + 1} reference images — they show the same physical garment from different angles or with different details. Preserve every visible feature across all of them (logos, stitching, hardware, prints) in the final render. Do not invent or omit details based on a single image when other references contradict.`;
+            const referenceClause = extras.length === 0
+                ? 'Use the single reference image to render the item.'
+                : `Use ALL ${extras.length + 1} reference images — they show the same physical garment from different angles or with different details. Preserve every visible feature across all of them (logos, stitching, hardware, prints) in the final render. Do not invent or omit details based on a single image when other references contradict.`;
 
-        const styleClause = this._styleForType(garment.type, garment.subtype);
+            const styleClause = this._styleForType(garment.type, garment.subtype);
 
-        const prompt = `Generate a clean product-catalog photo of the exact ${descriptor}.
+            const prompt = `Generate a clean product-catalog photo of the exact ${descriptor}.
 ${referenceClause}
 
 COMPOSITION (mandatory — every garment of this type must look the same way so the wardrobe grid is uniform):
@@ -1103,23 +1114,20 @@ GENERAL RULES:
 - Studio e-commerce aesthetic (think Nike/SSENSE/MR PORTER product page)
 - No text overlays, no watermarks, no borders`;
 
-        const cropMime = cropPath.endsWith('.png') ? 'image/png' : 'image/jpeg';
-        const cropBase64 = fs.readFileSync(cropPath).toString('base64');
+            const cropMime = cropPath.endsWith('.png') ? 'image/png' : 'image/jpeg';
+            const cropBase64 = fs.readFileSync(cropPath).toString('base64');
 
-        const parts = [{ inlineData: { data: cropBase64, mimeType: cropMime } }];
-        for (const ref of extras) {
-            parts.push({
-                inlineData: {
-                    data: ref.data,
-                    mimeType: ref.mimeType || 'image/jpeg'
-                }
-            });
-        }
-        parts.push({ text: prompt });
+            const parts = [{ inlineData: { data: cropBase64, mimeType: cropMime } }];
+            for (const ref of extras) {
+                parts.push({
+                    inlineData: {
+                        data: ref.data,
+                        mimeType: ref.mimeType || 'image/jpeg'
+                    }
+                });
+            }
+            parts.push({ text: prompt });
 
-        const modelName = this.config.getModel('IMAGE');
-        const startedAt = Date.now();
-        try {
             let response;
             try {
                 response = await this.agent.client.models.generateContent({
@@ -2033,32 +2041,35 @@ ${panelDescriptors.map(d => `  Panel ${d.index}: ${d.garments.join(', ')}`).join
      */
     async generateOutfitVariations(outfitId, { count = 3 } = {}) {
         const TAG = '[wardrobe.variations]';
-        const source = this.db.getOutfit(outfitId);
-        if (!source) throw new Error(`Outfit ${outfitId} not found`);
 
-        const sourceIds = Array.isArray(source.garment_ids) ? source.garment_ids : [];
-        if (sourceIds.length < 2) {
-            throw new Error('Source outfit needs at least 2 items to build variations');
-        }
-
-        const pool = this.db.getGarments({ limit: 500 }) || [];
-        const poolById = Object.fromEntries(pool.map(g => [g.id, g]));
-        // Drop panels we can't build (ids no longer in wardrobe) so the LLM
-        // doesn't anchor on ghosts.
-        const validSourceIds = sourceIds.filter(id => poolById[id]);
-        if (validSourceIds.length < 2) {
-            throw new Error('Source outfit has too few garments still in the wardrobe');
-        }
-
-        // Outfits don't have a meta column we can flip a flag on, so emit a
-        // dedicated pending event before the slow LLM + render begins. The web
-        // client uses this to show a spinner without holding a Server Action
-        // transition open. We always emit a terminal event afterward
-        // (variations-rendered on success, variations-failed on error) so the
-        // client can clear the spinner reliably.
+        // Emit pending up-front so the client always receives a terminal event
+        // (variations-rendered on success or variations-failed on error) after
+        // this. The route layer pre-validates the obvious cases (outfit exists,
+        // sourceIds.length >= 2) for fast 4xx; everything else lives inside the
+        // try block so a throw here always reaches the failed broadcast.
+        // Without this, the client's optimistic pendingVariations flag could
+        // hang forever after a 202 response since no socket terminal event
+        // would arrive.
         this._broadcast('wardrobe:outfit:variations-pending', { id: outfitId });
 
         try {
+            const source = this.db.getOutfit(outfitId);
+            if (!source) throw new Error(`Outfit ${outfitId} not found`);
+
+            const sourceIds = Array.isArray(source.garment_ids) ? source.garment_ids : [];
+            if (sourceIds.length < 2) {
+                throw new Error('Source outfit needs at least 2 items to build variations');
+            }
+
+            const pool = this.db.getGarments({ limit: 500 }) || [];
+            const poolById = Object.fromEntries(pool.map(g => [g.id, g]));
+            // Drop panels we can't build (ids no longer in wardrobe) so the LLM
+            // doesn't anchor on ghosts.
+            const validSourceIds = sourceIds.filter(id => poolById[id]);
+            if (validSourceIds.length < 2) {
+                throw new Error('Source outfit has too few garments still in the wardrobe');
+            }
+
             let variations = [];
             if (this.agent.client) {
                 try {
