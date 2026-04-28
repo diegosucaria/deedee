@@ -11,10 +11,11 @@ class BackupManager {
         // Default to 'backups' if not specified. Remove trailing slash if present.
         this.backupPath = (process.env.GCS_BACKUP_PATH || 'backups').replace(/\/$/, '');
 
-        console.log('[BackupManager] Initialized.',
-            this.bucketName ? `Bucket: ${this.bucketName}` : 'WARNING: GCS_BACKUP_BUCKET not set.',
-            `Path: ${this.backupPath}`
-        );
+        if (this.bucketName) {
+            console.log(`[BackupManager] Initialized. Bucket: ${this.bucketName} Path: ${this.backupPath}`);
+        } else {
+            console.log('[BackupManager] Disabled: GCS_BACKUP_BUCKET not set.');
+        }
     }
 
     async performBackup() {

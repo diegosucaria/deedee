@@ -11,6 +11,25 @@ class MCPManager {
         this.toolMap = new Map();  // toolName -> { name: string, client: Client }
         this.configPath = path.resolve(__dirname, configPath);
         this._activeAbortControllers = new Set(); // Track active long-running calls
+        this._slimSkipped = new Map(); // serverName -> [missingVars]
+    }
+
+    /**
+     * Returns the names of any ${VAR} placeholders in the server config that
+     * resolve to an empty value in process.env. We use this to skip MCP servers
+     * cleanly in slim installs instead of letting them spawn and crash.
+     */
+    _findMissingEnvVars(serverConfig) {
+        const missing = new Set();
+        const check = (val) => {
+            if (typeof val !== 'string') return;
+            for (const m of val.matchAll(/\$\{([^}]+)\}/g)) {
+                if (!process.env[m[1]]) missing.add(m[1]);
+            }
+        };
+        if (serverConfig.env) Object.values(serverConfig.env).forEach(check);
+        if (serverConfig.url) check(serverConfig.url);
+        return [...missing];
     }
 
     // ... (init method remains same)
@@ -88,8 +107,17 @@ class MCPManager {
         const config = userConfig;
         this.config = config;
 
+        this._slimSkipped.clear();
+
         for (const [name, serverConfig] of Object.entries(config)) {
             if (serverConfig.disabled) continue;
+
+            const missing = this._findMissingEnvVars(serverConfig);
+            if (missing.length > 0) {
+                this._slimSkipped.set(name, missing);
+                console.log(`[MCP] '${name}' disabled: missing env ${missing.join(', ')}`);
+                continue;
+            }
 
             try {
                 console.log(`[MCP] Connecting to server: ${name}...`);
@@ -329,6 +357,11 @@ class MCPManager {
         for (const name of configuredNames) {
             if (config[name].disabled) {
                 statuses.push({ name, status: 'disabled' });
+                continue;
+            }
+
+            if (this._slimSkipped.has(name)) {
+                statuses.push({ name, status: 'missing-env', missing: this._slimSkipped.get(name) });
                 continue;
             }
 
