@@ -19,12 +19,15 @@ export function getSocketUrl() {
         return window.__DEEDEE_CONFIG__.socketUrl;
     }
     // 2. Fallback: derive from current origin. 
-    // If we're on a standard port (80/443), assume we're through a proxy/tunnel that routes /socket.io.
+    // If we're on a standard port (80/443), assume we're using the Cloudflare Tunnel
+    // subdomain routing (api.domain.com).
     // Otherwise, swap to the default API port (local dev).
     if (typeof window !== 'undefined') {
         const { protocol, hostname, port } = window.location;
         if (!port || port === '80' || port === '443') {
-            return `${protocol}//${hostname}`;
+            // Strip 'www.' if present, then prepend 'api.'
+            const baseHost = hostname.replace(/^www\./, '');
+            return `${protocol}//api.${baseHost}`;
         }
         return `${protocol}//${hostname}:3001`;
     }

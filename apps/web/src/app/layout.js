@@ -37,6 +37,8 @@ export const viewport = {
   viewportFit: "cover",
 };
 
+export const dynamic = 'force-dynamic';
+
 export default function RootLayout({ children }) {
   // Inject runtime config for client components.
   // SOCKET_URL is set at container runtime (e.g. Balena device vars) so we
