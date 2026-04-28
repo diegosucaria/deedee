@@ -1390,6 +1390,9 @@ export default function ChatSessionPage({ params }) {
                             }}
                             placeholder={`Message...`}
                             rows={1}
+                            autoComplete="off"
+                            autoCorrect="off"
+                            spellCheck={false}
                             className="flex-1 rounded-xl border border-zinc-700 bg-zinc-900 px-3 py-2 md:px-4 md:py-3 min-h-[40px] md:min-h-[48px] max-h-[150px] text-white placeholder-zinc-500 outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 transition-all resize-none scrollbar-thin scrollbar-thumb-zinc-700 font-sans"
                         />
 
