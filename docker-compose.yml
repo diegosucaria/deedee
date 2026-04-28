@@ -3,7 +3,8 @@ version: '2.1'
 volumes:
   repo-data:
   agent-data: # For SQLite DB
-  interfaces-data: # For WhatsApp Sessions
+  interfaces-data:
+    # For WhatsApp Sessions
 
 services:
   agent:
@@ -124,6 +125,15 @@ services:
   #   networks:
   #     - deedee-net
   #   restart: always
+
+  cloudflared:
+    image: cloudflare/cloudflared:latest
+    command: tunnel run
+    environment:
+      - TUNNEL_TOKEN=${TUNNEL_TOKEN}
+    restart: always
+    networks:
+      - deedee-net
 
 networks:
   deedee-net:
