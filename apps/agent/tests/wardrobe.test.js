@@ -1699,6 +1699,134 @@ describe('WardrobeService.recommendOutfit (P6)', () => {
     });
 });
 
+describe('WardrobeService.recommendOutfit active-trip reuse', () => {
+    let service;
+    const today = new Date().toISOString().slice(0, 10);
+    const yesterday = new Date(Date.now() - 86400000).toISOString().slice(0, 10);
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().slice(0, 10);
+
+    beforeEach(() => {
+        jest.clearAllMocks();
+        service = new WardrobeService(mockAgent);
+        mockAgent.db.getGarments.mockReturnValue([
+            { id: 'g1', type: 'top' }, { id: 'g2', type: 'bottom' }
+        ]);
+        mockAgent.db.getGarment.mockImplementation(id =>
+            mockAgent.db.getGarments().find(g => g.id === id) || null);
+        mockAgent.db.getOutfits = jest.fn().mockReturnValue([]);
+        mockAgent.db.addOutfit = jest.fn().mockReturnValue('out_new');
+        mockAgent.db.getOutfit = jest.fn();
+        mockAgent.db.getTrips = jest.fn();
+        mockAgent.db.getTrip = jest.fn();
+    });
+
+    test('reuses pre-rendered trip outfit when active trip covers today', async () => {
+        mockAgent.db.getTrips.mockReturnValue([{
+            id: 'trip_1',
+            status: 'active',
+            destination: 'Lisbon',
+            start_date: yesterday,
+            end_date: tomorrow,
+            actual_capsule: ['g1', 'g2'],
+            weather_snapshot: { daily_plan: [
+                { date: yesterday, garment_ids: ['g1'], outfit_id: 'out_y' },
+                { date: today, garment_ids: ['g1', 'g2'], outfit_id: 'out_today', rationale: 'Day-2 look' },
+                { date: tomorrow, garment_ids: ['g2'], outfit_id: 'out_t' }
+            ]}
+        }]);
+        mockAgent.db.getOutfit.mockImplementation(id => id === 'out_today'
+            ? { id: 'out_today', garment_ids: ['g1', 'g2'], rendered_image_path: '/data/outfits/out_today/render.jpg' }
+            : null);
+        const existsSpy = jest.spyOn(fs, 'existsSync').mockReturnValue(true);
+
+        const r = await service.recommendOutfit({ context: 'morning' });
+
+        expect(r.proposals).toHaveLength(1);
+        expect(r.proposals[0].outfit.id).toBe('out_today');
+        expect(r.proposals[0].outfit.rendered_image_path).toBe('/data/outfits/out_today/render.jpg');
+        expect(r.proposals[0].bucket).toBe('trip_planned');
+        expect(r.proposals[0].rationale).toBe('Day-2 look');
+        // No fresh LLM call and no new outfit row created.
+        expect(mockAgent.client.models.generateContent).not.toHaveBeenCalled();
+        expect(mockAgent.db.addOutfit).not.toHaveBeenCalled();
+        existsSpy.mockRestore();
+    });
+
+    test('falls through to LLM flow when active trip has no rendered image for today', async () => {
+        const trip = {
+            id: 'trip_2',
+            status: 'active',
+            destination: 'Porto',
+            start_date: today,
+            end_date: tomorrow,
+            actual_capsule: ['g1', 'g2'],
+            weather_snapshot: { daily_plan: [
+                { date: today, garment_ids: ['g1', 'g2'], outfit_id: 'out_today' }
+            ]}
+        };
+        mockAgent.db.getTrips.mockReturnValue([trip]);
+        mockAgent.db.getTrip.mockImplementation(id => id === 'trip_2' ? trip : null);
+        // Outfit exists but no render path yet — pretrip render hasn't run.
+        mockAgent.db.getOutfit.mockReturnValue({ id: 'out_today', garment_ids: ['g1', 'g2'], rendered_image_path: null });
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            text: () => JSON.stringify({ proposals: [
+                { bucket: 'weather_anchored', garment_ids: ['g1', 'g2'], rationale: 'fresh' }
+            ]}),
+            candidates: [{ content: { parts: [{ text: JSON.stringify({ proposals: [] }) }] } }]
+        });
+
+        await service.recommendOutfit({ context: 'morning' });
+
+        expect(mockAgent.client.models.generateContent).toHaveBeenCalledTimes(1);
+        // Pool came from the trip's actual_capsule, so the prompt should reference its garments only.
+        const promptText = mockAgent.client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
+        expect(promptText).toContain('Trip: Porto');
+    });
+
+    test('skips reuse when no active trip covers today', async () => {
+        mockAgent.db.getTrips.mockReturnValue([{
+            id: 'trip_3',
+            status: 'active',
+            start_date: '2000-01-01',
+            end_date: '2000-01-05',
+            weather_snapshot: { daily_plan: [{ date: '2000-01-02', outfit_id: 'old' }] }
+        }]);
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            text: () => JSON.stringify({ proposals: [
+                { bucket: 'weather_anchored', garment_ids: ['g1', 'g2'], rationale: 'fresh' }
+            ]}),
+            candidates: [{ content: { parts: [{ text: JSON.stringify({ proposals: [] }) }] } }]
+        });
+
+        await service.recommendOutfit({ context: 'morning' });
+
+        expect(mockAgent.db.getOutfit).not.toHaveBeenCalledWith('old');
+        expect(mockAgent.client.models.generateContent).toHaveBeenCalledTimes(1);
+    });
+
+    test('does not auto-detect when caller supplies explicit garmentIds', async () => {
+        mockAgent.db.getTrips.mockReturnValue([{
+            id: 'trip_4',
+            status: 'active',
+            start_date: today,
+            end_date: today,
+            weather_snapshot: { daily_plan: [{ date: today, outfit_id: 'out_today' }] }
+        }]);
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            text: () => JSON.stringify({ proposals: [
+                { bucket: 'weather_anchored', garment_ids: ['g1'], rationale: 'pinned' }
+            ]}),
+            candidates: [{ content: { parts: [{ text: JSON.stringify({ proposals: [] }) }] } }]
+        });
+
+        await service.recommendOutfit({ garmentIds: ['g1'], context: 'pinned' });
+
+        // Explicit pool means we shouldn't even peek at trip data.
+        expect(mockAgent.db.getTrips).not.toHaveBeenCalled();
+        expect(mockAgent.client.models.generateContent).toHaveBeenCalledTimes(1);
+    });
+});
+
 describe('WardrobeService.generateOutfitVariations', () => {
     let service;
     const sourceOutfit = {

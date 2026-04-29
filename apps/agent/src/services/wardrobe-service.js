@@ -1687,6 +1687,20 @@ Respond with strict JSON:
      * Saves each proposal as a wr_outfits row and returns the saved outfits.
      */
     async recommendOutfit({ garmentIds = null, tripId = null, context = '', count = 4, render = true } = {}) {
+        // When neither an explicit garment list nor trip is given, auto-detect
+        // an active trip covering today. If that trip already has a pre-rendered
+        // outfit for today (from renderTripDailyOutfits), reuse it instead of
+        // generating a fresh recommendation — keeps the daily morning suggestion
+        // visually consistent with the trip plan and skips a redundant render.
+        if (!Array.isArray(garmentIds) && !tripId) {
+            const activeTrip = this._findActiveTripForToday();
+            if (activeTrip) {
+                const reused = this._reuseTripDailyOutfit(activeTrip);
+                if (reused) return reused;
+                tripId = activeTrip.id;
+            }
+        }
+
         // Resolve candidate pool
         let pool = [];
         let trip = null;
@@ -1838,6 +1852,32 @@ Do not propose items outside the pool. Respond with strict JSON:
             experimental: 'bolder pick'
         };
         return map[bucket] || (bucket || 'outfit').replace(/_/g, ' ');
+    }
+
+    _findActiveTripForToday() {
+        const today = new Date().toISOString().slice(0, 10);
+        const trips = this.db.getTrips?.({ status: 'active' }) || [];
+        return trips.find(t =>
+            typeof t.start_date === 'string'
+            && typeof t.end_date === 'string'
+            && t.start_date <= today
+            && today <= t.end_date
+        ) || null;
+    }
+
+    _reuseTripDailyOutfit(trip) {
+        const today = new Date().toISOString().slice(0, 10);
+        const daily = Array.isArray(trip.weather_snapshot?.daily_plan) ? trip.weather_snapshot.daily_plan : [];
+        const dayEntry = daily.find(d => d?.date === today);
+        if (!dayEntry?.outfit_id) return null;
+        const outfit = this.db.getOutfit(dayEntry.outfit_id);
+        if (!outfit?.rendered_image_path || !fs.existsSync(outfit.rendered_image_path)) return null;
+        const rationale = dayEntry.rationale
+            || `Pre-planned look for ${trip.destination || 'your trip'} (day ${daily.indexOf(dayEntry) + 1} of ${daily.length}).`;
+        return {
+            proposals: [{ outfit, bucket: 'trip_planned', rationale, wants: [] }],
+            notes: `Reusing pre-rendered trip outfit for ${today}.`
+        };
     }
 
     _saveProposals(proposals, context) {
