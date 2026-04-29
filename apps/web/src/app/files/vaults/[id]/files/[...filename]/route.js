@@ -1,8 +1,12 @@
 
 import { NextResponse } from 'next/server';
 import { API_URL } from '@/lib/api';
+import { requireSession } from '@/lib/auth/guard';
 
 export async function GET(request, { params }) {
+    const { session, response } = await requireSession();
+    if (!session) return response;
+
     const { id, filename: filenameParam } = await params;
     const filename = Array.isArray(filenameParam) ? filenameParam.join('/') : filenameParam;
     const { DEEDEE_API_TOKEN } = process.env;

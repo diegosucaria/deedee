@@ -90,6 +90,11 @@ async function reissue(payload) {
 // Pathnames the middleware will not gate. Login flow itself, OAuth
 // callback (so an expired session mid-OAuth-flow doesn't drop the
 // authorization code), static assets, the manifest/icons, and health.
+//
+// IMPORTANT: the static-asset regex is restricted to TOP-LEVEL paths
+// (single segment after /) so it can't be exploited to bypass auth on
+// nested route handlers that happen to take an extension. e.g. a vault
+// file at /files/vaults/123/files/photo.png must NOT bypass.
 const PUBLIC_PATHS = [
     /^\/login(?:\/.*)?$/,
     /^\/api\/auth\/login$/,
@@ -100,7 +105,7 @@ const PUBLIC_PATHS = [
     /^\/_next\/.*$/,
     /^\/favicon\.ico$/,
     /^\/site\.webmanifest$/,
-    /^\/.*\.(?:png|svg|ico|jpg|jpeg|webp|woff2?|ttf|map)$/,
+    /^\/[^/]+\.(?:png|svg|ico|jpg|jpeg|webp|woff2?|ttf|map)$/,
 ];
 
 function isPublic(pathname) {
