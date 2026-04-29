@@ -36,7 +36,7 @@ const { MemoryPruningService } = require('./services/memory-pruning');
 const { DreamService } = require('./services/dream-service');
 const { SubAgentService } = require('./services/subagent-service');
 const { ToolScoper } = require('./services/tool-scoper');
-const { sanitizeToolResult } = require('./utils/tool-result-sanitizer');
+const { sanitizeToolResult, sanitizeToolArgs } = require('./utils/tool-result-sanitizer');
 const { filterCalendarResult } = require('./utils/calendar-filter');
 const { NotificationService } = require('./utils/notifications');
 
@@ -2168,6 +2168,10 @@ class Agent {
       // Clone and resolve
       args = resolveSecrets(JSON.parse(JSON.stringify(args)));
     }
+
+    // Pre-call sanitization: catch common LLM mistakes that lead to
+    // oversized tool responses (e.g. events.list with no timeMax).
+    args = sanitizeToolArgs(executionName, args);
 
     // --- INTERNAL DB TOOLS ---
     if (executionName === 'rememberFact') {

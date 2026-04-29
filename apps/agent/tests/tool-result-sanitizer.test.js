@@ -1,4 +1,6 @@
-const { sanitizeToolResult, isHighCapTool, MAX_TOOL_RESULT_CHARS, MAX_EMAIL_BODY_CHARS, MAX_EVENT_DESCRIPTION_CHARS } = require('../src/utils/tool-result-sanitizer');
+const { sanitizeToolResult, sanitizeToolArgs, isHighCapTool, MAX_TOOL_RESULT_CHARS, MAX_EMAIL_BODY_CHARS, MAX_EVENT_DESCRIPTION_CHARS, MAX_DOC_TEXT_CHARS, DEFAULT_CALENDAR_WINDOW_DAYS } = require('../src/utils/tool-result-sanitizer');
+const fs = require('fs');
+const path = require('path');
 
 // --- Fixtures ---
 
@@ -628,6 +630,252 @@ describe('Tool Result Sanitizer', () => {
             expect(parsed.body).toContain('Rate Awwa Suites');
             expect(parsed.body).not.toContain('<style');
             expect(parsed.body).not.toContain('color:red');
+        });
+    });
+
+    // ─── Layer 1d: Google Docs ────────────────────────────────────────────
+
+    describe('Docs sanitization (Layer 1d)', () => {
+        const syntheticDoc = JSON.parse(
+            fs.readFileSync(path.join(__dirname, 'fixtures/work_docs_get_synthetic.json'), 'utf8')
+        );
+
+        function unwrap(result) {
+            if (result && typeof result.output === 'string') return JSON.parse(result.output);
+            return result;
+        }
+
+        test('extracts plain text from a synthetic Docs API response', () => {
+            const raw = { output: JSON.stringify(syntheticDoc) };
+            const cleaned = sanitizeToolResult('work_docs', raw);
+            const parsed = unwrap(cleaned);
+
+            expect(parsed.documentId).toBe(syntheticDoc.documentId);
+            expect(parsed.title).toBe(syntheticDoc.title);
+            expect(parsed.text).toBeDefined();
+            // Real text content survives.
+            expect(parsed.text).toContain('Person One');
+            expect(parsed.text).toContain('Person Two');
+            expect(parsed.text).toContain('Alpha');
+            expect(parsed.text).toContain('Beta');
+        });
+
+        test('strips styling metadata (textStyle, paragraphStyle, rgbColor, magnitude/unit)', () => {
+            const raw = { output: JSON.stringify(syntheticDoc) };
+            const cleaned = sanitizeToolResult('work_docs', raw);
+            const cleanedStr = JSON.stringify(cleaned);
+
+            // None of the noise fields survive.
+            expect(cleanedStr).not.toContain('textStyle');
+            expect(cleanedStr).not.toContain('paragraphStyle');
+            expect(cleanedStr).not.toContain('rgbColor');
+            expect(cleanedStr).not.toContain('weightedFontFamily');
+            expect(cleanedStr).not.toContain('namedStyleType');
+            expect(cleanedStr).not.toContain('"magnitude"');
+            expect(cleanedStr).not.toContain('"unit":"PT"');
+            expect(cleanedStr).not.toContain('endIndex');
+            expect(cleanedStr).not.toContain('startIndex');
+        });
+
+        test('renders headings as markdown', () => {
+            const raw = { output: JSON.stringify(syntheticDoc) };
+            const cleaned = sanitizeToolResult('work_docs', raw);
+            const parsed = unwrap(cleaned);
+
+            // TITLE → "# ", HEADING_2 → "## "
+            expect(parsed.text).toMatch(/# Team Sync/);
+            expect(parsed.text).toMatch(/## Person One/);
+            expect(parsed.text).toMatch(/## Person Two/);
+        });
+
+        test('renders bullet lists with "- " prefix', () => {
+            const raw = { output: JSON.stringify(syntheticDoc) };
+            const cleaned = sanitizeToolResult('work_docs', raw);
+            const parsed = unwrap(cleaned);
+
+            expect(parsed.text).toMatch(/- Confirm Gamma role for Person One/);
+            expect(parsed.text).toMatch(/- Get vacation calendar for May/);
+        });
+
+        test('renders person mentions inline as @name', () => {
+            const raw = { output: JSON.stringify(syntheticDoc) };
+            const cleaned = sanitizeToolResult('work_docs', raw);
+            const parsed = unwrap(cleaned);
+            expect(parsed.text).toContain('@Person Two');
+        });
+
+        test('renders rich links as markdown links', () => {
+            const raw = { output: JSON.stringify(syntheticDoc) };
+            const cleaned = sanitizeToolResult('work_docs', raw);
+            const parsed = unwrap(cleaned);
+            expect(parsed.text).toContain('[Master Staffing Sheet](https://docs.google.com/spreadsheets/d/abc)');
+        });
+
+        test('renders tables as markdown rows', () => {
+            const raw = { output: JSON.stringify(syntheticDoc) };
+            const cleaned = sanitizeToolResult('work_docs', raw);
+            const parsed = unwrap(cleaned);
+            expect(parsed.text).toContain('| Person | Project |');
+            expect(parsed.text).toContain('| Person One | Alpha |');
+        });
+
+        test('massive size reduction — synthetic doc shrinks at least 4×', () => {
+            const raw = { output: JSON.stringify(syntheticDoc) };
+            const rawSize = JSON.stringify(raw).length;
+            const cleaned = sanitizeToolResult('work_docs', raw);
+            const cleanedSize = JSON.stringify(cleaned).length;
+            expect(cleanedSize).toBeLessThan(rawSize / 4);
+        });
+
+        test('handles double-wrapped output (GWS MCP compact mode)', () => {
+            // GWS MCP --tool-mode compact wraps as { output: "{\"output\": \"...\"}" }
+            const inner = { output: JSON.stringify(syntheticDoc) };
+            const doubleWrapped = { output: JSON.stringify(inner) };
+            const cleaned = sanitizeToolResult('work_docs', doubleWrapped);
+            const parsed = unwrap(cleaned);
+            expect(parsed.text).toContain('Person One');
+        });
+
+        test('handles documents.list response by keeping only id and title', () => {
+            const raw = {
+                output: JSON.stringify({
+                    documents: [
+                        { documentId: 'd1', title: 'Doc A', revisionId: 'rev1', body: { content: [] } },
+                        { documentId: 'd2', title: 'Doc B', revisionId: 'rev2', body: { content: [] } },
+                    ],
+                })
+            };
+            const cleaned = sanitizeToolResult('work_docs', raw);
+            const parsed = unwrap(cleaned);
+            expect(parsed.documents).toHaveLength(2);
+            expect(parsed.documents[0]).toEqual({ documentId: 'd1', title: 'Doc A' });
+            expect(parsed.documents[1]).toEqual({ documentId: 'd2', title: 'Doc B' });
+        });
+
+        test('passes through non-doc payloads unchanged', () => {
+            const raw = { output: JSON.stringify({ random: 'payload', other: [1, 2, 3] }) };
+            const cleaned = sanitizeToolResult('work_docs', raw);
+            const parsed = unwrap(cleaned);
+            expect(parsed).toEqual({ random: 'payload', other: [1, 2, 3] });
+        });
+
+        test('truncates extracted text at MAX_DOC_TEXT_CHARS', () => {
+            const longContent = 'A'.repeat(MAX_DOC_TEXT_CHARS + 5000);
+            const longDoc = {
+                documentId: 'long',
+                title: 'Long Doc',
+                body: { content: [{ paragraph: { elements: [{ textRun: { content: longContent } }] } }] }
+            };
+            const raw = { output: JSON.stringify(longDoc) };
+            const cleaned = sanitizeToolResult('work_docs', raw);
+            const parsed = unwrap(cleaned);
+            expect(parsed.text.length).toBeLessThanOrEqual(MAX_DOC_TEXT_CHARS + 20); // +20 for "... [truncated]"
+            expect(parsed.text.endsWith('[truncated]')).toBe(true);
+        });
+
+        test('isDocsTool matches namespaced tool names but not generic words', () => {
+            // These should be sanitized
+            const docPayload = { output: JSON.stringify(syntheticDoc) };
+            for (const name of ['work_docs', 'personal_docs', 'work_docs_documents_get']) {
+                const cleaned = sanitizeToolResult(name, docPayload);
+                expect(unwrap(cleaned).text).toBeDefined();
+            }
+            // These should NOT be sanitized as docs
+            for (const name of ['readSlackHistory', 'work_calendar', 'work_gmail']) {
+                const cleaned = sanitizeToolResult(name, docPayload);
+                // unwrap returns the raw doc (no .text field added)
+                const parsed = unwrap(cleaned);
+                expect(parsed.text).toBeUndefined();
+            }
+        });
+
+        test('handles a mid-string-truncated double-wrapped payload without throwing', () => {
+            // Simulates what the existing Layer 2 generic cap produces when a doc
+            // response exceeds MAX_TOOL_RESULT_CHARS — the inner JSON string is
+            // sliced mid-token, so JSON.parse on the inner field will throw.
+            // The sanitizer should fall through to the original result.
+            const truncatedPayload = {
+                output: '{"output":"{\\n  \\"body\\": {\\n    \\"content\\": [\\n      {\\n        \\"endIndex\\": 1,\\n        \\"sectionBreak\\":'
+            };
+            expect(() => sanitizeToolResult('work_docs', truncatedPayload)).not.toThrow();
+        });
+    });
+
+    // ─── Pre-call argument sanitization ──────────────────────────────────
+
+    describe('sanitizeToolArgs — events.list timeMax defaulting', () => {
+        const ONE_DAY_MS = 24 * 60 * 60 * 1000;
+
+        test('injects timeMax when only timeMin is provided (GWS shape)', () => {
+            const args = {
+                resource: 'events',
+                method: 'list',
+                params: { calendarId: 'primary', timeMin: '2026-04-29T00:00:00Z' }
+            };
+            const out = sanitizeToolArgs('work_calendar', args);
+            expect(out.params.timeMax).toBeDefined();
+            const min = new Date(out.params.timeMin).getTime();
+            const max = new Date(out.params.timeMax).getTime();
+            expect(max - min).toBe(DEFAULT_CALENDAR_WINDOW_DAYS * ONE_DAY_MS);
+        });
+
+        test('does NOT touch args when timeMax is already provided', () => {
+            const args = {
+                resource: 'events',
+                method: 'list',
+                params: { calendarId: 'primary', timeMin: '2026-04-29T00:00:00Z', timeMax: '2026-04-30T00:00:00Z' }
+            };
+            const out = sanitizeToolArgs('work_calendar', args);
+            expect(out.params.timeMax).toBe('2026-04-30T00:00:00Z');
+        });
+
+        test('does not touch the original args object (no mutation)', () => {
+            const args = {
+                resource: 'events',
+                method: 'list',
+                params: { calendarId: 'primary', timeMin: '2026-04-29T00:00:00Z' }
+            };
+            const before = JSON.parse(JSON.stringify(args));
+            sanitizeToolArgs('work_calendar', args);
+            expect(args).toEqual(before);
+        });
+
+        test('defaults both timeMin (now) and timeMax (now+7d) when neither is provided', () => {
+            const args = { resource: 'events', method: 'list', params: { calendarId: 'primary' } };
+            const out = sanitizeToolArgs('work_calendar', args);
+            expect(out.params.timeMin).toBeDefined();
+            expect(out.params.timeMax).toBeDefined();
+            const min = new Date(out.params.timeMin).getTime();
+            const max = new Date(out.params.timeMax).getTime();
+            expect(max - min).toBe(DEFAULT_CALENDAR_WINDOW_DAYS * ONE_DAY_MS);
+        });
+
+        test('handles top-level shape (no nested params)', () => {
+            const args = { timeMin: '2026-04-29T00:00:00Z' };
+            const out = sanitizeToolArgs('listEvents', args);
+            expect(out.timeMax).toBeDefined();
+        });
+
+        test('does not touch non-events.list calendar calls', () => {
+            const args = { resource: 'calendars', method: 'get', params: { calendarId: 'primary' } };
+            const out = sanitizeToolArgs('work_calendar', args);
+            expect(out).toEqual(args);
+        });
+
+        test('does not touch non-calendar tools', () => {
+            const args = { params: { timeMin: '2026-04-29T00:00:00Z' } };
+            const out = sanitizeToolArgs('work_gmail', args);
+            expect(out).toEqual(args);
+        });
+
+        test('passes through invalid timeMin without throwing', () => {
+            const args = { resource: 'events', method: 'list', params: { timeMin: 'not-a-date' } };
+            expect(() => sanitizeToolArgs('work_calendar', args)).not.toThrow();
+        });
+
+        test('passes through null/undefined args', () => {
+            expect(sanitizeToolArgs('work_calendar', null)).toBeNull();
+            expect(sanitizeToolArgs('work_calendar', undefined)).toBeUndefined();
         });
     });
 });
