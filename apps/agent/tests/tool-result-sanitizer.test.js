@@ -849,6 +849,46 @@ describe('Tool Result Sanitizer', () => {
             expect(JSON.stringify(cleaned)).not.toContain('tabProperties');
         });
 
+        test('tabs wins over backward-compat top-level body when both are present', () => {
+            // includeTabsContent=true returns BOTH a populated `body` (first tab,
+            // for backwards compat) AND a `tabs` array (all tabs). We must read
+            // from `tabs` to avoid losing content from non-first tabs.
+            const dualShape = {
+                documentId: 'dual',
+                title: 'Dual Shape Doc',
+                body: {
+                    content: [
+                        { paragraph: { elements: [{ textRun: { content: 'First tab content (backward-compat copy).\n' } }] } }
+                    ]
+                },
+                tabs: [
+                    {
+                        tabProperties: { title: 'Tab One' },
+                        documentTab: { body: { content: [
+                            { paragraph: { elements: [{ textRun: { content: 'First tab content (canonical).\n' } }] } }
+                        ] } }
+                    },
+                    {
+                        tabProperties: { title: 'Tab Two' },
+                        documentTab: { body: { content: [
+                            { paragraph: { elements: [{ textRun: { content: 'Second tab unique content.\n' } }] } }
+                        ] } }
+                    }
+                ]
+            };
+            const raw = { output: JSON.stringify(dualShape) };
+            const cleaned = sanitizeToolResult('work_docs', raw);
+            const parsed = unwrap(cleaned);
+            // Must include the second tab — that's the data we'd lose if body wins.
+            expect(parsed.text).toContain('Second tab unique content.');
+            expect(parsed.text).toContain('[Tab] Tab Two');
+            // The canonical first-tab text should be present.
+            expect(parsed.text).toContain('First tab content (canonical).');
+            // The backward-compat copy at the top level was redundant — we don't
+            // care if it appears, but the second-tab assertion above is what proves
+            // tabs (not body) was the source.
+        });
+
         test('tabbed doc with empty tabs array passes through with empty text', () => {
             const raw = {
                 output: JSON.stringify({ documentId: 'd', title: 't', tabs: [] })
@@ -947,6 +987,17 @@ describe('Tool Result Sanitizer', () => {
             const args = { timeMin: '2026-04-29T00:00:00Z' };
             const out = sanitizeToolArgs('listEvents', args);
             expect(out.timeMax).toBeDefined();
+        });
+
+        test('non-calendar tool that matched via name-based branch keeps flat shape (no params nesting)', () => {
+            // listEvents is the internal-tool branch of isCalendarEventsListCall.
+            // If the model passes weird args that include resource+method, isGwsShape
+            // must NOT fire (the tool name is not calendar-namespaced), so timeMax
+            // stays at top level where the tool actually reads it.
+            const args = { resource: 'events', method: 'list', timeMin: '2026-04-29T00:00:00Z' };
+            const out = sanitizeToolArgs('listEvents', args);
+            expect(out.timeMax).toBeDefined();
+            expect(out.params).toBeUndefined();
         });
 
         test('does not touch non-events.list calendar calls', () => {

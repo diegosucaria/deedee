@@ -444,16 +444,18 @@ function sanitizeDocsResult(result) {
 function sanitizeDocsParsed(obj) {
     if (!obj || typeof obj !== 'object') return obj;
 
-    // documents.get response: has body.content + documentId + title
-    if (obj.body && Array.isArray(obj.body.content)) {
-        return extractCleanDoc(obj);
-    }
-
-    // documents.get with includeTabsContent=true returns the body nested
-    // under tabs[*].documentTab instead of at the top level.
+    // documents.get with includeTabsContent=true returns ALL content under
+    // tabs[*].documentTab. The top-level `body` field is also populated for
+    // backwards compatibility but only contains the FIRST tab — checking
+    // tabs first ensures we don't lose content from other tabs.
     // https://developers.google.com/workspace/docs/api/how-tos/tabs
     if (Array.isArray(obj.tabs)) {
         return extractCleanTabbedDoc(obj);
+    }
+
+    // documents.get without tabs: content lives at body.content.
+    if (obj.body && Array.isArray(obj.body.content)) {
+        return extractCleanDoc(obj);
     }
 
     // documents.list response: { documents: [...] } — keep only id/title
@@ -788,7 +790,13 @@ function sanitizeToolArgs(toolName, args) {
         // a flat top-level shape. Either way, ensure timeMax lands where the
         // downstream tool actually reads it from — which for GWS is `params`,
         // even when the model omitted that field entirely.
-        const isGwsShape = !!(cleaned.resource && cleaned.method);
+        // Mirror the exact GWS-branch conditions in isCalendarEventsListCall
+        // so a non-calendar tool that happened to match via the name-based
+        // branch (e.g. internal listEvents) doesn't get its args nested.
+        const isGwsShape = !!(
+            toolName.toLowerCase().includes('calendar') &&
+            cleaned.resource && cleaned.method
+        );
         let target;
         if (isGwsShape) {
             cleaned.params = cleaned.params && typeof cleaned.params === 'object'
