@@ -11,6 +11,30 @@ class MCPManager {
         this.toolMap = new Map();  // toolName -> { name: string, client: Client }
         this.configPath = path.resolve(__dirname, configPath);
         this._activeAbortControllers = new Set(); // Track active long-running calls
+        this._slimSkipped = new Map(); // serverName -> [missingVars]
+    }
+
+    /**
+     * Returns the missing ${VAR} placeholders ONLY when the server is fully
+     * unconfigured — i.e. not a single placeholder resolves to a value. That
+     * keeps the prior behavior for partially-configured servers (e.g.
+     * browser-use with GOOGLE_API_KEY set but BROWSER_EXECUTABLE_PATH unset)
+     * where the server has its own defaults and would otherwise spawn fine.
+     * Returns [] when the server should still be attempted.
+     */
+    _findMissingEnvVars(serverConfig) {
+        const missing = new Set();
+        let present = 0;
+        const check = (val) => {
+            if (typeof val !== 'string') return;
+            for (const m of val.matchAll(/\$\{([^}]+)\}/g)) {
+                if (process.env[m[1]]) present++;
+                else missing.add(m[1]);
+            }
+        };
+        if (serverConfig.env) Object.values(serverConfig.env).forEach(check);
+        if (serverConfig.url) check(serverConfig.url);
+        return present === 0 && missing.size > 0 ? [...missing] : [];
     }
 
     // ... (init method remains same)
@@ -88,8 +112,17 @@ class MCPManager {
         const config = userConfig;
         this.config = config;
 
+        this._slimSkipped.clear();
+
         for (const [name, serverConfig] of Object.entries(config)) {
             if (serverConfig.disabled) continue;
+
+            const missing = this._findMissingEnvVars(serverConfig);
+            if (missing.length > 0) {
+                this._slimSkipped.set(name, missing);
+                console.log(`[MCP] '${name}' disabled: missing env ${missing.join(', ')}`);
+                continue;
+            }
 
             try {
                 console.log(`[MCP] Connecting to server: ${name}...`);
@@ -329,6 +362,11 @@ class MCPManager {
         for (const name of configuredNames) {
             if (config[name].disabled) {
                 statuses.push({ name, status: 'disabled' });
+                continue;
+            }
+
+            if (this._slimSkipped.has(name)) {
+                statuses.push({ name, status: 'missing-env', missing: this._slimSkipped.get(name) });
                 continue;
             }
 

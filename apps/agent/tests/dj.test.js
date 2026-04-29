@@ -90,10 +90,30 @@ describe('DJService', () => {
         const fs = require('fs');
         jest.spyOn(fs, 'existsSync').mockReturnValue(false);
 
-        await djService.initialize();
+        const prev = process.env.DISCOGS_TOKEN;
+        process.env.DISCOGS_TOKEN = 'test-token';
+        try {
+            await djService.initialize();
+        } finally {
+            if (prev === undefined) delete process.env.DISCOGS_TOKEN;
+            else process.env.DISCOGS_TOKEN = prev;
+        }
 
         expect(mockAgent.vaults.createVault).toHaveBeenCalledWith('dj_history');
         expect(mockAgent.vaults.updateVaultPage).toHaveBeenCalled();
+    });
+
+    test('should skip vault creation when DISCOGS_TOKEN is unset', async () => {
+        const prev = process.env.DISCOGS_TOKEN;
+        delete process.env.DISCOGS_TOKEN;
+        try {
+            await djService.initialize();
+        } finally {
+            if (prev !== undefined) process.env.DISCOGS_TOKEN = prev;
+        }
+
+        expect(djService.disabled).toBe(true);
+        expect(mockAgent.vaults.createVault).not.toHaveBeenCalled();
     });
 
     test('ingestVinyl should process image and return placeholders', async () => {

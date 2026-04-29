@@ -18,6 +18,12 @@ class DJService {
     }
 
     async initialize() {
+        if (!process.env.DISCOGS_TOKEN) {
+            this.disabled = true;
+            console.log('[DJService] Disabled: DISCOGS_TOKEN not set.');
+            return;
+        }
+
         // Ensure 'dj_history' vault exists
         const vaultId = 'dj_history';
         const vaultPath = path.join(this.vaults.vaultsDir, vaultId);

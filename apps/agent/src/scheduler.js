@@ -705,7 +705,8 @@ FORMAT (when you do notify):
 - Each item: [Platform #context] Person Name: what they need from you
 - If you took action: append "→ Set reminder" or "→ Added to calendar"
 - Be concise. 3-5 bullets max. No essays.`,
-                silent: false
+                silent: false,
+                defaultEnabled: false
             },
             {
                 name: 'wardrobe_pretrip_check',
@@ -735,7 +736,8 @@ FORMAT (when you do notify):
 7. If nothing was started AND nothing new was planned, respond with [SILENT] and do not call sendMessage.
 
 NEVER contact anyone other than the owner.`,
-                silent: false
+                silent: false,
+                defaultEnabled: false
             },
             {
                 name: 'wardrobe_morning_outfit',
@@ -764,7 +766,8 @@ STEP 5 — Send the suggestion to the owner via WhatsApp (do NOT rely on the sch
 STEP 6 — After sendMessage succeeds, respond with the single token [SILENT] so no duplicate status summary is sent. If recommend_outfit returned zero proposals, also respond with [SILENT].
 
 NEVER contact anyone other than the owner.`,
-                silent: false
+                silent: false,
+                defaultEnabled: false
             }
         ];
 
@@ -784,7 +787,13 @@ NEVER contact anyone other than the owner.`,
             }
 
             const existing = persistedStates[sysJob.name];
-            const isEnabled = existing && 'enabled' in existing ? existing.enabled : true;
+            const defaultEnabled = sysJob.defaultEnabled !== false;
+            const isEnabled = existing && 'enabled' in existing
+                ? existing.enabled
+                : defaultEnabled;
+            if (!existing && !defaultEnabled) {
+                console.log(`[Scheduler] System job '${sysJob.name}' starts disabled by default. Enable it from the Tasks UI when you're ready.`);
+            }
 
             // Use the standard scheduleJob logic which handles the callback wrapper
             // We manually construct the instruction wrapper to match 'agent_instruction' type
