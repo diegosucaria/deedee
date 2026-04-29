@@ -13,9 +13,14 @@ export default function LoginForm({ next, passkeysEnabled, hasPasskeys, hasPassw
     const [secureContext, setSecureContext] = useState(true);
 
     useEffect(() => {
-        if (typeof window !== 'undefined') {
-            setSecureContext(!!window.isSecureContext);
-        }
+        if (typeof window === 'undefined') return;
+        const secure = !!window.isSecureContext;
+        setSecureContext(secure);
+        // If we landed on the passkey path but the browser refuses to run
+        // ceremonies (no secure context), drop back to the password form
+        // so the user isn't staring at an empty page.
+        if (!secure) setMode('password');
+        // eslint-disable-next-line react-hooks/exhaustive-deps
     }, []);
 
     const passkeyAvailable = passkeysEnabled && secureContext;

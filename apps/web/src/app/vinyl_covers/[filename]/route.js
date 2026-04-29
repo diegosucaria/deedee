@@ -12,15 +12,15 @@ export async function GET(request, { params }) {
 
     try {
         const headers = INTERNAL_TOKEN ? { Authorization: `Bearer ${INTERNAL_TOKEN}` } : {};
-        const response = await fetch(imageUrl, { headers });
+        const upstream = await fetch(imageUrl, { headers });
 
-        if (!response.ok) {
+        if (!upstream.ok) {
             return new NextResponse('Image not found', { status: 404 });
         }
 
-        const blob = await response.blob();
+        const blob = await upstream.blob();
         const out = new Headers();
-        out.set('Content-Type', response.headers.get('Content-Type') || 'image/jpeg');
+        out.set('Content-Type', upstream.headers.get('Content-Type') || 'image/jpeg');
         out.set('Cache-Control', 'private, max-age=31536000, immutable');
 
         return new NextResponse(blob, { headers: out });
