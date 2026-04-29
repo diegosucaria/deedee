@@ -449,6 +449,13 @@ function sanitizeDocsParsed(obj) {
         return extractCleanDoc(obj);
     }
 
+    // documents.get with includeTabsContent=true returns the body nested
+    // under tabs[*].documentTab instead of at the top level.
+    // https://developers.google.com/workspace/docs/api/how-tos/tabs
+    if (Array.isArray(obj.tabs)) {
+        return extractCleanTabbedDoc(obj);
+    }
+
     // documents.list response: { documents: [...] } — keep only id/title
     if (Array.isArray(obj.documents)) {
         return {
@@ -465,17 +472,43 @@ function sanitizeDocsParsed(obj) {
 
 function extractCleanDoc(doc) {
     const text = renderDocBody(doc.body);
-    const clean = {
+    return {
         documentId: doc.documentId,
         title: doc.title,
         revisionId: doc.revisionId,
         text: truncate(text, MAX_DOC_TEXT_CHARS),
     };
-    // Optional metadata that may matter to the model.
-    if (doc.documentStyle?.pageSize) {
-        // Drop — purely visual.
+}
+
+function extractCleanTabbedDoc(doc) {
+    const sections = [];
+    walkTabs(doc.tabs, sections, 0);
+    const text = sections.join('\n\n').trim();
+    return {
+        documentId: doc.documentId,
+        title: doc.title,
+        revisionId: doc.revisionId,
+        text: truncate(text, MAX_DOC_TEXT_CHARS),
+    };
+}
+
+function walkTabs(tabs, out, depth) {
+    if (!Array.isArray(tabs)) return;
+    for (const tab of tabs) {
+        const tabTitle = tab?.tabProperties?.title;
+        const body = tab?.documentTab?.body;
+        if (tabTitle) {
+            const prefix = '#'.repeat(Math.min(depth + 1, 6));
+            out.push(`${prefix} [Tab] ${tabTitle}`);
+        }
+        if (body) {
+            const rendered = renderDocBody(body);
+            if (rendered) out.push(rendered);
+        }
+        if (Array.isArray(tab?.childTabs) && tab.childTabs.length) {
+            walkTabs(tab.childTabs, out, depth + 1);
+        }
     }
-    return clean;
 }
 
 function renderDocBody(body) {
@@ -751,8 +784,20 @@ function sanitizeToolArgs(toolName, args) {
     const cleaned = { ...args };
 
     if (isCalendarEventsListCall(toolName, cleaned)) {
-        const params = cleaned.params ? { ...cleaned.params } : null;
-        const target = params || cleaned;
+        // GWS-shape calls put query args under `params`; everything else uses
+        // a flat top-level shape. Either way, ensure timeMax lands where the
+        // downstream tool actually reads it from — which for GWS is `params`,
+        // even when the model omitted that field entirely.
+        const isGwsShape = !!(cleaned.resource && cleaned.method);
+        let target;
+        if (isGwsShape) {
+            cleaned.params = cleaned.params && typeof cleaned.params === 'object'
+                ? { ...cleaned.params }
+                : {};
+            target = cleaned.params;
+        } else {
+            target = cleaned;
+        }
 
         if (!target.timeMax) {
             const min = target.timeMin ? new Date(target.timeMin) : new Date();
@@ -763,8 +808,6 @@ function sanitizeToolArgs(toolName, args) {
                 console.log(`[Sanitizer] events.list missing timeMax — defaulted to ${target.timeMin} → ${target.timeMax} (${DEFAULT_CALENDAR_WINDOW_DAYS}d window)`);
             }
         }
-
-        if (params) cleaned.params = params;
     }
 
     return cleaned;

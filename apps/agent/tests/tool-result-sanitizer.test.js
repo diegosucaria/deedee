@@ -789,6 +789,75 @@ describe('Tool Result Sanitizer', () => {
             }
         });
 
+        test('handles tabbed Docs API shape ({tabs: [{documentTab: {body: {...}}}]})', () => {
+            // Google Docs API since 2024 nests body under tabs[*].documentTab
+            // when includeTabsContent=true. The non-tabbed `body` field is absent.
+            const tabbedDoc = {
+                documentId: 'tabbed-doc-id',
+                title: 'Tabbed Doc',
+                revisionId: 'rev-1',
+                tabs: [
+                    {
+                        tabProperties: { tabId: 't1', title: 'Overview', index: 0 },
+                        documentTab: {
+                            body: {
+                                content: [
+                                    { paragraph: { elements: [{ textRun: { content: 'Overview content here.\n', textStyle: { bold: true } } }] } }
+                                ]
+                            }
+                        },
+                        childTabs: [
+                            {
+                                tabProperties: { tabId: 't1.1', title: 'Subtab' },
+                                documentTab: {
+                                    body: {
+                                        content: [
+                                            { paragraph: { elements: [{ textRun: { content: 'Nested subtab text.\n' } }] } }
+                                        ]
+                                    }
+                                }
+                            }
+                        ]
+                    },
+                    {
+                        tabProperties: { tabId: 't2', title: 'Details', index: 1 },
+                        documentTab: {
+                            body: {
+                                content: [
+                                    { paragraph: { elements: [{ textRun: { content: 'Detail content here.\n' } }] } }
+                                ]
+                            }
+                        }
+                    }
+                ]
+            };
+            const raw = { output: JSON.stringify(tabbedDoc) };
+            const cleaned = sanitizeToolResult('work_docs', raw);
+            const parsed = unwrap(cleaned);
+
+            expect(parsed.documentId).toBe('tabbed-doc-id');
+            expect(parsed.title).toBe('Tabbed Doc');
+            expect(parsed.text).toContain('Overview content here.');
+            expect(parsed.text).toContain('Detail content here.');
+            expect(parsed.text).toContain('Nested subtab text.');
+            // Tab titles surface as headings.
+            expect(parsed.text).toContain('[Tab] Overview');
+            expect(parsed.text).toContain('[Tab] Details');
+            expect(parsed.text).toContain('[Tab] Subtab');
+            // Styling noise must be gone.
+            expect(JSON.stringify(cleaned)).not.toContain('textStyle');
+            expect(JSON.stringify(cleaned)).not.toContain('tabProperties');
+        });
+
+        test('tabbed doc with empty tabs array passes through with empty text', () => {
+            const raw = {
+                output: JSON.stringify({ documentId: 'd', title: 't', tabs: [] })
+            };
+            const cleaned = sanitizeToolResult('work_docs', raw);
+            const parsed = unwrap(cleaned);
+            expect(parsed.text).toBe('');
+        });
+
         test('handles a mid-string-truncated double-wrapped payload without throwing', () => {
             // Simulates what the existing Layer 2 generic cap produces when a doc
             // response exceeds MAX_TOOL_RESULT_CHARS — the inner JSON string is
@@ -817,6 +886,30 @@ describe('Tool Result Sanitizer', () => {
             const min = new Date(out.params.timeMin).getTime();
             const max = new Date(out.params.timeMax).getTime();
             expect(max - min).toBe(DEFAULT_CALENDAR_WINDOW_DAYS * ONE_DAY_MS);
+        });
+
+        test('GWS shape with NO params field — creates params and writes timeMax/timeMin under it', () => {
+            // Real production shape observed in agent.db: model calls
+            // personal_calendar with just {resource, method} and no params.
+            const args = { resource: 'events', method: 'list' };
+            const out = sanitizeToolArgs('work_calendar', args);
+            expect(out.params).toBeDefined();
+            expect(out.params.timeMin).toBeDefined();
+            expect(out.params.timeMax).toBeDefined();
+            // timeMax must NOT land at the top level — that's the bug we're guarding against.
+            expect(out.timeMax).toBeUndefined();
+            expect(out.timeMin).toBeUndefined();
+            const min = new Date(out.params.timeMin).getTime();
+            const max = new Date(out.params.timeMax).getTime();
+            expect(max - min).toBe(DEFAULT_CALENDAR_WINDOW_DAYS * ONE_DAY_MS);
+        });
+
+        test('GWS shape with params=null is treated like no-params', () => {
+            const args = { resource: 'events', method: 'list', params: null };
+            const out = sanitizeToolArgs('work_calendar', args);
+            expect(out.params).toBeDefined();
+            expect(out.params.timeMin).toBeDefined();
+            expect(out.params.timeMax).toBeDefined();
         });
 
         test('does NOT touch args when timeMax is already provided', () => {
