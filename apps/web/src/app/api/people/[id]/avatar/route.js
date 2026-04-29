@@ -1,8 +1,12 @@
 
 import { NextResponse } from 'next/server';
 import { API_URL } from '@/lib/api';
+import { requireSession } from '@/lib/auth/guard';
 
 export async function GET(request, { params }) {
+    const { session, response } = await requireSession();
+    if (!session) return response;
+
     const { id } = await params;
     const { DEEDEE_API_TOKEN } = process.env;
 
@@ -27,7 +31,7 @@ export async function GET(request, { params }) {
             if (location) {
                 return NextResponse.redirect(location, {
                     headers: {
-                        'Cache-Control': 'public, max-age=60' // Only 60s for fallbacks
+                        'Cache-Control': 'private, max-age=60' // Only 60s for fallbacks
                     }
                 });
             }
@@ -39,10 +43,10 @@ export async function GET(request, { params }) {
 
         const blob = await res.blob();
 
-        // Real cached avatar — cache for 1 hour
+        // Real cached avatar — cache privately for 1 hour
         const headers = new Headers();
         headers.set('Content-Type', res.headers.get('Content-Type') || 'image/jpeg');
-        headers.set('Cache-Control', 'public, max-age=3600, s-maxage=3600');
+        headers.set('Cache-Control', 'private, max-age=3600');
 
         return new NextResponse(blob, { headers });
     } catch (error) {

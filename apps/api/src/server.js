@@ -1,7 +1,33 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const axios = require('axios');
 const { authMiddleware } = require('./auth');
+const { verifySession } = require('./session');
+
+// Register a global axios interceptor before any other module starts
+// issuing requests. Every outbound call to the agent service gets a
+// Bearer DEEDEE_INTERNAL_TOKEN header so agent's /internal/* middleware
+// accepts it. The token is unrelated to DEEDEE_API_TOKEN — that one is
+// for human/iOS-Shortcut callers hitting the public api.
+//
+// Guarded with optional chaining so test suites that pass a stub axios
+// (no `interceptors` property) don't crash at module load.
+if (axios?.interceptors?.request?.use) {
+    const AGENT_URL = process.env.AGENT_URL || 'http://agent:3000';
+    axios.interceptors.request.use((config) => {
+        const token = process.env.DEEDEE_INTERNAL_TOKEN;
+        if (!token) return config;
+        const target = config.url || '';
+        if (target.startsWith(AGENT_URL)) {
+            config.headers = config.headers || {};
+            if (!config.headers.Authorization) {
+                config.headers.Authorization = `Bearer ${token}`;
+            }
+        }
+        return config;
+    });
+}
 const chatRouter = require('./chat');
 const audioChatRouter = require('./audio-chat');
 const briefingRouter = require('./briefing');
@@ -16,10 +42,11 @@ const WEB_ORIGIN = process.env.WEB_ORIGIN || 'http://localhost:3000';
 
 // Increase body limit to support large audio/image payloads (matches Agent)
 app.use(express.json({ limit: '50mb' }));
-// CORS scoped to the UI origin so the _forward_auth cookie can ride along
-// on cross-origin socket.io connects. Wildcard origin + credentials is
-// rejected by browsers, so the origin must be explicit. Non-browser callers
-// (iOS Shortcuts etc.) authenticate via Bearer token and don't need CORS.
+// CORS scoped to the UI origin so the session cookie can ride along on
+// cross-origin socket.io connects. Wildcard origin + credentials is
+// rejected by browsers, so the origin must be explicit. Non-browser
+// callers (iOS Shortcuts etc.) authenticate via Bearer token and don't
+// need CORS.
 app.use(cors({ origin: WEB_ORIGIN, credentials: true }));
 
 // Public Routes (No Auth)
@@ -55,26 +82,22 @@ app.use('/v1/mcp', require('./routes/mcp'));
 
 // --- Socket.io Proxy to Interfaces ---
 // Auth model:
-//   - Traefik's google-auth middleware gates this path on the reverse proxy
-//     and stamps `X-Forwarded-User` on authenticated requests.
-//   - We require that header here as defense-in-depth: if the API container
-//     is ever reached without going through Traefik (direct port exposure,
-//     misconfigured router), the proxy refuses to relay.
-//   - We inject DEEDEE_API_TOKEN into the upstream URL so Interfaces accepts
-//     via its query-param token path. The token never reaches the browser.
-//   - Polling stays disabled on the client (transports: ['websocket']) so a
-//     successful WS upgrade is the only HTTP request that hits Traefik per
-//     connection — no forward-auth cookie spam.
-//   - Escape hatch: setting DISABLE_SOCKET_AUTH_GATE=1 skips the header check
-//     so plain `docker-compose up` self-hosters (no Traefik forward-auth) can
-//     reach `/socket.io`. Only safe on a trusted LAN — it removes the only
-//     auth layer in front of the socket proxy.
+//   - Browser holds a httpOnly session cookie (`deedee_session`) issued by
+//     apps/web. We verify the JWT signature with the shared SESSION_SECRET
+//     before relaying the WS upgrade to interfaces.
+//   - DEEDEE_API_TOKEN is injected into the upstream URL so interfaces
+//     accepts via its query-param token path. The token never reaches the
+//     browser.
+//   - websocket-only transport on the client means a single upgrade per
+//     connection — the cookie is checked once, no polling spam.
+//   - SESSION_SECRET is the only required auth knob now. The legacy
+//     X-Forwarded-User / DISABLE_SOCKET_AUTH_GATE escape hatch is gone.
 const { createProxyMiddleware } = require('http-proxy-middleware');
 const INTERFACES_URL = process.env.INTERFACES_URL || 'http://interfaces:5000';
-const SOCKET_AUTH_GATE_DISABLED = process.env.DISABLE_SOCKET_AUTH_GATE === '1';
 
-if (SOCKET_AUTH_GATE_DISABLED) {
-    console.warn('[API] DISABLE_SOCKET_AUTH_GATE=1 — /socket.io reachable without X-Forwarded-User. Use only on trusted networks.');
+const SESSION_SECRET = process.env.SESSION_SECRET;
+if (!SESSION_SECRET || SESSION_SECRET.length < 32) {
+    console.warn('[API] SESSION_SECRET unset or too short. /socket.io will reject all browser connects until it is configured.');
 }
 
 const injectUpstreamToken = (path) => {
@@ -91,10 +114,10 @@ const socketProxy = createProxyMiddleware({
     pathRewrite: injectUpstreamToken,
 });
 
-const socketAuthGate = (req, res, next) => {
-    if (SOCKET_AUTH_GATE_DISABLED) return next();
-    if (!req.headers['x-forwarded-user']) {
-        return res.status(401).json({ error: 'Socket.io requires authenticated session via reverse proxy' });
+const socketAuthGate = async (req, res, next) => {
+    const session = await verifySession(req);
+    if (!session) {
+        return res.status(401).json({ error: 'Socket.io requires an authenticated session' });
     }
     next();
 };
@@ -171,14 +194,15 @@ app.get('/v1/logs/:container', authMiddleware, (req, res) => {
 if (require.main === module) {
     const server = http.createServer(app);
     // Express middleware does not run for raw WebSocket `upgrade` events,
-    // so we gate on `X-Forwarded-User` here in addition to the HTTP middleware
-    // before delegating to the proxy.
-    server.on('upgrade', (req, socket, head) => {
+    // so we verify the session cookie here too before delegating to the
+    // proxy. Same JWT, same secret as the HTTP middleware above.
+    server.on('upgrade', async (req, socket, head) => {
         if (!req.url || !req.url.startsWith('/socket.io')) {
             socket.destroy();
             return;
         }
-        if (!SOCKET_AUTH_GATE_DISABLED && !req.headers['x-forwarded-user']) {
+        const session = await verifySession(req);
+        if (!session) {
             socket.write('HTTP/1.1 401 Unauthorized\r\nConnection: close\r\n\r\n');
             socket.destroy();
             return;

@@ -1,11 +1,15 @@
 
 import { NextResponse } from 'next/server';
 import { API_URL } from '@/lib/api';
+import { requireSession } from '@/lib/auth/guard';
 
 export async function GET(request) {
+    const { session, response } = await requireSession();
+    if (!session) return response;
+
     const { searchParams } = new URL(request.url);
     const jid = searchParams.get('jid');
-    const session = searchParams.get('session');
+    const session_q = searchParams.get('session');
     const { DEEDEE_API_TOKEN } = process.env;
 
     if (!jid || !DEEDEE_API_TOKEN) {
@@ -15,7 +19,7 @@ export async function GET(request) {
     try {
         const url = new URL(`${API_URL}/v1/whatsapp/profile`);
         url.searchParams.set('jid', jid);
-        url.searchParams.set('session', session || 'user');
+        url.searchParams.set('session', session_q || 'user');
 
         const res = await fetch(url.toString(), {
             headers: {

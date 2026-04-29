@@ -4,6 +4,7 @@ volumes:
   repo-data:
   agent-data: # For SQLite DB
   interfaces-data: # For WhatsApp Sessions
+  web-data: # For auth.json (login password hash + passkeys). Do NOT include in backups.
 
 services:
   agent:
@@ -14,6 +15,8 @@ services:
       - NODE_ENV=production
       - SUPERVISOR_URL=http://supervisor:4000
       - INTERFACES_URL=http://interfaces:5000
+      # DEEDEE_INTERNAL_TOKEN required at runtime — agent rejects /internal/*
+      # callers without a matching bearer token. Inject via Balena/.env.
       - RATE_LIMIT_HOURLY=50
       - RATE_LIMIT_DAILY=500
       - MAX_TOOL_LOOPS=50
@@ -68,7 +71,9 @@ services:
       - AGENT_URL=http://agent:3000
       - PORT=5000
       - DATA_DIR=/app/data
-      # TELEGRAM_TOKEN, SLACK_TOKEN, DEEDEE_API_TOKEN injected by Balena
+      # TELEGRAM_TOKEN, SLACK_TOKEN, DEEDEE_API_TOKEN injected by Balena.
+      # DEEDEE_INTERNAL_TOKEN also required — interfaces injects it on
+      # outbound calls to agent /internal/* (sessions, history, etc.).
     volumes:
       - interfaces-data:/app/data
     networks:
@@ -85,10 +90,12 @@ services:
       - AGENT_URL=http://agent:3000
       - INTERFACES_URL=http://interfaces:5000
       - PORT=3001
-      # DEEDEE_API_TOKEN, WEB_ORIGIN injected by Balena
-      # DISABLE_SOCKET_AUTH_GATE=1 — set this for plain self-host runs
-      # (no Traefik forward-auth in front). Skips the X-Forwarded-User
-      # check on /socket.io. Trusted LAN only.
+      # Required at runtime (inject via Balena/.env, never bake into the image):
+      #   DEEDEE_API_TOKEN        — bearer for /v1/* (iOS Shortcuts etc.)
+      #   DEEDEE_INTERNAL_TOKEN   — bearer for agent /internal/*
+      #   SESSION_SECRET          — must match the web service; verifies the
+      #                             session cookie on /socket.io upgrade
+      #   WEB_ORIGIN              — UI origin, used for CORS with credentials
     ports:
       - "3001:3001"
     networks:
@@ -104,9 +111,30 @@ services:
       - NODE_ENV=production
       - PORT=3000
       - API_URL=http://api:3001
-      # SOCKET_URL — public URL of the API gateway for browser WebSocket connections.
-      # Injected at runtime by Balena device vars (e.g. https://deedee.example.com).
-      # Read server-side by layout.js and emitted to the client via window.__DEEDEE_CONFIG__.
+      - AUTH_DATA_DIR=/app/data
+      # Required at runtime (inject via Balena/.env, never bake into the image):
+      #   DEEDEE_API_TOKEN        — server-side fetchAPI bearer (token never reaches the browser)
+      #   DEEDEE_INTERNAL_TOKEN   — bearer added when proxying to agent /internal/*
+      #   SESSION_SECRET          — 32+ random bytes; signs the session JWT
+      #   WEB_ORIGIN              — public origin of the UI (https://deedee.example.com)
+      #   WEBAUTHN_RP_ID          — passkey relying-party id (e.g. deedee.example.com)
+      #   WEBAUTHN_ORIGIN         — must equal WEB_ORIGIN; passkeys require https or localhost
+      #   COOKIE_DOMAIN           — set to .example.com only for the two-subdomain layout;
+      #                             leave unset when web and api share a domain
+      #   LOGIN_PASSWORD          — optional. If set, hashed into auth.json on every boot.
+      #                             Acts as the bootstrap and recovery path. Unset it after
+      #                             you've enrolled a passkey if you'd rather not have it
+      #                             living in env.
+      #   SOCKET_URL              — public URL of the api gateway for browser WS connects
+      #                             (e.g. https://api.example.com). Read server-side and
+      #                             emitted via window.__DEEDEE_CONFIG__.
+    volumes:
+      # Persists auth.json (password hash + enrolled passkeys + signed-out
+      # JTI list). Do NOT include this volume in any backup — losing it
+      # means setting LOGIN_PASSWORD again, restarting, and re-enrolling
+      # passkeys, which is fine. Including it in a backup leaks the
+      # password hash and credential public keys.
+      - web-data:/app/data
     ports:
       - "3002:3000"
     networks:

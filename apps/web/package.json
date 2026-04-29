@@ -8,15 +8,19 @@
     "start": "next start",
     "lint": "eslint",
     "test:actions": "node scripts/verify-actions.js",
-    "test": "npm run lint && npm run test:actions"
+    "test": "npm run lint && npm run test:actions",
+    "auth:init": "node scripts/init-auth.js"
   },
   "dependencies": {
+    "@simplewebauthn/browser": "^11.0.0",
+    "@simplewebauthn/server": "^11.0.0",
     "@tailwindcss/typography": "^0.5.19",
     "@uiw/react-md-editor": "^4.0.11",
     "client-only": "^0.0.1",
     "clsx": "^2.1.1",
     "cronstrue": "^3.9.0",
     "framer-motion": "^12.24.12",
+    "jose": "^5.9.6",
     "lucide-react": "^0.562.0",
     "next": "^14.2.3",
     "react": "^18.3.1",
