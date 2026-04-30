@@ -8,7 +8,10 @@ const nextConfig = {
   turbopack: {
     root: resolve(__dirname, '../..'),
   },
+  // Boot-time auth bootstrap: applies LOGIN_PASSWORD env var, GCs the
+  // store, and logs the auth posture. See src/instrumentation.js.
   experimental: {
+    instrumentationHook: true,
     serverActions: {
       bodySizeLimit: '10mb',
     },

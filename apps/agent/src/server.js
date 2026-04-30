@@ -120,6 +120,26 @@ app.post('/webhook', (req, res) => {
   }
 });
 
+// /internal/* routes carry private user content (wardrobe images, vault
+// files, journal data, etc). Inside the Docker network they're already
+// unreachable from the public internet, but we add a constant-time bearer
+// check as defense-in-depth against accidental port exposure or a future
+// deploy where agent isn't network-isolated. Web injects this token
+// server-side when proxying to the agent; it never touches the browser.
+const cryptoTimingSafe = require('crypto').timingSafeEqual;
+const internalTokenMiddleware = (req, res, next) => {
+    const expected = process.env.DEEDEE_INTERNAL_TOKEN;
+    if (!expected) return next(); // Token unset: dev-only escape hatch.
+    const header = req.headers.authorization || '';
+    const provided = header.startsWith('Bearer ') ? header.slice(7) : '';
+    const a = Buffer.from(provided);
+    const b = Buffer.from(expected);
+    if (a.length !== b.length || !cryptoTimingSafe(a, b)) {
+        return res.status(401).json({ error: 'Invalid or missing internal token' });
+    }
+    next();
+};
+
 const { createInternalRouter } = require('./routes/internal');
 const { createLiveRouter } = require('./routes/live');
 const { createWatchersRouter } = require('./routes/watchers'); // NEW
@@ -139,6 +159,11 @@ const { createNotificationsRouter } = require('./routes/notifications');
 app.use('/live', createLiveRouter(agent));
 const { createHealthRouter } = require('./routes/health');
 app.use('/health', createHealthRouter(agent));
+
+// Gate every /internal/* path with the bearer token check, regardless of
+// whether agent is initialized. Express runs middleware in registration
+// order, so this must come before any /internal route handlers.
+app.use('/internal', internalTokenMiddleware);
 
 if (agent) {
   // Mount Modular Routers

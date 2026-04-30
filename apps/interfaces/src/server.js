@@ -19,6 +19,24 @@ const io = new Server(server, {
 
 const port = process.env.PORT || 5000;
 const agentUrl = process.env.AGENT_URL || 'http://localhost:3000';
+
+// Inject DEEDEE_INTERNAL_TOKEN on outbound calls to the agent so its
+// /internal/* middleware accepts us. Same pattern as apps/api. Guarded
+// for test suites that pass a stub axios with no `interceptors`.
+if (axios?.interceptors?.request?.use) {
+    axios.interceptors.request.use((config) => {
+        const token = process.env.DEEDEE_INTERNAL_TOKEN;
+        if (!token) return config;
+        const target = config.url || '';
+        if (target.startsWith(agentUrl)) {
+            config.headers = config.headers || {};
+            if (!config.headers.Authorization) {
+                config.headers.Authorization = `Bearer ${token}`;
+            }
+        }
+        return config;
+    });
+}
 const telegramToken = process.env.TELEGRAM_TOKEN;
 const allowedTelegramIds = (process.env.ALLOWED_TELEGRAM_IDS || '').split(',').map(id => id.trim()).filter(Boolean);
 const defaultTelegramId = allowedTelegramIds.length > 0 ? allowedTelegramIds[0] : null;

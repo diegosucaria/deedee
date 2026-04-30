@@ -62,7 +62,7 @@ Deedee includes a personal **Wardrobe Service** that catalogs your clothes, sugg
     -   **Progressive Enrichment**: "Analyzing N garments…" banner, per-card shimmer chips + "Analyzing" overlay, auto-fill on Socket.io events.
     -   **Brand Confirm Chip**: Amber candidate chip on the card + full confirm/reject in the detail modal when `needs_brand_confirm`.
     -   **Filter Chips**: All / Tops / Bottoms / Outerwear / Shoes / Accessories (horizontal scroll on mobile).
-    -   **Auth**: Behind the same reverse-proxy auth as all `/*` pages.
+    -   **Auth**: Behind the built-in session cookie like every other `/*` page. The wardrobe image proxy at `/wardrobe_images/*` requires `requireSession()` and forwards a `DEEDEE_INTERNAL_TOKEN` to the agent.
 
 ## Data Model
 

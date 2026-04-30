@@ -10,6 +10,7 @@ import VoiceSelector from '@/components/VoiceSelector';
 import ScrollableTabs from '@/components/ScrollableTabs';
 import PageShell from '@/components/PageShell';
 import InterfacesClient from '@/components/InterfacesClient';
+import SecurityClient from './security/SecurityClient';
 
 import { Suspense } from 'react';
 
@@ -86,11 +87,22 @@ function SettingsContent() {
 
     const currentMode = config?.search_strategy?.mode || 'HYBRID';
 
+    const [passkeysAvailable, setPasskeysAvailable] = useState(false);
+    useEffect(() => {
+        let cancelled = false;
+        fetch('/api/auth/me', { cache: 'no-store' })
+            .then((r) => r.ok ? r.json() : null)
+            .then((d) => { if (!cancelled && d) setPasskeysAvailable(!!d.passkeysEnabled); })
+            .catch(() => {});
+        return () => { cancelled = true; };
+    }, []);
+
     const tabs = [
         { id: 'general', label: 'General' },
         { id: 'models', label: 'Models' },
         { id: 'communication', label: 'Communication' },
         { id: 'interfaces', label: 'Interfaces' },
+        { id: 'security', label: 'Security' },
         { id: 'backups', label: 'Backups' },
         { id: 'environment', label: 'Environment' },
     ];
@@ -381,6 +393,12 @@ function SettingsContent() {
                             It's probably fine as a subsection.
                         */}
                         <InterfacesClient />
+                    </div>
+                )}
+
+                {activeTab === 'security' && (
+                    <div className="animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <SecurityClient passkeysEnabled={passkeysAvailable} />
                     </div>
                 )}
 

@@ -53,10 +53,85 @@ nano .env
 docker-compose up --build
 ```
 
-**Self-hosting on a LAN (e.g. Raspberry Pi)?** The default setup assumes a Traefik reverse proxy with Google forward-auth in front of the API gateway. If you're running plain `docker-compose up` with no reverse proxy, the `/socket.io` endpoint will reject every connection because `X-Forwarded-User` is never set, and the web UI shows repeated `WebSocket connection ... failed` errors. Set `DISABLE_SOCKET_AUTH_GATE=1` on the `api` service to bypass that check. Trusted LAN only — it removes the only auth layer in front of the socket proxy. While you're at it, also set:
+**Authentication is now built in.** The web UI ships its own login screen — no reverse-proxy forward-auth required. See [Authentication Setup](#-authentication-setup) below for the full env-var list and deployment recipes.
 
-- `WEB_ORIGIN=http://<your-host>:3002` on the `api` service (CORS origin for the web UI cookie).
-- `SOCKET_URL=ws://<your-host>:3001` on the `web` service (browser WebSocket target).
+### 🔐 Authentication Setup
+
+DeeDee is single-user but the UI is on the open internet, so it ships with its own login. You sign in once with a password and (optionally) enrol passkeys for Face ID / Touch ID / hardware keys on every device. Sessions are 30-day rolling cookies — log in once, then come back weeks later without re-typing anything.
+
+#### What you need to set
+
+These env vars go on the **web** service unless noted. Generate secrets with `openssl rand -base64 48`.
+
+| Var | Required | Notes |
+|---|---|---|
+| `SESSION_SECRET` | yes | 32+ bytes. Set the **same value** on `web` and `api`. Rotate to log everyone out everywhere. |
+| `LOGIN_PASSWORD` | yes (first boot) | Plain password. Hashed into `auth.json` on every boot — env always wins, so this is also your recovery path. |
+| `WEB_ORIGIN` | yes | Public URL of the UI (e.g. `https://deedee.example.com`). Set on **both** `web` and `api` (the api needs it for CORS). |
+| `WEBAUTHN_RP_ID` | for passkeys | Relying-party id. Use the UI's hostname (e.g. `deedee.example.com`). |
+| `WEBAUTHN_ORIGIN` | for passkeys | Same as `WEB_ORIGIN`. Must be `https://` (or `localhost` for dev). |
+| `COOKIE_DOMAIN` | two-subdomain only | e.g. `.example.com` so the cookie rides to `api.example.com` for socket.io. |
+| `SOCKET_URL` | two-subdomain only | Public URL of the api gateway (e.g. `https://api.example.com`). |
+| `DEEDEE_INTERNAL_TOKEN` | yes | 32+ bytes. Set on **web**, **api**, **agent**, and **interfaces**. Defense-in-depth on agent's `/internal/*`. |
+| `DEEDEE_API_TOKEN` | yes | Existing token. Bearer for `/v1/*` (iOS Shortcuts, cron, etc.). Browser never sees it. |
+
+#### Recipe A: two subdomains (web on one, api on another)
+
+```bash
+# .env
+SESSION_SECRET=<openssl rand -base64 48>
+LOGIN_PASSWORD=<choose one>
+DEEDEE_API_TOKEN=<openssl rand -base64 32>
+DEEDEE_INTERNAL_TOKEN=<openssl rand -base64 32>
+
+# web service
+WEB_ORIGIN=https://deedee.example.com
+WEBAUTHN_RP_ID=deedee.example.com
+WEBAUTHN_ORIGIN=https://deedee.example.com
+COOKIE_DOMAIN=.example.com
+SOCKET_URL=https://api.example.com
+
+# api service
+WEB_ORIGIN=https://deedee.example.com
+```
+
+Subdomains of the same eTLD+1 are same-site, so `SameSite=Lax` is preserved and CSRF protection still applies. The cookie is verified by the api on every `/socket.io` upgrade using the shared `SESSION_SECRET`.
+
+#### Recipe B: single subdomain (web and api both at `deedee.example.com`, with your reverse proxy splitting paths)
+
+```bash
+WEB_ORIGIN=https://deedee.example.com
+WEBAUTHN_RP_ID=deedee.example.com
+WEBAUTHN_ORIGIN=https://deedee.example.com
+# Leave COOKIE_DOMAIN unset — host-scoped cookie is stricter and works fine
+# Leave SOCKET_URL unset — useSocket.js falls back to current origin
+```
+
+#### Bootstrap
+
+The first time you boot, set `LOGIN_PASSWORD` in env and start the stack. The web container hashes it into `auth.json` on startup, prints `[auth] password=set …` in its logs, and the `/login` page accepts that password. Once you're in, head to **Settings → Security** and add a passkey for each device you use.
+
+For an interactive prompt instead of an env var:
+
+```bash
+docker compose run --rm web npm run auth:init
+```
+
+#### Recovery (forgot password / lost passkeys)
+
+Set `LOGIN_PASSWORD` to a new value and restart the web container. The env-var path always overwrites the stored hash, so you're back in instantly. Re-enrol passkeys after.
+
+#### Backups
+
+The `web-data` volume holds `auth.json` (password hash, passkey public keys, signed-out JTI list). **Do not include it in your backup strategy.** If lost, recovery is "set `LOGIN_PASSWORD`, restart, re-enroll passkeys" — much safer than backing up secret material.
+
+#### Passkey requirements
+
+Passkeys need a Secure Context: HTTPS in production, or `localhost` for local dev. The login page hides the passkey button automatically when these conditions aren't met, and the server returns 503 on the passkey routes if `WEBAUTHN_RP_ID`/`WEBAUTHN_ORIGIN` aren't set or aren't HTTPS.
+
+#### iOS Shortcuts and other API callers
+
+Unaffected. Continue using `Authorization: Bearer ${DEEDEE_API_TOKEN}` against `/v1/*`. The login is for browser users only.
 
 ### 3. Usage
 Open Telegram and message your bot:

@@ -1,3 +1,4 @@
+import { headers } from "next/headers";
 import { Inter } from "next/font/google";
 import "./globals.css";
 import { Sidebar } from "@/components/Sidebar";
@@ -37,7 +38,7 @@ export const viewport = {
   viewportFit: "cover",
 };
 
-export default function RootLayout({ children }) {
+export default async function RootLayout({ children }) {
   // Inject runtime config for client components.
   // SOCKET_URL is set at container runtime (e.g. Balena device vars) so we
   // can't rely on NEXT_PUBLIC_* (baked at build time). Instead, read the env
@@ -45,6 +46,13 @@ export default function RootLayout({ children }) {
   const runtimeConfig = {
     socketUrl: process.env.SOCKET_URL || '',
   };
+
+  // Middleware stamps the request pathname on x-deedee-path so we can
+  // skip the sidebar/main wrapper on the login screen without moving every
+  // existing page into a route group.
+  const h = await headers();
+  const pathname = h.get('x-deedee-path') || '';
+  const isLogin = pathname === '/login' || pathname.startsWith('/login/');
 
   return (
     <html lang="en" className="dark">
@@ -59,12 +67,16 @@ export default function RootLayout({ children }) {
         className={`${inter.className} antialiased`}
       >
         <ZoomLock />
-        <div className="flex h-dvh bg-black text-zinc-200 selection:bg-indigo-500 selection:text-white">
-          <Sidebar />
-          <main className="flex-1 min-w-0 overflow-y-auto relative flex flex-col overflow-x-hidden">
-            {children}
-          </main>
-        </div>
+        {isLogin ? (
+          children
+        ) : (
+          <div className="flex h-dvh bg-black text-zinc-200 selection:bg-indigo-500 selection:text-white">
+            <Sidebar />
+            <main className="flex-1 min-w-0 overflow-y-auto relative flex flex-col overflow-x-hidden">
+              {children}
+            </main>
+          </div>
+        )}
       </body>
     </html>
   );

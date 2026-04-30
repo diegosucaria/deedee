@@ -94,8 +94,12 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - `DELETE /v1/notifications/:id`: Delete a notification.
     - `/v1/dj/*`: DJ crate management (vinyls, crates). Agent-backed. See [docs/dj-assistant.md](dj-assistant.md).
     - `/v1/wardrobe/*`: Wardrobe service (garments, outfits, trips, shopping list, profile). Agent-backed. See [docs/wardrobe.md](wardrobe.md).
-- **Socket.io Proxy**: `/socket.io` path is proxied to `interfaces:5000` via `http-proxy-middleware` with full WebSocket upgrade support. Traefik's `google-auth` middleware gates the path on the reverse proxy and stamps `X-Forwarded-User` on authenticated requests. The API gateway requires that header (defense-in-depth) and injects `DEEDEE_API_TOKEN` into the upstream URL so Interfaces accepts the connection. The browser never holds the API token — auth is the `_forward_auth` cookie. Clients use `transports: ['websocket']` to keep traffic to a single WS upgrade per connection (no polling, no forward-auth cookie spam).
-- **Auth**: Bearer Token (`DEEDEE_API_TOKEN`) for `/v1/*`. `/socket.io` requires `X-Forwarded-User` (set by Traefik forward-auth). `/health` is public. Self-host escape hatch: `DISABLE_SOCKET_AUTH_GATE=1` on the API service skips the header check for plain `docker-compose up` runs without a reverse proxy. Trusted LAN only.
+- **Socket.io Proxy**: `/socket.io` path is proxied to `interfaces:5000` via `http-proxy-middleware` with full WebSocket upgrade support. Browser clients send the session JWT cookie (`deedee_session`) issued by the web service. The API gateway verifies the JWT on every upgrade using the shared `SESSION_SECRET`, then injects `DEEDEE_API_TOKEN` into the upstream URL so Interfaces accepts the connection. The browser never holds the API token. Clients use `transports: ['websocket']` to keep traffic to a single WS upgrade per connection (no polling).
+- **Auth**:
+    - `/v1/*`: Bearer Token (`DEEDEE_API_TOKEN`). Used by iOS Shortcuts, cron jobs, and internal services.
+    - `/socket.io`: Session JWT cookie (signed with `SESSION_SECRET`, shared with web).
+    - `/health`: Public.
+    - **CORS**: Scoped to `WEB_ORIGIN` with credentials enabled so the cookie can ride cross-subdomain in two-subdomain deployments.
 - **Security**: All route parameters are encoded with `encodeURIComponent()` to prevent injection via crafted job names or IDs.
 - **Flow**: Client -> API -> Agent (Waits for full processing) -> API -> Client JSON Response.
 
@@ -105,7 +109,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 - **Port**: `5000`
 - **Supported Channels**:
     - **Socket.io**: Real-time event-based communication for Web Interface. Browser clients connect via the API gateway (`/socket.io` proxy) which handles WebSocket upgrades.
-        - **Auth**: Two paths, both backed by `DEEDEE_API_TOKEN`. Internal services (agent, browser screencast tools) connect with the token in `handshake.auth.token` and are marked `isTrusted` (only these can emit `browser:frame`). Browser clients receive the token from the API gateway as a query param after Traefik's forward-auth accepts the user — they can connect but are NOT trusted.
+        - **Auth**: Two paths, both backed by `DEEDEE_API_TOKEN`. Internal services (agent, browser screencast tools) connect with the token in `handshake.auth.token` and are marked `isTrusted` (only these can emit `browser:frame`). Browser clients receive the token from the API gateway as a query param after the API gateway has verified their session JWT cookie — they can connect but are NOT trusted.
         - Emits: `agent:message` (Stream), `agent:thinking` (Status), `session:update` (Auto-Title), `subagent:update` (Sub-agent status change), `notification:new` (System notifications).
     - **Telegram**: Long-Polling Bot. Supports Global Stop (`/stop`) and Audio Messages.
     - **WhatsApp**:
@@ -122,8 +126,10 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 - **Features**: Real-time Chat with Sessions, Markdown Journal, Memory Bank, Task Scheduler, System Notifications (bell icon + management page).
 - **Runtime Config**: `SOCKET_URL` env var is read server-side by `layout.js` and injected into the client as `window.__DEEDEE_CONFIG__.socketUrl`. This is required because Next.js `NEXT_PUBLIC_*` vars are baked at build time, but Balena/Docker sets env vars at container start.
 - **Auth**:
-    - **User**: Relies on Reverse Proxy (Authelia/Authentik).
-    - **Service**: Injected `DEEDEE_API_TOKEN` for secure API communication (Server Actions).
+    - **User**: Built-in `/login` page. Password (argon2-style scrypt hash in `auth.json`) plus optional WebAuthn passkeys. Sessions are signed JWT cookies (HS256 + `SESSION_SECRET`) with sliding 30-day expiry. Middleware (`src/middleware.js`) gates pages, image proxies, server actions, and `/api/*`. Self-service at `/settings/security`: enroll/rename/delete passkeys, change password, sign out. See [Authentication Setup](../README.md#-authentication-setup) for env vars and deploy recipes.
+    - **Bootstrap & recovery**: `LOGIN_PASSWORD` env var is hashed into `auth.json` on every web boot — non-interactive setup *and* recovery if you forget the password. `npm run auth:init` is an interactive alternative.
+    - **Service**: Injected `DEEDEE_API_TOKEN` for secure API communication (Server Actions). Cross-service `/internal/*` calls into the agent carry `DEEDEE_INTERNAL_TOKEN`, injected by a global axios interceptor in `apps/api` and `apps/interfaces`.
+    - **Storage**: `auth.json` lives on the dedicated `web-data` Docker volume. Excluded from backups by design — recovery is "set `LOGIN_PASSWORD`, restart, re-enroll passkeys".
 
 ### 6. MCP Servers (`packages/mcp-servers`)
 - **Role**: Tool Providers.
@@ -147,8 +153,10 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 ### Security Model
 1.  **Network Isolation**: No container relies on public ingress. All inter-service communication is internal Docker networking.
 2.  **Authentication**:
-    -   API: Bearer Token (`DEEDEE_API_TOKEN`).
-    -   Socket.io: Traefik forward-auth (`X-Forwarded-User`) for browser clients gated at the API gateway; the gateway injects `DEEDEE_API_TOKEN` into the upstream handshake so Interfaces accepts the connection. Internal services authenticate directly with `DEEDEE_API_TOKEN` in `handshake.auth.token`.
+    -   API `/v1/*`: Bearer Token (`DEEDEE_API_TOKEN`). Used by iOS Shortcuts, cron, and internal services.
+    -   Browser `/socket.io`: Session JWT cookie (signed with `SESSION_SECRET`, set by the web service after password or passkey login). The API gateway verifies the cookie on each WebSocket upgrade and injects `DEEDEE_API_TOKEN` into the upstream handshake so Interfaces accepts the connection. Internal services authenticate directly with `DEEDEE_API_TOKEN` in `handshake.auth.token`.
+    -   Web UI: Self-contained `/login` page (password + passkey). Next.js middleware redirects unauthenticated requests; route handlers re-check via `requireSession()` for defense-in-depth.
+    -   Agent `/internal/*`: `DEEDEE_INTERNAL_TOKEN` bearer. Defense-in-depth on top of Docker network isolation.
     -   Telegram: `ALLOWED_TELEGRAM_IDS` allowlist.
 3.  **Safety Mechanisms**:
     -   **Global Stop**: `/stop` command halts all active execution loops instantly.
