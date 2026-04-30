@@ -117,6 +117,21 @@ For an interactive prompt instead of an env var:
 docker compose run --rm web npm run auth:init
 ```
 
+#### Upgrading from a build before the volume-permissions fix
+
+Early builds of the auth feature shipped without the entrypoint that chowns the `web-data` volume to the unprivileged `nextjs` user. The symptom is a `/login` page that always says **"No password configured yet"** even after `LOGIN_PASSWORD` is set, and no `[auth] password=set` line in the web logs. To clear this on an existing deploy:
+
+```bash
+# Balena: from the host running balena-engine
+balena volume rm <fleet>_web-data         # safe — auth.json was never written
+# OR plain docker compose
+docker compose down
+docker volume rm $(docker compose config --volumes | grep web-data)
+docker compose up -d
+```
+
+The new entrypoint also re-chowns the dir on every boot, so a clean redeploy from this version forward fixes itself without manual intervention.
+
 #### Recovery (forgot password / lost passkeys)
 
 Set `LOGIN_PASSWORD` to a new value and restart the web container. The env-var path always overwrites the stored hash, so you're back in instantly. Re-enrol passkeys after.
