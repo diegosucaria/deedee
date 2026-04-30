@@ -65,7 +65,10 @@ COPY --from=builder --chown=nextjs:nodejs /app/apps/web/public ./apps/web/public
 RUN mkdir -p /app/data && chown 1001:1001 /app/data
 
 # Entrypoint runs as root, chowns /app/data, drops to nextjs.
-COPY --chmod=755 apps/web/docker-entrypoint.sh /usr/local/bin/web-entrypoint
+# COPY + chmod is split into two steps so the executable bit is set even
+# on builders without BuildKit (where --chmod is silently ignored).
+COPY apps/web/docker-entrypoint.sh /usr/local/bin/web-entrypoint
+RUN chmod +x /usr/local/bin/web-entrypoint
 
 EXPOSE 3000
 
