@@ -4,6 +4,8 @@
  * Two-layer defense against oversized tool results that bloat the Gemini context window:
  *   Layer 1a: Gmail-specific deep cleaning (decode base64, strip HTML/headers)
  *   Layer 1b: Calendar-specific cleaning (strip attendees, etags, attachments)
+ *   Layer 1c: People-specific cleaning (strip nulls, truncate notes)
+ *   Layer 1d: Google Docs cleaning (extract text from styling-heavy JSON tree)
  *   Layer 2: Generic size cap for ALL tool results
  */
 
@@ -75,6 +77,15 @@ function sanitizeToolResult(toolName, result, maxChars = MAX_TOOL_RESULT_CHARS) 
             cleaned = sanitizeCalendarResult(cleaned);
         } catch (e) {
             console.error(`[Sanitizer] Calendar sanitization failed for ${toolName}:`, e.message);
+        }
+    }
+
+    // Layer 1d: Google Docs cleaning
+    if (isDocsTool(toolName)) {
+        try {
+            cleaned = sanitizeDocsResult(cleaned);
+        } catch (e) {
+            console.error(`[Sanitizer] Docs sanitization failed for ${toolName}:`, e.message);
         }
     }
 
@@ -386,6 +397,201 @@ function extractCleanEvent(event) {
     return clean;
 }
 
+// --- Layer 1d: Google Docs ---
+
+const MAX_DOC_TEXT_CHARS = 40_000;
+
+function isDocsTool(toolName) {
+    if (!toolName) return false;
+    const lower = toolName.toLowerCase();
+    // Match work_docs, personal_docs, work_docs_documents_get, etc.
+    // Exclude generic "doc" matches (e.g. nothing else uses "_docs" suffix today).
+    return /(^|_)docs(_|$)/.test(lower);
+}
+
+/**
+ * Sanitize a Google Docs documents.get response.
+ * The Docs API returns a massive JSON tree dominated by styling metadata
+ * (textStyle, paragraphStyle, rgbColor, magnitude/unit, namedStyleType...).
+ * Actual content lives in body.content[*].paragraph.elements[*].textRun.content
+ * Person mentions live in .person.personProperties (email/name).
+ * Rich links live in .richLink.richLinkProperties (uri/title).
+ */
+function sanitizeDocsResult(result) {
+    // GWS MCP wraps results as { output: "JSON string" }, sometimes double-wrapped.
+    if (result && typeof result.output === 'string') {
+        try {
+            let parsed = JSON.parse(result.output);
+            if (parsed && typeof parsed.output === 'string') {
+                try { parsed = JSON.parse(parsed.output); } catch {}
+            }
+            const cleaned = sanitizeDocsParsed(parsed);
+            // If the parsed object wasn't a doc, return original (don't lose data).
+            if (cleaned === parsed) return result;
+            return { output: JSON.stringify(cleaned) };
+        } catch {
+            return result;
+        }
+    }
+
+    if (result && typeof result === 'object') {
+        return sanitizeDocsParsed(result);
+    }
+
+    return result;
+}
+
+function sanitizeDocsParsed(obj) {
+    if (!obj || typeof obj !== 'object') return obj;
+
+    // documents.get with includeTabsContent=true returns ALL content under
+    // tabs[*].documentTab. The top-level `body` field is also populated for
+    // backwards compatibility but only contains the FIRST tab — checking
+    // tabs first ensures we don't lose content from other tabs.
+    // https://developers.google.com/workspace/docs/api/how-tos/tabs
+    if (Array.isArray(obj.tabs)) {
+        return extractCleanTabbedDoc(obj);
+    }
+
+    // documents.get without tabs: content lives at body.content.
+    if (obj.body && Array.isArray(obj.body.content)) {
+        return extractCleanDoc(obj);
+    }
+
+    // documents.list response: { documents: [...] } — keep only id/title
+    if (Array.isArray(obj.documents)) {
+        return {
+            ...obj,
+            documents: obj.documents.map(d => ({
+                documentId: d.documentId,
+                title: d.title,
+            })),
+        };
+    }
+
+    return obj;
+}
+
+function extractCleanDoc(doc) {
+    const text = renderDocBody(doc.body);
+    return {
+        documentId: doc.documentId,
+        title: doc.title,
+        revisionId: doc.revisionId,
+        text: truncate(text, MAX_DOC_TEXT_CHARS),
+    };
+}
+
+function extractCleanTabbedDoc(doc) {
+    const sections = [];
+    walkTabs(doc.tabs, sections, 0);
+    const text = sections.join('\n\n').trim();
+    return {
+        documentId: doc.documentId,
+        title: doc.title,
+        revisionId: doc.revisionId,
+        text: truncate(text, MAX_DOC_TEXT_CHARS),
+    };
+}
+
+function walkTabs(tabs, out, depth) {
+    if (!Array.isArray(tabs)) return;
+    for (const tab of tabs) {
+        const tabTitle = tab?.tabProperties?.title;
+        const body = tab?.documentTab?.body;
+        if (tabTitle) {
+            const prefix = '#'.repeat(Math.min(depth + 1, 6));
+            out.push(`${prefix} [Tab] ${tabTitle}`);
+        }
+        if (body) {
+            const rendered = renderDocBody(body);
+            if (rendered) out.push(rendered);
+        }
+        if (Array.isArray(tab?.childTabs) && tab.childTabs.length) {
+            walkTabs(tab.childTabs, out, depth + 1);
+        }
+    }
+}
+
+function renderDocBody(body) {
+    if (!body || !Array.isArray(body.content)) return '';
+    const lines = [];
+    for (const block of body.content) {
+        const rendered = renderStructuralElement(block);
+        if (rendered) lines.push(rendered);
+    }
+    return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
+function renderStructuralElement(block) {
+    if (!block || typeof block !== 'object') return '';
+
+    if (block.paragraph) return renderParagraph(block.paragraph);
+
+    if (block.table) return renderTable(block.table);
+
+    if (block.tableOfContents) {
+        // ToC is a nested doc body.
+        return renderDocBody(block.tableOfContents);
+    }
+
+    // sectionBreak / pageBreak / etc. — drop.
+    return '';
+}
+
+function renderParagraph(paragraph) {
+    const elements = paragraph.elements || [];
+    let text = '';
+    for (const el of elements) {
+        if (el.textRun?.content) {
+            text += el.textRun.content;
+        } else if (el.person) {
+            const name = el.person.personProperties?.name;
+            const email = el.person.personProperties?.email;
+            text += name ? `@${name}` : (email ? `@${email}` : '@person');
+        } else if (el.richLink) {
+            const title = el.richLink.richLinkProperties?.title;
+            const uri = el.richLink.richLinkProperties?.uri;
+            text += title ? `[${title}](${uri || ''})` : (uri || '');
+        }
+        // Drop: pageBreak, equation, columnBreak, footnoteReference, autoText, horizontalRule.
+    }
+
+    text = text.replace(/\n+$/, '');
+    if (!text.trim() && !paragraph.bullet) return '';
+
+    // Heading prefix from namedStyleType: HEADING_1 → "# ", HEADING_2 → "## ", etc.
+    const styleType = paragraph.paragraphStyle?.namedStyleType || '';
+    const headingMatch = /^HEADING_(\d)$/.exec(styleType);
+    if (headingMatch) {
+        const level = Math.min(parseInt(headingMatch[1], 10), 6);
+        return '#'.repeat(level) + ' ' + text.trim();
+    }
+    if (styleType === 'TITLE') return '# ' + text.trim();
+    if (styleType === 'SUBTITLE') return '## ' + text.trim();
+
+    // Bullet/numbered list.
+    if (paragraph.bullet) {
+        const indent = paragraph.bullet.nestingLevel || 0;
+        return '  '.repeat(indent) + '- ' + text.trim();
+    }
+
+    return text;
+}
+
+function renderTable(table) {
+    if (!table || !Array.isArray(table.tableRows)) return '';
+    const rows = [];
+    for (const row of table.tableRows) {
+        const cells = (row.tableCells || []).map(c => {
+            const cellText = (c.content || []).map(renderStructuralElement).join(' ').trim();
+            return cellText.replace(/\|/g, '\\|').replace(/\n/g, ' ');
+        });
+        rows.push('| ' + cells.join(' | ') + ' |');
+    }
+    return rows.join('\n');
+}
+
 // --- Layer 1c: People-specific ---
 
 function isPeopleTool(toolName) {
@@ -561,6 +767,78 @@ function getTruncationHint(toolName) {
     return 'Result was truncated due to size. Try a more specific query or use filters to reduce the result size. Do NOT retry the same call.';
 }
 
+// --- Pre-call argument sanitization ---
+
+const DEFAULT_CALENDAR_WINDOW_DAYS = 7;
+
+/**
+ * Mutate-safe pre-processor for tool arguments. Catches common LLM mistakes
+ * that lead to oversized responses BEFORE the tool is called.
+ *
+ * Currently handles:
+ *  - calendar events.list called with timeMin but no timeMax → default to timeMin + 7d
+ *  - calendar events.list called with neither → default to now + 7d
+ *
+ * Returns a new args object; the input is never mutated.
+ */
+function sanitizeToolArgs(toolName, args) {
+    if (!args || typeof args !== 'object') return args;
+    const cleaned = { ...args };
+
+    if (isCalendarEventsListCall(toolName, cleaned)) {
+        // GWS-shape calls put query args under `params`; everything else uses
+        // a flat top-level shape. Either way, ensure timeMax lands where the
+        // downstream tool actually reads it from — which for GWS is `params`,
+        // even when the model omitted that field entirely.
+        // Mirror the exact GWS-branch conditions in isCalendarEventsListCall
+        // so a non-calendar tool that happened to match via the name-based
+        // branch (e.g. internal listEvents) doesn't get its args nested.
+        const isGwsShape = !!(
+            toolName.toLowerCase().includes('calendar') &&
+            cleaned.resource && cleaned.method
+        );
+        let target;
+        if (isGwsShape) {
+            cleaned.params = cleaned.params && typeof cleaned.params === 'object'
+                ? { ...cleaned.params }
+                : {};
+            target = cleaned.params;
+        } else {
+            target = cleaned;
+        }
+
+        if (!target.timeMax) {
+            const min = target.timeMin ? new Date(target.timeMin) : new Date();
+            if (!isNaN(min.getTime())) {
+                const max = new Date(min.getTime() + DEFAULT_CALENDAR_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+                target.timeMax = max.toISOString();
+                if (!target.timeMin) target.timeMin = min.toISOString();
+                console.log(`[Sanitizer] events.list missing timeMax — defaulted to ${target.timeMin} → ${target.timeMax} (${DEFAULT_CALENDAR_WINDOW_DAYS}d window)`);
+            }
+        }
+    }
+
+    return cleaned;
+}
+
+function isCalendarEventsListCall(toolName, args) {
+    if (!toolName) return false;
+    const lower = toolName.toLowerCase();
+
+    // GWS MCP shape: { resource: "events", method: "list", params: {...} }
+    // Only valid on calendar-namespaced tools.
+    if (lower.includes('calendar') && args.resource && args.method) {
+        const r = String(args.resource).toLowerCase();
+        const m = String(args.method).toLowerCase();
+        return r.endsWith('events') && m === 'list';
+    }
+
+    // Internal tool name whose contract IS events.list at top level.
+    if (lower.includes('listevents') || lower.endsWith('events_list')) return true;
+
+    return false;
+}
+
 // --- Shared helpers ---
 
 function truncate(str, maxLen) {
@@ -568,4 +846,4 @@ function truncate(str, maxLen) {
     return str.substring(0, maxLen) + '... [truncated]';
 }
 
-module.exports = { sanitizeToolResult, isHighCapTool, MAX_TOOL_RESULT_CHARS, MAX_EMAIL_BODY_CHARS, MAX_EVENT_DESCRIPTION_CHARS, MAX_PERSON_NOTES_CHARS, HIGH_CAP_TOOLS, HIGH_CAP_MAX_CHARS };
+module.exports = { sanitizeToolResult, sanitizeToolArgs, isHighCapTool, MAX_TOOL_RESULT_CHARS, MAX_EMAIL_BODY_CHARS, MAX_EVENT_DESCRIPTION_CHARS, MAX_PERSON_NOTES_CHARS, MAX_DOC_TEXT_CHARS, HIGH_CAP_TOOLS, HIGH_CAP_MAX_CHARS, DEFAULT_CALENDAR_WINDOW_DAYS };

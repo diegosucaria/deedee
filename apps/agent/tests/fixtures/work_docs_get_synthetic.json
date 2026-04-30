@@ -1,0 +1,323 @@
+{
+  "documentId": "1ABCexampleDocId",
+  "title": "Team Sync Notes",
+  "revisionId": "ALm37BX_example",
+  "documentStyle": {
+    "pageSize": {
+      "width": {
+        "magnitude": 612,
+        "unit": "PT"
+      },
+      "height": {
+        "magnitude": 792,
+        "unit": "PT"
+      }
+    },
+    "marginTop": {
+      "magnitude": 72,
+      "unit": "PT"
+    }
+  },
+  "namedStyles": {
+    "styles": []
+  },
+  "body": {
+    "content": [
+      {
+        "endIndex": 1,
+        "sectionBreak": {
+          "sectionStyle": {
+            "contentDirection": "LEFT_TO_RIGHT",
+            "sectionType": "CONTINUOUS"
+          }
+        }
+      },
+      {
+        "startIndex": 1,
+        "endIndex": 17,
+        "paragraph": {
+          "elements": [
+            {
+              "startIndex": 1,
+              "endIndex": 17,
+              "textRun": {
+                "content": "Team Sync\n",
+                "textStyle": {
+                  "fontSize": {
+                    "magnitude": 26,
+                    "unit": "PT"
+                  },
+                  "weightedFontFamily": {
+                    "fontFamily": "Arial",
+                    "weight": 400
+                  },
+                  "foregroundColor": {
+                    "color": {
+                      "rgbColor": {
+                        "red": 0.2,
+                        "green": 0.2,
+                        "blue": 0.2
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          ],
+          "paragraphStyle": {
+            "namedStyleType": "TITLE",
+            "direction": "LEFT_TO_RIGHT"
+          }
+        }
+      },
+      {
+        "startIndex": 17,
+        "endIndex": 50,
+        "paragraph": {
+          "elements": [
+            {
+              "textRun": {
+                "content": "Person One",
+                "textStyle": {
+                  "bold": true
+                }
+              }
+            },
+            {
+              "textRun": {
+                "content": " \u2014 Alpha project, no vacation upcoming.\n",
+                "textStyle": {}
+              }
+            }
+          ],
+          "paragraphStyle": {
+            "namedStyleType": "HEADING_2"
+          }
+        }
+      },
+      {
+        "startIndex": 50,
+        "endIndex": 60,
+        "paragraph": {
+          "elements": [
+            {
+              "textRun": {
+                "content": "Person Two",
+                "textStyle": {
+                  "bold": true
+                }
+              }
+            },
+            {
+              "textRun": {
+                "content": " \u2014 extended on current project +2-3 weeks. Possible swap into ",
+                "textStyle": {}
+              }
+            },
+            {
+              "person": {
+                "personId": "kix.example",
+                "personProperties": {
+                  "email": "ptwo@example.com",
+                  "name": "Person Two"
+                }
+              }
+            },
+            {
+              "textRun": {
+                "content": " for Beta (discuss tomorrow).\n",
+                "textStyle": {}
+              }
+            }
+          ],
+          "paragraphStyle": {
+            "namedStyleType": "HEADING_2"
+          }
+        }
+      },
+      {
+        "startIndex": 60,
+        "endIndex": 80,
+        "paragraph": {
+          "elements": [
+            {
+              "textRun": {
+                "content": "Action items:\n",
+                "textStyle": {
+                  "bold": true
+                }
+              }
+            }
+          ],
+          "paragraphStyle": {
+            "namedStyleType": "NORMAL_TEXT"
+          }
+        }
+      },
+      {
+        "startIndex": 80,
+        "endIndex": 90,
+        "paragraph": {
+          "elements": [
+            {
+              "textRun": {
+                "content": "Confirm Gamma role for Person One\n"
+              }
+            }
+          ],
+          "paragraphStyle": {
+            "namedStyleType": "NORMAL_TEXT"
+          },
+          "bullet": {
+            "listId": "kix.list1",
+            "nestingLevel": 0
+          }
+        }
+      },
+      {
+        "startIndex": 90,
+        "endIndex": 100,
+        "paragraph": {
+          "elements": [
+            {
+              "textRun": {
+                "content": "Get vacation calendar for May\n"
+              }
+            }
+          ],
+          "paragraphStyle": {
+            "namedStyleType": "NORMAL_TEXT"
+          },
+          "bullet": {
+            "listId": "kix.list1",
+            "nestingLevel": 0
+          }
+        }
+      },
+      {
+        "startIndex": 100,
+        "endIndex": 130,
+        "paragraph": {
+          "elements": [
+            {
+              "textRun": {
+                "content": "See linked staffing dashboard: "
+              }
+            },
+            {
+              "richLink": {
+                "richLinkProperties": {
+                  "uri": "https://docs.google.com/spreadsheets/d/abc",
+                  "title": "Master Staffing Sheet"
+                }
+              }
+            },
+            {
+              "textRun": {
+                "content": ".\n"
+              }
+            }
+          ],
+          "paragraphStyle": {
+            "namedStyleType": "NORMAL_TEXT"
+          }
+        }
+      },
+      {
+        "startIndex": 130,
+        "endIndex": 200,
+        "table": {
+          "tableRows": [
+            {
+              "tableCells": [
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Person"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Project"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "tableCells": [
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Person One"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                },
+                {
+                  "content": [
+                    {
+                      "paragraph": {
+                        "elements": [
+                          {
+                            "textRun": {
+                              "content": "Alpha"
+                            }
+                          }
+                        ]
+                      }
+                    }
+                  ]
+                }
+              ]
+            }
+          ]
+        }
+      }
+    ],
+    "lists": {
+      "kix.list1": {
+        "listProperties": {
+          "nestingLevels": [
+            {
+              "glyphType": "BULLET",
+              "indentFirstLine": {
+                "magnitude": 18,
+                "unit": "PT"
+              },
+              "indentStart": {
+                "magnitude": 36,
+                "unit": "PT"
+              }
+            }
+          ]
+        }
+      }
+    }
+  }
+}
