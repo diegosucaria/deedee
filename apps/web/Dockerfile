@@ -46,6 +46,10 @@ WORKDIR /app
 ENV NODE_ENV production
 ENV NEXT_TELEMETRY_DISABLED 1
 
+# su-exec lets the entrypoint drop from root to nextjs after fixing the
+# data-volume ownership. Standard Alpine pattern; ~20KB binary.
+RUN apk add --no-cache su-exec
+
 RUN addgroup --system --gid 1001 nodejs
 RUN adduser --system --uid 1001 nextjs
 
@@ -54,11 +58,22 @@ COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/standalone ./
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/.next/static ./apps/web/.next/static
 COPY --from=builder --chown=nextjs:nodejs /app/apps/web/public ./apps/web/public
 
-USER nextjs
+# Pre-create the data dir with nextjs ownership so a fresh volume mount
+# inherits the right perms. The entrypoint also fixes perms at runtime
+# to handle volumes that already exist with wrong ownership from a
+# previous deploy.
+RUN mkdir -p /app/data && chown 1001:1001 /app/data
+
+# Entrypoint runs as root, chowns /app/data, drops to nextjs.
+# COPY + chmod is split into two steps so the executable bit is set even
+# on builders without BuildKit (where --chmod is silently ignored).
+COPY apps/web/docker-entrypoint.sh /usr/local/bin/web-entrypoint
+RUN chmod +x /usr/local/bin/web-entrypoint
 
 EXPOSE 3000
 
 ENV PORT 3000
 ENV HOSTNAME "0.0.0.0"
 
+ENTRYPOINT ["web-entrypoint"]
 CMD ["node", "apps/web/server.js"]
