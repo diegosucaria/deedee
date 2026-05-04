@@ -1031,7 +1031,18 @@ class AgentDB {
     const partsStr = msg.parts ? JSON.stringify(msg.parts) : null;
     const metaStr = msg.metadata ? JSON.stringify(msg.metadata) : null;
     const targetChatId = msg.chatId || msg.chat_id || msg.metadata?.chatId;
-    stmt.run(id, msg.role, msg.content, partsStr, msg.source, targetChatId, msg.cost || 0, msg.tokenCount || 0, msg.timestamp || Date.now(), metaStr);
+    // Normalize timestamp to ISO string. Mixing integer (ms) and ISO text in the
+    // same column makes ORDER BY timestamp return text rows before integer rows
+    // (SQLite NUMERIC affinity), so history fetches silently dropped integer rows.
+    let ts;
+    if (msg.timestamp == null) {
+      ts = new Date().toISOString();
+    } else if (typeof msg.timestamp === 'number') {
+      ts = new Date(msg.timestamp).toISOString();
+    } else {
+      ts = msg.timestamp;
+    }
+    stmt.run(id, msg.role, msg.content, partsStr, msg.source, targetChatId, msg.cost || 0, msg.tokenCount || 0, ts, metaStr);
   }
 
   getHistory(options = {}) {
