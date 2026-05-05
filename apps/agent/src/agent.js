@@ -123,6 +123,10 @@ class Agent {
     this.stopFlags = new Set();
     this.cancellationFlags = new Set(); // For stopping chat generation
     this.activeTopics = new Map(); // Store active vault topics per chatId
+    // Per-watcher in-flight lock. Coalesces rapid-fire matching messages so a
+    // single trailing rerun (with the latest message) covers the burst, instead
+    // of N concurrent runs racing to schedule N duplicate events.
+    this.watcherLocks = new Map(); // lockKey -> { rerunNeeded, latestMsg }
     // Initialize Command Handler
     this.commandHandler = new CommandHandler(this.db, this.interface, this.confirmationManager, this.stopFlags, this);
     this.rateLimiter = new RateLimiter(this.db);
@@ -689,6 +693,10 @@ class Agent {
       replies: []      // List of text/audio replies
     };
 
+    // Watcher in-flight lock state (set inside the watcher block; cleaned up in finally).
+    let watcherLockKey = null;
+    let watcherLockState = null;
+
     try {
       const isMultiModal = !!message.parts;
 
@@ -985,6 +993,24 @@ class Agent {
         }
 
         if (triggeredWatcher) {
+          // IN-FLIGHT LOCK: Coalesce rapid-fire matching messages into one trailing rerun.
+          // Without this, two messages 3s apart (e.g. "Hola" + "11,30") run the watcher
+          // concurrently and book duplicate calendar events. The rerun re-reads chat
+          // history, so the latest run sees every message that arrived during the lock.
+          const lockKey = `watcher:${triggeredWatcher.id}:${contactString}`;
+          const existingLock = this.watcherLocks.get(lockKey);
+          if (existingLock) {
+            // Persist so the rerun's readChatHistory will see this message.
+            this.db.saveMessage(message);
+            existingLock.rerunNeeded = true;
+            existingLock.latestMsg = message;
+            console.log(`${logPrefix} Watcher ${triggeredWatcher.id} already running for ${contactString}; coalesced into pending rerun.`);
+            return executionSummary;
+          }
+          watcherLockKey = lockKey;
+          watcherLockState = { rerunNeeded: false, latestMsg: null };
+          this.watcherLocks.set(lockKey, watcherLockState);
+
           console.log(`${logPrefix} Watcher TRIGGERED! ID: ${triggeredWatcher.id}, Instruction: "${triggeredWatcher.instruction}"`);
 
           // Watchers stay active across triggers; update last trigger timestamp
@@ -2115,6 +2141,22 @@ class Agent {
       }
       executionSummary.replies.push(errReply);
     } finally {
+      // Release the watcher in-flight lock and fire one trailing rerun if any
+      // matching messages arrived while we were running. The boolean flag
+      // collapses N queued messages into a single rerun (latest-message-wins).
+      if (watcherLockKey) {
+        this.watcherLocks.delete(watcherLockKey);
+        if (watcherLockState && watcherLockState.rerunNeeded && watcherLockState.latestMsg) {
+          const queuedMsg = watcherLockState.latestMsg;
+          console.log(`[Agent] Watcher rerun firing on ${watcherLockKey} for queued message.`);
+          setImmediate(() => {
+            this.processMessage(queuedMsg, originalSendCallback, onProgress).catch(err => {
+              console.error('[Agent] Watcher rerun failed:', err.message);
+            });
+          });
+        }
+      }
+
       const isPassiveMode = message.source === 'whatsapp:user';
       if (!isPassiveMode) {
         const e2eDuration = Date.now() - e2eStart;

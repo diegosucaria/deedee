@@ -146,6 +146,58 @@ describe('Message Watchers & Passive Mode', () => {
         expect(callArgs.content).toContain(`[WATCHER: ${contact}]`);
     });
 
+    it('should COALESCE concurrent watcher triggers into one trailing rerun', async () => {
+        const contact = '5551234567';
+        const insert = db.createWatcher({
+            name: 'Coalesce Watcher',
+            contactString: contact,
+            condition: 'all',
+            instruction: 'Say done',
+            status: 'active'
+        });
+        const watcherId = insert.lastInsertRowid;
+
+        // Bypass the dynamic GoogleGenAI import — the early `if (!this.client)` block
+        // in processMessage runs before the watcher logic, and the import fails under
+        // jest's CJS mode. Mocking client to truthy short-circuits that init.
+        agent.client = {};
+
+        // Simulate run 1 holding the in-flight lock (we don't run a real model here —
+        // we're testing the queue/coalesce semantics directly).
+        const lockKey = `watcher:${watcherId}:${contact}`;
+        const lockState = { rerunNeeded: false, latestMsg: null };
+        agent.watcherLocks.set(lockKey, lockState);
+
+        const baseMsg = {
+            role: 'user',
+            source: 'whatsapp:user',
+            metadata: { phoneNumber: contact, chatId: `${contact}@s.whatsapp.net` }
+        };
+        const sendCallback = jest.fn();
+        const generateSpy = jest.spyOn(agent, '_generateStream');
+
+        // Two more matching messages arrive while the lock is held — both coalesce.
+        await agent.processMessage({ ...baseMsg, id: 'm2', content: 'second' }, sendCallback);
+        await agent.processMessage({ ...baseMsg, id: 'm3', content: 'third' }, sendCallback);
+
+        // Neither queued message hit the model.
+        expect(generateSpy).not.toHaveBeenCalled();
+        expect(sendCallback).not.toHaveBeenCalled();
+
+        // Both messages collapsed into ONE pending rerun (not two), and the latest
+        // message wins — so the rerun will fire with m3, not m2.
+        expect(lockState.rerunNeeded).toBe(true);
+        expect(lockState.latestMsg.id).toBe('m3');
+
+        // Both queued messages were persisted so the rerun's readChatHistory sees them.
+        const storedIds = db.db.prepare('SELECT id FROM messages WHERE chat_id = ?')
+            .all(`${contact}@s.whatsapp.net`).map(r => r.id);
+        expect(storedIds).toEqual(expect.arrayContaining(['m2', 'm3']));
+
+        // Cleanup: pretend run 1 finished (the real finally block would do this).
+        agent.watcherLocks.delete(lockKey);
+    });
+
     // Validating specific regex logic from agent.js
     it('should match conditions correctly', () => {
         const check = (condition, content) => {
