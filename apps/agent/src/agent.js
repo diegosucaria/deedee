@@ -198,6 +198,122 @@ class Agent {
     }
   }
 
+  // --- Proactive-mirror wrapper -------------------------------------------
+  // Owner-WhatsApp identity (phone JID + resolved LID), populated lazily.
+  // Cached permanently once LID is resolved. On resolve failure (common at
+  // startup before Baileys is connected), the partial set is reused but the
+  // resolve is retried on the next send — bounded by _ownerLidRetryAfterMs
+  // so a permanently-down resolve endpoint doesn't generate one HTTP call
+  // per send.
+  async _getOwnerWaIds() {
+    const now = Date.now();
+    const haveCache = !!this._ownerWaIds;
+    const fullyResolved = haveCache && this._ownerLidResolved;
+    const recentlyTried = haveCache && this._ownerLidRetryAfterMs && now < this._ownerLidRetryAfterMs;
+    if (fullyResolved || recentlyTried) return this._ownerWaIds;
+
+    const setting = this.db.getAgentSetting('owner_phone');
+    const ownerPhone = (setting && setting.value) || process.env.MY_PHONE || '';
+    const ownerDigits = ownerPhone.replace(/[^0-9]/g, '');
+
+    if (!ownerDigits) {
+      // No owner configured. Cache permanently so we stop hitting the DB.
+      this._ownerWaIds = new Set();
+      this._ownerPreferredJid = null;
+      this._ownerLidResolved = true;
+      return this._ownerWaIds;
+    }
+
+    const phoneJid = `${ownerDigits}@s.whatsapp.net`;
+    const ids = new Set([phoneJid]);
+    let preferredJid = phoneJid;
+    let lidResolved = false;
+    try {
+      const interfacesUrl = process.env.INTERFACES_URL || 'http://interfaces:5000';
+      const r = await axios.get(`${interfacesUrl}/whatsapp/resolve`, {
+        params: { identifier: phoneJid, session: 'assistant' },
+        headers: { Authorization: `Bearer ${process.env.DEEDEE_API_TOKEN}` }
+      });
+      if (r.data?.lid) {
+        ids.add(r.data.lid);
+        preferredJid = r.data.lid;
+        lidResolved = true;
+      }
+      if (r.data?.phoneJid) ids.add(r.data.phoneJid);
+    } catch (e) {
+      console.warn('[Mirror] Owner LID resolve failed (will retry):', e.message);
+    }
+
+    this._ownerWaIds = ids;
+    this._ownerPreferredJid = preferredJid;
+    this._ownerLidResolved = lidResolved;
+    // On failure, throttle retries to avoid one HTTP call per send when the
+    // resolve endpoint is permanently down.
+    this._ownerLidRetryAfterMs = lidResolved ? 0 : now + 30_000;
+    return ids;
+  }
+
+  // Normalize chatId so bare digits (e.g. scheduler smart notifications use
+  // `chatId: ownerPhone` with no @suffix) match the owner-id set.
+  _normalizeWaChatId(chatId) {
+    if (!chatId || typeof chatId !== 'string') return chatId;
+    if (chatId.includes('@')) return chatId;
+    const digits = chatId.replace(/[^0-9]/g, '');
+    return digits ? `${digits}@s.whatsapp.net` : chatId;
+  }
+
+  async _mirrorToOwnerChat(payload) {
+    if (!payload || typeof payload !== 'object') return;
+    // Match anything routed to WhatsApp: source='whatsapp' (incl. split form
+    // 'whatsapp:assistant') OR platform='whatsapp' (smart notifications use
+    // source='scheduler' with platform indicating the delivery channel).
+    const sourceRoot = String(payload.source || '').split(':')[0];
+    const platformRoot = String(payload.platform || '').split(':')[0];
+    if (sourceRoot !== 'whatsapp' && platformRoot !== 'whatsapp') return;
+    const targetChatId = this._normalizeWaChatId(payload.metadata?.chatId);
+    if (!targetChatId) return;
+    const ownerIds = await this._getOwnerWaIds();
+    if (!ownerIds.has(targetChatId)) return;
+    // Skip non-message socket events (e.g. session_update, presence).
+    const t = payload.type || 'text';
+    if (!['text', 'image', 'audio', 'video', 'document'].includes(t)) return;
+    // Prefer the LID form for the saved row so it lives in the same chat
+    // thread as inbound user replies (which Baileys delivers as @lid).
+    const chatId = this._ownerPreferredJid || targetChatId;
+    const content = payload.caption || (t === 'text' ? payload.content : '') || '';
+    try {
+      this.db.saveMessageIfNew({
+        id: payload.id,
+        role: 'assistant',
+        content,
+        source: 'whatsapp:assistant',
+        chatId,
+        metadata: { type: t, imagePath: payload.imagePath || null }
+      });
+    } catch (e) {
+      console.warn('[Mirror] saveMessageIfNew failed:', e.message);
+    }
+  }
+
+  _installInterfaceMirror() {
+    if (!this.interface || this._interfaceMirrorInstalled) return;
+    const originalSend = this.interface.send.bind(this.interface);
+    this.interface.send = async (payload) => {
+      const result = await originalSend(payload);
+      // Defer to setImmediate so the mirror runs after any in-flight microtasks,
+      // including a follow-up db.saveMessage(reply) in paths that save AFTER
+      // calling interface.send (e.g. agent.js xAI streaming path). The mirror's
+      // saveMessageIfNew is then a no-op for ids already saved by the main loop.
+      setImmediate(() => {
+        this._mirrorToOwnerChat(payload).catch(err =>
+          console.warn('[Mirror] Unhandled error:', err.message)
+        );
+      });
+      return result;
+    };
+    this._interfaceMirrorInstalled = true;
+  }
+
   async start() {
     this.isStopped = false;
     console.log('Agent starting...');
@@ -218,6 +334,12 @@ class Agent {
     // Load Settings (API Keys, etc)
     const settings = this.db.getAllAgentSettings();
     this.settings = settings; // Update this.settings for consistency
+
+    // Wrap interface.send to mirror proactive WhatsApp sends to the owner's
+    // chat thread. Without this, scheduler/dream/reminder messages reach the
+    // owner's phone but are never persisted to the agent DB, so the agent
+    // can't reference them when the owner replies.
+    this._installInterfaceMirror();
 
     // Check for xAI config
     if (settings['provider:xai']?.apiKey) {
