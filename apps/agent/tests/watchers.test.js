@@ -38,6 +38,7 @@ describe('Message Watchers & Passive Mode', () => {
     beforeEach(() => {
         db.db.exec('DELETE FROM watchers');
         db.db.exec('DELETE FROM messages');
+        if (agent.watcherLocks) agent.watcherLocks.clear();
         jest.clearAllMocks();
     });
 
@@ -144,6 +145,144 @@ describe('Message Watchers & Passive Mode', () => {
         const callArgs = sendCallback.mock.calls[0][0];
         expect(callArgs.metadata.chatId).toBe(adminId);
         expect(callArgs.content).toContain(`[WATCHER: ${contact}]`);
+    });
+
+    it('should COALESCE concurrent watcher triggers into one trailing rerun', async () => {
+        const contact = '5551234567';
+        const insert = db.createWatcher({
+            name: 'Coalesce Watcher',
+            contactString: contact,
+            condition: 'all',
+            instruction: 'Say done',
+            status: 'active'
+        });
+        const watcherId = insert.lastInsertRowid;
+
+        // Bypass the dynamic GoogleGenAI import — the early `if (!this.client)` block
+        // in processMessage runs before the watcher logic, and the import fails under
+        // jest's CJS mode. Mocking client to truthy short-circuits that init.
+        agent.client = {};
+
+        // Simulate run 1 holding the in-flight lock (we don't run a real model here —
+        // we're testing the queue/coalesce semantics directly).
+        const lockKey = `watcher:${watcherId}:${contact}`;
+        const lockState = { rerunNeeded: false, latestMsg: null };
+        agent.watcherLocks.set(lockKey, lockState);
+
+        const baseMsg = {
+            role: 'user',
+            source: 'whatsapp:user',
+            metadata: { phoneNumber: contact, chatId: `${contact}@s.whatsapp.net` }
+        };
+        const sendCallback = jest.fn();
+        const generateSpy = jest.spyOn(agent, '_generateStream');
+
+        // Two more matching messages arrive while the lock is held — both coalesce.
+        await agent.processMessage({ ...baseMsg, id: 'm2', content: 'second' }, sendCallback);
+        await agent.processMessage({ ...baseMsg, id: 'm3', content: 'third' }, sendCallback);
+
+        // Neither queued message hit the model.
+        expect(generateSpy).not.toHaveBeenCalled();
+        expect(sendCallback).not.toHaveBeenCalled();
+
+        // Both messages collapsed into ONE pending rerun (not two), and the latest
+        // message wins — so the rerun will fire with m3, not m2.
+        expect(lockState.rerunNeeded).toBe(true);
+        expect(lockState.latestMsg.id).toBe('m3');
+
+        // Both queued messages were persisted so the rerun's readChatHistory sees them.
+        const storedIds = db.db.prepare('SELECT id FROM messages WHERE chat_id = ?')
+            .all(`${contact}@s.whatsapp.net`).map(r => r.id);
+        expect(storedIds).toEqual(expect.arrayContaining(['m2', 'm3']));
+
+        // Each queued message is flagged so the rerun's saveMessage skips it
+        // (otherwise the rerun's INSERT would violate the messages.id PRIMARY KEY,
+        // crash before the watcher hijack installs, and leak an error reply
+        // straight to the watched contact).
+        expect(lockState.latestMsg._watcherPersisted).toBe(true);
+
+        // Cleanup: pretend run 1 finished (the real finally block would do this).
+        agent.watcherLocks.delete(lockKey);
+    });
+
+    it('should fire exactly one trailing rerun without leaking errors to the contact (end-to-end)', async () => {
+        const contact = '5559876543';
+        db.createWatcher({
+            name: 'E2E Watcher',
+            contactString: contact,
+            condition: 'all',
+            instruction: 'Say done',
+            status: 'active'
+        });
+
+        // Stub client + library: the dynamic GoogleGenAI import fails under jest's
+        // CJS mode, and chats.create is called before _generateStream so it has to
+        // exist (even if its return value is never used — _generateStream is mocked).
+        agent.client = { chats: { create: jest.fn().mockReturnValue({}) } };
+        agent._loadClientLibrary = jest.fn().mockResolvedValue({ GoogleGenAI: class { } });
+
+        // Run A's first model call hangs on `runAResponse` until we resolve it,
+        // holding the watcher lock so the queued message can demonstrate coalescing.
+        let resolveRunA;
+        const runAResponse = new Promise(r => { resolveRunA = r; });
+        let callCount = 0;
+        agent._generateStream = jest.fn().mockImplementation(() => {
+            callCount++;
+            if (callCount === 1) return runAResponse;
+            return Promise.resolve({
+                candidates: [{ content: { role: 'model', parts: [{ text: 'Done' }] } }]
+            });
+        });
+
+        const baseMsg = {
+            role: 'user',
+            source: 'whatsapp:user',
+            metadata: { phoneNumber: contact, chatId: `${contact}@s.whatsapp.net` }
+        };
+        const sendCallback = jest.fn();
+
+        // Fire run A — don't await; it parks on runAResponse with the lock held.
+        const runA = agent.processMessage(
+            { ...baseMsg, id: 'e2e-1', content: 'first' },
+            sendCallback
+        );
+
+        // Yield until run A reaches the watcher block and acquires the lock.
+        for (let i = 0; i < 10 && agent.watcherLocks.size === 0; i++) {
+            await new Promise(r => setImmediate(r));
+        }
+        expect(agent.watcherLocks.size).toBe(1);
+
+        // Two more messages arrive while the lock is held — they should coalesce.
+        await agent.processMessage({ ...baseMsg, id: 'e2e-2', content: 'second' }, sendCallback);
+        await agent.processMessage({ ...baseMsg, id: 'e2e-3', content: 'third' }, sendCallback);
+        expect(callCount).toBe(1); // queued messages didn't reach the model
+
+        // Release run A; the finally block fires the rerun via setImmediate.
+        resolveRunA({ candidates: [{ content: { role: 'model', parts: [{ text: 'Done' }] } }] });
+        await runA;
+
+        // Drain enough ticks for the rerun's full flow to complete.
+        for (let i = 0; i < 20 && callCount < 2; i++) {
+            await new Promise(r => setImmediate(r));
+        }
+
+        // Exactly one trailing rerun fired (m2 and m3 collapsed into one).
+        expect(callCount).toBe(2);
+
+        // Lock fully released after both runs.
+        expect(agent.watcherLocks.size).toBe(0);
+
+        // CRITICAL: no error reply leaked to the contact. Without the
+        // _watcherPersisted guard, the rerun's saveMessage would have thrown
+        // a UNIQUE constraint error before the watcher hijack installed,
+        // sending a "⚠️ A temporary processing error..." through the
+        // original (un-hijacked) send callback to the watched contact.
+        const errorReplies = sendCallback.mock.calls.filter(args => {
+            const reply = args[0];
+            return typeof reply?.content === 'string' && reply.content.startsWith('⚠️');
+        });
+        expect(errorReplies).toEqual([]);
     });
 
     // Validating specific regex logic from agent.js
