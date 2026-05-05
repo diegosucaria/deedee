@@ -2,8 +2,15 @@
 // on /socket.io to gate browser WebSocket upgrades. The DEEDEE_API_TOKEN
 // bearer middleware on /v1/* is unaffected — that path is for iOS
 // Shortcuts / cron / service-to-service callers and never sees a cookie.
-const { jwtVerify } = require('jose');
 const cookie = require('cookie');
+
+// jose@6 is pure ESM. Use dynamic import (cached) so this module stays
+// CJS-loadable under Jest, which doesn't follow Node's require-ESM path.
+let josePromise = null;
+function getJose() {
+    if (!josePromise) josePromise = import('jose');
+    return josePromise;
+}
 
 const SESSION_COOKIE_NAME = 'deedee_session';
 const ALG = 'HS256';
@@ -38,6 +45,7 @@ async function verifySession(req) {
     const key = loadKey();
     if (!key) return null;
     try {
+        const { jwtVerify } = await getJose();
         const { payload } = await jwtVerify(token, key, { algorithms: [ALG] });
         return payload;
     } catch {

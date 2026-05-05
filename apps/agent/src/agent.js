@@ -1001,7 +1001,12 @@ class Agent {
           const existingLock = this.watcherLocks.get(lockKey);
           if (existingLock) {
             // Persist so the rerun's readChatHistory will see this message.
+            // The flag prevents a duplicate INSERT when the rerun's normal flow
+            // reaches the saveMessage call below — same id would violate the
+            // PRIMARY KEY and crash before the watcher hijack is installed,
+            // leaking an error reply to the watched contact.
             this.db.saveMessage(message);
+            message._watcherPersisted = true;
             existingLock.rerunNeeded = true;
             existingLock.latestMsg = message;
             console.log(`${logPrefix} Watcher ${triggeredWatcher.id} already running for ${contactString}; coalesced into pending rerun.`);
@@ -1022,7 +1027,10 @@ class Agent {
           // "Passive Mode" logic above saved it.
           // If it IS triggered, we proceed.
 
-          this.db.saveMessage(message);
+          // Skip if a prior queued path already persisted this message (rerun trigger).
+          if (!message._watcherPersisted) {
+            this.db.saveMessage(message);
+          }
 
           // HIJACK SEND CALLBACK FOR WATCHER: Suppress/Redirect replies
           console.log('[Agent] WATCHER DETECTED. Hijacking activeSendCallback.');
