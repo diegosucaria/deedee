@@ -200,42 +200,77 @@ class Agent {
 
   // --- Proactive-mirror wrapper -------------------------------------------
   // Owner-WhatsApp identity (phone JID + resolved LID), populated lazily.
-  // null means "not yet resolved"; an empty Set means "no owner configured".
+  // Cached permanently once LID is resolved. On resolve failure (common at
+  // startup before Baileys is connected), the partial set is reused but the
+  // resolve is retried on the next send — bounded by _ownerLidRetryAfterMs
+  // so a permanently-down resolve endpoint doesn't generate one HTTP call
+  // per send.
   async _getOwnerWaIds() {
-    if (this._ownerWaIds) return this._ownerWaIds;
+    const now = Date.now();
+    const haveCache = !!this._ownerWaIds;
+    const fullyResolved = haveCache && this._ownerLidResolved;
+    const recentlyTried = haveCache && this._ownerLidRetryAfterMs && now < this._ownerLidRetryAfterMs;
+    if (fullyResolved || recentlyTried) return this._ownerWaIds;
+
     const setting = this.db.getAgentSetting('owner_phone');
     const ownerPhone = (setting && setting.value) || process.env.MY_PHONE || '';
     const ownerDigits = ownerPhone.replace(/[^0-9]/g, '');
-    const ids = new Set();
-    if (ownerDigits) {
-      const phoneJid = `${ownerDigits}@s.whatsapp.net`;
-      ids.add(phoneJid);
-      this._ownerPreferredJid = phoneJid;
-      try {
-        const interfacesUrl = process.env.INTERFACES_URL || 'http://interfaces:5000';
-        const r = await axios.get(`${interfacesUrl}/whatsapp/resolve`, {
-          params: { identifier: phoneJid, session: 'assistant' },
-          headers: { Authorization: `Bearer ${process.env.DEEDEE_API_TOKEN}` }
-        });
-        if (r.data?.lid) {
-          ids.add(r.data.lid);
-          this._ownerPreferredJid = r.data.lid;
-        }
-        if (r.data?.phoneJid) ids.add(r.data.phoneJid);
-      } catch (e) {
-        console.warn('[Mirror] Owner LID resolve failed; using phone JID only:', e.message);
-      }
+
+    if (!ownerDigits) {
+      // No owner configured. Cache permanently so we stop hitting the DB.
+      this._ownerWaIds = new Set();
+      this._ownerPreferredJid = null;
+      this._ownerLidResolved = true;
+      return this._ownerWaIds;
     }
+
+    const phoneJid = `${ownerDigits}@s.whatsapp.net`;
+    const ids = new Set([phoneJid]);
+    let preferredJid = phoneJid;
+    let lidResolved = false;
+    try {
+      const interfacesUrl = process.env.INTERFACES_URL || 'http://interfaces:5000';
+      const r = await axios.get(`${interfacesUrl}/whatsapp/resolve`, {
+        params: { identifier: phoneJid, session: 'assistant' },
+        headers: { Authorization: `Bearer ${process.env.DEEDEE_API_TOKEN}` }
+      });
+      if (r.data?.lid) {
+        ids.add(r.data.lid);
+        preferredJid = r.data.lid;
+        lidResolved = true;
+      }
+      if (r.data?.phoneJid) ids.add(r.data.phoneJid);
+    } catch (e) {
+      console.warn('[Mirror] Owner LID resolve failed (will retry):', e.message);
+    }
+
     this._ownerWaIds = ids;
+    this._ownerPreferredJid = preferredJid;
+    this._ownerLidResolved = lidResolved;
+    // On failure, throttle retries to avoid one HTTP call per send when the
+    // resolve endpoint is permanently down.
+    this._ownerLidRetryAfterMs = lidResolved ? 0 : now + 30_000;
     return ids;
+  }
+
+  // Normalize chatId so bare digits (e.g. scheduler smart notifications use
+  // `chatId: ownerPhone` with no @suffix) match the owner-id set.
+  _normalizeWaChatId(chatId) {
+    if (!chatId || typeof chatId !== 'string') return chatId;
+    if (chatId.includes('@')) return chatId;
+    const digits = chatId.replace(/[^0-9]/g, '');
+    return digits ? `${digits}@s.whatsapp.net` : chatId;
   }
 
   async _mirrorToOwnerChat(payload) {
     if (!payload || typeof payload !== 'object') return;
-    // Only WhatsApp sends — split form 'whatsapp:assistant' counts.
+    // Match anything routed to WhatsApp: source='whatsapp' (incl. split form
+    // 'whatsapp:assistant') OR platform='whatsapp' (smart notifications use
+    // source='scheduler' with platform indicating the delivery channel).
     const sourceRoot = String(payload.source || '').split(':')[0];
-    if (sourceRoot !== 'whatsapp') return;
-    const targetChatId = payload.metadata?.chatId;
+    const platformRoot = String(payload.platform || '').split(':')[0];
+    if (sourceRoot !== 'whatsapp' && platformRoot !== 'whatsapp') return;
+    const targetChatId = this._normalizeWaChatId(payload.metadata?.chatId);
     if (!targetChatId) return;
     const ownerIds = await this._getOwnerWaIds();
     if (!ownerIds.has(targetChatId)) return;
