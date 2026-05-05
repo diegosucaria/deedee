@@ -1045,6 +1045,30 @@ class AgentDB {
     stmt.run(id, msg.role, msg.content, partsStr, msg.source, targetChatId, msg.cost || 0, msg.tokenCount || 0, ts, metaStr);
   }
 
+  // Insert variant for the proactive-mirror wrapper. Idempotent on id so callers
+  // that send a payload already saved by the main reply loop (same id) don't
+  // create a duplicate row; payloads with no/new id are saved fresh.
+  saveMessageIfNew(msg) {
+    const stmt = this.db.prepare(`
+      INSERT OR IGNORE INTO messages (id, role, content, parts, source, chat_id, cost, token_count, timestamp, metadata)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `);
+    const id = msg.id || crypto.randomUUID();
+    const partsStr = msg.parts ? JSON.stringify(msg.parts) : null;
+    const metaStr = msg.metadata ? JSON.stringify(msg.metadata) : null;
+    const targetChatId = msg.chatId || msg.chat_id || msg.metadata?.chatId;
+    let ts;
+    if (msg.timestamp == null) {
+      ts = new Date().toISOString();
+    } else if (typeof msg.timestamp === 'number') {
+      ts = new Date(msg.timestamp).toISOString();
+    } else {
+      ts = msg.timestamp;
+    }
+    const result = stmt.run(id, msg.role, msg.content, partsStr, msg.source, targetChatId, msg.cost || 0, msg.tokenCount || 0, ts, metaStr);
+    return { inserted: result.changes > 0, id };
+  }
+
   getHistory(options = {}) {
     const { limit = 50, since, until, chatId, order = 'DESC', source } = options;
 

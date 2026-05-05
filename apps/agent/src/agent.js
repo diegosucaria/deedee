@@ -198,6 +198,87 @@ class Agent {
     }
   }
 
+  // --- Proactive-mirror wrapper -------------------------------------------
+  // Owner-WhatsApp identity (phone JID + resolved LID), populated lazily.
+  // null means "not yet resolved"; an empty Set means "no owner configured".
+  async _getOwnerWaIds() {
+    if (this._ownerWaIds) return this._ownerWaIds;
+    const setting = this.db.getAgentSetting('owner_phone');
+    const ownerPhone = (setting && setting.value) || process.env.MY_PHONE || '';
+    const ownerDigits = ownerPhone.replace(/[^0-9]/g, '');
+    const ids = new Set();
+    if (ownerDigits) {
+      const phoneJid = `${ownerDigits}@s.whatsapp.net`;
+      ids.add(phoneJid);
+      this._ownerPreferredJid = phoneJid;
+      try {
+        const interfacesUrl = process.env.INTERFACES_URL || 'http://interfaces:5000';
+        const r = await axios.get(`${interfacesUrl}/whatsapp/resolve`, {
+          params: { identifier: phoneJid, session: 'assistant' },
+          headers: { Authorization: `Bearer ${process.env.DEEDEE_API_TOKEN}` }
+        });
+        if (r.data?.lid) {
+          ids.add(r.data.lid);
+          this._ownerPreferredJid = r.data.lid;
+        }
+        if (r.data?.phoneJid) ids.add(r.data.phoneJid);
+      } catch (e) {
+        console.warn('[Mirror] Owner LID resolve failed; using phone JID only:', e.message);
+      }
+    }
+    this._ownerWaIds = ids;
+    return ids;
+  }
+
+  async _mirrorToOwnerChat(payload) {
+    if (!payload || typeof payload !== 'object') return;
+    // Only WhatsApp sends — split form 'whatsapp:assistant' counts.
+    const sourceRoot = String(payload.source || '').split(':')[0];
+    if (sourceRoot !== 'whatsapp') return;
+    const targetChatId = payload.metadata?.chatId;
+    if (!targetChatId) return;
+    const ownerIds = await this._getOwnerWaIds();
+    if (!ownerIds.has(targetChatId)) return;
+    // Skip non-message socket events (e.g. session_update, presence).
+    const t = payload.type || 'text';
+    if (!['text', 'image', 'audio', 'video', 'document'].includes(t)) return;
+    // Prefer the LID form for the saved row so it lives in the same chat
+    // thread as inbound user replies (which Baileys delivers as @lid).
+    const chatId = this._ownerPreferredJid || targetChatId;
+    const content = payload.caption || (t === 'text' ? payload.content : '') || '';
+    try {
+      this.db.saveMessageIfNew({
+        id: payload.id,
+        role: 'assistant',
+        content,
+        source: 'whatsapp:assistant',
+        chatId,
+        metadata: { type: t, imagePath: payload.imagePath || null }
+      });
+    } catch (e) {
+      console.warn('[Mirror] saveMessageIfNew failed:', e.message);
+    }
+  }
+
+  _installInterfaceMirror() {
+    if (!this.interface || this._interfaceMirrorInstalled) return;
+    const originalSend = this.interface.send.bind(this.interface);
+    this.interface.send = async (payload) => {
+      const result = await originalSend(payload);
+      // Defer to setImmediate so the mirror runs after any in-flight microtasks,
+      // including a follow-up db.saveMessage(reply) in paths that save AFTER
+      // calling interface.send (e.g. agent.js xAI streaming path). The mirror's
+      // saveMessageIfNew is then a no-op for ids already saved by the main loop.
+      setImmediate(() => {
+        this._mirrorToOwnerChat(payload).catch(err =>
+          console.warn('[Mirror] Unhandled error:', err.message)
+        );
+      });
+      return result;
+    };
+    this._interfaceMirrorInstalled = true;
+  }
+
   async start() {
     this.isStopped = false;
     console.log('Agent starting...');
@@ -218,6 +299,12 @@ class Agent {
     // Load Settings (API Keys, etc)
     const settings = this.db.getAllAgentSettings();
     this.settings = settings; // Update this.settings for consistency
+
+    // Wrap interface.send to mirror proactive WhatsApp sends to the owner's
+    // chat thread. Without this, scheduler/dream/reminder messages reach the
+    // owner's phone but are never persisted to the agent DB, so the agent
+    // can't reference them when the owner replies.
+    this._installInterfaceMirror();
 
     // Check for xAI config
     if (settings['provider:xai']?.apiKey) {
