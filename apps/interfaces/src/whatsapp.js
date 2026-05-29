@@ -4,7 +4,7 @@ const path = require('path');
 const fs = require('fs');
 const QRCode = require('qrcode');
 const Database = require('better-sqlite3');
-const { spawn } = require('child_process');
+const child_process = require('child_process');
 
 /**
  * Converts a WAV audio buffer to OGG/Opus format using ffmpeg.
@@ -22,7 +22,7 @@ function convertToOpus(wavBuffer) {
         let settled = false;
         const settle = (fn, val) => { if (!settled) { settled = true; clearTimeout(timer); fn(val); } };
 
-        const ffmpeg = spawn('ffmpeg', [
+        const ffmpeg = child_process.spawn('ffmpeg', [
             '-i', 'pipe:0',
             '-c:a', 'libopus',
             '-b:a', '48k',

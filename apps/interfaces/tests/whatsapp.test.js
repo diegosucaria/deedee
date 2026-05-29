@@ -1,5 +1,8 @@
 
 const request = require('supertest');
+const child_process = require('child_process');
+const EventEmitter = require('events');
+const { Readable, Writable } = require('stream');
 const { WhatsAppService } = require('../src/whatsapp');
 const fs = require('fs');
 
@@ -8,6 +11,19 @@ jest.mock('qrcode', () => ({
     toDataURL: jest.fn().mockResolvedValue('data:image/png;base64,mockqr')
 }));
 jest.mock('axios');
+
+// Returns a spawn mock that simulates ffmpeg being unavailable (ENOENT).
+// convertToOpus catches the error event and falls back to the raw buffer,
+// so callers get a Buffer back without actually invoking ffmpeg.
+function fakeFfmpegNotFound() {
+    const proc = new EventEmitter();
+    proc.stdout = new Readable({ read() {} });
+    proc.stderr = new Readable({ read() {} });
+    proc.stdin = new Writable({ write(_c, _e, cb) { cb(); }, final(cb) { cb(); } });
+    proc.kill = jest.fn();
+    process.nextTick(() => proc.emit('error', new Error('spawn ffmpeg ENOENT')));
+    return proc;
+}
 
 describe('WhatsAppService Unit Tests', () => {
     let whatsapp;
@@ -21,6 +37,10 @@ describe('WhatsAppService Unit Tests', () => {
         jest.spyOn(console, 'log').mockImplementation(() => { });
         jest.spyOn(console, 'error').mockImplementation(() => { });
         jest.spyOn(console, 'warn').mockImplementation(() => { });
+
+        // Isolate from real ffmpeg — convertToOpus falls back to raw buffer on error.
+        // Keeps the audio-send test stable across machines with/without ffmpeg.
+        jest.spyOn(child_process, 'spawn').mockImplementation(fakeFfmpegNotFound);
 
         // Mock Env
         process.env.ALLOWED_WHATSAPP_NUMBERS = '123456';
