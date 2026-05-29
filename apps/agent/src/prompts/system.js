@@ -175,9 +175,9 @@ ${notificationContext?.ownerPhone ? `\nOWNER CONTACT: Your owner is "${notificat
         let COMMUNICATION_STYLE_PROTOCOL = '';
         if (typeof communicationStyle === 'string' && communicationStyle.trim()) {
                 COMMUNICATION_STYLE_PROTOCOL = `
-            COMMUNICATION STYLE (tone & register when writing to the owner):
+            COMMUNICATION STYLE (your own voice when replying to the owner):
             ${communicationStyle.trim()}
-            (This shapes tone and register only. It does NOT override the LANGUAGE PROTOCOL — always reply in the language of the user's last message — nor the CONSTITUTION.)
+            (Applies to YOUR OWN messages to the owner. Do NOT apply it when drafting or sending a message AS the owner to someone else — there, mirror the owner's own writing style instead. It shapes tone/register only and never overrides the LANGUAGE PROTOCOL — always reply in the language of the user's last message — or the CONSTITUTION.)
         `;
         }
 

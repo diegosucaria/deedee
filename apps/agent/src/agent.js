@@ -383,7 +383,7 @@ class Agent {
         new Date().toISOString(),
         "No active goals (snapshot)",
         "No facts (snapshot)",
-        { codingMode: true, skillsContext }
+        { codingMode: true, skillsContext, communicationStyle: this.settings?.communication_style || '' }
       );
 
       const snapshot = {
