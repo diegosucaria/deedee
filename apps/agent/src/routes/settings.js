@@ -66,7 +66,7 @@ function createSettingsRouter(agent) {
                 'owner_phone', 'owner_name', 'search_strategy', 'voice_settings',
                 'communication_dry_run', 'communication_style', 'notification_channel',
                 'provider:xai', 'chatModel', 'visionModel',
-                'slack_monitored_channels'
+                'slack_monitored_channels', 'proactive_run_probability'
             ];
             if (!ALLOWED_KEYS.includes(key)) {
                 return res.status(400).json({ error: 'Invalid config key' });
@@ -76,7 +76,17 @@ function createSettingsRouter(agent) {
                 return res.status(400).json({ error: 'Missing key or value' });
             }
 
-            const jsonValue = JSON.stringify(value);
+            let storedValue = value;
+            // Proactive loop run probability: must be a number in [0, 1].
+            if (key === 'proactive_run_probability') {
+                const n = Number(value);
+                if (!Number.isFinite(n) || n < 0 || n > 1) {
+                    return res.status(400).json({ error: 'proactive_run_probability must be a number between 0 and 1' });
+                }
+                storedValue = n;
+            }
+
+            const jsonValue = JSON.stringify(storedValue);
 
             const stmt = agent.db.db.prepare(`
                 INSERT INTO agent_settings (key, value, category, updated_at)
@@ -93,13 +103,13 @@ function createSettingsRouter(agent) {
 
             // Update In-Memory Cache
             if (agent.settings) {
-                agent.settings[key] = value;
+                agent.settings[key] = storedValue;
             }
 
             // Notify via Socket (Broadcast via Interfaces service)
             if (agent.interface) {
                 // fire and forget
-                agent.interface.broadcast('entity:update', { type: 'setting', key, value }).catch(console.error);
+                agent.interface.broadcast('entity:update', { type: 'setting', key, value: storedValue }).catch(console.error);
             }
 
             res.json({ success: true, key, value });

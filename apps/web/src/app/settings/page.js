@@ -357,6 +357,27 @@ function SettingsContent() {
                                     </p>
                                 </div>
 
+                                {/* Proactive Scan Frequency */}
+                                <div className="border-t border-zinc-800/50 pt-6">
+                                    <label className="block text-sm font-medium text-zinc-400 mb-1">
+                                        Proactive Scan Frequency
+                                    </label>
+                                    <select
+                                        value={String(config?.proactive_run_probability ?? 0.05)}
+                                        onChange={(e) => handleSave('proactive_run_probability', parseFloat(e.target.value))}
+                                        className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500/50 outline-none"
+                                    >
+                                        <option value="0">Off — never run proactively</option>
+                                        <option value="0.03">Minimal (~3% of hours)</option>
+                                        <option value="0.05">Low (~5%, default)</option>
+                                        <option value="0.1">Medium (~10%)</option>
+                                        <option value="0.2">High (~20%)</option>
+                                    </select>
+                                    <p className="text-xs text-zinc-500 mt-1">
+                                        How often the hourly proactive loop actually wakes up to scan Slack, email, and calendar for things worth surfacing. Lower means fewer unprompted messages and lower cost.
+                                    </p>
+                                </div>
+
                                 <div className="border-t border-zinc-800/50 pt-6 flex items-center justify-between">
                                     <div>
                                         <h3 className="text-white font-medium">Dry Run Mode</h3>

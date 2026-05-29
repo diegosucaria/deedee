@@ -37,6 +37,8 @@ class SlackConnection {
         this.channelCache = new Map();  // channelId -> {name, type}
         this.channelNameToId = new Map(); // #name -> channelId
         this.lastReadTs = new Map();
+        this._rosterCache = null;       // full workspace user list (TTL-cached)
+        this._rosterCacheAt = 0;
     }
 
     async start() {
@@ -238,6 +240,15 @@ class SlackConnection {
     }
 
     async getWorkspaceUsers() {
+        // Roster cache. resolveSlackUser hits this on every lookup, and one
+        // Slack scan resolves many users — so uncached we re-paginated the whole
+        // workspace per call, a top latency + Slack-rate cost driver and a
+        // frequent loop-detector trigger. The roster changes rarely, so a short
+        // TTL is safe; re-auth builds a fresh connection with an empty cache.
+        const TTL_MS = 60 * 60 * 1000; // 1h
+        if (this._rosterCache && (Date.now() - this._rosterCacheAt) < TTL_MS) {
+            return this._rosterCache;
+        }
         const users = [];
         let cursor;
         do {
@@ -259,6 +270,8 @@ class SlackConnection {
             }
             cursor = res.response_metadata?.next_cursor;
         } while (cursor);
+        this._rosterCache = users;
+        this._rosterCacheAt = Date.now();
         return users;
     }
 

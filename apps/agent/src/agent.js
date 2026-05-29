@@ -1753,7 +1753,7 @@ class Agent {
       // Per-tool Tier 1 overrides. Use for tools that legitimately fan out across
       // many distinct arguments (but should still have a ceiling, unlike LOOP_EXEMPT_TOOLS).
       const TIER1_LIMIT_OVERRIDES = {
-        resolveSlackUser: 12, // fans out to resolve each user in a Slack scan (6–10 is normal)
+        resolveSlackUser: 12, // fans out per user in a Slack scan (6–10 normal); cheap now that the workspace roster is cached interface-side
       };
       let loopCount = 0;
       let hasBrowserSession = false; // Escalate limit when browser tools are used
