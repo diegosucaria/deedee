@@ -113,6 +113,18 @@ app.post('/webhook', (req, res) => {
     message.source = message.source || 'http';
     message.timestamp = message.timestamp || new Date().toISOString();
 
+    // Internal system alerts (e.g. Slack token expiry) are delivered to the
+    // owner verbatim and de-duplicated — NOT fed through the LLM. Routing them
+    // through the agent caused a message storm: every failed Slack poll
+    // re-injected the alert and the LLM re-worded + re-sent it each time,
+    // which knocked over the WhatsApp connection (2026-05-27).
+    if (message.metadata?.internal_system_alert) {
+      const dedupKey = message.metadata.alertKey || message.content;
+      agent.deliverSystemAlert(message.content, dedupKey)
+        .catch(err => console.error('[Server] deliverSystemAlert failed:', err.message));
+      return res.json({ received: true, delivered: 'direct' });
+    }
+
     httpInterface.receive(message);
     res.json({ received: true });
   } else {

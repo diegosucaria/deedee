@@ -318,6 +318,48 @@ class Agent {
     this._interfaceMirrorInstalled = true;
   }
 
+  // Deliver an internal system alert (e.g. Slack token expiry) to the owner
+  // verbatim, bypassing the LLM. De-duplicated per alertKey so a persistent or
+  // flapping failure can't storm the owner with reworded copies — the bug that
+  // took WhatsApp down on 2026-05-27, when each failed Slack poll re-injected
+  // the alert and the LLM re-sent a fresh variant. The dedup timestamp is set
+  // only after a successful send, so a delivery failure doesn't latch.
+  async deliverSystemAlert(text, dedupKey) {
+    if (!text) return false;
+    const key = dedupKey || text;
+    const now = Date.now();
+    const COOLDOWN_MS = 6 * 60 * 60 * 1000; // 6h
+    if (!this._systemAlertDedup) this._systemAlertDedup = new Map();
+    const last = this._systemAlertDedup.get(key);
+    if (last && now - last < COOLDOWN_MS) {
+      console.log(`[Agent] Suppressing duplicate system alert (key='${key}', last sent ${Math.round((now - last) / 1000)}s ago).`);
+      return false;
+    }
+
+    const setting = this.db.getAgentSetting('owner_phone');
+    const ownerPhone = (setting && setting.value) || process.env.MY_PHONE || '';
+    if (!ownerPhone) {
+      console.warn('[Agent] deliverSystemAlert: no owner_phone configured; dropping alert.');
+      return false;
+    }
+
+    try {
+      await this.interface.send({
+        source: 'whatsapp:assistant',
+        content: text,
+        type: 'text',
+        metadata: { chatId: ownerPhone },
+        isNotification: true
+      });
+      this._systemAlertDedup.set(key, now);
+      console.log(`[Agent] Delivered system alert to owner (key='${key}').`);
+      return true;
+    } catch (e) {
+      console.error('[Agent] deliverSystemAlert send failed:', e.message);
+      return false;
+    }
+  }
+
   async start() {
     this.isStopped = false;
     console.log('Agent starting...');

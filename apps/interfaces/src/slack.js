@@ -21,6 +21,12 @@ class SlackConnection {
         this.listening = config.listening !== false;
         this.monitoredChannels = config.monitoredChannels || [];
         this.onTokenExpired = onTokenExpired;
+        // Latch: once the token is known-dead we notify exactly once and stop
+        // hitting Slack. Without this, every failed poll AND every failed agent
+        // tool call re-fired onTokenExpired, storming the owner with reworded
+        // alerts (the 2026-05-27 incident). Reset naturally on re-auth, which
+        // builds a fresh SlackConnection.
+        this.tokenExpired = false;
 
         this.ws = null;
         this.pollInterval = null;
@@ -54,6 +60,17 @@ class SlackConnection {
             this.pollInterval = null;
         }
         console.log(`[Slack:${this.workspace?.team || 'Unknown'}] Stopped.`);
+    }
+
+    // Single entry point for "token is dead". Latched so it fires once: halts
+    // the connection (stops polling + RTM reconnect via intentionallyStopped)
+    // and notifies the owner exactly once until re-auth.
+    _handleTokenExpired() {
+        if (this.tokenExpired) return;
+        this.tokenExpired = true;
+        console.error(`[Slack:${this.workspace?.team || 'Unknown'}] Token expired — latching, halting connection, notifying once.`);
+        this.stop();
+        if (this.onTokenExpired) this.onTokenExpired(this.workspace?.teamId);
     }
 
     async _connect() {
@@ -147,9 +164,7 @@ class SlackConnection {
                 await this._pollConversations();
             } catch (err) {
                 if (err.message?.includes('token_revoked') || err.message?.includes('invalid_auth')) {
-                    console.error(`[Slack:${this.workspace?.team}] Token expired during polling.`);
-                    this.stop();
-                    if (this.onTokenExpired) this.onTokenExpired(this.workspace.teamId);
+                    this._handleTokenExpired();
                 }
             }
         }, 5000);
@@ -441,6 +456,13 @@ class SlackConnection {
     }
 
     async _api(method, body = {}) {
+        // Once latched as expired, fail fast without touching the network so
+        // agent tool calls (proactive loop, etc.) can't keep re-triggering the
+        // expiry path. The distinct error string avoids matching the
+        // token_revoked/invalid_auth detection below.
+        if (this.tokenExpired) {
+            throw new Error(`Slack API ${method}: token_expired_latched`);
+        }
         const headers = {
             'Authorization': `Bearer ${this.xoxc}`,
             'Cookie': `d=${this.xoxd}`,
@@ -459,7 +481,7 @@ class SlackConnection {
         const data = await res.json();
         if (!data.ok) {
             if (data.error === 'token_revoked' || data.error === 'invalid_auth') {
-                if (this.onTokenExpired) this.onTokenExpired(this.workspace?.teamId);
+                this._handleTokenExpired();
             }
             throw new Error(`Slack API ${method}: ${data.error}`);
         }
@@ -877,10 +899,13 @@ class SlackManager {
         console.error(`[SlackManager] ⚠️ Token expired for ${teamId}. Notifying user...`);
         try {
             await axios.post(`${this.agentUrl}/webhook`, {
-                content: `SYSTEM: Your Slack token for team ${teamId} has expired. Please re-login via Settings → Interfaces → Slack.`,
+                content: `⚠️ Your Slack token for team ${teamId} has expired — I can't read Slack until you re-login via Settings → Interfaces → Slack.`,
                 source: 'system',
                 role: 'user',
-                metadata: { internal_system_alert: true },
+                // internal_system_alert is delivered to the owner verbatim and
+                // de-duplicated by the agent (NOT fed through the LLM). alertKey
+                // gives a stable dedup identity per workspace.
+                metadata: { internal_system_alert: true, alertKey: `slack_token_expired:${teamId}` },
             });
         } catch (err) {
             console.error('[SlackManager] Failed to send expiry notification:', err.message);
