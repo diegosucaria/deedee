@@ -248,12 +248,19 @@ class WardrobeExecutor extends BaseExecutor {
                     await context.sendCallback(imgMsg);
                     return [
                         base,
-                        `IMAGE_PATH: ${renderPath}`,
                         `The rendered outfit image has already been delivered inline to the web chat. Do NOT call sendMessage — just describe the outfit briefly in your next reply.`
                     ].join('\n');
                 } catch (inlineErr) {
-                    console.warn(`[wardrobe.visualize_outfit] inline web send failed (${inlineErr.message}); falling back to sendMessage hint.`);
-                    // fall through to the default hint below
+                    // Inline send failed on the web — don't fall through to the
+                    // WhatsApp hint (the user isn't on WhatsApp). Tell the model
+                    // the render couldn't be delivered so it can communicate
+                    // that to the user instead of attempting a wrong-channel send.
+                    console.warn(`[wardrobe.visualize_outfit] inline web send failed (${inlineErr.message}).`);
+                    return [
+                        base,
+                        `IMAGE_PATH: ${renderPath}`,
+                        `The outfit image was rendered to disk but could not be delivered inline to the web chat. Do NOT call sendMessage (the user is on web, not WhatsApp). Tell the user the render failed to display and ask if they want to retry.`
+                    ].join('\n');
                 }
             }
 
@@ -320,14 +327,18 @@ class WardrobeExecutor extends BaseExecutor {
                 return result.notes || 'No proposals generated.';
             }
 
-            // On the web, push each rendered preview inline so the user sees the
-            // images directly in the chat (and the model isn't tempted to forward
-            // them to WhatsApp via sendMessage).
+            // On the web, push each rendered preview inline so the user sees
+            // the images directly in the chat. Track per-outfit success so
+            // the model output text accurately reflects what was delivered:
+            // if a sendCallback throws for one image, we still want the model
+            // to mention that one (via IMAGE_PATH) instead of silently
+            // dropping it under a blanket "all delivered" trailer.
             const source = execContext?.message?.source || '';
             const isWeb = source === 'web';
-            const inlinedWebImages = isWeb && typeof execContext?.sendCallback === 'function';
+            const canInline = isWeb && typeof execContext?.sendCallback === 'function';
+            const inlinedOutfitIds = new Set();
 
-            if (inlinedWebImages) {
+            if (canInline) {
                 for (const p of result.proposals) {
                     const renderPath = p.outfit?.rendered_image_path;
                     if (!renderPath) continue;
@@ -341,26 +352,46 @@ class WardrobeExecutor extends BaseExecutor {
                         imgMsg.source = source;
                         imgMsg.type = 'image';
                         await execContext.sendCallback(imgMsg);
+                        inlinedOutfitIds.add(p.outfit.id);
                     } catch (inlineErr) {
                         console.warn(`[wardrobe.recommend_outfit] inline web send failed for outfit ${p.outfit.id} (${inlineErr.message})`);
                     }
                 }
             }
 
+            const proposalsWithImages = result.proposals.filter(p => p.outfit?.rendered_image_path);
+            const inlinedCount = inlinedOutfitIds.size;
+            const allInlined = proposalsWithImages.length > 0
+                && inlinedCount === proposalsWithImages.length;
+
             const lines = result.proposals.map(p => {
                 const ids = (p.outfit.garment_ids || []).join(', ');
                 let line = `- [${p.bucket}] outfit ${p.outfit.id}: ${ids}\n  ${p.rationale}`;
                 if (p.outfit.rendered_image_path) {
-                    line += `\n  IMAGE_PATH: ${p.outfit.rendered_image_path}`;
+                    // Suppress the IMAGE_PATH hint for images we already
+                    // delivered inline, so the model doesn't try to re-send
+                    // them via sendMessage. Keep it for ones that failed
+                    // (or for non-web channels where nothing is inlined).
+                    if (!inlinedOutfitIds.has(p.outfit.id)) {
+                        line += `\n  IMAGE_PATH: ${p.outfit.rendered_image_path}`;
+                    }
                 }
                 if (p.wants?.length) {
                     line += `\n  Wants: ${p.wants.map(w => w.description).join('; ')}`;
                 }
                 return line;
             });
-            const trailer = inlinedWebImages
-                ? `\n\nImages have already been displayed inline in the web chat. Do NOT call sendMessage — just describe the suggestions briefly.`
-                : '';
+
+            let trailer = '';
+            if (canInline) {
+                if (allInlined) {
+                    trailer = `\n\nAll outfit images have been delivered inline to the web chat. Do NOT call sendMessage — just describe the suggestions briefly.`;
+                } else if (inlinedCount > 0) {
+                    trailer = `\n\n${inlinedCount} of ${proposalsWithImages.length} outfit image(s) were delivered inline to the web chat; the rest could not be rendered. Tell the user which ones rendered and do NOT call sendMessage (the user is on web, not WhatsApp).`;
+                } else if (proposalsWithImages.length > 0) {
+                    trailer = `\n\nThe outfit images could not be rendered inline. Tell the user the render failed and do NOT call sendMessage (the user is on web, not WhatsApp).`;
+                }
+            }
             return `Suggested ${result.proposals.length} outfit(s):\n${lines.join('\n')}${trailer}`;
         } catch (e) {
             return `Error recommending outfit: ${e.message}`;

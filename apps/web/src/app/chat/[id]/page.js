@@ -203,6 +203,13 @@ export default function ChatSessionPage({ params }) {
             setThinkingStatus('Stopped.');
             setLiveActivity([]);
             turnIdRef.current = null;
+            // The stopped turn won't emit chat:ack, so without releasing the
+            // in-flight latch any subsequent (or already-queued) messages
+            // would buffer forever. Match the agent:error pattern: clear the
+            // latch and drain the next queued turn so the user's pending
+            // input still gets a chance.
+            inFlightRef.current = false;
+            drainQueue();
         } catch (e) {
             console.error('Stop error:', e);
         }
