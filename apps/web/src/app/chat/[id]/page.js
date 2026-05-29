@@ -129,6 +129,26 @@ export default function ChatSessionPage({ params }) {
     const attachmentCount = selectedImages.length + selectedFiles.length + (audioBlob ? 1 : 0);
     const attachmentSlotsLeft = Math.max(0, MAX_ATTACHMENTS - attachmentCount);
 
+    // Outgoing message queue. While the agent is processing a turn (inFlightRef
+    // true between socket emit and chat:ack), additional user messages get
+    // buffered here instead of racing with the in-flight turn server-side.
+    // Each entry is the prepared socket payload plus the optimistic bubble
+    // we'd push into messages once it actually dispatches.
+    // outgoingQueue (state) drives the visual "queued" indicator;
+    // outgoingQueueRef mirrors it for synchronous reads inside callbacks.
+    const [outgoingQueue, setOutgoingQueue] = useState([]);
+    const outgoingQueueRef = useRef([]);
+    const inFlightRef = useRef(false);
+    // socketRef shadows the `socket` state so the chat:ack listener (which
+    // closure-captures `socket = null` at first effect run) can still reach
+    // the live socket when it needs to dispatch a queued turn.
+    const socketRef = useRef(null);
+
+    const updateQueue = (next) => {
+        outgoingQueueRef.current = next;
+        setOutgoingQueue(next);
+    };
+
     // Fetch Vaults & Config
     useEffect(() => {
         getVaults().then(setVaults).catch(console.error);
@@ -429,15 +449,24 @@ export default function ChatSessionPage({ params }) {
             });
 
             // Handle Ack
-            newSocket.on('chat:ack', () => {
+            newSocket.on('chat:ack', async () => {
                 if (!isMounted) return;
                 console.log('[Chat] Message acknowledged. Refreshing history...');
-                loadSession();
-                // Persisted history will now carry the tool/thought activity inline.
+                // Wait for the refresh to finish before draining the queue.
+                // Otherwise loadSession's setMessages would race with drain's
+                // optimistic bubble for the next turn and clobber it briefly.
+                try { await loadSession(); } catch (e) { console.warn('[Chat] loadSession after ack failed:', e); }
+                if (!isMounted) return;
+                // Persisted history now carries the tool/thought activity inline.
                 setLiveActivity([]);
                 setThinkingStatus('');
                 // Late events for this turn (post-ack) will now be filtered.
                 turnIdRef.current = null;
+                // The prior turn is fully done; the agent is free to take the
+                // next message. If anything was queued while it was thinking,
+                // drain one entry now and let the UI flow start a fresh turn.
+                inFlightRef.current = false;
+                drainQueue();
             });
 
             // Handle Session Updates (Auto-Titling)
@@ -637,6 +666,11 @@ export default function ChatSessionPage({ params }) {
                 setThinkingStatus('');
                 setLiveActivity([]);
                 turnIdRef.current = null;
+                // Release the in-flight latch so queued messages can drain;
+                // otherwise a single failed turn would freeze the queue
+                // forever. Drain the next queued turn (if any) so the user's
+                // pending input still gets a chance.
+                inFlightRef.current = false;
                 setMessages((prev) => {
                     // Remove any in-progress streaming message
                     const cleaned = prev.filter(m => m.isFinal !== false || m.role !== 'assistant');
@@ -649,15 +683,20 @@ export default function ChatSessionPage({ params }) {
                         isError: true
                     }];
                 });
+                drainQueue();
             });
 
-            if (isMounted) setSocket(newSocket);
+            if (isMounted) {
+                setSocket(newSocket);
+                socketRef.current = newSocket;
+            }
         };
 
         initSocket();
 
         return () => {
             isMounted = false;
+            socketRef.current = null;
             if (newSocket) {
                 newSocket.disconnect();
                 newSocket.close(); // Ensure explicit close
@@ -668,7 +707,7 @@ export default function ChatSessionPage({ params }) {
     // Auto-scroll
     useEffect(() => {
         messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-    }, [messages, isWaiting]);
+    }, [messages, isWaiting, outgoingQueue]);
 
     // Auto-resize textarea
     const textareaRef = useRef(null);
@@ -790,6 +829,38 @@ export default function ChatSessionPage({ params }) {
         });
     };
 
+    // Dispatch a fully-prepared turn: push the optimistic bubbles into the
+    // visible history, mark in-flight, and emit the socket event.
+    // Used both for an immediate send and for draining the outgoing queue
+    // once the previous turn's chat:ack arrives. Reads the socket via
+    // socketRef so it works correctly when called from the socket listener
+    // closure (where the `socket` state was null at registration time).
+    const dispatchTurn = ({ socketPayload, optimisticBubbles }) => {
+        const activeSocket = socketRef.current;
+        if (!activeSocket) return;
+        for (const bubble of optimisticBubbles) addMessage(bubble);
+        setIsWaiting(true);
+        setLiveActivity([]);
+        setThinkingStatus('');
+        turnIdRef.current = socketPayload.metadata?.turnId || null;
+        inFlightRef.current = true;
+        activeSocket.emit('chat:message', socketPayload);
+    };
+
+    // Pop the head of the queue (if any) and dispatch it. Returns true if
+    // something was dispatched. Called from the chat:ack handler.
+    const drainQueue = () => {
+        const queue = outgoingQueueRef.current;
+        if (!queue.length || !socketRef.current) return false;
+        const [head, ...rest] = queue;
+        updateQueue(rest);
+        dispatchTurn({
+            socketPayload: head.socketPayload,
+            optimisticBubbles: head.optimisticBubbles
+        });
+        return true;
+    };
+
     const handleSendMessage = async (e) => {
         e.preventDefault();
         if (isSendingRef.current) return; // synchronous guard against double-submit
@@ -866,10 +937,11 @@ export default function ChatSessionPage({ params }) {
                 }
             }
 
-            // 4. All uploads succeeded — push optimistic UI now
-            if (audioOptimistic) addMessage(audioOptimistic);
+            // 4. All uploads succeeded — build the optimistic bubbles + payload.
+            const optimisticBubbles = [];
+            if (audioOptimistic) optimisticBubbles.push(audioOptimistic);
             if (optimisticAttachments.length > 0) {
-                addMessage({
+                optimisticBubbles.push({
                     role: 'user',
                     content: content,
                     type: 'attachments',
@@ -877,7 +949,7 @@ export default function ChatSessionPage({ params }) {
                     timestamp
                 });
             } else if (content.trim()) {
-                addMessage({
+                optimisticBubbles.push({
                     role: 'user',
                     content,
                     type: 'text',
@@ -885,36 +957,62 @@ export default function ChatSessionPage({ params }) {
                 });
             }
 
+            // Always clear the composer once the message is captured — whether
+            // we send it now or queue it for later, the user is done typing it.
             setInputValue('');
             clearAttachments();
-            setIsWaiting(true);
-            setLiveActivity([]);
-            setThinkingStatus('');
 
             // Fresh turn id; events from prior turns will be ignored by listeners.
             const newTurnId = (typeof crypto !== 'undefined' && crypto.randomUUID)
                 ? crypto.randomUUID()
                 : `turn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
-            turnIdRef.current = newTurnId;
 
             // Auto-collapse sidebar on first message
             if (messages.length === 0) setCollapsed(true);
 
-            socket.emit('chat:message', {
-                content: content,
-                files: files,
-                chatId: chatId,
+            const socketPayload = {
+                content,
+                files,
+                chatId,
                 metadata: {
                     location: userLocation,
                     vaultId: selectedVault !== 'none' ? selectedVault : undefined,
                     model: selectedModel !== 'auto' ? selectedModel : undefined,
                     turnId: newTurnId
                 }
-            });
+            };
+
+            if (inFlightRef.current) {
+                // Agent is still processing the prior turn — queue this one
+                // and dispatch it from the chat:ack handler. The optimistic
+                // bubbles live in the queue entry (not in `messages`) so
+                // loadSession() on chat:ack doesn't drop them; they're rendered
+                // as their own "queued" section in the JSX below.
+                const summaryText = content.trim()
+                    || (audioOptimistic ? 'Voice note' : (optimisticAttachments.length > 0 ? `${optimisticAttachments.length} attachment(s)` : ''));
+                updateQueue([
+                    ...outgoingQueueRef.current,
+                    {
+                        queueId: newTurnId,
+                        socketPayload,
+                        optimisticBubbles,
+                        summaryText,
+                        queuedAt: timestamp,
+                        attachmentCount: optimisticAttachments.length + (audioOptimistic ? 1 : 0)
+                    }
+                ]);
+            } else {
+                dispatchTurn({ socketPayload, optimisticBubbles });
+            }
         } finally {
             isSendingRef.current = false;
             setIsSending(false);
         }
+    };
+
+    // Cancel a queued (not-yet-sent) message.
+    const removeFromQueue = (queueId) => {
+        updateQueue(outgoingQueueRef.current.filter(q => q.queueId !== queueId));
     };
 
     // Group consecutive function_call/function_response messages into the
@@ -1265,6 +1363,35 @@ export default function ChatSessionPage({ params }) {
                     </div>
                 )}
 
+                {/* Queued messages — typed by the user while the agent is still
+                    processing the prior turn. Each is shown as a faded user
+                    bubble with a clock indicator + cancel button until chat:ack
+                    fires and drainQueue() promotes the head into a real turn. */}
+                {outgoingQueue.length > 0 && (
+                    <div className="flex flex-col items-end gap-2 w-full">
+                        {outgoingQueue.map((q) => (
+                            <div
+                                key={q.queueId}
+                                className="flex items-center gap-2 max-w-[80%] rounded-2xl border border-dashed border-zinc-700 bg-zinc-900/60 px-3 py-2 text-sm text-zinc-300"
+                                title="Queued — will send after the agent finishes the current reply"
+                            >
+                                <Loader2 className="h-3.5 w-3.5 animate-spin text-zinc-500 shrink-0" />
+                                <span className="truncate">
+                                    {q.summaryText || (q.attachmentCount > 0 ? `${q.attachmentCount} attachment(s)` : '(empty)')}
+                                </span>
+                                <button
+                                    type="button"
+                                    onClick={() => removeFromQueue(q.queueId)}
+                                    className="ml-1 p-0.5 rounded hover:bg-zinc-700/60 text-zinc-500 hover:text-zinc-200 shrink-0"
+                                    title="Remove from queue"
+                                >
+                                    <X className="h-3.5 w-3.5" />
+                                </button>
+                            </div>
+                        ))}
+                    </div>
+                )}
+
                 <div ref={messagesEndRef} />
             </div>
 
@@ -1388,7 +1515,7 @@ export default function ChatSessionPage({ params }) {
                                     handleSendMessage(e);
                                 }
                             }}
-                            placeholder={`Message...`}
+                            placeholder={isWaiting ? `Type to queue while agent is replying…` : `Message...`}
                             rows={1}
                             autoComplete="off"
                             autoCorrect="off"
