@@ -64,7 +64,7 @@ function createSettingsRouter(agent) {
 
             const ALLOWED_KEYS = [
                 'owner_phone', 'owner_name', 'search_strategy', 'voice_settings',
-                'communication_dry_run', 'notification_channel',
+                'communication_dry_run', 'communication_style', 'notification_channel',
                 'provider:xai', 'chatModel', 'visionModel',
                 'slack_monitored_channels'
             ];
