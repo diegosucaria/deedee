@@ -242,6 +242,29 @@ describe('SlackManager Unit Tests', () => {
             );
         });
 
+        // resolveSlackUser hits getWorkspaceUsers on every lookup; caching the
+        // roster avoids re-paginating the whole workspace per call.
+        test('getWorkspaceUsers caches the roster (no re-fetch within TTL)', async () => {
+            mockFetch.mockResolvedValue({
+                json: () => Promise.resolve({
+                    ok: true,
+                    members: [
+                        { id: 'U1', real_name: 'Alice', profile: {} },
+                        { id: 'U2', real_name: 'Bob', profile: {} },
+                    ],
+                    response_metadata: { next_cursor: '' },
+                }),
+            });
+
+            const first = await conn.getWorkspaceUsers();
+            const fetchesAfterFirst = mockFetch.mock.calls.length;
+            const second = await conn.getWorkspaceUsers();
+
+            expect(first.length).toBe(2);
+            expect(second).toBe(first);                              // served from cache
+            expect(mockFetch.mock.calls.length).toBe(fetchesAfterFirst); // no extra fetch
+        });
+
         test('search should limit results to max 50', async () => {
             mockFetch.mockResolvedValueOnce({
                 json: () => Promise.resolve({ ok: true, messages: { matches: [] } }),
