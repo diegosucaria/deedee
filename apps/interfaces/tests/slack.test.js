@@ -146,8 +146,45 @@ describe('SlackManager Unit Tests', () => {
             expect.objectContaining({
                 source: 'system',
                 content: expect.stringContaining('Slack token for team T123 has expired'),
+                metadata: expect.objectContaining({
+                    internal_system_alert: true,
+                    alertKey: 'slack_token_expired:T123',
+                }),
             })
         );
+    });
+
+    // Regression for the 2026-05-27 storm: a dead token re-fired the expiry
+    // path on every failed poll AND every failed agent tool call, so the owner
+    // got dozens of reworded WhatsApp alerts. The latch must fire onTokenExpired
+    // exactly once and then short-circuit further API calls without re-firing.
+    test('token-expiry latch fires onTokenExpired once and short-circuits further _api calls', async () => {
+        const { SlackConnection } = require('../src/slack');
+        const onExpired = jest.fn();
+        const conn = new SlackConnection('http://mock-agent:3000', {
+            xoxc: 'xoxc-dead',
+            xoxd: 'xoxd-dead',
+            workspace: { team: 'MyTeam', teamId: 'T999' },
+        }, onExpired);
+
+        // Every Slack call returns invalid_auth.
+        mockFetch.mockResolvedValue({
+            json: () => Promise.resolve({ ok: false, error: 'invalid_auth' }),
+        });
+
+        // First failing call detects expiry, latches, and notifies once.
+        await expect(conn._api('conversations.list')).rejects.toThrow(/invalid_auth/);
+        expect(conn.tokenExpired).toBe(true);
+        expect(onExpired).toHaveBeenCalledTimes(1);
+        expect(onExpired).toHaveBeenCalledWith('T999');
+        expect(mockFetch).toHaveBeenCalledTimes(1);
+
+        // Subsequent calls (e.g. proactive-loop tools) short-circuit: no network,
+        // no re-fire of the expiry notification.
+        await expect(conn._api('conversations.history')).rejects.toThrow(/token_expired_latched/);
+        await expect(conn._api('users.info')).rejects.toThrow(/token_expired_latched/);
+        expect(onExpired).toHaveBeenCalledTimes(1);
+        expect(mockFetch).toHaveBeenCalledTimes(1);
     });
 
     // --- API & Connections (SlackConnection tests) ---
@@ -179,6 +216,28 @@ describe('SlackManager Unit Tests', () => {
                         'Authorization': 'Bearer xoxc-test',
                         'Cookie': 'd=xoxd-test',
                     }),
+                })
+            );
+        });
+
+        // Regression: a connection created via addConnection (UI re-login) must
+        // wire the expiry handler, so a later token expiry still alerts the
+        // owner — not just connections built at startup via _initConnection.
+        test('a connection added via addConnection notifies the owner on token expiry', async () => {
+            const axios = require('axios');
+            axios.post = jest.fn().mockResolvedValue({});
+
+            mockFetch.mockResolvedValue({
+                json: () => Promise.resolve({ ok: false, error: 'invalid_auth' }),
+            });
+
+            await expect(conn._api('conversations.list')).rejects.toThrow();
+
+            expect(conn.tokenExpired).toBe(true);
+            expect(axios.post).toHaveBeenCalledWith(
+                'http://mock-agent:3000/webhook',
+                expect.objectContaining({
+                    metadata: expect.objectContaining({ alertKey: 'slack_token_expired:T123' }),
                 })
             );
         });
