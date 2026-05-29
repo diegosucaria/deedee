@@ -1,4 +1,7 @@
+const fs = require('fs');
+const path = require('path');
 const { BaseExecutor } = require('./base');
+const { createAssistantMessage } = require('@deedee/shared/src/types');
 
 class WardrobeExecutor extends BaseExecutor {
     constructor(services) {
@@ -29,13 +32,13 @@ class WardrobeExecutor extends BaseExecutor {
             case 'analyze_outfit_photo':
                 return this.analyze_outfit_photo(args, wardrobe);
             case 'recommend_outfit':
-                return this.recommend_outfit(args, wardrobe);
+                return this.recommend_outfit(args, wardrobe, context);
             case 'like_outfit':
                 return this.like_outfit(args, wardrobe);
             case 'list_outfits':
                 return this.list_outfits(args, wardrobe);
             case 'visualize_outfit':
-                return this.visualize_outfit(args, wardrobe);
+                return this.visualize_outfit(args, wardrobe, context);
             case 'set_reference_selfie':
                 return this.set_reference_selfie(args, wardrobe);
             case 'get_wardrobe_profile':
@@ -209,7 +212,7 @@ class WardrobeExecutor extends BaseExecutor {
         }
     }
 
-    async visualize_outfit({ garment_ids_panels, layout, outfit_id } = {}, wardrobe) {
+    async visualize_outfit({ garment_ids_panels, layout, outfit_id } = {}, wardrobe, context) {
         if (!garment_ids_panels) return 'Missing garment_ids_panels (array or array-of-arrays).';
         try {
             const result = await wardrobe.visualizeOutfit({
@@ -223,8 +226,46 @@ class WardrobeExecutor extends BaseExecutor {
             const renderPath = result.outfit?.rendered_image_path || '';
             const base = `Rendered outfit ${result.outfit.id} (${result.panels} panel${result.panels === 1 ? '' : 's'}, layout=${result.layout}).`;
             if (!renderPath) return base;
-            // Put the path on its own line so the model can extract it verbatim
-            // without having to parse it out of prose or quoting.
+
+            // Route the image to the channel the user is actually on. The web UI
+            // renders inline image parts; WhatsApp/scheduler need the model to
+            // call sendMessage explicitly so the image is posted to the user's
+            // phone. Without this branch, every outfit rendered from web chat
+            // would still be pushed to WhatsApp (see line 231 pre-fix).
+            const source = context?.message?.source || '';
+            const isWeb = source === 'web';
+
+            if (isWeb && typeof context?.sendCallback === 'function') {
+                try {
+                    const buffer = fs.readFileSync(renderPath);
+                    const ext = path.extname(renderPath).toLowerCase();
+                    const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
+                    const imgMsg = createAssistantMessage('');
+                    imgMsg.parts = [{ inlineData: { mimeType, data: buffer.toString('base64') } }];
+                    imgMsg.metadata = { chatId: context.message?.metadata?.chatId };
+                    imgMsg.source = source;
+                    imgMsg.type = 'image';
+                    await context.sendCallback(imgMsg);
+                    return [
+                        base,
+                        `The rendered outfit image has already been delivered inline to the web chat. Do NOT call sendMessage — just describe the outfit briefly in your next reply.`
+                    ].join('\n');
+                } catch (inlineErr) {
+                    // Inline send failed on the web — don't fall through to the
+                    // WhatsApp hint (the user isn't on WhatsApp). Tell the model
+                    // the render couldn't be delivered so it can communicate
+                    // that to the user instead of attempting a wrong-channel send.
+                    console.warn(`[wardrobe.visualize_outfit] inline web send failed (${inlineErr.message}).`);
+                    return [
+                        base,
+                        `IMAGE_PATH: ${renderPath}`,
+                        `The outfit image was rendered to disk but could not be delivered inline to the web chat. Do NOT call sendMessage (the user is on web, not WhatsApp). Tell the user the render failed to display and ask if they want to retry.`
+                    ].join('\n');
+                }
+            }
+
+            // WhatsApp / scheduler / other channels: image isn't auto-attached,
+            // so instruct the model to push it via sendMessage.
             return [
                 base,
                 `IMAGE_PATH: ${renderPath}`,
@@ -273,30 +314,85 @@ class WardrobeExecutor extends BaseExecutor {
         }
     }
 
-    async recommend_outfit({ garment_ids, trip_id, context, count, render } = {}, wardrobe) {
+    async recommend_outfit({ garment_ids, trip_id, context: outfitContext, count, render } = {}, wardrobe, execContext) {
         try {
             const result = await wardrobe.recommendOutfit({
                 garmentIds: Array.isArray(garment_ids) ? garment_ids : null,
                 tripId: trip_id || null,
-                context: context || '',
+                context: outfitContext || '',
                 count: count || 4,
                 render: render !== false
             });
             if (!result.proposals || result.proposals.length === 0) {
                 return result.notes || 'No proposals generated.';
             }
+
+            // On the web, push each rendered preview inline so the user sees
+            // the images directly in the chat. Track per-outfit success so
+            // the model output text accurately reflects what was delivered:
+            // if a sendCallback throws for one image, we still want the model
+            // to mention that one (via IMAGE_PATH) instead of silently
+            // dropping it under a blanket "all delivered" trailer.
+            const source = execContext?.message?.source || '';
+            const isWeb = source === 'web';
+            const canInline = isWeb && typeof execContext?.sendCallback === 'function';
+            const inlinedOutfitIds = new Set();
+
+            if (canInline) {
+                for (const p of result.proposals) {
+                    const renderPath = p.outfit?.rendered_image_path;
+                    if (!renderPath) continue;
+                    try {
+                        const buffer = fs.readFileSync(renderPath);
+                        const ext = path.extname(renderPath).toLowerCase();
+                        const mimeType = ext === '.png' ? 'image/png' : 'image/jpeg';
+                        const imgMsg = createAssistantMessage('');
+                        imgMsg.parts = [{ inlineData: { mimeType, data: buffer.toString('base64') } }];
+                        imgMsg.metadata = { chatId: execContext.message?.metadata?.chatId };
+                        imgMsg.source = source;
+                        imgMsg.type = 'image';
+                        await execContext.sendCallback(imgMsg);
+                        inlinedOutfitIds.add(p.outfit.id);
+                    } catch (inlineErr) {
+                        console.warn(`[wardrobe.recommend_outfit] inline web send failed for outfit ${p.outfit.id} (${inlineErr.message})`);
+                    }
+                }
+            }
+
+            const proposalsWithImages = result.proposals.filter(p => p.outfit?.rendered_image_path);
+            const inlinedCount = inlinedOutfitIds.size;
+            const allInlined = proposalsWithImages.length > 0
+                && inlinedCount === proposalsWithImages.length;
+
             const lines = result.proposals.map(p => {
                 const ids = (p.outfit.garment_ids || []).join(', ');
                 let line = `- [${p.bucket}] outfit ${p.outfit.id}: ${ids}\n  ${p.rationale}`;
                 if (p.outfit.rendered_image_path) {
-                    line += `\n  IMAGE_PATH: ${p.outfit.rendered_image_path}`;
+                    // Suppress the IMAGE_PATH hint for images we already
+                    // delivered inline, so the model doesn't try to re-send
+                    // them via sendMessage. Keep it for ones that failed
+                    // (or for non-web channels where nothing is inlined).
+                    if (!inlinedOutfitIds.has(p.outfit.id)) {
+                        line += `\n  IMAGE_PATH: ${p.outfit.rendered_image_path}`;
+                    }
                 }
                 if (p.wants?.length) {
                     line += `\n  Wants: ${p.wants.map(w => w.description).join('; ')}`;
                 }
                 return line;
             });
-            return `Suggested ${result.proposals.length} outfit(s):\n${lines.join('\n')}`;
+
+            let trailer = '';
+            if (canInline) {
+                if (allInlined) {
+                    trailer = `\n\nAll outfit images have been delivered inline to the web chat. Do NOT call sendMessage — just describe the suggestions briefly.`;
+                } else if (inlinedCount > 0) {
+                    trailer = `\n\n${inlinedCount} of ${proposalsWithImages.length} outfit image(s) were delivered inline to the web chat; the rest could not be rendered. Tell the user which ones rendered and do NOT call sendMessage (the user is on web, not WhatsApp).`;
+                } else if (proposalsWithImages.length > 0) {
+                    trailer = `\n\nThe outfit images could not be rendered inline. Tell the user the render failed and do NOT call sendMessage (the user is on web, not WhatsApp).`;
+                }
+            }
+            return `Suggested ${result.proposals.length} outfit(s):\n${lines.join('\n')}${trailer}`;
         } catch (e) {
             return `Error recommending outfit: ${e.message}`;
         }
