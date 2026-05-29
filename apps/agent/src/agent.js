@@ -1308,7 +1308,7 @@ class Agent {
             ownerPhone: this.settings?.owner_phone || '',
             notificationChannel: this.settings?.notification_channel || 'whatsapp'
         };
-        let grokSystemPrompt = getSystemInstruction(timeString, activeGoals, facts, { codingMode: true, vaultContext, skillsContext, notificationContext });
+        let grokSystemPrompt = getSystemInstruction(timeString, activeGoals, facts, { codingMode: true, vaultContext, skillsContext, notificationContext, communicationStyle: this.settings?.communication_style || '' });
 
         // Add Tool Manifest since Grok can't see definitions natively yet
         grokSystemPrompt += `\n\n ** AVAILABLE TOOLS(You cannot execute them directly, but you know they exist):**\n` +
@@ -1560,7 +1560,7 @@ class Agent {
         timeString,
         activeGoals,
         facts,
-        { codingMode: !isLightweight, vaultContext, skillsContext, notificationContext, isLightweight }
+        { codingMode: !isLightweight, vaultContext, skillsContext, notificationContext, isLightweight, communicationStyle: this.settings?.communication_style || '' }
       );
 
       console.log(`${logPrefix} [Context] System Instruction Size: ~${systemInstruction.length} chars(~${Math.round(systemInstruction.length / 4)} tokens)${isLightweight ? ' (lightweight)' : ''}.`);

@@ -314,6 +314,26 @@ function SettingsContent() {
                 {/* Communication Tab */}
                 {activeTab === 'communication' && (
                     <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        {/* Communication Style */}
+                        <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
+                            <h2 className="text-lg font-semibold text-white mb-4">Communication Style</h2>
+                            <div>
+                                <label className="block text-sm font-medium text-zinc-400 mb-1">
+                                    Tone &amp; Register
+                                </label>
+                                <textarea
+                                    defaultValue={config?.communication_style || ''}
+                                    onBlur={(e) => handleSave('communication_style', e.target.value)}
+                                    placeholder="Describe the voice the agent should use when writing to you (e.g. warm but polished, leaning neutral). Leave blank for the model default."
+                                    rows={4}
+                                    className="w-full bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-indigo-500/50 outline-none resize-y"
+                                />
+                                <p className="text-xs text-zinc-500 mt-1">
+                                    Free text describing tone and register. Describe the voice you want rather than listing words to avoid — positive phrasing steers more reliably. Does not override language matching.
+                                </p>
+                            </div>
+                        </div>
+
                         {/* Communication Settings */}
                         <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
                             <h2 className="text-lg font-semibold text-white mb-4">Notifications & Messaging</h2>

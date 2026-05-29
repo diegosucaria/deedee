@@ -7,7 +7,7 @@
  * @returns {string} The system instruction.
  */
 function getSystemInstruction(dateString, activeGoals, facts, options = { codingMode: false, vaultContext: null }) {
-        const { codingMode, vaultContext, skillsContext, notificationContext, isLightweight } = options;
+        const { codingMode, vaultContext, skillsContext, notificationContext, isLightweight, communicationStyle } = options;
 
         // Lightweight mode: minimal prompt for scanner/fetch sub-agents
         if (isLightweight) {
@@ -172,6 +172,15 @@ ${notificationContext?.ownerPhone ? `\nOWNER CONTACT: Your owner is "${notificat
             - [ ] Update "specs/" if adding new big features.
     `;
 
+        let COMMUNICATION_STYLE_PROTOCOL = '';
+        if (typeof communicationStyle === 'string' && communicationStyle.trim()) {
+                COMMUNICATION_STYLE_PROTOCOL = `
+            COMMUNICATION STYLE (tone & register when writing to the owner):
+            ${communicationStyle.trim()}
+            (This shapes tone and register only. It does NOT override the LANGUAGE PROTOCOL — always reply in the language of the user's last message — nor the CONSTITUTION.)
+        `;
+        }
+
         let NOTIFICATION_PROTOCOL = '';
         if (notificationContext && notificationContext.ownerPhone) {
                 NOTIFICATION_PROTOCOL = `
@@ -182,7 +191,7 @@ ${notificationContext?.ownerPhone ? `\nOWNER CONTACT: Your owner is "${notificat
             `;
         }
 
-        let instruction = BASE_PROMPT + NOTIFICATION_PROTOCOL + THINKING_PROTOCOL;
+        let instruction = BASE_PROMPT + COMMUNICATION_STYLE_PROTOCOL + NOTIFICATION_PROTOCOL + THINKING_PROTOCOL;
 
         if (skillsContext) {
                 instruction += `\n\nACTIVE SKILLS:\nThe following are specialized behavioral modules you have loaded. Adopt these personas or follow these procedures when triggered by the relevant context.\n${skillsContext}\n`;
