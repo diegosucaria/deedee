@@ -603,11 +603,19 @@ class SlackManager {
         }
     }
 
-    async _initConnection(cred) {
-        const conn = new SlackConnection(this.agentUrl, cred, async (teamId) => {
+    // Shared token-expiry handler for every SlackConnection this manager owns.
+    // Both _initConnection (startup) and addConnection (UI re-login) MUST wire
+    // this — otherwise a connection created at runtime would expire silently
+    // with no owner alert until the next process restart.
+    _makeExpiryHandler() {
+        return async (teamId) => {
             console.error(`[SlackManager] Token expired for team ${teamId}`);
             await this._notifyTokenExpired(teamId);
-        });
+        };
+    }
+
+    async _initConnection(cred) {
+        const conn = new SlackConnection(this.agentUrl, cred, this._makeExpiryHandler());
 
         // Connect to get workspace info if not cached, or just let start() fetch it
         await conn.start();
@@ -620,7 +628,7 @@ class SlackManager {
 
     async addConnection(xoxc, xoxd) {
         // Test it first
-        const conn = new SlackConnection(this.agentUrl, { xoxc, xoxd, listening: true, monitoredChannels: [] });
+        const conn = new SlackConnection(this.agentUrl, { xoxc, xoxd, listening: true, monitoredChannels: [] }, this._makeExpiryHandler());
         await conn.start();
         if (!conn.workspace || !conn.workspace.teamId) {
             throw new Error('Failed to validate Slack connection');

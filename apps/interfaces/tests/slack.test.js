@@ -220,6 +220,28 @@ describe('SlackManager Unit Tests', () => {
             );
         });
 
+        // Regression: a connection created via addConnection (UI re-login) must
+        // wire the expiry handler, so a later token expiry still alerts the
+        // owner — not just connections built at startup via _initConnection.
+        test('a connection added via addConnection notifies the owner on token expiry', async () => {
+            const axios = require('axios');
+            axios.post = jest.fn().mockResolvedValue({});
+
+            mockFetch.mockResolvedValue({
+                json: () => Promise.resolve({ ok: false, error: 'invalid_auth' }),
+            });
+
+            await expect(conn._api('conversations.list')).rejects.toThrow();
+
+            expect(conn.tokenExpired).toBe(true);
+            expect(axios.post).toHaveBeenCalledWith(
+                'http://mock-agent:3000/webhook',
+                expect.objectContaining({
+                    metadata: expect.objectContaining({ alertKey: 'slack_token_expired:T123' }),
+                })
+            );
+        });
+
         test('search should limit results to max 50', async () => {
             mockFetch.mockResolvedValueOnce({
                 json: () => Promise.resolve({ ok: true, messages: { matches: [] } }),
