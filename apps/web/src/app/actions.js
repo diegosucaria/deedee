@@ -470,6 +470,18 @@ export async function updateAgentConfig(key, value) {
     }
 }
 
+// Public outbound IP of the host running the agent (the Pi). Used to restrict
+// the Gemini API key to this host. Pass { refresh: true } to bypass the cache.
+export async function getEgressIP({ refresh = false } = {}) {
+    try {
+        const qs = refresh ? '?refresh=1' : '';
+        return await fetchAPI(`/v1/settings/egress-ip${qs}`);
+    } catch (error) {
+        console.error('getEgressIP Error:', error);
+        return { error: error.message };
+    }
+}
+
 export async function getVoiceSettings() {
     try {
         const res = await fetchAPI('/v1/settings');
