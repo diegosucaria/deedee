@@ -3,11 +3,11 @@
 MCP Server — Pilotfy integration for DeeDee.
 
 Lets the assistant view aircraft availability and make/cancel bookings at a
-flight school served by Pilotfy's legacy "school-turns" API (e.g. Aero Club
-Córdoba, schoolId 34). Uses the same FastMCP pattern as
+flight school served by Pilotfy's legacy "school-turns" API. The school is
+auto-detected from the logged-in account. Uses the same FastMCP pattern as
 packages/plex-mcp-server/ and packages/mcp-servers/browser-use/.
 
-API notes (verified live; full trail at github.com/diegosucaria/pilotfy-calendar):
+API notes (verified against the live API):
   - Host: https://api.pilotfy.com.ar
   - Auth: POST /api/v3/user/signin {email,password} -> {data:{token,user}}.
     Send the token on every request as header  Authorization: <token>
@@ -42,12 +42,28 @@ STATIC_TOKEN = os.environ.get("PILOTFY_TOKEN", "").strip()
 _sid_raw = os.environ.get("PILOTFY_SCHOOL_ID", "").strip()
 SCHOOL_ID_OVERRIDE = int(_sid_raw) if _sid_raw.isdigit() else None
 try:
-    TZ = float(os.environ.get("PILOTFY_TZ_OFFSET", "-3"))  # Argentina = -3
+    TZ = float(os.environ.get("PILOTFY_TZ_OFFSET", "-3"))  # aerodrome UTC offset; override via env
 except ValueError:
     TZ = -3.0
 
 REQUEST_TIMEOUT = 30          # seconds per HTTP call
 MIN_SIGNIN_INTERVAL = 5.0     # seconds — guard against hammering signin (lockout risk)
+
+
+def _opt_float(name):
+    v = os.environ.get(name, "").strip()
+    try:
+        return float(v) if v else None
+    except ValueError:
+        return None
+
+
+# Aerodrome coordinates for the sunrise/sunset calc are normally read from the
+# school's own API data; these env vars are an optional fallback/override (no
+# location is hardcoded).
+AERO_LAT = _opt_float("PILOTFY_AERODROME_LAT")
+AERO_LON = _opt_float("PILOTFY_AERODROME_LON")
+AERO_NAME = os.environ.get("PILOTFY_AERODROME_NAME", "").strip() or None
 
 # ── Reference data (from the Pilotfy app) ────────────────────────────────────
 STATUS = {1: "Pendiente", 2: "Aprobado", 3: "Cancelado por piloto",
@@ -77,7 +93,7 @@ class _State:
         self.turns_to = "21:00"
         self.weeks = 2
         self.max_turns = None
-        self.aerodrome = {"lat": -31.4868, "lng": -64.1408, "name": "Córdoba (fallback)"}
+        self.aerodrome = None   # {lat, lng, name} resolved in _boot() from API data or env
 
 
 _S = _State()
@@ -245,6 +261,8 @@ def _boot():
         if aero and aero.get("latitude") is not None:
             _S.aerodrome = {"lat": aero["latitude"], "lng": aero.get("longitude"),
                             "name": aero.get("name")}
+        elif AERO_LAT is not None and AERO_LON is not None:
+            _S.aerodrome = {"lat": AERO_LAT, "lng": AERO_LON, "name": AERO_NAME}
         _S.booted = True
 
 
@@ -391,6 +409,10 @@ def sun_times(date_str, lat, lng, tz=-3):
 
 def _sun_block(date_str):
     a = _S.aerodrome
+    if not a or a.get("lat") is None or a.get("lng") is None:
+        return {"dawn": None, "sunrise": None, "sunset": None, "dusk": None,
+                "note": "aerodrome coordinates unavailable; set PILOTFY_AERODROME_LAT/LON "
+                        "or rely on the school's API data"}
     s = sun_times(date_str, a["lat"], a["lng"], TZ)
     out = {k: _hhmm(v) for k, v in s.items()}
     out["note"] = f"civil twilight (dawn/dusk) & sunrise/sunset; tz {TZ:g}; aerodrome {a.get('name')}"

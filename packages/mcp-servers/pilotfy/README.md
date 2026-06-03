@@ -2,16 +2,15 @@
 
 An MCP server that lets DeeDee (or any MCP client) view aircraft availability and
 make/cancel bookings at a flight school served by **Pilotfy**'s legacy
-"school-turns" API — e.g. **Aero Club Córdoba** (`schoolId 34`, aerodrome EDO,
-hours 06:00–21:00, bookable 2 weeks ahead, max 10 turns/user).
+"school-turns" API. The school, its operating hours, booking window, and
+per-user turn limit are auto-detected from the logged-in account.
 
 Single-file [`server.py`](server.py), built on FastMCP — same pattern as
 [`../../plex-mcp-server`](../../plex-mcp-server) and [`../browser-use`](../browser-use).
 
-API details were verified live and are documented at
-[github.com/diegosucaria/pilotfy-calendar](https://github.com/diegosucaria/pilotfy-calendar).
-The civil-twilight algorithm is ported verbatim from that repo's app (and
-cross-checked bit-for-bit against the original JavaScript).
+The API was reverse-engineered from the Pilotfy app and verified against the live
+API. The civil-twilight algorithm is ported verbatim from the app and
+cross-checked bit-for-bit against the original JavaScript.
 
 ## Tools
 
@@ -63,7 +62,10 @@ Secrets are **never** hardcoded or logged — they come from the environment.
 | `PILOTFY_TOKEN` | yes\* | — | Alternative to email+password: a raw JWT (no `Bearer`). Cannot self-refresh — when it expires the server errors until you supply a fresh token or email+password. |
 | `PILOTFY_BASE` | no | `https://api.pilotfy.com.ar` | API host. |
 | `PILOTFY_SCHOOL_ID` | no | auto-detect | Force a school id; otherwise the first active membership from `GET /api/v3/school/user` is used. |
-| `PILOTFY_TZ_OFFSET` | no | `-3` | Aerodrome UTC offset (hours) for the sunrise/sunset calc. Argentina = −3. |
+| `PILOTFY_TZ_OFFSET` | no | `-3` | Aerodrome UTC offset (hours) for the sunrise/sunset calc. |
+| `PILOTFY_AERODROME_LAT` | no | from API | Aerodrome latitude for the sun calc. Normally read from the school's API data; set only to override or when the API omits it. |
+| `PILOTFY_AERODROME_LON` | no | from API | Aerodrome longitude (see above). |
+| `PILOTFY_AERODROME_NAME` | no | from API | Display name for the aerodrome (optional). |
 
 \* Provide **either** `PILOTFY_EMAIL` + `PILOTFY_PASSWORD` **or** `PILOTFY_TOKEN`.
 
