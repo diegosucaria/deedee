@@ -459,6 +459,7 @@ def whoami() -> str:
         if not user:
             try:
                 user = _get("/api/v3/user/profile") or {}
+                _S.user = user   # cache it (token-only auth never sets this at login)
             except PilotfyError:
                 user = {}
         exp = _jwt_exp(_S.token)
