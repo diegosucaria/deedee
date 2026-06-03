@@ -76,20 +76,23 @@ The server is registered in [`apps/agent/mcp_config.json`](../../../apps/agent/m
   "cwd": "../../packages/mcp-servers/pilotfy",
   "env": {
     "PILOTFY_EMAIL": "${PILOTFY_EMAIL}",
-    "PILOTFY_PASSWORD": "${PILOTFY_PASSWORD}"
+    "PILOTFY_PASSWORD": "${PILOTFY_PASSWORD}",
+    "PILOTFY_TOKEN": "${PILOTFY_TOKEN}"
   }
 }
 ```
 
-The `${PILOTFY_EMAIL}` / `${PILOTFY_PASSWORD}` placeholders resolve from the
-**agent process environment** — set the real values where DeeDee's other secrets
-live (the root `.env` locally, or Balena env vars on the device), exactly like
-`PLEX_TOKEN` / `HA_TOKEN`. If neither placeholder is present in the environment,
-the agent auto-disables this server at startup (`[MCP] 'pilotfy' disabled: missing env …`)
-rather than failing — so it's safe to ship enabled. Optional vars
-(`PILOTFY_TOKEN`, `PILOTFY_BASE`, `PILOTFY_SCHOOL_ID`, `PILOTFY_TZ_OFFSET`) are
-inherited from the process environment too; add them to the `env` block only if
-you want them documented there.
+The `${PILOTFY_*}` placeholders resolve from the **agent process environment** —
+set the real values where DeeDee's other secrets live (the root `.env` locally,
+or Balena env vars on the device), exactly like `PLEX_TOKEN` / `HA_TOKEN`. Provide
+**either** `PILOTFY_EMAIL` + `PILOTFY_PASSWORD` **or** `PILOTFY_TOKEN`; any unset
+placeholders resolve to empty and are ignored. `PILOTFY_TOKEN` is listed in the
+`env` block (not just relied on via the process-env spread) so that token-only
+setups aren't skipped by the agent's missing-env check. If **none** of the three
+are present, the agent auto-disables this server at startup
+(`[MCP] 'pilotfy' disabled: missing env …`) rather than failing — so it's safe to
+ship enabled. Other optional vars (`PILOTFY_BASE`, `PILOTFY_SCHOOL_ID`,
+`PILOTFY_TZ_OFFSET`) are inherited from the process environment.
 
 After setting the env vars, hit **Reload** on the Brain → Tools & MCP page (or
 restart the agent).

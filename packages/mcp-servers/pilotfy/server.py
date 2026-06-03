@@ -27,8 +27,9 @@ import math
 import os
 import re
 import sys
+import threading
 import time
-from datetime import date, datetime, timedelta
+from datetime import date, datetime, timedelta, timezone
 
 import requests  # type: ignore
 from mcp.server.fastmcp import FastMCP  # type: ignore
@@ -79,6 +80,7 @@ class _State:
 
 
 _S = _State()
+_LOCK = threading.RLock()   # guards _boot() + login/token mutation (FastMCP runs sync tools in threads)
 
 
 class PilotfyError(Exception):
@@ -119,44 +121,49 @@ def _safe_json(resp):
         return txt or None
 
 
-def _do_signin():
-    """Exchange email+password for a token. Throttled to avoid account lockout."""
+def _do_signin(force=False):
+    """Exchange email+password for a token. Throttled to avoid account lockout.
+    `force=True` bypasses the throttle for the single deliberate retry after a 401
+    (which is bounded by `_retry=False`); the cold path stays throttled so repeated
+    tool calls with bad credentials can't hammer signin."""
     if not (EMAIL and PASSWORD):
         raise PilotfyError("Login required but PILOTFY_EMAIL/PILOTFY_PASSWORD are not set.")
-    now = time.monotonic()
-    if _S.signins and (now - _S.last_signin) < MIN_SIGNIN_INTERVAL:
-        raise PilotfyError("Refusing to re-login so soon (account-lockout protection). Try again shortly.")
-    _S.last_signin = now
-    _S.signins += 1
-    try:
-        r = requests.post(
-            BASE + "/api/v3/user/signin",
-            json={"email": EMAIL, "password": PASSWORD},
-            headers={"Content-Type": "application/json"},
-            timeout=REQUEST_TIMEOUT,
-        )
-    except requests.RequestException as e:
-        raise PilotfyError(f"network error during signin: {e}")
-    data = _safe_json(r)
-    if not r.ok:
-        err = data.get("error") if isinstance(data, dict) else None
-        raise PilotfyError(f"login failed: {err or ('HTTP ' + str(r.status_code))}", status=r.status_code)
-    tok = ((data or {}).get("data") or {}).get("token")
-    if not tok:
-        raise PilotfyError("login response contained no token")
-    _S.token = tok
-    _S.token_source = "signin"
-    _S.user = ((data or {}).get("data") or {}).get("user")
+    with _LOCK:
+        now = time.monotonic()
+        if not force and _S.signins and (now - _S.last_signin) < MIN_SIGNIN_INTERVAL:
+            raise PilotfyError("Refusing to re-login so soon (account-lockout protection). Try again shortly.")
+        _S.last_signin = now
+        _S.signins += 1
+        try:
+            r = requests.post(
+                BASE + "/api/v3/user/signin",
+                json={"email": EMAIL, "password": PASSWORD},
+                headers={"Content-Type": "application/json"},
+                timeout=REQUEST_TIMEOUT,
+            )
+        except requests.RequestException as e:
+            raise PilotfyError(f"network error during signin: {e}")
+        data = _safe_json(r)
+        if not r.ok:
+            err = data.get("error") if isinstance(data, dict) else None
+            raise PilotfyError(f"login failed: {err or ('HTTP ' + str(r.status_code))}", status=r.status_code)
+        tok = ((data or {}).get("data") or {}).get("token")
+        if not tok:
+            raise PilotfyError("login response contained no token")
+        _S.token = tok
+        _S.token_source = "signin"
+        _S.user = ((data or {}).get("data") or {}).get("user")
 
 
 def _token():
-    if not _S.token:
-        if STATIC_TOKEN:
-            _S.token = STATIC_TOKEN
-            _S.token_source = "env"
-        else:
-            _do_signin()
-    return _S.token
+    with _LOCK:
+        if not _S.token:
+            if STATIC_TOKEN:
+                _S.token = STATIC_TOKEN
+                _S.token_source = "env"
+            else:
+                _do_signin()
+        return _S.token
 
 
 def _api(method, path, body=None, _retry=True):
@@ -174,7 +181,7 @@ def _api(method, path, body=None, _retry=True):
     # Token rejected — re-login once and retry (only possible with email+password).
     if r.status_code in (401, 403) and _retry and EMAIL and PASSWORD:
         _S.token = None
-        _do_signin()
+        _do_signin(force=True)   # deliberate single retry; bounded by _retry=False below
         return _api(method, path, body, _retry=False)
 
     data = _safe_json(r)
@@ -197,44 +204,47 @@ def _boot():
     """Resolve school + aerodrome once (auto-detect first active membership)."""
     if _S.booted:
         return
-    memberships = _get("/api/v3/school/user") or []
-    active = [m for m in memberships if m.get("status") == 1 and m.get("school")]
+    with _LOCK:
+        if _S.booted:   # re-check after acquiring the lock (another thread may have booted)
+            return
+        memberships = _get("/api/v3/school/user") or []
+        active = [m for m in memberships if m.get("status") == 1 and m.get("school")]
 
-    school = None
-    school_id = None
-    if SCHOOL_ID_OVERRIDE is not None:
-        school_id = SCHOOL_ID_OVERRIDE
-        match = next((m for m in active if m.get("schoolId") == school_id), None)
-        if match:
-            school = match["school"]
-    if school is None and not school_id:
-        if not active:
-            raise PilotfyError("You don't belong to any active school in Pilotfy.")
-        chosen = active[0]
-        school_id = chosen["schoolId"]
-        school = chosen["school"]
+        school = None
+        school_id = None
+        if SCHOOL_ID_OVERRIDE is not None:
+            school_id = SCHOOL_ID_OVERRIDE
+            match = next((m for m in active if m.get("schoolId") == school_id), None)
+            if match:
+                school = match["school"]
+        if school is None and not school_id:
+            if not active:
+                raise PilotfyError("You don't belong to any active school in Pilotfy.")
+            chosen = active[0]
+            school_id = chosen["schoolId"]
+            school = chosen["school"]
 
-    # Fall back to the school-detail endpoint (also the source of aerodrome coords).
-    detail = None
-    try:
-        detail = _get(f"/api/v3/school/id/{school_id}")
-    except PilotfyError:
+        # Fall back to the school-detail endpoint (also the source of aerodrome coords).
         detail = None
-    if school is None:
-        school = detail or {}
+        try:
+            detail = _get(f"/api/v3/school/id/{school_id}")
+        except PilotfyError:
+            detail = None
+        if school is None:
+            school = detail or {}
 
-    _S.school_id = school_id
-    _S.school = school or {}
-    _S.turns_from = school.get("turnsFrom") or "06:00"
-    _S.turns_to = school.get("turnsTo") or "21:00"
-    _S.weeks = school.get("turnWeeks") or 2
-    _S.max_turns = school.get("turnsMaxByUser")
+        _S.school_id = school_id
+        _S.school = school or {}
+        _S.turns_from = school.get("turnsFrom") or "06:00"
+        _S.turns_to = school.get("turnsTo") or "21:00"
+        _S.weeks = school.get("turnWeeks") or 2
+        _S.max_turns = school.get("turnsMaxByUser")
 
-    aero = (detail or {}).get("aerodrome") if isinstance(detail, dict) else None
-    if aero and aero.get("latitude") is not None:
-        _S.aerodrome = {"lat": aero["latitude"], "lng": aero.get("longitude"),
-                        "name": aero.get("name")}
-    _S.booted = True
+        aero = (detail or {}).get("aerodrome") if isinstance(detail, dict) else None
+        if aero and aero.get("latitude") is not None:
+            _S.aerodrome = {"lat": aero["latitude"], "lng": aero.get("longitude"),
+                            "name": aero.get("name")}
+        _S.booted = True
 
 
 # ── Small helpers ─────────────────────────────────────────────────────────────
@@ -322,6 +332,12 @@ def _fmt_epoch(epoch):
         return datetime.fromtimestamp(int(epoch)).strftime("%Y-%m-%d")
     except Exception:
         return "unknown"
+
+
+def _today():
+    """Today's date in the aerodrome's timezone (not the server's local clock),
+    so the 'past' check and the booking window line up with the aeroclub's day."""
+    return datetime.now(timezone(timedelta(hours=TZ))).date()
 
 
 def _free_gaps(busy_intervals, start_min, end_min):
@@ -521,7 +537,7 @@ def my_turns(include_past: bool = False) -> str:
     try:
         _boot()
         turns = _get(f"/api/v3/school/id/{_S.school_id}/turns") or []
-        today = date.today().isoformat()
+        today = _today().isoformat()
         rows = []
         for t in turns:
             d = t.get("date", "") or ""
@@ -584,8 +600,8 @@ def book_turn(planeId: int, date: str, timeFrom: str, timeTo: str, reason: int,
         warnings = []
 
         # NB: the `date` parameter shadows datetime.date inside this function, so
-        # we get "today" from datetime.now() and parse via _validate_date (module scope).
-        today_d = datetime.now().date()
+        # we use _today() (aerodrome TZ) and parse via _validate_date (module scope).
+        today_d = _today()
         latest = today_d + timedelta(days=_S.weeks * 7 - 1)
         if target < today_d:
             problems.append(f"date {date} is in the past")
