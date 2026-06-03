@@ -29,7 +29,13 @@ cross-checked bit-for-bit against the original JavaScript).
 8 Prueba de Aeronaves · 9 Trabajo Aéreo · 10 Examen.
 
 `instructor` accepts an instructor **name** (case-insensitive substring) or their
-**userId**; leave empty for a solo flight.
+**userId** for a specific instructor; `'any'` for any available instructor; or
+leave empty for a solo flight. Reasons **2 (Instrucción)** and **3 (Readaptación)**
+require an instructor.
+
+The booking request sends exactly one instructor field — `instructorId`,
+`anyInstructor`, or `withoutInstructor` — and **never** `visibleDate` or
+`hasInstructor` (the API validates strictly and rejects unknown keys).
 
 ### Confirmation flow for write actions
 
@@ -41,9 +47,10 @@ assistant should:
 3. Re-call the **same** tool with `confirm=True` to actually perform it.
 
 `book_turn` validation (run on both calls) checks: date format and the
-N-week booking window, `timeTo > timeFrom`, school hours, valid `reason`, the
-aircraft exists/is active, no overlap with an existing Pendiente/Aprobado turn,
-and the per-user max-turns limit. API errors are surfaced verbatim.
+N-week booking window, `timeTo > timeFrom`, school hours, valid `reason`,
+instructor present for reasons that require one, the aircraft exists/is active,
+no overlap with an existing Pendiente/Aprobado turn, and the per-user max-turns
+limit. API errors are surfaced verbatim.
 
 ## Configuration (environment variables)
 

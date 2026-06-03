@@ -56,6 +56,7 @@ REASON = {1: "Vuelo Privado", 2: "Instrucción Alumno", 3: "Readaptación",
           4: "Navegación", 5: "Bautismo", 6: "Adaptación", 7: "Vuelo No Regular",
           8: "Prueba de Aeronaves", 9: "Trabajo Aéreo", 10: "Examen"}
 OCCUPYING = {1, 2}            # only Pendiente/Aprobado occupy an aircraft; 3/4/5 = free
+INSTRUCTOR_REQUIRED = {2, 3}  # Instrucción Alumno, Readaptación — a solo flight is rejected
 
 mcp = FastMCP("pilotfy-server")
 
@@ -264,11 +265,6 @@ def _hhmm(m):
     return f"{m // 60:02d}:{m % 60:02d}"
 
 
-def _visible(date_str):
-    y, m, d = date_str.split("-")
-    return f"{d}/{m}/{y}"
-
-
 def _dur(mins):
     h, m = divmod(int(mins), 60)
     if h and m:
@@ -402,20 +398,24 @@ def _sun_block(date_str):
 
 
 def _resolve_instructor(value):
-    """-> (has_instructor, instructor_id, label). Accepts '', a userId, or a name."""
+    """-> (mode, instructor_id, label). mode is 'solo' | 'any' | 'specific'.
+    Accepts '' (solo), 'any'/'anyone'/'cualquiera' (any available instructor),
+    or an instructor name (substring) / userId for a specific one."""
     v = (value or "").strip()
-    if v == "" or v.lower() in ("none", "no", "sin", "false", "0"):
-        return (False, 0, None)
+    if v == "" or v.lower() in ("none", "no", "sin", "solo", "false", "0"):
+        return ("solo", None, "solo (no instructor)")
+    if v.lower() in ("any", "anyone", "cualquiera", "cualquier", "anyinstructor"):
+        return ("any", None, "any available instructor")
     instructors = _get(f"/api/v3/school/id/{_S.school_id}/instructor") or []
     active = [{"id": i.get("userId"), "name": (i.get("user") or {}).get("name")}
               for i in instructors if i.get("status") == 1 and i.get("user")]
     if v.isdigit():
         uid = int(v)
         m = next((x for x in active if x["id"] == uid), None)
-        return (True, uid, m["name"] if m else f"userId {uid}")
+        return ("specific", uid, m["name"] if m else f"userId {uid}")
     matches = [x for x in active if v.lower() in (x["name"] or "").lower()]
     if len(matches) == 1:
-        return (True, matches[0]["id"], matches[0]["name"])
+        return ("specific", matches[0]["id"], matches[0]["name"])
     names = ", ".join(sorted(x["name"] for x in active if x["name"])) or "(none active)"
     if not matches:
         raise PilotfyError(f"No instructor matches '{value}'. Active instructors: {names}")
@@ -581,7 +581,9 @@ def book_turn(planeId: int, date: str, timeFrom: str, timeTo: str, reason: int,
         reason:    1 Vuelo Privado · 2 Instrucción Alumno · 3 Readaptación ·
                    4 Navegación · 5 Bautismo · 6 Adaptación · 7 Vuelo No Regular ·
                    8 Prueba de Aeronaves · 9 Trabajo Aéreo · 10 Examen
-        instructor: optional — an instructor name or userId. Empty = solo.
+        instructor: optional. Empty/'solo' = solo flight; 'any' = any available
+                   instructor; or an instructor name / userId for a specific one.
+                   Reasons 2 (Instrucción) and 3 (Readaptación) require an instructor.
         confirm:   MUST be True to actually book. When False (default), this only
                    validates and returns a summary + the exact payload for the
                    user to approve — nothing is sent.
@@ -625,7 +627,12 @@ def book_turn(planeId: int, date: str, timeFrom: str, timeTo: str, reason: int,
         elif plane.get("status") != 1:
             warnings.append(f"aircraft {plane.get('registration')} is not marked active (status {plane.get('status')})")
 
-        has_instr, instr_id, instr_lbl = _resolve_instructor(instructor)
+        instr_mode, instr_id, instr_lbl = _resolve_instructor(instructor)
+        if reason in INSTRUCTOR_REQUIRED and instr_mode == "solo":
+            problems.append(
+                f"reason “{_reason_name(reason)}” requires an instructor "
+                "(pass instructor=<name>, a userId, or 'any')"
+            )
 
         # Overlap pre-check against existing Pendiente/Aprobado turns for this plane.
         if not problems:
@@ -652,19 +659,26 @@ def book_turn(planeId: int, date: str, timeFrom: str, timeTo: str, reason: int,
         if problems:
             return _json({"status": "validation_failed", "problems": problems, "warnings": warnings})
 
+        # The API is strict (Joi: object.allowUnknown). Send ONLY these keys plus
+        # EXACTLY ONE instructor field. Do NOT send visibleDate or hasInstructor —
+        # the app strips those before POSTing and the API rejects the whole request.
         payload = {
             "schoolId": _S.school_id,
             "planeId": planeId,
             "date": date,
-            "visibleDate": _visible(date),
             "timeFrom": timeFrom,
             "timeTo": timeTo,
             "reason": reason,
-            "hasInstructor": has_instr,
-            "instructorId": instr_id,
         }
+        if instr_mode == "specific":
+            payload["instructorId"] = instr_id
+        elif instr_mode == "any":
+            payload["anyInstructor"] = 1
+        else:  # solo
+            payload["withoutInstructor"] = 1
+
         model = f"{(plane.get('aircraftBrand') or '').strip()} {(plane.get('aircraftModel') or '').strip()}".strip()
-        instr_text = f"with instructor {instr_lbl}" if has_instr else "solo (no instructor)"
+        instr_text = f"with instructor {instr_lbl}" if instr_mode == "specific" else instr_lbl
         summary = (
             f"Book {plane.get('registration')} ({model}) on {date} "
             f"{timeFrom}–{timeTo} ({_dur(t - f)}), reason “{_reason_name(reason)}”, "
@@ -681,12 +695,16 @@ def book_turn(planeId: int, date: str, timeFrom: str, timeTo: str, reason: int,
             })
 
         resp = _api("POST", f"/api/v3/school/id/{_S.school_id}/turns", payload)
-        created = resp.get("data") if isinstance(resp, dict) and "data" in resp else resp
+        data = resp.get("data") if isinstance(resp, dict) else None
+        created = data.get("turn") if isinstance(data, dict) and "turn" in data else data
+        waitlisted = resp.get("isInWaitlist") if isinstance(resp, dict) else None
         return _json({
             "status": "booked",
-            "message": "Turn created as Pendiente (awaiting school approval).",
+            "message": ("Added to the waitlist for this slot." if waitlisted
+                        else "Turn created as Pendiente (awaiting school approval)."),
             "summary": summary,
             "warnings": warnings,
+            "isInWaitlist": waitlisted,
             "turn": created,
         })
     except Exception as e:
