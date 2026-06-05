@@ -64,5 +64,20 @@
             "DEEDEE_API_TOKEN": "${DEEDEE_API_TOKEN}"
         },
         "disabled": false
+    },
+    "pilotfy": {
+        "command": "python3",
+        "args": [
+            "server.py",
+            "--transport",
+            "stdio"
+        ],
+        "cwd": "../../packages/mcp-servers/pilotfy",
+        "env": {
+            "PILOTFY_EMAIL": "${PILOTFY_EMAIL}",
+            "PILOTFY_PASSWORD": "${PILOTFY_PASSWORD}",
+            "PILOTFY_TOKEN": "${PILOTFY_TOKEN}"
+        },
+        "disabled": false
     }
 }
