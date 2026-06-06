@@ -30,6 +30,21 @@ function _scanToolMap(toolMap, safeLabel) {
     return null;
 }
 
+/** Loose validation that a string is an IPv4 or IPv6 address (guards against echo services returning HTML). */
+function isValidIp(s) {
+    if (typeof s !== 'string') return false;
+    const v = s.trim();
+    // IPv4
+    if (/^(\d{1,3}\.){3}\d{1,3}$/.test(v)) {
+        return v.split('.').every((o) => o.length <= 3 && Number(o) <= 255);
+    }
+    // IPv6 (loose — hex groups separated by colons)
+    if (v.includes(':') && /^[0-9a-fA-F:]+$/.test(v)) return true;
+    return false;
+}
+
+const EGRESS_IP_TTL_MS = 60 * 1000;
+
 function createSettingsRouter(agent) {
     const router = express.Router();
 
@@ -117,6 +132,63 @@ function createSettingsRouter(agent) {
             console.error('[Settings] POST Failed:', error);
             res.status(500).json({ error: error.message });
         }
+    });
+
+    // GET /internal/settings/egress-ip
+    // The Pi's public outbound IP — used to restrict the Gemini API key to this
+    // host (Cloud Console → API key → Application restrictions → IP addresses).
+    // Detected from the agent process, whose egress IP is what reaches Gemini.
+    let egressIpCache = null; // { ip, fetchedAt: number }
+
+    router.get('/egress-ip', async (req, res) => {
+        const now = Date.now();
+        const force = req.query.refresh === '1' || req.query.refresh === 'true';
+
+        if (!force && egressIpCache && now - egressIpCache.fetchedAt < EGRESS_IP_TTL_MS) {
+            return res.json({
+                ip: egressIpCache.ip,
+                fetchedAt: new Date(egressIpCache.fetchedAt).toISOString(),
+                cached: true,
+            });
+        }
+
+        // Ordered echo services; each resolves to a bare IP string. Tried in turn.
+        const providers = [
+            async () => {
+                const r = await fetch('https://api.ipify.org?format=json', { signal: AbortSignal.timeout(4000) });
+                if (!r.ok) throw new Error(`ipify ${r.status}`);
+                return (await r.json()).ip;
+            },
+            async () => {
+                const r = await fetch('https://icanhazip.com', { signal: AbortSignal.timeout(4000) });
+                if (!r.ok) throw new Error(`icanhazip ${r.status}`);
+                return await r.text();
+            },
+            async () => {
+                const r = await fetch('https://ifconfig.co/ip', {
+                    signal: AbortSignal.timeout(4000),
+                    headers: { 'User-Agent': 'curl/8' },
+                });
+                if (!r.ok) throw new Error(`ifconfig.co ${r.status}`);
+                return await r.text();
+            },
+        ];
+
+        let lastErr = null;
+        for (const provider of providers) {
+            try {
+                const candidate = (await provider())?.trim();
+                if (isValidIp(candidate)) {
+                    egressIpCache = { ip: candidate, fetchedAt: now };
+                    return res.json({ ip: candidate, fetchedAt: new Date(now).toISOString(), cached: false });
+                }
+            } catch (e) {
+                lastErr = e;
+            }
+        }
+
+        console.warn('[Settings] Egress IP lookup failed:', lastErr?.message || 'no valid IP returned');
+        res.status(502).json({ error: 'Could not determine egress IP' });
     });
 
 

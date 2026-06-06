@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { getAgentConfig, updateAgentConfig, getEnvConfig, getBackups, getVoiceSettings, saveVoiceSettings } from '../actions';
-import { Settings, Check, AlertTriangle, Eye, EyeOff, Save } from 'lucide-react';
+import { getAgentConfig, updateAgentConfig, getEnvConfig, getBackups, getVoiceSettings, saveVoiceSettings, getEgressIP } from '../actions';
+import { Settings, Check, AlertTriangle, Eye, EyeOff, Save, Copy, RefreshCw } from 'lucide-react';
 import BackupSettings from '@/components/BackupSettings';
 import EnvVariables from '@/components/EnvVariables';
 import VoiceSelector from '@/components/VoiceSelector';
@@ -28,6 +28,8 @@ function SettingsContent() {
     const [xaiKey, setXaiKey] = useState('');
     const [showKey, setShowKey] = useState(false);
     const [newModel, setNewModel] = useState('');
+    const [egressIp, setEgressIp] = useState({ loading: true, ip: null, fetchedAt: null, error: null });
+    const [copiedIp, setCopiedIp] = useState(false);
 
     useEffect(() => {
         Promise.all([
@@ -45,6 +47,27 @@ function SettingsContent() {
             setVoice(voiceData);
         });
     }, []);
+
+    const loadEgressIp = async (refresh = false) => {
+        setEgressIp((prev) => ({ ...prev, loading: true, error: null }));
+        const res = await getEgressIP({ refresh });
+        if (res?.ip) {
+            setEgressIp({ loading: false, ip: res.ip, fetchedAt: res.fetchedAt || null, error: null });
+        } else {
+            setEgressIp({ loading: false, ip: null, fetchedAt: null, error: res?.error || 'Unavailable' });
+        }
+    };
+
+    useEffect(() => { loadEgressIp(false); }, []);
+
+    const handleCopyEgressIp = async () => {
+        if (!egressIp.ip) return;
+        try {
+            await navigator.clipboard.writeText(egressIp.ip);
+            setCopiedIp(true);
+            setTimeout(() => setCopiedIp(false), 1500);
+        } catch { /* clipboard unavailable */ }
+    };
 
     const handleTabChange = (tabId) => {
         router.replace(`/settings?tab=${tabId}`);
@@ -157,6 +180,54 @@ function SettingsContent() {
                                     </p>
                                 </div>
                             </div>
+                        </div>
+
+                        {/* Network / Egress IP */}
+                        <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
+                            <h2 className="text-lg font-semibold text-white mb-1">Network</h2>
+                            <p className="text-sm text-zinc-400 mb-4">
+                                The public IP this device uses for outbound traffic. Use it to lock the Gemini API key to this host
+                                (Google Cloud Console → API key → Application restrictions → IP addresses).
+                            </p>
+                            <label className="block text-sm font-medium text-zinc-400 mb-1">
+                                Egress public IP
+                            </label>
+                            <div className="flex items-center gap-2">
+                                <div className="flex-1 flex items-center justify-between bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2">
+                                    {egressIp.loading ? (
+                                        <span className="text-sm text-zinc-500">Detecting…</span>
+                                    ) : egressIp.ip ? (
+                                        <span className="font-mono text-sm text-white">{egressIp.ip}</span>
+                                    ) : (
+                                        <span className="text-sm text-red-400">{egressIp.error || 'Unavailable'}</span>
+                                    )}
+                                    {egressIp.ip && !egressIp.loading && (
+                                        <button
+                                            type="button"
+                                            onClick={handleCopyEgressIp}
+                                            className="text-zinc-500 hover:text-white transition-colors"
+                                            title="Copy to clipboard"
+                                        >
+                                            {copiedIp ? <Check size={16} className="text-emerald-400" /> : <Copy size={16} />}
+                                        </button>
+                                    )}
+                                </div>
+                                <button
+                                    type="button"
+                                    onClick={() => loadEgressIp(true)}
+                                    disabled={egressIp.loading}
+                                    className="p-2.5 rounded-lg border border-zinc-800 text-zinc-400 hover:text-white hover:border-zinc-600 disabled:opacity-50 transition-colors"
+                                    title="Re-check egress IP"
+                                >
+                                    <RefreshCw size={16} className={egressIp.loading ? 'animate-spin' : ''} />
+                                </button>
+                            </div>
+                            {egressIp.ip && !egressIp.loading && (
+                                <p className="text-xs text-zinc-500 mt-2">
+                                    {egressIp.fetchedAt ? `Detected ${new Date(egressIp.fetchedAt).toLocaleString()}. ` : ''}
+                                    Residential IPs can change — re-check if Gemini calls start failing.
+                                </p>
+                            )}
                         </div>
 
                         {/* Search Strategy Card */}
