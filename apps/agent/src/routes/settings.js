@@ -223,6 +223,7 @@ function createSettingsRouter(agent) {
             }
 
             fs.writeFileSync(credsPath, JSON.stringify(parsedCreds, null, 2), { mode: 0o600 });
+            fs.chmodSync(credsPath, 0o600); // writeFileSync mode only applies on create; enforce on overwrite too
             console.log(`[Settings] Saved GWS credentials for ${label} to ${credsPath}`);
 
             if (agent.mcp) {
@@ -351,6 +352,7 @@ function createSettingsRouter(agent) {
             const fs = require('fs');
             const clientData = { clientId, clientSecret, redirectUri };
             fs.writeFileSync(getOAuthClientPath(), JSON.stringify(clientData, null, 2), { mode: 0o600 });
+            fs.chmodSync(getOAuthClientPath(), 0o600); // writeFileSync mode only applies on create; enforce on overwrite too
             console.log(`[Settings] Saved GWS OAuth client config`);
 
             res.json({ success: true });
@@ -466,6 +468,7 @@ function createSettingsRouter(agent) {
             };
 
             fs.writeFileSync(credsPath, JSON.stringify(credentials, null, 2), { mode: 0o600 });
+            fs.chmodSync(credsPath, 0o600); // writeFileSync mode only applies on create; enforce on overwrite too
             console.log(`[Settings] Saved GWS OAuth credentials for ${label} to ${credsPath}`);
 
             // Update MCP config and reload
