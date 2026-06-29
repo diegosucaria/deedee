@@ -222,7 +222,7 @@ function createSettingsRouter(agent) {
                 return res.status(400).json({ error: 'Invalid JSON credentials' });
             }
 
-            fs.writeFileSync(credsPath, JSON.stringify(parsedCreds, null, 2));
+            fs.writeFileSync(credsPath, JSON.stringify(parsedCreds, null, 2), { mode: 0o600 });
             console.log(`[Settings] Saved GWS credentials for ${label} to ${credsPath}`);
 
             if (agent.mcp) {
@@ -258,20 +258,30 @@ function createSettingsRouter(agent) {
 
     // ─── GWS OAuth Routes ───────────────────────────────────────────────
 
+    // Least-privilege scope set: READ-ONLY everywhere except creating calendar
+    // events/invites. No send, no edit, no admin. Minimizes blast radius if the
+    // on-disk refresh token leaks, and keeps the consent screen honest.
+    // Sending email and account suspension are tightly linked — DeeDee never sends.
+    // Tier notes (per Google): gmail.readonly + drive.readonly are RESTRICTED;
+    // calendar.* + the *.readonly editor scopes are SENSITIVE (non-restricted).
+    // Restricted scopes are fine for a personal, unverified, In-production app
+    // under Google's "personal use / <100 users known to you" exception.
     const GWS_OAUTH_SCOPES = [
-        'https://www.googleapis.com/auth/gmail.modify',
-        'https://mail.google.com/',
-        'https://www.googleapis.com/auth/calendar',
-        'https://www.googleapis.com/auth/drive',
-        'https://www.googleapis.com/auth/contacts',
-        'https://www.googleapis.com/auth/contacts.other.readonly',
-        'https://www.googleapis.com/auth/spreadsheets',
-        'https://www.googleapis.com/auth/documents',
-        'https://www.googleapis.com/auth/presentations',
-        'https://www.googleapis.com/auth/tasks',
-        'https://www.googleapis.com/auth/forms',
-        'https://www.googleapis.com/auth/chat.messages',
-        'https://www.googleapis.com/auth/admin.directory.user.readonly',
+        // Identity — non-sensitive; lets the CLI tell which account authorized
+        'openid',
+        'https://www.googleapis.com/auth/userinfo.email',
+        'https://www.googleapis.com/auth/userinfo.profile',
+        // Gmail — read only (no compose, send, modify, or delete)
+        'https://www.googleapis.com/auth/gmail.readonly',
+        // Calendar — read calendars/events + create events & send invites.
+        // Excludes calendar deletion and ACL/sharing changes.
+        'https://www.googleapis.com/auth/calendar.readonly',
+        'https://www.googleapis.com/auth/calendar.events',
+        // Docs / Drive / Sheets / Slides — read only (browse + read content, no edit)
+        'https://www.googleapis.com/auth/drive.readonly',
+        'https://www.googleapis.com/auth/documents.readonly',
+        'https://www.googleapis.com/auth/spreadsheets.readonly',
+        'https://www.googleapis.com/auth/presentations.readonly',
     ];
 
     function getDataDir() {
@@ -340,7 +350,7 @@ function createSettingsRouter(agent) {
 
             const fs = require('fs');
             const clientData = { clientId, clientSecret, redirectUri };
-            fs.writeFileSync(getOAuthClientPath(), JSON.stringify(clientData, null, 2));
+            fs.writeFileSync(getOAuthClientPath(), JSON.stringify(clientData, null, 2), { mode: 0o600 });
             console.log(`[Settings] Saved GWS OAuth client config`);
 
             res.json({ success: true });
@@ -455,7 +465,7 @@ function createSettingsRouter(agent) {
                 refresh_token: tokenData.refresh_token,
             };
 
-            fs.writeFileSync(credsPath, JSON.stringify(credentials, null, 2));
+            fs.writeFileSync(credsPath, JSON.stringify(credentials, null, 2), { mode: 0o600 });
             console.log(`[Settings] Saved GWS OAuth credentials for ${label} to ${credsPath}`);
 
             // Update MCP config and reload
