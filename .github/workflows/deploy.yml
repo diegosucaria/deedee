@@ -12,8 +12,17 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
+      # Pin the toolchain. balena-cli 25.x requires Node >=24.11; without an
+      # explicit Node + CLI version the runner silently fell back to an old
+      # build (22.5.5) that fails auth against the current Balena API with
+      # ERR_STREAM_PREMATURE_CLOSE, surfacing as a misleading
+      # "Token authentication failed". See PR for the full diagnosis.
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+
       - name: Install Balena CLI
-        run: npm install -g balena-cli
+        run: npm install -g balena-cli@25.1.10
 
       - name: Balena Login
         env:
