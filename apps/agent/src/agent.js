@@ -37,6 +37,7 @@ const { DreamService } = require('./services/dream-service');
 const { SubAgentService } = require('./services/subagent-service');
 const { ToolScoper } = require('./services/tool-scoper');
 const { sanitizeToolResult, sanitizeToolArgs } = require('./utils/tool-result-sanitizer');
+const { sanitizeFunctionDeclarations } = require('./utils/gemini-schema-sanitizer');
 const { filterCalendarResult } = require('./utils/calendar-filter');
 const { NotificationService } = require('./utils/notifications');
 
@@ -1565,7 +1566,10 @@ class Agent {
         console.log(`${logPrefix} Mode: STANDARD(Function Calling) - Enforced for ${decision.toolMode}`);
         // const toolNames = allTools.map(t => t.name).join(', ');
         // console.log(`${ logPrefix } Available Tools for Model: [${ toolNames }]`);
-        geminiTools = [{ functionDeclarations: allTools }];
+        // Strip JSON-Schema keywords Gemini rejects (e.g. propertyNames,
+        // exclusiveMinimum) from MCP-advertised tool schemas. One poisoned
+        // schema 400s the whole request, so this gates ALL declarations.
+        geminiTools = [{ functionDeclarations: sanitizeFunctionDeclarations(allTools) }];
       }
 
       // Formatter for System Time
