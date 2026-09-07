@@ -11,8 +11,8 @@ Single-file [`server.py`](server.py), built on FastMCP — same pattern as
 
 The API was reverse-engineered from the portal's Angular bundle, where the
 request and response shapes are declared as zod schemas, then checked against the
-live API. See [Verified and unverified](#verified-and-unverified) for what has
-actually been exercised.
+live API. Every endpoint is [verified](#verified) against a real account,
+including booking and cancelling end to end.
 
 > **Unofficial.** Not affiliated with or endorsed by Sanatorio Allende. It talks
 > to the portal's API with the patient's own account. The API is undocumented and
@@ -162,24 +162,18 @@ MCP client config (e.g. Claude Desktop) — use absolute paths:
 `mcp` 2.x renamed `FastMCP` to `MCPServer`; the server imports whichever is
 installed. On 2.x it also accepts `--transport streamable-http`.
 
-## Verified and unverified
+## Verified
 
-Checked against the live API with a real account:
+Every endpoint has been exercised against the live API with a real account:
 
 - login, and the `patientId` claim in the JWT
-- `whoami`, `search_doctors`, `list_procedures`, `earliest_by_specialty`,
-  `find_availability`, `find_earlier`, `my_appointments`
-- `turnos/ValidarAsignar` with the exact payload `book_appointment` sends
-- **booking, end to end.** A real appointment was booked through
-  `book_appointment` and then confirmed in `my_appointments`.
-
-Not exercised against the live API:
-
-- `turnos/CancelarTurno`, the call that cancels. Its payload
-  (`{IdTurno, IdMotivoDeAnulacionTurno, Observaciones}`) and the reason codes come
-  from the portal bundle's own schema, so the shape is right, but no cancellation
-  has been run. Everything `cancel_appointment` does before that call — finding
-  the appointment, building the summary — is verified.
+- all seven read tools
+- `turnos/ValidarAsignar`, including a real rejection, which is what the
+  `confirm=False` dry run reports
+- **booking**, end to end: booked through `book_appointment`, then confirmed in
+  `my_appointments`
+- **cancelling**, end to end: cancelled through `cancel_appointment`, then
+  confirmed as `Anulado x Paciente`
 
 ### Portal quirks worth knowing
 
@@ -200,6 +194,12 @@ Each of these cost a debugging round, so they are worth keeping written down.
   rows do **not** carry it, so `find_earlier` looks it up by the doctor's name.
 - `PrestacionMedica/...` accepts `0` as a wildcard specialty, which is how you
   list a doctor's procedures when you only know their service and branch.
+- **The web UI hides same-day slots; the API does not.** Its date helper does
+  `if (startDate is today && serviceId !== 25) startDate += 1 day`, so the
+  "nuevo turno" calendar always begins tomorrow. Service 25 is LABORATORIO
+  CENTRAL, the one exception. The API still returns today's slots and accepts a
+  booking for them, so this server can book appointments the website will not
+  show you.
 - The portal enforces **one appointment per service per month** and refuses a
   second with "Ya tiene otro turno asignado para el mismo servicio en el mes".
   `ValidarAsignar` reports it, so `book_appointment(confirm=False)` surfaces it
