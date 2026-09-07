@@ -75,6 +75,7 @@ COPY packages/plex-mcp-server ./packages/plex-mcp-server
 RUN uv pip install -r packages/plex-mcp-server/requirements.txt
 RUN uv pip install -r packages/mcp-servers/browser-use/requirements.txt
 RUN uv pip install -r packages/mcp-servers/pilotfy/requirements.txt
+RUN uv pip install -r packages/mcp-servers/allende/requirements.txt
 # Pinned: ha-mcp 7.9.0 added tool params with Gemini-incompatible schema keywords
 # (propertyNames/exclusiveMinimum) and a floating install silently pulled it on an
 # unrelated deploy, taking the agent down. Pin so upgrades are deliberate.

@@ -79,5 +79,20 @@
             "PILOTFY_TOKEN": "${PILOTFY_TOKEN}"
         },
         "disabled": false
+    },
+    "allende": {
+        "command": "python3",
+        "args": [
+            "server.py",
+            "--transport",
+            "stdio"
+        ],
+        "cwd": "../../packages/mcp-servers/allende",
+        "env": {
+            "ALLENDE_USERNAME": "${ALLENDE_USERNAME}",
+            "ALLENDE_PASSWORD": "${ALLENDE_PASSWORD}",
+            "ALLENDE_TOKEN": "${ALLENDE_TOKEN}"
+        },
+        "disabled": false
     }
 }
