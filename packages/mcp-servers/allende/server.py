@@ -113,6 +113,13 @@ ID_SISTEMA_CLIENTE = 2                # app-portal-paciente
 ID_TIPO_BUSQUEDA = 1
 ID_TIPO_DE_TURNO = 1
 
+# Appointment states (portal enum). Anything in DEAD_STATES is no longer live.
+STATE_ASIGNADO = 1
+DEAD_STATES = {5, 6, 9, 10}     # anulado x paciente, cancelado, anulado en recepcion/admision
+STATE_NAMES = {1: "Asignado", 2: "Receptado", 3: "Atendiendo", 4: "Atendido",
+               5: "Anulado x Paciente", 6: "Cancelado", 7: "Ausente", 8: "Libre",
+               9: "Anulado en Recepcion", 10: "Anulado en Admision"}
+
 # Cancellation reasons the portal offers a patient, and the one it defaults to.
 CANCEL_REASONS = {1: "Ya me atendí en otro lugar", 2: "La fecha es muy lejana",
                   4: "Otro motivo / prefiero no decirlo", 5: "Motivo médico"}
@@ -877,7 +884,8 @@ def my_appointments(includePast: bool = False, sinceDate: str = "", untilDate: s
     """My booked appointments at the Sanatorio.
 
     Args:
-        includePast: also list appointments that have already happened.
+        includePast: also list past appointments, and cancelled ones. When false
+                     (the default) only live upcoming appointments come back.
         sinceDate: YYYY-MM-DD lower bound. Defaults to today, or a year back
                    when includePast is true.
         untilDate: YYYY-MM-DD upper bound. Defaults to two years ahead.
@@ -911,16 +919,26 @@ def my_appointments(includePast: bool = False, sinceDate: str = "", untilDate: s
                 continue
             out.append({k: v for k, v in {
                 "Id": r.get("Id"), "date": _iso_day(r.get("Fecha")), "time": _clean(r.get("Hora")),
-                "estado": _clean(r.get("Estado")), "doctor": _clean(r.get("Recurso")),
+                "estado": _clean(r.get("Estado")) or STATE_NAMES.get(r.get("IdEstado"), ""),
+                "IdEstado": r.get("IdEstado"), "doctor": _clean(r.get("Recurso")),
                 "IdRecurso": r.get("IdRecurso"),
                 "servicio": _clean(r.get("Servicio")), "IdServicio": r.get("IdServicio"),
                 "sucursal": _clean(r.get("Sucursal")), "IdSucursal": r.get("IdSucursal"),
                 "prestacion": _clean(r.get("PrestacionesConcatenadas") or r.get("Prestacion")),
                 "tipo": _clean(r.get("TipoDeTurno")),
             }.items() if v not in ("", None)})
+        # A cancelled appointment keeps its future date, so a date filter alone
+        # still lists it. Drop dead ones unless the caller asked for history.
+        dropped = 0
+        if not includePast:
+            live = [a for a in out if a.get("IdEstado") not in DEAD_STATES]
+            dropped = len(out) - len(live)
+            out = live
         out.sort(key=lambda x: (x.get("date") or "", x.get("time") or ""))
         result = {"from": start.isoformat(), "to": end.isoformat(),
                   "includePast": includePast, "count": len(out), "appointments": out}
+        if dropped:
+            result["cancelledHidden"] = dropped
         if isinstance(total, int) and total > len(out):
             result["truncated"] = f"{total} match the filter; raise limit to see them all."
         return _json(result)
@@ -1019,6 +1037,14 @@ def cancel_appointment(appointmentId: int, reasonId: int = DEFAULT_CANCEL_REASON
             if a.get("Id") == appointmentId:
                 found = a
                 break
+
+        if found and found.get("IdEstado") in DEAD_STATES:
+            return _json({
+                "status": "already_inactive",
+                "appointment": found,
+                "note": f"Appointment #{appointmentId} is already "
+                        f"{found.get('estado')} — nothing to do.",
+            })
 
         if found:
             summary = (f"Cancel appointment #{appointmentId} on {found.get('date')} "
