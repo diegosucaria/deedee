@@ -3,7 +3,7 @@ const http = require('http');
 const express = require('express');
 const { TelegramService } = require('./telegram');
 const { WhatsAppService } = require('./whatsapp');
-const { SlackManager, SlackService } = require('./slack');
+const { SlackManager, SlackConnection } = require('./slack');
 const axios = require('axios');
 
 const app = express();
@@ -422,18 +422,23 @@ app.get('/slack/status', (req, res) => {
 
 app.post('/slack/credentials', async (req, res) => {
   try {
-    const { xoxc, xoxd, test } = req.body;
+    const { xoxc, xoxd, test, teamId } = req.body;
     if (!xoxc || !xoxd) return res.status(400).json({ error: 'Missing xoxc or xoxd token' });
 
     if (test) {
-      const tempSlack = new SlackService(agentUrl, { xoxc, xoxd });
-      await tempSlack.start();
-      if (!tempSlack.workspace) return res.status(400).json({ error: 'Invalid tokens' });
-      await tempSlack.stop();
-      return res.json({ success: true, team: tempSlack.workspace.team, user: tempSlack.workspace.user });
+      // Probe with a bare connection (never the manager, which would load and
+      // restart every saved workspace) and stay deaf so the probe cannot hand
+      // messages to the agent before we drop it.
+      const probe = new SlackConnection(agentUrl, { xoxc, xoxd, listening: false, monitoredChannels: [] });
+      await probe.start();
+      const workspace = probe.workspace;
+      await probe.stop();
+      if (!workspace) return res.status(400).json({ error: 'Invalid tokens' });
+      return res.json({ success: true, team: workspace.team, teamId: workspace.teamId, user: workspace.user });
     }
 
-    const workspace = await slack.addConnection(xoxc, xoxd);
+    // teamId means re-login: keep that workspace's settings, reject other tokens.
+    const workspace = await slack.addConnection(xoxc, xoxd, teamId || null);
     io.emit('slack:status', slack.getStatus());
     res.json({ success: true, workspace });
   } catch (err) {

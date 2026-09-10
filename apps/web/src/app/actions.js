@@ -667,11 +667,13 @@ export async function getSlackStatus() {
     }
 }
 
-export async function saveSlackCredentials(xoxc, xoxd) {
+// teamId re-logins an existing workspace: its monitored channels and listening
+// flag survive, and tokens for another workspace are rejected.
+export async function saveSlackCredentials(xoxc, xoxd, teamId = null) {
     try {
         const res = await fetchAPI('/v1/slack/credentials', {
             method: 'POST',
-            body: JSON.stringify({ xoxc, xoxd })
+            body: JSON.stringify(teamId ? { xoxc, xoxd, teamId } : { xoxc, xoxd })
         });
         return { success: true, ...res };
     } catch (error) {

@@ -61,6 +61,13 @@ class SlackConnection {
             clearInterval(this.pollInterval);
             this.pollInterval = null;
         }
+        // The 'close' handler bails out early on an intentional stop, so it never
+        // reaches its own clearInterval. Without this, every stop — and re-login
+        // stops the old connection — left a ping timer running for good.
+        if (this.pingInterval) {
+            clearInterval(this.pingInterval);
+            this.pingInterval = null;
+        }
         console.log(`[Slack:${this.workspace?.team || 'Unknown'}] Stopped.`);
     }
 
@@ -139,7 +146,10 @@ class SlackConnection {
                 const reasonStr = reason ? reason.toString() : 'No reason provided';
                 console.warn(`[Slack:${this.workspace?.team}] RTM closed (code: ${code}, reason: ${reasonStr}). Reconnecting in 5s...`);
                 this.connected = false;
-                if (this.pingInterval) clearInterval(this.pingInterval);
+                if (this.pingInterval) {
+                    clearInterval(this.pingInterval);
+                    this.pingInterval = null;
+                }
                 setTimeout(() => {
                     if (this.xoxc) this._connectRTM().catch(() => this._startPolling());
                 }, 5000);
@@ -639,17 +649,44 @@ class SlackManager {
         }
     }
 
-    async addConnection(xoxc, xoxd) {
+    // expectedTeamId marks a re-login: the caller already has this workspace and
+    // is only handing us fresh tokens. We then seed the new connection with the
+    // old settings BEFORE it starts, so no message slips through with the wrong
+    // listening flag, and we refuse tokens from a different workspace.
+    async addConnection(xoxc, xoxd, expectedTeamId = null) {
+        const prior = expectedTeamId ? this.connections.get(expectedTeamId) : null;
+        if (expectedTeamId && !prior) {
+            throw new Error(`Slack workspace ${expectedTeamId} not connected.`);
+        }
+
         // Test it first
-        const conn = new SlackConnection(this.agentUrl, { xoxc, xoxd, listening: true, monitoredChannels: [] }, this._makeExpiryHandler());
+        const conn = new SlackConnection(this.agentUrl, {
+            xoxc,
+            xoxd,
+            listening: prior ? prior.listening : true,
+            monitoredChannels: prior ? [...prior.monitoredChannels] : [],
+        }, this._makeExpiryHandler());
         await conn.start();
         if (!conn.workspace || !conn.workspace.teamId) {
             throw new Error('Failed to validate Slack connection');
         }
 
+        if (expectedTeamId && conn.workspace.teamId !== expectedTeamId) {
+            await conn.stop();
+            throw new Error(`These tokens belong to ${conn.workspace.team} (${conn.workspace.teamId}), not ${prior.workspace?.team || expectedTeamId}. Add it as a new workspace instead.`);
+        }
+
         // Stop old connection if overwriting
-        if (this.connections.has(conn.workspace.teamId)) {
-            await this.connections.get(conn.workspace.teamId).stop();
+        const existing = this.connections.get(conn.workspace.teamId);
+        if (existing) {
+            // Re-login through "Add Workspace" (no expectedTeamId): carry the
+            // settings over too, or fresh tokens would silently wipe the
+            // monitored channel list and leave the agent deaf.
+            if (!prior) {
+                conn.listening = existing.listening;
+                conn.monitoredChannels = [...existing.monitoredChannels];
+            }
+            await existing.stop();
         }
 
         this.connections.set(conn.workspace.teamId, conn);

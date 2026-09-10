@@ -133,6 +133,92 @@ describe('SlackManager Unit Tests', () => {
         expect(() => slack.resolveConnection(null)).toThrow('Multiple workspaces connected. Please specify teamId.');
     });
 
+    // --- Re-login (fresh tokens for a workspace we already have) ---
+
+    // A token dies every few weeks. Re-login used to run through addConnection
+    // with default settings, so the whole monitored channel list vanished and
+    // the agent went deaf until the user rebuilt it by hand.
+    describe('re-login', () => {
+        const CHANNELS = [{ id: 'C1', name: 'general' }, { id: 'C2', name: 'engineering' }];
+
+        // auth.test then a failed rtm.connect (falls back to polling).
+        const mockLogin = (team, teamId) => {
+            mockFetch.mockResolvedValueOnce({
+                json: () => Promise.resolve({ ok: true, team, team_id: teamId })
+            }).mockResolvedValueOnce({
+                json: () => Promise.resolve({ ok: false })
+            });
+        };
+
+        beforeEach(async () => {
+            mockLogin('MyTeam', 'T123');
+            await slack.addConnection('xoxc-old', 'xoxd-old');
+            slack.setMonitoredChannels('T123', CHANNELS);
+            slack.setListening('T123', false);
+        });
+
+        test('keeps monitored channels and listening flag when teamId is given', async () => {
+            mockLogin('MyTeam', 'T123');
+            await slack.addConnection('xoxc-new', 'xoxd-new', 'T123');
+
+            const conn = slack.connections.get('T123');
+            expect(slack.connections.size).toBe(1);
+            expect(conn.xoxc).toBe('xoxc-new');
+            expect(conn.monitoredChannels).toEqual(CHANNELS);
+            // Seeded before start(), so no message can arrive while listening is wrong.
+            expect(conn.listening).toBe(false);
+        });
+
+        test('keeps settings when the same workspace is re-added without a teamId', async () => {
+            mockLogin('MyTeam', 'T123');
+            await slack.addConnection('xoxc-new', 'xoxd-new');
+
+            const conn = slack.connections.get('T123');
+            expect(conn.xoxc).toBe('xoxc-new');
+            expect(conn.monitoredChannels).toEqual(CHANNELS);
+            expect(conn.listening).toBe(false);
+        });
+
+        test('rejects tokens from a different workspace and leaves the old connection alone', async () => {
+            mockLogin('OtherTeam', 'T999');
+
+            await expect(slack.addConnection('xoxc-other', 'xoxd-other', 'T123'))
+                .rejects.toThrow(/OtherTeam \(T999\)/);
+
+            const conn = slack.connections.get('T123');
+            expect(slack.connections.size).toBe(1);
+            expect(conn.xoxc).toBe('xoxc-old');
+            expect(conn.monitoredChannels).toEqual(CHANNELS);
+        });
+
+        test('rejects a re-login for a workspace that is not connected', async () => {
+            await expect(slack.addConnection('xoxc-new', 'xoxd-new', 'T404'))
+                .rejects.toThrow('Slack workspace T404 not connected.');
+        });
+
+        // Re-login stops the old connection. stop() used to leave the RTM ping
+        // timer running, so each re-login added a timer that never died.
+        test('stopping a connection clears the RTM ping timer', async () => {
+            const conn = slack.connections.get('T123');
+            conn.pingInterval = setInterval(() => { }, 1000);
+
+            await conn.stop();
+
+            expect(conn.pingInterval).toBeNull();
+        });
+
+        test('dead tokens leave the existing connection in place', async () => {
+            mockFetch.mockResolvedValue({
+                json: () => Promise.resolve({ ok: false, error: 'invalid_auth' })
+            });
+
+            await expect(slack.addConnection('xoxc-dead', 'xoxd-dead', 'T123'))
+                .rejects.toThrow('Failed to validate Slack connection');
+
+            expect(slack.connections.get('T123').xoxc).toBe('xoxc-old');
+        });
+    });
+
     // --- Token Expiry Notification ---
 
     test('_notifyTokenExpired should post system alert to agent', async () => {
