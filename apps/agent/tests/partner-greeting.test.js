@@ -87,6 +87,15 @@ describe('PartnerGreetingService', () => {
         expect(agent.interface.send.mock.calls[0][0].content).toContain('Dry run');
     });
 
+    test('greeting-only dryRun drafts and reports without the global switch', async () => {
+        history([{ role: 'user', content: 'see you tomorrow', timestamp: at('2026-01-15T01:00:00Z') }]);
+        settings.partner_greeting.dryRun = true;
+        const r = await service().run('morning', { now: () => NOW });
+        expect(r).toEqual({ dryRun: true, kind: 'morning', text: 'Good morning love' });
+        expect(agent.interface.send).toHaveBeenCalledTimes(1);
+        expect(agent.interface.send.mock.calls[0][0].metadata.session).toBe('assistant');
+    });
+
     test('when the model declines, nothing goes to the partner and the owner hears why', async () => {
         history([{ role: 'user', content: 'we need to talk', timestamp: at('2026-01-15T01:00:00Z') }]);
         modelReply = { send: false, text: '', reason: 'last night ended in an argument' };

@@ -102,14 +102,16 @@ function createSettingsRouter(agent) {
                 }
                 storedValue = n;
             }
-            // Partner greeting target: { contact, name? }. Lives on the Pi only.
+            // Partner greeting target: { contact, name?, dryRun? }. Lives on the Pi only.
+            // dryRun limits the greeting jobs to drafting and reporting to the
+            // owner, without touching the global communication_dry_run switch.
             if (key === 'partner_greeting') {
                 const contact = typeof value?.contact === 'string' ? value.contact.trim() : '';
                 if (contact.replace(/[^0-9]/g, '').length < 5) {
-                    return res.status(400).json({ error: 'partner_greeting needs { contact: phone number or WhatsApp JID, name?: string }' });
+                    return res.status(400).json({ error: 'partner_greeting needs { contact: phone number or WhatsApp JID, name?: string, dryRun?: boolean }' });
                 }
                 const name = typeof value.name === 'string' ? value.name.trim() : '';
-                storedValue = name ? { contact, name } : { contact };
+                storedValue = { contact, ...(name ? { name } : {}), dryRun: value.dryRun === true };
             }
 
             const jsonValue = JSON.stringify(storedValue);

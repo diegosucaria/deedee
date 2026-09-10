@@ -142,7 +142,14 @@ describe('Settings API partner_greeting', () => {
         const res = await request(app).post('/internal/settings')
             .send({ key: 'partner_greeting', value: { contact: ' 100000000000001@lid ', name: ' Alex ' }, category: 'communication' });
         expect(res.statusCode).toBe(200);
-        expect(run).toHaveBeenCalledWith('partner_greeting', JSON.stringify({ contact: '100000000000001@lid', name: 'Alex' }), 'communication');
+        expect(run).toHaveBeenCalledWith('partner_greeting', JSON.stringify({ contact: '100000000000001@lid', name: 'Alex', dryRun: false }), 'communication');
+    });
+
+    test('keeps dryRun only when it is exactly true', async () => {
+        await request(app).post('/internal/settings').send({ key: 'partner_greeting', value: { contact: '5490000000000', dryRun: true } });
+        await request(app).post('/internal/settings').send({ key: 'partner_greeting', value: { contact: '5490000000000', dryRun: 'yes' } });
+        expect(run.mock.calls[0][1]).toBe(JSON.stringify({ contact: '5490000000000', dryRun: true }));
+        expect(run.mock.calls[1][1]).toBe(JSON.stringify({ contact: '5490000000000', dryRun: false }));
     });
 
     test('rejects a value without a usable contact', async () => {
