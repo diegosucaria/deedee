@@ -1617,14 +1617,16 @@ class AgentDB {
 
   // --- Search & Consolidation ---
   searchMessages(query, limit = 10) {
-    // Simple LIKE search
+    // Substring LIKE search. Escape LIKE wildcards so a literal "%" or "_"
+    // in the query doesn't match everything.
     const stmt = this.db.prepare(`
-        SELECT timestamp, role, content FROM messages 
-        WHERE content LIKE ? OR parts LIKE ?
+        SELECT timestamp, role, content FROM messages
+        WHERE content LIKE ? ESCAPE '\\' OR parts LIKE ? ESCAPE '\\'
         ORDER BY timestamp DESC
         LIMIT ?
         `);
-    const likeQuery = `% ${query} % `;
+    const escaped = String(query ?? '').replace(/[\\%_]/g, '\\$&');
+    const likeQuery = `%${escaped}%`;
     return stmt.all(likeQuery, likeQuery, limit);
   }
 
