@@ -8,6 +8,7 @@ module.exports = {
         "/dist/",
         "/coverage/"
     ],
+    setupFilesAfterEnv: ["<rootDir>/jest.data-dir.js"],
     moduleNameMapper: {
         "^bindings$": "<rootDir>/jest.setup.js"
     },
