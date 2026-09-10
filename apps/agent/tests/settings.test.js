@@ -125,3 +125,38 @@ describe('Settings API', () => {
         expect(res.body.mimeType).toBe('audio/wav');
     });
 });
+
+describe('Settings API partner_greeting', () => {
+    let app;
+    let run;
+
+    beforeEach(() => {
+        run = jest.fn();
+        const agent = { db: { db: { prepare: jest.fn().mockReturnValue({ run }) } } };
+        app = express();
+        app.use(express.json());
+        app.use('/internal/settings', createSettingsRouter(agent));
+    });
+
+    test('stores a trimmed contact and name', async () => {
+        const res = await request(app).post('/internal/settings')
+            .send({ key: 'partner_greeting', value: { contact: ' 100000000000001@lid ', name: ' Alex ' }, category: 'communication' });
+        expect(res.statusCode).toBe(200);
+        expect(run).toHaveBeenCalledWith('partner_greeting', JSON.stringify({ contact: '100000000000001@lid', name: 'Alex', dryRun: false }), 'communication');
+    });
+
+    test('keeps dryRun only when it is exactly true', async () => {
+        await request(app).post('/internal/settings').send({ key: 'partner_greeting', value: { contact: '5490000000000', dryRun: true } });
+        await request(app).post('/internal/settings').send({ key: 'partner_greeting', value: { contact: '5490000000000', dryRun: 'yes' } });
+        expect(run.mock.calls[0][1]).toBe(JSON.stringify({ contact: '5490000000000', dryRun: true }));
+        expect(run.mock.calls[1][1]).toBe(JSON.stringify({ contact: '5490000000000', dryRun: false }));
+    });
+
+    test('rejects a value without a usable contact', async () => {
+        for (const value of [{}, { contact: '' }, { contact: 'abc' }, 'not-an-object']) {
+            const res = await request(app).post('/internal/settings').send({ key: 'partner_greeting', value });
+            expect(res.statusCode).toBe(400);
+        }
+        expect(run).not.toHaveBeenCalled();
+    });
+});

@@ -4,7 +4,10 @@
  *
  * Who to greet comes from the `partner_greeting` agent setting, never from
  * source code:
- *   { "contact": "<phone digits, phone JID or LID JID>", "name": "<name used in notes to the owner>" }
+ *   { "contact": "<phone digits, phone JID or LID JID>", "name": "<name used in notes to the owner>",
+ *     "dryRun": true|false }
+ * With dryRun (or the global communication_dry_run) on, the jobs draft and
+ * report to the owner but send nothing to the partner.
  *
  * Code decides whether to send; the model only drafts the text (or declines).
  * The job skips a day when the owner already wrote to the partner, and the
@@ -62,7 +65,7 @@ class PartnerGreetingService {
             try { value = JSON.parse(value); } catch { value = null; }
         }
         if (!value || typeof value.contact !== 'string' || !value.contact.trim()) return null;
-        return { contact: value.contact.trim(), name: (value.name || 'your partner').trim() };
+        return { contact: value.contact.trim(), name: (value.name || 'your partner').trim(), dryRun: value.dryRun === true };
     }
 
     _jid(contact) {
@@ -180,6 +183,13 @@ Return JSON only: {"send": true or false, "text": "the message", "reason": "one 
         if (!draft.send) {
             await this._notifyOwner(`I didn't send ${spec.label} to ${settings.name} today: ${draft.reason || 'the chat did not look right for it.'}`);
             return { skipped: true, reason: draft.reason || 'model declined' };
+        }
+
+        // Greeting-only dry run, or the global switch sendMessage honours:
+        // draft and report, but send nothing to the partner.
+        if (settings.dryRun || this.agent.db.getAgentSetting?.('communication_dry_run')?.value === true) {
+            await this._notifyOwner(`Dry run: would have sent ${spec.label} to ${settings.name}: "${draft.text}"`);
+            return { dryRun: true, kind, text: draft.text };
         }
 
         await this.agent.interface.send({ source: 'whatsapp', type: 'text', content: draft.text, metadata: { chatId: jid, session: 'user' } });

@@ -1531,7 +1531,10 @@ class Agent {
       // Interactive tool scoping: core tools plus the groups the router named.
       // Sub-agents and scheduled jobs use their own allow-lists above. With no
       // toolGroups (router error, forced model) every tool is kept.
-      if (!message.metadata?.isSubAgent && message.source !== 'scheduler' && Array.isArray(decision?.toolGroups)) {
+      // Watcher runs are skipped too: their instructions are free-form and
+      // often need tools (calendar, messaging) the router can't infer.
+      const isWatcherRun = String(message.content || '').startsWith('SYSTEM_WATCHER_ALERT');
+      if (!message.metadata?.isSubAgent && message.source !== 'scheduler' && !isWatcherRun && Array.isArray(decision?.toolGroups)) {
         this._toolGroupMemory = this._toolGroupMemory || new ToolGroupMemory();
         const groups = this._toolGroupMemory.merge(chatId, decision.toolGroups);
         const before = internalTools.length + externalTools.length;

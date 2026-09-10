@@ -10,6 +10,7 @@ import VoiceSelector from '@/components/VoiceSelector';
 import ScrollableTabs from '@/components/ScrollableTabs';
 import PageShell from '@/components/PageShell';
 import InterfacesClient from '@/components/InterfacesClient';
+import PartnerGreetingSettings from '@/components/PartnerGreetingSettings';
 import SecurityClient from './security/SecurityClient';
 
 import { Suspense } from 'react';
@@ -480,6 +481,11 @@ function SettingsContent() {
                                 </div>
                             )}
                         </div>
+
+                        <PartnerGreetingSettings
+                            value={config?.partner_greeting}
+                            onSave={(v) => handleSave('partner_greeting', v)}
+                        />
 
                         {/* Voice Settings Card */}
                         <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">

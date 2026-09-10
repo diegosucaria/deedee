@@ -46,9 +46,9 @@ describe('Agent request context and tool scoping', () => {
         fs.rmSync(dbPath, { recursive: true, force: true });
     });
 
-    const run = async (decision, metadata = {}) => {
+    const run = async (decision, metadata = {}, content = 'hello') => {
         agent.router.route = jest.fn().mockResolvedValue(decision);
-        await agent.processMessage({ content: 'hello', role: 'user', source: 'web', metadata: { chatId: 'ctx-test', replyMode: 'text', ...metadata } }, jest.fn());
+        await agent.processMessage({ content, role: 'user', source: 'web', metadata: { chatId: 'ctx-test', replyMode: 'text', ...metadata } }, jest.fn());
         const cfg = agent.client.chats.create.mock.calls[0][0].config;
         return { cfg, names: cfg.tools[0].functionDeclarations.map(d => d.name), decls: cfg.tools[0].functionDeclarations };
     };
@@ -78,6 +78,11 @@ describe('Agent request context and tool scoping', () => {
         const { names } = await run({ model: 'FLASH', toolMode: 'STANDARD' }, { isSubAgent: true, allowedTools: ['server:gws_work'] });
         expect(names).toContain('work_gmail');
         expect(names).not.toContain('ha_call_service');
+    });
+
+    test('watcher-triggered runs keep every tool even when the router names none', async () => {
+        const { names } = await run({ model: 'FLASH', toolMode: 'STANDARD', toolGroups: [] }, {}, 'SYSTEM_WATCHER_ALERT: A message matched watcher conditions.');
+        expect(names).toEqual(expect.arrayContaining(['ha_call_service', 'work_gmail', 'lookupDevice']));
     });
 
     test('per-turn context rides in the user turn, not the system instruction', async () => {
