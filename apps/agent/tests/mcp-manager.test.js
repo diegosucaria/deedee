@@ -63,3 +63,42 @@ describe('MCPManager._findMissingEnvVars', () => {
         expect(result).toEqual([]);
     });
 });
+
+describe('MCPManager config migration and tool filters', () => {
+    const { GWS_MCP_SERVICES } = require('../src/mcp-manager');
+    let manager;
+
+    beforeEach(() => {
+        manager = new MCPManager();
+        jest.spyOn(console, 'log').mockImplementation(() => {});
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
+    });
+
+    afterEach(() => jest.restoreAllMocks());
+
+    test('narrows saved gws servers from "-s all" to the scoped services', () => {
+        const saved = { gws_work: { command: 'gws', args: ['mcp', '-s', 'all', '--tool-mode', 'compact'] } };
+        expect(manager._migrateConfig(saved, {})).toBe(true);
+        expect(saved.gws_work.args).toEqual(['mcp', '-s', GWS_MCP_SERVICES, '--tool-mode', 'compact']);
+        expect(manager._migrateConfig(saved, {})).toBe(false);
+    });
+
+    test('copies tool filters from defaults without overriding saved ones', () => {
+        const defaults = { homeassistant: { includeTools: ['ha_get_*'] }, plex: { excludeTools: ['x'] } };
+        const saved = { homeassistant: { command: 'ha-mcp' }, plex: { excludeTools: ['mine'] } };
+        expect(manager._migrateConfig(saved, defaults)).toBe(true);
+        expect(saved.homeassistant.includeTools).toEqual(['ha_get_*']);
+        expect(saved.plex.excludeTools).toEqual(['mine']);
+    });
+
+    test('includeTools/excludeTools filter by name and glob', () => {
+        const tools = ['ha_get_state', 'ha_get_history', 'ha_call_service', 'ha_restart'].map(name => ({ name }));
+        const kept = manager._filterServerTools('homeassistant', tools, { includeTools: ['ha_get_*', 'ha_call_service'], excludeTools: ['ha_get_history'] });
+        expect(kept.map(t => t.name)).toEqual(['ha_get_state', 'ha_call_service']);
+    });
+
+    test('an includeTools list that matches nothing keeps every tool', () => {
+        const tools = [{ name: 'a' }, { name: 'b' }];
+        expect(manager._filterServerTools('s', tools, { includeTools: ['zzz_*'] })).toHaveLength(2);
+    });
+});

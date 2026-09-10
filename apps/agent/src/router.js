@@ -1,5 +1,8 @@
 
 const { ConfigService } = require('./services/config-service');
+const { TOOL_GROUPS } = require('./services/tool-groups');
+
+const TOOL_GROUP_LINES = Object.entries(TOOL_GROUPS).map(([g, desc]) => `        * **${g}**: ${desc}`).join('\n');
 
 class Router {
     constructor(apiKey, db) {
@@ -47,7 +50,7 @@ class Router {
             const instructionText = `
         You are the Router for a personal assistant bot. Your only job is to analyze the user's input and select the best model to handle the request.
         
-        Output a JSON object: {"model": "FLASH" | "PRO" | "IMAGE", "toolMode": "SEARCH" | "STANDARD", "reason": "brief explanation", "transcription": "transcription of user input if audio, otherwise null"}
+        Output a JSON object: {"model": "FLASH" | "PRO" | "IMAGE", "toolMode": "SEARCH" | "STANDARD", "toolGroups": ["group", ...], "reason": "brief explanation", "transcription": "transcription of user input if audio, otherwise null"}
         
         ### ROUTING LOGIC
         
@@ -74,6 +77,12 @@ class Router {
         * **Analysis:** Summarizing long text.
         * **Memory & History:** "Search my conversation with...", "What did I say yesterday?", "Find the message about..." (Requires internal tools, NOT Google).
         
+        ### TOOL GROUPS
+        Also return "toolGroups": the optional tool groups this request may need. Core tools (memory, reminders, messaging, contacts, people, web search, shell, sub-agents, goals, images, audio) are always available, so list only the extras below:
+${TOOL_GROUP_LINES}
+        * Be inclusive: if a group might be needed, include it. A missing group means the assistant cannot do the task.
+        * Use [] for chat, questions and tasks that only need core tools.
+
         ### STICKY ROUTING (CRITICAL)
         * **Last Used Model:** ${lastModel || 'NONE'} (${hoursSince} hours ago)
         * **Rule:** If the Last Used Model was **PRO**, and the current user input is a **continuation**, **confirmation** ("Yes", "Proceed", "Ok"), or **short follow-up** related to the previous PRO context, **YOU MUST STAY ON PRO**.

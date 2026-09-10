@@ -21,7 +21,8 @@ const VaultManager = require('./vault-manager');
 const { BackupManager } = require('./backup');
 const { Scheduler } = require('./scheduler');
 const axios = require('axios');
-const { getSystemInstruction } = require('./prompts/system');
+const { getSystemInstruction, getTurnContext } = require('./prompts/system');
+const { filterToolsByGroups, ToolGroupMemory } = require('./services/tool-groups');
 const { getFunctionCalls, getThinkingMessage } = require('./utils/helpers');
 const { geminiToOpenAIHistory, openAIToGeminiChunk } = require('./utils/mapper');
 const { PeopleService } = require('./services/people-service');
@@ -554,6 +555,17 @@ class Agent {
   /**
    * Helper to send message efficiently with streaming and token broadcasting
    */
+  // Puts the per-turn context (see getTurnContext) in front of the user's
+  // message as its own text part. Only the model request carries it; the
+  // saved message is unchanged.
+  _withTurnContext(message, turnContext) {
+    if (!turnContext) return message.parts || message.content;
+    const parts = Array.isArray(message.parts) && message.parts.length > 0
+      ? message.parts
+      : [{ text: String(message.content ?? '') }];
+    return { role: 'user', parts: [{ text: turnContext }, ...parts] };
+  }
+
   async _generateStream(session, payload, chatId, source, turnId) {
     // Retry helper for transient errors (up to 8 retries with longer backoff)
     const MAX_RETRIES = 8;
@@ -1471,16 +1483,18 @@ class Agent {
       const mcpTools = await this.mcp.getTools();
 
       // Transform MCP tools to Gemini Format if not already compliant
+      // serverName and category are kept for scoping below and stripped
+      // before the declarations go to Gemini.
       let externalTools = mcpTools.map(t => ({
         name: t.name,
         description: t.description,
-        parameters: t.parameters
+        parameters: t.parameters,
+        serverName: t.serverName
       }));
 
       // Flatten all internal tool declarations from toolDefinitions array
       // Strip 'category' field (used only for scoping, not part of Gemini schema)
-      let internalTools = toolDefinitions.flatMap(td => td.functionDeclarations || [])
-        .map(({ category, ...rest }) => rest);
+      let internalTools = toolDefinitions.flatMap(td => td.functionDeclarations || []);
 
       // Helper: match tools by MCP server name prefix (e.g., "server:gws_personal")
       const _matchesServerPrefix = (tool, allowedSet) => {
@@ -1512,9 +1526,20 @@ class Agent {
         console.log(`${logPrefix} Scheduler tool scope applied: ${allowed.size} tools allowed (internal: ${internalTools.length}, external: ${externalTools.length})`);
       }
 
+      // Interactive tool scoping: core tools plus the groups the router named.
+      // Sub-agents and scheduled jobs use their own allow-lists above. With no
+      // toolGroups (router error, forced model) every tool is kept.
+      if (!message.metadata?.isSubAgent && message.source !== 'scheduler' && Array.isArray(decision?.toolGroups)) {
+        this._toolGroupMemory = this._toolGroupMemory || new ToolGroupMemory();
+        const groups = this._toolGroupMemory.merge(chatId, decision.toolGroups);
+        const before = internalTools.length + externalTools.length;
+        ({ internalTools, externalTools } = filterToolsByGroups(internalTools, externalTools, groups));
+        console.log(`${logPrefix} Tool groups [${groups.join(', ') || 'core only'}]: ${internalTools.length + externalTools.length} of ${before} tools.`);
+      }
+
       const allTools = [
-        ...internalTools,
-        ...externalTools
+        ...internalTools.map(({ category, ...rest }) => rest),
+        ...externalTools.map(({ serverName, ...rest }) => rest)
       ];
 
       // construct the tools object for Gemini
@@ -1606,8 +1631,17 @@ class Agent {
         timeString,
         activeGoals,
         facts,
-        { codingMode: !isLightweight, vaultContext, skillsContext, notificationContext, isLightweight, communicationStyle: this.settings?.communication_style || '' }
+        { codingMode: !isLightweight, vaultContext, skillsContext, notificationContext, isLightweight, communicationStyle: this.settings?.communication_style || '', dynamicInTurn: !isLightweight }
       );
+      // Time, goals, skills, vault and location change per message, so they go
+      // in the user turn and the system instruction stays cacheable.
+      const turnContext = isLightweight ? '' : getTurnContext({
+        dateString: timeString,
+        activeGoals,
+        skillsContext,
+        vaultContext,
+        location: message.metadata?.location
+      });
 
       console.log(`${logPrefix} [Context] System Instruction Size: ~${systemInstruction.length} chars(~${Math.round(systemInstruction.length / 4)} tokens)${isLightweight ? ' (lightweight)' : ''}.`);
       // Lightweight sub-agents skip all contextual injections (impersonation, iOS, output mode)
@@ -1622,11 +1656,6 @@ class Agent {
         3. ** Be Natural **: Do not sound like an AI.Use "I", not "Deedee".
         --------------------------------
         `;
-
-        // In-Context User Location
-        if (message.metadata?.location) {
-          systemInstruction += `\n\n**USER LOCATION**: The user is currently in **${message.metadata.location}**. Use this for context (weather, time, local queries) if queried.`;
-        }
 
         if (['iphone', 'ios_shortcut'].includes(message.source)) {
           systemInstruction += `\n
@@ -1689,7 +1718,7 @@ class Agent {
         const modelStart = Date.now();
         try {
           // STREAMING IMPLEMENTATION
-          response = await this._generateStream(session, message.parts || message.content, chatId, message.source, turnId);
+          response = await this._generateStream(session, this._withTurnContext(message, turnContext), chatId, message.source, turnId);
 
           const modelDuration = Date.now() - modelStart;
           console.timeEnd(timerLabel);
