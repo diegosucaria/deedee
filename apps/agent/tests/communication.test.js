@@ -240,3 +240,30 @@ describe('CommunicationExecutor', () => {
         expect(mockInterfaceService.send).not.toHaveBeenCalled();
     });
 });
+
+describe('CommunicationExecutor LID targets', () => {
+    let send;
+    let executor;
+
+    beforeEach(() => {
+        send = jest.fn().mockResolvedValue({ success: true });
+        executor = new CommunicationExecutor({
+            interface: { send },
+            db: { isVerifiedContact: jest.fn().mockReturnValue(true), verifyContact: jest.fn(), searchPeople: jest.fn() }
+        });
+    });
+
+    test('keeps the @lid domain for LID-only contacts', async () => {
+        await executor.execute('sendMessage', { to: '100000000000001@lid', content: 'hi', session: 'user' }, { message: {} });
+        expect(send).toHaveBeenCalledWith(expect.objectContaining({
+            metadata: expect.objectContaining({ chatId: '100000000000001@lid', session: 'user' })
+        }));
+    });
+
+    test('still builds a phone JID from bare digits', async () => {
+        await executor.execute('sendMessage', { to: '+54 9 000 000-0000', content: 'hi' }, { message: {} });
+        expect(send).toHaveBeenCalledWith(expect.objectContaining({
+            metadata: expect.objectContaining({ chatId: '5490000000000@s.whatsapp.net' })
+        }));
+    });
+});

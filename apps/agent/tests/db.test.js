@@ -140,3 +140,44 @@ describe('AgentDB', () => {
     });
   });
 });
+
+describe('AgentDB.searchMessages', () => {
+  const searchDir = path.join(__dirname, 'tmp_db_search');
+  let db;
+
+  const save = (content) => db.saveMessage({
+    id: crypto.randomUUID(),
+    role: 'user',
+    content,
+    source: 'web',
+    metadata: { chatId: 'search-test' },
+    timestamp: new Date().toISOString()
+  });
+
+  beforeEach(() => {
+    fs.rmSync(searchDir, { recursive: true, force: true });
+    db = new AgentDB(searchDir);
+  });
+
+  afterEach(() => {
+    if (db) db.close();
+    fs.rmSync(searchDir, { recursive: true, force: true });
+  });
+
+  test('finds a word anywhere in the message, not only when padded by spaces', () => {
+    save('dentist appointment moved to friday');
+    save('Dentist, again.');
+    save('unrelated note');
+
+    const rows = db.searchMessages('dentist', 10);
+    expect(rows.map(r => r.content).sort()).toEqual(['Dentist, again.', 'dentist appointment moved to friday']);
+  });
+
+  test('treats LIKE wildcards in the query literally', () => {
+    save('battery at 50% now');
+    save('battery at 500 now');
+
+    const rows = db.searchMessages('50%', 10);
+    expect(rows.map(r => r.content)).toEqual(['battery at 50% now']);
+  });
+});

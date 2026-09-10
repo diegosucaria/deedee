@@ -1,4 +1,7 @@
-FROM node:24-alpine AS base
+# Pinned to 24.18.0: Node 24.19+ aborts when better-sqlite3 objects are garbage-collected
+# ("RemoveEnvironmentCleanupHook ... (env) != nullptr", nodejs/node#65446).
+# Only move this forward to a release that fixes that issue.
+FROM node:24.18.0-alpine AS base
 RUN apk add --no-cache libc6-compat
 RUN npm install turbo --global
 
