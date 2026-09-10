@@ -35,6 +35,7 @@ const { WardrobeService } = require('./services/wardrobe-service');
 const { SkillService } = require('./services/skill-service');
 const { MemoryPruningService } = require('./services/memory-pruning');
 const { DreamService } = require('./services/dream-service');
+const { PartnerGreetingService } = require('./services/partner-greeting');
 const { SubAgentService } = require('./services/subagent-service');
 const { ToolScoper } = require('./services/tool-scoper');
 const { sanitizeToolResult, sanitizeToolArgs } = require('./utils/tool-result-sanitizer');
@@ -148,6 +149,7 @@ class Agent {
     this.skillService = new SkillService(this);
     this.memoryPruning = new MemoryPruningService(this);
     this.dreamService = new DreamService(this);
+    this.partnerGreetingService = new PartnerGreetingService(this);
     this.subAgentService = new SubAgentService(this);
     this.toolScoper = new ToolScoper(config.googleApiKey, this.db);
     this.notifications = new NotificationService(this.db, this.interface);

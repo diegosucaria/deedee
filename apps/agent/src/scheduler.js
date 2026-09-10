@@ -771,6 +771,23 @@ STEP 6 — After sendMessage succeeds, respond with the single token [SILENT] so
 NEVER contact anyone other than the owner.`,
                 silent: false,
                 defaultEnabled: false
+            },
+            {
+                // Sends from the owner's own WhatsApp account, as the owner.
+                // Target comes from the partner_greeting setting; runs
+                // directly (no agent loop). Random 0-75 min delay inside.
+                name: 'partner_good_morning',
+                cron: '0 7 * * *',
+                task: 'Send the owner\'s good-morning message to their partner (partner_greeting setting).',
+                silent: true,
+                defaultEnabled: false
+            },
+            {
+                name: 'partner_good_night',
+                cron: '30 22 * * *', // Random 0-45 min delay inside
+                task: 'Send the owner\'s good-night message to their partner (partner_greeting setting).',
+                silent: true,
+                defaultEnabled: false
             }
         ];
 
@@ -824,6 +841,13 @@ NEVER contact anyone other than the owner.`,
                         throw err;
                     }
                     return result; // Return for logging
+                }
+
+                // Partner greetings: direct call, no agent loop. The model only
+                // drafts the text; the service decides whether to send.
+                if (sysJob.name === 'partner_good_morning' || sysJob.name === 'partner_good_night') {
+                    const kind = sysJob.name === 'partner_good_morning' ? 'morning' : 'night';
+                    return await this.agent.partnerGreetingService.run(kind, { randomDelay: true });
                 }
 
                 // Nightly RAG Scan
