@@ -1,5 +1,6 @@
 const express = require('express');
 const { ConfigService } = require('../services/config-service');
+const { GWS_MCP_SERVICES } = require('../mcp-manager');
 
 /**
  * Find the MCP calendar tool name for a GWS account label.
@@ -235,7 +236,7 @@ function createSettingsRouter(agent) {
 
                 userConfig[`gws_${safeLabel}`] = {
                     command: "gws",
-                    args: ["mcp", "-s", "all", "--tool-mode", "compact"],
+                    args: ["mcp", "-s", GWS_MCP_SERVICES, "--tool-mode", "compact"],
                     namespace: safeLabel,
                     env: {
                         "GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE": credsPath,
@@ -327,7 +328,7 @@ function createSettingsRouter(agent) {
 
         userConfig[`gws_${safeLabel}`] = {
             command: "gws",
-            args: ["mcp", "-s", "all", "--tool-mode", "compact"],
+            args: ["mcp", "-s", GWS_MCP_SERVICES, "--tool-mode", "compact"],
             namespace: safeLabel,
             env: {
                 "GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE": credsPath,

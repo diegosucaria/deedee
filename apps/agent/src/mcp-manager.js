@@ -4,6 +4,17 @@ const { SSEClientTransport } = require("@modelcontextprotocol/sdk/client/sse.js"
 const path = require('path');
 const fs = require('fs');
 
+// Google Workspace services the OAuth scopes in routes/settings.js can use.
+// "-s all" loads ~25 services (admin, reseller, classroom...) whose tool
+// descriptions go to the model on every request but can never succeed.
+const GWS_MCP_SERVICES = 'gmail,calendar,drive,docs,sheets,slides';
+
+// "*" matches any run of characters; everything else is literal.
+function _toolPatternToRegex(pattern) {
+    const escaped = String(pattern).replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
+    return new RegExp(`^${escaped}$`);
+}
+
 class MCPManager {
     constructor(configPath = '../mcp_config.json') {
         this.clients = new Map(); // serverName -> Client
@@ -97,6 +108,8 @@ class MCPManager {
                 dirty = true;
             }
         }
+
+        if (this._migrateConfig(userConfig, defaultConfig)) dirty = true;
 
         // 4. Save if changed (or if file didn't exist)
         if (dirty || !fs.existsSync(this.configPath)) {
@@ -292,7 +305,8 @@ class MCPManager {
 
                 const result = await client.listTools();
                 if (result && result.tools) {
-                    const mappedTools = result.tools.map(t => {
+                    const serverTools = this._filterServerTools(name, result.tools, this.config?.[name]);
+                    const mappedTools = serverTools.map(t => {
                         let safeName = `${prefix}${t.name}`;
 
                         // Sanitize to Gemini's allowed characters (a-z, A-Z, 0-9, _, ., :, -)
@@ -343,6 +357,65 @@ class MCPManager {
             }
         }
         console.log(`[MCP] Tool cache refreshed. ${this.toolCache.length} tools found.`);
+    }
+
+    /**
+     * Upgrades a saved config in place. Returns true if anything changed.
+     * - Tool filters (includeTools/excludeTools) live in the image's default
+     *   config; carry them to saved entries that don't set their own, since
+     *   the merge above only adds whole servers that are missing.
+     * - GWS entries saved with "-s all" move to GWS_MCP_SERVICES.
+     */
+    _migrateConfig(userConfig, defaultConfig = {}) {
+        let changed = false;
+        for (const [key, def] of Object.entries(defaultConfig)) {
+            const saved = userConfig[key];
+            if (!saved || !def) continue;
+            for (const field of ['includeTools', 'excludeTools']) {
+                if (def[field] && !saved[field]) {
+                    saved[field] = def[field];
+                    changed = true;
+                }
+            }
+        }
+        for (const [key, saved] of Object.entries(userConfig)) {
+            if (!key.startsWith('gws_') || !Array.isArray(saved?.args)) continue;
+            const i = saved.args.findIndex(a => a === '-s' || a === '--services');
+            if (i !== -1 && saved.args[i + 1] === 'all') {
+                saved.args[i + 1] = GWS_MCP_SERVICES;
+                changed = true;
+                console.log(`[MCP] ${key}: narrowed services from "all" to ${GWS_MCP_SERVICES}`);
+            }
+        }
+        return changed;
+    }
+
+    /**
+     * Applies a server's includeTools/excludeTools (names or "*" globs, matched
+     * against the server's own tool names). If includeTools matches nothing,
+     * the list is probably stale for this server version, so keep every tool.
+     */
+    _filterServerTools(name, tools, serverConfig = {}) {
+        let kept = tools;
+        const include = serverConfig?.includeTools;
+        if (Array.isArray(include) && include.length > 0) {
+            const res = include.map(_toolPatternToRegex);
+            const matched = tools.filter(t => res.some(re => re.test(t.name)));
+            if (matched.length > 0) {
+                kept = matched;
+            } else {
+                console.warn(`[MCP] ${name}: includeTools matched none of ${tools.length} tools; keeping all.`);
+            }
+        }
+        const exclude = serverConfig?.excludeTools;
+        if (Array.isArray(exclude) && exclude.length > 0) {
+            const res = exclude.map(_toolPatternToRegex);
+            kept = kept.filter(t => !res.some(re => re.test(t.name)));
+        }
+        if (kept.length !== tools.length) {
+            console.log(`[MCP] ${name}: exposing ${kept.length} of ${tools.length} tools.`);
+        }
+        return kept;
     }
 
     async getStatus() {
@@ -502,4 +575,4 @@ class MCPManager {
     }
 }
 
-module.exports = { MCPManager };
+module.exports = { MCPManager, GWS_MCP_SERVICES };

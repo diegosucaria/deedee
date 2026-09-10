@@ -72,10 +72,10 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
         const getPayloadText = (p) => {
           if (typeof p === 'string') return p;
           if (Array.isArray(p)) return ''; // FIX: Handle direct array payload (Function Response)
-          if (p?.parts && p.parts[0]?.text) return p.parts[0].text;
+          if (Array.isArray(p?.parts)) return p.parts.map(x => x.text || "").join("\n");
           if (p?.message) {
             if (typeof p.message === 'string') return p.message;
-            if (p.message.parts && p.message.parts[0]?.text) return p.message.parts[0].text;
+            if (Array.isArray(p.message.parts)) return p.message.parts.map(x => x.text || "").join("\n");
             return '';
           }
           return '';
@@ -137,10 +137,10 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
         const getPayloadText = (p) => {
           if (typeof p === 'string') return p;
           if (Array.isArray(p)) return ''; // FIX: Handle direct array payload
-          if (p?.parts && p.parts[0]?.text) return p.parts[0].text;
+          if (Array.isArray(p?.parts)) return p.parts.map(x => x.text || "").join("\n");
           if (p?.message) {
             if (typeof p.message === 'string') return p.message;
-            if (p.message.parts && p.message.parts[0]?.text) return p.message.parts[0].text;
+            if (Array.isArray(p.message.parts)) return p.message.parts.map(x => x.text || "").join("\n");
             return '';
           }
           return '';

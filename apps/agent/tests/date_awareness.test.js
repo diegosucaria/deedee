@@ -108,8 +108,15 @@ describe('Date Awareness', () => {
         const systemInstruction = config.config.systemInstruction;
         expect(systemInstruction).toContain('CURRENT_TIME:');
 
+        // The actual time rides in the TURN CONTEXT part of the user message,
+        // so the system instruction stays identical between requests.
+        const session = mockChatsCreate.mock.results[0].value;
+        const sent = session.sendMessage.mock.calls[0][0].message;
+        const sentText = sent.parts.map(p => p.text || '').join('\n');
+        expect(sentText).toContain('CURRENT_TIME:');
+
         // Verify it has the year (good enough for sanity check)
         const year = new Date().getFullYear().toString();
-        expect(systemInstruction).toContain(year);
+        expect(sentText).toContain(year);
     });
 });
