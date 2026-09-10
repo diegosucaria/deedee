@@ -77,6 +77,16 @@ describe('PartnerGreetingService', () => {
         expect(toOwner.content).toContain('Good morning love');
     });
 
+    test('dry run drafts and reports to the owner but sends nothing to the partner', async () => {
+        history([{ role: 'user', content: 'see you tomorrow', timestamp: at('2026-01-15T01:00:00Z') }]);
+        settings.communication_dry_run = true;
+        const r = await service().run('morning', { now: () => NOW });
+        expect(r).toEqual({ dryRun: true, kind: 'morning', text: 'Good morning love' });
+        expect(agent.interface.send).toHaveBeenCalledTimes(1);
+        expect(agent.interface.send.mock.calls[0][0].metadata.chatId).toBe(`${OWNER}@s.whatsapp.net`);
+        expect(agent.interface.send.mock.calls[0][0].content).toContain('Dry run');
+    });
+
     test('when the model declines, nothing goes to the partner and the owner hears why', async () => {
         history([{ role: 'user', content: 'we need to talk', timestamp: at('2026-01-15T01:00:00Z') }]);
         modelReply = { send: false, text: '', reason: 'last night ended in an argument' };

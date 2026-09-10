@@ -182,6 +182,12 @@ Return JSON only: {"send": true or false, "text": "the message", "reason": "one 
             return { skipped: true, reason: draft.reason || 'model declined' };
         }
 
+        // Same switch sendMessage honours: draft and report, but send nothing.
+        if (this.agent.db.getAgentSetting?.('communication_dry_run')?.value === true) {
+            await this._notifyOwner(`Dry run: would have sent ${spec.label} to ${settings.name}: "${draft.text}"`);
+            return { dryRun: true, kind, text: draft.text };
+        }
+
         await this.agent.interface.send({ source: 'whatsapp', type: 'text', content: draft.text, metadata: { chatId: jid, session: 'user' } });
         await this._notifyOwner(`Sent ${spec.label} to ${settings.name}: "${draft.text}"`);
         return { sent: true, kind, text: draft.text };

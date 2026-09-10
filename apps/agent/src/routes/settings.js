@@ -82,7 +82,8 @@ function createSettingsRouter(agent) {
                 'owner_phone', 'owner_name', 'search_strategy', 'voice_settings',
                 'communication_dry_run', 'communication_style', 'notification_channel',
                 'provider:xai', 'chatModel', 'visionModel',
-                'slack_monitored_channels', 'proactive_run_probability'
+                'slack_monitored_channels', 'proactive_run_probability',
+                'partner_greeting'
             ];
             if (!ALLOWED_KEYS.includes(key)) {
                 return res.status(400).json({ error: 'Invalid config key' });
@@ -100,6 +101,15 @@ function createSettingsRouter(agent) {
                     return res.status(400).json({ error: 'proactive_run_probability must be a number between 0 and 1' });
                 }
                 storedValue = n;
+            }
+            // Partner greeting target: { contact, name? }. Lives on the Pi only.
+            if (key === 'partner_greeting') {
+                const contact = typeof value?.contact === 'string' ? value.contact.trim() : '';
+                if (contact.replace(/[^0-9]/g, '').length < 5) {
+                    return res.status(400).json({ error: 'partner_greeting needs { contact: phone number or WhatsApp JID, name?: string }' });
+                }
+                const name = typeof value.name === 'string' ? value.name.trim() : '';
+                storedValue = name ? { contact, name } : { contact };
             }
 
             const jsonValue = JSON.stringify(storedValue);
