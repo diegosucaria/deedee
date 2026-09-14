@@ -181,3 +181,31 @@ describe('AgentDB.searchMessages', () => {
     expect(rows.map(r => r.content)).toEqual(['battery at 50% now']);
   });
 });
+
+describe('AgentDB.searchMessages result size', () => {
+  const dir = path.join(__dirname, 'tmp_db_search_size');
+  let db;
+
+  beforeEach(() => {
+    fs.rmSync(dir, { recursive: true, force: true });
+    db = new AgentDB(dir);
+  });
+
+  afterEach(() => {
+    if (db) db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  test('a match inside tool data returns a short excerpt instead of an empty row', () => {
+    db.saveMessage({ id: crypto.randomUUID(), role: 'function', content: null, parts: [{ functionResponse: { name: 'lookup', response: { note: 'zebra ' + 'x'.repeat(2000) } } }], source: 'web', metadata: { chatId: 's' }, timestamp: new Date().toISOString() });
+    const [row] = db.searchMessages('zebra', 5);
+    expect(row.content).toContain('zebra');
+    expect(row.content.length).toBeLessThanOrEqual(400);
+  });
+
+  test('long message content is capped', () => {
+    db.saveMessage({ id: crypto.randomUUID(), role: 'user', content: 'zebra ' + 'y'.repeat(5000), source: 'web', metadata: { chatId: 's' }, timestamp: new Date().toISOString() });
+    const [row] = db.searchMessages('zebra', 5);
+    expect(row.content.length).toBe(1000);
+  });
+});

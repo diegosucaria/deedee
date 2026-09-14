@@ -22,7 +22,7 @@ const { BackupManager } = require('./backup');
 const { Scheduler } = require('./scheduler');
 const axios = require('axios');
 const { getSystemInstruction, getTurnContext } = require('./prompts/system');
-const { filterToolsByGroups, ToolGroupMemory } = require('./services/tool-groups');
+const { filterToolsByGroups, ToolGroupMemory, groupsNamedIn } = require('./services/tool-groups');
 const { getFunctionCalls, getThinkingMessage } = require('./utils/helpers');
 const { geminiToOpenAIHistory, openAIToGeminiChunk } = require('./utils/mapper');
 const { PeopleService } = require('./services/people-service');
@@ -1536,7 +1536,9 @@ class Agent {
       const isWatcherRun = String(message.content || '').startsWith('SYSTEM_WATCHER_ALERT');
       if (!message.metadata?.isSubAgent && message.source !== 'scheduler' && !isWatcherRun && Array.isArray(decision?.toolGroups)) {
         this._toolGroupMemory = this._toolGroupMemory || new ToolGroupMemory();
-        const groups = this._toolGroupMemory.merge(chatId, decision.toolGroups);
+        // Integrations the user names are always loaded, on top of the router's pick.
+        const named = groupsNamedIn(message.content || (message.parts || []).map(p => p.text || '').join(' '));
+        const groups = this._toolGroupMemory.merge(chatId, [...decision.toolGroups, ...named]);
         const before = internalTools.length + externalTools.length;
         ({ internalTools, externalTools } = filterToolsByGroups(internalTools, externalTools, groups));
         console.log(`${logPrefix} Tool groups [${groups.join(', ') || 'core only'}]: ${internalTools.length + externalTools.length} of ${before} tools.`);

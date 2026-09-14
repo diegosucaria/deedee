@@ -36,16 +36,38 @@ function mcpServerGroup(serverName = '') {
 
 const TOOL_GROUPS = {
     home: 'lights, devices, sensors, Home Assistant, Node-RED automations',
-    workspace: 'email, calendar, Google Drive / Docs / Sheets / Slides',
+    workspace: 'Gmail, Google Calendar, Google Drive / Docs / Sheets / Slides',
     slack: 'Slack messages, channels and people',
     wardrobe: 'clothes, outfits, packing for trips',
     dj: 'vinyl records, DJ sets, track picks',
     docs: 'life vaults, notes, uploaded documents',
     media: 'Plex movies, shows and music',
-    browser: 'opening or acting on web pages',
-    flights: 'flight school lessons and bookings',
-    health: 'medical appointments',
+    browser: 'opening or acting on web pages (browser-use)',
+    flights: 'Pilotfy flight school: lessons, bookings, flight hours',
+    health: 'Sanatorio Allende medical appointments ("turnos"): search, book, cancel',
 };
+
+// Words that name an integration outright. A message that names one always
+// gets its group, whatever the router decided: asking for "the allende mcp"
+// and getting a tool set without it made the model improvise through the shell.
+const GROUP_NAME_WORDS = {
+    home: ['home assistant', 'homeassistant', 'node-red', 'node red', 'nodered'],
+    workspace: ['gmail', 'google calendar', 'google drive', 'google docs', 'google sheets'],
+    slack: ['slack'],
+    media: ['plex'],
+    browser: ['browser-use', 'browser use'],
+    flights: ['pilotfy'],
+    health: ['allende'],
+};
+
+/** Groups whose integration is named in `text` (case-insensitive). */
+function groupsNamedIn(text) {
+    const t = String(text || '').toLowerCase();
+    if (!t) return [];
+    return Object.entries(GROUP_NAME_WORDS)
+        .filter(([, words]) => words.some(w => t.includes(w)))
+        .map(([group]) => group);
+}
 
 /**
  * Keeps core tools plus tools from `groups`. `groups` must be an array;
@@ -94,4 +116,4 @@ class ToolGroupMemory {
     }
 }
 
-module.exports = { TOOL_GROUPS, INTERNAL_CATEGORY_GROUPS, mcpServerGroup, filterToolsByGroups, ToolGroupMemory };
+module.exports = { TOOL_GROUPS, INTERNAL_CATEGORY_GROUPS, mcpServerGroup, filterToolsByGroups, ToolGroupMemory, groupsNamedIn };

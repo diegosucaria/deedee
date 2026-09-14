@@ -1634,8 +1634,13 @@ class AgentDB {
   searchMessages(query, limit = 10) {
     // Substring LIKE search. Escape LIKE wildcards so a literal "%" or "_"
     // in the query doesn't match everything.
+    // Rows that matched only inside tool data (parts) have no content; return
+    // a short excerpt of the parts instead. Cap every result so a search can't
+    // flood the context window.
     const stmt = this.db.prepare(`
-        SELECT timestamp, role, content FROM messages
+        SELECT timestamp, role,
+          substr(COALESCE(NULLIF(content, ''), parts), 1, CASE WHEN content IS NULL OR content = '' THEN 400 ELSE 1000 END) AS content
+        FROM messages
         WHERE content LIKE ? ESCAPE '\\' OR parts LIKE ? ESCAPE '\\'
         ORDER BY timestamp DESC
         LIMIT ?
