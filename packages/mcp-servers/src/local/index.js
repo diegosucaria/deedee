@@ -6,7 +6,7 @@ const execAsync = util.promisify(exec);
 
 const BLOCKED_BINARIES = [
   'vi', 'nano', 'emacs', 'vim', 'top', 'htop', 'shutdown', 'init', 'halt',
-  'passwd', 'mkfs', 'fdisk', 'parted', 'dd', 'env', 'sudo', 'su',
+  'passwd', 'mkfs', 'fdisk', 'parted', 'dd', 'env', 'printenv', 'sudo', 'su',
   'sqlite3'
 ];
 
@@ -16,7 +16,32 @@ const BLOCKED_PATTERNS = [
   { regex: /agent\.db/, message: "Direct access to agent.db is not allowed. Use the appropriate tools instead." },
   { regex: /\bstrings\s+.*\/app\/data/i, message: "Raw binary extraction from data files is not allowed." },
   { regex: /\/app\/interfaces-data/i, message: "Access to the interfaces data volume is not allowed. It contains credentials and session data." },
+  { regex: /\/proc\/[^\s]*\/environ/i, message: "Reading process environments is not allowed. They hold credentials." },
 ];
+
+// Environment variable names that hold credentials.
+const SECRET_NAME = /(PASS|PWD|TOKEN|SECRET|KEY|CREDENTIAL|COOKIE|AUTH|PRIVATE)/i;
+
+/**
+ * Removes credentials from tool output before it reaches the model, logs or DB.
+ * Replaces the value of every secret-named environment variable wherever it
+ * appears, and the value side of "NAME=value" / "NAME: value" lines whose name
+ * looks secret (covers .env files and variables this process doesn't have).
+ */
+function redactSecrets(text, env = process.env) {
+  if (typeof text !== 'string' || text.length === 0) return text;
+  let out = text;
+  const values = Object.entries(env)
+    .filter(([name, value]) => SECRET_NAME.test(name) && typeof value === 'string' && value.length >= 6)
+    .sort((a, b) => b[1].length - a[1].length);
+  for (const [name, value] of values) {
+    if (out.includes(value)) out = out.split(value).join(`[REDACTED:${name}]`);
+  }
+  return out.replace(
+    /^(\s*(?:export\s+)?["']?[A-Za-z0-9_.-]*(?:PASS|PWD|TOKEN|SECRET|KEY|CREDENTIAL|COOKIE|AUTH|PRIVATE)[A-Za-z0-9_.-]*["']?\s*[=:]\s*)(?!\[REDACTED)(\S.*)$/gim,
+    '$1[REDACTED]'
+  );
+}
 
 class LocalTools {
   constructor(workDir = '/app') {
@@ -34,7 +59,7 @@ class LocalTools {
   async readFile(filePath) {
     try {
       const fullPath = this._resolveSafe(filePath);
-      return await fs.readFile(fullPath, 'utf8');
+      return redactSecrets(await fs.readFile(fullPath, 'utf8'));
     } catch (error) {
       throw new Error(`Failed to read file: ${error.message}`);
     }
@@ -87,17 +112,17 @@ class LocalTools {
         cwd: this.workDir,
         timeout: options.timeout || 30000 // default 30s
       });
-      return { stdout: stdout.trim(), stderr: stderr.trim() };
+      return { stdout: redactSecrets(stdout.trim()), stderr: redactSecrets(stderr.trim()) };
     } catch (error) {
       // If the command failed (exit code != 0), we still return the output
       // so the model can see why it failed.
       return {
-        stdout: error.stdout ? error.stdout.trim() : '',
-        stderr: error.stderr ? error.stderr.trim() : error.message,
+        stdout: error.stdout ? redactSecrets(error.stdout.trim()) : '',
+        stderr: redactSecrets(error.stderr ? error.stderr.trim() : error.message),
         error: true
       };
     }
   }
 }
 
-module.exports = { LocalTools };
+module.exports = { LocalTools, redactSecrets };

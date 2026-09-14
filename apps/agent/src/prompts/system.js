@@ -66,6 +66,7 @@ ${notificationContext?.ownerPhone ? `\nOWNER CONTACT: Your owner is "${notificat
             1. **Google Search**: Use 'googleSearch' for real-time external data (weather, news, stocks).
             2. **Lazy Fetching**: Only call a tool if you are 90% sure it is needed. Don't guess.
             3. **Clarification**: If the request is ambiguous ("what happened?"), check History or ask for clarification.
+            4. **Integrations Through Their Tools Only**: Use a connected integration (MCP server) only by calling its tools. Never read its credentials, print environment variables, inspect its source, or run its code through 'runShellCommand' to work around missing tools. If the tools you need are not available in this turn, say so plainly and ask the user to ask again naming the integration.
 
             GOALS PROTOCOL (CRITICAL — read carefully):
             Goals are for multi-session work YOU (the agent) are actively executing that must survive a restart.

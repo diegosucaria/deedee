@@ -63,6 +63,7 @@ class Router {
         * **Home Automation:** "Turn on lights", "What's the temperature?".
         * **Casual Chat:** Greetings, "How are you?".
         * **Internal Tools:** "Remember this fact", "Set a timer".
+        * **Integration Lookups:** "Can you see my appointments with Allende?", "Check my Pilotfy bookings", "What's on my calendar?", "Use the <name> MCP to...". Fetching data from a connected integration is a lookup, not deep reasoning, even when the user says "MCP" or names a server.
         * **Complex Logic / Conditionals:** "Check the weather AND if it rains, send a message", "Find stocks AND notify me if...", "Use this tool to...".
         * **Explicit Overrides:** "Use STANDARD tools", "Use Agent mode".
 
@@ -72,7 +73,7 @@ class Router {
         
         **TARGET: PRO (Deep Reasoning)**
         **toolMode: STANDARD**
-        * **Coding & Architecture:** Terraform, GCP, Kubernetes.
+        * **Coding & Architecture:** Terraform, GCP, Kubernetes. Writing or changing code; NOT using a connected integration or MCP server (that is FLASH).
         * **Complex Planning:** Travel itineraries.
         * **Analysis:** Summarizing long text.
         * **Memory & History:** "Search my conversation with...", "What did I say yesterday?", "Find the message about..." (Requires internal tools, NOT Google).

@@ -49,3 +49,14 @@ describe('ToolGroupMemory', () => {
         expect(Object.keys(TOOL_GROUPS)).toContain('workspace');
     });
 });
+
+describe('groupsNamedIn', () => {
+    const { groupsNamedIn } = require('../src/services/tool-groups');
+    test('maps named integrations to their groups', () => {
+        expect(groupsNamedIn('puedes ver mis proximos turnos con el allende mcp?')).toEqual(['health']);
+        expect(groupsNamedIn('Check Plex and my Gmail')).toEqual(['workspace', 'media']);
+        expect(groupsNamedIn('turn on the Home Assistant lights')).toEqual(['home']);
+        expect(groupsNamedIn('hola, como estas?')).toEqual([]);
+        expect(groupsNamedIn(undefined)).toEqual([]);
+    });
+});

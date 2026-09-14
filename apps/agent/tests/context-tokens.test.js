@@ -7,7 +7,8 @@ jest.mock('axios');
 
 const mockMcpTools = [
     { name: 'ha_call_service', description: 'Call a service', parameters: { type: 'object', properties: {} }, serverName: 'homeassistant' },
-    { name: 'work_gmail', description: 'Gmail', parameters: { type: 'object', properties: {} }, serverName: 'gws_work' }
+    { name: 'work_gmail', description: 'Gmail', parameters: { type: 'object', properties: {} }, serverName: 'gws_work' },
+    { name: 'my_appointments', description: 'Appointments', parameters: { type: 'object', properties: {} }, serverName: 'allende' }
 ];
 
 jest.mock('../src/mcp-manager', () => ({
@@ -77,6 +78,12 @@ describe('Agent request context and tool scoping', () => {
     test('server: allow-list entries match MCP tools by server name', async () => {
         const { names } = await run({ model: 'FLASH', toolMode: 'STANDARD' }, { isSubAgent: true, allowedTools: ['server:gws_work'] });
         expect(names).toContain('work_gmail');
+        expect(names).not.toContain('ha_call_service');
+    });
+
+    test('an integration named in the message is loaded even when the router picks other groups', async () => {
+        const { names } = await run({ model: 'FLASH', toolMode: 'STANDARD', toolGroups: ['docs'] }, {}, 'can you see my next appointments with the allende mcp?');
+        expect(names).toContain('my_appointments');
         expect(names).not.toContain('ha_call_service');
     });
 
