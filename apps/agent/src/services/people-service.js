@@ -100,9 +100,64 @@ class PeopleService {
     }
 
     // --- Sync ---
+
+    /**
+     * Records each person's WhatsApp ID (identifiers.whatsapp_lid) next to their
+     * phone number, from the phone → ID links in the WhatsApp contact list.
+     * A person stored under a WhatsApp ID moves onto the linked phone number,
+     * unless another person already has that number. Never creates or deletes
+     * people. Pass the contact list if you already have it.
+     * @returns {{ linked: number, upgraded: number }}
+     */
+    async linkWhatsAppIdentities(contacts = null) {
+        let list = contacts;
+        if (!list) {
+            const res = await axios.get(`${this.interfacesUrl}/whatsapp/contacts`, {
+                params: { session: 'user' },
+                headers: { 'Authorization': `Bearer ${process.env.DEEDEE_API_TOKEN}` }
+            });
+            list = res.data || [];
+        }
+
+        const lidByPhone = new Map();
+        for (const c of list) {
+            if (!c?.id || !c.lid || !c.id.endsWith('@s.whatsapp.net')) continue;
+            lidByPhone.set(c.id.split('@')[0], String(c.lid).split('@')[0]);
+        }
+        const phoneByLid = new Map([...lidByPhone].map(([phone, lid]) => [lid, phone]));
+
+        const stats = { linked: 0, upgraded: 0 };
+        for (const person of this.agent.db.listPeople()) {
+            const phone = String(person.phone || '').replace(/\D/g, '');
+            if (!phone) continue;
+            const identifiers = { ...(person.identifiers || {}) };
+
+            if (lidByPhone.has(phone)) {
+                const lid = lidByPhone.get(phone);
+                if (identifiers.whatsapp_lid === lid) continue;
+                identifiers.whatsapp_lid = lid;
+                if (!identifiers.whatsapp) identifiers.whatsapp = phone;
+                this.agent.db.updatePerson(person.id, { identifiers });
+                stats.linked++;
+            } else if (phoneByLid.has(phone)) {
+                // Stored under the WhatsApp ID: move onto the real number.
+                const realPhone = phoneByLid.get(phone);
+                const holder = this.agent.db.getPerson(realPhone);
+                if (holder && holder.id !== person.id) continue; // two records; leave for the owner
+                identifiers.whatsapp = realPhone;
+                identifiers.whatsapp_lid = phone;
+                this.agent.db.updatePerson(person.id, { phone: realPhone, identifiers });
+                stats.upgraded++;
+            }
+        }
+        return stats;
+    }
+
     async syncFromWhatsApp() {
         const existingPeople = this.agent.db.listPeople();
         const existingPhones = new Set(existingPeople.map(p => p.phone ? p.phone.replace(/\D/g, '') : '').filter(Boolean));
+        // A saved contact whose WhatsApp ID already belongs to someone is that person.
+        const existingLids = new Set(existingPeople.map(p => p.identifiers?.whatsapp_lid).filter(Boolean));
 
         // Fetch contacts from WhatsApp (Session: user)
         // We want the user's phone book, which is mirrored in the 'user' session.
@@ -146,8 +201,9 @@ class PeopleService {
                 continue;
             }
 
-            // Check duplicate
-            if (existingPhones.has(phone)) {
+            // Check duplicate (by phone, or by the WhatsApp ID linked to it)
+            const contactLid = contact.lid ? String(contact.lid).split('@')[0] : null;
+            if (existingPhones.has(phone) || (contactLid && (existingLids.has(contactLid) || existingPhones.has(contactLid)))) {
                 stats.skipped++;
                 continue;
             }
@@ -175,6 +231,11 @@ class PeopleService {
             existingPhones.add(phone);
             stats.added++;
         }
+
+        // Link WhatsApp IDs to phone numbers (covers people added above too).
+        const links = await this.linkWhatsAppIdentities(whatsappContacts);
+        stats.linked = links.linked;
+        stats.upgraded = links.upgraded;
 
         // Cleanup any groups that slipped through (e.g. from prior syncs)
         const removed = this.agent.db.deleteGroupContacts();

@@ -916,6 +916,17 @@ NEVER contact anyone other than the owner.`,
                     } catch (e) {
                         console.error('[Scheduler] Log cleanup failed:', e);
                     }
+                    // Keep people's WhatsApp IDs linked to their phone numbers (no model call).
+                    if (this.agent.peopleService) {
+                        try {
+                            const links = await this.agent.peopleService.linkWhatsAppIdentities();
+                            if (links.linked || links.upgraded) {
+                                console.log(`[Scheduler] WhatsApp IDs: ${links.linked} linked, ${links.upgraded} moved onto phone numbers.`);
+                            }
+                        } catch (e) {
+                            console.warn('[Scheduler] WhatsApp ID linking failed:', e.message);
+                        }
+                    }
                 }
 
                 // Proactive Thought (Probabilistic execution).

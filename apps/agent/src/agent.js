@@ -1161,11 +1161,11 @@ class Agent {
 
           // --- AUTOPILOT LOGIC (skip for fromMe — we don't want to draft replies to ourselves) ---
           if (!isFromMe) {
-            try {
-              this.impersonationService.handleMessage(chatId, message, contactString);
-            } catch (e) {
-              console.error('[Agent] Autopilot failed:', e.message);
-            }
+            // handleMessage is async and not awaited: catch its rejection on the
+            // promise. A try/catch here only sees synchronous throws, so a
+            // failure became an unhandled rejection.
+            this.impersonationService.handleMessage(chatId, message, contactString)
+              .catch(e => console.error('[Agent] Autopilot failed:', e.message));
           }
 
           return executionSummary; // Exit early

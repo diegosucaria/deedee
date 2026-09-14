@@ -60,7 +60,8 @@ export default function PeoplePage() {
         const res = await syncWhatsAppContacts();
         setSyncing(false);
         if (res.success) {
-            alert(`Synced ${res.stats.added} contacts! (Skipped ${res.stats.skipped})`);
+            const linked = (res.stats.linked || 0) + (res.stats.upgraded || 0);
+            alert(`Synced ${res.stats.added} contacts, linked ${linked} WhatsApp IDs. (Skipped ${res.stats.skipped})`);
             loadPeople();
         } else {
             alert('Failed to sync: ' + res.error);

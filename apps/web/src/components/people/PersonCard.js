@@ -48,6 +48,14 @@ export function PersonCard({ person, onEdit, onDelete }) {
                         <Phone size={10} />
                         <span>{person.phone || 'No phone'}</span>
                     </div>
+                    {person.identifiers?.whatsapp_lid && (
+                        <span
+                            className="px-1.5 py-0.5 rounded-md bg-emerald-500/10 text-emerald-400"
+                            title="This number and the person's WhatsApp ID are linked, so Deedee finds them either way."
+                        >
+                            WhatsApp ID linked
+                        </span>
+                    )}
                 </div>
                 {person.notes && (
                     <p className="text-xs text-muted-foreground/70 truncate mt-1">

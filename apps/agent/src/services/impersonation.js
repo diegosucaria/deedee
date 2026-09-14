@@ -57,27 +57,8 @@ class ImpersonationService {
      * Get style profile for a specific contact
      */
     getContactStyle(contactIdOrPhone) {
-        // Try strict ID first, then phone match
-        let person = this.db.getPerson(contactIdOrPhone);
-        if (!person && contactIdOrPhone.includes('@')) {
-            // It's a JID (phone or LID), try to find by phone digits
-            const phone = contactIdOrPhone.split('@')[0];
-            person = this.db.getPerson(phone);
-        }
-        // If still not found and looks like an LID (>14 digits), try suffix match
-        if (!person) {
-            const digits = contactIdOrPhone.replace(/[^0-9]/g, '');
-            if (digits.length > 14) {
-                const suffix = digits.slice(-7);
-                const row = this.db.db.prepare('SELECT * FROM people WHERE phone LIKE ?').get(`%${suffix}`);
-                if (row) {
-                    if (row.metadata) row.metadata = JSON.parse(row.metadata);
-                    if (row.identifiers) row.identifiers = JSON.parse(row.identifiers);
-                    person = row;
-                }
-            }
-        }
-
+        // getPerson takes ids, phones, phone JIDs and WhatsApp IDs (@lid).
+        const person = this.db.getPerson(contactIdOrPhone);
         if (!person) return null;
 
         let styleProfile = null;
@@ -100,19 +81,7 @@ class ImpersonationService {
     }
 
     getPersonRelationship(contactIdOrPhone) {
-        let person = this.db.getPerson(contactIdOrPhone);
-        if (!person && contactIdOrPhone.includes('@')) {
-            const phone = contactIdOrPhone.split('@')[0];
-            person = this.db.getPerson(phone);
-        }
-        // LID suffix fallback (same pattern as getContactStyle/getAutopilotStatus)
-        if (!person) {
-            const digits = contactIdOrPhone.replace(/[^0-9]/g, '');
-            if (digits.length > 14) {
-                const suffix = digits.slice(-7);
-                person = this.db.db.prepare('SELECT * FROM people WHERE phone LIKE ?').get(`%${suffix}`);
-            }
-        }
+        const person = this.db.getPerson(contactIdOrPhone);
         return person ? (person.relationship || null) : null;
     }
 
@@ -120,13 +89,7 @@ class ImpersonationService {
      * Save style profile for a specific contact
      */
     saveContactStyle(contactIdOrPhone, profileText) {
-        let person = this.db.getPerson(contactIdOrPhone);
-
-        // If searching by JID failed, try stripped phone
-        if (!person && contactIdOrPhone.includes('@')) {
-            person = this.db.getPerson(contactIdOrPhone.split('@')[0]);
-        }
-
+        const person = this.db.getPerson(contactIdOrPhone);
         if (!person) throw new Error("Person not found");
 
         let meta = {};
@@ -629,23 +592,10 @@ ${transcript}
     getAutopilotStatus(contactIdentifier, contactName) {
         if (!contactIdentifier) return 'off';
 
-        // Clean ID (remove @s.whatsapp.net, @lid, etc) to match DB 'id' or 'phone' which are usually numeric
-        const cleanId = contactIdentifier.includes('@') ? contactIdentifier.split('@')[0] : contactIdentifier;
-
-        // 1. Try finding person by CLEAN ID directly
-        let person = this.db.db.prepare('SELECT id, autopilot_status, autopilot_expires_at FROM people WHERE id = ?').get(cleanId);
-
-        // 2. If not found, try by phone match
-        if (!person) {
-            person = this.db.db.prepare('SELECT id, autopilot_status, autopilot_expires_at FROM people WHERE phone = ? OR id = ?').get(cleanId, contactIdentifier);
-        }
-
-        // 3. If still not found and looks like an LID (>14 digits), try fuzzy suffix match on phone
-        //    LID digits won't match phone, so try the last 7 digits as a phone suffix
-        if (!person && cleanId.length > 14) {
-            const suffix = cleanId.slice(-7);
-            person = this.db.db.prepare('SELECT id, autopilot_status, autopilot_expires_at FROM people WHERE phone LIKE ?').get(`%${suffix}`);
-        }
+        // getPerson matches ids, phones, phone JIDs and linked WhatsApp IDs (@lid).
+        // No digit-suffix guessing: a WhatsApp ID's digits are unrelated to the
+        // phone number, so a suffix match can switch autopilot on for the wrong person.
+        const person = this.db.getPerson(contactIdentifier);
 
         if (!person) {
             // console.log(`[Autopilot Debug] Person NOT found in DB. Defaulting to 'off'.`);
