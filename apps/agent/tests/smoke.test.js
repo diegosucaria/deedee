@@ -39,6 +39,7 @@ jest.mock('../src/db', () => ({
     getWatchers: jest.fn().mockReturnValue([]),
     updateWatcher: jest.fn(),
     getAllAgentSettings: jest.fn().mockReturnValue({}),
+    getPerson: jest.fn().mockReturnValue(null),
     markStaleSubAgents: jest.fn().mockReturnValue(0),
     close: jest.fn().mockResolvedValue()
   }))

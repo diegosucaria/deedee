@@ -14,6 +14,7 @@ jest.mock('../src/db', () => ({
             })
         },
         saveMessage: jest.fn(),
+        getPerson: jest.fn().mockReturnValue(null),
         getKey: jest.fn(),
         setKey: jest.fn(),
         countMessages: jest.fn().mockReturnValue(0),

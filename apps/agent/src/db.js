@@ -670,14 +670,28 @@ class AgentDB {
     return id;
   }
 
-  getPerson(id) {
-    // Try by ID first, then phone
-    let stmt = this.db.prepare('SELECT * FROM people WHERE id = ?');
-    let row = stmt.get(id);
+  // Accepts a person id, a phone number, or a WhatsApp address:
+  // "<phone>@s.whatsapp.net" or a WhatsApp ID ("<lid>@lid"). Phones match the
+  // phone column or identifiers.whatsapp; WhatsApp IDs match
+  // identifiers.whatsapp_lid, which PeopleService.linkWhatsAppIdentities fills in.
+  getPerson(idOrAddress) {
+    const key = String(idOrAddress ?? '');
+    let row = this.db.prepare('SELECT * FROM people WHERE id = ? OR phone = ?').get(key, key);
 
     if (!row) {
-      stmt = this.db.prepare('SELECT * FROM people WHERE phone = ?');
-      row = stmt.get(id);
+      const digits = key.replace(/@.*$/, '').replace(/\D/g, '');
+      if (digits.length >= 5) {
+        try {
+          row = /@lid$/i.test(key)
+            ? this.db.prepare("SELECT * FROM people WHERE json_extract(identifiers, '$.whatsapp_lid') = ?").get(digits)
+            : this.db.prepare(`SELECT * FROM people WHERE phone = ?
+                OR json_extract(identifiers, '$.whatsapp') = ?
+                OR json_extract(identifiers, '$.whatsapp_lid') = ?`).get(digits, digits, digits);
+        } catch (e) {
+          // A row with malformed identifiers JSON makes json_extract throw; fall back to phone only.
+          row = this.db.prepare('SELECT * FROM people WHERE phone = ?').get(digits);
+        }
+      }
     }
 
     if (row) {
@@ -743,8 +757,8 @@ class AgentDB {
 
     if (query) {
       const wildcard = `%${query}%`;
-      conditions.push(`(name LIKE ? OR relationship LIKE ? OR notes LIKE ? OR phone LIKE ? OR ? LIKE ('%' || name || '%'))`);
-      args.push(wildcard, wildcard, wildcard, wildcard, query);
+      conditions.push(`(name LIKE ? OR relationship LIKE ? OR notes LIKE ? OR phone LIKE ? OR identifiers LIKE ? OR ? LIKE ('%' || name || '%'))`);
+      args.push(wildcard, wildcard, wildcard, wildcard, wildcard, query);
     }
 
     if (conditions.length > 0) {
@@ -779,10 +793,11 @@ class AgentDB {
       OR relationship LIKE ? 
       OR notes LIKE ? 
       OR phone LIKE ?
+      OR identifiers LIKE ?
       OR ? LIKE ('%' || name || '%')
     `);
-    // Pass wildcard 4 times, then raw query once for the reverse match
-    return stmt.all(wildcard, wildcard, wildcard, wildcard, query).map(row => ({
+    // Pass wildcard 5 times, then raw query once for the reverse match
+    return stmt.all(wildcard, wildcard, wildcard, wildcard, wildcard, query).map(row => ({
       ...row,
       metadata: row.metadata ? JSON.parse(row.metadata) : {},
       identifiers: row.identifiers ? JSON.parse(row.identifiers) : {}

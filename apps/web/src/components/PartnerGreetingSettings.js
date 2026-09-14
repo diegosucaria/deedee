@@ -3,11 +3,46 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { Heart, Search, Loader2, AlertTriangle } from 'lucide-react';
-import { getWhatsAppContacts } from '../app/actions';
+import { getPeople, getWhatsAppContacts } from '../app/actions';
 
 const MIN_QUERY = 2;
 
+const digitsOf = (value = '') => String(value).replace(/@.*$/, '').replace(/\D/g, '');
+
 const describe = (id = '') => (id.endsWith('@lid') ? 'WhatsApp ID (no phone number shared)' : id.split('@')[0]);
+
+// The address to greet a person on: their WhatsApp ID when linked (the chat
+// history is filed under it), otherwise their phone number.
+const personAddress = (p) => (p.identifiers?.whatsapp_lid ? `${p.identifiers.whatsapp_lid}@lid` : digitsOf(p.phone));
+
+// People first (one entry per person, both addresses linked), then WhatsApp
+// contacts that no person in People already covers.
+async function searchTargets(query) {
+    const [peopleRes, contacts] = await Promise.all([
+        getPeople({ search: query, limit: 8 }),
+        getWhatsAppContacts('user', query),
+    ]);
+    const people = (Array.isArray(peopleRes) ? peopleRes : peopleRes?.people || []).filter((p) => personAddress(p));
+    const covered = new Set();
+    for (const p of people) {
+        [p.phone, p.identifiers?.whatsapp, p.identifiers?.whatsapp_lid].forEach((v) => v && covered.add(digitsOf(v)));
+    }
+    const fromPeople = people.map((p) => ({
+        key: `person:${p.id}`,
+        contact: personAddress(p),
+        label: p.name,
+        detail: [p.phone ? digitsOf(p.phone) : null, p.identifiers?.whatsapp_lid ? 'WhatsApp ID linked' : null].filter(Boolean).join(' · '),
+    }));
+    const fromContacts = (Array.isArray(contacts) ? contacts : [])
+        .filter((c) => c?.id && !covered.has(digitsOf(c.id)))
+        .map((c) => ({
+            key: `contact:${c.id}`,
+            contact: c.id,
+            label: c.name || c.notify || c.phone || c.id,
+            detail: `${describe(c.id)} · not in People`,
+        }));
+    return [...fromPeople, ...fromContacts].slice(0, 8);
+}
 
 // Who the partner_good_morning / partner_good_night jobs write to, as the owner.
 // Saved as the partner_greeting agent setting: { contact, name, dryRun }.
@@ -20,14 +55,14 @@ export default function PartnerGreetingSettings({ value, onSave }) {
     const trimmed = query.trim();
     const showResults = trimmed.length >= MIN_QUERY;
 
-    // Debounced contact search; state only changes in the async callback.
+    // Debounced search; state only changes in the async callback.
     useEffect(() => {
         if (trimmed.length < MIN_QUERY) return;
         let active = true;
         const timer = setTimeout(async () => {
-            const data = await getWhatsAppContacts('user', trimmed);
+            const found = await searchTargets(trimmed).catch(() => []);
             if (!active) return;
-            setResults(Array.isArray(data) ? data.slice(0, 8) : []);
+            setResults(found);
             setSearching(false);
         }, 400);
         return () => {
@@ -41,10 +76,9 @@ export default function PartnerGreetingSettings({ value, onSave }) {
         setSearching(e.target.value.trim().length >= MIN_QUERY);
     };
 
-    const pick = (contact) => {
-        const label = contact.name || contact.notify || contact.phone || contact.id;
+    const pick = (target) => {
         // A new target starts in dry run, so the first drafts only reach the owner.
-        onSave({ contact: contact.id, name: label, dryRun: saved ? saved.dryRun === true : true });
+        onSave({ contact: target.contact, name: target.label, dryRun: saved ? saved.dryRun === true : true });
         setQuery('');
         setResults([]);
         setSearching(false);
@@ -78,11 +112,11 @@ export default function PartnerGreetingSettings({ value, onSave }) {
                             <div className="text-xs text-zinc-500">{describe(saved.contact)}</div>
                         </div>
                     ) : (
-                        <p className="text-sm text-zinc-500">Nobody yet. Search your contacts below.</p>
+                        <p className="text-sm text-zinc-500">Nobody yet. Search your people and contacts below.</p>
                     )}
                 </div>
 
-                {/* Contact search */}
+                {/* People / contact search */}
                 <div>
                     <label className="block text-sm font-medium text-zinc-400 mb-1">
                         {saved ? 'Change contact' : 'Find contact'}
@@ -100,22 +134,22 @@ export default function PartnerGreetingSettings({ value, onSave }) {
                     </div>
                     {showResults && results.length > 0 && (
                         <ul className="mt-2 border border-zinc-800 rounded-lg divide-y divide-zinc-800 overflow-hidden">
-                            {results.map((c) => (
-                                <li key={c.id}>
+                            {results.map((t) => (
+                                <li key={t.key}>
                                     <button
                                         type="button"
-                                        onClick={() => pick(c)}
+                                        onClick={() => pick(t)}
                                         className="w-full text-left px-4 py-2 hover:bg-zinc-800/60 transition-colors"
                                     >
-                                        <div className="text-white text-sm">{c.name || c.notify || c.phone}</div>
-                                        <div className="text-xs text-zinc-500">{describe(c.id)}</div>
+                                        <div className="text-white text-sm">{t.label}</div>
+                                        <div className="text-xs text-zinc-500">{t.detail}</div>
                                     </button>
                                 </li>
                             ))}
                         </ul>
                     )}
                     {showResults && !searching && results.length === 0 && (
-                        <p className="text-xs text-zinc-500 mt-2">No contacts match.</p>
+                        <p className="text-xs text-zinc-500 mt-2">No people or contacts match.</p>
                     )}
                 </div>
 
