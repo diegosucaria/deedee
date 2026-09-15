@@ -405,6 +405,24 @@ class AgentDB {
 
       CREATE INDEX IF NOT EXISTS idx_notifications_active
         ON notifications(is_read, is_dismissed, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS pending_questions (
+        id TEXT PRIMARY KEY,
+        chat_id TEXT,
+        reply_chat_id TEXT NOT NULL,
+        reply_source TEXT,
+        source TEXT,
+        question TEXT NOT NULL,
+        options TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        answer TEXT,
+        created_at TEXT DEFAULT (datetime('now')),
+        expires_at TEXT,
+        answered_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_pending_questions_reply
+        ON pending_questions(reply_chat_id, status);
     `);
 
     // Seed wr_user_profile singleton (id=1) with preferred brands if missing
@@ -2710,6 +2728,66 @@ class AgentDB {
       WHERE status = 'running'
     `).run();
     return result.changes;
+  }
+
+  // --- askUser: pending questions ---
+
+  createPendingQuestion({ id, chatId, replyChatId, replySource, source, question, options, expiresAt }) {
+    this.db.prepare(`
+      INSERT INTO pending_questions (id, chat_id, reply_chat_id, reply_source, source, question, options, status, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, 'pending', ?)
+    `).run(id, chatId || null, replyChatId, replySource || null, source || null, question,
+      options ? JSON.stringify(options) : null, expiresAt || null);
+  }
+
+  /** The open question waiting on `replyChatId`, or undefined. */
+  getPendingQuestion(replyChatId) {
+    return this.db.prepare(`
+      SELECT * FROM pending_questions WHERE reply_chat_id = ? AND status = 'pending'
+      ORDER BY created_at DESC LIMIT 1
+    `).get(replyChatId);
+  }
+
+  /** The newest question on `replyChatId` that ended without an answer. */
+  getLastClosedQuestion(replyChatId) {
+    return this.db.prepare(`
+      SELECT * FROM pending_questions
+      WHERE reply_chat_id = ? AND status IN ('expired', 'timeout')
+      ORDER BY answered_at DESC LIMIT 1
+    `).get(replyChatId);
+  }
+
+  closePendingQuestion(id, status, answer = null) {
+    this.db.prepare(`
+      UPDATE pending_questions
+      SET status = ?, answer = ?, answered_at = datetime('now')
+      WHERE id = ? AND status = 'pending'
+    `).run(status, answer, id);
+  }
+
+  /**
+   * Boot: no wait survives a restart, so every open row becomes 'expired'.
+   * Returns the rows it closed.
+   */
+  expirePendingQuestions() {
+    const rows = this.db.prepare(`SELECT id, reply_chat_id FROM pending_questions WHERE status = 'pending'`).all();
+    if (rows.length > 0) {
+      this.db.prepare(`
+        UPDATE pending_questions SET status = 'expired', answered_at = datetime('now')
+        WHERE status = 'pending'
+      `).run();
+    }
+    return rows;
+  }
+
+  /** Source of the newest user message in a chat (used to route sub-agent questions). */
+  getLastUserSource(chatId) {
+    if (!chatId) return null;
+    const row = this.db.prepare(`
+      SELECT source FROM messages WHERE chat_id = ? AND role = 'user'
+      ORDER BY timestamp DESC LIMIT 1
+    `).get(chatId);
+    return row ? row.source : null;
   }
 
   cleanupSubAgents() {
