@@ -38,6 +38,7 @@ const { DreamService } = require('./services/dream-service');
 const { PartnerGreetingService } = require('./services/partner-greeting');
 const { SubAgentService } = require('./services/subagent-service');
 const { AskUserService } = require('./services/ask-user');
+const { BrowserLive } = require('./services/browser-live');
 const { ToolScoper } = require('./services/tool-scoper');
 const { sanitizeToolResult, sanitizeToolArgs } = require('./utils/tool-result-sanitizer');
 const { buildFunctionResponseParts, stripInlineParts, imagesAsUserContent, isPartsRejection, splitImages } = require('./utils/function-response');
@@ -156,6 +157,7 @@ class Agent {
     this.partnerGreetingService = new PartnerGreetingService(this);
     this.subAgentService = new SubAgentService(this);
     this.askUser = new AskUserService(this);
+    this.browserLive = new BrowserLive(this);
     this.toolScoper = new ToolScoper(config.googleApiKey, this.db);
     this.notifications = new NotificationService(this.db, this.interface);
 
@@ -198,6 +200,9 @@ class Agent {
     console.log('[Agent] Stopping...');
     if (this.scheduler) {
       await this.scheduler.stop();
+    }
+    if (this.browserLive) {
+      try { this.browserLive.close(); } catch (e) { console.warn('[Agent] browserLive close failed:', e.message); }
     }
     if (this.mcp) {
       try {

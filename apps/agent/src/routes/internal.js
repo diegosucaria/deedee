@@ -744,6 +744,48 @@ function createInternalRouter(agent) {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
+    // --- Browser live view ---
+    // The interfaces service forwards socket events here; the API proxies
+    // status and start for the /browser page. See services/browser-live.js.
+    const live = (res) => {
+        if (!agent.browserLive) { res.status(503).json({ error: 'Browser live view not ready' }); return null; }
+        return agent.browserLive;
+    };
+    const liveReply = (res, result) => {
+        if (result && result.error) return res.status(409).json(result);
+        res.json(result);
+    };
+
+    router.post('/browser/live/watch', async (req, res) => {
+        const bl = live(res); if (!bl) return;
+        try { res.json(await bl.watch(req.body?.watcherId)); } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.post('/browser/live/input', async (req, res) => {
+        const bl = live(res); if (!bl) return;
+        const event = req.body?.event;
+        if (!event || typeof event !== 'object' || typeof event.type !== 'string') {
+            return res.status(400).json({ error: 'event with a type is required' });
+        }
+        try { liveReply(res, await bl.input(event)); } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.post('/browser/live/navigate', async (req, res) => {
+        const bl = live(res); if (!bl) return;
+        if (typeof req.body?.url !== 'string') return res.status(400).json({ error: 'url is required' });
+        try { liveReply(res, await bl.navigate(req.body.url)); } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.post('/browser/live/start', async (req, res) => {
+        const bl = live(res); if (!bl) return;
+        try { liveReply(res, await bl.start()); } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.get('/browser/live/status', (req, res) => {
+        const bl = live(res); if (!bl) return;
+        try { res.json(bl.status()); } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
     // --- Logs ---
     router.get('/logs/jobs', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
