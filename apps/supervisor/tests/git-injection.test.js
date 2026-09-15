@@ -60,7 +60,8 @@ describe('GitOps Shell Injection Prevention', () => {
     });
 
     test('should use execFile for add with malicious filenames', async () => {
-        const maliciousFile = '; rm -rf /';
+        // Inside an allowed folder so the path filter lets it through
+        const maliciousFile = 'apps/agent/; rm -rf x.js';
 
         await gitOps.commitAndPush('safe message', [maliciousFile]);
 

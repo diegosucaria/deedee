@@ -4,6 +4,12 @@ const { Verifier } = require('./verifier');
 const execAsync = util.promisify(exec);
 const execFileAsync = util.promisify(execFile);
 
+// Untracked files may only enter a commit from these folders, with these
+// extensions. Root-level files, data/ and *.db never get staged. This keeps
+// personal files the agent drops into the work dir out of the public repo.
+const ALLOWED_PREFIXES = ['apps/', 'packages/', 'docs/', 'specs/', '.github/'];
+const ALLOWED_EXTENSIONS = ['.js', '.jsx', '.ts', '.json', '.md', '.yml', '.yaml', '.py', '.txt'];
+
 class GitOps {
   constructor(workDir = '/app/source') {
     this.workDir = workDir;
@@ -15,6 +21,21 @@ class GitOps {
       const { stdout, stderr } = await execAsync(command, { cwd: this.workDir });
       if (stderr) console.warn(`Git Warning: ${stderr}`);
       return stdout.trim();
+    } catch (error) {
+      console.error(`Git Error: ${error.message}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Like run(), but keeps stdout as is. `git status --porcelain` lines start
+   * with a space for unstaged edits; trim() would eat it.
+   */
+  async runRaw(command) {
+    try {
+      const { stdout, stderr } = await execAsync(command, { cwd: this.workDir });
+      if (stderr) console.warn(`Git Warning: ${stderr}`);
+      return stdout;
     } catch (error) {
       console.error(`Git Error: ${error.message}`);
       throw error;
@@ -97,48 +118,98 @@ class GitOps {
     }
   }
 
+  /**
+   * True when a path may be staged: inside an allowed folder, with an allowed
+   * extension, no `..`, and no `data` segment.
+   */
+  isAllowedPath(file) {
+    const path = require('path');
+    const normalized = String(file).replace(/\\/g, '/').replace(/^\.\//, '');
+    if (!normalized || normalized.startsWith('/')) return false;
+    const segments = normalized.split('/');
+    if (segments.includes('..') || segments.includes('data')) return false;
+    if (!ALLOWED_PREFIXES.some(prefix => normalized.startsWith(prefix))) return false;
+    return ALLOWED_EXTENSIONS.includes(path.extname(normalized).toLowerCase());
+  }
+
+  /**
+   * Parse `git status --porcelain` into tracked changes and untracked files.
+   */
+  _parseStatus(statusOutput) {
+    const tracked = [];
+    const untracked = [];
+    for (const line of statusOutput.split('\n')) {
+      if (line.trim() === '') continue;
+      const code = line.substring(0, 2);
+      let file = line.substring(3).trim();
+      // Renames read "R  old -> new"; keep the new path.
+      if (file.includes(' -> ')) file = file.split(' -> ').pop();
+      if (code === '??') untracked.push(file);
+      else tracked.push(file);
+    }
+    return { tracked, untracked };
+  }
+
   async commitAndPush(message, files = ['.']) {
+    const skipped = [];
     try {
-      // 0. Security Scan
-      // If files=['.'], we need to know WHICH files are staged/changed.
-      // git status --porcelain
-      let filesToScan = files;
+      // 0. Work out what to stage. Never `git add .`.
+      let trackedToStage = [];
+      let untrackedToStage = [];
+      let stageAllTracked = false;
+
       if (files.includes('.')) {
-        const statusOutput = await this.run('git status --porcelain');
-        // Parse status lines: " M apps/file.js" -> "apps/file.js"
-        filesToScan = statusOutput.split('\n')
-          .filter(line => line.trim() !== '')
-          .map(line => line.substring(3).trim()); // naive parse
+        const statusOutput = await this.runRaw('git status --porcelain --untracked-files=all');
+        const { tracked, untracked } = this._parseStatus(statusOutput);
+        trackedToStage = tracked;
+        stageAllTracked = true;
+        for (const file of untracked) {
+          if (this.isAllowedPath(file)) untrackedToStage.push(file);
+          else skipped.push(file);
+        }
+      } else {
+        for (const file of files) {
+          if (this.isAllowedPath(file)) untrackedToStage.push(file);
+          else skipped.push(file);
+        }
+        if (untrackedToStage.length === 0) {
+          throw new Error(`No file in the allowed folders to commit. Skipped: ${skipped.join(', ')}`);
+        }
       }
 
-      await this._scanForSecrets(filesToScan);
+      if (skipped.length > 0) {
+        console.warn(`[GitOps] Skipping ${skipped.length} file(s) outside the allowed paths: ${skipped.join(', ')}`);
+      }
 
-      await this.verifier.verify(files);
+      const filesToScan = [...trackedToStage, ...untrackedToStage];
+
+      // 1. Security Scan + Verifier
+      await this._scanForSecrets(filesToScan);
+      await this.verifier.verify(filesToScan);
 
       // SAFE EXECUTION: Prevent shell injection by avoiding 'git add ${files} and git commit -m "${message}"'
       // Use execFileAsync via runSafe
 
-      // 1. Git Add
-      // If files contains '.', we can use standard git add .
-      // If specific files, pass them as arguments
-      if (files.includes('.')) {
-        await this.runSafe('git', ['add', '.']);
-      } else {
-        await this.runSafe('git', ['add', ...files]);
+      // 2. Git Add: tracked changes with -u, allowed untracked files by name
+      if (stageAllTracked) {
+        await this.runSafe('git', ['add', '-u']);
+      }
+      if (untrackedToStage.length > 0) {
+        await this.runSafe('git', ['add', '--', ...untrackedToStage]);
       }
 
-      // 2. Git Commit
+      // 3. Git Commit
       // Pass message as a separate argument to avoid shell interpretation
       await this.runSafe('git', ['commit', '-m', message]);
 
-      // 3. Git Push (origin master is hardcoded safe string, but consistent to use runSafe or run)
+      // 4. Git Push (origin master is hardcoded safe string, but consistent to use runSafe or run)
       await this.runSafe('git', ['push', 'origin', 'master']);
 
-      return { success: true, message: 'Pushed to origin/master' };
+      return { success: true, message: 'Pushed to origin/master', skipped };
 
     } catch (error) {
       console.error('[GitOps] Validation or Git Error:', error.message);
-      return { success: false, error: error.message };
+      return { success: false, error: error.message, skipped };
     }
   }
 
