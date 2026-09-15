@@ -154,6 +154,10 @@ describe('normalizeUrl and pickPageTarget', () => {
         expect(normalizeUrl('example.test/x')).toBe('https://example.test/x');
         expect(normalizeUrl('http://a.test')).toBe('http://a.test/');
         expect(normalizeUrl('about:blank')).toBe('about:blank');
+        expect(normalizeUrl('About:Blank')).toBe('about:blank');
+        expect(normalizeUrl('about:flags')).toBeNull();
+        expect(normalizeUrl('about:settings')).toBeNull();
+        expect(normalizeUrl('chrome://history')).toBeNull();
         expect(normalizeUrl('javascript:alert(1)')).toBeNull();
         expect(normalizeUrl('file:///etc/passwd')).toBeNull();
         expect(normalizeUrl('')).toBeNull();
@@ -319,7 +323,7 @@ describe('BrowserLive input and navigation', () => {
     test('navigate sends Page.navigate with the cleaned url and rejects bad schemes', async () => {
         const { live } = makeLive({ targets: [PAGE] });
         const { ws } = await watchAndOpen(live);
-        expect(await live.navigate('javascript:x')).toEqual({ error: 'Only http, https and about: URLs are allowed' });
+        expect(await live.navigate('javascript:x')).toEqual({ error: 'Only http, https and about:blank URLs are allowed' });
         expect(await live.navigate('example.test')).toEqual({ ok: true, url: 'https://example.test/' });
         expect(ws.sent[ws.sent.length - 1]).toMatchObject({ method: 'Page.navigate', params: { url: 'https://example.test/' } });
     });

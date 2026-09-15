@@ -72,7 +72,7 @@ the browser, with a link to the full page.
   `Input.dispatchMouseEvent`, `Input.insertText` (printable text) and
   `Input.dispatchKeyEvent` (Enter, Tab, Backspace, Escape, Delete, arrows,
   Home, End, PageUp, PageDown). The URL bar calls `Page.navigate`; only
-  `http`, `https` and `about:` URLs pass.
+  `http`, `https` and `about:blank` pass.
 - **Watch pings**: the page sends `browser:watch` every 10 s. The screencast
   starts on the first ping, stops 30 s after the last one, and reconnects
   every 3 s while watched if Chromium closes. While watched the service

@@ -81,11 +81,13 @@ function inputToCdp(event) {
     }
 }
 
-/** Accepts http(s) and about: URLs; adds https:// when the scheme is missing. */
+/** Accepts http(s) and about:blank; adds https:// when the scheme is missing. */
 function normalizeUrl(input) {
     const raw = String(input || '').trim();
     if (!raw) return null;
-    if (/^about:/i.test(raw)) return raw;
+    // Chromium turns a browser-side about:<name> into chrome://<name>, so
+    // only about:blank passes; every other about: page stays out like chrome:.
+    if (/^about:/i.test(raw)) return raw.toLowerCase() === 'about:blank' ? 'about:blank' : null;
     const withScheme = /^[a-z][a-z0-9+.-]*:/i.test(raw) ? raw : `https://${raw}`;
     try {
         const u = new URL(withScheme);
@@ -164,7 +166,7 @@ class BrowserLive {
     /** URL bar: navigates the watched page. */
     async navigate(input) {
         const url = normalizeUrl(input);
-        if (!url) return { error: 'Only http, https and about: URLs are allowed' };
+        if (!url) return { error: 'Only http, https and about:blank URLs are allowed' };
         if (!this._isOpen()) return { error: 'Browser not connected' };
         try {
             await this._send('Page.navigate', { url });
