@@ -2528,8 +2528,10 @@ class AgentDB {
     stmt.run(key, valStr, category);
   }
 
+  // Rows in the 'system' category (migration flags) are internal bookkeeping
+  // and stay out of the settings the UI and the agent read.
   getAllAgentSettings() {
-    const stmt = this.db.prepare('SELECT key, value, category FROM agent_settings');
+    const stmt = this.db.prepare("SELECT key, value, category FROM agent_settings WHERE COALESCE(category, 'general') != 'system'");
     const rows = stmt.all();
     const settings = {};
     for (const row of rows) {

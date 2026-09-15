@@ -50,10 +50,11 @@ function createSettingsRouter(agent) {
     const router = express.Router();
 
     // GET /internal/settings
-    // Returns { key: value, key2: value2 }
+    // Returns { key: value, key2: value2 }. Rows in the 'system' category are
+    // internal bookkeeping (migration flags) and stay out of the UI.
     router.get('/', (req, res) => {
         try {
-            const stmt = agent.db.db.prepare('SELECT key, value FROM agent_settings');
+            const stmt = agent.db.db.prepare("SELECT key, value FROM agent_settings WHERE COALESCE(category, 'general') != 'system'");
             const rows = stmt.all();
 
             const settings = rows.reduce((acc, row) => {
