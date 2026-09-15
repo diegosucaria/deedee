@@ -1,11 +1,18 @@
 const request = require('supertest');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 describe('Supervisor API', () => {
   let app;
+  let stateDir;
 
   beforeEach(() => {
     jest.resetModules(); // Ensure clean state
     process.env.SUPERVISOR_TOKEN = 'test-token';
+    // Keep the monitor's state files out of /app/state on the test machine
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'supervisor-state-'));
+    process.env.SUPERVISOR_STATE_DIR = stateDir;
     // Mock GitOps BEFORE requiring app
     jest.mock('../src/git-ops', () => {
       return {
@@ -16,7 +23,8 @@ describe('Supervisor API', () => {
             return { success: true, message: 'Mock Pushed' };
           }),
           workDir: '/tmp/mock-source',
-          run: jest.fn().mockResolvedValue('hash|mock subject'),
+          run: jest.fn().mockResolvedValue('hash'),
+          runSafe: jest.fn().mockResolvedValue('hash\towner@example.test\tmock subject'),
           rollback: jest.fn().mockResolvedValue({ success: true }),
           pull: jest.fn().mockResolvedValue({ success: true })
         }))
@@ -25,6 +33,11 @@ describe('Supervisor API', () => {
 
     // Require app AFTER mocking
     app = require('../src/server').app;
+  });
+
+  afterEach(() => {
+    delete process.env.SUPERVISOR_STATE_DIR;
+    fs.rmSync(stateDir, { recursive: true, force: true });
   });
 
   test('GET /health', async () => {
