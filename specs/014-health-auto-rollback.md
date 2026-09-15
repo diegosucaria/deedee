@@ -25,6 +25,15 @@ Ensure the Agent is alive and functioning. If the Agent becomes unresponsive (es
     - Trigger `git.rollback()`.
     - Notify User: "🔄 Detective detected a crash after update. Rolling back changes..."
 
+### 2.4 Rollback Window Rule (added 2026-09)
+- The window opens on start only when both hold:
+    1. `HEAD` differs from `.last_boot_commit` (a new commit since the last boot).
+    2. The author email of `HEAD` equals the Supervisor's git email (`GIT_USER_EMAIL`, default `supervisor@deedee.bot`).
+- Otherwise `lastUpdate` stays `0`: the Supervisor alerts but never rolls back. Reboots, crashes, Balena deploys and owner merges do not open the window.
+- The Supervisor records the self-commit hash at start. `git.rollback({ expectedHead })` re-checks `HEAD` and aborts if it moved.
+- `SUPERVISOR_AUTO_ROLLBACK=false` disables rollback. Alerts stay on.
+- The decision is logged at start.
+
 ## 3. Implementation Details
 
 ### Supervisor

