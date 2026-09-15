@@ -20,20 +20,28 @@ services:
       - RATE_LIMIT_HOURLY=50
       - RATE_LIMIT_DAILY=500
       - MAX_TOOL_LOOPS=50
-      # - ROUTER_MODEL=gemini-3-flash-preview
-      # - ROUTER_MODEL=gemini-2.5-flash
-      # - ROUTER_MODEL=gemini-2.5-flash-lite
-      - ROUTER_MODEL=gemini-3.1-flash-lite-preview
-      - WORKER_LITE=gemini-3.1-flash-lite-preview
-      - WORKER_FLASH=gemini-3-flash-preview
-      # - WORKER_FLASH=gemini-2.5-flash # using this one bc it supports googleSearch grounding. (preview models don't)
-      # - WORKER_FLASH=gemini-3.1-flash-lite-preview
+      # Gemini model roles. Balena device/fleet variables override these values,
+      # so a bad model id is fixed from the Balena dashboard: set the old id on the
+      # device, restart the agent. That is the rollback path; no redeploy needed.
+      # Roles, prices and the smoke check: docs/models.md.
+      - ROUTER_MODEL=gemini-3.1-flash-lite
+      # - ROUTER_MODEL=gemini-3.5-flash-lite
+      - WORKER_LITE=gemini-3.1-flash-lite
+      # - WORKER_LITE=gemini-3.5-flash-lite
+      - WORKER_FLASH=gemini-3.6-flash
+      # - WORKER_FLASH=gemini-3.8-flash # same price, no MINIMAL thinking level
+      # - WORKER_FLASH=gemini-3-flash-preview # previous default
       - WORKER_PRO=gemini-3.1-pro-preview
       - GEMINI_TTS_MODEL=gemini-2.5-flash-preview-tts
-      - GEMINI_IMAGE_MODEL=gemini-3-pro-image-preview
-      - WORKER_GOOGLE_SEARCH=gemini-2.5-pro
-      - WORKER_LIVE=gemini-2.5-flash-native-audio-preview-12-2025
-      - GEMINI_EMBEDDING_MODEL=gemini-embedding-2-preview
+      # - GEMINI_TTS_MODEL=gemini-3.1-flash-tts-preview # 2x the price
+      - GEMINI_IMAGE_MODEL=gemini-3.1-flash-image
+      # - GEMINI_IMAGE_MODEL=gemini-3-pro-image # drop-in rollback, 2x the price
+      - WORKER_GOOGLE_SEARCH=gemini-3.6-flash
+      # - WORKER_GOOGLE_SEARCH=gemini-2.5-pro # previous default
+      - WORKER_LIVE=gemini-3.8-live
+      # - WORKER_LIVE=gemini-2.5-flash-native-audio-preview-12-2025 # previous default
+      - GEMINI_EMBEDDING_MODEL=gemini-embedding-2
+      # Changing the embedding model re-embeds the whole RAG index in the background.
       - EMBEDDING_DIMENSIONS=1536
     volumes:
       - repo-data:/app/source
