@@ -586,6 +586,34 @@ class AgentDB {
     try {
       this.db.exec("ALTER TABLE wr_user_profile ADD COLUMN style_preferences TEXT");
     } catch (err) { }
+
+    this._migrateMessageTimestampsToIso();
+  }
+
+  // One-time data migration: older rows stored epoch ms in messages.timestamp.
+  // Mixed integer/text values break ORDER BY, so rewrite them as ISO text.
+  // The flag lives in agent_settings (kv_store rows are memory facts that
+  // reach the model prompt).
+  _migrateMessageTimestampsToIso() {
+    const FLAG = 'migration_messages_ts_iso';
+    try {
+      const done = this.db.prepare('SELECT value FROM agent_settings WHERE key = ?').get(FLAG);
+      if (done) return;
+      const info = this.db.prepare(`
+        UPDATE messages
+        SET timestamp = strftime('%Y-%m-%dT%H:%M:%fZ', timestamp / 1000.0, 'unixepoch')
+        WHERE typeof(timestamp) IN ('integer', 'real')
+      `).run();
+      this.db.prepare(`
+        INSERT INTO agent_settings(key, value, category) VALUES(?, ?, 'system')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+      `).run(FLAG, JSON.stringify(new Date().toISOString()));
+      if (info.changes > 0) {
+        console.log(`[DB] Converted ${info.changes} message timestamps to ISO text.`);
+      }
+    } catch (err) {
+      console.error('[DB] Timestamp migration failed:', err.message);
+    }
   }
 
   // --- Scheduled Jobs ---
@@ -1781,11 +1809,12 @@ class AgentDB {
   getHistoryForChat(chatId, limit = 20) {
     if (!chatId) return [];
 
-    // Get last N messages for this chat
+    // Get last N messages for this chat. rowid breaks ties between rows saved
+    // in the same millisecond (a tool call and its result, for example).
     const stmt = this.db.prepare(`
-      SELECT role, content, metadata FROM messages 
+      SELECT id, role, content, parts, metadata, timestamp FROM messages 
       WHERE chat_id = ?
-      ORDER BY timestamp DESC 
+      ORDER BY timestamp DESC, rowid DESC 
       LIMIT ?
     `);
 
@@ -1803,9 +1832,14 @@ class AgentDB {
       if (role === 'assistant') role = 'model';
       if (role === 'function') role = 'user';
 
+      // Old rows may still hold epoch ms; hand callers an ISO string either way.
+      const timestamp = typeof row.timestamp === 'number'
+        ? new Date(row.timestamp).toISOString()
+        : row.timestamp;
+
       if (row.parts) {
         try {
-          return { role, parts: JSON.parse(row.parts), metadata: meta };
+          return { id: row.id, role, parts: JSON.parse(row.parts), metadata: meta, timestamp };
         } catch (e) {
           console.error('[DB] Failed to parse message parts:', e);
         }
@@ -1813,11 +1847,29 @@ class AgentDB {
 
       // Fallback to content
       return {
+        id: row.id,
         role: role,
         parts: [{ text: row.content || '' }],
-        metadata: meta
+        metadata: meta,
+        timestamp
       };
     });
+  }
+
+  /**
+   * Count the messages in a chat saved after the given message.
+   * Returns null when the message is missing (deleted or unknown id).
+   */
+  countMessagesAfter(chatId, messageId) {
+    if (!chatId || !messageId) return null;
+    const target = this.db.prepare('SELECT rowid, timestamp FROM messages WHERE id = ? AND chat_id = ?').get(messageId, chatId);
+    if (!target) return null;
+    const row = this.db.prepare(`
+      SELECT COUNT(*) as count FROM messages
+      WHERE chat_id = ?
+      AND (timestamp > ? OR (timestamp = ? AND rowid > ?))
+    `).get(chatId, target.timestamp, target.timestamp, target.rowid);
+    return row.count;
   }
 
   // --- Reset Commands ---

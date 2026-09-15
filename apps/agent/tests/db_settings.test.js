@@ -32,7 +32,10 @@ describe('AgentDB Settings', () => {
         db.setAgentSetting('k2', { v: 2 });
 
         const all = db.getAllAgentSettings();
-        expect(all).toEqual({
+        // init() records the one-time message timestamp migration here too.
+        const { migration_messages_ts_iso, ...userSettings } = all;
+        expect(typeof migration_messages_ts_iso).toBe('string');
+        expect(userSettings).toEqual({
             k1: 'v1',
             k2: { v: 2 }
         });
