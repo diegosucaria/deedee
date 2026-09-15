@@ -6,12 +6,15 @@ import { ExternalLink } from 'lucide-react';
 import { useSocket } from '../hooks/useSocket';
 
 const WATCH_INTERVAL_MS = 10_000;   // browser:watch ping while the widget shows
-const HIDE_AFTER_MS = 30_000;       // hide this long after the last frame or browser signal
+const HIDE_AFTER_MS = 30_000;       // hide this long after the agent's last browser signal
 
 /**
  * Small live view at the bottom of a chat. It wakes up when the agent calls a
- * browser_ tool (or when frames arrive), pings browser:watch so the agent
- * streams frames, and links to the full /browser page.
+ * browser_ tool or reports itself busy, pings browser:watch so the agent
+ * streams frames, and links to the full /browser page. Frames only update
+ * the picture: if they also kept the widget awake, the widget's own watch
+ * pings would keep the screencast and Chromium alive for as long as a chat
+ * tab stays open. Whoever wants to keep watching opens /browser.
  */
 export default function LiveBrowserWidget() {
     const { socket } = useSocket();
@@ -33,11 +36,8 @@ export default function LiveBrowserWidget() {
         };
 
         const handleFrame = (data) => {
-            // data: { data: base64, w, h, url }
-            if (data && data.data) {
-                setFrame(`data:image/jpeg;base64,${data.data}`);
-                wake();
-            }
+            // data: { data: base64, w, h, url }. Updates the picture only; see above.
+            if (data && data.data) setFrame(`data:image/jpeg;base64,${data.data}`);
         };
         const handleStatus = (s) => {
             if (!s) return;
