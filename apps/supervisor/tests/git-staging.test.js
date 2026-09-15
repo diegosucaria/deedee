@@ -27,7 +27,7 @@ describe('GitOps staging rules', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
-        gitOps = new GitOps('/tmp/test');
+        gitOps = new GitOps('/tmp/test', { name: 'Deedee Supervisor', email: 'supervisor@example.test' });
         gitOps._scanForSecrets = jest.fn().mockResolvedValue();
         gitOps.verifier = { verify: jest.fn().mockResolvedValue() };
     });
@@ -50,6 +50,21 @@ describe('GitOps staging rules', () => {
         const adds = addCalls();
         expect(adds).toEqual([['add', '-u']]);
         expect(adds.some(args => args.includes('.'))).toBe(false);
+    });
+
+    test('commit carries the identity per command, so repo config is irrelevant', async () => {
+        mockStatus([' M apps/agent/src/agent.js']);
+
+        await gitOps.commitAndPush('fix: thing');
+
+        const commit = child_process.execFile.mock.calls
+            .map(call => call[1])
+            .find(args => args.includes('commit'));
+        expect(commit).toEqual([
+            '-c', 'user.name=Deedee Supervisor',
+            '-c', 'user.email=supervisor@example.test',
+            'commit', '-m', 'fix: thing'
+        ]);
     });
 
     test('skips a root-level untracked file and data/ paths', async () => {
@@ -100,7 +115,7 @@ describe('GitOps staging rules', () => {
 
     test('isAllowedPath rules', () => {
         expect(gitOps.isAllowedPath('apps/agent/src/a.js')).toBe(true);
-        expect(gitOps.isAllowedPath('.github/workflows/ci.yml')).toBe(true);
+        expect(gitOps.isAllowedPath('.github/workflows/ci.yml')).toBe(false);
         expect(gitOps.isAllowedPath('specs/020-x.md')).toBe(true);
         expect(gitOps.isAllowedPath('packages/core/notes.txt')).toBe(true);
         expect(gitOps.isAllowedPath('README.md')).toBe(false);
@@ -116,10 +131,14 @@ describe('GitOps rollback guard', () => {
     let gitOps;
     let commands;
 
+    function safeCalls() {
+        return child_process.execFile.mock.calls.map(call => call[1]);
+    }
+
     beforeEach(() => {
         jest.clearAllMocks();
         commands = [];
-        gitOps = new GitOps('/tmp/test');
+        gitOps = new GitOps('/tmp/test', { name: 'Deedee Supervisor', email: 'supervisor@example.test' });
         child_process.exec.mockImplementation((cmd, opts, cb) => {
             if (typeof opts === 'function') cb = opts;
             commands.push(cmd);
@@ -132,21 +151,34 @@ describe('GitOps rollback guard', () => {
     test('reverts when HEAD still is the expected self-commit', async () => {
         const result = await gitOps.rollback({ expectedHead: 'aaaa111' });
         expect(result.success).toBe(true);
-        expect(commands.some(c => c.includes('git revert'))).toBe(true);
-        expect(commands.some(c => c.includes('git push'))).toBe(true);
+        expect(result.revertCommit).toBe('aaaa111');
+        expect(safeCalls().some(args => args.includes('revert'))).toBe(true);
+        expect(safeCalls().some(args => args.includes('push'))).toBe(true);
+    });
+
+    test('revert carries the identity per command and never touches a shell', async () => {
+        await gitOps.rollback({ expectedHead: 'aaaa111' });
+
+        const revert = safeCalls().find(args => args.includes('revert'));
+        expect(revert).toEqual([
+            '-c', 'user.name=Deedee Supervisor',
+            '-c', 'user.email=supervisor@example.test',
+            'revert', '--no-edit', 'HEAD'
+        ]);
+        expect(commands.some(c => c.includes('revert'))).toBe(false);
     });
 
     test('refuses when HEAD moved away from the self-commit', async () => {
         const result = await gitOps.rollback({ expectedHead: 'bbbb222' });
         expect(result.success).toBe(false);
         expect(result.error).toMatch(/Rollback aborted/);
-        expect(commands.some(c => c.includes('git revert'))).toBe(false);
-        expect(commands.some(c => c.includes('git push'))).toBe(false);
+        expect(safeCalls().some(args => args.includes('revert'))).toBe(false);
+        expect(safeCalls().some(args => args.includes('push'))).toBe(false);
     });
 
     test('manual rollback without expectedHead still reverts', async () => {
         const result = await gitOps.rollback();
         expect(result.success).toBe(true);
-        expect(commands.some(c => c.includes('git revert'))).toBe(true);
+        expect(safeCalls().some(args => args.includes('revert'))).toBe(true);
     });
 });

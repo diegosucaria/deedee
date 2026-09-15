@@ -7,13 +7,27 @@ const execFileAsync = util.promisify(execFile);
 // Untracked files may only enter a commit from these folders, with these
 // extensions. Root-level files, data/ and *.db never get staged. This keeps
 // personal files the agent drops into the work dir out of the public repo.
-const ALLOWED_PREFIXES = ['apps/', 'packages/', 'docs/', 'specs/', '.github/'];
+// `.github/` stays out: a staged workflow file would run in CI with the
+// repository's secrets.
+const ALLOWED_PREFIXES = ['apps/', 'packages/', 'docs/', 'specs/'];
 const ALLOWED_EXTENSIONS = ['.js', '.jsx', '.ts', '.json', '.md', '.yml', '.yaml', '.py', '.txt'];
 
 class GitOps {
-  constructor(workDir = '/app/source') {
+  constructor(workDir = '/app/source', identity = null) {
     this.workDir = workDir;
     this.verifier = new Verifier(workDir);
+    // The author identity travels with every commit and revert as `-c`
+    // flags. The agent can rewrite .git/config in the shared volume; the
+    // env values it cannot touch.
+    this.identity = identity || {
+      name: process.env.GIT_USER_NAME || 'Deedee Supervisor',
+      email: process.env.GIT_USER_EMAIL || 'supervisor@deedee.bot'
+    };
+  }
+
+  /** `-c user.name=… -c user.email=…` for commit-like commands. */
+  _identityArgs() {
+    return ['-c', `user.name=${this.identity.name}`, '-c', `user.email=${this.identity.email}`];
   }
 
   async run(command) {
@@ -58,8 +72,11 @@ class GitOps {
     await this.run('git init');
     await this.run('git checkout -B master');
 
-    await this.run(`git config user.name "${name}"`);
-    await this.run(`git config user.email "${email}"`);
+    // Repo config only serves merges during `git pull`. Commits and reverts
+    // carry the identity per command (see _identityArgs).
+    this.identity = { name, email };
+    await this.runSafe('git', ['config', 'user.name', name]);
+    await this.runSafe('git', ['config', 'user.email', email]);
 
     if (remoteUrl) {
       // Mask Sensitive Auth Info in Logs (Robust)
@@ -200,7 +217,7 @@ class GitOps {
 
       // 3. Git Commit
       // Pass message as a separate argument to avoid shell interpretation
-      await this.runSafe('git', ['commit', '-m', message]);
+      await this.runSafe('git', [...this._identityArgs(), 'commit', '-m', message]);
 
       // 4. Git Push (origin master is hardcoded safe string, but consistent to use runSafe or run)
       await this.runSafe('git', ['push', 'origin', 'master']);
@@ -232,13 +249,14 @@ class GitOps {
       // Ensure clean state
       await this.run('git reset --hard HEAD');
 
-      // Revert the last commit. This creates a new commit.
-      await this.run('git revert --no-edit HEAD');
+      // Revert the last commit. This creates a new commit under our identity.
+      await this.runSafe('git', [...this._identityArgs(), 'revert', '--no-edit', 'HEAD']);
+      const revertCommit = await this.run('git rev-parse HEAD');
 
       // Push the new revert commit
-      await this.run('git push origin master');
+      await this.runSafe('git', ['push', 'origin', 'master']);
 
-      return { success: true, message: 'Rolled back last change successfully.' };
+      return { success: true, message: 'Rolled back last change successfully.', revertCommit };
     } catch (error) {
       console.error('[GitOps] Rollback Error:', error.message);
       return { success: false, error: error.message };
