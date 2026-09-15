@@ -7,7 +7,7 @@
  * 2. Makes sure the secrets file exists; --secrets fails on a missing file.
  * 3. Checks the CDP port. playwright would hang until its launch timeout if
  *    another Chromium already holds it, so fail fast with a clear message.
- * Then hands argv to the real CLI unchanged.
+ * Then hands argv to the real CLI (cli.js in the @playwright/mcp package) unchanged.
  */
 const fs = require('fs');
 const path = require('path');
@@ -38,7 +38,9 @@ async function main() {
         process.exit(1);
     }
 
-    require('@playwright/mcp/cli.js');
+    // The package's "exports" map hides cli.js, so resolve it by path.
+    const pkgDir = path.dirname(require.resolve('@playwright/mcp/package.json'));
+    require(path.join(pkgDir, 'cli.js'));
 }
 
 main().catch((e) => {

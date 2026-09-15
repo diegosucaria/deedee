@@ -1,6 +1,7 @@
 {
   "browser": {
     "launchOptions": {
+      "chromiumSandbox": false,
       "args": [
         "--remote-debugging-port=9222",
         "--remote-debugging-address=127.0.0.1",
@@ -9,7 +10,10 @@
       ]
     },
     "contextOptions": {
-      "viewport": { "width": 1280, "height": 800 }
+      "viewport": {
+        "width": 1280,
+        "height": 800
+      }
     }
   },
   "outputMaxSize": 52428800
