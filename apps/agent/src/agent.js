@@ -37,6 +37,7 @@ const { MemoryPruningService } = require('./services/memory-pruning');
 const { DreamService } = require('./services/dream-service');
 const { PartnerGreetingService } = require('./services/partner-greeting');
 const { SubAgentService } = require('./services/subagent-service');
+const { AskUserService } = require('./services/ask-user');
 const { ToolScoper } = require('./services/tool-scoper');
 const { sanitizeToolResult, sanitizeToolArgs } = require('./utils/tool-result-sanitizer');
 const { buildFunctionResponseParts, stripInlineParts, imagesAsUserContent, isPartsRejection, splitImages } = require('./utils/function-response');
@@ -154,6 +155,7 @@ class Agent {
     this.dreamService = new DreamService(this);
     this.partnerGreetingService = new PartnerGreetingService(this);
     this.subAgentService = new SubAgentService(this);
+    this.askUser = new AskUserService(this);
     this.toolScoper = new ToolScoper(config.googleApiKey, this.db);
     this.notifications = new NotificationService(this.db, this.interface);
 
@@ -376,6 +378,8 @@ class Agent {
     if (staleCount > 0) {
       console.log(`[SubAgent] Marked ${staleCount} stale sub-agent(s) as failed from previous session.`);
     }
+    // No askUser wait survives a restart; close the rows it left open.
+    try { this.askUser.expireOnBoot(); } catch (e) { console.warn('[AskUser] expireOnBoot failed:', e.message); }
 
     // 1. Initialize the unified Client (Dynamic Import for ESM)
     const { GoogleGenAI } = await this._loadClientLibrary();
@@ -994,6 +998,16 @@ class Agent {
         await activeSendCallback(pong);
         executionSummary.replies.push(pong);
         return executionSummary;
+      }
+
+      // 0b. askUser: a plain reply to a waiting question ends that wait and
+      // goes no further. /stop and /cancel end it too, then run as usual.
+      if (chatId && !isMultiModal && !isSubAgent) {
+        const answered = await this.askUser.intercept(message, activeSendCallback);
+        if (answered) {
+          executionSummary.replies.push(answered);
+          return executionSummary;
+        }
       }
 
       // Clear stop flag for this chat on new message (unless it's the stop command itself, handled by command handler)
@@ -1906,7 +1920,7 @@ class Agent {
         // Gmail/calendar/people tools are exempt from Tier 1 because the normal workflow is
         // list → fetch each item by ID (e.g. list emails → get each email). Multi-account
         // setups (work_/personal_ prefixes) multiply the call count further.
-        const LOOP_EXEMPT_TOOLS = new Set(['spawnAgent', 'readChatHistory', 'searchMemory', 'getFact', 'getAgentResult', 'listAgentTasks']);
+        const LOOP_EXEMPT_TOOLS = new Set(['spawnAgent', 'askUser', 'readChatHistory', 'searchMemory', 'getFact', 'getAgentResult', 'listAgentTasks']);
         function isLoopExemptTool(toolName) {
           if (!toolName) return false;
           if (LOOP_EXEMPT_TOOLS.has(toolName)) return true;
@@ -2467,6 +2481,11 @@ class Agent {
     // Pre-call sanitization: catch common LLM mistakes that lead to
     // oversized tool responses (e.g. events.list with no timeMax).
     args = sanitizeToolArgs(executionName, args);
+
+    // --- ASK THE USER (blocks until the reply, a timeout or a stop) ---
+    if (executionName === 'askUser') {
+      return this.askUser.ask(message, args);
+    }
 
     // --- INTERNAL DB TOOLS ---
     if (executionName === 'rememberFact') {

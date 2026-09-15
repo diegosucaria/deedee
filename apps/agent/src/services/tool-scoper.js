@@ -168,6 +168,10 @@ Example: ["slack", "calendar_email", "memory", "subagent", "scheduler"]`;
             if (mcpByCategory['mcp_other']) {
                 mcpByCategory['mcp_other'].forEach(t => toolNames.add(t));
             }
+            // Internal tools with no category are core (e.g. askUser); keep them.
+            if (internalByCategory['uncategorized']) {
+                internalByCategory['uncategorized'].forEach(t => toolNames.add(t));
+            }
 
             return toolNames.size > 0 ? [...toolNames] : null;
         } catch (err) {

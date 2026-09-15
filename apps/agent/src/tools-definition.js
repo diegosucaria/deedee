@@ -3,6 +3,20 @@
 const toolDefinitions = [
   {
     functionDeclarations: [
+      // Core: ask the user and wait (no category, so it is always available)
+      {
+        name: "askUser",
+        description: "Ask the user ONE question and wait for the answer. Use it for an OTP or SMS code, a CAPTCHA, or a choice only the user can make. The next plain message in the chat is the answer. Returns { answer }, { cancelled: true } or { timeout: true }. One open question per chat.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            question: { type: "STRING", description: "Short, clear question." },
+            options: { type: "ARRAY", items: { type: "STRING" }, description: "Optional choices (max 8). Shown as buttons in the web chat." },
+            timeoutSeconds: { type: "NUMBER", description: "How long to wait. Default 300, max 900." }
+          },
+          required: ["question"]
+        }
+      },
       // Memory / DB
       {
         name: "rememberFact",
