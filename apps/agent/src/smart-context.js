@@ -33,7 +33,9 @@ class SmartContextManager {
         // db.getHistoryForChat uses a sliding window; summary acts as long-term memory injection
         // We should just fetch the limit. The summary acts as the "Long Term Memory" injection.
 
-        const recentHistory = this.db.getHistoryForChat(chatId, limit);
+        // Saved rows carry raw parts (tool calls, tool results, media). Make
+        // them safe for the model before anything else touches them.
+        const recentHistory = SmartContextManager.normalizeHistoryForModel(this.db.getHistoryForChat(chatId, limit));
 
         // INJECT TIMESTAMPS
         // The model receives raw text history. To give it temporal awareness, 
@@ -77,6 +79,108 @@ class SmartContextManager {
         }
 
         return SmartContextManager.ensureAlternation(timestampedHistory);
+    }
+
+    /**
+     * Make hydrated history safe for the model. Pure: returns new rows.
+     *
+     * Rows come straight from the DB window, so the window can cut a tool
+     * exchange in half or hold calls the agent never answered (duplicates it
+     * dropped, loop limits, aborts). Gemini rejects such history with 400.
+     *
+     * - A "call row" is a model row with functionCall parts. A "response row"
+     *   is a user/function row with functionResponse parts.
+     * - A call row must be followed by a response row; only calls with a
+     *   matching response (by name, in order) survive, and the response row
+     *   keeps only those matches. Unpaired call rows and orphan response rows
+     *   are dropped.
+     * - inlineData parts (images, voice notes) become a short text marker so
+     *   media is not re-uploaded on every turn. The live turn's message never
+     *   passes through here.
+     * - Leading rows are dropped until the first user row with text, so the
+     *   result starts with a plain user text row. Rows with no parts are gone.
+     */
+    static normalizeHistoryForModel(history) {
+        if (!Array.isArray(history) || history.length === 0) return [];
+
+        const rows = [];
+        for (const msg of history) {
+            if (!msg || !Array.isArray(msg.parts)) continue;
+            const parts = SmartContextManager._replaceInlineData(msg.parts);
+            if (parts.length > 0) rows.push({ ...msg, parts });
+        }
+
+        const isCall = (p) => !!(p && p.functionCall);
+        const isResponse = (p) => !!(p && p.functionResponse);
+        const isCallRow = (m) => m.role === 'model' && m.parts.some(isCall);
+        const isResponseRow = (m) => (m.role === 'user' || m.role === 'function') && m.parts.some(isResponse);
+
+        const paired = [];
+        for (let i = 0; i < rows.length; i++) {
+            const row = rows[i];
+            if (isResponseRow(row)) continue; // orphan: its call row was not kept
+            if (!isCallRow(row)) { paired.push(row); continue; }
+
+            const next = rows[i + 1];
+            if (!next || !isResponseRow(next)) continue; // unanswered call row
+
+            const matched = SmartContextManager._matchCallsToResponses(row.parts, next.parts);
+            if (matched.calls.length === 0) continue; // nothing answered; the response row falls out as an orphan
+
+            paired.push({ ...row, parts: row.parts.filter(p => !isCall(p) || matched.calls.includes(p)) });
+            paired.push({ ...next, parts: next.parts.filter(p => !isResponse(p) || matched.responses.includes(p)) });
+            i++; // the response row is consumed
+        }
+
+        const hasText = (m) => m.parts.some(p => p && typeof p.text === 'string' && p.text.length > 0);
+        let start = 0;
+        while (start < paired.length && !(paired[start].role === 'user' && hasText(paired[start]))) start++;
+        return paired.slice(start);
+    }
+
+    /**
+     * Pair functionCall parts with functionResponse parts by name, in order.
+     * Responses are a subsequence of the calls (the agent drops duplicate
+     * calls before running them), so each response takes the first unused
+     * call with the same name that comes after the previous match.
+     */
+    static _matchCallsToResponses(callParts, responseParts) {
+        const calls = callParts.filter(p => p && p.functionCall);
+        const responses = responseParts.filter(p => p && p.functionResponse);
+        const matchedCalls = [];
+        const matchedResponses = [];
+        let from = 0;
+        for (const resp of responses) {
+            const idx = calls.findIndex((c, i) => i >= from && c.functionCall.name === resp.functionResponse.name);
+            if (idx === -1) continue;
+            matchedCalls.push(calls[idx]);
+            matchedResponses.push(resp);
+            from = idx + 1;
+        }
+        return { calls: matchedCalls, responses: matchedResponses };
+    }
+
+    /**
+     * Swap inlineData parts for a text marker, folded into the previous text
+     * part when there is one. Drops empty or malformed parts.
+     */
+    static _replaceInlineData(parts) {
+        const out = [];
+        for (const part of parts) {
+            if (!part || typeof part !== 'object' || Object.keys(part).length === 0) continue;
+            if (!part.inlineData) { out.push(part); continue; }
+
+            const mime = String(part.inlineData.mimeType || '');
+            const kind = mime.startsWith('image/') ? 'image' : mime.startsWith('audio/') ? 'audio' : 'file';
+            const marker = `[${kind} attached]`;
+            const prev = out[out.length - 1];
+            if (prev && typeof prev.text === 'string' && Object.keys(prev).length === 1) {
+                out[out.length - 1] = { text: prev.text ? `${prev.text} ${marker}` : marker };
+            } else {
+                out.push({ text: marker });
+            }
+        }
+        return out;
     }
 
     /**

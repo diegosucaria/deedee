@@ -142,6 +142,168 @@ describe('SmartContextManager.ensureAlternation', () => {
     });
 });
 
+describe('SmartContextManager.normalizeHistoryForModel', () => {
+    const normalize = SmartContextManager.normalizeHistoryForModel;
+    const user = (text) => ({ role: 'user', parts: [{ text }] });
+    const model = (text) => ({ role: 'model', parts: [{ text }] });
+    const call = (...names) => ({ role: 'model', parts: names.map(name => ({ functionCall: { name, args: {} } })) });
+    const response = (...names) => ({ role: 'user', parts: names.map(name => ({ functionResponse: { name, response: { ok: true } } })) });
+    const roles = (rows) => rows.map(r => r.role);
+    const callNames = (row) => row.parts.filter(p => p.functionCall).map(p => p.functionCall.name);
+    const responseNames = (row) => row.parts.filter(p => p.functionResponse).map(p => p.functionResponse.name);
+
+    it('returns [] for empty or bad input', () => {
+        expect(normalize([])).toEqual([]);
+        expect(normalize(null)).toEqual([]);
+        expect(normalize(undefined)).toEqual([]);
+    });
+
+    it('leaves plain text history unchanged', () => {
+        const history = [user('Hello'), model('Hi'), user('How are you?'), model('Good!')];
+        expect(normalize(history)).toEqual(history);
+    });
+
+    it('keeps matched call/response pairs, including several loops in a row', () => {
+        const history = [
+            user('Lights and weather'),
+            call('toggleLight', 'getWeather'),
+            response('toggleLight', 'getWeather'),
+            call('getForecast'),
+            response('getForecast'),
+            model('Done.'),
+            user('Thanks'),
+        ];
+        const out = normalize(history);
+        expect(out).toEqual(history);
+    });
+
+    it('drops a window that starts with an orphan functionResponse', () => {
+        const history = [
+            response('getWeather'),
+            model('It is sunny.'),
+            user('Thanks'),
+            model('Welcome.'),
+        ];
+        const out = normalize(history);
+        expect(roles(out)).toEqual(['user', 'model']);
+        expect(out[0].parts[0].text).toBe('Thanks');
+    });
+
+    it('drops an orphan functionResponse in the middle of the window', () => {
+        const history = [user('a'), model('b'), response('t'), user('c')];
+        const out = normalize(history);
+        expect(roles(out)).toEqual(['user', 'model', 'user']);
+        expect(out.some(r => r.parts.some(p => p.functionResponse))).toBe(false);
+    });
+
+    it('keeps only the calls that have a response when the agent dropped duplicates', () => {
+        // The model asked for getWeather twice; the agent ran it once.
+        const history = [
+            user('Weather?'),
+            call('getWeather', 'getWeather', 'getTime'),
+            response('getWeather', 'getTime'),
+            model('20 degrees at noon.'),
+        ];
+        const out = normalize(history);
+        expect(roles(out)).toEqual(['user', 'model', 'user', 'model']);
+        expect(callNames(out[1])).toEqual(['getWeather', 'getTime']);
+        expect(responseNames(out[2])).toEqual(['getWeather', 'getTime']);
+    });
+
+    it('drops responses that have no call and calls that have no response', () => {
+        const history = [
+            user('Go'),
+            call('a', 'b'),
+            response('b', 'zzz'),
+            model('ok'),
+        ];
+        const out = normalize(history);
+        expect(callNames(out[1])).toEqual(['b']);
+        expect(responseNames(out[2])).toEqual(['b']);
+    });
+
+    it('drops the pair when no call has a response', () => {
+        const history = [user('Go'), call('a'), response('b'), model('ok')];
+        expect(roles(normalize(history))).toEqual(['user', 'model']);
+        expect(normalize(history)[1].parts[0].text).toBe('ok');
+    });
+
+    it('drops a trailing functionCall with no response', () => {
+        const history = [user('Weather?'), model('Checking'), call('getWeather')];
+        const out = normalize(history);
+        expect(roles(out)).toEqual(['user', 'model']);
+        expect(out[1].parts[0].text).toBe('Checking');
+    });
+
+    it('drops a functionCall row followed by a plain user row', () => {
+        const history = [user('Weather?'), call('getWeather'), user('Never mind'), model('Ok')];
+        const out = normalize(history);
+        expect(roles(out)).toEqual(['user', 'user', 'model']);
+        expect(out.some(r => r.parts.some(p => p.functionCall))).toBe(false);
+    });
+
+    it('keeps the model text next to a matched call', () => {
+        const history = [
+            user('Weather?'),
+            { role: 'model', parts: [{ text: 'Let me check.' }, { functionCall: { name: 'getWeather', args: {} } }] },
+            response('getWeather'),
+            model('Sunny.'),
+        ];
+        const out = normalize(history);
+        expect(out[1].parts).toHaveLength(2);
+        expect(out[1].parts[0].text).toBe('Let me check.');
+    });
+
+    it('accepts response rows with the raw function role', () => {
+        const history = [user('Go'), call('t'), { role: 'function', parts: [{ functionResponse: { name: 't', response: {} } }] }, model('ok')];
+        expect(normalize(history)).toHaveLength(4);
+    });
+
+    it('drops leading rows until the first user row with text', () => {
+        const history = [
+            model('Orphan'),
+            { role: 'user', parts: [{ text: '' }] },
+            user('Hello'),
+            model('Hi'),
+        ];
+        const out = normalize(history);
+        expect(roles(out)).toEqual(['user', 'model']);
+        expect(out[0].parts[0].text).toBe('Hello');
+    });
+
+    it('drops rows with no parts and empty parts', () => {
+        const history = [user('Hello'), { role: 'model', parts: [] }, { role: 'model', parts: [{}] }, model('Hi'), { role: 'user' }];
+        const out = normalize(history);
+        expect(roles(out)).toEqual(['user', 'model']);
+    });
+
+    it('replaces inlineData with a text marker by media type', () => {
+        const history = [
+            { role: 'user', parts: [{ inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } }] },
+            model('Nice photo.'),
+            { role: 'user', parts: [{ text: 'Listen' }, { inlineData: { mimeType: 'audio/ogg', data: 'BBBB' } }] },
+            model('Heard it.'),
+            { role: 'user', parts: [{ inlineData: { mimeType: 'application/pdf', data: 'CCCC' } }, { text: 'Read this' }] },
+        ];
+        const out = normalize(history);
+        expect(JSON.stringify(out)).not.toContain('inlineData');
+        expect(out[0].parts).toEqual([{ text: '[image attached]' }]);
+        expect(out[2].parts).toEqual([{ text: 'Listen [audio attached]' }]);
+        expect(out[4].parts).toEqual([{ text: '[file attached]' }, { text: 'Read this' }]);
+    });
+
+    it('does not mutate the input rows', () => {
+        const history = [
+            { role: 'user', parts: [{ text: 'Hi' }, { inlineData: { mimeType: 'image/png', data: 'x' } }] },
+            call('a', 'a'),
+            response('a'),
+        ];
+        const snapshot = JSON.parse(JSON.stringify(history));
+        normalize(history);
+        expect(history).toEqual(snapshot);
+    });
+});
+
 describe('SmartContextManager summarization', () => {
     let db;
     let client;
@@ -247,15 +409,34 @@ describe('SmartContextManager summarization', () => {
         expect(client.models.generateContent).toHaveBeenCalledTimes(1);
     });
 
+    it('normalizes the window before the summary pair goes in front', async () => {
+        db.getLatestSummary.mockReturnValue({ id: 1, chat_id: 'chat-1', content: 'older stuff', range_end: 'm0' });
+        db.getHistoryForChat.mockReturnValue([
+            { id: 'f0', role: 'user', parts: [{ functionResponse: { name: 't', response: {} } }], metadata: {}, timestamp: '2026-03-04T10:00:00.000Z' },
+            { id: 'a0', role: 'model', parts: [{ text: 'done' }], metadata: {}, timestamp: '2026-03-04T10:00:01.000Z' },
+            { id: 'u1', role: 'user', parts: [{ text: 'hi' }, { inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } }], metadata: {}, timestamp: '2026-03-04T10:00:02.000Z' },
+            { id: 'm1', role: 'model', parts: [{ functionCall: { name: 't', args: {} } }], metadata: {}, timestamp: '2026-03-04T10:00:03.000Z' },
+        ]);
+        const ctx = await manager.getContext('chat-1', 'FLASH');
+        expect(ctx.map(m => m.role)).toEqual(['user', 'model', 'user']);
+        expect(ctx[0].parts[0].text).toContain('[SYSTEM: Context Summary');
+        expect(ctx[2].parts[0].text).toMatch(/^\[\d\d\/\d\d \d\d:\d\d\] hi \[image attached\]$/);
+        expect(JSON.stringify(ctx)).not.toContain('inlineData');
+        expect(JSON.stringify(ctx)).not.toContain('functionResponse');
+        expect(JSON.stringify(ctx)).not.toContain('functionCall');
+    });
+
     it('prefixes timestamps and drops the row id from model history', async () => {
         db.getHistoryForChat.mockReturnValue([
             { id: 'u1', role: 'user', parts: [{ text: 'hi' }], metadata: {}, timestamp: '2026-03-04T10:00:00.000Z' },
             { id: 'm1', role: 'model', parts: [{ functionCall: { name: 't', args: {} } }], metadata: {}, timestamp: '2026-03-04T10:00:01.000Z' },
+            { id: 'f1', role: 'user', parts: [{ functionResponse: { name: 't', response: {} } }], metadata: {}, timestamp: '2026-03-04T10:00:01.000Z' },
         ]);
         const ctx = await manager.getContext('chat-1', 'FLASH');
-        expect(ctx).toHaveLength(2);
+        expect(ctx).toHaveLength(3);
         expect(ctx[0].parts[0].text).toMatch(/^\[\d\d\/\d\d \d\d:\d\d\] hi$/);
         expect(ctx[1].parts[0].functionCall.name).toBe('t');
+        expect(ctx[2].parts[0].functionResponse.name).toBe('t');
         for (const m of ctx) {
             expect(m.id).toBeUndefined();
             expect(m.timestamp).toBeDefined();
