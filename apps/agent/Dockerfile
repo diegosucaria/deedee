@@ -20,10 +20,6 @@ COPY packages/shared/package.json packages/shared/package.json
 COPY packages/mcp-servers/package.json packages/mcp-servers/package.json
 COPY packages/node-red-mcp/package.json packages/node-red-mcp/package.json
 
-# Copy all package.json files from inside mcp-servers too if they exist, 
-# or we can rely on workspace definitions. 
-COPY packages/mcp-servers/browser/package.json packages/mcp-servers/browser/package.json
-
 RUN turbo prune --scope=@deedee/agent --docker
 
 # --- Builder Stage ---
@@ -48,10 +44,13 @@ WORKDIR /app
 ENV LANG=C.UTF-8
 ENV NODE_ENV=production
 
-# Install Runtime Dependencies: Python, UV, curl, chromium (for browser MCP)
+# Install Runtime Dependencies: Python, UV, curl, chromium (for @playwright/mcp)
 # Full Chromium dependencies for Alpine: nss, freetype, harfbuzz, ca-certificates, ttf-freefont
 RUN apk add --no-cache python3 py3-pip curl gcompat \
     chromium nss freetype harfbuzz ca-certificates ttf-freefont
+# Record the Chromium version in the build log. Alpine drops old builds, so
+# the version moves between images.
+RUN chromium-browser --version
 
 RUN curl -LsSf https://astral.sh/uv/install.sh | sh
 ENV PATH="/root/.local/bin:/root/.cargo/bin:$PATH"
@@ -76,7 +75,6 @@ COPY packages/plex-mcp-server ./packages/plex-mcp-server
 
 # Pre-install MCP Servers
 RUN uv pip install -r packages/plex-mcp-server/requirements.txt
-RUN uv pip install -r packages/mcp-servers/browser-use/requirements.txt
 RUN uv pip install -r packages/mcp-servers/pilotfy/requirements.txt
 RUN uv pip install -r packages/mcp-servers/allende/requirements.txt
 # Pinned: ha-mcp 7.9.0 added tool params with Gemini-incompatible schema keywords

@@ -5,8 +5,7 @@
   "private": true,
   "workspaces": [
     "apps/*",
-    "packages/*",
-    "packages/mcp-servers/browser"
+    "packages/*"
   ],
   "scripts": {
     "test": "NODE_OPTIONS=--experimental-vm-modules jest",

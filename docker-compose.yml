@@ -39,6 +39,8 @@ services:
       - repo-data:/app/source
       - agent-data:/app/data
       - interfaces-data:/app/interfaces-data:ro
+    # Chromium (browser MCP) uses /dev/shm; the Docker default of 64m is too small.
+    shm_size: 256m
     networks:
       - deedee-net
     restart: always
