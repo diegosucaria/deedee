@@ -7,6 +7,8 @@ class SmartContextManager {
         this.client = client;
         // Configuration
         this.TOKEN_THRESHOLD = parseInt(process.env.CONTEXT_TOKEN_THRESHOLD || '50000');
+        // Do not build a new summary until this many messages follow the last one.
+        this.MIN_NEW_MESSAGES = 20;
         this.config = new ConfigService();
         this.SUMMARY_MODEL = this.config.getModel('FLASH');
     }
@@ -36,7 +38,8 @@ class SmartContextManager {
         // INJECT TIMESTAMPS
         // The model receives raw text history. To give it temporal awareness, 
         // we explicitly prepend the timestamp to the message content.
-        const timestampedHistory = recentHistory.map(msg => {
+        // The row id is for bookkeeping only; keep it out of the model history.
+        const timestampedHistory = recentHistory.map(({ id, ...msg }) => {
             if (msg.timestamp) {
                 const date = new Date(msg.timestamp);
                 // Format: [02/04 10:00]
@@ -126,6 +129,10 @@ class SmartContextManager {
         const deepHistory = this.db.getHistoryForChat(chatId, 100);
         if (deepHistory.length < 20) return; // Too short to summarize
 
+        // Gate: wait for enough new messages after the last summary. Without
+        // this every message past the threshold produced a fresh summary.
+        if (!this.hasEnoughNewMessages(chatId, deepHistory)) return;
+
         const estimatedTokens = JSON.stringify(deepHistory).length / 4;
 
         if (estimatedTokens > this.TOKEN_THRESHOLD) {
@@ -134,14 +141,61 @@ class SmartContextManager {
         }
     }
 
+    /**
+     * True when at least MIN_NEW_MESSAGES messages follow the last summary.
+     * summaries.range_end holds the id of the last message that summary covered.
+     * Older summaries stored a timestamp there; those fall through and allow
+     * one more run, which then records a proper id.
+     */
+    hasEnoughNewMessages(chatId, history) {
+        const last = this.db.getLatestSummary(chatId);
+        if (!last || !last.range_end) return true;
+
+        let since = null;
+        const idx = history.findIndex(m => m.id === last.range_end);
+        if (idx !== -1) {
+            since = history.length - idx - 1;
+        } else if (typeof this.db.countMessagesAfter === 'function') {
+            since = this.db.countMessagesAfter(chatId, last.range_end);
+        }
+        if (since === null) return true;
+        return since >= this.MIN_NEW_MESSAGES;
+    }
+
+    /**
+     * Render one history message as a line of plain text for the summary prompt.
+     * Text parts run together as one string; tool parts become short markers
+     * set off by a space.
+     */
+    static renderMessageText(msg) {
+        const parts = Array.isArray(msg.parts) ? msg.parts : [];
+        let out = '';
+        for (const p of parts) {
+            if (!p) continue;
+            if (typeof p.text === 'string' && p.text.length > 0) {
+                out += p.text;
+            } else if (p.functionCall) {
+                out += ` [tool: ${p.functionCall.name || 'unknown'}] `;
+            } else if (p.functionResponse) {
+                out += ` [tool result: ${p.functionResponse.name || 'unknown'}] `;
+            }
+        }
+        return out.replace(/ {2,}/g, ' ').trim();
+    }
+
     async performSummarization(chatId, history) {
         try {
             // Keep the last 10 messages intact (don't summarize them yet), summarize the older ones.
             const attemptsToSummarize = history.slice(0, history.length - 10);
             if (attemptsToSummarize.length < 5) return; // Not enough to summarize
 
-            // Format for Flash
-            const conversationText = attemptsToSummarize.map(m => `[${m.role.toUpperCase()}]: ${m.parts[0].text}`).join('\n');
+            // Format for Flash: text parts only, tool parts as short markers.
+            const conversationText = attemptsToSummarize
+                .map(m => ({ role: m.role, text: SmartContextManager.renderMessageText(m) }))
+                .filter(m => m.text)
+                .map(m => `[${m.role.toUpperCase()}]: ${m.text}`)
+                .join('\n');
+            if (!conversationText) return;
             const prompt = `
             Compress the following conversation into a concise, high-level summary. 
             Focus on:
@@ -174,8 +228,12 @@ class SmartContextManager {
 
                 this.config.logUsageFromResponse(this.db, this.SUMMARY_MODEL, result, chatId, 'summarization');
 
-                const start = attemptsToSummarize[0].timestamp || new Date().toISOString();
-                const end = attemptsToSummarize[attemptsToSummarize.length - 1].timestamp || new Date().toISOString();
+                // range_start / range_end hold message ids; range_end feeds the
+                // "enough new messages" gate on the next run.
+                const first = attemptsToSummarize[0];
+                const lastMsg = attemptsToSummarize[attemptsToSummarize.length - 1];
+                const start = first.id || first.timestamp || new Date().toISOString();
+                const end = lastMsg.id || lastMsg.timestamp || new Date().toISOString();
 
                 this.db.saveSummary(chatId, summaryText, start, end, originalTokens, summaryTokens);
 
