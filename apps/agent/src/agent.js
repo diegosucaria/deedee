@@ -2084,6 +2084,18 @@ class Agent {
             toolResult = { info: 'No output from tool execution.' };
           }
 
+          // A browser server that is down (port 9222 busy, launch failure)
+          // is worth a notification: the model cannot fix it.
+          if (executionName.startsWith('browser_') && /not connected|connection closed|transport closed/i.test(String(toolResult?.error || ''))) {
+            this.notifications.create({
+              type: 'browser_down',
+              severity: 'error',
+              title: 'Browser server not connected',
+              message: `"${executionName}" failed: ${String(toolResult.error).slice(0, 200)}. Check the MCP status page; a reload restarts the browser server.`,
+              metadata: { toolName: executionName, chatId, source: message.source, link: '/brain' }
+            });
+          }
+
           // Screenshots ride on `_images`; they go to the model as inlineData
           // and never into the UI preview, the summary or the DB.
           const split = splitImages(toolResult);

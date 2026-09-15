@@ -164,12 +164,15 @@ Delete both server packages; Dockerfile and root workspace edits (section 4); Ba
 
 ## 12. Verified
 
-Checked on an x86 devbox (2026-09-15) and again during implementation:
+Checked on an x86 devbox (2026-09-15) and again during stage A implementation:
 
-- Playwright keeps its pipe when `launchOptions.args` adds `--remote-debugging-port`; Chromium also serves `/json/version` and `/json/list` on that port. The CI smoke asserts this on Alpine.
-- `@playwright/mcp@0.0.81` reads `PLAYWRIGHT_MCP_EXECUTABLE_PATH`, `PLAYWRIGHT_MCP_CONFIG`, `PLAYWRIGHT_MCP_HEADLESS` and `PLAYWRIGHT_MCP_CDP_ENDPOINT`. `--secrets <path>` loads a dotenv file. `lookupSecret` matches names exactly; `redactSecrets` rewrites values as `<secret>NAME</secret>`.
+- Playwright keeps its pipe when `launchOptions.args` adds `--remote-debugging-port`; Chromium also serves `/json/version` and `/json/list` on that port. `scripts/browser-smoke.js` passed here with Google Chrome 152 (26 tools, snapshot text, JPEG screenshot item, CDP with 3 targets). CI runs the same script on Alpine.
+- `@playwright/mcp@0.0.81` reads `PLAYWRIGHT_MCP_EXECUTABLE_PATH` (an empty value counts as unset), `PLAYWRIGHT_MCP_CONFIG`, `PLAYWRIGHT_MCP_HEADLESS`, `PLAYWRIGHT_MCP_CDP_ENDPOINT` and `PLAYWRIGHT_MCP_SANDBOX`. `--secrets <path>` loads the file with `dotenv.parse`. `lookupSecret` matches names exactly; `redactSecrets` rewrites values as `<secret>NAME</secret>`.
+- The package `exports` map hides `cli.js`, so the launcher stub resolves `@playwright/mcp/package.json` and requires `cli.js` by absolute path.
+- Playwright does not add `--no-sandbox` on its own. The agent container runs as root (no `USER` in the Dockerfile), so `playwright-mcp.config.json` sets `launchOptions.chromiumSandbox: false`.
+- `dotenv.parse` does not unescape `\"` or `\\` inside double quotes, so the design's "escape quotes and backslashes" does not round-trip. The renderer uses single quotes (literal) and double quotes only for values that hold a single quote, with newlines as `\n`. Tests round-trip awkward values through the bundled parser. A value with both quote kinds is rejected.
 - `outputDir` in the config file goes through `path.resolve` with no `${VAR}` expansion, so the agent passes `--output-dir` in args instead.
 - Its `isProfileLocked` reads the `SingletonLock` symlink and calls `process.kill(pid, 0)`; a reused pid gives a false "already in use", which the launcher stub guards against.
-- `@google/genai` 1.34.0 types `FunctionResponse.parts?: FunctionResponsePart[]`.
+- `@google/genai` 1.34.0 types `FunctionResponse.parts?: FunctionResponsePart[]`. Live acceptance by Gemini is still unverified: run `scripts/gemini-image-response-smoke.js` with a key.
 - The agent container has `WORKDIR /app/apps/agent` and `CMD npm start`, so `process.cwd()` is `/app/apps/agent` and the `cwd` auto-repair resolves `../../apps/agent` there.
 - Node 24 has a global `WebSocket`.
