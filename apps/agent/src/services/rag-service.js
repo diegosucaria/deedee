@@ -5,14 +5,14 @@ const crypto = require('crypto');
 const Database = require('better-sqlite3');
 const { ConfigService } = require('./config-service');
 
-// Matryoshka dimensions supported by gemini-embedding-2-preview: 768, 1536, 3072
+// Matryoshka dimensions supported by gemini-embedding-2: 768, 1536, 3072
 // Default 768 for backward compat with existing embeddings; set EMBEDDING_DIMENSIONS to upgrade
 const EMBEDDING_DIMENSIONS = parseInt(process.env.EMBEDDING_DIMENSIONS, 10) || 768;
 
 // Max file size for multimodal embedding (base64 encoding adds ~33% overhead)
 const MAX_MULTIMODAL_SIZE = 20 * 1024 * 1024; // 20MB
 
-// Supported media types for native multimodal embedding via gemini-embedding-2-preview
+// Supported media types for native multimodal embedding via gemini-embedding-2
 const MEDIA_TYPES = {
     image: {
         extensions: ['.png', '.jpg', '.jpeg', '.webp', '.gif'],
@@ -32,7 +32,12 @@ class RagService {
     constructor(agent) {
         this.agent = agent;
         this.config = new ConfigService();
-        this.dbPath = path.join(process.cwd(), 'data', 'rag.db');
+        const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
+        this.dbPath = path.join(dataDir, 'rag.db');
+        // Set when the embedding model id changed but the dimensions did not.
+        // agent.start() turns it into a background re-embed (startPendingReembed).
+        this.pendingModelReembed = null;
+        this.reembedInProgress = false;
         const dbDir = path.dirname(this.dbPath);
         if (!fs.existsSync(dbDir)) {
             fs.mkdirSync(dbDir, { recursive: true });
@@ -268,9 +273,13 @@ class RagService {
             }
 
             if (modelChanged) {
-                console.log(`[RAG] Embedding model changed: ${prevModel} → ${currentModel} (dimensions unchanged at ${currentDims}).`);
-                console.log('[RAG] Existing embeddings remain valid. Re-index recommended for improved quality.');
-                this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_model', ?)").run(currentModel);
+                // Same dimensions, so the old vectors still load, but vectors from two
+                // models do not share a space: new queries would match old chunks poorly.
+                // Keep the old id in rag_metadata until the re-embed finishes, so a crash
+                // mid-way retries on the next boot.
+                console.warn(`[RAG] ⚠ Embedding model changed: ${prevModel} → ${currentModel} (dimensions unchanged at ${currentDims}).`);
+                console.warn('[RAG] The RAG index needs re-embedding. It starts in the background once the agent is up.');
+                this.pendingModelReembed = { prevModel, currentModel, dims: currentDims };
             }
             this.needsReindex = false;
         }
@@ -306,7 +315,85 @@ class RagService {
         if (vaultsDir) await this.scanAndIngest(vaultsDir);
         if (journalDir) await this.scanJournals(journalDir);
 
+        // Documents ingested from outside the vaults (e.g. the durable memory file)
+        // are not covered by the scans above. Re-ingest those that still exist.
+        const leftovers = this.db.prepare("SELECT filepath, vault_id FROM documents WHERE hash = ''").all();
+        for (const doc of leftovers) {
+            if (!doc.filepath || !fs.existsSync(doc.filepath)) continue;
+            try {
+                await this.ingestDocument(doc.filepath, doc.vault_id);
+            } catch (e) {
+                console.error(`[RAG] Re-index failed for ${path.basename(doc.filepath)}:`, e.message);
+            }
+        }
+
+        // The index now reflects the configured model and dimensions.
+        this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_dimensions', ?)").run(String(EMBEDDING_DIMENSIONS));
+        this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_model', ?)").run(this.config.getModel('EMBEDDING'));
+        this.pendingModelReembed = null;
+        this.needsReindex = false;
+
         console.log('[RAG] Full re-index complete.');
+    }
+
+    /**
+     * Start the background re-embed queued by _handleDimensionMigration when the
+     * embedding model id changed. Creates a notification, runs reindexAll without
+     * blocking the caller, and records the new model id when it completes.
+     * @param {string} [vaultsDir]
+     * @param {string} [journalDir]
+     * @returns {Promise<boolean>|null} the background task (resolves true on success), or null when nothing is pending
+     */
+    startPendingReembed(vaultsDir, journalDir) {
+        const pending = this.pendingModelReembed;
+        if (!pending || this.reembedInProgress) return null;
+        this.reembedInProgress = true;
+
+        const { prevModel, currentModel, dims } = pending;
+        console.warn(`[RAG] Re-embedding the whole index in the background: ${prevModel} → ${currentModel} (${dims}D).`);
+        this._notify({
+            type: 'rag_reindex_required',
+            severity: 'warning',
+            title: `RAG index needs re-embedding for model ${currentModel}`,
+            message: `Embedding model changed from ${prevModel} to ${currentModel} (dimensions unchanged at ${dims}). All documents are being re-embedded in the background; search quality may dip until it finishes.`,
+            metadata: { prevModel, currentModel, dims, link: '/system' }
+        });
+
+        return this.reindexAll(vaultsDir, journalDir)
+            .then(() => {
+                const stats = this.getStats();
+                console.log(`[RAG] Re-embed complete: ${stats.chunks} chunks now use ${currentModel}.`);
+                this._notify({
+                    type: 'rag_reindex_complete',
+                    severity: 'info',
+                    title: `RAG index re-embedded with ${currentModel}`,
+                    message: `${stats.documents} documents / ${stats.chunks} chunks were re-embedded with ${currentModel}.`,
+                    metadata: { prevModel, currentModel, dims, documents: stats.documents, chunks: stats.chunks, link: '/system' }
+                });
+                return true;
+            })
+            .catch((e) => {
+                console.error('[RAG] Background re-embed failed:', e.message);
+                this._notify({
+                    type: 'rag_reindex_failed',
+                    severity: 'error',
+                    title: `RAG re-embed for ${currentModel} failed`,
+                    message: `Re-embedding failed: ${e.message}. It retries on the next agent start; or run the reindexEmbeddings tool.`,
+                    metadata: { prevModel, currentModel, dims, error: e.message, link: '/system' }
+                });
+                return false;
+            })
+            .finally(() => {
+                this.reembedInProgress = false;
+            });
+    }
+
+    _notify(opts) {
+        try {
+            if (this.agent?.notifications?.create) this.agent.notifications.create(opts);
+        } catch (e) {
+            console.warn('[RAG] Notification failed:', e.message);
+        }
     }
 
     async ingestDocument(filepath, vaultId = null) {

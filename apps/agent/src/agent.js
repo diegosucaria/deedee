@@ -515,6 +515,14 @@ class Agent {
       });
     }
 
+    // Embedding model id changed since the last run: re-embed the RAG index in
+    // the background (rag-service.js keeps the old id until this completes).
+    try {
+      this.ragService.startPendingReembed(this.vaults?.vaultsDir, this.journal?.journalDir);
+    } catch (e) {
+      console.error('[RAG] Could not start the background re-embed:', e.message);
+    }
+
     this.interface.on('message', this.onMessage);
     console.log('Agent listening for messages.');
   }
