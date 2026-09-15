@@ -59,8 +59,22 @@ browser close; the profile keeps the cookies.
 - `/browser` in the web app shows the page over CDP (port 9222), lets Diego
   type a URL, click and type, and log in himself. Any signed-in web user can
   drive it; fine for a single owner.
-- `askUser` lets the model ask for an OTP, a CAPTCHA or a choice and wait for
-  the next plain message in the chat.
+- `askUser({ question, options?, timeoutSeconds? })` lets the model ask for an
+  OTP, a CAPTCHA or a choice and wait. Default wait 300 s, max 900 s. The next
+  plain text message in the reply chat is the answer; a number picks an option.
+  The web chat shows options as chips. The model gets `{ answer }`,
+  `{ cancelled: true }` or `{ timeout: true }`.
+  - Reply chat: a web, Telegram or WhatsApp assistant run asks in its own chat.
+    A scheduled job, a system run or a watcher run asks the owner on the
+    notification channel. A sub-agent asks in its parent's chat when that is a
+    live chat; otherwise the tool returns an error and the sub-agent reports
+    what it needs.
+  - One open question per reply chat. `/stop`, `/cancel` and the web Stop
+    button end the wait. Open rows in `pending_questions` expire on boot; a
+    reply within 10 minutes of an expiry gets "That question expired."
+  - The question goes out through `interface.send`, so it shows at once even
+    though the run is still going. The interfaces -> agent `/chat` call has no
+    HTTP timeout; keep it that way, or the run dies while it waits.
 
 ## Failure modes
 
