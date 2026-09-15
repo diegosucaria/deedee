@@ -6,12 +6,18 @@
  * DATA_DIR), then checks the four things Deedee relies on:
  * 1. browser_navigate to a data: URL returns a snapshot with the page text.
  * 2. browser_take_screenshot returns an image content item.
- * 3. Chromium answers on 127.0.0.1:9222 while the server holds its pipe.
+ * 3. Chromium answers on the CDP port while the server holds its pipe.
  * 4. The server closes cleanly.
  *
+ * The smoke uses its own CDP port (SMOKE_CDP_PORT, default 9333) through a
+ * temp copy of playwright-mcp.config.json, so it runs beside the agent's
+ * live browser server (which owns 9222) without a false "port busy" FAIL.
+ *
  * Env: BROWSER_EXECUTABLE_PATH (default /usr/bin/chromium-browser).
- * Runs in CI (browser-smoke job) and inside the agent container on the Pi:
+ * Runs in CI (browser-smoke job) from the repo root:
  *   node apps/agent/scripts/browser-smoke.js
+ * and inside the agent container on the Pi, whose WORKDIR is /app/apps/agent:
+ *   node scripts/browser-smoke.js
  */
 const fs = require('fs');
 const os = require('os');
@@ -23,6 +29,30 @@ const { debugPortFromConfig } = require('../src/utils/browser-profile');
 
 const AGENT_DIR = path.resolve(__dirname, '..');
 const MARKER = `deedee-smoke-${Date.now()}`;
+const SMOKE_CDP_PORT = parseInt(process.env.SMOKE_CDP_PORT || '9333', 10);
+
+/**
+ * Copies the Playwright config into `dir` with the CDP port swapped for
+ * `port`. Returns the copy's path.
+ */
+function writeSmokeConfig(sourcePath, dir, port) {
+    const cfg = JSON.parse(fs.readFileSync(sourcePath, 'utf8'));
+    const launch = cfg.browser = cfg.browser || {};
+    launch.launchOptions = launch.launchOptions || {};
+    const args = (launch.launchOptions.args || []).filter(a => !String(a).startsWith('--remote-debugging-port='));
+    args.push(`--remote-debugging-port=${port}`);
+    launch.launchOptions.args = args;
+    const out = path.join(dir, 'playwright-mcp.config.json');
+    fs.writeFileSync(out, JSON.stringify(cfg, null, 2));
+    return out;
+}
+
+/** Replaces the value after `--config` in `args` (or appends the flag). */
+function withConfig(args, configPath) {
+    const i = args.indexOf('--config');
+    if (i >= 0 && i + 1 < args.length) return [...args.slice(0, i + 1), configPath, ...args.slice(i + 2)];
+    return [...args, '--config', configPath];
+}
 
 function log(msg) { console.log(`[browser-smoke] ${msg}`); }
 function fail(msg) { console.error(`[browser-smoke] FAIL: ${msg}`); process.exit(1); }
@@ -47,10 +77,12 @@ async function main() {
     const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deedee-browser-smoke-'));
     const vars = { DATA_DIR: dataDir, BROWSER_EXECUTABLE_PATH: executable };
     const resolve = (s) => String(s).replace(/\$\{([^}]+)\}/g, (_, k) => vars[k] ?? process.env[k] ?? '');
-    const args = entry.args.map(resolve);
+    const smokeConfig = writeSmokeConfig(path.join(AGENT_DIR, 'playwright-mcp.config.json'), dataDir, SMOKE_CDP_PORT);
+    const args = withConfig(entry.args.map(resolve), smokeConfig);
     const env = { ...process.env };
     for (const [k, v] of Object.entries(entry.env || {})) env[k] = resolve(v);
-    const port = debugPortFromConfig(path.join(AGENT_DIR, 'playwright-mcp.config.json'));
+    const port = debugPortFromConfig(smokeConfig);
+    if (port !== SMOKE_CDP_PORT) fail(`smoke config port is ${port}, expected ${SMOKE_CDP_PORT}`);
 
     log(`spawning: node ${args.join(' ')}`);
     log(`cwd: ${AGENT_DIR}, DATA_DIR: ${dataDir}, CDP port: ${port}`);

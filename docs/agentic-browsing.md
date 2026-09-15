@@ -140,12 +140,16 @@ site logged in.
 
 ## Smoke test
 
-`node apps/agent/scripts/browser-smoke.js` starts the server with the args from
+`apps/agent/scripts/browser-smoke.js` starts the server with the args from
 `mcp_config.json` in a temp `DATA_DIR`, navigates to a `data:` URL, checks the
 snapshot text, checks that a screenshot returns an image, and checks that
-`http://127.0.0.1:9222/json/version` answers. CI runs it on
-`node:24.18.0-alpine` with Alpine Chromium (job `browser-smoke`). Run it inside
-the agent container after a deploy too. Set `BROWSER_EXECUTABLE_PATH` to use
+`http://127.0.0.1:<port>/json/version` answers. It uses its own CDP port
+(`SMOKE_CDP_PORT`, default 9333) through a temp copy of the Playwright config,
+so it runs beside the agent's live browser server without a false "port busy"
+FAIL. CI runs it on `node:24.18.0-alpine` with Alpine Chromium (job
+`browser-smoke`) from the repo root: `node apps/agent/scripts/browser-smoke.js`.
+Inside the agent container after a deploy the WORKDIR is `/app/apps/agent`, so
+run `node scripts/browser-smoke.js`. Set `BROWSER_EXECUTABLE_PATH` to use
 another binary.
 
 ## Env
