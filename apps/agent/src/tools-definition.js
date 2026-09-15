@@ -280,7 +280,7 @@ const toolDefinitions = [
       {
         name: "googleSearch",
         category: "search",
-        description: "Perform a Google Search for quick facts, weather, news, or simple Q&A. Do NOT use this for deep research, flight booking, or interacting with pages. For those, use 'browser_navigate'.",
+        description: "Perform a Google Search for quick facts, weather, news, or simple Q&A. Do NOT use this for deep research, flight booking, or interacting with pages. For those, use the browser tools.",
         parameters: {
           type: "OBJECT",
           properties: {
