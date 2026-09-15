@@ -141,6 +141,25 @@ describe('getHistoryForChat hydration', () => {
         }
     });
 
+    it('restores the caption of a media row whose parts hold only the file', () => {
+        const chatId = 'chat-media';
+        db.createSession({ id: chatId, title: 'Media' });
+        db.saveMessage({
+            id: 'img1', role: 'user', content: 'what is this?', chat_id: chatId, timestamp: 1000,
+            parts: [{ inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } }]
+        });
+        db.saveMessage({
+            id: 'fc1', role: 'model', content: 'Thinking...', chat_id: chatId, timestamp: 2000,
+            parts: [{ functionCall: { name: 'lookup', args: {} } }]
+        });
+        const history = db.getHistoryForChat(chatId, 20);
+        expect(history[0].parts[0]).toEqual({ text: 'what is this?' });
+        expect(history[0].parts[1].inlineData.mimeType).toBe('image/jpeg');
+        // Tool rows never get their content text added.
+        expect(history[1].parts).toHaveLength(1);
+        expect(history[1].parts[0].functionCall.name).toBe('lookup');
+    });
+
     it('keeps insertion order for rows saved in the same millisecond', () => {
         const chatId = 'chat-same-ms';
         db.createSession({ id: chatId, title: 'Same ms' });

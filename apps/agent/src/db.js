@@ -1839,7 +1839,15 @@ class AgentDB {
 
       if (row.parts) {
         try {
-          return { id: row.id, role, parts: JSON.parse(row.parts), metadata: meta, timestamp };
+          const parts = JSON.parse(row.parts);
+          // A media row keeps its caption in `content`; its parts hold only the file.
+          // Put the caption back so the model still sees what was said.
+          const hasText = Array.isArray(parts) && parts.some(p => typeof p.text === 'string' && p.text.trim());
+          const isToolRow = Array.isArray(parts) && parts.some(p => p.functionCall || p.functionResponse);
+          if (Array.isArray(parts) && !hasText && !isToolRow && typeof row.content === 'string' && row.content.trim()) {
+            parts.unshift({ text: row.content });
+          }
+          return { id: row.id, role, parts, metadata: meta, timestamp };
         } catch (e) {
           console.error('[DB] Failed to parse message parts:', e);
         }
