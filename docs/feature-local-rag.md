@@ -11,7 +11,7 @@ Deedee now has a Local RAG system integrated with **Life Vaults**. This allows t
 3.  **Nightly Scan**: A job runs every night at 3 AM to find any files you might have manually dropped into the vault folders and indexes them.
 
 ## Supported File Types
-Deedee uses `gemini-embedding-2-preview` for multimodal embeddings, supporting:
+Deedee uses `gemini-embedding-2` (env `GEMINI_EMBEDDING_MODEL`) for multimodal embeddings, supporting:
 
 | Type | Extensions | How it works |
 |------|-----------|--------------|
@@ -51,7 +51,10 @@ A: It will **not** be indexed by default. The RAG system watches specific vault 
 A: Yes! You can drop files directly into `data/vaults/{topic}/files/` on the file system. The nightly scan (or `/rescan`) will pick them up. This is useful for building a "Knowledge Base" for the agent—dropping in PDFs of manuals, receipts, or notes that you want the agent to be able to reference anytime you enter that context.
 
 **Q: What embedding model is used?**
-A: `gemini-embedding-2-preview` with configurable Matryoshka dimensions (768, 1536, or 3072). Set the `EMBEDDING_DIMENSIONS` environment variable to change. Default is 768 for backward compatibility; production uses 1536.
+A: `gemini-embedding-2` with configurable Matryoshka dimensions (768, 1536, or 3072). Set the `EMBEDDING_DIMENSIONS` environment variable to change. Default is 768 for backward compatibility; production uses 1536.
+
+**Q: What happens if I change the embedding model?**
+A: Vectors from two models do not share a space. At the next start the agent posts a `rag_reindex_required` notification and re-embeds every document in the background, then records the new id in `rag_metadata`. See [models.md](models.md#changing-the-embedding-model).
 
 **Q: What happens if I change the embedding dimensions?**
 A: The system automatically detects dimension changes on startup, clears incompatible embeddings, and re-indexes documents on the next nightly scan. No manual intervention needed.

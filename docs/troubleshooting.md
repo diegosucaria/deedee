@@ -30,3 +30,19 @@ This is due to **Dependency Hoisting** vs **Strict Pruning**.
 **Solution:**
 - Ensure `server.js` listens on `0.0.0.0`.
 - Check startup logs for silent crashes.
+
+## Gemini models
+
+### Issue: 404 / "model not found" from Gemini, or a role stops answering
+**Symptoms:**
+- Logs show `404` or `NOT_FOUND` for a `gemini-*` id.
+- The router, TTS, image or embedding calls fail while others work.
+
+**Cause:**
+- The id for that role was retired, or a Balena variable points at an old id.
+
+**Solution:**
+- Check which id each role resolves and whether it still exists: run
+  `node scripts/model-smoke.js` in the agent container (see [models.md](models.md)).
+- Fix the id with a Balena device variable (no deploy), restart `agent`, rerun the smoke.
+- A changed embedding model triggers a background re-embed; watch for `rag_reindex_*` notifications.
