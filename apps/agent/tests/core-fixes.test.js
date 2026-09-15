@@ -58,23 +58,39 @@ describe('Agent core fixes', () => {
     };
 
     describe('_deliverReply', () => {
-        test('records a delivery_failure notification when the callback returns false', async () => {
-            const cb = jest.fn().mockResolvedValue(false);
-            const reply = { content: 'x'.repeat(300), source: 'whatsapp', metadata: { chatId: 'chat-1' } };
-            const result = await agent._deliverReply(cb, reply, userMsg('hi'));
-            expect(result).toBe(false);
+        test('records a delivery_failure notification when interface.send returns false', async () => {
+            // onMessage wires the callback to interface.send; a false must come through.
+            agent.interface.send.mockResolvedValue(false);
+            agent.router = { route: jest.fn().mockRejectedValue(new Error('boom')) };
+            const msg = userMsg('hi', { source: 'telegram' });
+
+            await agent.onMessage(msg);
+
+            expect(agent.interface.send).toHaveBeenCalledWith(expect.objectContaining({ content: expect.stringContaining('boom') }));
             expect(notifications.create).toHaveBeenCalledTimes(1);
             const n = notifications.create.mock.calls[0][0];
             expect(n.type).toBe('delivery_failure');
             expect(n.title).toBe('Reply not delivered');
             expect(n.metadata.chatId).toBe('chat-1');
-            expect(n.metadata.source).toBe('whatsapp');
-            expect(n.metadata.content).toHaveLength(200);
+            expect(n.metadata.source).toBe('telegram');
+            expect(n.metadata.content).toContain('boom');
         });
 
-        test('stays quiet when the callback returns undefined or true', async () => {
-            await agent._deliverReply(jest.fn().mockResolvedValue(undefined), { content: 'a' }, userMsg('hi'));
-            await agent._deliverReply(jest.fn().mockResolvedValue(true), { content: 'b' }, userMsg('hi'));
+        test('caps the stored content at 200 characters', async () => {
+            const cb = jest.fn().mockResolvedValue(false);
+            const reply = { content: 'x'.repeat(300), source: 'whatsapp', metadata: { chatId: 'chat-1' } };
+            const result = await agent._deliverReply(cb, reply, userMsg('hi'));
+            expect(result).toBe(false);
+            expect(notifications.create.mock.calls[0][0].metadata.content).toHaveLength(200);
+        });
+
+        test('stays quiet when interface.send returns undefined or true', async () => {
+            agent.router = { route: jest.fn().mockRejectedValue(new Error('boom')) };
+            agent.interface.send.mockResolvedValue(undefined);
+            await agent.onMessage(userMsg('hi'));
+            agent.interface.send.mockResolvedValue(true);
+            await agent.onMessage(userMsg('hi'));
+            expect(agent.interface.send).toHaveBeenCalledTimes(2);
             expect(notifications.create).not.toHaveBeenCalled();
         });
     });

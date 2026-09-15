@@ -588,7 +588,8 @@ class Agent {
           reply.content = "📝 **[SIMULATION RESULT]**\n" + reply.content;
         }
       }
-      await this.interface.send(reply);
+      // Hand the result back so _deliverReply sees a false from the interface.
+      return this.interface.send(reply);
     });
   }
 
