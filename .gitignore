@@ -16,3 +16,4 @@ apps/agent/tests/test_people.db
 .skills
 .agent
 .claude
+.pii-denylist
