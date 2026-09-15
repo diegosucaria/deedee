@@ -1,10 +1,14 @@
 import { API_URL } from '@/lib/api';
+import { requireSession } from '@/lib/auth/guard';
 
 export const dynamic = 'force-dynamic';
 
 const ALLOWED_CONTAINERS = new Set(['all', 'agent', 'interfaces', 'api', 'web', 'supervisor']);
 
 export async function GET(request, { params }) {
+    const { session, response } = await requireSession();
+    if (!session) return response;
+
     const { container } = await params;
     const { DEEDEE_API_TOKEN } = process.env;
 
