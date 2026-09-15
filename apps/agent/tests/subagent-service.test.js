@@ -129,6 +129,40 @@ describe('SubAgentService', () => {
             expect(result.status).toBe('completed');
         });
 
+        it('should abort the agent run on timeout', async () => {
+            const aborted = new Set();
+            mockAgent.abortChat = jest.fn((chatId) => aborted.add(chatId));
+            mockAgent.notifications = { create: jest.fn() };
+            let loopDone;
+            const loopFinished = new Promise(resolve => { loopDone = resolve; });
+            // A run that keeps looping until the agent aborts its chat.
+            mockAgent.processMessage.mockImplementation(async (msg) => {
+                while (!aborted.has(msg.metadata.chatId)) {
+                    await new Promise(r => setTimeout(r, 5));
+                }
+                loopDone();
+                return {};
+            });
+
+            const result = await service.spawn({
+                task: 'Never ends',
+                parentChatId: 'chat-123',
+                timeoutMinutes: 0.0005, // 30 ms
+                waitForResult: true,
+            });
+
+            expect(mockAgent.abortChat).toHaveBeenCalledWith(`subagent-${result.taskId}`);
+            expect(mockAgent.db.updateSubAgent).toHaveBeenCalledWith(
+                result.taskId,
+                expect.objectContaining({ status: 'timeout' })
+            );
+            // The loop really stopped.
+            await expect(Promise.race([
+                loopFinished.then(() => 'stopped'),
+                new Promise(r => setTimeout(() => r('still running'), 500)),
+            ])).resolves.toBe('stopped');
+        });
+
         it('should handle processMessage errors gracefully', async () => {
             mockAgent.processMessage.mockRejectedValue(new Error('Model unavailable'));
 
