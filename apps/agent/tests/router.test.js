@@ -51,6 +51,17 @@ describe('Router', () => {
         expect(decision.toolMode).toBe('STANDARD');
     });
 
+    test('should fall back to PRO with empty toolGroups when routing fails', async () => {
+        jest.spyOn(console, 'error').mockImplementation(() => { });
+        mockSendMessage.mockRejectedValue(new Error('network down'));
+
+        const decision = await router.route('turn on the lights', [], null);
+
+        expect(decision.model).toBe('PRO');
+        expect(decision.toolMode).toBe('STANDARD');
+        expect(decision.toolGroups).toEqual([]);
+    });
+
     test('should stick to PRO for confirmation "ok" if lastModel was PRO', async () => {
         // Mock LLM response
         mockSendMessage.mockResolvedValueOnce({
