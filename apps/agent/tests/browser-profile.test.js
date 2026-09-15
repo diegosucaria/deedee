@@ -2,7 +2,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const net = require('net');
-const { argValue, lockPid, clearStaleProfileLock, isPortBusy, debugPortFromConfig, LOCK_FILES } = require('../src/utils/browser-profile');
+const { argValue, lockPid, clearStaleProfileLock, isPortBusy, waitForPortFree, debugPortFromConfig, LOCK_FILES } = require('../src/utils/browser-profile');
 
 function makeProfile(pid) {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deedee-profile-'));
@@ -67,6 +67,38 @@ describe('isPortBusy', () => {
         expect(await isPortBusy(port)).toBe(true);
         await new Promise(r => server.close(r));
         expect(await isPortBusy(port)).toBe(false);
+    });
+});
+
+describe('waitForPortFree', () => {
+    test('resolves true once the listener closes, and reports the wait', async () => {
+        const server = net.createServer();
+        await new Promise(res => server.listen(0, '127.0.0.1', res));
+        const port = server.address().port;
+        const onWait = jest.fn();
+        setTimeout(() => server.close(), 300);
+        const t0 = Date.now();
+        expect(await waitForPortFree(port, { timeoutMs: 5000, intervalMs: 50, onWait })).toBe(true);
+        expect(Date.now() - t0).toBeGreaterThanOrEqual(250);
+        expect(onWait).toHaveBeenCalledTimes(1);
+    });
+
+    test('resolves false when the port stays busy past the timeout', async () => {
+        const server = net.createServer();
+        await new Promise(res => server.listen(0, '127.0.0.1', res));
+        const port = server.address().port;
+        expect(await waitForPortFree(port, { timeoutMs: 300, intervalMs: 50 })).toBe(false);
+        await new Promise(res => server.close(res));
+    });
+
+    test('resolves true at once for a free port', async () => {
+        const server = net.createServer();
+        await new Promise(res => server.listen(0, '127.0.0.1', res));
+        const port = server.address().port;
+        await new Promise(res => server.close(res));
+        const onWait = jest.fn();
+        expect(await waitForPortFree(port, { timeoutMs: 1000, onWait })).toBe(true);
+        expect(onWait).not.toHaveBeenCalled();
     });
 });
 

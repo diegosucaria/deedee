@@ -11,8 +11,9 @@ Chromium on a persistent profile. Spec: `specs/048-browser-v3.md`.
   `browser_*`. `browser_run_code_unsafe` and `browser_close` are excluded.
 - **Launcher stub**: `apps/agent/scripts/browser-mcp.js`. Before the real CLI it
   clears a stale Chromium profile lock (only when the lock's pid is dead or not
-  Chromium), creates an empty secrets file when missing, and checks that port
-  9222 is free. A busy port exits 1 with a clear message.
+  Chromium), creates an empty secrets file when missing, and waits up to 15 s
+  for port 9222 to be free (on a restart the old Chromium may hold it for a
+  few seconds). A port still busy after that exits 1 with a clear message.
 - **Playwright config**: `apps/agent/playwright-mcp.config.json`. Adds
   `--remote-debugging-port=9222` so the live viewer can attach, turns off the
   Chromium sandbox (the container runs as root), and sets a 1280x800 viewport.
@@ -125,8 +126,9 @@ site logged in.
 - Chromium crash: the tool returns an error; the next call relaunches it.
   The live view sees the socket close, shows "Browser closed" and Start.
 - Stale `SingletonLock` after a hard kill: the stub removes it.
-- Port 9222 busy: the stub exits 1; `getStatus` shows the server down;
-  `POST /internal/mcp/reload` starts it again once the port is free.
+- Port 9222 busy: the stub waits up to 15 s, then exits 1; `getStatus` shows
+  the server down; `POST /internal/mcp/reload` starts it again once the port
+  is free.
 - Server death: the next call restarts the server once and retries.
 - Secrets file missing: the server starts with no secrets.
 

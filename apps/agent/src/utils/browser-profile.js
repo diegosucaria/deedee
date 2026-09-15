@@ -84,6 +84,24 @@ function isPortBusy(port, host = '127.0.0.1', timeoutMs = 500) {
     });
 }
 
+/**
+ * Polls until nothing listens on host:port. Resolves true when the port is
+ * free, false when it is still busy after `timeoutMs`. A restart spawns the
+ * new server right after the SDK closes the old one, and on a slow machine
+ * the old Chromium can hold the port for a few more seconds.
+ */
+async function waitForPortFree(port, { host = '127.0.0.1', timeoutMs = 15000, intervalMs = 250, onWait = null } = {}) {
+    const deadline = Date.now() + timeoutMs;
+    let waited = false;
+    while (await isPortBusy(port, host)) {
+        if (Date.now() >= deadline) return false;
+        if (!waited && onWait) onWait();
+        waited = true;
+        await new Promise(res => setTimeout(res, intervalMs));
+    }
+    return true;
+}
+
 /** Port from `--remote-debugging-port=N` in the Playwright config's launch args. */
 function debugPortFromConfig(configPath) {
     try {
@@ -97,4 +115,4 @@ function debugPortFromConfig(configPath) {
     }
 }
 
-module.exports = { argValue, lockPid, clearStaleProfileLock, isPortBusy, debugPortFromConfig, LOCK_FILES, DEFAULT_DEBUG_PORT };
+module.exports = { argValue, lockPid, clearStaleProfileLock, isPortBusy, waitForPortFree, debugPortFromConfig, LOCK_FILES, DEFAULT_DEBUG_PORT };

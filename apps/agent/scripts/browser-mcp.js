@@ -5,13 +5,16 @@
  * Runs before every spawn, including restartServer:
  * 1. Clears a stale Chromium profile lock (dead pid or not chromium).
  * 2. Makes sure the secrets file exists; --secrets fails on a missing file.
- * 3. Checks the CDP port. playwright would hang until its launch timeout if
- *    another Chromium already holds it, so fail fast with a clear message.
+ * 3. Waits for the CDP port. On a restart the old Chromium may still hold it
+ *    for a few seconds. playwright would hang until its launch timeout if
+ *    another Chromium holds the port, so after the wait fail with a clear message.
  * Then hands argv to the real CLI (cli.js in the @playwright/mcp package) unchanged.
  */
 const fs = require('fs');
 const path = require('path');
-const { argValue, clearStaleProfileLock, isPortBusy, debugPortFromConfig } = require('../src/utils/browser-profile');
+const { argValue, clearStaleProfileLock, waitForPortFree, debugPortFromConfig } = require('../src/utils/browser-profile');
+
+const PORT_WAIT_MS = 15000;
 
 async function main() {
     const argv = process.argv.slice(2);
@@ -33,8 +36,12 @@ async function main() {
 
     const configFile = argValue(argv, '--config');
     const port = debugPortFromConfig(configFile ? path.resolve(configFile) : '');
-    if (await isPortBusy(port)) {
-        console.error(`[browser-mcp] port 127.0.0.1:${port} is busy. Another Chromium (or an old browser MCP) still holds it. Stop it, then reload the MCP servers.`);
+    const free = await waitForPortFree(port, {
+        timeoutMs: PORT_WAIT_MS,
+        onWait: () => console.error(`[browser-mcp] port 127.0.0.1:${port} is busy; waiting up to ${PORT_WAIT_MS / 1000}s for it to free up`)
+    });
+    if (!free) {
+        console.error(`[browser-mcp] port 127.0.0.1:${port} is still busy after ${PORT_WAIT_MS / 1000}s. Another Chromium (or an old browser MCP) holds it. Stop it, then reload the MCP servers.`);
         process.exit(1);
     }
 
