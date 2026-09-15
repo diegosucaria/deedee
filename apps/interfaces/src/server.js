@@ -630,7 +630,9 @@ app.post('/send', async (req, res) => {
         io.to(target).emit('agent:message', {
           content,
           type: type || 'text',
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          // askUser questions carry { id, options }; the chat renders them as chips
+          metadata: metadata.question ? { chatId: metadata.chatId, question: metadata.question } : undefined
         });
         return res.json({ success: true });
       }
