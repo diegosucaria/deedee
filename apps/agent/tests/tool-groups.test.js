@@ -56,6 +56,11 @@ describe('groupsNamedIn', () => {
         expect(groupsNamedIn('puedes ver mis proximos turnos con el allende mcp?')).toEqual(['health']);
         expect(groupsNamedIn('Check Plex and my Gmail')).toEqual(['workspace', 'media']);
         expect(groupsNamedIn('turn on the Home Assistant lights')).toEqual(['home']);
+        expect(groupsNamedIn('open the browser and check my bill')).toEqual(['browser']);
+        expect(groupsNamedIn('use playwright to log in')).toEqual(['browser']);
+        expect(mcpServerGroup('browser')).toBe('browser');
+        expect(mcpServerGroup('browser-use')).toBeNull();
+        expect(TOOL_GROUPS.browser).toContain('Playwright');
         expect(groupsNamedIn('hola, como estas?')).toEqual([]);
         expect(groupsNamedIn(undefined)).toEqual([]);
     });

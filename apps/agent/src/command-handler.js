@@ -24,7 +24,7 @@ class CommandHandler {
             if (this.stopFlags) {
                 this.stopFlags.add(chatId);
                 this.stopFlags.add('GLOBAL_STOP');
-                // Cancel any active long-running MCP tool calls immediately (e.g. browser_use_task)
+                // Cancel any active MCP tool calls at once (e.g. a long browser_ step)
                 if (this.agent?.mcp?.cancelActiveCalls) {
                     this.agent.mcp.cancelActiveCalls();
                 }

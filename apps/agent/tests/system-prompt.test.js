@@ -28,4 +28,24 @@ describe('system prompt vs turn context', () => {
         }
         expect(t.startsWith('[TURN CONTEXT')).toBe(true);
     });
+
+    test('browser secret names appear as names only, in the turn context or the prompt', () => {
+        const t = getTurnContext({ dateString: 'T', browserSecretNames: ['SITE_USER', 'SITE_PASSWORD'] });
+        expect(t).toContain('BROWSER SECRETS (type these names exactly): SITE_USER, SITE_PASSWORD');
+        expect(getTurnContext({ dateString: 'T', browserSecretNames: [] })).toContain('BROWSER SECRETS: none saved');
+        expect(getTurnContext({ dateString: 'T' })).not.toContain('BROWSER SECRETS');
+
+        const full = getSystemInstruction('T', 'G', 'F', { dynamicInTurn: true, browserSecretNames: ['SITE_USER'] });
+        expect(full).toContain('BROWSER PROTOCOL');
+        expect(full).toContain('askUser');
+        expect(full).toContain('/browser');
+        expect(full).not.toContain('browser_use');
+        expect(full).not.toContain('SITE_USER'); // names live in the turn context here
+
+        const grok = getSystemInstruction('T', 'G', 'F', { dynamicInTurn: false, browserSecretNames: ['SITE_USER'] });
+        expect(grok).toContain('BROWSER SECRETS (type these names exactly): SITE_USER');
+
+        const light = getSystemInstruction('T', 'G', 'F', { isLightweight: true, browserSecretNames: ['SITE_USER'] });
+        expect(light).toContain('SITE_USER');
+    });
 });

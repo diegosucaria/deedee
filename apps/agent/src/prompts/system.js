@@ -7,7 +7,7 @@
  * @returns {string} The system instruction.
  */
 function getSystemInstruction(dateString, activeGoals, facts, options = { codingMode: false, vaultContext: null }) {
-        const { codingMode, vaultContext, skillsContext, notificationContext, isLightweight, communicationStyle, dynamicInTurn } = options;
+        const { codingMode, vaultContext, skillsContext, notificationContext, isLightweight, communicationStyle, dynamicInTurn, browserSecretNames } = options;
 
         // Lightweight mode: minimal prompt for scanner/fetch sub-agents
         if (isLightweight) {
@@ -24,6 +24,7 @@ EXECUTION RULES:
 3. HARD LIMIT: If you have made 10 tool calls and are not done, STOP and return what you have so far.
 4. Do NOT call tools speculatively. Only call a tool if the task requires it.
 5. If a tool returns empty or no results, move on unless the task explicitly requires retrying with different parameters.
+6. Browser tools (browser_*): navigate, snapshot, act by ref. Type secret NAMES, never values.${formatBrowserSecrets(browserSecretNames)}
 ${notificationContext?.ownerPhone ? `\nOWNER CONTACT: Your owner is "${notificationContext.ownerName}". Send messages to owner with to="me". Do NOT use searchContacts for the owner.` : ''}`;
         }
 
@@ -106,36 +107,37 @@ ${notificationContext?.ownerPhone ? `\nOWNER CONTACT: Your owner is "${notificat
             3. **Exclude Colleagues**: DO NOT query colleagues' individual calendars (usually identified by their email addresses) unless explicitly asked by the user.
             4. **Deduplication**: If you have access to multiple Google accounts (e.g., 'work' and 'personal' MCPs), be careful not to query the exact same calendar ID (like personal email) through both MCPs to avoid duplicate events.
 
-            BROWSER PROTOCOL (browser-use):
-            You have browser automation via browser-use tools. Choose the right tool for the job:
+            BROWSER PROTOCOL (Playwright browser, tools named browser_*):
+            The browser runs on a persistent profile: logins and cookies survive between tasks.
 
             1. **When to Browse vs Search**:
                - Use 'googleSearch' for quick facts, weather, stock prices, or simple Q&A.
-               - Use browser tools when the user explicitly asks to "navigate", "browse", "go to", "log in", or "check a page".
-               - Use browser tools to **act** on a page (login, click, fill forms), read **full page content**, or access specific URLs.
+               - Use browser tools when the user asks to "navigate", "browse", "go to", "log in", or "check a page".
+               - Use browser tools to **act** on a page (login, click, fill forms), read **full page content**, or open specific URLs.
 
-            2. **Autonomous Tasks (preferred for complex work)**:
-               - Use 'browser_use_task' for multi-step browsing: research, form-filling, comparisons, data extraction across pages.
-               - Write a detailed task description. Include the goal, constraints, and what to extract.
-               - Set a starting URL if known. The agent navigates autonomously from there.
-               - Example: browser_use_task(task="Find the 3 cheapest flights from SFO to LAX on June 15, extract airline, price, and departure time", url="https://google.com/flights")
+            2. **Flow**: browser_navigate -> browser_snapshot -> act by 'ref' -> browser_snapshot again.
+               - 'browser_snapshot' returns the page as an accessibility tree. Every element has a 'ref' (like e12). Pass that ref to browser_click, browser_type, browser_select_option, browser_hover and browser_fill_form.
+               - Most actions return a fresh snapshot. Read it before the next step; do not re-snapshot without need.
+               - Use 'browser_take_screenshot' only to check visuals (layout, an image, a chart). The screenshot reaches you as an image; describe what you see, do not paste it.
+               - Use 'browser_wait_for' for text that loads late. Use 'browser_tabs' for tabs. Use 'browser_navigate_back' to go back.
+               - One browser step at a time. Do not call several browser tools in one turn.
 
-            3. **Manual Control (for simple or precise actions)**:
-               - Use 'browser_use_open' to navigate to a URL and see the page title.
-               - Use 'browser_use_state' to see the page's interactive elements (each has an index number).
-               - Use 'browser_use_click(index)' and 'browser_use_type(index, text)' to interact with elements by index.
-               - Use 'browser_use_screenshot' for visual verification.
-               - Use 'browser_use_close' to clean up when done.
-               - Flow: open → state → click/type → state → ... → close
+            3. **Secrets (passwords, codes)**:
+               - Never ask for a password and never type a real value. Type the secret NAME exactly as listed under BROWSER SECRETS${dynamicInTurn ? ' in the TURN CONTEXT' : ' below'}; the browser swaps the name for the value. A name that differs by one character is typed as plain text.
+               - Example: browser_type(ref="e7", text="SITE_PASSWORD"). Also valid inside browser_fill_form values.
+               - Tool output shows values as <secret>NAME</secret>. Never repeat a value in chat.
+               - If no secret fits, ask the user to add one in Settings > Browser secrets, or to log in himself.
 
-            4. **Choosing Between Autonomous vs Manual**:
-               - **Autonomous** ('browser_use_task'): Best for tasks needing 3+ steps, research across pages, or complex form flows. It handles navigation, waiting, and retries internally.
-               - **Manual** (open/state/click/type): Best for single-page reads, one quick click, or when you need precise control over each step.
+            4. **When you need the user**:
+               - For an OTP or SMS code, a CAPTCHA, or a choice only the user can make, call 'askUser' with a short question (and options when there are a few). Wait for the answer, then continue.
+               - If a site needs a fresh login and no secret covers it, stop and tell the user to log in at /browser (the live browser page). The session stays in the profile; try again after.
+               - Never guess credentials. Never retry a login more than twice.
 
-            5. **Important Rules**:
-               - Do NOT mix autonomous and manual tools in the same workflow — they use separate browser instances.
-               - Always call 'browser_use_close' when done with manual browsing to free resources.
-               - If 'browser_use_task' fails or gives incomplete results, fall back to manual tools for direct control.
+            5. **Limits**:
+               - Do not call browser_close; the browser closes on its own after 10 idle minutes.
+               - Each browser tool call may take up to 2 minutes. If a page will not load after two tries, report that and stop.
+               - Keep reports short: what you found, and any step you could not finish.
+            ${dynamicInTurn ? '' : formatBrowserSecrets(browserSecretNames)}
     `;
 
         const THINKING_PROTOCOL = `
@@ -215,11 +217,19 @@ ${notificationContext?.ownerPhone ? `\nOWNER CONTACT: Your owner is "${notificat
  * instruction, so the system instruction and tool list stay byte-identical
  * between requests and Gemini's implicit prefix cache can hit.
  */
-function getTurnContext({ dateString, activeGoals, skillsContext, vaultContext, location } = {}) {
+/** "BROWSER SECRETS: A, B" or a note that none exist. Names only, never values. */
+function formatBrowserSecrets(names) {
+        if (!Array.isArray(names)) return '';
+        if (names.length === 0) return '\nBROWSER SECRETS: none saved. Ask the user to add them in Settings > Browser secrets.';
+        return `\nBROWSER SECRETS (type these names exactly): ${names.join(', ')}`;
+}
+
+function getTurnContext({ dateString, activeGoals, skillsContext, vaultContext, location, browserSecretNames } = {}) {
         const lines = ['[TURN CONTEXT — generated by the system for this message, not written by the user]'];
         if (dateString) lines.push(`CURRENT_TIME: ${dateString}`);
         if (location) lines.push(`USER LOCATION: The user is currently in ${location}. Use this for context (weather, time, local queries) if queried.`);
         lines.push(`ACTIVE GOALS (your in-flight multi-session work):\n${activeGoals ? activeGoals : 'None.'}`);
+        if (Array.isArray(browserSecretNames)) lines.push(formatBrowserSecrets(browserSecretNames).trim());
         if (skillsContext) {
                 lines.push(`ACTIVE SKILLS:\nThe following are specialized behavioral modules you have loaded. Adopt these personas or follow these procedures when triggered by the relevant context.\n${skillsContext}`);
         }
@@ -230,4 +240,4 @@ function getTurnContext({ dateString, activeGoals, skillsContext, vaultContext, 
         return lines.join('\n\n');
 }
 
-module.exports = { getSystemInstruction, getTurnContext };
+module.exports = { getSystemInstruction, getTurnContext, formatBrowserSecrets };
