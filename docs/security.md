@@ -58,3 +58,37 @@ For the env-var inventory and two-subdomain vs single-subdomain recipes, see the
 ### Tools
 - **GSuite**: Full Read/Write access to Calendar and Mail.
 - **Home Assistant**: Full Control (lights, locks, etc). *Specific critical actions (unlock, disarm) require confirmation.*
+
+## Personal data guard
+
+The repo is public. `scripts/check-pii.js` blocks personal data and secrets before they land. It needs Node only, no packages.
+
+**What it blocks**
+- Argentine phone numbers (`549` + 8-10 digits) and any other run of 11-15 digits.
+- WhatsApp ids with real-looking digits: `<digits>@s.whatsapp.net`, `<digits>@lid`, `<digits>@g.us`.
+- Secret-looking tokens: Google API keys (`AIza`) and OAuth tokens (`ya29.`), Slack tokens (`xoxb-`, `xoxa-`, `xoxp-`) and webhook URLs, GitHub tokens (`ghp_`, `github_pat_`), Tailscale keys (`tskey-`), private key blocks.
+- Private LAN addresses (`10.x.x.x`, `192.168.x.x` with numeric octets).
+- Anything that matches your local `.pii-denylist` (see below).
+
+**What it allows**
+- Digit runs with fewer than 4 distinct digits (`5490000000000`, `100000000000001`), `549` plus a near-constant tail (`5490000000001`), monotone sequences (`1234567890`), epoch milliseconds (`1700000000000`) and the fictional US 555 range (`15551234567`).
+- Token placeholders made of repeated characters (`AIzaXXXX...`, `xoxb-XXXX`).
+- A line that carries `pii-guard: allow`. Use it only for pattern definitions and synthetic test fixtures.
+
+**Where it runs**
+- `.husky/pre-commit` scans the staged diff on every commit.
+- The `pii-guard` job in `.github/workflows/ci.yml` scans added lines on pull requests (`--range origin/master...HEAD`) and the whole tree on pushes to `master`.
+
+**Run it yourself**
+```bash
+node scripts/check-pii.js                                # whole tree
+node scripts/check-pii.js --range origin/master...HEAD   # your branch
+node scripts/check-pii.js --staged --fix-hints           # staged changes, with placeholder hints
+```
+Each hit prints as `file:line: <masked match> [rule]`. Exit code 1 means hits, 2 means a usage or git error.
+
+**Denylist for names**
+Names cannot go into a public pattern list. Put them in `.pii-denylist` at the repo root: one regex per line, `#` starts a comment, matching ignores case. The file is gitignored, so it stays on your machine and CI never sees it. `--denylist <file>` points at another file.
+
+**History**
+Commits from before this guard may still hold phone numbers or ids. The guard does not scan history. The owner decides whether to rewrite history, which changes every commit hash and forces every clone to re-fetch, or to accept it and rotate anything that was exposed.
