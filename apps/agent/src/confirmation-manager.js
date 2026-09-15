@@ -64,9 +64,21 @@ class ConfirmationManager {
                     /agent\.db/.test(args.command) ||
                     /\bstrings\s+.*\/app\/data/i.test(args.command) ||
                     // Interfaces volume contains credentials
-                    /\/app\/interfaces-data/i.test(args.command)
+                    /\/app\/interfaces-data/i.test(args.command) ||
+                    // Browser profile: secrets dotenv/JSON and Chromium cookies
+                    /browser[_-]profile/i.test(args.command) ||
+                    /browser-secrets/i.test(args.command) ||
+                    // Chromium's CDP port: Network.getAllCookies would dump every session
+                    /(?:^|[^0-9])9222(?![0-9])/.test(args.command) ||
+                    /\/devtools\//i.test(args.command)
                 ),
                 message: '⚠️ Direct database/credentials access via shell is not allowed. Use the proper tools instead.'
+            },
+            {
+                // The browser profile holds the secrets files and Chromium's cookies.
+                condition: (name, args) => ['readFile', 'writeFile', 'listDirectory'].includes(name)
+                    && /browser[_-]profile|browser-secrets/i.test(String(args?.path || '')),
+                message: '⚠️ The browser profile holds secrets and cookies. Reading it is not allowed.'
             },
             {
                 condition: (name, args) => name === 'sendEmail' && !args.to.includes('@'), // loose check

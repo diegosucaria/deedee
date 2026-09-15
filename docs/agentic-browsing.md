@@ -51,6 +51,10 @@ The model only ever sees the names, listed in each turn's context. It types a
 name with `browser_type`; the server swaps it for the value on an exact match.
 Tool output shows values as `<secret>NAME</secret>`. The `$SECRET` skill
 substitution is skipped for `browser_` tools so names reach the server as typed.
+The confirmation manager stops `runShellCommand`, `readFile` and
+`listDirectory` from touching `browser_profile/`, `browser-secrets*` or the
+CDP port 9222, so a page cannot talk the model into reading the values or
+dumping cookies with `Network.getAllCookies`.
 
 A save restarts Chromium. Someone using the live viewer at that moment sees the
 browser close; the profile keeps the cookies.

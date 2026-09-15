@@ -25,6 +25,19 @@ describe('ConfirmationManager', () => {
         expect(check('runShellCommand', { command: 'ls -la' }).requiresConfirmation).toBe(false);
     });
 
+    test('blocks shell access to the browser profile, its secrets and the CDP port', () => {
+        expect(check('runShellCommand', { command: 'cat /app/data/browser_profile/browser-secrets.env' }).requiresConfirmation).toBe(true);
+        expect(check('runShellCommand', { command: 'cat data/browser_profile/browser-secrets.json' }).requiresConfirmation).toBe(true);
+        expect(check('runShellCommand', { command: 'ls /app/data/browser_profile/chromium/Default' }).requiresConfirmation).toBe(true);
+        expect(check('runShellCommand', { command: 'curl -s http://127.0.0.1:9222/json/list' }).requiresConfirmation).toBe(true);
+        expect(check('runShellCommand', { command: 'node -e "new WebSocket(\'ws://localhost:9222/devtools/page/1\')"' }).requiresConfirmation).toBe(true);
+        expect(check('runShellCommand', { command: 'echo 19222' }).requiresConfirmation).toBe(false);
+        expect(check('runShellCommand', { command: 'ls /app/data/output' }).requiresConfirmation).toBe(false);
+        expect(check('readFile', { path: '/app/data/browser_profile/browser-secrets.env' }).requiresConfirmation).toBe(true);
+        expect(check('listDirectory', { path: '/app/data/browser_profile/chromium' }).requiresConfirmation).toBe(true);
+        expect(check('readFile', { path: '/app/data/notes.txt' }).requiresConfirmation).toBe(false);
+    });
+
     test('should block Plex destruction', () => {
         expect(check('media_delete', { id: 123 }).requiresConfirmation).toBe(true);
         expect(check('playlist_delete', { id: 1 }).requiresConfirmation).toBe(true);

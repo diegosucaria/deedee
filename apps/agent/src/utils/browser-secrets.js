@@ -1,9 +1,10 @@
 /**
  * Browser secrets: the Settings UI saves a JSON map; the browser MCP server
  * (@playwright/mcp --secrets) reads a dotenv file. This module renders one
- * from the other and lists the names for the prompt. Values never leave the
- * data dir: the model only sees names, and the server redacts values from
- * tool output.
+ * from the other and lists the names for the prompt. The model only sees
+ * names: the server redacts values from tool output, and the confirmation
+ * manager stops runShellCommand from reading `browser_profile/` or talking
+ * to the CDP port. Both files are mode 0600 under the data dir.
  */
 const fs = require('fs');
 const path = require('path');
