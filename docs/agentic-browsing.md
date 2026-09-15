@@ -54,11 +54,55 @@ substitution is skipped for `browser_` tools so names reach the server as typed.
 A save restarts Chromium. Someone using the live viewer at that moment sees the
 browser close; the profile keeps the cookies.
 
-## Live view and questions (stage B)
+## Live view
 
-- `/browser` in the web app shows the page over CDP (port 9222), lets Diego
-  type a URL, click and type, and log in himself. Any signed-in web user can
-  drive it; fine for a single owner.
+`/browser` in the web app shows the page the MCP server drives and lets Diego
+type a URL, click, type and log in himself. The Sidebar links to it, and the
+chat widget (`LiveBrowserWidget`) shows the same frames while the agent uses
+the browser, with a link to the full page.
+
+- **Agent**: `apps/agent/src/services/browser-live.js` speaks raw CDP over the
+  global `WebSocket` to Chromium's debug port (9222, read from
+  `playwright-mcp.config.json`). It picks the focused page target from
+  `/json/list`, runs `Page.startScreencast` (JPEG, quality 50, max 1280x800,
+  every 2nd frame), acks each frame and broadcasts at most 5 per second as
+  `browser:frame { data, w, h, url }`. `w` and `h` are viewport pixels; the
+  viewer scales mouse positions to them. Input maps to
+  `Input.dispatchMouseEvent`, `Input.insertText` (printable text) and
+  `Input.dispatchKeyEvent` (Enter, Tab, Backspace, Escape, Delete, arrows,
+  Home, End, PageUp, PageDown). The URL bar calls `Page.navigate`; only
+  `http`, `https` and `about:` URLs pass.
+- **Watch pings**: the page sends `browser:watch` every 10 s. The screencast
+  starts on the first ping, stops 30 s after the last one, and reconnects
+  every 3 s while watched if Chromium closes. While watched the service
+  calls `browser_tabs list` every 5 minutes through `mcp.callTool`, so the
+  server's idle timer does not close Chromium under Diego. This call skips
+  the agent loop, history and the `agent:tool_call` broadcast.
+- **Start**: `mcp.callTool('browser_navigate', { url: 'about:blank' })`, so
+  the MCP server stays the only launcher.
+- **Status**: `browser:status { running, url, agentBusy, watchers }` goes out
+  on change. `agentBusy` is true while a `browser_` tool call is in flight.
+  The viewer then locks input until "Take over" is pressed; the lock returns
+  with the agent's next call.
+- **Routes**: agent `POST /internal/browser/live/watch|input|navigate|start`
+  and `GET /internal/browser/live/status` (bearer `DEEDEE_INTERNAL_TOKEN`).
+  The interfaces service maps socket events `browser:watch`, `browser:input`
+  and `browser:navigate` to them and drops input above 60 events per second
+  per socket. The API proxies `GET /v1/browser/status` and
+  `POST /v1/browser/start` for the page's first render.
+- **Access**: any signed-in web user can watch and drive the browser. Fine
+  for a single owner.
+
+### Login sequence
+
+Open `/browser`, press Start, type the site URL, log in with real keystrokes
+and handle the OTP on the phone. Cookies land in `browser_profile/chromium`.
+Leave; idle closes Chromium after 10 minutes. Later the model's
+`browser_navigate` relaunches on the same profile and the snapshot shows the
+site logged in.
+
+## Questions to the user
+
 - `askUser({ question, options?, timeoutSeconds? })` lets the model ask for an
   OTP, a CAPTCHA or a choice and wait. Default wait 300 s, max 900 s. The next
   plain text message in the reply chat is the answer; a number picks an option.
@@ -79,6 +123,7 @@ browser close; the profile keeps the cookies.
 ## Failure modes
 
 - Chromium crash: the tool returns an error; the next call relaunches it.
+  The live view sees the socket close, shows "Browser closed" and Start.
 - Stale `SingletonLock` after a hard kill: the stub removes it.
 - Port 9222 busy: the stub exits 1; `getStatus` shows the server down;
   `POST /internal/mcp/reload` starts it again once the port is free.
