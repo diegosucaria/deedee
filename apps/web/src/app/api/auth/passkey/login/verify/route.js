@@ -1,13 +1,7 @@
 import { NextResponse } from 'next/server';
 import { finishAuthentication } from '@/lib/auth/webauthn';
 import { issueSession, buildSetCookie } from '@/lib/auth/session';
-import { rateLimitLogin, resetRateLimit } from '@/lib/auth/rate-limit';
-
-function clientIp(req) {
-    const fwd = req.headers.get('x-forwarded-for');
-    if (fwd) return fwd.split(',')[0].trim();
-    return req.headers.get('x-real-ip') || 'unknown';
-}
+import { rateLimitLogin, resetRateLimit, recordLoginFailure, clientIp } from '@/lib/auth/rate-limit';
 
 export async function POST(request) {
     const ip = clientIp(request);
@@ -27,6 +21,7 @@ export async function POST(request) {
         res.cookies.set(buildSetCookie(token, ttl));
         return res;
     } catch (err) {
+        recordLoginFailure();
         const status = err.status || 401;
         return NextResponse.json({ error: err.message }, { status });
     }
