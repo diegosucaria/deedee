@@ -17,19 +17,28 @@ class Monitor {
         this.rollbackThreshold = 5; // Rollback after 5 failures
         this.dangerWindow = 10 * 60 * 1000; // 10 minutes after update
 
+        // Rollback policy. The window only opens for a commit the supervisor
+        // itself authored (a self-improvement). Owner merges never roll back.
+        this.autoRollback = (process.env.SUPERVISOR_AUTO_ROLLBACK || 'true') !== 'false';
+        this.supervisorEmail = process.env.GIT_USER_EMAIL || 'supervisor@deedee.bot';
+        this.selfCommit = null; // Hash of the self-commit the window protects
+
         // State
         this.failures = 0;
         this.intervalId = null;
-        this.lastUpdate = Date.now(); // Assume we just started, so we are in danger window
+        this.lastUpdate = 0; // 0 = danger window closed. start() decides.
     }
 
-    start() {
+    async start() {
         console.log('[Monitor] Starting health checks...');
         console.log(`[Monitor] Agent URL: ${this.agentUrl}`);
         if (this.slackWebhookUrl) console.log('[Monitor] Slack alerting enabled.');
 
+        // Decide the rollback window before notifyStartup() rewrites .last_boot_commit
+        await this.assessRollbackWindow();
+
         // Startup Notification
-        this.notifyStartup();
+        await this.notifyStartup();
 
         // Initial check
         this.check();
@@ -41,11 +50,61 @@ class Monitor {
         if (this.intervalId) clearInterval(this.intervalId);
     }
 
-    async notifyStartup() {
-        if (!this.slackWebhookUrl) return;
+    _trackingFile() {
+        return path.join(this.git.workDir, '.last_boot_commit');
+    }
+
+    _readLastBootCommit() {
+        const trackingFile = this._trackingFile();
+        if (fs.existsSync(trackingFile)) {
+            return fs.readFileSync(trackingFile, 'utf-8').trim();
+        }
+        return '';
+    }
+
+    /**
+     * Open the danger window only when HEAD is new since the last boot AND the
+     * supervisor wrote it. Any other start (reboot, deploy, owner merge) keeps
+     * the window closed: we still alert, we never roll back.
+     */
+    async assessRollbackWindow() {
+        this.lastUpdate = 0;
+        this.selfCommit = null;
+
+        if (!this.autoRollback) {
+            console.log('[Monitor] Auto-rollback disabled (SUPERVISOR_AUTO_ROLLBACK=false). Window closed.');
+            return;
+        }
 
         try {
-            const trackingFile = path.join(this.git.workDir, '.last_boot_commit');
+            const info = await this.git.run('git log -1 --pretty=format:%H|%ae');
+            if (!info) {
+                console.warn('[Monitor] Could not read HEAD. Rollback window closed.');
+                return;
+            }
+
+            const [hash, authorEmail = ''] = info.split('|');
+            const lastHash = this._readLastBootCommit();
+            const changed = hash !== lastHash;
+            const isSelf = authorEmail.trim().toLowerCase() === this.supervisorEmail.toLowerCase();
+
+            if (changed && isSelf) {
+                this.lastUpdate = Date.now();
+                this.selfCommit = hash;
+                console.log(`[Monitor] HEAD ${hash.substring(0, 7)} is a new self-commit. Rollback window open for ${this.dangerWindow / 60000} min.`);
+                return;
+            }
+
+            const reason = !changed ? 'HEAD unchanged since last boot' : 'HEAD not authored by the supervisor';
+            console.log(`[Monitor] Rollback window closed: ${reason} (${hash.substring(0, 7)}).`);
+        } catch (err) {
+            console.error('[Monitor] Rollback window check failed, keeping it closed:', err.message);
+        }
+    }
+
+    async notifyStartup() {
+        try {
+            const trackingFile = this._trackingFile();
             
             // Get current commit info
             // %H: commit hash, %s: subject
@@ -60,10 +119,7 @@ class Monitor {
             const [currentHash, ...msgParts] = commitInfo.split('|');
             const currentMessage = msgParts.join('|');
 
-            let lastHash = '';
-            if (fs.existsSync(trackingFile)) {
-                lastHash = fs.readFileSync(trackingFile, 'utf-8').trim();
-            }
+            const lastHash = this._readLastBootCommit();
 
             if (currentHash !== lastHash) {
                 // New commit or first run
@@ -157,27 +213,39 @@ class Monitor {
             await this.alertUser(`⚠️ **Agent Alert**\nAgent is unresponsive (3 consecutive failures).`);
         }
 
-        // Tier 2: Auto-Rollback
-        const timeSinceUpdate = Date.now() - this.lastUpdate;
-        if (this.failures >= this.rollbackThreshold && timeSinceUpdate < this.dangerWindow) {
-            console.warn('[Monitor] Rollback threshold reached inside danger window. Initiating rollback...');
-            await this.alertUser(`🔄 **Auto-Rollback Triggered**\nAgent crashed repeatedly after recent update. Rolling back changes...`);
-
-            try {
-                const result = await this.git.rollback();
-                if (result.success) {
-                    await this.alertUser(`✅ Rollback successful. Waiting for restart...`);
-                    // Reset failures to give it time to restart
-                    this.failures = 0;
-                    // Reset lastUpdate to "Infinity" (past) effectively closing the danger window for this run.
-                    this.lastUpdate = 0;
-                } else {
-                    await this.alertUser(`❌ Rollback failed: ${result.error}`);
-                }
-            } catch (err) {
-                console.error('[Monitor] Rollback exception:', err);
-            }
+        // Tier 2: Auto-Rollback (self-commits only, inside the danger window)
+        if (this.failures < this.rollbackThreshold) return;
+        if (!this.autoRollback) {
+            console.warn('[Monitor] Rollback threshold reached but auto-rollback is disabled. Alert only.');
+            return;
         }
+        const timeSinceUpdate = Date.now() - this.lastUpdate;
+        if (!this.lastUpdate || !this.selfCommit || timeSinceUpdate >= this.dangerWindow) {
+            if (this.failures === this.rollbackThreshold) {
+                console.warn('[Monitor] Rollback threshold reached outside the danger window. Alert only, no rollback.');
+            }
+            return;
+        }
+
+        console.warn('[Monitor] Rollback threshold reached inside danger window. Initiating rollback...');
+        await this.alertUser(`🔄 **Auto-Rollback Triggered**\nAgent crashed repeatedly after a self-update. Rolling back changes...`);
+
+        try {
+            // Only revert the self-commit recorded at start. GitOps re-checks HEAD.
+            const result = await this.git.rollback({ expectedHead: this.selfCommit });
+            if (result.success) {
+                await this.alertUser(`✅ Rollback successful. Waiting for restart...`);
+                // Reset failures to give it time to restart
+                this.failures = 0;
+            } else {
+                await this.alertUser(`❌ Rollback failed: ${result.error}`);
+            }
+        } catch (err) {
+            console.error('[Monitor] Rollback exception:', err);
+        }
+        // Close the danger window for this run, whatever the outcome.
+        this.lastUpdate = 0;
+        this.selfCommit = null;
     }
 
     async alertUser(message) {

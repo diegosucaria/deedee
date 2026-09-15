@@ -142,8 +142,21 @@ class GitOps {
     }
   }
 
-  async rollback() {
+  /**
+   * Revert HEAD and push. With `expectedHead`, refuse when HEAD moved: the
+   * monitor only ever reverts the self-commit it recorded at start.
+   */
+  async rollback({ expectedHead } = {}) {
     try {
+      if (expectedHead) {
+        const head = await this.run('git rev-parse HEAD');
+        if (head !== expectedHead) {
+          const msg = `Rollback aborted: HEAD ${head.substring(0, 7)} is not the self-commit ${expectedHead.substring(0, 7)}.`;
+          console.warn(`[GitOps] ${msg}`);
+          return { success: false, error: msg };
+        }
+      }
+
       console.log('[GitOps] Rolling back last commit...');
       // Ensure clean state
       await this.run('git reset --hard HEAD');
