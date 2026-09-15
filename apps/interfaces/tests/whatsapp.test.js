@@ -296,8 +296,8 @@ describe('WhatsAppService Unit Tests', () => {
     });
 
     test('should resolve LID via centralized resolver when participant is missing', async () => {
-        const lidJid = '987654321012345@lid';
-        const realNumber = '549351234567';
+        const lidJid = '100000000000002@lid';
+        const realNumber = '549000000000';
 
         whatsapp.allowedNumbers = new Set([realNumber]);
         const spyAxios = require('axios').post;

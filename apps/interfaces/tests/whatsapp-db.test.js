@@ -108,24 +108,24 @@ describe('WhatsApp SQLiteStore', () => {
 
     describe('resolveIdentity', () => {
         test('Strategy 1: should resolve by phone JID', () => {
-            const contact = { id: '5551234@s.whatsapp.net', lid: '999888777666555@lid', name: 'Alice' };
+            const contact = { id: '5551234@s.whatsapp.net', lid: '100000000000001@lid', name: 'Alice' };
             ev.emit('contacts.upsert', [contact]);
 
             const result = store.resolveIdentity('5551234@s.whatsapp.net');
             expect(result.phoneJid).toBe('5551234@s.whatsapp.net');
-            expect(result.lid).toBe('999888777666555@lid');
+            expect(result.lid).toBe('100000000000001@lid');
             expect(result.name).toBe('Alice');
             expect(result.allJids).toContain('5551234@s.whatsapp.net');
-            expect(result.allJids).toContain('999888777666555@lid');
+            expect(result.allJids).toContain('100000000000001@lid');
         });
 
         test('Strategy 2: should resolve by LID', () => {
-            const contact = { id: '5551234@s.whatsapp.net', lid: '999888777666555@lid', name: 'Bob' };
+            const contact = { id: '5551234@s.whatsapp.net', lid: '100000000000001@lid', name: 'Bob' };
             ev.emit('contacts.upsert', [contact]);
 
-            const result = store.resolveIdentity('999888777666555@lid');
+            const result = store.resolveIdentity('100000000000001@lid');
             expect(result.phoneJid).toBe('5551234@s.whatsapp.net');
-            expect(result.lid).toBe('999888777666555@lid');
+            expect(result.lid).toBe('100000000000001@lid');
             expect(result.name).toBe('Bob');
         });
 
@@ -139,12 +139,12 @@ describe('WhatsApp SQLiteStore', () => {
         });
 
         test('Strategy 4: should resolve by fuzzy suffix match', () => {
-            const contact = { id: '549351234567@s.whatsapp.net', name: 'Diana' };
+            const contact = { id: '549000001111@s.whatsapp.net', name: 'Diana' };
             ev.emit('contacts.upsert', [contact]);
 
             // Use last 7 digits with different country code prefix
-            const result = store.resolveIdentity('541234567');
-            expect(result.phoneJid).toBe('549351234567@s.whatsapp.net');
+            const result = store.resolveIdentity('540001111');
+            expect(result.phoneJid).toBe('549000001111@s.whatsapp.net');
             expect(result.name).toBe('Diana');
         });
 
@@ -157,9 +157,9 @@ describe('WhatsApp SQLiteStore', () => {
         });
 
         test('should return inferred LID when no contact found for LID input', () => {
-            const result = store.resolveIdentity('999888777666555@lid');
+            const result = store.resolveIdentity('100000000000001@lid');
             expect(result.phoneJid).toBeNull();
-            expect(result.lid).toBe('999888777666555@lid');
+            expect(result.lid).toBe('100000000000001@lid');
             expect(result.name).toBeNull();
         });
 

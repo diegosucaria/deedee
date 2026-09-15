@@ -7,14 +7,14 @@ const tmpDir = path.join(__dirname, 'tmp_mirror_db');
 // Stub for axios so the LID resolve call doesn't try to hit the network.
 jest.mock('axios', () => ({
     get: jest.fn().mockResolvedValue({
-        data: { lid: '264664608964626@lid', phoneJid: '5491111111111@s.whatsapp.net' }
+        data: { lid: '100000000000001@lid', phoneJid: '5491111111111@s.whatsapp.net' }
     }),
     post: jest.fn().mockResolvedValue({ data: {} })
 }));
 
 const OWNER_PHONE = '5491111111111';
 const OWNER_PHONE_JID = `${OWNER_PHONE}@s.whatsapp.net`;
-const OWNER_LID = '264664608964626@lid';
+const OWNER_LID = '100000000000001@lid';
 
 function makeAgentStub(db) {
     const proto = require('../src/agent').Agent.prototype;
