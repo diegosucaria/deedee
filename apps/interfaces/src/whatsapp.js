@@ -521,6 +521,8 @@ class WhatsAppService {
         this.heartbeatTimer = null;
         this.lastHeartbeat = Date.now();
         this.isReconnecting = false;
+        // After this many 515 errors in a row we stop and ask for a manual repair.
+        this.MAX_515_ERRORS = 10;
 
         // Reconnection Config (Standard)
         this.reconnectConfig = {
@@ -793,16 +795,14 @@ class WhatsAppService {
 
                     console.log(`${this.logPrefix} Connection closed (Status: ${statusCode}). Reconnect: ${shouldReconnect}`);
 
-                    // Auto-Recovery for loop 515
+                    // Repeated 515 stream errors: stop retrying and ask the owner
+                    // to repair by hand. The session is never wiped on its own;
+                    // /whatsapp/repair and /whatsapp/disconnect do that on request.
                     if (statusCode === 515) {
                         this.reconnectAttempts++;
                         console.log(`${this.logPrefix} Stream Error 515 count: ${this.reconnectAttempts}`);
-                        if (this.reconnectAttempts >= 10) {
-                            console.error(`${this.logPrefix} Too many 515 errors. Corruption likely. Wiping session.`);
-                            await this.disconnect(true); // Explicit wipe
-                            // Restart to generate NEW QR
-                            if (this.reconnectTimeout) clearTimeout(this.reconnectTimeout);
-                            this.reconnectTimeout = setTimeout(() => this.start(), 1000);
+                        if (this.reconnectAttempts >= this.MAX_515_ERRORS) {
+                            await this._enterNeedsRepair(statusCode);
                             return;
                         }
                     }
@@ -1150,6 +1150,38 @@ class WhatsAppService {
         }
 
         return report;
+    }
+
+    /**
+     * Stop reconnecting after too many 515 errors, mark the session as
+     * needing repair and tell the owner through the agent's system alert path.
+     */
+    async _enterNeedsRepair(statusCode) {
+        const errors = this.reconnectAttempts;
+        console.error(`${this.logPrefix} ${errors} stream errors (${statusCode}) in a row. Auto-reconnect stopped. Session marked needs_repair; use Settings > Interfaces > WhatsApp to restart or reset it.`);
+        if (this.reconnectTimeout) {
+            clearTimeout(this.reconnectTimeout);
+            this.reconnectTimeout = null;
+        }
+        this.status = 'needs_repair';
+        this.qr = null;
+        this.sock = null;
+        // A manual restart gets a fresh set of retries.
+        this.reconnectAttempts = 0;
+
+        const text = `WhatsApp session "${this.sessionId}" hit ${errors} stream errors (${statusCode}) in a row. I stopped reconnecting. Open Settings > Interfaces > WhatsApp and press Start Session. If it fails again, press Force Reset and scan a new QR.`;
+        try {
+            await axios.post(`${this.agentUrl}/webhook`, {
+                content: text,
+                source: 'system',
+                role: 'user',
+                // internal_system_alert: delivered to the owner verbatim and
+                // de-duplicated by the agent (same path as the Slack token alert).
+                metadata: { internal_system_alert: true, alertKey: `whatsapp_needs_repair:${this.sessionId}` },
+            });
+        } catch (err) {
+            console.error(`${this.logPrefix} Failed to send needs_repair alert:`, err?.message);
+        }
     }
 
     async disconnect(clearSession = false) {

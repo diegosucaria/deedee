@@ -190,7 +190,10 @@ describe('WhatsAppService Unit Tests', () => {
         jest.useRealTimers();
     });
 
-    test('should clear session after N consecutive 515 errors', async () => {
+    test('should stop and mark needs_repair after N consecutive 515 errors (no wipe)', async () => {
+        const axios = require('axios');
+        axios.post.mockResolvedValue({ data: { received: true } });
+
         // We trigger it somewhat manually to verify the logic increment
         whatsapp.reconnectAttempts = 9;
         await whatsapp.connect();
@@ -199,6 +202,7 @@ describe('WhatsAppService Unit Tests', () => {
 
         // 10th attempt (increment happens on error)
         jest.spyOn(whatsapp, 'disconnect');
+        jest.spyOn(whatsapp, 'connect');
         jest.spyOn(fs, 'rmSync');
 
         await qrCallback({
@@ -208,10 +212,35 @@ describe('WhatsAppService Unit Tests', () => {
             }
         });
 
-        // reconnectAttempts should be 10 now, trigger wipe
-        expect(whatsapp.disconnect).toHaveBeenCalledWith(true);
-        // Since disconnect calls rmSync, we verify that too
-        expect(fs.rmSync).toHaveBeenCalledWith(whatsapp.authFolder, expect.anything());
+        expect(whatsapp.status).toBe('needs_repair');
+        expect(whatsapp.reconnectTimeout).toBeNull();
+        // Never wipe on its own.
+        expect(whatsapp.disconnect).not.toHaveBeenCalled();
+        expect(fs.rmSync).not.toHaveBeenCalled();
+        // Tell the owner through the agent's system alert path.
+        expect(axios.post).toHaveBeenCalledWith('http://mock-agent/webhook', expect.objectContaining({
+            source: 'system',
+            role: 'user',
+            content: expect.stringContaining('stream errors'),
+            metadata: { internal_system_alert: true, alertKey: 'whatsapp_needs_repair:test-session' }
+        }));
+
+        // A manual reconnect still works from this state.
+        await whatsapp.connect();
+        expect(whatsapp.status).toBe('connecting');
+    });
+
+    test('should keep reconnecting before the 515 limit', async () => {
+        whatsapp.reconnectAttempts = 8;
+        await whatsapp.connect();
+        const qrCallback = mockBaileys.default.mock.results[0].value.ev.on.mock.calls.find(c => c[0] === 'connection.update')[1];
+
+        jest.useFakeTimers();
+        await qrCallback({ connection: 'close', lastDisconnect: { error: { output: { statusCode: 515 } } } });
+        expect(whatsapp.status).toBe('disconnected');
+        expect(whatsapp.reconnectTimeout).not.toBeNull();
+        clearTimeout(whatsapp.reconnectTimeout);
+        jest.useRealTimers();
     });
 
     test('should unwrap ephemeral message', async () => {

@@ -244,11 +244,13 @@ function Badge({ status }) {
         scan_qr: 'bg-yellow-500/10 text-yellow-400 border-yellow-500/20',
         connecting: 'bg-blue-500/10 text-blue-400 border-blue-500/20',
         disconnected: 'bg-zinc-700/30 text-zinc-500 border-zinc-700/50',
+        needs_repair: 'bg-red-500/10 text-red-400 border-red-500/20',
         error: 'bg-red-500/10 text-red-400 border-red-500/20'
     };
 
     const style = styles[status] || styles.disconnected;
-    const label = status === 'scan_qr' ? 'SCAN QR' : status.toUpperCase();
+    const labels = { scan_qr: 'SCAN QR', needs_repair: 'NEEDS REPAIR' };
+    const label = labels[status] || status.toUpperCase();
 
     return (
         <span className={`text-[10px] font-bold px-2 py-0.5 rounded-full border ${style}`}>
