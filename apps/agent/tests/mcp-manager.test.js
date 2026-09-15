@@ -304,4 +304,63 @@ describe('MCPManager.restartServer', () => {
         expect(manager._connectServer).toHaveBeenCalledTimes(1);
         expect(manager._pendingRestarts.has('browser')).toBe(false);
     });
+
+    test('overlapping restarts share one respawn', async () => {
+        let release;
+        manager._connectServer.mockImplementation(() => new Promise(res => { release = res; }));
+        const a = manager.restartServer('browser');
+        await new Promise(r => setImmediate(r));
+        expect(manager.isServerRestarting('browser')).toBe(true);
+        const b = manager.restartServer('browser');
+        release(true);
+        expect(await a).toEqual({ restarted: true });
+        expect(await b).toEqual({ restarted: true });
+        expect(manager._connectServer).toHaveBeenCalledTimes(1);
+        expect(manager._closeClient).toHaveBeenCalledTimes(1);
+        expect(manager.isServerRestarting('browser')).toBe(false);
+    });
+
+    test('a call during a restart waits for the new client instead of failing', async () => {
+        const oldClient = { callTool: jest.fn().mockRejectedValue(new Error('Not connected')) };
+        const newClient = { callTool: jest.fn().mockResolvedValue({ content: [{ type: 'text', text: 'fresh' }] }) };
+        manager.toolMap.set('browser_snapshot', { name: 'browser', client: oldClient, originalName: 'browser_snapshot' });
+        let release;
+        manager._connectServer.mockImplementation(() => new Promise(res => { release = res; }));
+        manager._refreshToolCache.mockImplementation(async () => {
+            manager.toolMap.set('browser_snapshot', { name: 'browser', client: newClient, originalName: 'browser_snapshot' });
+        });
+
+        const restart = manager.restartServer('browser');
+        await new Promise(r => setImmediate(r));
+        const call = manager.callTool('browser_snapshot', {});
+        await new Promise(r => setImmediate(r));
+        expect(oldClient.callTool).not.toHaveBeenCalled();
+
+        release(true);
+        await restart;
+        expect(await call).toEqual({ output: 'fresh' });
+        expect(newClient.callTool).toHaveBeenCalledTimes(1);
+        expect(manager._connectServer).toHaveBeenCalledTimes(1);
+    });
+
+    test('a closed-transport retry joins the restart already running', async () => {
+        const deadClient = { callTool: jest.fn().mockRejectedValue(new Error('Connection closed')) };
+        const newClient = { callTool: jest.fn().mockResolvedValue({ content: [{ type: 'text', text: 'ok' }] }) };
+        manager.toolMap.set('browser_tabs', { name: 'browser', client: deadClient, originalName: 'browser_tabs' });
+        let release;
+        manager._connectServer.mockImplementation(() => new Promise(res => { release = res; }));
+        manager._refreshToolCache.mockImplementation(async () => {
+            manager.toolMap.set('browser_tabs', { name: 'browser', client: newClient, originalName: 'browser_tabs' });
+        });
+
+        // Two calls fail together (the child died); both try to restart.
+        const a = manager.callTool('browser_tabs', {});
+        const b = manager.callTool('browser_tabs', {});
+        await new Promise(r => setImmediate(r));
+        await new Promise(r => setImmediate(r));
+        release(true);
+        expect(await a).toEqual({ output: 'ok' });
+        expect(await b).toEqual({ output: 'ok' });
+        expect(manager._connectServer).toHaveBeenCalledTimes(1);
+    });
 });

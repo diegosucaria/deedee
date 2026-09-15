@@ -31,6 +31,7 @@ class MCPManager {
         this.configPath = path.resolve(__dirname, configPath);
         this._activeAbortControllers = new Set(); // one per in-flight call; each carries .toolName and .serverName
         this._pendingRestarts = new Set(); // servers to restart once their in-flight call ends
+        this._restarting = new Map(); // serverName -> promise of the restart in progress
         this._slimSkipped = new Map(); // serverName -> [missingVars]
     }
 
@@ -352,23 +353,39 @@ class MCPManager {
      * Closes one server, spawns it again and refreshes the tool cache.
      * For stdio servers this kills the child (the browser server takes Chromium
      * with it), so while a call to that server is in flight the restart waits
-     * for the call to finish. Returns { restarted } or { deferred }.
+     * for the call to finish. Only one restart per server runs at a time: a
+     * second caller joins the one in progress instead of spawning a second
+     * child (which would leave the first as an orphan holding the CDP port
+     * and the profile lock). Returns { restarted } or { deferred }.
      */
     async restartServer(name) {
         const serverConfig = this.config?.[name];
         if (!serverConfig) throw new Error(`Unknown MCP server: ${name}`);
+        const inProgress = this._restarting.get(name);
+        if (inProgress) return inProgress;
         if (this.isServerBusy(name)) {
             this._pendingRestarts.add(name);
             console.log(`[MCP] restart of ${name} deferred: a call is in flight`);
             return { deferred: true };
         }
         this._pendingRestarts.delete(name);
+        const run = this._doRestart(name, serverConfig).finally(() => this._restarting.delete(name));
+        this._restarting.set(name, run);
+        return run;
+    }
+
+    async _doRestart(name, serverConfig) {
         await this._closeClient(name);
         if (serverConfig.disabled) return { restarted: false, disabled: true };
         const ok = await this._connectServer(name, serverConfig);
         await this._refreshToolCache();
         console.log(`[MCP] ${name} restarted (${ok ? 'connected' : 'failed'})`);
         return { restarted: ok };
+    }
+
+    /** True while restartServer(name) is running. */
+    isServerRestarting(name) {
+        return this._restarting.has(name);
     }
 
     _runPendingRestart(serverName) {
@@ -569,6 +586,13 @@ class MCPManager {
         // Linear lookup removed. Using cache.
         let owner = this.toolMap.get(name);
 
+        // toolMap still points at the old client while its server restarts;
+        // wait for the new one instead of failing with "Not connected".
+        if (owner && this._restarting.has(owner.name)) {
+            await this._restarting.get(owner.name).catch(() => {});
+            owner = this.toolMap.get(name);
+        }
+
         if (!owner) {
             // Try refresh once just in case
             await this._refreshToolCache();
@@ -677,6 +701,8 @@ class MCPManager {
 
     async close() {
         console.log('[MCP] Closing connections...');
+        // A restart in progress would otherwise spawn a child after this loop.
+        if (this._restarting.size > 0) await Promise.allSettled([...this._restarting.values()]);
         for (const name of [...this.clients.keys()]) {
             await this._closeClient(name);
         }
