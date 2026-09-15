@@ -67,7 +67,7 @@ class GitOps {
     const patterns = [
       { name: 'OpenAI API Key', regex: /sk-[a-zA-Z0-9]{20,}/ },
       { name: 'GitHub Token', regex: /(ghp|gho|ghu|ghs|ghr)_[a-zA-Z0-9]{36}/ },
-      { name: 'Private Key', regex: /-----BEGIN PRIVATE KEY-----/ },
+      { name: 'Private Key', regex: /-----BEGIN PRIVATE KEY-----/ }, // pii-guard: allow
       { name: 'Google API Key', regex: /AIza[0-9A-Za-z-_]{35}/ },
       { name: 'Generic High Entropy', regex: /([a-z0-9]{32,})/i }
     ];
