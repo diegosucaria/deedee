@@ -1108,7 +1108,7 @@ class Agent {
                 // Initialize lite client specifically for low-latency, low-cost extraction
                 const { GoogleGenAI } = await this._loadClientLibrary();
                 const genAI = new GoogleGenAI({ apiKey: this.config.googleApiKey });
-                const liteModel = process.env.WORKER_LITE || process.env.WORKER_FLASH || 'gemini-2.5-flash';
+                const liteModel = this.configService.getModel('LITE');
 
                 for (const part of mediaParts) {
                   const isAudio = part.inlineData.mimeType.startsWith('audio/');

@@ -25,10 +25,7 @@ function createLiveRouter(agent) {
     // 2. Get Live Config
     router.get('/config', (req, res) => {
         const config = new ConfigService();
-        // Live usually expects "models/" prefix? Or just the name? 
-        // Checking doc: "models/gemini-2.0-flash-exp"
-        // Our config service returns "gemini-2.0-flash-exp".
-        // Prepend "models/" prefix as required by the Live API
+        // The Live API wants the "models/" prefix; ConfigService returns the bare id.
         const modelName = config.getModel('LIVE');
         const model = `models/${modelName}`;
         res.json({ model });

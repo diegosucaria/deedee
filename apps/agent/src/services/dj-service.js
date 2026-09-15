@@ -1316,7 +1316,9 @@ If unsure, return { "bpm": 0, "key": "" }`
         if (crate.length === 0) return "Your crate is empty! Add some vinyls first.";
 
         // 2. Pro Model Reasoning
-        const proModelName = process.env.WORKER_PRO || 'gemini-1.5-pro-latest';
+        const proModelName = this.config.getModel('PRO');
+        // TODO(B4.2 SDK PR): client.getGenerativeModel is the old @google/generative-ai API and
+        // throws with @google/genai. Move this call to client.models.generateContent there.
         const model = this.agent.client.getGenerativeModel({ model: proModelName });
 
         const prompt = `
@@ -1355,7 +1357,9 @@ If unsure, return { "bpm": 0, "key": "" }`
      * Recommend Digital (History + Global)
      */
     async recommendDigital(currentTrack, metadata = {}, chatId) {
-        const proModelName = process.env.WORKER_PRO || 'gemini-1.5-pro-latest';
+        const proModelName = this.config.getModel('PRO');
+        // TODO(B4.2 SDK PR): client.getGenerativeModel is the old @google/generative-ai API and
+        // throws with @google/genai. Move this call to client.models.generateContent there.
         const model = this.agent.client.getGenerativeModel({ model: proModelName });
 
         // Context from RAG
