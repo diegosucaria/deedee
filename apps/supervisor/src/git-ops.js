@@ -12,6 +12,20 @@ const execFileAsync = util.promisify(execFile);
 const ALLOWED_PREFIXES = ['apps/', 'packages/', 'docs/', 'specs/'];
 const ALLOWED_EXTENSIONS = ['.js', '.jsx', '.ts', '.json', '.md', '.yml', '.yaml', '.py', '.txt'];
 
+// A parent process (a git hook, for one) may export these to point git at
+// another repository. GitOps must only ever touch workDir, so it drops them.
+const REDIRECTING_GIT_VARS = [
+  'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX', 'GIT_COMMON_DIR',
+  'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE'
+];
+
+/** process.env without the variables that redirect git away from cwd. */
+function cleanGitEnv() {
+  const env = { ...process.env };
+  for (const key of REDIRECTING_GIT_VARS) delete env[key];
+  return env;
+}
+
 class GitOps {
   constructor(workDir = '/app/source', identity = null) {
     this.workDir = workDir;
@@ -32,7 +46,7 @@ class GitOps {
 
   async run(command) {
     try {
-      const { stdout, stderr } = await execAsync(command, { cwd: this.workDir });
+      const { stdout, stderr } = await execAsync(command, { cwd: this.workDir, env: cleanGitEnv() });
       if (stderr) console.warn(`Git Warning: ${stderr}`);
       return stdout.trim();
     } catch (error) {
@@ -47,7 +61,7 @@ class GitOps {
    */
   async runRaw(command) {
     try {
-      const { stdout, stderr } = await execAsync(command, { cwd: this.workDir });
+      const { stdout, stderr } = await execAsync(command, { cwd: this.workDir, env: cleanGitEnv() });
       if (stderr) console.warn(`Git Warning: ${stderr}`);
       return stdout;
     } catch (error) {
@@ -58,7 +72,7 @@ class GitOps {
 
   async runSafe(file, args) {
     try {
-      const { stdout, stderr } = await execFileAsync(file, args, { cwd: this.workDir });
+      const { stdout, stderr } = await execFileAsync(file, args, { cwd: this.workDir, env: cleanGitEnv() });
       if (stderr) console.warn(`Git Warning (Safe): ${stderr}`);
       return stdout.trim();
     } catch (error) {
@@ -276,4 +290,4 @@ class GitOps {
   }
 }
 
-module.exports = { GitOps };
+module.exports = { GitOps, cleanGitEnv };

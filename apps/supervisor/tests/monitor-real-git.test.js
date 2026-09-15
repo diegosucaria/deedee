@@ -5,7 +5,7 @@ const { execFileSync } = require('child_process');
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
-const { GitOps } = require('../src/git-ops');
+const { GitOps, cleanGitEnv } = require('../src/git-ops');
 const { Monitor } = require('../src/monitor');
 
 const SELF = { name: 'Deedee Supervisor', email: 'supervisor@example.test' };
@@ -24,7 +24,9 @@ describe('Monitor + GitOps against a real git repository', () => {
             cwd,
             encoding: 'utf-8',
             stdio: ['ignore', 'pipe', 'pipe'],
-            env: { ...process.env, HOME: root, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }
+            // cleanGitEnv drops GIT_DIR and friends: under a git hook they
+            // would point every command at the hook's repository.
+            env: { ...cleanGitEnv(), HOME: root, GIT_CONFIG_GLOBAL: '/dev/null', GIT_CONFIG_NOSYSTEM: '1' }
         }).trim();
     }
 

@@ -113,6 +113,30 @@ describe('GitOps staging rules', () => {
         expect(addCalls()).toEqual([]);
     });
 
+    test('git runs with GIT_DIR and friends removed from the environment', async () => {
+        process.env.GIT_DIR = '/elsewhere/.git';
+        process.env.GIT_WORK_TREE = '/elsewhere';
+        process.env.GIT_INDEX_FILE = '/elsewhere/index';
+        try {
+            await gitOps.runSafe('git', ['status']);
+            await gitOps.run('git status');
+        } finally {
+            delete process.env.GIT_DIR;
+            delete process.env.GIT_WORK_TREE;
+            delete process.env.GIT_INDEX_FILE;
+        }
+
+        const safeOpts = child_process.execFile.mock.calls.at(-1)[2];
+        const shellOpts = child_process.exec.mock.calls.at(-1)[1];
+        for (const opts of [safeOpts, shellOpts]) {
+            expect(opts.cwd).toBe('/tmp/test');
+            expect(opts.env.GIT_DIR).toBeUndefined();
+            expect(opts.env.GIT_WORK_TREE).toBeUndefined();
+            expect(opts.env.GIT_INDEX_FILE).toBeUndefined();
+            expect(opts.env.PATH).toBe(process.env.PATH);
+        }
+    });
+
     test('isAllowedPath rules', () => {
         expect(gitOps.isAllowedPath('apps/agent/src/a.js')).toBe(true);
         expect(gitOps.isAllowedPath('.github/workflows/ci.yml')).toBe(false);
