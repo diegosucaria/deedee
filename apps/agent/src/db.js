@@ -2770,7 +2770,7 @@ class AgentDB {
    * Returns the rows it closed.
    */
   expirePendingQuestions() {
-    const rows = this.db.prepare(`SELECT id, reply_chat_id FROM pending_questions WHERE status = 'pending'`).all();
+    const rows = this.db.prepare(`SELECT id, reply_chat_id, options FROM pending_questions WHERE status = 'pending'`).all();
     if (rows.length > 0) {
       this.db.prepare(`
         UPDATE pending_questions SET status = 'expired', answered_at = datetime('now')

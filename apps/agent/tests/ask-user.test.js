@@ -6,7 +6,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { AgentDB } = require('../src/db');
-const { AskUserService, clampTimeoutSeconds } = require('../src/services/ask-user');
+const { AskUserService, clampTimeoutSeconds, looksLikeLateAnswer } = require('../src/services/ask-user');
 
 const OWNER_DIGITS = '10000000000';
 const OWNER_JID = `${OWNER_DIGITS}@s.whatsapp.net`;
@@ -272,6 +272,50 @@ describe('AskUserService', () => {
             expect(await svc.intercept(reply('chat-1', 'hello'), cb)).toBeNull();
         });
 
+        test('a new request after the expiry runs as usual; only an answer-like reply is swallowed', async () => {
+            const cb = jest.fn().mockResolvedValue();
+            const pending = svc.ask(webMsg('chat-1'), { question: 'Code?', timeoutSeconds: 5 });
+            await flush();
+            jest.advanceTimersByTime(5_000);
+            await pending;
+            // A sentence is a new request, not a late code.
+            expect(await svc.intercept(reply('chat-1', 'what is on my calendar today?'), cb)).toBeNull();
+            expect(cb).not.toHaveBeenCalled();
+            // The note is spent: even a code-like message now runs as usual.
+            expect(await svc.intercept(reply('chat-1', '1234'), cb)).toBeNull();
+
+            const withOptions = svc.ask(webMsg('chat-2'), { question: 'Book it?', options: ['Yes', 'No'], timeoutSeconds: 5 });
+            await flush();
+            jest.advanceTimersByTime(5_000);
+            await withOptions;
+            const late = await svc.intercept(reply('chat-2', 'no'), cb);
+            expect(late.content).toBe('That question expired.');
+
+            const byNumber = svc.ask(webMsg('chat-3'), { question: 'Book it?', options: ['Yes', 'No'], timeoutSeconds: 5 });
+            await flush();
+            jest.advanceTimersByTime(5_000);
+            await byNumber;
+            expect((await svc.intercept(reply('chat-3', '2'), cb)).content).toBe('That question expired.');
+
+            const moved = svc.ask(webMsg('chat-4'), { question: 'Book it?', options: ['Yes', 'No'], timeoutSeconds: 5 });
+            await flush();
+            jest.advanceTimersByTime(5_000);
+            await moved;
+            // A short token that is not an option is a new message when options exist.
+            expect(await svc.intercept(reply('chat-4', 'status'), cb)).toBeNull();
+        });
+
+        test('looksLikeLateAnswer', () => {
+            expect(looksLikeLateAnswer('123456', [])).toBe(true);
+            expect(looksLikeLateAnswer('yes', [])).toBe(true);
+            expect(looksLikeLateAnswer('what is on my calendar today?', [])).toBe(false);
+            expect(looksLikeLateAnswer('averyveryverylongtoken', [])).toBe(false);
+            expect(looksLikeLateAnswer('1', ['A', 'B'])).toBe(true);
+            expect(looksLikeLateAnswer('3', ['A', 'B'])).toBe(false);
+            expect(looksLikeLateAnswer('b', ['A', 'B'])).toBe(true);
+            expect(looksLikeLateAnswer('ok', ['A', 'B'])).toBe(false);
+        });
+
         test('a reply long after the expiry is a normal message', async () => {
             const pending = svc.ask(webMsg('chat-1'), { question: 'Code?', timeoutSeconds: 5 });
             await flush();
@@ -327,17 +371,21 @@ describe('AskUserService', () => {
     describe('expire on boot', () => {
         test('pending rows from a previous run become expired and a prompt late reply is told so', async () => {
             db.createPendingQuestion({ id: 'q-old', chatId: 'chat-1', replyChatId: 'chat-1', replySource: 'web', source: 'web', question: 'Old?', options: [], expiresAt: null });
+            db.createPendingQuestion({ id: 'q-opt', chatId: 'chat-2', replyChatId: 'chat-2', replySource: 'web', source: 'web', question: 'Pick?', options: ['Red', 'Blue'], expiresAt: null });
             db.createPendingQuestion({ id: 'q-done', chatId: 'chat-3', replyChatId: 'chat-3', replySource: 'web', source: 'web', question: 'Done?', options: [] });
             db.closePendingQuestion('q-done', 'answered', 'yes');
 
             const fresh = new AskUserService(agent);
-            expect(fresh.expireOnBoot()).toBe(1);
+            expect(fresh.expireOnBoot()).toBe(2);
             expect(db.db.prepare('SELECT status FROM pending_questions WHERE id = ?').get('q-old').status).toBe('expired');
             expect(db.db.prepare('SELECT status FROM pending_questions WHERE id = ?').get('q-done').status).toBe('answered');
             expect(db.getPendingQuestion('chat-1')).toBeUndefined();
 
             const late = await fresh.intercept(reply('chat-1', '1234'), jest.fn());
             expect(late.content).toBe('That question expired.');
+            // Options survive the restart, so "blue" reads as a late answer and a request does not.
+            expect(fresh.recentlyClosed.get('chat-2').options).toEqual(['Red', 'Blue']);
+            expect(await fresh.intercept(reply('chat-2', 'show me the weather'), jest.fn())).toBeNull();
             expect(fresh.expireOnBoot()).toBe(0);
         });
     });

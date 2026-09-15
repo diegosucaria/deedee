@@ -15,8 +15,10 @@ const DEFAULT_TIMEOUT_S = 300;
 const MAX_TIMEOUT_S = 900;
 const MIN_TIMEOUT_S = 5;
 const MAX_OPTIONS = 8;
-// A plain message this soon after a question expired is taken as its late answer.
+// A message this soon after a question expired may be its late answer.
 const LATE_REPLY_WINDOW_MS = 10 * 60 * 1000;
+// A free-text late answer (OTP, "yes") is one short token; a request has spaces.
+const LATE_TOKEN_RE = /^\S{1,12}$/;
 const STOP_POLL_MS = 1000;
 
 const LIVE_SOURCES = new Set(['web', 'telegram', 'whatsapp', 'whatsapp:assistant']);
@@ -46,6 +48,25 @@ function mapOptionAnswer(text, options) {
     }
     const hit = options.find(o => o.toLowerCase() === text.toLowerCase());
     return hit || text;
+}
+
+/**
+ * True when `text` reads as an answer to a question that already closed:
+ * an option number, an option's text, or (with no options) one short token.
+ * Anything else is a new request and must reach the model.
+ */
+function looksLikeLateAnswer(text, options) {
+    if (options && options.length > 0) {
+        if (/^\d{1,2}$/.test(text)) return options[Number(text) - 1] !== undefined;
+        return options.some(o => o.toLowerCase() === text.toLowerCase());
+    }
+    return LATE_TOKEN_RE.test(text);
+}
+
+/** Options column (JSON text) back to an array. */
+function parseOptions(raw) {
+    if (Array.isArray(raw)) return raw;
+    try { return JSON.parse(raw || '[]'); } catch { return []; }
 }
 
 function questionText(question, options) {
@@ -160,7 +181,7 @@ class AskUserService {
             };
             timer = setTimeout(() => {
                 this.agent.db.closePendingQuestion(id, 'timeout');
-                this._noteClosed(replyChatId, id);
+                this._noteClosed(replyChatId, id, options);
                 wait.finish({ timeout: true });
             }, timeoutMs);
             poll = setInterval(() => {
@@ -197,10 +218,12 @@ class AskUserService {
             return this._reply(message, 'Got it.', sendCallback);
         }
 
+        // The first message after a closed question either answers it late
+        // or moves on; either way the note is spent.
         const closed = this.recentlyClosed.get(chatId);
         if (closed) {
             this.recentlyClosed.delete(chatId);
-            if (Date.now() - closed.at <= LATE_REPLY_WINDOW_MS) {
+            if (Date.now() - closed.at <= LATE_REPLY_WINDOW_MS && looksLikeLateAnswer(text, closed.options)) {
                 this.agent.db.saveMessage(message);
                 return this._reply(message, 'That question expired.', sendCallback);
             }
@@ -222,7 +245,7 @@ class AskUserService {
     /** Boot: a wait does not survive a restart, so open rows become 'expired'. */
     expireOnBoot() {
         const rows = this.agent.db.expirePendingQuestions();
-        for (const row of rows) this._noteClosed(row.reply_chat_id, row.id);
+        for (const row of rows) this._noteClosed(row.reply_chat_id, row.id, parseOptions(row.options));
         if (rows.length > 0) console.log(`[AskUser] Expired ${rows.length} question(s) left from the previous run.`);
         return rows.length;
     }
@@ -236,8 +259,8 @@ class AskUserService {
         wait.finish({ [status]: true });
     }
 
-    _noteClosed(replyChatId, id) {
-        this.recentlyClosed.set(replyChatId, { id, at: Date.now() });
+    _noteClosed(replyChatId, id, options = []) {
+        this.recentlyClosed.set(replyChatId, { id, at: Date.now(), options: normalizeOptions(options) });
     }
 
     _stopRequested(chatId, replyChatId) {
@@ -277,4 +300,4 @@ class AskUserService {
     }
 }
 
-module.exports = { AskUserService, isLiveSource, clampTimeoutSeconds, mapOptionAnswer, DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S };
+module.exports = { AskUserService, isLiveSource, clampTimeoutSeconds, mapOptionAnswer, looksLikeLateAnswer, DEFAULT_TIMEOUT_S, MAX_TIMEOUT_S };
