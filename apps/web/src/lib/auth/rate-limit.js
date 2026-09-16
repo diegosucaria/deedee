@@ -1,14 +1,47 @@
-// Tiny in-memory rate limiter for /api/auth/login. Single-user app so
-// we only ever care about one bucket — but we key by IP anyway to avoid
-// a single attacker locking the legit user out of the password path.
+// Tiny in-memory rate limiter for the login routes. Single-user app so we
+// only ever care about one bucket — but we key by IP anyway to avoid a
+// single attacker locking the legit user out of the password path.
+//
+// A second, global bucket counts failed attempts across every IP, so a
+// spray from many addresses still slows down. Its cost is that a burst of
+// failures also blocks the legit user until the window ends.
 import 'server-only';
 
 const buckets = new Map();
 const WINDOW_MS = 15 * 60 * 1000;
 const MAX_ATTEMPTS = 5;
 
+const GLOBAL_WINDOW_MS = 10 * 60 * 1000;
+const GLOBAL_MAX_FAILURES = 50;
+let globalFailures = { count: 0, reset: 0 };
+
+// Client address for rate-limit keys. Behind a reverse proxy the proxy
+// APPENDS the real client address to X-Forwarded-For, so the last entry
+// is the one it added; the client can prepend anything it likes.
+export function clientIp(req) {
+    const fwd = req.headers.get('x-forwarded-for');
+    if (fwd) {
+        const parts = fwd.split(',').map((s) => s.trim()).filter(Boolean);
+        if (parts.length) return parts[parts.length - 1];
+    }
+    return req.headers.get('x-real-ip') || 'unknown';
+}
+
+function globalWindow(now) {
+    if (globalFailures.reset < now) {
+        globalFailures = { count: 0, reset: now + GLOBAL_WINDOW_MS };
+    }
+    return globalFailures;
+}
+
 export function rateLimitLogin(ip) {
     const now = Date.now();
+
+    const global = globalWindow(now);
+    if (global.count >= GLOBAL_MAX_FAILURES) {
+        return { allowed: false, retryAfter: Math.ceil((global.reset - now) / 1000) };
+    }
+
     const key = ip || 'unknown';
     const entry = buckets.get(key) || { count: 0, reset: now + WINDOW_MS };
     if (entry.reset < now) {
@@ -21,6 +54,11 @@ export function rateLimitLogin(ip) {
         return { allowed: false, retryAfter: Math.ceil((entry.reset - now) / 1000) };
     }
     return { allowed: true, remaining: MAX_ATTEMPTS - entry.count };
+}
+
+// Call after a failed password or passkey check. Feeds the global bucket.
+export function recordLoginFailure() {
+    globalWindow(Date.now()).count += 1;
 }
 
 export function resetRateLimit(ip) {
