@@ -351,6 +351,20 @@ class Agent {
       const source = reply?.source || message?.source;
       const content = String(reply?.content || '').slice(0, 200);
       console.error(`[Agent] Reply not delivered (chat ${chatId || '?'}, source ${source || '?'}).`);
+
+      // One notification per (chat, source) every 30 minutes. A broken
+      // interface fails every reply; repeats only add to the log count.
+      const COOLDOWN_MS = 30 * 60 * 1000;
+      const now = Date.now();
+      if (!this._deliveryFailureDedup) this._deliveryFailureDedup = new Map();
+      const dedupKey = `${chatId || '?'}|${source || '?'}`;
+      const seen = this._deliveryFailureDedup.get(dedupKey);
+      if (seen && now - seen.at < COOLDOWN_MS) {
+        seen.suppressed += 1;
+        console.error(`[Agent] delivery_failure notification suppressed for ${dedupKey} (${seen.suppressed} repeats in the last 30 min).`);
+        return result;
+      }
+      this._deliveryFailureDedup.set(dedupKey, { at: now, suppressed: 0 });
       try {
         this.notifications.create({
           type: 'delivery_failure',

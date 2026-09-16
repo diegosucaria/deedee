@@ -95,6 +95,27 @@ describe('Agent core fixes', () => {
         });
     });
 
+    describe('_deliverReply dedup', () => {
+        test('one delivery_failure notification per chat and source every 30 minutes', async () => {
+            const cb = jest.fn().mockResolvedValue(false);
+            const reply = { content: 'x', source: 'whatsapp', metadata: { chatId: 'chat-1' } };
+            await agent._deliverReply(cb, reply, userMsg('hi'));
+            await agent._deliverReply(cb, reply, userMsg('hi'));
+            await agent._deliverReply(cb, reply, userMsg('hi'));
+            expect(notifications.create).toHaveBeenCalledTimes(1);
+            expect(console.error).toHaveBeenCalledWith(expect.stringContaining('2 repeats'));
+
+            // Another source is its own key.
+            await agent._deliverReply(cb, { ...reply, source: 'telegram' }, userMsg('hi'));
+            expect(notifications.create).toHaveBeenCalledTimes(2);
+
+            // Past the cooldown the next failure is reported again.
+            agent._deliveryFailureDedup.get('chat-1|whatsapp').at = Date.now() - 31 * 60 * 1000;
+            await agent._deliverReply(cb, reply, userMsg('hi'));
+            expect(notifications.create).toHaveBeenCalledTimes(3);
+        });
+    });
+
     describe('error path', () => {
         test('rewinds with deleteMessagesSince and reports an undelivered error reply', async () => {
             agent.router = { route: jest.fn().mockRejectedValue(new Error('boom')) };
