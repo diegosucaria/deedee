@@ -1,11 +1,13 @@
-import { getNotifications } from '../../actions';
+import { getNotifications, getNotificationOutbox } from '../../actions';
 import NotificationsClient from '@/components/NotificationsClient';
+import UndeliveredClient from '@/components/UndeliveredClient';
 
 export const dynamic = 'force-dynamic';
 
 export default async function NotificationsPage() {
     let notifications = [];
     let unreadCount = 0;
+    let outbox = { rows: [], counts: { pending: 0, sent: 0, failed: 0, dead: 0 } };
 
     try {
         const data = await getNotifications(100, true, true);
@@ -13,6 +15,13 @@ export default async function NotificationsPage() {
         unreadCount = data.unreadCount || 0;
     } catch (e) {
         console.error('Failed to fetch notifications:', e);
+    }
+
+    try {
+        const data = await getNotificationOutbox(50);
+        outbox = { rows: data.rows || [], counts: data.counts || outbox.counts };
+    } catch (e) {
+        console.error('Failed to fetch the delivery outbox:', e);
     }
 
     return (
@@ -23,6 +32,10 @@ export default async function NotificationsPage() {
                     System alerts, warnings, and important events. {unreadCount > 0 && `${unreadCount} unread.`}
                 </p>
             </header>
+
+            <section className="w-full mb-10">
+                <UndeliveredClient initialRows={outbox.rows} initialCounts={outbox.counts} />
+            </section>
 
             <section className="w-full pb-20">
                 <NotificationsClient initialNotifications={notifications} initialUnreadCount={unreadCount} />

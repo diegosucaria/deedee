@@ -117,6 +117,29 @@ describe('WhatsAppService Unit Tests', () => {
         );
     });
 
+    test('sendMessage skips a repeat of the same message id for 24 h', async () => {
+        await whatsapp.connect();
+        const first = await whatsapp.sendMessage('123@s.whatsapp.net', 'hello', { type: 'text', id: 'msg-1' });
+        expect(first).toEqual({ duplicate: false });
+        const again = await whatsapp.sendMessage('123@s.whatsapp.net', 'hello', { type: 'text', id: 'msg-1' });
+        expect(again).toEqual({ duplicate: true });
+        expect(whatsapp.sock.sendMessage).toHaveBeenCalledTimes(1);
+
+        // No id: every call goes out.
+        await whatsapp.sendMessage('123@s.whatsapp.net', 'hello', { type: 'text' });
+        await whatsapp.sendMessage('123@s.whatsapp.net', 'hello', { type: 'text' });
+        expect(whatsapp.sock.sendMessage).toHaveBeenCalledTimes(3);
+    });
+
+    test('sendMessage does not remember an id whose send failed', async () => {
+        await whatsapp.connect();
+        whatsapp.sock.sendMessage.mockRejectedValueOnce(new Error('Connection Closed'));
+        await expect(whatsapp.sendMessage('123@s.whatsapp.net', 'hello', { type: 'text', id: 'msg-2' })).rejects.toThrow('Connection Closed');
+        const retry = await whatsapp.sendMessage('123@s.whatsapp.net', 'hello', { type: 'text', id: 'msg-2' });
+        expect(retry).toEqual({ duplicate: false });
+        expect(whatsapp.sock.sendMessage).toHaveBeenCalledTimes(2);
+    });
+
     test('should ignore message if allowed list is empty (Secure Default)', async () => {
         whatsapp.allowedNumbers = new Set();
         const spyWarn = jest.spyOn(console, 'warn');

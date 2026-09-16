@@ -1,10 +1,41 @@
 const schedule = require('node-schedule');
 
+// A one-off reminder that came due while the process was down is still
+// delivered, marked "(late)", when it is less than this overdue.
+const LATE_REMINDER_MAX_MS = 24 * 60 * 60 * 1000;
+
 class Scheduler {
     constructor(agent) {
         this.agent = agent;
         this.jobs = {}; // Store job references
         console.log('[Scheduler] Initialized.');
+    }
+
+    /** The delivery ledger (retries, backoff, fallback channel). */
+    _delivery() {
+        if (!this.agent.delivery) {
+            const { DeliveryService } = require('./services/delivery-service');
+            this.agent.delivery = new DeliveryService(this.agent);
+        }
+        return this.agent.delivery;
+    }
+
+    /** setReminder jobs: explicit flag, taskType, or the legacy "Reminder: ..." task. */
+    _isReminderPayload(payload, taskType, isOneOff) {
+        return !!(payload && (
+            payload.isReminder === true ||
+            taskType === 'reminder' ||
+            (isOneOff && typeof payload.task === 'string' && payload.task.startsWith('Reminder: '))
+        ));
+    }
+
+    /** Legacy reminder rows only carry `task`; give them a reminderMessage. */
+    _reminderPayload(payload) {
+        const reminderPayload = { ...payload };
+        if (!reminderPayload.reminderMessage && typeof reminderPayload.task === 'string') {
+            reminderPayload.reminderMessage = reminderPayload.task.replace(/^Reminder:\s*/, '');
+        }
+        return reminderPayload;
     }
 
     /**
@@ -197,12 +228,21 @@ class Scheduler {
                 }
             }
 
-            // One-Off Past Check (Filter out old reminders that we missed)
+            // One-Off Past Check. A reminder that came due while the process
+            // was down still goes out, marked "(late)", when it is less than
+            // 24 h overdue; anything else that is past is dropped.
             const isOneOff = payload?.isOneOff || false; // Trust payload flag
+            const isReminderPayload = this._isReminderPayload(payload, taskType, isOneOff);
             if (isOneOff) {
                 const jobTime = new Date(cronExpression).getTime();
                 if (jobTime <= Date.now()) {
-                    console.log(`[Scheduler] Found past one-off job '${name}' during load (${cronExpression}). Filtering/Deleting.`);
+                    const overdueMs = Date.now() - jobTime;
+                    if (isReminderPayload && overdueMs < LATE_REMINDER_MAX_MS) {
+                        console.log(`[Scheduler] Reminder '${name}' came due ${Math.round(overdueMs / 60000)} min ago while the process was down. Delivering late.`);
+                        await this._deliverLateReminder(name, payload);
+                    } else {
+                        console.log(`[Scheduler] Found past one-off job '${name}' during load (${cronExpression}). Filtering/Deleting.`);
+                    }
                     this.agent.db.deleteScheduledJob(name);
                     this.agent.db.deleteJobState(name);
                     continue;
@@ -216,22 +256,11 @@ class Scheduler {
             }
 
             let callback;
-            // Direct-delivery reminders (setReminder tool). Detect via explicit flag or
-            // legacy payload shape (payload.task starts with "Reminder: " + targetChatId).
-            // Must come BEFORE the generic `payload.task` branch so legacy reminders
-            // don't get routed through the agent (causing double-messages).
-            const isReminderPayload = payload && (
-                payload.isReminder === true ||
-                taskType === 'reminder' ||
-                (isOneOff && typeof payload.task === 'string' && payload.task.startsWith('Reminder: '))
-            );
+            // Direct-delivery reminders (setReminder tool). Must come BEFORE the
+            // generic `payload.task` branch so legacy reminders don't get routed
+            // through the agent (causing double-messages).
             if (isReminderPayload) {
-                // Backfill reminderMessage for legacy payloads that only have `task`
-                const reminderPayload = { ...payload };
-                if (!reminderPayload.reminderMessage && typeof reminderPayload.task === 'string') {
-                    reminderPayload.reminderMessage = reminderPayload.task.replace(/^Reminder:\s*/, '');
-                }
-                callback = this._buildDirectReminderCallback(name, reminderPayload);
+                callback = this._buildDirectReminderCallback(name, this._reminderPayload(payload));
             } else if (payload && payload.task) {
                 // Any job with a task string is treated as an agent instruction
                 // (handles legacy 'custom', 'function_call', and 'agent_instruction' types)
@@ -258,14 +287,15 @@ class Scheduler {
 
         try {
             if (this.agent.interface && this.agent.settings) {
-                // Refresh settings directly from DB just to be safe
-                const settings = this.agent.db.getAllAgentSettings();
-                const ownerPhone = settings.owner_phone;
-                const channel = settings.notification_channel || 'whatsapp';
+                // Owner channel from fresh settings: notification_channel plus the
+                // id that channel needs (owner_phone or ALLOWED_TELEGRAM_IDS).
+                const delivery = this._delivery();
+                const owner = delivery.resolveOwnerTarget();
+                const channel = owner ? owner.channel : 'none';
 
-                console.log(`[Scheduler] Smart Notification Evaluation - Phone: ${ownerPhone ? ownerPhone : 'MISSING'}, Channel: ${channel}`);
+                console.log(`[Scheduler] Smart Notification Evaluation - Owner channel: ${owner ? `${owner.channel} (${owner.target})` : 'MISSING'}`);
 
-                if (ownerPhone) {
+                if (owner) {
                     const taskLower = (payload.task || '').toLowerCase();
                     let shouldNotify = false;
                     let notificationText = null;
@@ -325,30 +355,29 @@ class Scheduler {
 
                     if (shouldNotify && notificationText) {
                         console.log(`[Scheduler] Smart Notification: Pushing to ${channel}...`);
-                        if (result) {
-                            result.decision = 'notified';
-                            result.decisionReason = `Sent via ${channel}`;
-                        }
+                        const origin = payload?.jobName || (payload?.task ? String(payload.task).substring(0, 50) : 'job');
                         try {
-                            const sendResult = await this.agent.interface.send({
-                                source: 'scheduler',
-                                content: notificationText,
-                                type: 'text',
-                                metadata: {
-                                    chatId: ownerPhone
-                                },
-                                platform: channel, // Used by server.js to route from scheduler
-                                isNotification: true
-                            });
-
-                            // If send() explicitly returns false (e.g. HttpInterface swallowed an error)
-                            if (sendResult === false) {
-                                console.error(`[Scheduler] Smart Notification delivery failed (${channel} → ${ownerPhone}). Falling back to system notification.`);
-                                this._createFallbackNotification(payload, notificationText, `${channel} send returned false`);
-                                if (result) {
+                            // One attempt now; the ledger retries refused sends with
+                            // backoff and tries the other owner channel after two failures.
+                            // No content dedupe: a job that fires every 5 minutes with
+                            // the same text means every one of them.
+                            const outcome = await delivery.deliver('job_notification', owner.channel, owner.target,
+                                { content: notificationText, type: 'text' }, { origin, dedupe: false });
+                            if (result) {
+                                if (outcome.delivered) {
+                                    result.decision = 'notified';
+                                    result.decisionReason = `Sent via ${outcome.via || channel}`;
+                                } else if (outcome.queued) {
                                     result.decision = 'delivery_failed';
-                                    result.decisionReason = `${channel} send returned false — saved as system notification`;
+                                    result.decisionReason = `${channel} send failed — queued for retry (outbox ${outcome.id})`;
+                                } else {
+                                    result.decision = 'delivery_failed';
+                                    result.decisionReason = `${channel} send failed — ${outcome.error || 'not queued'}`;
                                 }
+                            }
+                            if (!outcome.delivered && !outcome.queued) {
+                                console.error(`[Scheduler] Smart Notification delivery failed (${channel}) and could not be queued. Falling back to system notification.`);
+                                this._createFallbackNotification(payload, notificationText, outcome.error || `${channel} send returned false`);
                             }
                         } catch (sendErr) {
                             // Notification delivery failure should NOT trigger a full job retry.
@@ -486,103 +515,85 @@ class Scheduler {
      * sendMessage(to="me") per NOTIFICATION_PROTOCOL AND then emit a confirmation
      * reply ("I've sent the reminder to your WhatsApp...") — both got delivered.
      *
-     * This callback just sends the reminder text directly via the interface.
-     * Shared between executors/scheduler.js (new reminders) and loadJobs (persisted).
+     * The callback hands the text to the delivery ledger: one attempt now, then
+     * retries with backoff and the fallback channel. Shared between
+     * executors/scheduler.js (new reminders) and loadJobs (persisted).
      */
     _buildDirectReminderCallback(name, payload) {
-        const createCallback = (currentPayload) => async () => {
-            const reminderMessage = currentPayload.reminderMessage;
+        return async () => {
+            const reminderMessage = payload.reminderMessage;
             if (!reminderMessage) {
                 console.error(`[Scheduler] Reminder '${name}' has no reminderMessage; skipping.`);
                 return;
             }
-            console.log(`[Scheduler] Firing reminder '${name}' (retry ${currentPayload.retryCount || 0}): ${reminderMessage}`);
+            console.log(`[Scheduler] Firing reminder '${name}': ${reminderMessage}`);
+            if (!this.agent.interface) throw new Error('No interface available for reminder delivery');
 
-            try {
-                if (!this.agent.interface) throw new Error('No interface available for reminder delivery');
+            const delivery = this._delivery();
+            const owner = delivery.resolveOwnerTarget();
+            const originChatId = payload.targetChatId || '';
+            const originSource = payload.targetSource || '';
+            const originChannel = originSource.split(':')[0];
+            // Include 'web' so a reminder set from the web UI is attempted there too.
+            // The socket may be dead by the time it fires; that's fine — we still
+            // push to the owner's channel below as the durable delivery path.
+            const userFacingSources = ['whatsapp', 'telegram', 'slack', 'web'];
+            const isUserOrigin = userFacingSources.includes(originSource) && originChatId;
 
-                // Refresh settings from DB in case they changed
-                const settings = this.agent.db?.getAllAgentSettings?.() || this.agent.settings || {};
-                const ownerPhone = settings.owner_phone;
-                const channel = settings.notification_channel || 'whatsapp';
-
-                const originChatId = currentPayload.targetChatId || '';
-                const originSource = currentPayload.targetSource || '';
-                // Include 'web' so a reminder set from the web UI is attempted there too.
-                // The socket may be dead by the time it fires; that's fine — we still
-                // push to owner's channel below as the durable delivery path.
-                const userFacingSources = ['whatsapp', 'telegram', 'slack', 'web'];
-                const isUserOrigin = userFacingSources.includes(originSource) && originChatId;
-
-                let delivered = false;
-
-                if (isUserOrigin) {
-                    // User set the reminder from a chat interface — reply to that chat
-                    const originResult = await this.agent.interface.send({
-                        source: originSource,
-                        content: reminderMessage,
-                        type: 'text',
-                        metadata: { chatId: originChatId, session: 'assistant' },
-                        isNotification: true
-                    });
-                    if (originResult !== false) delivered = true;
-
-                    // Also push to owner if origin isn't already their chat
-                    const alreadySentToOwner = ownerPhone && originChatId.includes(ownerPhone);
-                    if (ownerPhone && !alreadySentToOwner) {
-                        await this.agent.interface.send({
-                            source: channel,
-                            content: reminderMessage,
-                            type: 'text',
-                            metadata: { chatId: `${ownerPhone}@s.whatsapp.net`, session: 'assistant' },
-                            isNotification: true
-                        });
-                    }
-                } else {
-                    // System-origin (e.g. proactive_thought) — deliver to owner's channel
-                    if (!ownerPhone) throw new Error('No owner phone configured for reminder delivery');
-                    const result = await this.agent.interface.send({
-                        source: channel,
-                        content: reminderMessage,
-                        type: 'text',
-                        metadata: { chatId: `${ownerPhone}@s.whatsapp.net`, session: 'assistant' },
-                        isNotification: true
-                    });
-                    if (result !== false) delivered = true;
+            // Two reminders with the same text minutes apart are two reminders,
+            // so the ledger's content dedupe stays off here.
+            const opts = { origin: name, dedupe: false };
+            const outcomes = [];
+            if (isUserOrigin) {
+                // User set the reminder from a chat interface — reply to that chat
+                outcomes.push(await delivery.deliver('reminder', originSource, originChatId, { content: reminderMessage }, opts));
+                // Also push to the owner unless that chat already is the owner's
+                if (owner && !delivery.isOwnerTarget(originChannel, originChatId)) {
+                    outcomes.push(await delivery.deliver('reminder', owner.channel, owner.target, { content: reminderMessage }, opts));
                 }
-
-                if (!delivered) throw new Error('Reminder delivery returned false');
-            } catch (error) {
-                console.error(`[Scheduler] Reminder '${name}' delivery failed:`, error.message);
-                const currentRetry = currentPayload.retryCount || 0;
-                const MAX_RETRIES = 3;
-
-                if (currentRetry < MAX_RETRIES) {
-                    console.log(`[Scheduler] Rescheduling reminder '${name}' for retry ${currentRetry + 1}/${MAX_RETRIES} in 60s.`);
-                    const nextPayload = { ...currentPayload, retryCount: currentRetry + 1 };
-                    this.scheduleOneOff(name, new Date(Date.now() + 60000), createCallback(nextPayload), {
-                        persist: true,
-                        taskType: 'reminder',
-                        payload: nextPayload
-                    });
-                } else {
-                    // Fallback: surface in web dashboard so the owner doesn't miss it
-                    this._createFallbackNotification({ task: `Reminder: ${reminderMessage}` }, reminderMessage, error.message);
-                    if (process.env.SLACK_WEBHOOK_URL) {
-                        try {
-                            await fetch(process.env.SLACK_WEBHOOK_URL, {
-                                method: 'POST',
-                                headers: { 'Content-Type': 'application/json' },
-                                body: JSON.stringify({
-                                    text: `🚨 *Reminder Failure*\n\nFailed to deliver reminder: *"${reminderMessage}"*\nError: ${error.message}`
-                                })
-                            });
-                        } catch (e) { console.error('[Scheduler] Slack alert failed:', e.message); }
-                    }
-                }
+            } else if (owner) {
+                // System-origin (e.g. proactive_thought) — deliver to the owner's channel
+                outcomes.push(await delivery.deliver('reminder', owner.channel, owner.target, { content: reminderMessage }, opts));
+            } else {
+                outcomes.push({ delivered: false, error: 'No owner channel configured for reminder delivery' });
             }
+
+            const delivered = outcomes.some(o => o.delivered);
+            if (delivered) return { delivered: true };
+            const queued = outcomes.filter(o => o.queued && o.id).map(o => o.id);
+            const errors = outcomes.map(o => o.error).filter(Boolean).join('; ') || 'delivery refused';
+            if (queued.length > 0) {
+                console.warn(`[Scheduler] Reminder '${name}' not delivered yet; the ledger retries (outbox ${queued.join(', ')}).`);
+                return { delivered: false, queued };
+            }
+            // Nothing stored anywhere: the dashboard row is the last trace.
+            console.error(`[Scheduler] Reminder '${name}' delivery failed: ${errors}`);
+            this._createFallbackNotification({ task: `Reminder: ${reminderMessage}` }, reminderMessage, errors);
+            return { delivered: false, error: errors };
         };
-        return createCallback(payload);
+    }
+
+    /**
+     * Boot: a reminder that came due while the process was down goes out
+     * now with a "(late)" marker, through the same callback as a live one.
+     */
+    async _deliverLateReminder(name, payload) {
+        const reminderPayload = this._reminderPayload(payload);
+        if (!reminderPayload.reminderMessage) return;
+        reminderPayload.reminderMessage = `(late) ${reminderPayload.reminderMessage}`;
+        let status = 'success';
+        let output = null;
+        try {
+            const result = await this._buildDirectReminderCallback(name, reminderPayload)();
+            output = result ? JSON.stringify(result) : null;
+        } catch (err) {
+            status = 'failure';
+            output = err.message;
+            console.error(`[Scheduler] Late reminder '${name}' failed:`, err.message);
+        }
+        if (typeof this.agent.db?.logJobExecution === 'function') {
+            try { this.agent.db.logJobExecution(name, status, output, 0); } catch { /* logging only */ }
+        }
     }
 
     /**

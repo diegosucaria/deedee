@@ -111,6 +111,64 @@ describe('Interfaces API Tests', () => {
     });
   });
 
+  describe('POST /send dedupe by message id', () => {
+    let telegramSend;
+
+    beforeEach(() => {
+      telegramSend = jest.fn().mockResolvedValue({ duplicate: false });
+      jest.doMock('../src/telegram', () => ({
+        TelegramService: jest.fn().mockImplementation(() => ({
+          start: jest.fn().mockResolvedValue(),
+          sendMessage: telegramSend,
+          sendVoice: jest.fn(),
+          sendPhoto: jest.fn()
+        }))
+      }));
+      process.env.TELEGRAM_TOKEN = 'tg-token';
+    });
+
+    const send = (body) => request(app).post('/send').set('Authorization', 'Bearer valid-token').send(body);
+
+    test('a repeat of the same id within 24 h is not sent again', async () => {
+      app = await loadApp();
+      const body = { id: 'msg-1', source: 'telegram', content: 'hello', metadata: { chatId: '42' } };
+
+      const first = await send(body);
+      expect(first.statusCode).toBe(200);
+      expect(first.body).toEqual({ success: true });
+      expect(telegramSend).toHaveBeenCalledWith('42', 'hello', { id: 'msg-1' });
+
+      const again = await send(body);
+      expect(again.statusCode).toBe(200);
+      expect(again.body).toEqual({ success: true, duplicate: true });
+      expect(telegramSend).toHaveBeenCalledTimes(1);
+
+      // A different id, same text, goes out.
+      await send({ ...body, id: 'msg-2' });
+      expect(telegramSend).toHaveBeenCalledTimes(2);
+    });
+
+    test('a failed send does not mark the id, so the retry goes out', async () => {
+      app = await loadApp();
+      telegramSend.mockRejectedValueOnce(new Error('socket hang up'));
+      const body = { id: 'msg-3', source: 'telegram', content: 'hello', metadata: { chatId: '42' } };
+
+      expect((await send(body)).statusCode).toBe(500);
+      const retry = await send(body);
+      expect(retry.statusCode).toBe(200);
+      expect(retry.body).toEqual({ success: true });
+      expect(telegramSend).toHaveBeenCalledTimes(2);
+    });
+
+    test('sends without an id are never deduped', async () => {
+      app = await loadApp();
+      const body = { source: 'telegram', content: 'hello', metadata: { chatId: '42' } };
+      await send(body);
+      await send(body);
+      expect(telegramSend).toHaveBeenCalledTimes(2);
+    });
+  });
+
   describe('Session Management', () => {
     test('GET /sessions should forward to Agent', async () => {
       mockAxios.get.mockResolvedValue({ data: { sessions: [] } });

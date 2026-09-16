@@ -84,6 +84,16 @@ describe('Agent core fixes', () => {
             expect(notifications.create.mock.calls[0][0].metadata.content).toHaveLength(200);
         });
 
+        test('queues the refused reply under the reply id so the retry and the mirror reuse it', async () => {
+            const cb = jest.fn().mockResolvedValue(false);
+            const enqueue = jest.spyOn(agent.delivery, 'enqueueFailed').mockResolvedValue({ id: 'reply-1', queued: true });
+            const reply = { id: 'reply-1', content: 'x', source: 'whatsapp', metadata: { chatId: 'chat-1' } };
+            await agent._deliverReply(cb, reply, userMsg('hi'));
+            expect(enqueue).toHaveBeenCalledWith('reply', 'whatsapp', 'chat-1', reply,
+                expect.objectContaining({ id: 'reply-1', origin: 'chat-1' }));
+            expect(notifications.create.mock.calls[0][0].metadata.outboxId).toBe('reply-1');
+        });
+
         test('stays quiet when interface.send returns undefined or true', async () => {
             agent.router = { route: jest.fn().mockRejectedValue(new Error('boom')) };
             agent.interface.send.mockResolvedValue(undefined);
@@ -145,7 +155,7 @@ describe('Agent core fixes', () => {
             expect(await agent.deliverSystemAlert('wa down', 'whatsapp_needs_repair:assistant')).toBe(true);
 
             expect(agent.interface.send).toHaveBeenCalledTimes(2);
-            expect(agent.interface.send.mock.calls[0][0].source).toBe('whatsapp:assistant');
+            expect(agent.interface.send.mock.calls[0][0]).toMatchObject({ source: 'whatsapp', metadata: { chatId: '10000@s.whatsapp.net', session: 'assistant' } });
             expect(agent.interface.send.mock.calls[1][0]).toEqual(expect.objectContaining({ source: 'telegram', metadata: { chatId: '111' } }));
             expect(notifications.create).toHaveBeenCalledTimes(1);
             const n = notifications.create.mock.calls[0][0];

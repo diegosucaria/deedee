@@ -1,11 +1,14 @@
 const { Telegraf } = require('telegraf');
 const axios = require('axios');
 const { createUserMessage } = require('@deedee/shared/src/types');
+const { SentIds } = require('./sent-ids');
 
 class TelegramService {
   constructor(token, agentUrl) {
     this.bot = new Telegraf(token);
     this.agentUrl = agentUrl;
+    // Message ids sent in the last 24 h; a retry with the same id is skipped.
+    this.sentIds = new SentIds();
 
     // Security: Parse Allowed IDs
     const allowed = process.env.ALLOWED_TELEGRAM_IDS || '';
@@ -183,8 +186,19 @@ class TelegramService {
       .replace(/>/g, '&gt;');
   }
 
-  async sendMessage(chatId, content) {
+  /**
+   * @param {string|number} chatId
+   * @param {string} content
+   * @param {{ id?: string }} [options] - the agent's message id; a repeat
+   *   within 24 h is not sent again.
+   * @returns {Promise<{ duplicate: boolean }>}
+   */
+  async sendMessage(chatId, content, options = {}) {
     this.stopTyping(chatId);
+    if (this.sentIds.has(options.id)) {
+      console.log(`[Telegram] Message ${options.id} already sent; skipping the repeat.`);
+      return { duplicate: true };
+    }
     try {
       // Split by code blocks
       const parts = content.split('```');
@@ -231,6 +245,8 @@ class TelegramService {
       // Fallback to plain text
       await this.bot.telegram.sendMessage(chatId, content);
     }
+    this.sentIds.add(options.id);
+    return { duplicate: false };
   }
 
   async sendVoice(chatId, content) {

@@ -174,10 +174,34 @@ describe('AskUserService', () => {
             await first;
         });
 
-        test('a failed send closes the row and returns an error', async () => {
+        test('a refused send keeps the question open; the ledger retries until the timeout', async () => {
             agent.interface.send.mockResolvedValue(false);
-            await expect(svc.ask(webMsg('chat-1'), { question: 'Code?' })).resolves.toEqual({ error: expect.stringMatching(/deliver/) });
-            expect(db.getPendingQuestion('chat-1')).toBeUndefined();
+            const pending = svc.ask(webMsg('chat-1'), { question: 'Code?', timeoutSeconds: 30 });
+            await flush();
+
+            const row = db.getPendingQuestion('chat-1');
+            expect(row.status).toBe('pending');
+            const outbox = db.listRecentOutbox({ limit: 5 });
+            expect(outbox).toHaveLength(1);
+            expect(outbox[0]).toMatchObject({ kind: 'ask_user', channel: 'web', target: 'chat-1', status: 'failed', attempts: 1, expires_at: row.expires_at });
+            // The row id is the message id saved in the chat, so retries add no copies.
+            expect(db.getHistoryForChat('chat-1', 5).map(m => m.id)).toEqual([outbox[0].id]);
+            expect(agent.notifications.create).toHaveBeenCalledWith(expect.objectContaining({ type: 'ask_user' }));
+
+            jest.advanceTimersByTime(30_000);
+            await expect(pending).resolves.toEqual({ timeout: true, delivered: false });
+            expect(db.db.prepare('SELECT status FROM pending_questions WHERE id = ?').get(row.id).status).toBe('timeout');
+        });
+
+        test('without a ledger a refused send closes the row and returns an error', async () => {
+            agent.interface.send.mockResolvedValue(false);
+            db.enqueueOutbox = null; // hide the ledger helpers on this instance
+            try {
+                await expect(svc.ask(webMsg('chat-1'), { question: 'Code?' })).resolves.toEqual({ error: expect.stringMatching(/deliver/) });
+                expect(db.getPendingQuestion('chat-1')).toBeUndefined();
+            } finally {
+                delete db.enqueueOutbox;
+            }
         });
 
         test('an empty question is rejected without a send', async () => {
@@ -210,6 +234,86 @@ describe('AskUserService', () => {
             await flush();
             await svc.intercept(reply('999@lid', '4242', 'whatsapp:assistant'), jest.fn());
             await expect(pending).resolves.toEqual({ answer: '4242' });
+        });
+
+        describe('answers from the other owner channel', () => {
+            const TG_ID = '100000001';
+            let envIds;
+            beforeEach(() => {
+                envIds = process.env.ALLOWED_TELEGRAM_IDS;
+                process.env.ALLOWED_TELEGRAM_IDS = `${TG_ID}, 100000002`;
+                agent._getOwnerWaIds = jest.fn().mockResolvedValue(new Set([OWNER_JID]));
+                agent._normalizeWaChatId = (c) => c;
+                jest.spyOn(console, 'warn').mockImplementation(() => { });
+            });
+            afterEach(() => {
+                if (envIds === undefined) delete process.env.ALLOWED_TELEGRAM_IDS; else process.env.ALLOWED_TELEGRAM_IDS = envIds;
+            });
+            const job = { source: 'scheduler', metadata: { chatId: 'job-1' } };
+            const tgMsg = (text, id = TG_ID) => reply(id, text, 'telegram');
+
+            test('a Telegram message does not answer a WhatsApp question the owner never got', async () => {
+                agent.interface.send.mockResolvedValue(false);
+                const pending = svc.ask(job, { question: 'Code?', timeoutSeconds: 30 });
+                await flush();
+                expect(db.getOutboxRow(agent.interface.send.mock.calls[0][0].id)).toMatchObject({ status: 'failed', channel: 'whatsapp' });
+
+                const cb = jest.fn();
+                // The owner's unrelated Telegram message reaches the model untouched.
+                expect(await svc.intercept(tgMsg('turn off the lights'), cb)).toBeNull();
+                expect(cb).not.toHaveBeenCalled();
+                expect(db.getPendingQuestion(OWNER_JID).status).toBe('pending');
+                // A second person in ALLOWED_TELEGRAM_IDS does not count either.
+                expect(await svc.intercept(tgMsg('hola', '100000002'), cb)).toBeNull();
+
+                jest.advanceTimersByTime(30_000);
+                await expect(pending).resolves.toEqual({ timeout: true, delivered: false });
+            });
+
+            test('a Telegram message does not answer a question that reached the owner on WhatsApp', async () => {
+                const pending = svc.ask(job, { question: 'Code?' });
+                await flush();
+                expect(db.getOutboxRow(agent.interface.send.mock.calls[0][0].id)).toMatchObject({ status: 'sent', delivered_via: 'whatsapp' });
+
+                expect(await svc.intercept(tgMsg('4242'), jest.fn())).toBeNull();
+                expect(db.getPendingQuestion(OWNER_JID).status).toBe('pending');
+                // The owner's own WhatsApp answer still closes it.
+                await svc.intercept(reply(OWNER_JID, '4242', 'whatsapp:assistant'), jest.fn());
+                await expect(pending).resolves.toEqual({ answer: '4242' });
+            });
+
+            test('once the ledger falls back to Telegram, the Telegram answer counts', async () => {
+                agent.interface.send.mockImplementation(async (m) => m.source === 'telegram');
+                const pending = svc.ask(job, { question: 'Code?', timeoutSeconds: 600 });
+                await flush();
+                const outboxId = agent.interface.send.mock.calls[0][0].id;
+                expect(await svc.intercept(tgMsg('4242'), jest.fn())).toBeNull();
+
+                // Second failure on WhatsApp -> the ledger tries Telegram, which accepts.
+                const delivery = agent.delivery;
+                db.db.prepare('UPDATE notification_outbox SET next_attempt_at = ? WHERE id = ?').run(new Date(Date.now() - 1000).toISOString(), outboxId);
+                await delivery.tick();
+                expect(db.getOutboxRow(outboxId)).toMatchObject({ status: 'sent', delivered_via: 'telegram', fallback_channel: 'telegram' });
+
+                const cb = jest.fn();
+                const ack = await svc.intercept(tgMsg('4242'), cb);
+                expect(ack.content).toBe('Got it.');
+                await expect(pending).resolves.toEqual({ answer: '4242' });
+            });
+
+            test('the configured owner channel always counts for a job question, even before delivery', async () => {
+                agent.settings.notification_channel = 'telegram';
+                agent.interface.send.mockResolvedValue(false);
+                const pending = svc.ask(job, { question: 'Code?', timeoutSeconds: 30 });
+                await flush();
+                expect(db.getPendingQuestion(TG_ID)).toMatchObject({ reply_source: 'telegram' });
+
+                // WhatsApp did not carry the question: the owner's WhatsApp message is not the answer.
+                expect(await svc.intercept(reply(OWNER_JID, 'hola', 'whatsapp:assistant'), jest.fn())).toBeNull();
+                // The second allowed Telegram id is the owner channel: it answers.
+                await svc.intercept(tgMsg('4242', '100000002'), jest.fn());
+                await expect(pending).resolves.toEqual({ answer: '4242' });
+            });
         });
 
         test('a sub-agent question reaches the parent chat and its reply answers it', async () => {

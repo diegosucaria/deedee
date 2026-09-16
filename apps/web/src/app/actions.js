@@ -2241,6 +2241,29 @@ export async function getNotifications(limit = 50, includeRead = false, includeD
     }
 }
 
+// Delivery ledger (notification_outbox): rows the agent could not push to
+// the owner yet, with counts by status.
+export async function getNotificationOutbox(limit = 50) {
+    await requireActionSession();
+    try {
+        const params = new URLSearchParams({ limit });
+        return await fetchAPI(`/v1/notifications/outbox?${params.toString()}`);
+    } catch (error) {
+        console.error('getNotificationOutbox Error:', error);
+        return { rows: [], counts: { pending: 0, sent: 0, failed: 0, dead: 0 }, error: 'Outbox unavailable' };
+    }
+}
+
+export async function retryOutboxDelivery(id) {
+    await requireActionSession();
+    try {
+        const result = await fetchAPI(`/v1/notifications/outbox/${encodeURIComponent(id)}/retry`, { method: 'POST' });
+        return { success: true, ...result };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function getUnreadCount() {
     try {
         return await fetchAPI('/v1/notifications/count');

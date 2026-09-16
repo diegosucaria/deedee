@@ -93,4 +93,26 @@ describe('TelegramService Security', () => {
         // Axios SHOULD be called
         expect(axios.post).toHaveBeenCalled();
     });
+
+    test('sendMessage skips a repeat of the same message id and forgets a failed one', async () => {
+        jest.spyOn(console, 'log').mockImplementation(() => { });
+        jest.spyOn(console, 'warn').mockImplementation(() => { });
+        service = new TelegramService('fake-token', 'http://agent:3000');
+        const tg = service.bot.telegram;
+        tg.sendMessage.mockResolvedValue({});
+
+        expect(await service.sendMessage('42', 'hello', { id: 'msg-1' })).toEqual({ duplicate: false });
+        expect(await service.sendMessage('42', 'hello', { id: 'msg-1' })).toEqual({ duplicate: true });
+        expect(tg.sendMessage).toHaveBeenCalledTimes(1);
+
+        // Without an id nothing is deduped.
+        await service.sendMessage('42', 'hello');
+        await service.sendMessage('42', 'hello');
+        expect(tg.sendMessage).toHaveBeenCalledTimes(3);
+
+        // HTML and plain text both fail: the id is not marked, the retry goes out.
+        tg.sendMessage.mockRejectedValueOnce(new Error('HTML')).mockRejectedValueOnce(new Error('network'));
+        await expect(service.sendMessage('42', 'hello', { id: 'msg-2' })).rejects.toThrow('network');
+        expect(await service.sendMessage('42', 'hello', { id: 'msg-2' })).toEqual({ duplicate: false });
+    });
 });

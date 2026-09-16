@@ -86,6 +86,7 @@
 
 ### Recent Improvements (Jan 2026)
 - [x] **Smart Notifications**: Configurable channel (WhatsApp/Telegram) and heuristic silence for recurring tasks.
+- [x] **Delivery Ledger (Sep 2026)**: every owner notification gets a `notification_outbox` row with retries (1m, 5m, 15m, 1h), a one-time fallback to the other channel, dead-letter notifications and a Retry button under `/system/notifications`. See `docs/notifications.md`.
 - [x] **Settings UI**: Reorganized settings into tabs (General, Communication, Interfaces, Backups) and added UI for new features.
 - [x] **Contact Import**: Added Import CSV/WhatsApp feature to People page.
 - [x] **Validation**: Enhanced API validation for configuration keys.

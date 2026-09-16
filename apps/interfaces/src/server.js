@@ -5,6 +5,7 @@ const express = require('express');
 const { TelegramService } = require('./telegram');
 const { WhatsAppService } = require('./whatsapp');
 const { SlackManager, SlackConnection } = require('./slack');
+const { SentIds } = require('./sent-ids');
 const axios = require('axios');
 
 const app = express();
@@ -683,11 +684,21 @@ app.post('/slack/monitored-channels', (req, res) => {
 
 // Removed GSuite routes
 
+// Ids of messages already handed to a transport (24 h). The agent's
+// delivery ledger retries a send whose HTTP answer was lost; the retry
+// carries the same id and must not reach the owner twice.
+const sentIds = new SentIds();
+
 // Endpoint for Agent to send messages out
 app.post('/send', async (req, res) => {
   try {
-    const { source, content, metadata, type, caption } = req.body;
-    console.log(`[Interfaces] /send called. Source: ${source}, Type: ${type}, Meta:`, JSON.stringify(metadata));
+    const { id, source, content, metadata, type, caption } = req.body;
+    console.log(`[Interfaces] /send called. Source: ${source}, Type: ${type}, Id: ${id || '-'}, Meta:`, JSON.stringify(metadata));
+
+    if (sentIds.has(id)) {
+      console.log(`[Interfaces] /send: message ${id} already sent; not sending again.`);
+      return res.json({ success: true, duplicate: true });
+    }
 
     // WEB / SOCKET
     if (source === 'web' || (metadata && metadata.socketId)) {
@@ -708,6 +719,7 @@ app.post('/send', async (req, res) => {
           // askUser questions carry { id, options }; the chat renders them as chips
           metadata: metadata.question ? { chatId: metadata.chatId, question: metadata.question } : undefined
         });
+        sentIds.add(id);
         return res.json({ success: true });
       }
     }
@@ -737,8 +749,9 @@ app.post('/send', async (req, res) => {
       } else if (type === 'image') {
         await telegram.sendPhoto(metadata.chatId, content);
       } else {
-        await telegram.sendMessage(metadata.chatId, content);
+        await telegram.sendMessage(metadata.chatId, content, { id });
       }
+      sentIds.add(id);
 
       return res.json({ success: true });
     }
@@ -768,8 +781,9 @@ app.post('/send', async (req, res) => {
         throw new Error('Missing chatId in metadata for WhatsApp message');
       }
 
-      const options = { type: type || 'text', caption: caption || null };
+      const options = { type: type || 'text', caption: caption || null, id };
       await finalService.sendMessage(metadata.chatId, content, options);
+      sentIds.add(id);
 
       return res.json({ success: true });
     }
@@ -778,6 +792,7 @@ app.post('/send', async (req, res) => {
       if (!slack?.connected) throw new Error('Slack not connected');
       if (!metadata?.chatId) throw new Error('Missing chatId in metadata for Slack message');
       await slack.sendMessage(metadata.chatId, content, { thread_ts: metadata.thread_ts });
+      sentIds.add(id);
       return res.json({ success: true });
     }
 
@@ -905,4 +920,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, makeInputGate };
+module.exports = { app, makeInputGate, sentIds };

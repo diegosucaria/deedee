@@ -1,5 +1,13 @@
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 const { Agent } = require('../src/agent');
 const { Scheduler } = require('../src/scheduler');
+const { AgentDB } = require('../src/db');
+
+const OWNER_DIGITS = '5490000000000';
+const OWNER_JID = `${OWNER_DIGITS}@s.whatsapp.net`;
+const TG_ID = '100000001';
 
 describe('Scheduler & Smart Notifications', () => {
     let agent;
@@ -53,11 +61,11 @@ describe('Scheduler & Smart Notifications', () => {
 
             await scheduler._processSmartNotification(result, payload);
 
+            // The ledger sends straight to the owner channel with the JID that channel needs.
             expect(agent.interface.send).toHaveBeenCalledWith(expect.objectContaining({
-                source: 'scheduler',
+                source: 'whatsapp',
                 content: 'I completed the task.',
-                metadata: { chatId: '12345' },
-                platform: 'whatsapp',
+                metadata: { chatId: '12345@s.whatsapp.net', session: 'assistant' },
                 isNotification: true
             }));
         });
@@ -92,13 +100,15 @@ describe('Scheduler & Smart Notifications', () => {
             await scheduler._processSmartNotification(result, payload);
 
             expect(agent.interface.send).toHaveBeenCalledWith({
-                source: 'scheduler',
+                id: expect.any(String),
+                role: 'assistant',
+                source: 'whatsapp',
                 content: 'Valid text output',
                 type: 'text',
                 metadata: {
-                    chatId: '12345'
+                    chatId: '12345@s.whatsapp.net',
+                    session: 'assistant'
                 },
-                platform: 'whatsapp',
                 isNotification: true
             });
         });
@@ -123,7 +133,7 @@ describe('Scheduler & Smart Notifications', () => {
             await scheduler._processSmartNotification(result, payload, false);
 
             expect(agent.interface.send).toHaveBeenCalledWith(expect.objectContaining({
-                source: 'scheduler',
+                source: 'whatsapp',
                 content: 'Here is your reminder!',
                 isNotification: true
             }));
@@ -189,7 +199,7 @@ describe('Scheduler & Smart Notifications', () => {
 
         it('system-origin reminder delivers exactly one message to owner channel', async () => {
             const payload = {
-                reminderMessage: "Reminder: You have a 'Cita con NAZAR MARIELA TERESITA' at 17:30.",
+                reminderMessage: "Reminder: You have an appointment with Alice at 17:30.",
                 isReminder: true,
                 targetChatId: 'system_proactive_thought_1776092460022',
                 targetSource: 'scheduler',
@@ -207,13 +217,13 @@ describe('Scheduler & Smart Notifications', () => {
 
             // Exactly ONE send call, direct to owner's WhatsApp
             expect(agent.interface.send).toHaveBeenCalledTimes(1);
-            expect(agent.interface.send).toHaveBeenCalledWith({
+            expect(agent.interface.send).toHaveBeenCalledWith(expect.objectContaining({
                 source: 'whatsapp',
-                content: "Reminder: You have a 'Cita con NAZAR MARIELA TERESITA' at 17:30.",
+                content: "Reminder: You have an appointment with Alice at 17:30.",
                 type: 'text',
                 metadata: { chatId: '12345@s.whatsapp.net', session: 'assistant' },
                 isNotification: true
-            });
+            }));
         });
 
         it('web-origin reminder tries the web socket AND pushes to owner channel', async () => {
@@ -285,20 +295,24 @@ describe('Scheduler & Smart Notifications', () => {
             }));
         });
 
-        it('retries up to 3 times before creating fallback notification', async () => {
+        it('without a ledger a refused reminder leaves a dashboard notification and no reschedule', async () => {
+            // This describe runs with a stub DB (no outbox helpers): the direct
+            // send is the only attempt, so the dashboard row is the last trace.
             agent.interface.send = jest.fn().mockResolvedValue(false);
             agent.db.createNotification = jest.fn();
+            const scheduleSpy = jest.spyOn(scheduler, 'scheduleOneOff');
 
             const payload = {
                 reminderMessage: 'test',
                 isReminder: true,
-                targetSource: 'scheduler',
-                retryCount: 3 // already at max — next failure creates fallback
+                targetSource: 'scheduler'
             };
 
             const callback = scheduler._buildDirectReminderCallback('reminder_retry_test', payload);
-            await callback();
+            const result = await callback();
 
+            expect(result).toMatchObject({ delivered: false });
+            expect(scheduleSpy).not.toHaveBeenCalled();
             expect(agent.db.createNotification).toHaveBeenCalledWith(expect.objectContaining({
                 type: 'delivery_failure',
                 title: expect.stringContaining('Undelivered')
@@ -423,6 +437,138 @@ describe('Scheduler & Smart Notifications', () => {
                 'task_retry', expect.any(Date), expect.any(Function),
                 expect.objectContaining({ payload: expect.objectContaining({ retryCount: 1 }) })
             );
+        });
+    });
+
+    describe('delivery ledger integration (real DB)', () => {
+        let dir, db, env;
+
+        beforeEach(() => {
+            env = { ids: process.env.ALLOWED_TELEGRAM_IDS, phone: process.env.MY_PHONE };
+            delete process.env.ALLOWED_TELEGRAM_IDS;
+            delete process.env.MY_PHONE;
+            jest.spyOn(console, 'warn').mockImplementation(() => { });
+            jest.spyOn(console, 'error').mockImplementation(() => { });
+            dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deedee-scheduler-ledger-'));
+            db = new AgentDB(dir);
+            db.setAgentSetting('owner_phone', `+${OWNER_DIGITS}`);
+            db.setAgentSetting('notification_channel', 'whatsapp');
+            agent.db = db;
+            agent.settings = {};
+            agent.notifications = { create: jest.fn().mockReturnValue({ id: 'n1' }) };
+        });
+
+        afterEach(() => {
+            db.close();
+            fs.rmSync(dir, { recursive: true, force: true });
+            if (env.ids === undefined) delete process.env.ALLOWED_TELEGRAM_IDS; else process.env.ALLOWED_TELEGRAM_IDS = env.ids;
+            if (env.phone === undefined) delete process.env.MY_PHONE; else process.env.MY_PHONE = env.phone;
+        });
+
+        const makeDue = (id) => db.db.prepare('UPDATE notification_outbox SET next_attempt_at = ? WHERE id = ?')
+            .run(new Date(Date.now() - 1000).toISOString(), id);
+
+        it('a refused smart notification is queued for retry instead of a dashboard row, then sent by the worker', async () => {
+            agent.interface.send = jest.fn().mockResolvedValue(false);
+            const result = { text: 'Here is your agenda.' };
+            const payload = { task: 'morning_briefing' };
+
+            const out = await scheduler._processSmartNotification(result, payload);
+
+            expect(out.decision).toBe('delivery_failed');
+            expect(out.decisionReason).toMatch(/queued for retry/);
+            expect(agent.notifications.create).not.toHaveBeenCalled();
+            const rows = db.listRecentOutbox({ limit: 5 });
+            expect(rows).toHaveLength(1);
+            expect(rows[0]).toMatchObject({ kind: 'job_notification', channel: 'whatsapp', target: OWNER_JID, status: 'failed', attempts: 1, origin: 'morning_briefing' });
+
+            agent.interface.send.mockResolvedValue(true);
+            makeDue(rows[0].id);
+            await agent.delivery.tick();
+            expect(db.getOutboxRow(rows[0].id)).toMatchObject({ status: 'sent', attempts: 2 });
+            expect(agent.interface.send).toHaveBeenCalledTimes(2);
+        });
+
+        it('a refused reminder is queued, not rescheduled every 60 s', async () => {
+            agent.interface.send = jest.fn().mockResolvedValue(false);
+            const scheduleSpy = jest.spyOn(scheduler, 'scheduleOneOff');
+            const payload = { reminderMessage: 'Dentist', isReminder: true, targetSource: 'scheduler' };
+
+            const result = await scheduler._buildDirectReminderCallback('reminder_1', payload)();
+
+            expect(result.delivered).toBe(false);
+            expect(result.queued).toHaveLength(1);
+            expect(scheduleSpy).not.toHaveBeenCalled();
+            expect(agent.notifications.create).not.toHaveBeenCalled();
+            expect(db.getOutboxRow(result.queued[0])).toMatchObject({ kind: 'reminder', status: 'failed', origin: 'reminder_1', target: OWNER_JID });
+        });
+
+        it('a job or reminder with the same text twice within 10 minutes is sent both times', async () => {
+            agent.interface.send = jest.fn().mockResolvedValue(true);
+            const first = await scheduler._processSmartNotification({ text: 'Server is down.' }, { task: 'status' });
+            const second = await scheduler._processSmartNotification({ text: 'Server is down.' }, { task: 'status' });
+            expect(first.decision).toBe('notified');
+            expect(second.decision).toBe('notified');
+            expect(agent.interface.send).toHaveBeenCalledTimes(2);
+
+            const cb = scheduler._buildDirectReminderCallback('reminder_2', { reminderMessage: 'Dentist', isReminder: true, targetSource: 'scheduler' });
+            expect(await cb()).toEqual({ delivered: true });
+            expect(await cb()).toEqual({ delivered: true });
+            expect(agent.interface.send).toHaveBeenCalledTimes(4);
+            expect(db.listRecentOutbox({ limit: 10 })).toHaveLength(4);
+        });
+
+        it('honors notification_channel = telegram with a numeric chat id, for jobs and reminders', async () => {
+            db.setAgentSetting('notification_channel', 'telegram');
+            process.env.ALLOWED_TELEGRAM_IDS = `${TG_ID}, 100000002`;
+            agent.interface.send = jest.fn().mockResolvedValue(true);
+
+            await scheduler._processSmartNotification({ text: 'Agenda' }, { task: 'briefing' });
+            expect(agent.interface.send).toHaveBeenLastCalledWith(expect.objectContaining({
+                source: 'telegram', content: 'Agenda', metadata: { chatId: TG_ID }
+            }));
+
+            await scheduler._buildDirectReminderCallback('reminder_tg', { reminderMessage: 'Dentist', isReminder: true, targetSource: 'scheduler' })();
+            expect(agent.interface.send).toHaveBeenLastCalledWith(expect.objectContaining({
+                source: 'telegram', content: 'Dentist', metadata: { chatId: TG_ID }
+            }));
+
+            // A reminder set from the owner's Telegram chat is not pushed twice.
+            agent.interface.send.mockClear();
+            await scheduler._buildDirectReminderCallback('reminder_tg2', { reminderMessage: 'Gym', isReminder: true, targetSource: 'telegram', targetChatId: TG_ID })();
+            expect(agent.interface.send).toHaveBeenCalledTimes(1);
+        });
+
+        it('loadJobs delivers one-off reminders missed while down with a (late) marker and drops older ones', async () => {
+            agent.interface.send = jest.fn().mockResolvedValue(true);
+            const minutesAgo = (m) => new Date(Date.now() - m * 60_000).toISOString();
+            db.saveScheduledJob({
+                name: 'reminder_late', cronExpression: minutesAgo(10), taskType: 'reminder',
+                payload: { task: 'Reminder: Call Alice', reminderMessage: 'Call Alice', isReminder: true, isOneOff: true, targetSource: 'scheduler' }, enabled: true
+            });
+            db.saveScheduledJob({
+                name: 'reminder_legacy_late', cronExpression: minutesAgo(30), taskType: 'agent_instruction',
+                payload: { task: 'Reminder: Water the plants', isOneOff: true, targetSource: 'scheduler' }, enabled: true
+            });
+            db.saveScheduledJob({
+                name: 'reminder_too_old', cronExpression: minutesAgo(25 * 60), taskType: 'reminder',
+                payload: { task: 'Reminder: Old', reminderMessage: 'Old', isReminder: true, isOneOff: true, targetSource: 'scheduler' }, enabled: true
+            });
+            db.saveScheduledJob({
+                name: 'task_past', cronExpression: minutesAgo(5), taskType: 'agent_instruction',
+                payload: { task: 'check the weather', isOneOff: true, targetSource: 'scheduler' }, enabled: true
+            });
+
+            await scheduler.loadJobs();
+
+            const contents = agent.interface.send.mock.calls.map(c => c[0].content).sort();
+            expect(contents).toEqual(['(late) Call Alice', '(late) Water the plants']);
+            expect(db.getScheduledJobs()).toEqual([]);
+            expect(Object.keys(scheduler.jobs)).toEqual([]);
+            expect(db.listRecentOutbox({ limit: 10 }).map(r => r.status)).toEqual(['sent', 'sent']);
+            // The late delivery is logged like a normal run.
+            const logs = db.db.prepare('SELECT * FROM job_logs').all();
+            expect(logs.some(r => JSON.stringify(r).includes('reminder_late'))).toBe(true);
         });
     });
 
