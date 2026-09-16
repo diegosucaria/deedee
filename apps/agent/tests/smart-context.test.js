@@ -367,6 +367,29 @@ describe('SmartContextManager summarization', () => {
         expect(db.saveSummary).toHaveBeenCalledWith('chat-1', 'A summary.', 'm0', 'm19', 100, 10);
     });
 
+    it('ignores base64 media when estimating tokens', async () => {
+        manager.TOKEN_THRESHOLD = 50000;
+        const history = buildHistory(30);
+        // One photo: ~1 MB of base64 in a raw row. It counted as 250k tokens before.
+        history[2] = {
+            id: 'm2', role: 'user', metadata: {}, timestamp: '2026-01-01T00:00:00.000Z',
+            parts: [{ text: 'look' }, { inlineData: { mimeType: 'image/jpeg', data: 'A'.repeat(1024 * 1024) } }]
+        };
+        db.getHistoryForChat.mockReturnValue(history);
+
+        expect(SmartContextManager.estimateTokens(history)).toBeLessThan(1000);
+        await manager.checkAndSummarize('chat-1');
+        expect(client.models.generateContent).not.toHaveBeenCalled();
+    });
+
+    it('reads the summary window through getHistoryForSummary when the db offers it', async () => {
+        db.getHistoryForSummary = jest.fn().mockReturnValue(buildHistory(40));
+        await manager.checkAndSummarize('chat-1');
+        expect(db.getHistoryForSummary).toHaveBeenCalledWith('chat-1', 100);
+        expect(db.getHistoryForChat).not.toHaveBeenCalled();
+        expect(client.models.generateContent).toHaveBeenCalledTimes(1);
+    });
+
     it('summarizes when no summary exists yet', async () => {
         db.getHistoryForChat.mockReturnValue(buildHistory(40));
         await manager.checkAndSummarize('chat-1');

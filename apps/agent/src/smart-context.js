@@ -229,20 +229,34 @@ class SmartContextManager {
         // Better: Check raw text length of last 50 messages.
         // Fast estimation: 4 chars ~= 1 token.
 
-        // Fetch extended history to estimate token count
-        const deepHistory = this.db.getHistoryForChat(chatId, 100);
+        // Fetch extended history to estimate token count. The summary window
+        // skips oversized parts (media blobs) at the SQL level when the db
+        // offers it; the plain history is the fallback.
+        const deepHistory = typeof this.db.getHistoryForSummary === 'function'
+            ? this.db.getHistoryForSummary(chatId, 100)
+            : this.db.getHistoryForChat(chatId, 100);
         if (deepHistory.length < 20) return; // Too short to summarize
 
         // Gate: wait for enough new messages after the last summary. Without
         // this every message past the threshold produced a fresh summary.
         if (!this.hasEnoughNewMessages(chatId, deepHistory)) return;
 
-        const estimatedTokens = JSON.stringify(deepHistory).length / 4;
+        const estimatedTokens = SmartContextManager.estimateTokens(deepHistory);
 
         if (estimatedTokens > this.TOKEN_THRESHOLD) {
             console.log(`[SmartContext] Chat ${chatId} exceeds threshold (${Math.round(estimatedTokens)} tokens). Summarizing...`);
             await this.performSummarization(chatId, deepHistory);
         }
+    }
+
+    /**
+     * Rough token estimate (4 chars per token) of what the model would see:
+     * media parts count as their marker, not their base64 payload. Before
+     * this, one photo in the window tripped the threshold on its own.
+     */
+    static estimateTokens(history) {
+        const normalized = SmartContextManager.normalizeHistoryForModel(history);
+        return JSON.stringify(normalized).length / 4;
     }
 
     /**

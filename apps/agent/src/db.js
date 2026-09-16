@@ -1819,8 +1819,32 @@ class AgentDB {
     `);
 
     const rows = stmt.all(chatId, limit).reverse(); // Reverse to get chronological order
+    return this._mapHistoryRows(rows);
+  }
 
-    // Map to Gemini SDK format
+  /**
+   * Same window as getHistoryForChat, but for token estimates and summaries.
+   * Rows whose parts exceed `maxPartsLength` bytes (media blobs) come back
+   * with parts NULL, so the mapper falls back to the caption in `content`.
+   * This keeps 100 base64 blobs from being parsed on every turn.
+   */
+  getHistoryForSummary(chatId, limit = 100, maxPartsLength = 20000) {
+    if (!chatId) return [];
+    const stmt = this.db.prepare(`
+      SELECT id, role, content,
+             CASE WHEN length(parts) > ? THEN NULL ELSE parts END AS parts,
+             metadata, timestamp
+      FROM messages
+      WHERE chat_id = ?
+      ORDER BY timestamp DESC, rowid DESC
+      LIMIT ?
+    `);
+    const rows = stmt.all(maxPartsLength, chatId, limit).reverse();
+    return this._mapHistoryRows(rows);
+  }
+
+  // Map raw message rows (chronological order) to the Gemini SDK shape.
+  _mapHistoryRows(rows) {
     return rows.map(row => {
       let meta = {};
       try { meta = row.metadata ? JSON.parse(row.metadata) : {}; } catch (e) { }

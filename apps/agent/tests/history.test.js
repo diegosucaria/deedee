@@ -187,6 +187,30 @@ describe('getHistoryForChat hydration', () => {
         expect(db.countMessagesAfter(chatId, 'missing')).toBeNull();
     });
 
+    it('getHistoryForSummary drops oversized parts and keeps the caption', () => {
+        const chatId = 'chat-summary-window';
+        db.createSession({ id: chatId, title: 'Window' });
+        db.saveMessage({ id: 's-1', role: 'user', content: 'hello', chat_id: chatId, timestamp: '2026-01-01T00:00:00.000Z' });
+        db.saveMessage({
+            id: 's-2', role: 'user', content: 'photo caption', chat_id: chatId, timestamp: '2026-01-01T00:00:01.000Z',
+            parts: [{ inlineData: { mimeType: 'image/jpeg', data: 'A'.repeat(1024 * 1024) } }]
+        });
+        db.saveMessage({
+            id: 's-3', role: 'assistant', content: 'nice', chat_id: chatId, timestamp: '2026-01-01T00:00:02.000Z',
+            parts: [{ text: 'nice' }]
+        });
+
+        const rows = db.getHistoryForSummary(chatId, 100);
+        expect(rows.map(r => r.id)).toEqual(['s-1', 's-2', 's-3']);
+        expect(rows[1].parts).toEqual([{ text: 'photo caption' }]);
+        expect(rows[2].parts).toEqual([{ text: 'nice' }]);
+        expect(JSON.stringify(rows).length).toBeLessThan(2000);
+
+        // The plain history still carries the blob.
+        const full = db.getHistoryForChat(chatId, 100);
+        expect(full[1].parts.some(p => p.inlineData)).toBe(true);
+    });
+
     it('converts integer timestamps to ISO text once', () => {
         const chatId = 'chat-migrate';
         db.createSession({ id: chatId, title: 'Migrate' });
