@@ -115,3 +115,27 @@ describe('sanitizeFunctionDeclarations', () => {
         expect(out[1]).toEqual({ name: 'b' });
     });
 });
+
+describe('sanitizeFunctionDeclarations internal keys', () => {
+    test('drops category and the confirmation flags before the model sees them', () => {
+        const { INTERNAL_DECLARATION_KEYS } = require('../src/utils/gemini-schema-sanitizer');
+        const out = sanitizeFunctionDeclarations([
+            { name: 'commitAndPush', category: 'filesystem', requiresConfirmation: true, confirmationReason: 'why', parameters: { type: 'object', properties: {} } },
+            { name: 'plain', category: 'memory' },
+        ]);
+        expect(out[0]).toEqual({ name: 'commitAndPush', parameters: { type: 'object', properties: {} } });
+        expect(out[1]).toEqual({ name: 'plain' });
+        expect(INTERNAL_DECLARATION_KEYS).toEqual(expect.arrayContaining(['category', 'requiresConfirmation']));
+    });
+
+    test('every internal tool declaration leaves without internal keys', () => {
+        const { toolDefinitions } = require('../src/tools-definition');
+        const out = sanitizeFunctionDeclarations(toolDefinitions.flatMap(t => t.functionDeclarations || []));
+        for (const decl of out) {
+            expect(decl.category).toBeUndefined();
+            expect(decl.requiresConfirmation).toBeUndefined();
+            expect(decl.confirmationReason).toBeUndefined();
+        }
+        expect(out.find(d => d.name === 'sendMessage').parameters.properties.force).toBeUndefined();
+    });
+});

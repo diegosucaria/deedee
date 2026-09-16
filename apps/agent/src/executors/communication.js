@@ -10,7 +10,9 @@ class CommunicationExecutor extends BaseExecutor {
 
         switch (name) {
             case 'sendMessage': {
-                const { to, content, session, service, type, force, imagePath } = args;
+                const { to, content, session, service, type, imagePath } = args;
+                // An owner-approved call (see services/approval-service.js) may open a first contact.
+                const approved = context?.approved === true;
                 console.log(`[CommunicationExecutor] Sending ${type || 'text'} to ${to} via ${service || 'whatsapp'} (Session: ${session || 'default'})${imagePath ? ` [imagePath=${imagePath}]` : ''}`);
 
                 const svc = service || 'whatsapp';
@@ -100,19 +102,17 @@ class CommunicationExecutor extends BaseExecutor {
                     const isVerified = services.db.isVerifiedContact(svc, cleanTo);
                     const contactName = foundPerson ? foundPerson.name : to;
 
-                    if (!isVerified && !force) {
-                        console.log(`[CommunicationExecutor] Blocked first-time message to ${cleanTo}`);
-                        // Enriched Error Message
+                    if (!isVerified && !approved) {
+                        console.log(`[CommunicationExecutor] Blocked first-time message to ${cleanTo} (no owner approval)`);
+                        // The guard normally pauses this call before it gets here; this is the last line.
                         return {
                             success: false,
-                            info: `SAFETY BLOCKED: First-time message verification required.\n\n` +
-                                `Contact: ${contactName}\n` +
-                                `Phone: ${cleanTo}\n\n` +
-                                `Please confirm you want to send this message. If confirmed, retry with 'force: true'.`
+                            error: `SAFETY BLOCKED: first message to ${contactName} (${cleanTo}) needs the owner's approval. ` +
+                                `The call resumes on its own once approved. Do not retry it and do not look for another way to send it.`
                         };
                     }
 
-                    if (!isVerified && force) {
+                    if (!isVerified && approved) {
                         services.db.verifyContact(svc, cleanTo);
 
                         // Auto-Save Alias if we found a person via search
@@ -198,7 +198,7 @@ class CommunicationExecutor extends BaseExecutor {
                     console.log(`[CommunicationExecutor] Sending to ${cleanTo} (${svc}): ${logPreview}`);
                     await services.interface.send(payload);
 
-                    // Verification handled above: 'force' marks verified, already-verified contacts skip check
+                    // Verification handled above: an approved call marks the contact verified, verified contacts skip the check
                     // Owner-chat mirroring is handled by the agent-level interface.send wrapper
                     // (apps/agent/src/agent.js _installInterfaceMirror).
 

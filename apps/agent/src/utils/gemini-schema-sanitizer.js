@@ -160,12 +160,21 @@ function sanitizeGeminiSchema(schema) {
  * @param {Array<{name:string, description?:string, parameters?:object}>} declarations
  * @returns {Array} Declarations with Gemini-safe `parameters`.
  */
+// Keys tools-definition.js uses for scoping and safety. They mean nothing
+// to the model and never travel with the declaration.
+const INTERNAL_DECLARATION_KEYS = ['category', 'requiresConfirmation', 'confirmationReason'];
+
 function sanitizeFunctionDeclarations(declarations) {
     if (!Array.isArray(declarations)) return declarations;
     return declarations.map(decl => {
-        if (!decl || !decl.parameters) return decl;
-        return { ...decl, parameters: sanitizeGeminiSchema(decl.parameters) };
+        if (!decl || typeof decl !== 'object') return decl;
+        const hasInternal = INTERNAL_DECLARATION_KEYS.some(k => k in decl);
+        if (!decl.parameters && !hasInternal) return decl;
+        const out = { ...decl };
+        for (const k of INTERNAL_DECLARATION_KEYS) delete out[k];
+        if (out.parameters) out.parameters = sanitizeGeminiSchema(out.parameters);
+        return out;
     });
 }
 
-module.exports = { sanitizeGeminiSchema, sanitizeFunctionDeclarations };
+module.exports = { sanitizeGeminiSchema, sanitizeFunctionDeclarations, INTERNAL_DECLARATION_KEYS };

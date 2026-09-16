@@ -208,6 +208,8 @@ const toolDefinitions = [
       {
         name: "commitAndPush",
         category: "filesystem",
+        requiresConfirmation: true,
+        confirmationReason: "Pushing code to the repository changes what runs on the device.",
         description: "Commits and pushes changes to the remote repository. Automatically runs 'npm test' first and fails if tests do not pass.",
         parameters: {
           type: "OBJECT",
@@ -352,6 +354,8 @@ const toolDefinitions = [
       },
       {
         name: "deleteDeviceAlias",
+        requiresConfirmation: true,
+        confirmationReason: "Forgetting a device alias removes learned memory.",
         category: "smarthome",
         description: "Remove a specific learned device alias mapping. Use this if an alias is incorrect.",
         parameters: {
@@ -363,7 +367,7 @@ const toolDefinitions = [
       {
         name: "sendMessage",
         category: "communication",
-        description: "Send a message to a specific user via WhatsApp or other services. Useful for initiating conversations, sending reminders to specific numbers, or replying with impersonation.",
+        description: "Send a message to a specific user via WhatsApp or other services. Useful for initiating conversations, sending reminders to specific numbers, or replying with impersonation. The first message to a contact pauses for the owner's approval; the call resumes once approved, so never retry it.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -372,8 +376,7 @@ const toolDefinitions = [
             imagePath: { type: "STRING", description: "Optional. Absolute local file path to an image on disk (e.g. '/app/data/wardrobe/outfits/<id>/render.jpg'). When provided with type='image', the server reads the file and attaches it — avoids piping base64 through tool output. 'content' becomes the caption." },
             service: { type: "STRING", description: "Optional. Service to use. Default: 'whatsapp'." },
             session: { type: "STRING", description: "Optional. The identity/session to send FROM. Values: 'assistant' (default), 'user' (impersonation)." },
-            type: { type: "STRING", description: "Optional. The type of message. Values: 'text' (default), 'image', 'audio'." },
-            force: { type: "BOOLEAN", description: "Optional. Set to true to bypass the 'First Time Contact' safeguard." }
+            type: { type: "STRING", description: "Optional. The type of message. Values: 'text' (default), 'image', 'audio'." }
           },
           required: ["to", "content"]
         }
@@ -455,6 +458,8 @@ const toolDefinitions = [
       },
       {
         name: "deletePerson",
+        requiresConfirmation: true,
+        confirmationReason: "Deleting a person removes their record and history links.",
         category: "people",
         description: "Delete a person from the database.",
         parameters: {
@@ -534,6 +539,8 @@ const toolDefinitions = [
       },
       {
         name: "deleteVault",
+        requiresConfirmation: true,
+        confirmationReason: "Deleting a vault removes its files and index.",
         category: "vault",
         description: "Permanently delete a Life Vault and all its contents. Use with caution.",
         parameters: {
@@ -840,6 +847,8 @@ const toolDefinitions = [
       },
       {
         name: "delete_garment",
+        requiresConfirmation: true,
+        confirmationReason: "Deleting a garment removes it from the wardrobe.",
         category: "wardrobe",
         description: "Delete a garment from the wardrobe by id.",
         parameters: {
@@ -979,6 +988,8 @@ const toolDefinitions = [
       },
       {
         name: "remove_from_wardrobe_trip_capsule",
+        requiresConfirmation: true,
+        confirmationReason: "Removing an item changes a saved trip capsule.",
         category: "wardrobe",
         description: "Remove garments from a wardrobe trip's actual_capsule.",
         parameters: {
