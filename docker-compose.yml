@@ -15,6 +15,10 @@ services:
       - NODE_ENV=production
       - SUPERVISOR_URL=http://supervisor:4000
       - INTERFACES_URL=http://interfaces:5000
+      # All persistent files (agent.db, rag.db, journal, vaults, covers) live on
+      # the agent-data volume. Without this rag.db fell back to the working dir
+      # and was rebuilt after every release.
+      - DATA_DIR=/app/data
       # DEEDEE_INTERNAL_TOKEN required at runtime — agent rejects /internal/*
       # callers without a matching bearer token. Inject via Balena/.env.
       - RATE_LIMIT_HOURLY=50

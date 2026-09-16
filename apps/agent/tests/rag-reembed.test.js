@@ -14,7 +14,7 @@ jest.mock('../src/services/config-service', () => {
     };
 });
 
-const { RagService } = require('../src/services/rag-service');
+const { RagService, resolveDataDir } = require('../src/services/rag-service');
 const { __setEmbeddingModel } = require('../src/services/config-service');
 
 const DIMS = parseInt(process.env.EMBEDDING_DIMENSIONS, 10) || 768;
@@ -279,5 +279,34 @@ describe('RAG re-embed on embedding model change', () => {
         const rag = open();
         await expect(rag.startPendingReembed(vaultsDir, null)).resolves.toBe(true);
         expect(metaModel(rag)).toBe('embed-model-c');
+    });
+});
+
+describe('rag.db location', () => {
+    const saved = process.env.DATA_DIR;
+    afterEach(() => {
+        if (saved === undefined) delete process.env.DATA_DIR; else process.env.DATA_DIR = saved;
+        jest.restoreAllMocks();
+    });
+
+    test('DATA_DIR wins', () => {
+        process.env.DATA_DIR = '/somewhere/data';
+        expect(resolveDataDir()).toBe('/somewhere/data');
+    });
+
+    test('inside the container (/app exists) it uses /app/data like db.js', () => {
+        delete process.env.DATA_DIR;
+        jest.spyOn(fs, 'existsSync').mockImplementation((p) => p === '/app');
+        if (process.platform === 'darwin') {
+            expect(resolveDataDir()).toBe(path.join(process.cwd(), 'data'));
+        } else {
+            expect(resolveDataDir()).toBe('/app/data');
+        }
+    });
+
+    test('outside the container it falls back to ./data', () => {
+        delete process.env.DATA_DIR;
+        jest.spyOn(fs, 'existsSync').mockReturnValue(false);
+        expect(resolveDataDir()).toBe(path.join(process.cwd(), 'data'));
     });
 });

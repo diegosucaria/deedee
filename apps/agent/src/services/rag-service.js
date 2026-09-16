@@ -28,12 +28,21 @@ const MEDIA_TYPES = {
     }
 };
 
+/**
+ * Where rag.db lives. Same rule as db.js and journal.js so the index sits on
+ * the agent-data volume in the container, not under the app's working dir.
+ */
+function resolveDataDir() {
+    if (process.env.DATA_DIR) return process.env.DATA_DIR;
+    if (fs.existsSync('/app') && process.platform !== 'darwin') return '/app/data';
+    return path.join(process.cwd(), 'data');
+}
+
 class RagService {
     constructor(agent) {
         this.agent = agent;
         this.config = new ConfigService();
-        const dataDir = process.env.DATA_DIR || path.join(process.cwd(), 'data');
-        this.dbPath = path.join(dataDir, 'rag.db');
+        this.dbPath = path.join(resolveDataDir(), 'rag.db');
         // Set when the embedding model id changed but the dimensions did not.
         // agent.start() turns it into a background re-embed (startPendingReembed).
         this.pendingModelReembed = null;
@@ -1125,4 +1134,4 @@ class RagService {
     }
 }
 
-module.exports = { RagService };
+module.exports = { RagService, resolveDataDir };

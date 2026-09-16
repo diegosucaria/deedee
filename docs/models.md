@@ -86,18 +86,34 @@ Run it before and after every id change. A retired id fails at `get` with a 404.
 ## Changing the embedding model
 
 `rag-service.js` stores the embedding model id and the dimension count in the
-`rag_metadata` table of `data/rag.db`.
+`rag_metadata` table of `rag.db`.
+
+Where `rag.db` lives: `$DATA_DIR/rag.db`. The `agent` service in
+`docker-compose.yml` sets `DATA_DIR=/app/data`, the `agent-data` volume. Before
+this, `rag.db` sat under the container's working directory and was rebuilt on
+every release, so the model-change path below never ran. The first boot after
+this change builds a fresh index under the volume (one full embed of all
+documents); later boots reuse it.
 
 - Dimensions change: all vectors are cleared at start and re-embedded by the
   next scan (existing behaviour).
 - Model id changes, dimensions do not: vectors from two models do not share a
   space, so the whole index needs re-embedding. At start the agent keeps the old
   id in `rag_metadata`, creates a `rag_reindex_required` notification ("RAG index
-  needs re-embedding for model X") and runs `reindexAll` in the background. When
-  it finishes it records the new id and posts `rag_reindex_complete`. On error it
-  posts `rag_reindex_failed` and retries at the next start. Search quality dips
-  while it runs.
+  needs re-embedding for model X") and runs `reindexAll` in the background.
+  Search quality dips while it runs.
+- `reindexAll` works document by document. A document keeps its old chunks
+  until all its new ones embedded, so a failed call never drops content from
+  vector or keyword search. Each embedding call gets 3 tries with backoff
+  (0.5 s, 1 s), at most 3 calls in flight. One run at a time: a second caller
+  joins the running one, and the nightly scan skips while it runs.
+- When every document succeeded it records the new id and posts
+  `rag_reindex_complete`. If any document failed it keeps the old id, posts
+  `rag_reindex_failed` with the counts, and the next agent start retries.
 - Manual trigger: the `reindexEmbeddings` tool, or a `rag_metadata` edit.
+- Switching `GEMINI_EMBEDDING_MODEL` on the device: do it after the release
+  that carries this section has deployed, or the re-embed runs on a `rag.db`
+  that the next release throws away.
 
 Budget the re-embed before switching: chunk count × average chunk tokens ×
 $0.20 per million. `getStats()` (the `/system` page) shows the chunk count.
