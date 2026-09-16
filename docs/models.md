@@ -37,9 +37,13 @@ list:
 
 | job | model | tools |
 |---|---|---|
-| `proactive_thought` | FLASH | `spawnAgent`, `getAgentResult`, `scheduleJob`, `setReminder`, `sendMessage`, `searchMemory`, `getFact`, `saveJobState`, `getJobState` |
-| `wardrobe_pretrip_check` | FLASH | `list_wardrobe_trips`, `start_wardrobe_trip`, `wardrobe_pack_for_trip`, `spawnAgent`, `getAgentResult`, `sendMessage` |
-| `wardrobe_morning_outfit` | FLASH | `spawnAgent`, `getAgentResult`, `recommend_outfit`, `sendMessage`, `getFact`, `searchMemory` |
+| `proactive_thought` | FLASH | `spawnAgent`, `getAgentResult`, `scheduleJob`, `setReminder`, `sendMessage`, `searchMemory`, `getFact`, `saveJobState`, `getJobState`, `askUser` |
+| `wardrobe_pretrip_check` | FLASH | `list_wardrobe_trips`, `start_wardrobe_trip`, `wardrobe_pack_for_trip`, `spawnAgent`, `getAgentResult`, `sendMessage`, `askUser` |
+| `wardrobe_morning_outfit` | FLASH | `spawnAgent`, `getAgentResult`, `recommend_outfit`, `sendMessage`, `getFact`, `searchMemory`, `askUser` |
+
+Each list names `askUser` because the scheduler filter matches by exact name.
+User jobs keep it through the tool scoper, which keeps every internal tool
+with no category. Questions from a job go to the owner channel.
 
 The PRO calls inside `recommend_outfit`, `wardrobe_pack_for_trip` and
 `consolidateMemory` stay. `nightly_consolidation` calls `consolidateMemory`
@@ -56,8 +60,10 @@ Sub-agents (`apps/agent/src/services/subagent-service.js`):
 
 - `lightweight: true` with no `model` runs on LITE. `SUBAGENT_LIGHTWEIGHT_MODEL=FLASH`
   rolls that back. `FLASH` is the default, `PRO` only when asked.
-- Tool loops per run: 20, or 50 when the allowlist names browser tools
-  (`metadata.maxToolLoops`; the agent's browser escalation still applies).
+- Tool loops per run: 20, or 50 when the allowlist names browser tools or the
+  run is PRO (`metadata.maxToolLoops`; the agent's browser escalation still
+  applies). `SUBAGENT_MAX_TOOL_LOOPS` and `SUBAGENT_MAX_TOOL_LOOPS_BROWSER`
+  change the two caps; `MAX_TOOL_LOOPS` does not apply to sub-agents.
 - A result longer than `SUBAGENT_RESULT_CAP` (4,000 chars; 0 disables) is
   compressed by LITE with MINIMAL thinking, tag `subagent_summary`. The full
   text is kept in `subagents.result_full`; `getAgentResult(taskId, full: true)`

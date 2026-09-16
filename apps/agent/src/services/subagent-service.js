@@ -3,11 +3,19 @@ const { ConfigService } = require('./config-service');
 
 const MODEL_CLASSES = ['LITE', 'FLASH', 'PRO'];
 
-// Tool loops per sub-agent run. Browser work needs more steps; the agent's
-// own escalation (MAX_TOOL_LOOPS_BROWSER) still applies once a browser tool
-// is called.
-const MAX_TOOL_LOOPS = 20;
-const MAX_TOOL_LOOPS_BROWSER = 50;
+// Tool loops per sub-agent run. Browser work and PRO runs need more steps;
+// the agent's own escalation (MAX_TOOL_LOOPS_BROWSER) still applies once a
+// browser tool is called. SUBAGENT_MAX_TOOL_LOOPS and
+// SUBAGENT_MAX_TOOL_LOOPS_BROWSER override the defaults.
+const DEFAULT_MAX_TOOL_LOOPS = 20;
+const DEFAULT_MAX_TOOL_LOOPS_BROWSER = 50;
+
+function envInt(name, fallback) {
+    const raw = process.env[name];
+    if (raw === undefined || raw === '') return fallback;
+    const n = parseInt(raw, 10);
+    return Number.isFinite(n) && n > 0 ? n : fallback;
+}
 
 // A result longer than this is compressed by LITE; the full text stays in
 // subagents.result_full. 0 disables the cap.
@@ -38,11 +46,17 @@ class SubAgentService {
         return 'FLASH';
     }
 
-    /** 50 loops when the allowlist names browser tools, else 20. */
-    resolveMaxToolLoops(tools) {
+    /**
+     * Loop cap for a run: the browser cap (50) when the allowlist names
+     * browser tools or the run is PRO (asked for heavy work), else 20.
+     */
+    resolveMaxToolLoops(tools, model) {
         const list = Array.isArray(tools) ? tools : [];
         const browser = list.some(t => typeof t === 'string' && (t.startsWith('browser_') || t === 'server:browser'));
-        return browser ? MAX_TOOL_LOOPS_BROWSER : MAX_TOOL_LOOPS;
+        const heavy = browser || model === 'PRO';
+        return heavy
+            ? envInt('SUBAGENT_MAX_TOOL_LOOPS_BROWSER', DEFAULT_MAX_TOOL_LOOPS_BROWSER)
+            : envInt('SUBAGENT_MAX_TOOL_LOOPS', DEFAULT_MAX_TOOL_LOOPS);
     }
 
     resultCap() {
@@ -95,7 +109,7 @@ class SubAgentService {
         const chatId = `subagent-${taskId}`;
         const timeout = Math.min(timeoutMinutes || this.DEFAULT_TIMEOUT_MINUTES, this.MAX_TIMEOUT_MINUTES);
         const selectedModel = this.resolveModel(model, lightweight);
-        const maxToolLoops = this.resolveMaxToolLoops(tools);
+        const maxToolLoops = this.resolveMaxToolLoops(tools, selectedModel);
 
         // Create isolated session
         this.agent.db.ensureSession(chatId, 'subagent');

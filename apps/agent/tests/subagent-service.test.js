@@ -314,8 +314,17 @@ describe('SubAgentService', () => {
     });
 
     describe('tool loop cap', () => {
+        let savedLoops, savedBrowser;
         beforeEach(() => {
+            savedLoops = process.env.SUBAGENT_MAX_TOOL_LOOPS;
+            savedBrowser = process.env.SUBAGENT_MAX_TOOL_LOOPS_BROWSER;
+            delete process.env.SUBAGENT_MAX_TOOL_LOOPS;
+            delete process.env.SUBAGENT_MAX_TOOL_LOOPS_BROWSER;
             mockAgent.processMessage.mockImplementation(async (msg, cb) => { await cb({ content: 'ok' }); return {}; });
+        });
+        afterEach(() => {
+            if (savedLoops === undefined) delete process.env.SUBAGENT_MAX_TOOL_LOOPS; else process.env.SUBAGENT_MAX_TOOL_LOOPS = savedLoops;
+            if (savedBrowser === undefined) delete process.env.SUBAGENT_MAX_TOOL_LOOPS_BROWSER; else process.env.SUBAGENT_MAX_TOOL_LOOPS_BROWSER = savedBrowser;
         });
 
         it('passes maxToolLoops 20 by default', async () => {
@@ -328,6 +337,24 @@ describe('SubAgentService', () => {
             expect(mockAgent.processMessage.mock.calls[0][0].metadata.maxToolLoops).toBe(50);
             expect(service.resolveMaxToolLoops(['server:browser'])).toBe(50);
             expect(service.resolveMaxToolLoops(null)).toBe(20);
+        });
+
+        it('a PRO run gets the higher cap even without browser tools', async () => {
+            await service.spawn({ task: 'refactor', parentChatId: 'c', model: 'PRO', tools: ['readFile', 'writeFile', 'runShellCommand'] });
+            expect(mockAgent.processMessage.mock.calls[0][0].metadata.maxToolLoops).toBe(50);
+            expect(service.resolveMaxToolLoops(['readFile'], 'FLASH')).toBe(20);
+        });
+
+        it('SUBAGENT_MAX_TOOL_LOOPS and _BROWSER override the defaults; bad values fall back', () => {
+            process.env.SUBAGENT_MAX_TOOL_LOOPS = '40';
+            process.env.SUBAGENT_MAX_TOOL_LOOPS_BROWSER = '80';
+            expect(service.resolveMaxToolLoops(['searchMemory'])).toBe(40);
+            expect(service.resolveMaxToolLoops(['browser_click'])).toBe(80);
+            expect(service.resolveMaxToolLoops(null, 'PRO')).toBe(80);
+            process.env.SUBAGENT_MAX_TOOL_LOOPS = '0';
+            process.env.SUBAGENT_MAX_TOOL_LOOPS_BROWSER = 'many';
+            expect(service.resolveMaxToolLoops(['searchMemory'])).toBe(20);
+            expect(service.resolveMaxToolLoops(['browser_click'])).toBe(50);
         });
     });
 
