@@ -153,7 +153,7 @@ describe('model-smoke runSmoke', () => {
         const levels = client.models.generateContent.mock.calls.map(([p]) => [p.model, p.config?.thinkingConfig?.thinkingLevel, p.config?.maxOutputTokens]);
         expect(levels).toEqual(expect.arrayContaining([
             ['gemini-3.1-flash-lite', 'MINIMAL', 20], ['gemini-3.1-flash-lite', 'MINIMAL', undefined],
-            ['gemini-3.1-pro-preview', 'LOW', 20], ['gemini-3.1-pro-preview', 'HIGH', undefined]
+            ['gemini-3.1-pro-preview', 'LOW', smoke.TEXT_THINKING_BUDGET], ['gemini-3.1-pro-preview', 'HIGH', undefined]
         ]));
     });
 
@@ -201,6 +201,20 @@ describe('model-smoke runSmoke', () => {
         const res = await runSmoke(client, buildPlan(MODELS, opts), opts);
         expect(res.rows[0].status).toBe('fail');
         expect(res.rows[0].note).toMatch(/MAX_TOKENS/);
+    });
+
+    test('the text check gives room to think to models without MINIMAL', async () => {
+        const client = fakeClient();
+        const opts = parseArgs(['--only', 'PRO,LITE', '--checks', 'text']);
+        const res = await runSmoke(client, buildPlan(MODELS, opts), opts);
+        expect(res.rows.filter(r => r.status !== 'ok')).toEqual([]);
+        const calls = client.models.generateContent.mock.calls.map(([args]) => args);
+        const pro = calls.find(a => /pro/.test(a.model));
+        const lite = calls.find(a => /lite/.test(a.model));
+        expect(pro.config.maxOutputTokens).toBe(smoke.TEXT_THINKING_BUDGET);
+        expect(pro.config.thinkingConfig.thinkingLevel).toBe('LOW');
+        expect(lite.config.maxOutputTokens).toBe(DEFAULTS.maxTokens);
+        expect(lite.config.thinkingConfig.thinkingLevel).toBe('MINIMAL');
     });
 
     test('a hanging call times out', async () => {
