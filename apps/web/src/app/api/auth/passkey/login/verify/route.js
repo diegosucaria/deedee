@@ -1,7 +1,7 @@
 import { NextResponse } from 'next/server';
 import { finishAuthentication } from '@/lib/auth/webauthn';
 import { issueSession, buildSetCookie } from '@/lib/auth/session';
-import { rateLimitLogin, resetRateLimit, recordLoginFailure, clientIp } from '@/lib/auth/rate-limit';
+import { rateLimitLogin, resetRateLimit, clientIp } from '@/lib/auth/rate-limit';
 
 export async function POST(request) {
     const ip = clientIp(request);
@@ -21,7 +21,7 @@ export async function POST(request) {
         res.cookies.set(buildSetCookie(token, ttl));
         return res;
     } catch (err) {
-        recordLoginFailure();
+        // Per-IP limit only: passkey failures never feed the global bucket.
         const status = err.status || 401;
         return NextResponse.json({ error: err.message }, { status });
     }

@@ -2,14 +2,15 @@ import { NextResponse } from 'next/server';
 import { requireSession } from '@/lib/auth/guard';
 import { readStore, writeStore } from '@/lib/auth/store';
 import { hashPassword, verifyPassword } from '@/lib/auth/password';
-import { rateLimitLogin, recordLoginFailure, clientIp } from '@/lib/auth/rate-limit';
+import { rateLimitLogin, clientIp } from '@/lib/auth/rate-limit';
 
 export async function POST(request) {
     const { session, response } = await requireSession();
     if (!session) return response;
 
-    // Re-use the login rate limit so a stolen session can't brute-force
-    // the current password to clear the second-factor check.
+    // Re-use the per-IP login limit so a stolen session can't brute-force
+    // the current password to clear the second-factor check. This route is
+    // session-gated, so it stays out of the global login failure bucket.
     const limit = rateLimitLogin(clientIp(request));
     if (!limit.allowed) {
         return NextResponse.json(
@@ -34,7 +35,6 @@ export async function POST(request) {
     }
     const ok = await verifyPassword(currentPassword, store.password);
     if (!ok) {
-        recordLoginFailure();
         return NextResponse.json({ error: 'Current password is incorrect' }, { status: 401 });
     }
 

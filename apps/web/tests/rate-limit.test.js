@@ -49,27 +49,44 @@ describe('login rate limit', () => {
         });
     });
 
-    describe('global failure bucket', () => {
+    describe('global password failure bucket', () => {
         test('49 failures leave fresh IPs allowed', () => {
-            for (let i = 0; i < 49; i++) rl.recordLoginFailure();
-            expect(rl.rateLimitLogin('fresh-1').allowed).toBe(true);
+            for (let i = 0; i < 49; i++) rl.recordPasswordLoginFailure();
+            expect(rl.rateLimitPasswordLogin('fresh-1').allowed).toBe(true);
         });
 
-        test('50 failures block every IP, even ones never seen', () => {
-            for (let i = 0; i < 50; i++) rl.recordLoginFailure();
-            const blocked = rl.rateLimitLogin('never-seen');
+        test('50 failures pause password login for every IP, even ones never seen', () => {
+            for (let i = 0; i < 50; i++) rl.recordPasswordLoginFailure();
+            const blocked = rl.rateLimitPasswordLogin('never-seen');
             expect(blocked.allowed).toBe(false);
+            expect(blocked.reason).toBe('global');
             expect(blocked.retryAfter).toBeGreaterThan(0);
             expect(blocked.retryAfter).toBeLessThanOrEqual(600);
+        });
+
+        test('the per-IP limiter ignores the global bucket (passkeys keep working)', () => {
+            for (let i = 0; i < 50; i++) rl.recordPasswordLoginFailure();
+            expect(rl.rateLimitLogin('never-seen').allowed).toBe(true);
+        });
+
+        test('a global pause does not consume the per-IP budget', () => {
+            for (let i = 0; i < 50; i++) rl.recordPasswordLoginFailure();
+            for (let i = 0; i < 10; i++) expect(rl.rateLimitPasswordLogin('ip-a').reason).toBe('global');
+            expect(rl.rateLimitLogin('ip-a').allowed).toBe(true);
+        });
+
+        test('per-IP block reports reason ip', () => {
+            for (let i = 0; i < 5; i++) rl.rateLimitPasswordLogin('ip-a');
+            expect(rl.rateLimitPasswordLogin('ip-a')).toMatchObject({ allowed: false, reason: 'ip' });
         });
 
         test('the global window expires after 10 minutes', () => {
             const start = Date.now();
             const spy = jest.spyOn(Date, 'now').mockReturnValue(start);
-            for (let i = 0; i < 50; i++) rl.recordLoginFailure();
-            expect(rl.rateLimitLogin('x').allowed).toBe(false);
+            for (let i = 0; i < 50; i++) rl.recordPasswordLoginFailure();
+            expect(rl.rateLimitPasswordLogin('x').allowed).toBe(false);
             spy.mockReturnValue(start + 10 * 60 * 1000 + 1);
-            expect(rl.rateLimitLogin('y').allowed).toBe(true);
+            expect(rl.rateLimitPasswordLogin('y').allowed).toBe(true);
             spy.mockRestore();
         });
     });
