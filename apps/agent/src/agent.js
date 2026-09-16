@@ -1894,6 +1894,8 @@ class Agent {
       // 2. Send Message to Gemini (with Retry Logic)
       const MAX_EMPTY_RETRIES = 2;
       // Thinking level by call class (docs/models.md, "Thinking levels"). The
+      // `code` group comes from the router or from a message that names shell,
+      // git or the repo (groupsNamedIn) and sticks to the chat for a while. The
       // tool loop re-sends the session config with its own level only when it
       // differs, so an unchanged loop keeps the request byte-identical.
       const selectedRole = decision.model === 'FLASH' ? 'FLASH' : decision.model === 'LITE' ? 'LITE' : 'PRO';

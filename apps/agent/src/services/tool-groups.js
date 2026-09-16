@@ -10,6 +10,9 @@
 
 // Internal tool categories (tools-definition.js `category`) → group.
 // Categories not listed here (and tools with no category) are core.
+// `filesystem` stays core on purpose: the `code` group only marks the turn as
+// coding (thinking class `coding`, docs/models.md) until tool deferral moves
+// the shell and file tools behind it.
 const INTERNAL_CATEGORY_GROUPS = {
     smarthome: 'home',
     wardrobe: 'wardrobe',
@@ -44,11 +47,13 @@ const TOOL_GROUPS = {
     browser: 'opening or acting on web pages (Playwright browser)',
     flights: 'Pilotfy flight school: lessons, bookings, flight hours',
     health: 'Sanatorio Allende medical appointments ("turnos"): search, book, cancel',
+    code: 'repo files, shell, git, editing this codebase',
 };
 
 // Words that name an integration outright. A message that names one always
 // gets its group, whatever the router decided: asking for "the allende mcp"
 // and getting a tool set without it made the model improvise through the shell.
+// Matched as whole words, so "git" does not fire on "digital".
 const GROUP_NAME_WORDS = {
     home: ['home assistant', 'homeassistant', 'node-red', 'node red', 'nodered'],
     workspace: ['gmail', 'google calendar', 'google drive', 'google docs', 'google sheets'],
@@ -57,14 +62,20 @@ const GROUP_NAME_WORDS = {
     browser: ['browser', 'playwright'],
     flights: ['pilotfy'],
     health: ['allende'],
+    code: ['shell', 'git', 'repo', 'repository', 'codebase'],
 };
 
-/** Groups whose integration is named in `text` (case-insensitive). */
+const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+const GROUP_NAME_PATTERNS = Object.fromEntries(
+    Object.entries(GROUP_NAME_WORDS).map(([g, words]) => [g, new RegExp(`\\b(?:${words.map(escapeRe).join('|')})\\b`, 'i')])
+);
+
+/** Groups whose integration is named in `text` as a whole word (case-insensitive). */
 function groupsNamedIn(text) {
-    const t = String(text || '').toLowerCase();
+    const t = String(text || '');
     if (!t) return [];
-    return Object.entries(GROUP_NAME_WORDS)
-        .filter(([, words]) => words.some(w => t.includes(w)))
+    return Object.entries(GROUP_NAME_PATTERNS)
+        .filter(([, re]) => re.test(t))
         .map(([group]) => group);
 }
 
