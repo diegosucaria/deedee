@@ -677,6 +677,9 @@ describe('Scheduler & Smart Notifications', () => {
                     expect(known.has(tool)).toBe(true);
                 }
                 expect(meta.allowedTools).toContain('sendMessage');
+                // askUser has no category; user jobs keep it via the scoper,
+                // system jobs must list it by name.
+                expect(meta.allowedTools).toContain('askUser');
             }
         });
 

@@ -731,7 +731,7 @@ FORMAT (when you do notify):
                 silent: false,
                 defaultEnabled: false,
                 model: 'FLASH',
-                allowedTools: ['spawnAgent', 'getAgentResult', 'scheduleJob', 'setReminder', 'sendMessage', 'searchMemory', 'getFact', 'saveJobState', 'getJobState']
+                allowedTools: ['spawnAgent', 'getAgentResult', 'scheduleJob', 'setReminder', 'sendMessage', 'searchMemory', 'getFact', 'saveJobState', 'getJobState', 'askUser']
             },
             {
                 name: 'wardrobe_pretrip_check',
@@ -765,7 +765,7 @@ NEVER contact anyone other than the owner.`,
                 defaultEnabled: false,
                 // wardrobe_pack_for_trip runs its own PRO call inside.
                 model: 'FLASH',
-                allowedTools: ['list_wardrobe_trips', 'start_wardrobe_trip', 'wardrobe_pack_for_trip', 'spawnAgent', 'getAgentResult', 'sendMessage']
+                allowedTools: ['list_wardrobe_trips', 'start_wardrobe_trip', 'wardrobe_pack_for_trip', 'spawnAgent', 'getAgentResult', 'sendMessage', 'askUser']
             },
             {
                 name: 'wardrobe_morning_outfit',
@@ -799,7 +799,7 @@ NEVER contact anyone other than the owner.`,
                 // Quality lives in recommend_outfit's own PRO call; the turn
                 // around it only orchestrates.
                 model: 'FLASH',
-                allowedTools: ['spawnAgent', 'getAgentResult', 'recommend_outfit', 'sendMessage', 'getFact', 'searchMemory']
+                allowedTools: ['spawnAgent', 'getAgentResult', 'recommend_outfit', 'sendMessage', 'getFact', 'searchMemory', 'askUser']
             },
             {
                 // Sends from the owner's own WhatsApp account, as the owner.
