@@ -73,7 +73,7 @@ For the env-var inventory and two-subdomain vs single-subdomain recipes, see the
 
 ### Tools
 - **GSuite**: Full Read/Write access to Calendar and Mail. Every email send waits for the owner (see Approvals).
-- **Home Assistant**: Full Control (lights, switches, media). Locks, covers, the alarm, climate and bulk control wait for the owner.
+- **Home Assistant**: Full Control (lights, switches, media, climate, covers). Locks, the alarm, opening a garage door and mass actions wait for the owner.
 
 ## Approvals
 
@@ -81,16 +81,17 @@ Some tool calls pause until the owner says yes. Before this change the
 prompt went to the chat that started the run. For a scheduled job or a
 watcher that chat is synthetic, so the prompt was dropped and the action
 was denied without anyone knowing. Now the prompt reaches the owner, the
-pending call survives a restart, and the answer can come from any of his
-chats.
+pending call survives a restart, and `/confirm <id>` works from any of his
+chats. The owner values capability over restriction: everyday actions run
+unasked, and jobs stay quiet unless they truly need him.
 
 **What pauses** (`apps/agent/src/confirmation-manager.js`, flags in `tools-definition.js`):
 - every email send (`sendEmail`, Gmail `messages.send` / `drafts.send`);
 - the first `sendMessage` to a contact the owner never messaged through Deedee (the old `force: true` retry is gone; an approved call opens the contact);
-- Home Assistant `lock`, `cover`, `alarm_control_panel`, `climate`, the `homeassistant`/`hassio` domains, automations off, mass actions, and `ha_bulk_control`;
-- appointment tools named `*book_appointment` / `*cancel_appointment`;
+- Home Assistant `lock` (lock and unlock), `alarm_control_panel` (arm and disarm), opening a cover whose id reads as a garage or gate (`garage`, `gate`, `portón`, `cochera`, `driveway`), the `homeassistant`/`hassio` domains, automations off, and `entity_id: all` on any domain except lights/switches/media off and lights on. `ha_bulk_control` pauses only when one of its operations touches those. Climate, blinds, closing the garage and bulk light control run unasked;
+- appointment tools named `*book_appointment` / `*cancel_appointment` (Allende) and `*book_turn` / `*cancel_turn` (Pilotfy);
 - `commitAndPush` (code that will run on the device);
-- Plex deletes and edits, and any tool named `*delete*` / `*remove*`;
+- data-destroying deletes: `deletePerson`, `deleteVault`, `delete_garment`, `deleteDeviceAlias` (per-tool flags), Plex deletes and edits, and `ha_config_remove_*` / `ha_remove_device|entity|zone|area_or_floor|helpers_integrations`. Everyday removals run unasked: `ha_remove_todo_item`, Plex `playlist_remove_from` / `collection_remove_from`, `remove_from_wardrobe_trip_capsule`, `cancelJob`;
 - shell commands that pipe remote content into an interpreter, damage the system, touch the databases, the WhatsApp credentials volume, the browser profile or the CDP port.
 
 A rule that throws on odd arguments counts as a hit. A malformed call is
@@ -98,9 +99,11 @@ held, never let through.
 
 **Where the prompt goes** (`apps/agent/src/services/approval-service.js`):
 - web, Telegram and the owner's own WhatsApp chat: the same chat (`interactive`);
-- scheduled jobs, system runs, watcher runs, other WhatsApp chats: the owner
-  channel from `notification_channel` (`deferred`), through the delivery
-  ledger (`docs/notifications.md`, kind `approval`) with the fallback channel;
+- scheduled jobs (whatever chat they were created from), system runs, watcher
+  runs, other WhatsApp chats: the owner channel from `notification_channel`
+  (`deferred`), through the delivery ledger (`docs/notifications.md`, kind
+  `approval`) with the fallback channel. A job created from a web chat also
+  gets a copy of the card in that web chat, with Approve / Deny buttons;
 - sub-agents cannot ask; the tool result tells them to report the need to the parent.
 
 The row is keyed by the chat that must answer, not by the chat that
@@ -112,14 +115,20 @@ contact.
 run came from, and how to answer. Web chats also get Approve / Deny
 buttons; the dashboard bell gets a notification.
 
-**Answers**: `/confirm [id]`, `/approve [id]`, `/cancel [id]`, `/deny [id]`,
-`/approvals` (list). With one approval pending in the chat a plain reply
-works: `yes`, `si`, `sí`, `ok`, `dale`, `approve`, `confirm` approve;
-`no`, `cancel`, `cancelar`, `deny` deny. Anything else goes on to
-`askUser` and the model. With several pending, the reply lists the ids and
-an id (or a unique prefix of at least 3 characters) is required. Only the
-first answer counts. The owner's WhatsApp LID, his phone JID and his
-Telegram id all count as the owner.
+**Answers**: `/confirm <id>`, `/approve <id>`, `/cancel <id>`, `/deny <id>`
+work from any of the owner's chats (web, his Telegram, his WhatsApp);
+`/approvals` lists every pending row. A plain reply (`yes`, `si`, `sí`,
+`ok`, `dale`, `approve`, `confirm`; `no`, `cancel`, `cancelar`, `deny`)
+counts only when all three hold: the card was delivered to this very chat
+(for a job, that is the owner channel), it is the only approval pending
+there, and no `askUser` question is open there. In every other case the
+word goes on to `askUser` and the model, so an "ok" typed to the model in
+another chat never fires a job's paused action. When a question is open,
+`askUser` reads the reply first. The bare `/confirm` and `/cancel` act only
+with exactly one approval pending in the chat they are typed in; with
+several, the reply lists the ids and an id (or a unique prefix of at least
+3 characters) is required. Only the first answer counts. The owner's
+WhatsApp LID and his phone JID are the same chat.
 
 **What runs after yes**: an interactive call resumes in its chat as before
 (`EXECUTE_PENDING`). A deferred call runs from the service with the stored
@@ -130,7 +139,10 @@ executor receives `context.approved = true`.
 **Expiry**: a sweeper runs every minute. Chat approvals expire after 30
 minutes, job and watcher approvals after 6 hours. Both live in the
 `approvals` agent setting (`ttlInteractiveMin`, `ttlDeferredHours`).
-Pending rows survive a restart; only overdue ones are dropped at boot.
+Pending rows survive a restart; only overdue ones are dropped at boot. An
+overdue row the sweeper has not reached yet cannot be approved or denied,
+from the chat, the settings card or the API: `decide()` marks it expired
+and says so.
 
 **Deny-list**: `approvals.deny` holds glob patterns matched against
 `toolName:argsJson` (keys sorted); a pattern without `:` matches the tool
