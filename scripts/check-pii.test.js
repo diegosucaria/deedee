@@ -280,14 +280,24 @@ describe('command line', () => {
     const SCRIPT = path.join(__dirname, 'check-pii.js');
     let repo;
 
+    // HOME points at an empty directory so the developer's own denylist never leaks into these tests.
+    let home;
+    // Git hooks (pre-push runs this suite) export GIT_DIR, GIT_INDEX_FILE and friends. A child
+    // `git init` that inherits them re-initialises the real repository, so strip every GIT_* variable.
+    const cleanEnv = () => {
+        const env = {};
+        for (const [k, v] of Object.entries(process.env)) {
+            if (!k.startsWith('GIT_')) env[k] = v;
+        }
+        env.HOME = home;
+        return env;
+    };
     const git = (...args) => {
-        const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: repo, encoding: 'utf8' });
+        const r = spawnSync('git', ['-c', 'user.name=t', '-c', 'user.email=t@example.com', '-c', 'commit.gpgsign=false', ...args], { cwd: repo, encoding: 'utf8', env: cleanEnv() });
         if (r.status !== 0) throw new Error(r.stderr);
         return r.stdout;
     };
-    // HOME points at an empty directory so the developer's own denylist never leaks into these tests.
-    let home;
-    const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { cwd: repo, encoding: 'utf8', env: { ...process.env, HOME: home } });
+    const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { cwd: repo, encoding: 'utf8', env: cleanEnv() });
     const write = (name, text) => fs.writeFileSync(path.join(repo, name), text);
 
     beforeEach(() => {
