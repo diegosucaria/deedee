@@ -152,4 +152,89 @@ describe('Memory Tools', () => {
         expect(result.info).toContain('No messages found');
         expect(client.models.generateContent).not.toHaveBeenCalled();
     });
+
+    test('consolidateMemory asks for JSON through config, the key @google/genai reads', async () => {
+        db.getMessagesByDate = jest.fn().mockReturnValue([
+            { timestamp: '2023-01-01T10:00:00Z', role: 'user', content: 'Hi' }
+        ]);
+        db.getAllFacts = jest.fn().mockReturnValue([]);
+        db.getFact = jest.fn().mockReturnValue(null);
+        db.setKey = jest.fn();
+        journal.log = jest.fn();
+        journal.syncFactsToMemory = jest.fn().mockResolvedValue('path/to/memory.md');
+
+        await executor.execute('consolidateMemory', { date: '2023-01-01' }, {});
+
+        const call = client.models.generateContent.mock.calls[0][0];
+        expect(call.model).toBe('gemini-mock');
+        expect(call.config).toEqual({ responseMimeType: 'application/json' });
+        expect(call).not.toHaveProperty('generationConfig');
+    });
+
+    test('consolidateMemory reads the SDK text getter and unwraps a fenced JSON block', async () => {
+        db.getMessagesByDate = jest.fn().mockReturnValue([
+            { timestamp: '2023-01-01T10:00:00Z', role: 'user', content: 'Hi' }
+        ]);
+        db.getAllFacts = jest.fn().mockReturnValue([]);
+        db.getFact = jest.fn().mockReturnValue(null);
+        db.setKey = jest.fn();
+        journal.log = jest.fn();
+        journal.syncFactsToMemory = jest.fn().mockResolvedValue('path/to/memory.md');
+        client.models.generateContent.mockResolvedValueOnce({
+            text: '```json\n{"summary": "Fenced day.", "facts": [{"key": "fenced_key", "value": "v"}]}\n```',
+            candidates: [{ content: { parts: [{ text: 'ignored when text is present' }] } }]
+        });
+
+        const result = await executor.execute('consolidateMemory', { date: '2023-01-01' }, {});
+
+        expect(result.success).toBe(true);
+        expect(result.facts_learned).toBe(1);
+        expect(db.setKey).toHaveBeenCalledWith('fenced_key', 'v', expect.any(Object));
+        expect(journal.log).toHaveBeenCalledWith(expect.stringContaining('Fenced day.'));
+    });
+
+    test('consolidateMemory returns an error when the reply holds no JSON', async () => {
+        db.getMessagesByDate = jest.fn().mockReturnValue([
+            { timestamp: '2023-01-01T10:00:00Z', role: 'user', content: 'Hi' }
+        ]);
+        db.setKey = jest.fn();
+        journal.log = jest.fn();
+        client.models.generateContent.mockResolvedValueOnce({ candidates: [] });
+
+        const result = await executor.execute('consolidateMemory', { date: '2023-01-01' }, {});
+
+        expect(result.error).toBe('Failed to generate valid summary JSON.');
+        expect(db.setKey).not.toHaveBeenCalled();
+    });
+});
+
+describe('parseJsonReply', () => {
+    const { parseJsonReply, responseText } = require('../src/executors/memory');
+
+    test('parses plain JSON', () => {
+        expect(parseJsonReply('{"summary": "s", "facts": []}')).toEqual({ summary: 's', facts: [] });
+    });
+
+    test('parses JSON inside a fence, with or without a language tag', () => {
+        expect(parseJsonReply('```json\n{"a": 1}\n```')).toEqual({ a: 1 });
+        expect(parseJsonReply('Here you go:\n```\n{"a": 2}\n```')).toEqual({ a: 2 });
+    });
+
+    test('parses the first brace block in prose', () => {
+        expect(parseJsonReply('Sure. {"a": {"b": 3}} Done.')).toEqual({ a: { b: 3 } });
+    });
+
+    test('returns null for empty, non-string or non-JSON input', () => {
+        expect(parseJsonReply('')).toBeNull();
+        expect(parseJsonReply(undefined)).toBeNull();
+        expect(parseJsonReply('no json here')).toBeNull();
+        expect(parseJsonReply('42')).toBeNull();
+    });
+
+    test('responseText prefers the SDK text getter and falls back to candidate parts', () => {
+        expect(responseText({ text: 'from getter', candidates: [{ content: { parts: [{ text: 'x' }] } }] })).toBe('from getter');
+        expect(responseText({ candidates: [{ content: { parts: [{ text: 'a' }, { text: 'b' }] } }] })).toBe('ab');
+        expect(responseText({ candidates: [] })).toBe('');
+        expect(responseText(undefined)).toBe('');
+    });
 });
