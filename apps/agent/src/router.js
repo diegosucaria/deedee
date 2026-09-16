@@ -170,9 +170,11 @@ ${TOOL_GROUP_LINES}
 
         } catch (error) {
             console.error('[Router] Routing failed, defaulting to PRO:', error.message);
-            // Empty toolGroups keeps tool scoping on: core tools plus any group
-            // the message names. Without it every tool (all MCP servers) is sent.
-            return { model: 'PRO', toolMode: 'STANDARD', toolGroups: [], reason: 'Error in router' };
+            // No toolGroups: the agent skips scoping and loads every tool, so an
+            // everyday request still reaches home and workspace tools when the
+            // router is down. Scoping with [] here lost those tools.
+            console.log('[Router] fallback: all tools');
+            return { model: 'PRO', toolMode: 'STANDARD', reason: 'Error in router' };
         }
     }
 }

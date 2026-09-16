@@ -1571,9 +1571,8 @@ class Agent {
 
       // Interactive tool scoping: core tools plus the groups the router named.
       // Sub-agents and scheduled jobs use their own allow-lists above. A router
-      // error yields toolGroups [] so scoping still applies (core tools plus
-      // groups named in the message and sticky memory). Only a forced model
-      // (no toolGroups) keeps every tool.
+      // error or a forced model returns no toolGroups, and then every tool
+      // stays loaded.
       // Watcher runs are skipped too: their instructions are free-form and
       // often need tools (calendar, messaging) the router can't infer.
       if (!message.metadata?.isSubAgent && message.source !== 'scheduler' && !isWatcherRun && Array.isArray(decision?.toolGroups)) {
