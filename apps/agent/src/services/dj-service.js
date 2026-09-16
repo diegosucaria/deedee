@@ -1317,9 +1317,6 @@ If unsure, return { "bpm": 0, "key": "" }`
 
         // 2. Pro Model Reasoning
         const proModelName = this.config.getModel('PRO');
-        // TODO(B4.2 SDK PR): client.getGenerativeModel is the old @google/generative-ai API and
-        // throws with @google/genai. Move this call to client.models.generateContent there.
-        const model = this.agent.client.getGenerativeModel({ model: proModelName });
 
         const prompt = `
         You are an expert Vinyl DJ.
@@ -1332,25 +1329,30 @@ If unsure, return { "bpm": 0, "key": "" }`
         Explain why (Key, BPM, Vibe).
       `;
 
-        const result = await model.generateContent(prompt);
+        const result = await this._generateText(proModelName, prompt);
+        this.config.logUsageFromResponse(this.db, proModelName, result, chatId, 'dj_mode');
 
-        // Log usage
-        const usage = result.response.usageMetadata;
-        if (usage) {
-            this.db.logTokenUsage({
-                model: proModelName,
-                promptTokens: usage.promptTokenCount,
-                candidateTokens: usage.candidatesTokenCount,
-                totalTokens: usage.totalTokenCount,
-                chatId: chatId,
-                estimatedCost: this.config.calculateCost(proModelName, usage.promptTokenCount, usage.candidatesTokenCount, usage.cachedContentTokenCount || 0, usage.thoughtsTokenCount || 0),
-                tag: 'dj_mode',
-                cachedTokens: usage.cachedContentTokenCount || 0,
-                thoughtsTokens: usage.thoughtsTokenCount || 0
-            });
-        }
+        return this._responseText(result);
+    }
 
-        return result.response.text();
+    /**
+     * One plain text call through the current SDK (`client.models.generateContent`).
+     * The old `client.getGenerativeModel` shape from @google/generative-ai does not
+     * exist on @google/genai and threw at runtime.
+     */
+    _generateText(modelName, prompt) {
+        return this.agent.client.models.generateContent({
+            model: modelName,
+            contents: [{ role: 'user', parts: [{ text: prompt }] }]
+        });
+    }
+
+    /** Text of the first candidate: the SDK `text` getter when present, else the joined text parts. */
+    _responseText(result) {
+        if (typeof result?.text === 'function') return result.text() || '';
+        if (typeof result?.text === 'string') return result.text;
+        const parts = result?.candidates?.[0]?.content?.parts;
+        return Array.isArray(parts) ? parts.map(p => p.text || '').join('') : '';
     }
 
     /**
@@ -1358,9 +1360,6 @@ If unsure, return { "bpm": 0, "key": "" }`
      */
     async recommendDigital(currentTrack, metadata = {}, chatId) {
         const proModelName = this.config.getModel('PRO');
-        // TODO(B4.2 SDK PR): client.getGenerativeModel is the old @google/generative-ai API and
-        // throws with @google/genai. Move this call to client.models.generateContent there.
-        const model = this.agent.client.getGenerativeModel({ model: proModelName });
 
         // Context from RAG
         let learnedContext = "";
@@ -1387,25 +1386,10 @@ If unsure, return { "bpm": 0, "key": "" }`
         You can recommend ANY track in the world, but prioritize tracks that fit the context and learned knowledge.
       `;
 
-        const result = await model.generateContent(prompt);
+        const result = await this._generateText(proModelName, prompt);
+        this.config.logUsageFromResponse(this.db, proModelName, result, chatId, 'dj_mode');
 
-        // Log usage
-        const usage2 = result.response.usageMetadata;
-        if (usage2) {
-            this.db.logTokenUsage({
-                model: proModelName,
-                promptTokens: usage2.promptTokenCount,
-                candidateTokens: usage2.candidatesTokenCount,
-                totalTokens: usage2.totalTokenCount,
-                chatId: chatId,
-                estimatedCost: this.config.calculateCost(proModelName, usage2.promptTokenCount, usage2.candidatesTokenCount, usage2.cachedContentTokenCount || 0, usage2.thoughtsTokenCount || 0),
-                tag: 'dj_mode',
-                cachedTokens: usage2.cachedContentTokenCount || 0,
-                thoughtsTokens: usage2.thoughtsTokenCount || 0
-            });
-        }
-
-        return result.response.text();
+        return this._responseText(result);
     }
 
     async ingestHistory(content, metadata) {
