@@ -153,7 +153,7 @@ describe('model-smoke runSmoke', () => {
         const levels = client.models.generateContent.mock.calls.map(([p]) => [p.model, p.config?.thinkingConfig?.thinkingLevel, p.config?.maxOutputTokens]);
         expect(levels).toEqual(expect.arrayContaining([
             ['gemini-3.1-flash-lite', 'MINIMAL', 20], ['gemini-3.1-flash-lite', 'MINIMAL', undefined],
-            ['gemini-3.1-pro-preview', 'LOW', 20], ['gemini-3.1-pro-preview', 'HIGH', undefined]
+            ['gemini-3.1-pro-preview', 'LOW', smoke.TEXT_THINKING_BUDGET], ['gemini-3.1-pro-preview', 'HIGH', undefined]
         ]));
     });
 
