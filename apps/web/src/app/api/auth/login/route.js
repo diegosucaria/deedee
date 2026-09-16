@@ -2,14 +2,17 @@ import { NextResponse } from 'next/server';
 import { readStore } from '@/lib/auth/store';
 import { verifyPassword } from '@/lib/auth/password';
 import { issueSession, buildSetCookie } from '@/lib/auth/session';
-import { rateLimitLogin, resetRateLimit, recordLoginFailure, clientIp } from '@/lib/auth/rate-limit';
+import { rateLimitPasswordLogin, resetRateLimit, recordPasswordLoginFailure, clientIp } from '@/lib/auth/rate-limit';
 
 export async function POST(request) {
     const ip = clientIp(request);
-    const limit = rateLimitLogin(ip);
+    const limit = rateLimitPasswordLogin(ip);
     if (!limit.allowed) {
+        const error = limit.reason === 'global'
+            ? 'Password sign-in is paused after too many failed attempts. Passkeys still work, or try again later.'
+            : 'Too many attempts. Try again later.';
         return NextResponse.json(
-            { error: 'Too many attempts. Try again later.' },
+            { error, paused: limit.reason === 'global' },
             { status: 429, headers: { 'Retry-After': String(limit.retryAfter) } },
         );
     }
@@ -28,7 +31,7 @@ export async function POST(request) {
 
     const ok = await verifyPassword(password, store.password);
     if (!ok) {
-        recordLoginFailure();
+        recordPasswordLoginFailure();
         return NextResponse.json({ error: 'Invalid password' }, { status: 401 });
     }
 

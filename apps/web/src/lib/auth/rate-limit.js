@@ -2,9 +2,11 @@
 // only ever care about one bucket — but we key by IP anyway to avoid a
 // single attacker locking the legit user out of the password path.
 //
-// A second, global bucket counts failed attempts across every IP, so a
-// spray from many addresses still slows down. Its cost is that a burst of
-// failures also blocks the legit user until the window ends.
+// A second, global bucket counts failed PASSWORD logins across every IP, so
+// a spray from many addresses still slows down. Its cost is that a burst of
+// failures also pauses password sign-in for the legit user until the window
+// ends. Passkey sign-in and the session-gated password change never read or
+// feed this bucket, so the owner can still get in with a passkey.
 import 'server-only';
 
 const buckets = new Map();
@@ -34,14 +36,11 @@ function globalWindow(now) {
     return globalFailures;
 }
 
+// Per-IP limit only. Use on every auth route that takes a guess from the
+// client: passkey options/verify, password change, and (via
+// rateLimitPasswordLogin) password login.
 export function rateLimitLogin(ip) {
     const now = Date.now();
-
-    const global = globalWindow(now);
-    if (global.count >= GLOBAL_MAX_FAILURES) {
-        return { allowed: false, retryAfter: Math.ceil((global.reset - now) / 1000) };
-    }
-
     const key = ip || 'unknown';
     const entry = buckets.get(key) || { count: 0, reset: now + WINDOW_MS };
     if (entry.reset < now) {
@@ -51,13 +50,24 @@ export function rateLimitLogin(ip) {
     entry.count += 1;
     buckets.set(key, entry);
     if (entry.count > MAX_ATTEMPTS) {
-        return { allowed: false, retryAfter: Math.ceil((entry.reset - now) / 1000) };
+        return { allowed: false, reason: 'ip', retryAfter: Math.ceil((entry.reset - now) / 1000) };
     }
     return { allowed: true, remaining: MAX_ATTEMPTS - entry.count };
 }
 
-// Call after a failed password or passkey check. Feeds the global bucket.
-export function recordLoginFailure() {
+// Password login only: the global failure bucket first, then the per-IP
+// limit. `reason: 'global'` lets the route tell the user passkeys still work.
+export function rateLimitPasswordLogin(ip) {
+    const now = Date.now();
+    const global = globalWindow(now);
+    if (global.count >= GLOBAL_MAX_FAILURES) {
+        return { allowed: false, reason: 'global', retryAfter: Math.ceil((global.reset - now) / 1000) };
+    }
+    return rateLimitLogin(ip);
+}
+
+// Call after a failed password LOGIN only. Feeds the global bucket.
+export function recordPasswordLoginFailure() {
     globalWindow(Date.now()).count += 1;
 }
 

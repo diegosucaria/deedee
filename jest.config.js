@@ -23,7 +23,9 @@ module.exports = {
         "^bindings$": "<rootDir>/jest.setup.js",
         // `server-only` is a marker package that only resolves inside the Next
         // bundler. Point it at Next's own empty shim.
-        "^server-only$": serverOnlyShim
+        "^server-only$": serverOnlyShim,
+        // apps/web's `@/` import alias (see apps/web/jsconfig.json).
+        "^@/(.*)$": "<rootDir>/apps/web/src/$1"
     },
     verbose: true
 };
