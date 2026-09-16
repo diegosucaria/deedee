@@ -1,3 +1,14 @@
+const crypto = require('crypto');
+
+// Constant-time compare of two secrets. False when either is missing or
+// the lengths differ (timingSafeEqual needs equal-length buffers).
+function tokenMatches(presented, expected) {
+    if (typeof presented !== 'string' || typeof expected !== 'string' || !expected) return false;
+    const a = Buffer.from(presented);
+    const b = Buffer.from(expected);
+    if (a.length !== b.length) return false;
+    return crypto.timingSafeEqual(a, b);
+}
 
 const authMiddleware = (req, res, next) => {
     const authHeader = req.headers.authorization;
@@ -14,11 +25,11 @@ const authMiddleware = (req, res, next) => {
         return res.status(500).json({ error: 'Server authentication configuration error' });
     }
 
-    if (token !== validToken) {
+    if (!tokenMatches(token, validToken)) {
         return res.status(403).json({ error: 'Invalid API Token' });
     }
 
     next();
 };
 
-module.exports = { authMiddleware };
+module.exports = { authMiddleware, tokenMatches };

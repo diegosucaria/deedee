@@ -1,6 +1,7 @@
 'use server';
 
 import { fetchAPI } from '@/lib/api';
+import { requireActionSession } from '@/lib/auth/guard';
 import { revalidatePath } from 'next/cache';
 
 export async function getSkills() {
@@ -14,6 +15,7 @@ export async function getSkills() {
 }
 
 export async function saveSkill(filename, content) {
+    await requireActionSession();
     try {
         const res = await fetchAPI('/v1/skills', {
             method: 'POST',
@@ -27,6 +29,7 @@ export async function saveSkill(filename, content) {
 }
 
 export async function deleteSkill(filename) {
+    await requireActionSession();
     try {
         // URL Safety: Encode component
         const safeName = encodeURIComponent(filename);
@@ -41,6 +44,7 @@ export async function deleteSkill(filename) {
 }
 
 export async function toggleSkill(name, enabled) {
+    await requireActionSession();
     try {
         const action = enabled ? 'enable' : 'disable';
         await fetchAPI(`/v1/skills/${encodeURIComponent(name)}/${action}`, {
@@ -54,6 +58,7 @@ export async function toggleSkill(name, enabled) {
 }
 
 export async function saveSkillSecrets(name, secrets) {
+    await requireActionSession();
     try {
         await fetchAPI(`/v1/skills/${encodeURIComponent(name)}/secrets`, {
             method: 'POST',
@@ -67,6 +72,7 @@ export async function saveSkillSecrets(name, secrets) {
 }
 
 export async function getSkill(name) {
+    await requireActionSession();
     try {
         const safeName = encodeURIComponent(name);
         const skill = await fetchAPI(`/v1/skills/${safeName}`);
