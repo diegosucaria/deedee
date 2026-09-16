@@ -58,12 +58,20 @@ const SERVICE_CATEGORIES = {
   grok: 'Grok',
 };
 
+// Tags written on the main agent chat path (see services/usage-attribution.js).
+// They say which class of turn a call belongs to, not which product surface it
+// came from, so the cost breakdown classifies them by chat_id like untagged rows.
+const MAIN_PATH_TAGS = ['chat', 'job', 'subagent', 'watcher']
+  .flatMap(t => [t, `${t}_tool_loop`]);
+const MAIN_PATH_TAGS_SQL = MAIN_PATH_TAGS.map(t => `'${t}'`).join(', ');
+
 // SQL CASE expression that resolves an effective_tag from tag + chat_id.
-// When tag is NOT NULL, use it directly. When tag IS NULL (main agent chat),
-// classify by chat_id pattern: WhatsApp JIDs, scheduled jobs, sub-agents, etc.
+// When tag names a call site (tts, dream, ...), use it directly. When tag IS
+// NULL or is a main-path tag, classify by chat_id pattern: WhatsApp JIDs,
+// scheduled jobs, sub-agents, etc.
 const EFFECTIVE_TAG_SQL = `
   CASE
-    WHEN tag IS NOT NULL THEN tag
+    WHEN tag IS NOT NULL AND tag NOT IN (${MAIN_PATH_TAGS_SQL}) THEN tag
     WHEN chat_id LIKE '%@s.us' OR chat_id LIKE '%@g.us' THEN 'whatsapp'
     WHEN chat_id LIKE 'scheduled\\_%' ESCAPE '\\' THEN 'scheduled_job'
     WHEN chat_id LIKE 'system\\_%' ESCAPE '\\' THEN 'system_job'
@@ -3733,4 +3741,4 @@ class AgentDB {
   }
 }
 
-module.exports = { AgentDB, SERVICE_CATEGORIES };
+module.exports = { AgentDB, SERVICE_CATEGORIES, MAIN_PATH_TAGS };

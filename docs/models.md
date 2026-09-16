@@ -184,7 +184,9 @@ It reads `data/agent.db` read-only (`--db` for another path) and prints:
 Tags on the main chat path: `chat`, `job` (scheduler), `subagent`, `watcher`,
 each with a `_tool_loop` suffix on the calls that follow tool results. Other
 tags name their call site (`router`, `title`, `tts`, `wardrobe_*`, ...).
-Rows with a NULL tag predate the attribution change.
+Rows with a NULL tag predate the attribution change. The stats page cost
+breakdown (`/v1/stats/cost-by-tag`) treats main-path tags like NULL: it sorts
+those rows into WhatsApp, Web Chat, Jobs or Sub-agents by `chat_id`.
 
 Expect only the new ids, daily cost within about 25% of the prior week, and no
 `model_failure` or `rag_reindex_failed` notifications.
