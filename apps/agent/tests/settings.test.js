@@ -160,3 +160,32 @@ describe('Settings API partner_greeting', () => {
         expect(run).not.toHaveBeenCalled();
     });
 });
+
+describe('Settings API approvals', () => {
+    let app;
+    let run;
+
+    beforeEach(() => {
+        run = jest.fn();
+        const mockDb = { db: { prepare: jest.fn().mockReturnValue({ run }) } };
+        app = express();
+        app.use(express.json());
+        app.use('/internal/settings', createSettingsRouter({ db: mockDb, settings: {} }));
+    });
+
+    test('stores clamped TTLs and the deny list as an array', async () => {
+        const res = await request(app)
+            .post('/internal/settings')
+            .send({ key: 'approvals', value: { ttlInteractiveMin: '45', ttlDeferredHours: 500, deny: 'commitAndPush\n# comment\nrunShellCommand:*rm -rf*' } });
+        expect(res.statusCode).toBe(200);
+        expect(run).toHaveBeenCalledWith('approvals', JSON.stringify({ ttlInteractiveMin: 45, ttlDeferredHours: 168, deny: ['commitAndPush', 'runShellCommand:*rm -rf*'] }), 'general');
+    });
+
+    test('rejects a non-object value', async () => {
+        for (const value of ['x', 5, ['a']]) {
+            const res = await request(app).post('/internal/settings').send({ key: 'approvals', value });
+            expect(res.statusCode).toBe(400);
+        }
+        expect(run).not.toHaveBeenCalled();
+    });
+});
