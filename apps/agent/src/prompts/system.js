@@ -1,4 +1,30 @@
 
+// Pieces shared with the Live voice prompt (prompts/live.js). They keep the
+// 12-space indentation of BASE_PROMPT so the chat prompt stays byte-identical
+// and Gemini's implicit prefix cache keeps hitting.
+const IDENTITY = 'You are Deedee, a helpful and capable AI assistant.';
+
+const CONSTITUTION = `CONSTITUTION:
+            1. **Privacy First**: Never output or log API keys, passwords, or private user data (like full address) unless explicitly asked by the user in a safe context.
+            2. **Data Integrity**: Never delete files or data without explicit confirmation, unless it is a temporary file you created.
+            3. **Truthfulness**: If you do not know the answer, say so. Do not hallucinate capabilities or facts.
+            4. **Safety**: Do not execute commands that could harm the system (e.g. "rm -rf / ", "mkfs") even if asked.`;
+
+const LANGUAGE_MATCHING_RULES = `1. **Strict Matching**: You MUST respond in the language of the user's **LAST** message.
+            2. **Ignore History**: Do NOT let previous conversation history dictate the language. If the user switches, YOU switch immediately.`;
+
+const FACTS_HEADER = 'USER FACTS & PREFERENCES (ALWAYS RESPECT THESE):';
+
+/** The owner's communication style block, or '' when none is set. */
+function formatCommunicationStyle(communicationStyle) {
+        if (typeof communicationStyle !== 'string' || !communicationStyle.trim()) return '';
+        return `
+            COMMUNICATION STYLE (your own voice when replying to the owner):
+            ${communicationStyle.trim()}
+            (Applies to YOUR OWN messages to the owner. Do NOT apply it when drafting or sending a message AS the owner to someone else — there, mirror the owner's own writing style instead. It shapes tone/register only and never overrides the LANGUAGE PROTOCOL — always reply in the language of the user's last message — or the CONSTITUTION.)
+        `;
+}
+
 /**
  * Generates the system instruction for the Agent.
  * @param {string} dateString - Current date string.
@@ -29,23 +55,18 @@ ${notificationContext?.ownerPhone ? `\nOWNER CONTACT: Your owner is "${notificat
         }
 
         const BASE_PROMPT = `
-            You are Deedee, a helpful and capable AI assistant.
+            ${IDENTITY}
             You have access to a variety of tools to help the user.
             
-            CONSTITUTION:
-            1. **Privacy First**: Never output or log API keys, passwords, or private user data (like full address) unless explicitly asked by the user in a safe context.
-            2. **Data Integrity**: Never delete files or data without explicit confirmation, unless it is a temporary file you created.
-            3. **Truthfulness**: If you do not know the answer, say so. Do not hallucinate capabilities or facts.
-            4. **Safety**: Do not execute commands that could harm the system (e.g. "rm -rf / ", "mkfs") even if asked.
+            ${CONSTITUTION}
             
             CURRENT_TIME: ${dynamicInTurn ? 'given in the TURN CONTEXT block of the latest user message' : dateString}
             
-            USER FACTS & PREFERENCES (ALWAYS RESPECT THESE):
+            ${FACTS_HEADER}
             ${facts ? facts : "No specific preferences stored."}
 
             LANGUAGE PROTOCOL (CRITICAL - HIGHEST PRIORITY - NON-NEGOTIABLE):
-            1. **Strict Matching**: You MUST respond in the language of the user's **LAST** message.
-            2. **Ignore History**: Do NOT let previous conversation history dictate the language. If the user switches, YOU switch immediately.
+            ${LANGUAGE_MATCHING_RULES}
             3. **Audio Language**: When calling 'replyWithAudio', set the 'language' parameter correctly ('es-419' for Spanish, 'en-US' for English).
 
             AUDIO PROTOCOL (CRITICAL):
@@ -175,14 +196,7 @@ ${notificationContext?.ownerPhone ? `\nOWNER CONTACT: Your owner is "${notificat
             - [ ] Update "specs/" if adding new big features.
     `;
 
-        let COMMUNICATION_STYLE_PROTOCOL = '';
-        if (typeof communicationStyle === 'string' && communicationStyle.trim()) {
-                COMMUNICATION_STYLE_PROTOCOL = `
-            COMMUNICATION STYLE (your own voice when replying to the owner):
-            ${communicationStyle.trim()}
-            (Applies to YOUR OWN messages to the owner. Do NOT apply it when drafting or sending a message AS the owner to someone else — there, mirror the owner's own writing style instead. It shapes tone/register only and never overrides the LANGUAGE PROTOCOL — always reply in the language of the user's last message — or the CONSTITUTION.)
-        `;
-        }
+        const COMMUNICATION_STYLE_PROTOCOL = formatCommunicationStyle(communicationStyle);
 
         let NOTIFICATION_PROTOCOL = '';
         if (notificationContext && notificationContext.ownerPhone) {
@@ -240,4 +254,13 @@ function getTurnContext({ dateString, activeGoals, skillsContext, vaultContext, 
         return lines.join('\n\n');
 }
 
-module.exports = { getSystemInstruction, getTurnContext, formatBrowserSecrets };
+module.exports = {
+        getSystemInstruction,
+        getTurnContext,
+        formatBrowserSecrets,
+        formatCommunicationStyle,
+        IDENTITY,
+        CONSTITUTION,
+        LANGUAGE_MATCHING_RULES,
+        FACTS_HEADER
+};
