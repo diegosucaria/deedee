@@ -79,6 +79,36 @@ describe('Interfaces API Tests', () => {
 
       expect(res.statusCode).toBe(401);
     });
+
+    test('POST /send should return 401 for a token that only shares a prefix', async () => {
+      app = await loadApp();
+      const res = await request(app)
+        .post('/send')
+        .set('Authorization', 'Bearer valid-token-and-more')
+        .send({ source: 'test', content: 'hello' });
+
+      expect(res.statusCode).toBe(401);
+    });
+
+    test('fails closed when DEEDEE_API_TOKEN is unset', async () => {
+      delete process.env.DEEDEE_API_TOKEN;
+      app = await loadApp();
+
+      const noToken = await request(app)
+        .post('/send')
+        .send({ source: 'test', content: 'hello' });
+      expect(noToken.statusCode).toBe(401);
+
+      // "Bearer undefined" used to pass because undefined === undefined.
+      const literalUndefined = await request(app)
+        .post('/send')
+        .set('Authorization', 'Bearer undefined')
+        .send({ source: 'test', content: 'hello' });
+      expect(literalUndefined.statusCode).toBe(401);
+
+      const health = await request(app).get('/health');
+      expect(health.statusCode).toBe(200);
+    });
   });
 
   describe('Session Management', () => {
