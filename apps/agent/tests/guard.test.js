@@ -89,25 +89,52 @@ describe('ConfirmationManager', () => {
         expect(check('gws_personal_calendar', { method: 'events.list' }).requiresConfirmation).toBe(false);
     });
 
-    test('Home Assistant locks, covers, alarms, climate and bulk control need approval', () => {
-        for (const domain of ['lock', 'cover', 'alarm_control_panel', 'climate']) {
-            expect(check('ha_call_service', { domain, service: 'turn_on', entity_id: `${domain}.x` }).requiresConfirmation).toBe(true);
-        }
-        expect(check('ha_call_service', { domain: 'lock', service: 'lock' }).requiresConfirmation).toBe(true);
+    test('Home Assistant locks, the alarm, opening a garage and mass actions need approval', () => {
+        expect(check('ha_call_service', { domain: 'lock', service: 'lock', entity_id: 'lock.front' }).requiresConfirmation).toBe(true);
+        expect(check('ha_call_service', { domain: 'lock', service: 'unlock', entity_id: 'lock.front' }).requiresConfirmation).toBe(true);
+        expect(check('ha_call_service', { domain: 'alarm_control_panel', service: 'alarm_arm_away' }).requiresConfirmation).toBe(true);
+        expect(check('ha_call_service', { domain: 'alarm_control_panel', service: 'alarm_disarm' }).requiresConfirmation).toBe(true);
+        expect(check('ha_call_service', { domain: 'cover', service: 'open_cover', entity_id: 'cover.garage_door' }).requiresConfirmation).toBe(true);
+        expect(check('ha_call_service', { domain: 'cover', service: 'set_cover_position', entity_id: 'cover.porton', position: 50 }).requiresConfirmation).toBe(true);
         expect(check('ha_call_service', { domain: 'homeassistant', service: 'restart' }).requiresConfirmation).toBe(true);
         expect(check('ha_call_service', { domain: 'automation', service: 'turn_off' }).requiresConfirmation).toBe(true);
-        expect(check('ha_bulk_control', { entities: ['light.a', 'light.b'], action: 'turn_off' }).requiresConfirmation).toBe(true);
-        // Everyday actions stay free
-        expect(check('ha_call_service', { domain: 'light', service: 'turn_on', entity_id: 'light.kitchen' }).requiresConfirmation).toBe(false);
-        expect(check('ha_call_service', { domain: 'light', service: 'turn_off', entity_id: 'all' }).requiresConfirmation).toBe(false);
         expect(check('ha_call_service', { domain: 'switch', service: 'turn_on', entity_id: 'all' }).requiresConfirmation).toBe(true);
         expect(check('ha_get_state', { entity_id: 'lock.front' }).requiresConfirmation).toBe(false);
+    });
+
+    test('everyday Home Assistant control runs unasked: lights, climate, blinds, closing the garage', () => {
+        expect(check('ha_call_service', { domain: 'light', service: 'turn_on', entity_id: 'light.kitchen' }).requiresConfirmation).toBe(false);
+        expect(check('ha_call_service', { domain: 'light', service: 'turn_off', entity_id: 'all' }).requiresConfirmation).toBe(false);
+        expect(check('ha_call_service', { domain: 'climate', service: 'set_temperature', entity_id: 'climate.bedroom', temperature: 22 }).requiresConfirmation).toBe(false);
+        expect(check('ha_call_service', { domain: 'climate', service: 'turn_on', entity_id: 'climate.living' }).requiresConfirmation).toBe(false);
+        expect(check('ha_call_service', { domain: 'cover', service: 'open_cover', entity_id: 'cover.living_blinds' }).requiresConfirmation).toBe(false);
+        expect(check('ha_call_service', { domain: 'cover', service: 'close_cover', entity_id: 'cover.garage_door' }).requiresConfirmation).toBe(false);
+        expect(check('ha_remove_todo_item', { entity_id: 'todo.shopping_list', item: 'milk' }).requiresConfirmation).toBe(false);
+        expect(check('ha_set_todo_item', { entity_id: 'todo.shopping_list', item: 'milk' }).requiresConfirmation).toBe(false);
+    });
+
+    test('ha_bulk_control pauses only when an operation touches a guarded domain', () => {
+        const ops = (...list) => ({ operations: list });
+        expect(check('ha_bulk_control', ops({ entity_id: 'light.a', action: 'turn_off' }, { entity_id: 'light.b', action: 'turn_off' })).requiresConfirmation).toBe(false);
+        expect(check('ha_bulk_control', ops({ entity_id: 'climate.bedroom', action: 'set_temperature', data: { temperature: 22 } }, { entity_id: 'switch.fan', action: 'turn_on' })).requiresConfirmation).toBe(false);
+        expect(check('ha_bulk_control', ops({ entity_id: 'cover.garage', action: 'close' })).requiresConfirmation).toBe(false);
+        expect(check('ha_bulk_control', ops({ entity_id: 'light.a', action: 'turn_off' }, { entity_id: 'lock.front', action: 'unlock' }))).toMatchObject({ requiresConfirmation: true, rule: 'ha-bulk' });
+        expect(check('ha_bulk_control', ops({ entity_id: 'alarm_control_panel.home', action: 'alarm_disarm' })).requiresConfirmation).toBe(true);
+        expect(check('ha_bulk_control', ops({ entity_id: 'cover.garage', action: 'open' })).requiresConfirmation).toBe(true);
+        expect(check('ha_bulk_control', ops({ entity_id: ['light.a', 'all'], action: 'turn_on' })).requiresConfirmation).toBe(true);
+        expect(check('ha_bulk_control', { entities: ['light.a', 'light.b'], action: 'turn_off' }).requiresConfirmation).toBe(false);
+        expect(check('ha_bulk_control', { entities: ['lock.a'], action: 'unlock' }).requiresConfirmation).toBe(true);
+        expect(check('ha_bulk_control', {}).requiresConfirmation).toBe(false);
     });
 
     test('appointment booking and cancelling need approval, with or without a namespace', () => {
         expect(check('book_appointment', { slot_ref: 's1' }).requiresConfirmation).toBe(true);
         expect(check('cancel_appointment', { appointmentId: 1 }).requiresConfirmation).toBe(true);
         expect(check('allende_book_appointment', { slot_ref: 's1' }).requiresConfirmation).toBe(true);
+        expect(check('book_turn', { planeId: 1, confirm: true }).requiresConfirmation).toBe(true);
+        expect(check('cancel_turn', { turnId: 1 }).requiresConfirmation).toBe(true);
+        expect(check('pilotfy_book_turn', { planeId: 1 }).requiresConfirmation).toBe(true);
+        expect(check('list_turns', {}).requiresConfirmation).toBe(false);
         expect(check('my_appointments', {}).requiresConfirmation).toBe(false);
         expect(check('find_earlier', { appointmentId: 1 }).requiresConfirmation).toBe(false);
     });
@@ -121,12 +148,21 @@ describe('ConfirmationManager', () => {
         expect(buildToolFlags([{ functionDeclarations: [{ name: 'x', requiresConfirmation: true }] }]).get('x').message).toMatch(/owner's approval/);
     });
 
-    test('tools named delete or remove need approval', () => {
-        expect(check('ha_config_remove_automation', { id: 'a' }).requiresConfirmation).toBe(true);
-        expect(check('ha_remove_todo_item', { item: 'milk' }).requiresConfirmation).toBe(true);
+    test('only data-destroying deletes need approval; everyday removals run unasked', () => {
+        expect(check('deletePerson', { id: 'p1' })).toMatchObject({ requiresConfirmation: true, rule: 'tool-flag' });
+        expect(check('deleteVault', { id: 'v1' }).requiresConfirmation).toBe(true);
         expect(check('delete_garment', { id: 1 }).requiresConfirmation).toBe(true);
-        expect(check('remove_from_wardrobe_trip_capsule', { id: 1 }).requiresConfirmation).toBe(true);
-        expect(check('deleteJournal', { date: 'x' }).requiresConfirmation).toBe(true);
+        expect(check('deleteDeviceAlias', { alias: 'x' }).requiresConfirmation).toBe(true);
+        expect(check('media_delete', { media_id: 1 })).toMatchObject({ requiresConfirmation: true, rule: 'plex-destructive' });
+        expect(check('playlist_delete', { playlist_id: 1 }).requiresConfirmation).toBe(true);
+        expect(check('ha_config_remove_automation', { id: 'a' })).toMatchObject({ requiresConfirmation: true, rule: 'delete-or-remove' });
+        // Everyday removals
+        expect(check('remove_from_wardrobe_trip_capsule', { id: 1, garment_ids: ['g'] }).requiresConfirmation).toBe(false);
+        expect(check('ha_remove_todo_item', { item: 'milk' }).requiresConfirmation).toBe(false);
+        expect(check('playlist_remove_from', { playlist_id: 1, item_titles: ['x'] }).requiresConfirmation).toBe(false);
+        expect(check('collection_remove_from', { collection_id: 1, item_titles: ['x'] }).requiresConfirmation).toBe(false);
+        expect(check('cancelJob', { name: 'morning' }).requiresConfirmation).toBe(false);
+        expect(check('deleteJournal', { date: 'x' }).requiresConfirmation).toBe(false);
         expect(check('undeleted_files', {}).requiresConfirmation).toBe(false);
         expect(check('listPeople', {}).requiresConfirmation).toBe(false);
     });

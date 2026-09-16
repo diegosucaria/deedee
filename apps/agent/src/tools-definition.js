@@ -988,8 +988,6 @@ const toolDefinitions = [
       },
       {
         name: "remove_from_wardrobe_trip_capsule",
-        requiresConfirmation: true,
-        confirmationReason: "Removing an item changes a saved trip capsule.",
         category: "wardrobe",
         description: "Remove garments from a wardrobe trip's actual_capsule.",
         parameters: {

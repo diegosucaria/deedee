@@ -17,8 +17,17 @@
 const { toolDefinitions } = require('./tools-definition');
 
 const HA_CALL_TOOLS = new Set(['ha_call_service', 'call_service']);
-// Domains where any service call changes physical security or comfort.
-const HA_GUARDED_DOMAINS = new Set(['lock', 'cover', 'alarm_control_panel', 'climate']);
+// Domains where any service call changes physical security. Climate,
+// covers (except opening a garage) and bulk light/switch control are
+// everyday actions and run unasked.
+const HA_GUARDED_DOMAINS = new Set(['lock', 'alarm_control_panel']);
+// A cover whose id reads as a garage or gate: opening it lets people in.
+const GARAGE_COVER_RE = /garage|gate|port[oó]n|cochera|driveway/i;
+const COVER_OPEN_SERVICES = new Set(['open_cover', 'open_cover_tilt', 'set_cover_position', 'set_cover_tilt_position', 'toggle', 'toggle_cover_tilt']);
+// Bulk actions that open or unlock (ha_bulk_control operations).
+const OPENING_ACTIONS = /open|unlock|toggle|disarm|position/i;
+// Removal tools that destroy Home Assistant configuration (not list items).
+const HA_CONFIG_REMOVE_RE = /^ha_config_remove_|^ha_remove_(?:device|entity|area_or_floor|zone|helpers_integrations)$/;
 
 const DESTRUCTIVE_PLEX = new Set([
     'media_delete', 'playlist_delete', 'collection_delete',
@@ -48,6 +57,42 @@ const SHELL_SYSTEM_DAMAGE = [
 function asString(value) {
     if (value == null) return '';
     return typeof value === 'string' ? value : String(value);
+}
+
+function entityDomain(entityId) {
+    const id = asString(entityId);
+    const dot = id.indexOf('.');
+    return dot > 0 ? id.slice(0, dot) : '';
+}
+
+/** Opening a garage-type cover (by id) needs the owner; closing never does. */
+function isGarageOpen(entityId, service) {
+    return GARAGE_COVER_RE.test(asString(entityId)) && COVER_OPEN_SERVICES.has(asString(service));
+}
+
+/**
+ * Does one ha_bulk_control operation touch a guarded domain? Operations
+ * carry `entity_id` (or `entity_ids`) with an `action` or `service`.
+ */
+function bulkOperationGuarded(op) {
+    if (!op || typeof op !== 'object') return false;
+    const ids = [];
+    if (Array.isArray(op.entity_id)) ids.push(...op.entity_id);
+    else if (op.entity_id !== undefined) ids.push(op.entity_id);
+    if (Array.isArray(op.entity_ids)) ids.push(...op.entity_ids);
+    if (Array.isArray(op.entities)) ids.push(...op.entities);
+    const action = asString(op.action || op.service);
+    const domain = asString(op.domain);
+    if (domain && HA_GUARDED_DOMAINS.has(domain)) return true;
+    if (domain === 'homeassistant' || domain === 'hassio') return true;
+    for (const raw of ids) {
+        const id = asString(raw);
+        if (id === 'all') return true;
+        const d = entityDomain(id);
+        if (HA_GUARDED_DOMAINS.has(d)) return true;
+        if (d === 'cover' && GARAGE_COVER_RE.test(id) && OPENING_ACTIONS.test(action)) return true;
+    }
+    return false;
 }
 
 /** Stable JSON: keys sorted so a deny pattern does not depend on argument order. */
@@ -113,6 +158,7 @@ class ConfirmationManager {
                     if (HA_GUARDED_DOMAINS.has(domain)) return true;
                     if (domain === 'automation' && service === 'turn_off') return true;
                     if (domain === 'script' && service.includes('delete')) return true;
+                    if (domain === 'cover' && isGarageOpen(args.entity_id, service)) return true;
                     if (asString(args.entity_id) === 'all') {
                         if (['light', 'switch', 'media_player'].includes(domain) && service === 'turn_off') return false;
                         if (domain === 'light' && service === 'turn_on') return false;
@@ -120,12 +166,20 @@ class ConfirmationManager {
                     }
                     return false;
                 },
-                message: 'This Home Assistant action touches the system, a lock, a cover, the alarm or the climate.'
+                message: 'This Home Assistant action touches the system, a lock, the alarm, a garage door, or every device at once.'
             },
             {
+                // Bulk control of lights, switches, media or climate runs unasked;
+                // only operations on a guarded domain (or on everything) pause.
                 id: 'ha-bulk',
-                condition: (name) => name === 'ha_bulk_control',
-                message: 'Bulk Home Assistant control changes many devices at once.'
+                condition: (name, args) => {
+                    if (name !== 'ha_bulk_control') return false;
+                    const ops = Array.isArray(args.operations) ? args.operations : [];
+                    if (ops.some(bulkOperationGuarded)) return true;
+                    // Flat shape: { entities: [...], action }
+                    return bulkOperationGuarded({ entities: args.entities, entity_id: args.entity_id, action: args.action, domain: args.domain });
+                },
+                message: 'This bulk Home Assistant action touches a lock, the alarm, a garage door, or every device at once.'
             },
             {
                 id: 'shell-remote-exec',
@@ -187,7 +241,7 @@ class ConfirmationManager {
             },
             {
                 id: 'appointments',
-                condition: (name) => /(?:^|_)(?:book|cancel)_appointment$/i.test(name),
+                condition: (name) => /(?:^|_)(?:book|cancel)_(?:appointment|turn)$/i.test(name),
                 message: 'This books or cancels a real appointment.'
             },
             {
@@ -196,9 +250,14 @@ class ConfirmationManager {
                 message: 'This action modifies the Plex library.'
             },
             {
+                // Data-destroying deletes only. The internal ones (deletePerson,
+                // deleteVault, delete_garment, deleteDeviceAlias) carry a
+                // per-tool flag; Plex deletes sit in DESTRUCTIVE_PLEX. Everyday
+                // removals (a shopping-list item, a track from a playlist,
+                // cancelJob) run unasked.
                 id: 'delete-or-remove',
-                condition: (name) => /(?:^|[_-])(?:delete|remove)(?:[_-]|$)|(?:delete|remove)[A-Z]|^(?:delete|remove)/.test(name),
-                message: 'This deletes or removes user data.'
+                condition: (name) => HA_CONFIG_REMOVE_RE.test(name),
+                message: 'This deletes Home Assistant configuration.'
             }
         ];
     }
@@ -294,4 +353,4 @@ class ConfirmationManager {
     }
 }
 
-module.exports = { ConfirmationManager, buildToolFlags, denyKey, globToRegExp, stableJson, HA_GUARDED_DOMAINS };
+module.exports = { ConfirmationManager, buildToolFlags, denyKey, globToRegExp, stableJson, HA_GUARDED_DOMAINS, bulkOperationGuarded, isGarageOpen };
