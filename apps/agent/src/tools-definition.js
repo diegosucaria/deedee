@@ -1224,7 +1224,7 @@ const toolDefinitions = [
           type: "OBJECT",
           properties: {
             task: { type: "STRING", description: "Clear, specific task description for the sub-agent." },
-            model: { type: "STRING", description: "Optional model override: 'FLASH' (default, fast/cheap) or 'PRO' (complex reasoning)." },
+            model: { type: "STRING", description: "Optional model class: 'LITE' for scans and fetches (default when lightweight is true), 'FLASH' default, 'PRO' for code or planning." },
             tools: {
               type: "ARRAY",
               items: { type: "STRING" },
@@ -1232,7 +1232,7 @@ const toolDefinitions = [
             },
             timeoutMinutes: { type: "NUMBER", description: "Max execution time in minutes (default: 6, max: 10)." },
             waitForResult: { type: "BOOLEAN", description: "Default: true (blocks until done). Set to false ONLY for fire-and-forget tasks where you don't need the result." },
-            lightweight: { type: "BOOLEAN", description: "If true, sub-agent gets minimal system prompt (no user facts, skills, coding rules). Use for scanner/fetch tasks that don't need user context. Default: false." }
+            lightweight: { type: "BOOLEAN", description: "If true, sub-agent gets minimal system prompt (no user facts, skills, coding rules) and runs on LITE unless model says otherwise. Use for scanner/fetch tasks that don't need user context. Default: false." }
           },
           required: ["task"]
         }
@@ -1240,11 +1240,12 @@ const toolDefinitions = [
       {
         name: "getAgentResult",
         category: "subagent",
-        description: "Check the status and result of a previously spawned sub-agent task.",
+        description: "Check the status and result of a previously spawned sub-agent task. Long results come back compressed; pass full: true to read the whole text.",
         parameters: {
           type: "OBJECT",
           properties: {
-            taskId: { type: "STRING", description: "The task ID returned by spawnAgent." }
+            taskId: { type: "STRING", description: "The task ID returned by spawnAgent." },
+            full: { type: "BOOLEAN", description: "Return the uncompressed result when one was stored. Default: false." }
           },
           required: ["taskId"]
         }

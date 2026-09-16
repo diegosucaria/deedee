@@ -1906,7 +1906,8 @@ class Agent {
           config: {
             tools: geminiTools,
             systemInstruction: systemInstruction,
-            thinkingConfig: { includeThoughts: true },
+            // Sub-agents run unattended: nobody reads their thought stream.
+            thinkingConfig: { includeThoughts: !isSubAgent },
           },
           history: history
         });
@@ -1979,7 +1980,11 @@ class Agent {
       let functionCalls = getFunctionCalls(response);
 
 
-      const MAX_LOOPS_DEFAULT = parseInt(process.env.MAX_TOOL_LOOPS || '15');
+      // A caller (sub-agent spawn) may cap its own run below the env default.
+      const metaMaxLoops = parseInt(message.metadata?.maxToolLoops, 10);
+      const MAX_LOOPS_DEFAULT = Number.isFinite(metaMaxLoops) && metaMaxLoops > 0
+        ? metaMaxLoops
+        : parseInt(process.env.MAX_TOOL_LOOPS || '15');
       const MAX_LOOPS_BROWSER = parseInt(process.env.MAX_TOOL_LOOPS_BROWSER || '50');
       const MAX_SAME_TOOL_CALLS = 6; // Same tool name (non-browser) = likely stuck
       const MAX_IDENTICAL_CALLS = 3; // Same tool + same args = definitely stuck
