@@ -3,7 +3,8 @@ const { Router } = require('../src/router');
 // Mock ConfigService
 jest.mock('../src/services/config-service', () => ({
     ConfigService: jest.fn().mockImplementation(() => ({
-        getModel: jest.fn().mockReturnValue('gemini-2.0-flash-exp')
+        getModel: jest.fn().mockReturnValue('gemini-2.0-flash-exp'),
+        getThinkingConfig: jest.fn().mockReturnValue(null)
     }))
 }));
 
