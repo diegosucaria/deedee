@@ -13,8 +13,64 @@ const MODEL_ENV_VARS = {
     EMBEDDING: 'GEMINI_EMBEDDING_MODEL',
 };
 
+// Gemini 3 thinking levels, cheapest first.
+const THINKING_LEVELS = ['MINIMAL', 'LOW', 'MEDIUM', 'HIGH'];
+const ALL_LEVELS = THINKING_LEVELS;
+const NO_MINIMAL = ['LOW', 'MEDIUM', 'HIGH'];
+
+// Levels each Gemini 3.x id accepts (thinking guide, checked by
+// scripts/model-smoke.js). Keys match exactly or as a prefix; ids not listed
+// fall back to a name heuristic (Pro has no MINIMAL, the rest have all four).
+// Ids outside the 3.x family get no thinkingLevel at all.
+const MODEL_THINKING_LEVELS = {
+    'gemini-3.1-pro': NO_MINIMAL,
+    'gemini-3-pro': NO_MINIMAL,
+    'gemini-3.8-flash': NO_MINIMAL,
+    'gemini-3.7-flash': NO_MINIMAL,
+    'gemini-3.6-flash': ALL_LEVELS,
+    'gemini-3.5-flash-lite': ALL_LEVELS,
+    'gemini-3.1-flash-lite': ALL_LEVELS,
+    'gemini-3-flash-preview': ALL_LEVELS,
+};
+
+// Default level per role and call class. '*' is the role's fallback for a class
+// not listed. Env `THINKING_<ROLE>` replaces the fallback and
+// `THINKING_<ROLE>_<CLASS>` one class (see docs/models.md, "Thinking levels").
+const THINKING_DEFAULTS = {
+    ROUTER: { '*': 'MINIMAL' },
+    LITE: { '*': 'MINIMAL' },
+    SEARCH: { '*': 'LOW' },
+    FLASH: {
+        '*': 'MINIMAL',
+        chat: 'LOW', tool_loop: 'LOW', job: 'LOW', subagent: 'LOW', watcher: 'LOW', coding: 'LOW',
+        wardrobe: 'LOW', impersonation: 'LOW',
+        summarization: 'MINIMAL', title: 'MINIMAL', scoper: 'MINIMAL', people_enrich: 'MINIMAL', cron_helper: 'MINIMAL',
+    },
+    PRO: {
+        '*': 'LOW',
+        chat: 'LOW', tool_loop: 'LOW', dream: 'LOW', pruning: 'LOW',
+        job: 'MEDIUM', subagent: 'MEDIUM', consolidation: 'MEDIUM', wardrobe: 'MEDIUM', impersonation: 'MEDIUM',
+        coding: 'HIGH',
+    },
+};
+
+// Sources whose client renders `agent:thought` events. Everyone else gets no
+// thought summaries, which also keeps thought text out of stored parts.
+const THOUGHT_SOURCES = new Set(['web', 'live']);
+
+// Warnings already printed (one per model+level, one per bad env value).
+const warnedOnce = new Set();
+function warnOnce(key, message) {
+    if (warnedOnce.has(key)) return;
+    warnedOnce.add(key);
+    console.warn(message);
+}
+
 const CONSTANTS = {
     MODEL_ENV_VARS,
+    THINKING_LEVELS,
+    THINKING_DEFAULTS,
+    MODEL_THINKING_LEVELS,
     MODELS: {
         FLASH: process.env.WORKER_FLASH || 'gemini-3.6-flash',
         LITE: process.env.WORKER_LITE || 'gemini-3.1-flash-lite',
@@ -104,6 +160,80 @@ class ConfigService {
      */
     getModelEnvVar(type) {
         return MODEL_ENV_VARS[type];
+    }
+
+    /**
+     * Levels a model id accepts, or null when the id is not a Gemini 3.x model
+     * (2.x ids take thinkingBudget, never thinkingLevel).
+     * @param {string} model
+     * @returns {string[]|null}
+     */
+    getModelThinkingLevels(model) {
+        const id = String(model || '');
+        if (!/^gemini-3/.test(id)) return null;
+        if (MODEL_THINKING_LEVELS[id]) return MODEL_THINKING_LEVELS[id];
+        const prefix = Object.keys(MODEL_THINKING_LEVELS)
+            .filter(k => id.startsWith(k))
+            .sort((a, b) => b.length - a.length)[0];
+        if (prefix) return MODEL_THINKING_LEVELS[prefix];
+        return id.includes('pro') ? NO_MINIMAL : ALL_LEVELS;
+    }
+
+    /**
+     * Thinking settings for one call.
+     * Level: env THINKING_<ROLE>_<CLASS>, else THINKING_<ROLE>, else the table
+     * in THINKING_DEFAULTS. A level the model lacks is raised to the lowest one
+     * it accepts (logged once). Non-3.x ids get `thinkingLevel: null`.
+     * Thought summaries only for sources that render them (web, live).
+     * @param {string} role - FLASH | LITE | PRO | ROUTER | SEARCH
+     * @param {string} [callClass='chat'] - chat, tool_loop, job, subagent, title, ...
+     * @param {{ source?: string, model?: string }} [opts]
+     * @returns {{ thinkingLevel: string|null, includeThoughts: boolean }}
+     */
+    getThinking(role, callClass = 'chat', opts = {}) {
+        const roleKey = String(role || 'FLASH').toUpperCase();
+        const cls = String(callClass || 'chat').toLowerCase();
+        const model = opts.model || this.getModel(roleKey);
+        const includeThoughts = THOUGHT_SOURCES.has(opts.source);
+
+        const table = THINKING_DEFAULTS[roleKey] || THINKING_DEFAULTS.FLASH;
+        let level = this._thinkingEnv(`THINKING_${roleKey}_${cls.toUpperCase()}`)
+            || this._thinkingEnv(`THINKING_${roleKey}`)
+            || table[cls]
+            || table['*'];
+
+        const allowed = this.getModelThinkingLevels(model);
+        if (!allowed) return { thinkingLevel: null, includeThoughts };
+        if (!allowed.includes(level)) {
+            const raised = allowed[0];
+            warnOnce(`level|${model}|${level}`,
+                `[Config] ${model} does not accept thinkingLevel ${level}; using ${raised} (role ${roleKey}, class ${cls}).`);
+            level = raised;
+        }
+        return { thinkingLevel: level, includeThoughts };
+    }
+
+    /**
+     * `thinkingConfig` for a generateContent/chats.create config, or null when
+     * there is nothing to send (non-3.x id and no thought summaries). Never
+     * carries thinkingBudget: the two keys together are rejected with a 400.
+     * @returns {{ thinkingLevel?: string, includeThoughts?: boolean }|null}
+     */
+    getThinkingConfig(role, callClass, opts) {
+        const { thinkingLevel, includeThoughts } = this.getThinking(role, callClass, opts);
+        const cfg = {};
+        if (thinkingLevel) cfg.thinkingLevel = thinkingLevel;
+        if (includeThoughts) cfg.includeThoughts = true;
+        return Object.keys(cfg).length ? cfg : null;
+    }
+
+    _thinkingEnv(name) {
+        const raw = process.env[name];
+        if (raw === undefined || raw === '') return null;
+        const value = String(raw).trim().toUpperCase();
+        if (THINKING_LEVELS.includes(value)) return value;
+        warnOnce(`env|${name}|${raw}`, `[Config] ${name}=${raw} is not one of ${THINKING_LEVELS.join('/')}; ignored.`);
+        return null;
     }
 
     /**
@@ -223,4 +353,4 @@ class ConfigService {
     }
 }
 
-module.exports = { ConfigService, CONSTANTS, MODEL_ENV_VARS };
+module.exports = { ConfigService, CONSTANTS, MODEL_ENV_VARS, THINKING_LEVELS, THINKING_DEFAULTS, MODEL_THINKING_LEVELS };
