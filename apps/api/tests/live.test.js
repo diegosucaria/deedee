@@ -39,15 +39,24 @@ describe('API Live Router', () => {
         expect(axios.get).toHaveBeenCalledWith(expect.stringContaining('/live/config'));
     });
 
-    test('POST /live/token should proxy to Agent', async () => {
-        axios.post.mockResolvedValue({
-            data: { token: 'mock-token' }
-        });
+    test('POST /live/token should proxy to Agent and pass model and expiry through', async () => {
+        const data = { token: 'auth_tokens/mock-token', model: 'models/mock-live', expiresAt: '2026-01-01T00:30:00.000Z' };
+        axios.post.mockResolvedValue({ data });
 
         const res = await request(app).post('/live/token');
 
         expect(res.statusCode).toBe(200);
-        expect(res.body).toEqual({ token: 'mock-token' });
+        expect(res.body).toEqual(data);
         expect(axios.post).toHaveBeenCalledWith(expect.stringContaining('/live/token'));
+    });
+
+    test('GET /live/config passes voice and systemInstruction through', async () => {
+        const data = { model: 'models/mock-live', voice: 'Puck', systemInstruction: 'You are Deedee.' };
+        axios.get.mockResolvedValue({ data });
+
+        const res = await request(app).get('/live/config');
+
+        expect(res.statusCode).toBe(200);
+        expect(res.body).toEqual(data);
     });
 });

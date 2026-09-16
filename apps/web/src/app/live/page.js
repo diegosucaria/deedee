@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { getLiveToken, executeLiveTool, getLiveConfig, getAgentTools } from './actions';
-import { getVoiceSettings } from '../actions';
+import { liveWebSocketUrl, buildLiveSetup, realtimeAudioMessage, messageSizeBytes } from './live-session';
 import { Mic, MicOff, PhoneOff, Settings2, Terminal, X } from 'lucide-react';
 import AudioSettingsDialog from '@/components/AudioSettingsDialog';
 import clsx from 'clsx';
@@ -15,7 +15,6 @@ export default function GeminiLivePage() {
     const [status, setStatus] = useState('idle'); // idle, connecting, active, error
     const [volume, setVolume] = useState(0);
     const [logs, setLogs] = useState([]);
-    const [voice, setVoice] = useState('Kore');
 
     const audioContextRef = useRef(null);
     const wsRef = useRef(null);
@@ -40,55 +39,19 @@ export default function GeminiLivePage() {
             log('Getting Config & Token...');
 
             // Parallel fetch for speed
-            const [config, auth, toolsRes, voicePref] = await Promise.all([
+            const [config, auth, toolsRes] = await Promise.all([
                 getLiveConfig(),
                 getLiveToken(),
-                getAgentTools(),
-                getVoiceSettings()
+                getAgentTools()
             ]);
-
-            if (voicePref) setVoice(voicePref);
 
             if (!auth.success || !auth.token) throw new Error(auth.error || 'No token');
             const tools = toolsRes.success ? toolsRes.tools : [];
             log(`Loaded ${tools.length} Tools.`);
 
-            // NOTE: The exact URL for global consumers is wss://generativelanguage.googleapis.com/...
-            // We pass the token in the 'setup' message OR as a query param `access_token`. 
-            const wsUrl = `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1alpha.GenerativeService.BidiGenerateContent?access_token=${auth.token}`;
-
-            // Helper to clean schema recursively
-            const cleanSchema = (schema) => {
-                if (!schema || typeof schema !== 'object') return schema;
-                const { type, description, properties, required, items, enum: enumValues } = schema;
-
-                const clean = {};
-                if (type) clean.type = type;
-                if (description) clean.description = description;
-                if (enumValues) clean.enum = enumValues;
-
-                if (properties) {
-                    clean.properties = {};
-                    for (const [key, value] of Object.entries(properties)) {
-                        clean.properties[key] = cleanSchema(value);
-                    }
-                }
-
-                if (required) clean.required = required;
-
-                if (items) {
-                    clean.items = cleanSchema(items);
-                }
-
-                return clean;
-            };
-
-            // Clean tools for Gemini
-            const cleanTools = tools.map(t => ({
-                name: t.name,
-                description: t.description,
-                parameters: cleanSchema(t.parameters)
-            }));
+            // Ephemeral tokens (auth_tokens/...) open the constrained v1beta
+            // socket; the token itself locks the model and the AUDIO modality.
+            const wsUrl = liveWebSocketUrl(auth.token);
 
             log(`Connecting (${config.model})...`);
             const ws = new WebSocket(wsUrl);
@@ -97,33 +60,19 @@ export default function GeminiLivePage() {
             ws.onopen = async () => {
                 log('WS Open. Sending Setup...');
 
-                // 1. Send Setup
-                const setupMsg = {
-                    setup: {
-                        model: config.model,
-                        generation_config: {
-                            response_modalities: ["AUDIO"],
-                            speech_config: {
-                                voice_config: {
-                                    prebuilt_voice_config: {
-                                        voice_name: voicePref || voice
-                                    }
-                                }
-                            }
-                        },
-                        system_instruction: {
-                            parts: [{
-                                text: "You are DeeDee, a helpful and friendly home assistant. You can control the smart home, answer questions, and execute tools. You speak both English and Spanish fluently. IMPORTANT: Listen carefully to the user's language. If the user speaks Spanish, you MUST reply in Spanish. If the user speaks English, reply in English. Adapt to the user's language preference automatically immediately."
-                            }]
-                        },
-                        tools: [
-                            // Only include if defined
-                            { google_search: {} },
-                            ...(cleanTools.length > 0 ? [{ function_declarations: cleanTools }] : [])
-                        ]
-                    }
-                };
-
+                // 1. Send Setup: the agent's own prompt, the voice and the
+                // tools. The token already locks the model and the AUDIO
+                // modality, so those two fields are informational here.
+                const systemInstruction = config.systemInstruction || '';
+                const setupMsg = buildLiveSetup({
+                    model: config.model,
+                    voice: config.voice,
+                    systemInstruction,
+                    tools
+                });
+                const setupKb = Math.round(messageSizeBytes(setupMsg) / 1024);
+                log(`Setup: ${setupKb} KB, ${tools.length} tools, prompt ${systemInstruction.length} chars.`);
+                console.log(`[Live] Setup message: ${setupKb} KB, ${tools.length} tools, system instruction ${systemInstruction.length} chars.`);
 
                 ws.send(JSON.stringify(setupMsg));
 
@@ -279,14 +228,7 @@ export default function GeminiLivePage() {
             // IMPORTANT: If ctx is 48k, we are sending 48k data. We must tell Gemini 48k.
             const actualRate = ctx.sampleRate; // This is the Single Source of Truth for what we are sending
 
-            wsRef.current.send(JSON.stringify({
-                realtimeInput: {
-                    mediaChunks: [{
-                        mimeType: `audio/pcm;rate=${actualRate}`,
-                        data: base64
-                    }]
-                }
-            }));
+            wsRef.current.send(JSON.stringify(realtimeAudioMessage(base64, actualRate)));
 
             // Visualizer volume update
             const sum = e.data.reduce((a, b) => a + Math.abs(b), 0);
