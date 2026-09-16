@@ -53,16 +53,7 @@ const mockAgent = {
                     }
                 }]
             })
-        },
-        // Legacy compat for recommendVinyl (still uses getGenerativeModel)
-        getGenerativeModel: jest.fn().mockReturnValue({
-            generateContent: jest.fn().mockResolvedValue({
-                response: {
-                    text: () => "Recommendation: Track A - B",
-                    usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 10, totalTokenCount: 20 }
-                }
-            })
-        })
+        }
     }
 };
 
@@ -154,18 +145,71 @@ describe('DJService', () => {
     test('recommendVinyl should call model if crate has items', async () => {
         mockAgent.db.getVinyls.mockReturnValue([{ artist: 'A', title: 'B' }]);
 
-        const mockModel = mockAgent.client.getGenerativeModel();
-        mockModel.generateContent.mockResolvedValueOnce({
-            response: {
-                text: () => "Recommendation: Track A - B",
-                usageMetadata: { totalTokenCount: 50 }
-            }
+        // @google/genai shape: `text` is a getter (a plain property here), usage sits on the result.
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            text: "Recommendation: Track A - B",
+            usageMetadata: { promptTokenCount: 30, candidatesTokenCount: 20, totalTokenCount: 50 }
         });
 
         const result = await djService.recommendVinyl('Some Track', 'chat_1');
 
         expect(result).toBe("Recommendation: Track A - B");
-        expect(mockAgent.db.logTokenUsage).toHaveBeenCalledWith(expect.objectContaining({ tag: 'dj_mode' }));
+        expect(mockAgent.client.models.generateContent).toHaveBeenCalledTimes(1);
+        const call = mockAgent.client.models.generateContent.mock.calls[0][0];
+        expect(call.model).toBe(djService.config.getModel('PRO'));
+        expect(call.contents).toEqual([{ role: 'user', parts: [{ text: expect.stringContaining('Current Track: "Some Track"') }] }]);
+        expect(call.contents[0].parts[0].text).toContain('A - B');
+        expect(mockAgent.db.logTokenUsage).toHaveBeenCalledWith(expect.objectContaining({
+            tag: 'dj_mode', chatId: 'chat_1', promptTokens: 30, candidateTokens: 20, totalTokens: 50
+        }));
+    });
+
+    test('recommendVinyl never uses the retired getGenerativeModel API', async () => {
+        mockAgent.db.getVinyls.mockReturnValue([{ artist: 'A', title: 'B' }]);
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            candidates: [{ content: { parts: [{ text: 'From ' }, { text: 'parts' }] } }]
+        });
+
+        const result = await djService.recommendVinyl('Some Track', 'chat_1');
+
+        expect(mockAgent.client.getGenerativeModel).toBeUndefined();
+        expect(result).toBe('From parts');
+        // No usageMetadata on the result: nothing to log, no throw.
+        expect(mockAgent.db.logTokenUsage).not.toHaveBeenCalled();
+    });
+
+    test('recommendDigital should call the PRO model and log usage', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            text: 'Smooth: X. Lift: Y. Pivot: Z.',
+            usageMetadata: { promptTokenCount: 12, candidatesTokenCount: 8, totalTokenCount: 20 }
+        });
+
+        const result = await djService.recommendDigital('Some Track', { venue: 'Club' }, 'chat_2');
+
+        expect(result).toBe('Smooth: X. Lift: Y. Pivot: Z.');
+        const call = mockAgent.client.models.generateContent.mock.calls[0][0];
+        expect(call.model).toBe(djService.config.getModel('PRO'));
+        expect(call.contents[0].role).toBe('user');
+        expect(call.contents[0].parts[0].text).toContain('Current Track: "Some Track"');
+        expect(call.contents[0].parts[0].text).toContain('"venue":"Club"');
+        expect(call.contents[0].parts[0].text).not.toContain('Relevant Knowledge from History');
+        expect(mockAgent.db.logTokenUsage).toHaveBeenCalledWith(expect.objectContaining({ tag: 'dj_mode', chatId: 'chat_2', totalTokens: 20 }));
+    });
+
+    test('recommendDigital should add RAG context when the search returns hits', async () => {
+        mockAgent.ragService = {
+            search: jest.fn().mockResolvedValue([{ content: 'Mix into halftime after the break', filename: 'history_1.md' }])
+        };
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({ text: 'ok' });
+        try {
+            await djService.recommendDigital('Some Track', {}, 'chat_2');
+        } finally {
+            delete mockAgent.ragService;
+        }
+
+        const prompt = mockAgent.client.models.generateContent.mock.calls[0][0].contents[0].parts[0].text;
+        expect(prompt).toContain('Relevant Knowledge from History');
+        expect(prompt).toContain('Mix into halftime after the break (Source: history_1.md)');
     });
 
     test('should detect duplicate and re-enrich instead of inserting', async () => {

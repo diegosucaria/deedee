@@ -172,26 +172,18 @@ class MemoryExecutor extends BaseExecutor {
                 console.log(`[Consolidation] Total logText length: ${logText.length} chars`);
 
                 try {
+                    // @google/genai reads `config`; the old `generationConfig` key was ignored,
+                    // so JSON mode never reached the API.
                     const response = await client.models.generateContent({
                         model: modelName,
                         contents: [{ parts: [{ text: summaryReq }] }],
-                        generationConfig: { responseMimeType: 'application/json' }
+                        config: { responseMimeType: 'application/json' }
                     });
 
                     const _cfg = new ConfigService();
                     _cfg.logUsageFromResponse(db, modelName, response, null, 'consolidation');
 
-                    let data = null;
-                    try {
-                        const raw = response.candidates[0].content.parts.map(p => p.text).join(' ');
-                        data = JSON.parse(raw);
-                    } catch (e) {
-                        // Fallback JSON extraction
-                        // Sometimes model wraps in markdown code block
-                        const raw = response.candidates[0].content.parts.map(p => p.text).join(' ');
-                        const match = raw.match(/```json\n([\s\S]*?)\n```/) || raw.match(/{[\s\S]*}/);
-                        if (match) data = JSON.parse(match[1] || match[0]);
-                    }
+                    const data = parseJsonReply(responseText(response));
 
                     if (data && data.summary) {
                         // 1. Log Journal & Ingest into RAG
@@ -269,4 +261,31 @@ class MemoryExecutor extends BaseExecutor {
     }
 }
 
-module.exports = { MemoryExecutor };
+/** Text of the first candidate: the SDK `text` getter when present, else the joined text parts. */
+function responseText(response) {
+    if (typeof response?.text === 'string') return response.text;
+    const parts = response?.candidates?.[0]?.content?.parts;
+    return Array.isArray(parts) ? parts.map(p => p.text || '').join('') : '';
+}
+
+/**
+ * Object from a model reply: plain JSON, JSON inside a ``` fence, or the first
+ * {...} block. Returns null when nothing parses.
+ */
+function parseJsonReply(raw) {
+    if (typeof raw !== 'string' || raw.trim() === '') return null;
+    const candidates = [raw];
+    const fenced = raw.match(/```(?:json)?\s*([\s\S]*?)```/i);
+    if (fenced) candidates.push(fenced[1]);
+    const braces = raw.match(/{[\s\S]*}/);
+    if (braces) candidates.push(braces[0]);
+    for (const text of candidates) {
+        try {
+            const parsed = JSON.parse(text.trim());
+            if (parsed && typeof parsed === 'object') return parsed;
+        } catch (e) { /* try the next shape */ }
+    }
+    return null;
+}
+
+module.exports = { MemoryExecutor, parseJsonReply, responseText };

@@ -83,6 +83,29 @@ one cent. The script does not write to `token_usage`.
 
 Run it before and after every id change. A retired id fails at `get` with a 404.
 
+## SDK
+
+The agent calls Gemini through `@google/genai` 2.22.0 (`apps/agent/package.json`).
+The 2.0.0 major only broke the Interactions API, which Deedee does not use.
+Every call passes its options under `config`; the SDK drops any other key
+without a warning. The SDK can retry HTTP 408, 429 and 5xx (five attempts, one
+second doubling up to sixty), but only when the client is built with
+`httpOptions: { retryOptions }`. Deedee does not set it: every `new GoogleGenAI`
+passes only `apiKey`. So `_retryCall` in `apps/agent/src/agent.js` is the only
+retry layer. If SDK retries are wanted later, add
+`httpOptions: { retryOptions: { attempts: 2 } }` at the constructors and lower
+`MAX_RETRIES` in `_retryCall`, or the two loops nest and the worst-case wait
+grows.
+
+After a bump, run the smoke inside the agent container on the device:
+
+```bash
+node scripts/model-smoke.js --with-image
+```
+
+Every check must pass and the agent boot log must show no SDK warnings. To roll
+back, revert `apps/agent/package.json` and `package-lock.json` and redeploy.
+
 ## Changing the embedding model
 
 `rag-service.js` stores the embedding model id and the dimension count in the
