@@ -10,7 +10,7 @@
  */
 const crypto = require('crypto');
 const { createAssistantMessage } = require('@deedee/shared/src/types');
-const { DeliveryService, telegramOwnerIds } = require('./delivery-service');
+const { DeliveryService, telegramOwnerIds, splitChannel } = require('./delivery-service');
 
 const DEFAULT_TIMEOUT_S = 300;
 const MAX_TIMEOUT_S = 900;
@@ -79,7 +79,7 @@ function questionText(question, options) {
 class AskUserService {
     constructor(agent) {
         this.agent = agent;
-        /** replyChatId -> { id, chatId, options, ownerChannel, finish } */
+        /** replyChatId -> { id, chatId, options, ownerChannel, replySource, outboxId, deliveredChannels, finish } */
         this.waits = new Map();
         /** replyChatId -> { id, at } for questions that ended without an answer */
         this.recentlyClosed = new Map();
@@ -185,7 +185,14 @@ class AskUserService {
         }
 
         return new Promise((resolve) => {
-            const wait = { id, chatId, replyChatId, options, ownerChannel: !!route.ownerChannel };
+            // deliveredChannels: where the question reached the owner. The ledger
+            // row (same id as the message) adds later retries and the fallback.
+            const wait = {
+                id, chatId, replyChatId, options, replySource,
+                ownerChannel: !!route.ownerChannel,
+                outboxId: outgoing.id,
+                deliveredChannels: new Set(outcome.delivered ? [splitChannel(outcome.via || replySource).channel] : [])
+            };
             let timer = null;
             let poll = null;
             wait.finish = (value) => {
@@ -301,14 +308,49 @@ class AskUserService {
         return null;
     }
 
+    /**
+     * Channels the question reached so far: the first attempt, plus what
+     * the ledger row records (retries and the fallback channel).
+     */
+    _deliveredChannels(wait) {
+        const out = new Set(wait.deliveredChannels || []);
+        try {
+            const row = typeof this.agent.db?.getOutboxRow === 'function' && wait.outboxId
+                ? this.agent.db.getOutboxRow(wait.outboxId) : null;
+            if (row) {
+                if (row.status === 'sent') out.add(splitChannel(row.delivered_via || row.channel).channel);
+                if (row.fallback_status === 'sent' && row.fallback_channel) out.add(splitChannel(row.fallback_channel).channel);
+            }
+        } catch (e) {
+            console.warn('[AskUser] Outbox lookup failed:', e.message);
+        }
+        return out;
+    }
+
+    /**
+     * May a message on `channel` (not the chat the wait is keyed to) answer
+     * this wait? Only when the question reached the owner on that channel,
+     * or when that channel is the configured owner channel of a question
+     * that came from a job, the system or a watcher. A question the owner
+     * never saw on Telegram must not eat the next Telegram message.
+     */
+    _acceptsChannel(wait, channel) {
+        if (!wait) return false;
+        if (wait.ownerChannel && splitChannel(wait.replySource).channel === channel) return true;
+        return this._deliveredChannels(wait).has(channel);
+    }
+
     async _findWait(chatId, source) {
         const direct = this.waits.get(chatId);
         if (direct) return direct;
         const channel = String(source || '').split(':')[0];
         // A question sent to the owner channel (or its fallback) may be answered
-        // from the owner's Telegram while the wait is keyed to the WhatsApp JID.
+        // from the owner's Telegram while the wait is keyed to the WhatsApp JID,
+        // but only once the question reached Telegram.
         if (channel === 'telegram') {
-            return telegramOwnerIds().includes(String(chatId)) ? this._ownerWait() : null;
+            if (!telegramOwnerIds().includes(String(chatId))) return null;
+            const wait = this._ownerWait();
+            return this._acceptsChannel(wait, 'telegram') ? wait : null;
         }
         // The owner's WhatsApp replies may arrive under a LID JID while the
         // question went to the phone JID. Match through the owner id set.
@@ -321,8 +363,10 @@ class AskUserService {
                 const keyNorm = this.agent._normalizeWaChatId ? this.agent._normalizeWaChatId(key) : key;
                 if (ids.has(keyNorm)) return wait;
             }
-            // The owner answers on WhatsApp a question that went to Telegram.
-            return this._ownerWait();
+            // The owner answers on WhatsApp a question that went to Telegram:
+            // only when WhatsApp carried it (the fallback) or is the owner channel.
+            const wait = this._ownerWait();
+            return this._acceptsChannel(wait, 'whatsapp') ? wait : null;
         } catch (e) {
             console.warn('[AskUser] Owner id lookup failed:', e.message);
         }

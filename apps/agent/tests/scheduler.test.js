@@ -503,6 +503,21 @@ describe('Scheduler & Smart Notifications', () => {
             expect(db.getOutboxRow(result.queued[0])).toMatchObject({ kind: 'reminder', status: 'failed', origin: 'reminder_1', target: OWNER_JID });
         });
 
+        it('a job or reminder with the same text twice within 10 minutes is sent both times', async () => {
+            agent.interface.send = jest.fn().mockResolvedValue(true);
+            const first = await scheduler._processSmartNotification({ text: 'Server is down.' }, { task: 'status' });
+            const second = await scheduler._processSmartNotification({ text: 'Server is down.' }, { task: 'status' });
+            expect(first.decision).toBe('notified');
+            expect(second.decision).toBe('notified');
+            expect(agent.interface.send).toHaveBeenCalledTimes(2);
+
+            const cb = scheduler._buildDirectReminderCallback('reminder_2', { reminderMessage: 'Dentist', isReminder: true, targetSource: 'scheduler' });
+            expect(await cb()).toEqual({ delivered: true });
+            expect(await cb()).toEqual({ delivered: true });
+            expect(agent.interface.send).toHaveBeenCalledTimes(4);
+            expect(db.listRecentOutbox({ limit: 10 })).toHaveLength(4);
+        });
+
         it('honors notification_channel = telegram with a numeric chat id, for jobs and reminders', async () => {
             db.setAgentSetting('notification_channel', 'telegram');
             process.env.ALLOWED_TELEGRAM_IDS = `${TG_ID}, 100000002`;

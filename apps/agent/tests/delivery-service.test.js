@@ -280,6 +280,27 @@ describe('DeliveryService', () => {
         });
     });
 
+    describe('caller-owned ids', () => {
+        test('a refused reply keeps its message id through the retry; a second enqueue of the same id is a no-op', async () => {
+            const reply = { id: 'reply-1', content: 'Done.', metadata: { chatId: OWNER_JID } };
+            const queued = await svc.enqueueFailed('reply', 'whatsapp', OWNER_JID, reply, { id: reply.id, origin: OWNER_JID });
+            expect(queued).toMatchObject({ queued: true, id: 'reply-1', status: 'failed' });
+
+            const again = await svc.enqueueFailed('reply', 'whatsapp', OWNER_JID, reply, { id: reply.id, origin: OWNER_JID });
+            expect(again).toMatchObject({ id: 'reply-1', status: 'failed', queued: true, existing: true, delivered: false });
+            expect(db.listRecentOutbox({ limit: 5 })).toHaveLength(1);
+
+            jest.advanceTimersByTime(MIN + 1000);
+            await svc.tick();
+            // The retried message carries the reply id, so the owner mirror stores no second copy.
+            expect(sentMessages()).toHaveLength(1);
+            expect(sentMessages()[0]).toMatchObject({ id: 'reply-1', content: 'Done.', source: 'whatsapp' });
+            expect(db.getOutboxRow('reply-1')).toMatchObject({ status: 'sent' });
+            expect(await svc.deliver('reply', 'whatsapp', OWNER_JID, reply, { id: reply.id })).toMatchObject({ delivered: true, existing: true });
+            expect(sentMessages()).toHaveLength(1);
+        });
+    });
+
     describe('dedupe', () => {
         test('the same kind, target and content within 10 minutes is not queued twice', async () => {
             const first = await svc.deliver('reminder', 'whatsapp', OWNER_DIGITS, { content: 'Dentist' });

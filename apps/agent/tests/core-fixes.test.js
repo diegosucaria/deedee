@@ -84,6 +84,16 @@ describe('Agent core fixes', () => {
             expect(notifications.create.mock.calls[0][0].metadata.content).toHaveLength(200);
         });
 
+        test('queues the refused reply under the reply id so the retry and the mirror reuse it', async () => {
+            const cb = jest.fn().mockResolvedValue(false);
+            const enqueue = jest.spyOn(agent.delivery, 'enqueueFailed').mockResolvedValue({ id: 'reply-1', queued: true });
+            const reply = { id: 'reply-1', content: 'x', source: 'whatsapp', metadata: { chatId: 'chat-1' } };
+            await agent._deliverReply(cb, reply, userMsg('hi'));
+            expect(enqueue).toHaveBeenCalledWith('reply', 'whatsapp', 'chat-1', reply,
+                expect.objectContaining({ id: 'reply-1', origin: 'chat-1' }));
+            expect(notifications.create.mock.calls[0][0].metadata.outboxId).toBe('reply-1');
+        });
+
         test('stays quiet when interface.send returns undefined or true', async () => {
             agent.router = { route: jest.fn().mockRejectedValue(new Error('boom')) };
             agent.interface.send.mockResolvedValue(undefined);

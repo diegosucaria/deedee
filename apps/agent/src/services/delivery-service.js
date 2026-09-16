@@ -259,6 +259,19 @@ class DeliveryService {
             return this._directOnly(pseudoRow, opts);
         }
 
+        // A caller that names the row id (a saved message) may hand the same
+        // message in twice; the first row stands.
+        if (opts.id && typeof this.db.getOutboxRow === 'function') {
+            const existing = this.db.getOutboxRow(opts.id);
+            if (existing) {
+                console.log(`[Delivery] Row ${existing.id} already in the ledger (${existing.status}); not queued again.`);
+                return {
+                    delivered: existing.status === 'sent', id: existing.id, status: existing.status,
+                    queued: existing.status === 'pending' || existing.status === 'failed', existing: true
+                };
+            }
+        }
+
         const hash = contentHash(p);
         if (opts.dedupe !== false) {
             const since = new Date(Date.now() - this.dedupeWindowMs);

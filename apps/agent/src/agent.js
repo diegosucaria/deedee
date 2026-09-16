@@ -370,11 +370,14 @@ class Agent {
       console.error(`[Agent] Reply not delivered (chat ${chatId || '?'}, source ${source || '?'}).`);
 
       // The ledger retries the reply with backoff and, when the chat is the
-      // owner's, tries the other owner channel after two failures.
+      // owner's, tries the other owner channel after two failures. The row
+      // reuses the reply id: the main loop saved the reply under it, so the
+      // owner-thread mirror stores no second copy when the retry goes out.
       let outboxId = null;
       if (chatId && source) {
         try {
-          const queued = await this.delivery.enqueueFailed('reply', source, chatId, reply, { origin: chatId, error: 'interface refused the reply' });
+          const queued = await this.delivery.enqueueFailed('reply', source, chatId, reply,
+            { id: reply?.id || undefined, origin: chatId, error: 'interface refused the reply' });
           if (queued?.id) outboxId = queued.id;
         } catch (e) {
           console.error('[Agent] Failed to queue the reply for retry:', e.message);
@@ -1379,7 +1382,7 @@ class Agent {
                 // The ledger retries the redirect so the watcher result still reaches the owner.
                 try {
                   await this.delivery.enqueueFailed('watcher', adminReply.source || message.source, adminChatId, adminReply,
-                    { origin: `watcher:${triggeredWatcher.id}`, error: 'interface refused the watcher redirect' });
+                    { id: adminReply.id || undefined, origin: `watcher:${triggeredWatcher.id}`, error: 'interface refused the watcher redirect' });
                 } catch (e) {
                   console.error('[Agent] Failed to queue the watcher redirect:', e.message);
                 }

@@ -359,8 +359,10 @@ class Scheduler {
                         try {
                             // One attempt now; the ledger retries refused sends with
                             // backoff and tries the other owner channel after two failures.
+                            // No content dedupe: a job that fires every 5 minutes with
+                            // the same text means every one of them.
                             const outcome = await delivery.deliver('job_notification', owner.channel, owner.target,
-                                { content: notificationText, type: 'text' }, { origin });
+                                { content: notificationText, type: 'text' }, { origin, dedupe: false });
                             if (result) {
                                 if (outcome.delivered) {
                                     result.decision = 'notified';
@@ -538,17 +540,20 @@ class Scheduler {
             const userFacingSources = ['whatsapp', 'telegram', 'slack', 'web'];
             const isUserOrigin = userFacingSources.includes(originSource) && originChatId;
 
+            // Two reminders with the same text minutes apart are two reminders,
+            // so the ledger's content dedupe stays off here.
+            const opts = { origin: name, dedupe: false };
             const outcomes = [];
             if (isUserOrigin) {
                 // User set the reminder from a chat interface — reply to that chat
-                outcomes.push(await delivery.deliver('reminder', originSource, originChatId, { content: reminderMessage }, { origin: name }));
+                outcomes.push(await delivery.deliver('reminder', originSource, originChatId, { content: reminderMessage }, opts));
                 // Also push to the owner unless that chat already is the owner's
                 if (owner && !delivery.isOwnerTarget(originChannel, originChatId)) {
-                    outcomes.push(await delivery.deliver('reminder', owner.channel, owner.target, { content: reminderMessage }, { origin: name }));
+                    outcomes.push(await delivery.deliver('reminder', owner.channel, owner.target, { content: reminderMessage }, opts));
                 }
             } else if (owner) {
                 // System-origin (e.g. proactive_thought) — deliver to the owner's channel
-                outcomes.push(await delivery.deliver('reminder', owner.channel, owner.target, { content: reminderMessage }, { origin: name }));
+                outcomes.push(await delivery.deliver('reminder', owner.channel, owner.target, { content: reminderMessage }, opts));
             } else {
                 outcomes.push({ delivered: false, error: 'No owner channel configured for reminder delivery' });
             }
