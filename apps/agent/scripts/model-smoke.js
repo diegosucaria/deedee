@@ -36,6 +36,9 @@ const CHECKS = ['get', 'text', 'tools', 'thinking', 'tts', 'image', 'embed', 'li
 // Planned per-role thinking levels (B4.3 moves this into ConfigService).
 const THINKING_LEVELS = { ROUTER: 'MINIMAL', LITE: 'MINIMAL', FLASH: 'LOW', SEARCH: 'LOW', PRO: 'HIGH' };
 
+// Output budget for the text check when the model cannot think at MINIMAL.
+const TEXT_THINKING_BUDGET = 1024;
+
 const DEFAULTS = { withImage: false, only: null, skip: [], checks: null, timeout: 60000, maxTokens: 20, json: false, help: false };
 
 const HELP = `Usage: node scripts/model-smoke.js [options]
@@ -171,10 +174,15 @@ const RUNNERS = {
     },
 
     async text({ client, model, opts }) {
+        // Thinking tokens count against maxOutputTokens on Gemini 3.x. Models whose
+        // lowest level is above MINIMAL (Pro) need room to think before they answer,
+        // or they hit MAX_TOKENS with an empty reply.
+        const level = lowestThinkingLevel(model);
+        const maxOutputTokens = level && level !== 'MINIMAL' ? Math.max(opts.maxTokens, TEXT_THINKING_BUDGET) : opts.maxTokens;
         const result = await client.models.generateContent({
             model,
             contents: 'Reply with the single word OK.',
-            config: { maxOutputTokens: opts.maxTokens, ...thinkingConfig(model, lowestThinkingLevel(model)) }
+            config: { maxOutputTokens, ...thinkingConfig(model, level) }
         });
         const text = textOf(result).trim();
         const usage = usageOf(result);
@@ -399,7 +407,7 @@ async function main(argv = process.argv.slice(2), out = console) {
 }
 
 module.exports = {
-    parseArgs, buildPlan, runSmoke, formatTable, checksForRole, lowestThinkingLevel, supportsThinkingLevel,
+    parseArgs, buildPlan, runSmoke, formatTable, checksForRole, lowestThinkingLevel, supportsThinkingLevel, TEXT_THINKING_BUDGET,
     ROLE_ORDER, TEXT_ROLES, CHECKS, THINKING_LEVELS, DEFAULTS, HELP, RUNNERS, main
 };
 

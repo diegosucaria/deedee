@@ -203,6 +203,20 @@ describe('model-smoke runSmoke', () => {
         expect(res.rows[0].note).toMatch(/MAX_TOKENS/);
     });
 
+    test('the text check gives room to think to models without MINIMAL', async () => {
+        const client = fakeClient();
+        const opts = parseArgs(['--only', 'PRO,LITE', '--checks', 'text']);
+        const res = await runSmoke(client, buildPlan(MODELS, opts), opts);
+        expect(res.rows.filter(r => r.status !== 'ok')).toEqual([]);
+        const calls = client.models.generateContent.mock.calls.map(([args]) => args);
+        const pro = calls.find(a => /pro/.test(a.model));
+        const lite = calls.find(a => /lite/.test(a.model));
+        expect(pro.config.maxOutputTokens).toBe(smoke.TEXT_THINKING_BUDGET);
+        expect(pro.config.thinkingConfig.thinkingLevel).toBe('LOW');
+        expect(lite.config.maxOutputTokens).toBe(DEFAULTS.maxTokens);
+        expect(lite.config.thinkingConfig.thinkingLevel).toBe('MINIMAL');
+    });
+
     test('a hanging call times out', async () => {
         const client = fakeClient({ models: { get: jest.fn(() => new Promise(() => { })) } });
         const opts = parseArgs(['--only', 'TTS', '--checks', 'get', '--timeout', '20']);
