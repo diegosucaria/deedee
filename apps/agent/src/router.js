@@ -170,6 +170,10 @@ ${TOOL_GROUP_LINES}
 
         } catch (error) {
             console.error('[Router] Routing failed, defaulting to PRO:', error.message);
+            // No toolGroups: the agent skips scoping and loads every tool, so an
+            // everyday request still reaches home and workspace tools when the
+            // router is down. Scoping with [] here lost those tools.
+            console.log('[Router] fallback: all tools');
             return { model: 'PRO', toolMode: 'STANDARD', reason: 'Error in router' };
         }
     }

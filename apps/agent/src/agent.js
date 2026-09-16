@@ -124,6 +124,9 @@ class Agent {
     this.confirmationManager = new ConfirmationManager(this.db);
     // Shared state for stopping execution
     this.stopFlags = new Set();
+    // Chats whose current run must stop at the next tool-loop check.
+    // Set by abortChat (sub-agent timeouts); cleared when the run ends.
+    this._abortedChats = new Set();
     this.cancellationFlags = new Set(); // For stopping chat generation
     this.activeTopics = new Map(); // Store active vault topics per chatId
     // Per-watcher in-flight lock. Coalesces rapid-fire matching messages so a
@@ -328,6 +331,55 @@ class Agent {
   // took WhatsApp down on 2026-05-27, when each failed Slack poll re-injected
   // the alert and the LLM re-sent a fresh variant. The dedup timestamp is set
   // only after a successful send, so a delivery failure doesn't latch.
+  /**
+   * Ask the run for this chat to stop at its next tool-loop check.
+   * Used by SubAgentService when a sub-agent times out.
+   */
+  abortChat(chatId) {
+    if (!chatId) return;
+    this._abortedChats.add(chatId);
+  }
+
+  /**
+   * Send a final reply through the interface callback and record a
+   * notification when the interface reports failure (returns false).
+   */
+  async _deliverReply(sendCallback, reply, message) {
+    const result = await sendCallback(reply);
+    if (result === false) {
+      const chatId = reply?.metadata?.chatId || message?.metadata?.chatId;
+      const source = reply?.source || message?.source;
+      const content = String(reply?.content || '').slice(0, 200);
+      console.error(`[Agent] Reply not delivered (chat ${chatId || '?'}, source ${source || '?'}).`);
+
+      // One notification per (chat, source) every 30 minutes. A broken
+      // interface fails every reply; repeats only add to the log count.
+      const COOLDOWN_MS = 30 * 60 * 1000;
+      const now = Date.now();
+      if (!this._deliveryFailureDedup) this._deliveryFailureDedup = new Map();
+      const dedupKey = `${chatId || '?'}|${source || '?'}`;
+      const seen = this._deliveryFailureDedup.get(dedupKey);
+      if (seen && now - seen.at < COOLDOWN_MS) {
+        seen.suppressed += 1;
+        console.error(`[Agent] delivery_failure notification suppressed for ${dedupKey} (${seen.suppressed} repeats in the last 30 min).`);
+        return result;
+      }
+      this._deliveryFailureDedup.set(dedupKey, { at: now, suppressed: 0 });
+      try {
+        this.notifications.create({
+          type: 'delivery_failure',
+          severity: 'error',
+          title: 'Reply not delivered',
+          message: `The interface did not accept a reply for chat ${chatId || 'unknown'} (${source || 'unknown'}).`,
+          metadata: { chatId, source, content, link: chatId ? `/system/history?chatId=${encodeURIComponent(chatId)}` : '/system/history' }
+        });
+      } catch (e) {
+        console.error('[Agent] Failed to record delivery failure:', e.message);
+      }
+    }
+    return result;
+  }
+
   async deliverSystemAlert(text, dedupKey) {
     if (!text) return false;
     const key = dedupKey || text;
@@ -340,26 +392,93 @@ class Agent {
       return false;
     }
 
+    // A WhatsApp session that needs repair may be the very channel this
+    // alert goes through, so it always leaves a dashboard notification too.
+    const isWhatsAppRepair = String(key).startsWith('whatsapp_needs_repair');
+    let delivered = false;
+    let notified = false;
+
     const setting = this.db.getAgentSetting('owner_phone');
     const ownerPhone = (setting && setting.value) || process.env.MY_PHONE || '';
     if (!ownerPhone) {
-      console.warn('[Agent] deliverSystemAlert: no owner_phone configured; dropping alert.');
-      return false;
+      console.warn('[Agent] deliverSystemAlert: no owner_phone configured; skipping WhatsApp.');
+    } else {
+      try {
+        const result = await this.interface.send({
+          source: 'whatsapp:assistant',
+          content: text,
+          type: 'text',
+          metadata: { chatId: ownerPhone },
+          isNotification: true
+        });
+        delivered = result !== false;
+        if (delivered) {
+          console.log(`[Agent] Delivered system alert to owner (key='${key}').`);
+        } else {
+          console.error(`[Agent] deliverSystemAlert: WhatsApp did not accept the alert (key='${key}').`);
+        }
+      } catch (e) {
+        console.error('[Agent] deliverSystemAlert send failed:', e.message);
+      }
     }
 
+    if (!delivered) {
+      delivered = await this._sendTelegramAlert(text, key);
+    }
+
+    if (!delivered || isWhatsAppRepair) {
+      notified = this._notifySystemAlert(text, key, delivered);
+    }
+
+    // Only remember the alert when someone can see it; otherwise try again
+    // on the next trigger.
+    if (delivered || notified) this._systemAlertDedup.set(key, now);
+    return delivered || notified;
+  }
+
+  /**
+   * Send a system alert to the first allowed Telegram id, when Telegram is set up.
+   * @returns {Promise<boolean>} true when the interface accepted the message
+   */
+  async _sendTelegramAlert(text, key) {
+    const ids = String(process.env.ALLOWED_TELEGRAM_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (ids.length === 0) return false;
     try {
-      await this.interface.send({
-        source: 'whatsapp:assistant',
+      const result = await this.interface.send({
+        source: 'telegram',
         content: text,
         type: 'text',
-        metadata: { chatId: ownerPhone },
+        metadata: { chatId: ids[0] },
         isNotification: true
       });
-      this._systemAlertDedup.set(key, now);
-      console.log(`[Agent] Delivered system alert to owner (key='${key}').`);
+      if (result === false) {
+        console.error(`[Agent] deliverSystemAlert: Telegram did not accept the alert (key='${key}').`);
+        return false;
+      }
+      console.log(`[Agent] Delivered system alert to owner via Telegram (key='${key}').`);
       return true;
     } catch (e) {
-      console.error('[Agent] deliverSystemAlert send failed:', e.message);
+      console.error('[Agent] deliverSystemAlert Telegram send failed:', e.message);
+      return false;
+    }
+  }
+
+  /**
+   * Record a system alert as a dashboard notification.
+   * @returns {boolean} true when the notification was stored
+   */
+  _notifySystemAlert(text, key, delivered) {
+    try {
+      const n = this.notifications.create({
+        type: 'system_alert',
+        severity: 'error',
+        title: delivered ? 'System alert' : 'System alert not delivered',
+        message: text,
+        metadata: { alertKey: key, delivered, link: '/settings/interfaces' }
+      });
+      return !!n;
+    } catch (e) {
+      console.error('[Agent] Failed to record system alert notification:', e.message);
       return false;
     }
   }
@@ -550,7 +669,8 @@ class Agent {
           reply.content = "📝 **[SIMULATION RESULT]**\n" + reply.content;
         }
       }
-      await this.interface.send(reply);
+      // Hand the result back so _deliverReply sees a false from the interface.
+      return this.interface.send(reply);
     });
   }
 
@@ -1012,7 +1132,7 @@ class Agent {
         const reply = createAssistantMessage(`Action **${action.name}** executed.\nResult: \`\`\`json\n${JSON.stringify(result, null, 2).substring(0, 500)}\n\`\`\``);
         reply.metadata = { chatId };
         reply.source = message.source;
-        await activeSendCallback(reply);
+        await this._deliverReply(activeSendCallback, reply, message);
         executionSummary.replies.push(reply);
         return executionSummary;
       } else if (commandResult === true) {
@@ -1247,8 +1367,10 @@ class Agent {
         }
       }
 
-      // 2. Rate Limiting
-      if (!(await this.rateLimiter.check(message, this.interface)) && !isSubAgent) {
+      // 2. Rate Limiting (human sources only; internal runs neither count nor get a reply)
+      const isWatcherRun = String(message.content || '').startsWith('SYSTEM_WATCHER_ALERT');
+      const skipRateLimit = isSubAgent || isWatcherRun || ['scheduler', 'subagent', 'system'].includes(message.source);
+      if (!skipRateLimit && !(await this.rateLimiter.check(message, this.interface))) {
         const chatId = message.metadata?.chatId;
         this.notifications.create({
           type: 'rate_limit_exceeded',
@@ -1391,7 +1513,7 @@ class Agent {
         reply.source = message.source;
         reply.metadata = { model: targetModel, chatId };
 
-        await activeSendCallback(reply);
+        await this._deliverReply(activeSendCallback, reply, message);
         executionSummary.replies.push(reply);
 
         // Save to DB
@@ -1420,7 +1542,7 @@ class Agent {
         const reply = createAssistantMessage('Image generated.');
         reply.metadata = { chatId: message.metadata?.chatId };
         reply.source = message.source;
-        await activeSendCallback(reply);
+        await this._deliverReply(activeSendCallback, reply, message);
         executionSummary.replies.push(reply);
 
         // --- HISTORY INJECTION [FIX] ---
@@ -1529,11 +1651,11 @@ class Agent {
       }
 
       // Interactive tool scoping: core tools plus the groups the router named.
-      // Sub-agents and scheduled jobs use their own allow-lists above. With no
-      // toolGroups (router error, forced model) every tool is kept.
+      // Sub-agents and scheduled jobs use their own allow-lists above. A router
+      // error or a forced model returns no toolGroups, and then every tool
+      // stays loaded.
       // Watcher runs are skipped too: their instructions are free-form and
       // often need tools (calendar, messaging) the router can't infer.
-      const isWatcherRun = String(message.content || '').startsWith('SYSTEM_WATCHER_ALERT');
       if (!message.metadata?.isSubAgent && message.source !== 'scheduler' && !isWatcherRun && Array.isArray(decision?.toolGroups)) {
         this._toolGroupMemory = this._toolGroupMemory || new ToolGroupMemory();
         // Integrations the user names are always loaded, on top of the router's pick.
@@ -1801,6 +1923,13 @@ class Agent {
       const identicalCallTracker = {}; // full signature -> count (any tool)
 
       while (functionCalls && functionCalls.length > 0) {
+        // CHECK ABORT (sub-agent timeout or other internal cancel)
+        if (this._abortedChats.has(chatId)) {
+          console.log(`${logPrefix} Abort flag detected for chat ${chatId}. Breaking loop.`);
+          await activeSendCallback(createAssistantMessage('Stopped: the task was cancelled before it finished.'));
+          break;
+        }
+
         // CHECK STOP FLAG
         if (this.stopFlags.has(chatId) || this.stopFlags.has('GLOBAL_STOP')) {
           console.log(`${logPrefix} Stop flag detected for chat ${chatId}. Breaking loop.`);
@@ -2285,7 +2414,7 @@ class Agent {
             console.log('[Agent] Suppressing final text response because audio was sent.');
             // We saved it to DB above, but we do NOT send it to interface to avoid double notification.
           } else {
-            await activeSendCallback(reply);
+            await this._deliverReply(activeSendCallback, reply, message);
           }
 
           executionSummary.replies.push(reply);
@@ -2308,7 +2437,7 @@ class Agent {
             // Save implicit reply
             this.db.saveMessage(reply);
 
-            await activeSendCallback(reply);
+            await this._deliverReply(activeSendCallback, reply, message);
             executionSummary.replies.push(reply);
           }
         } else {
@@ -2318,7 +2447,7 @@ class Agent {
           reply.metadata = { chatId: message.metadata?.chatId };
           reply.source = message.source;
           this.db.saveMessage(reply); // Persist error so it appears in history
-          await activeSendCallback(reply);
+          await this._deliverReply(activeSendCallback, reply, message);
           executionSummary.replies.push(reply);
         }
       }
@@ -2329,7 +2458,7 @@ class Agent {
       const chatId = message.metadata?.chatId;
       if (chatId && message.timestamp) {
         console.warn(`[Agent] Performing Auto-Rollback for chat ${chatId} since ${message.timestamp}`);
-        this.db.deleteMessagesFrom(chatId, message.timestamp);
+        this.db.deleteMessagesSince(chatId, message.timestamp);
       }
 
       // Build user-friendly error message
@@ -2347,12 +2476,15 @@ class Agent {
       errReply.metadata = { chatId: message.metadata?.chatId };
       errReply.source = message.source;
       try {
-        await activeSendCallback(errReply);
+        await this._deliverReply(activeSendCallback, errReply, message);
       } catch (sendErr) {
         console.error('[Agent] Failed to send error reply to user:', sendErr.message);
       }
       executionSummary.replies.push(errReply);
     } finally {
+      // The abort flag applies to this run only.
+      if (message.metadata?.chatId) this._abortedChats.delete(message.metadata.chatId);
+
       // Release the watcher in-flight lock and fire one trailing rerun if any
       // matching messages arrived while we were running. The boolean flag
       // collapses N queued messages into a single rerun (latest-message-wins).

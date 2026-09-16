@@ -241,11 +241,14 @@ function createInternalRouter(agent) {
                         ...(payload.allowedTools ? { allowedTools: payload.allowedTools } : {})
                     }
                 }, async (reply) => {
+                    let sent;
                     if (agent.interface) {
-                        await agent.interface.send(reply);
+                        sent = await agent.interface.send(reply);
                     }
                     if (!executionResult) executionResult = reply;
                     else if (reply.text) executionResult.text = (executionResult.text || '') + '\n' + reply.text;
+                    // A false from the interface lets _deliverReply record the failure.
+                    return sent;
                 });
                 return executionResult;
             };

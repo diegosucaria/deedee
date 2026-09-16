@@ -586,6 +586,50 @@ class AgentDB {
     try {
       this.db.exec("ALTER TABLE wr_user_profile ADD COLUMN style_preferences TEXT");
     } catch (err) { }
+
+    this._migrateMessageTimestampsToIso();
+  }
+
+  // One-time data migration: older rows stored epoch ms in messages.timestamp.
+  // Mixed integer/text values break ORDER BY, so rewrite them as ISO text.
+  // The flag lives in agent_settings (kv_store rows are memory facts that
+  // reach the model prompt).
+  _migrateMessageTimestampsToIso(batchSize = 5000) {
+    const FLAG = 'migration_messages_ts_iso';
+    try {
+      const done = this.db.prepare('SELECT value FROM agent_settings WHERE key = ?').get(FLAG);
+      if (done) return;
+
+      // Count first so the log shows the size of the job, then update in
+      // rowid ranges. One UPDATE over a large table held the write lock
+      // for too long on the Pi.
+      const scope = this.db.prepare(`
+        SELECT COUNT(*) AS n, MIN(rowid) AS lo, MAX(rowid) AS hi FROM messages
+        WHERE typeof(timestamp) IN ('integer', 'real')
+      `).get();
+      let changed = 0;
+      if (scope.n > 0) {
+        console.log(`[DB] Converting ${scope.n} message timestamps to ISO text (rowid ${scope.lo}-${scope.hi}, batches of ${batchSize})...`);
+        const update = this.db.prepare(`
+          UPDATE messages
+          SET timestamp = strftime('%Y-%m-%dT%H:%M:%fZ', timestamp / 1000.0, 'unixepoch')
+          WHERE rowid BETWEEN ? AND ? AND typeof(timestamp) IN ('integer', 'real')
+        `);
+        for (let from = scope.lo; from <= scope.hi; from += batchSize) {
+          changed += update.run(from, from + batchSize - 1).changes;
+        }
+      }
+      this.db.prepare(`
+        INSERT INTO agent_settings(key, value, category) VALUES(?, ?, 'system')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+      `).run(FLAG, JSON.stringify(new Date().toISOString()));
+      if (changed > 0) {
+        console.log(`[DB] Converted ${changed} message timestamps to ISO text.`);
+        try { this.db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { /* not in WAL mode */ }
+      }
+    } catch (err) {
+      console.error('[DB] Timestamp migration failed:', err.message);
+    }
   }
 
   // --- Scheduled Jobs ---
@@ -1781,17 +1825,42 @@ class AgentDB {
   getHistoryForChat(chatId, limit = 20) {
     if (!chatId) return [];
 
-    // Get last N messages for this chat
+    // Get last N messages for this chat. rowid breaks ties between rows saved
+    // in the same millisecond (a tool call and its result, for example).
     const stmt = this.db.prepare(`
-      SELECT role, content, metadata FROM messages 
+      SELECT id, role, content, parts, metadata, timestamp FROM messages 
       WHERE chat_id = ?
-      ORDER BY timestamp DESC 
+      ORDER BY timestamp DESC, rowid DESC 
       LIMIT ?
     `);
 
     const rows = stmt.all(chatId, limit).reverse(); // Reverse to get chronological order
+    return this._mapHistoryRows(rows);
+  }
 
-    // Map to Gemini SDK format
+  /**
+   * Same window as getHistoryForChat, but for token estimates and summaries.
+   * Rows whose parts exceed `maxPartsLength` bytes (media blobs) come back
+   * with parts NULL, so the mapper falls back to the caption in `content`.
+   * This keeps 100 base64 blobs from being parsed on every turn.
+   */
+  getHistoryForSummary(chatId, limit = 100, maxPartsLength = 20000) {
+    if (!chatId) return [];
+    const stmt = this.db.prepare(`
+      SELECT id, role, content,
+             CASE WHEN length(parts) > ? THEN NULL ELSE parts END AS parts,
+             metadata, timestamp
+      FROM messages
+      WHERE chat_id = ?
+      ORDER BY timestamp DESC, rowid DESC
+      LIMIT ?
+    `);
+    const rows = stmt.all(maxPartsLength, chatId, limit).reverse();
+    return this._mapHistoryRows(rows);
+  }
+
+  // Map raw message rows (chronological order) to the Gemini SDK shape.
+  _mapHistoryRows(rows) {
     return rows.map(row => {
       let meta = {};
       try { meta = row.metadata ? JSON.parse(row.metadata) : {}; } catch (e) { }
@@ -1803,9 +1872,22 @@ class AgentDB {
       if (role === 'assistant') role = 'model';
       if (role === 'function') role = 'user';
 
+      // Old rows may still hold epoch ms; hand callers an ISO string either way.
+      const timestamp = typeof row.timestamp === 'number'
+        ? new Date(row.timestamp).toISOString()
+        : row.timestamp;
+
       if (row.parts) {
         try {
-          return { role, parts: JSON.parse(row.parts), metadata: meta };
+          const parts = JSON.parse(row.parts);
+          // A media row keeps its caption in `content`; its parts hold only the file.
+          // Put the caption back so the model still sees what was said.
+          const hasText = Array.isArray(parts) && parts.some(p => typeof p.text === 'string' && p.text.trim());
+          const isToolRow = Array.isArray(parts) && parts.some(p => p.functionCall || p.functionResponse);
+          if (Array.isArray(parts) && !hasText && !isToolRow && typeof row.content === 'string' && row.content.trim()) {
+            parts.unshift({ text: row.content });
+          }
+          return { id: row.id, role, parts, metadata: meta, timestamp };
         } catch (e) {
           console.error('[DB] Failed to parse message parts:', e);
         }
@@ -1813,11 +1895,29 @@ class AgentDB {
 
       // Fallback to content
       return {
+        id: row.id,
         role: role,
         parts: [{ text: row.content || '' }],
-        metadata: meta
+        metadata: meta,
+        timestamp
       };
     });
+  }
+
+  /**
+   * Count the messages in a chat saved after the given message.
+   * Returns null when the message is missing (deleted or unknown id).
+   */
+  countMessagesAfter(chatId, messageId) {
+    if (!chatId || !messageId) return null;
+    const target = this.db.prepare('SELECT rowid, timestamp FROM messages WHERE id = ? AND chat_id = ?').get(messageId, chatId);
+    if (!target) return null;
+    const row = this.db.prepare(`
+      SELECT COUNT(*) as count FROM messages
+      WHERE chat_id = ?
+      AND (timestamp > ? OR (timestamp = ? AND rowid > ?))
+    `).get(chatId, target.timestamp, target.timestamp, target.rowid);
+    return row.count;
   }
 
   // --- Reset Commands ---
@@ -2476,8 +2576,10 @@ class AgentDB {
     stmt.run(key, valStr, category);
   }
 
+  // Rows in the 'system' category (migration flags) are internal bookkeeping
+  // and stay out of the settings the UI and the agent read.
   getAllAgentSettings() {
-    const stmt = this.db.prepare('SELECT key, value, category FROM agent_settings');
+    const stmt = this.db.prepare("SELECT key, value, category FROM agent_settings WHERE COALESCE(category, 'general') != 'system'");
     const rows = stmt.all();
     const settings = {};
     for (const row of rows) {

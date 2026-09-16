@@ -31,11 +31,19 @@ describe('AgentDB Settings', () => {
         db.setAgentSetting('k1', 'v1');
         db.setAgentSetting('k2', { v: 2 });
 
-        const all = db.getAllAgentSettings();
-        expect(all).toEqual({
+        expect(db.getAllAgentSettings()).toEqual({
             k1: 'v1',
             k2: { v: 2 }
         });
+    });
+
+    it('hides system rows such as the migration flag', () => {
+        // init() records the one-time message timestamp migration in the 'system' category.
+        expect(db.getAgentSetting('migration_messages_ts_iso')).not.toBeNull();
+        db.setAgentSetting('k1', 'v1');
+        db.setAgentSetting('internal_flag', true, 'system');
+
+        expect(db.getAllAgentSettings()).toEqual({ k1: 'v1' });
     });
 
     it('should update existing setting', () => {

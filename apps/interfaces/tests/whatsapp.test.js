@@ -190,15 +190,19 @@ describe('WhatsAppService Unit Tests', () => {
         jest.useRealTimers();
     });
 
-    test('should clear session after N consecutive 515 errors', async () => {
+    test('should stop and mark needs_repair after N consecutive 515 errors (no wipe)', async () => {
+        const axios = require('axios');
+        axios.post.mockResolvedValue({ data: { received: true } });
+
         // We trigger it somewhat manually to verify the logic increment
-        whatsapp.reconnectAttempts = 9;
+        whatsapp.streamErrorCount = 9;
         await whatsapp.connect();
 
         const qrCallback = mockBaileys.default.mock.results[0].value.ev.on.mock.calls.find(c => c[0] === 'connection.update')[1];
 
         // 10th attempt (increment happens on error)
         jest.spyOn(whatsapp, 'disconnect');
+        jest.spyOn(whatsapp, 'connect');
         jest.spyOn(fs, 'rmSync');
 
         await qrCallback({
@@ -208,10 +212,80 @@ describe('WhatsAppService Unit Tests', () => {
             }
         });
 
-        // reconnectAttempts should be 10 now, trigger wipe
-        expect(whatsapp.disconnect).toHaveBeenCalledWith(true);
-        // Since disconnect calls rmSync, we verify that too
-        expect(fs.rmSync).toHaveBeenCalledWith(whatsapp.authFolder, expect.anything());
+        expect(whatsapp.status).toBe('needs_repair');
+        expect(whatsapp.reconnectTimeout).toBeNull();
+        // Never wipe on its own.
+        expect(whatsapp.disconnect).not.toHaveBeenCalled();
+        expect(fs.rmSync).not.toHaveBeenCalled();
+        // Tell the owner through the agent's system alert path.
+        expect(axios.post).toHaveBeenCalledWith('http://mock-agent/webhook', expect.objectContaining({
+            source: 'system',
+            role: 'user',
+            content: expect.stringContaining('stream errors'),
+            metadata: { internal_system_alert: true, alertKey: 'whatsapp_needs_repair:test-session' }
+        }));
+
+        // A manual reconnect still works from this state.
+        await whatsapp.connect();
+        expect(whatsapp.status).toBe('connecting');
+    });
+
+    test('should keep reconnecting before the 515 limit', async () => {
+        const axios = require('axios');
+        axios.post.mockResolvedValue({ data: { received: true } });
+        await whatsapp.connect();
+        const qrCallback = mockBaileys.default.mock.results[0].value.ev.on.mock.calls.find(c => c[0] === 'connection.update')[1];
+        // Real timers: each close arms a reconnect timer, which we disarm by hand.
+        const close = async (statusCode) => {
+            await qrCallback({ connection: 'close', lastDisconnect: { error: { output: { statusCode } } } });
+            if (whatsapp.reconnectTimeout) clearTimeout(whatsapp.reconnectTimeout);
+        };
+
+        // Nine real 515 closes: each counts once, none trips the limit.
+        for (let i = 1; i <= 9; i++) {
+            await close(515);
+            expect(whatsapp.streamErrorCount).toBe(i);
+            expect(whatsapp.status).toBe('disconnected');
+            expect(whatsapp.reconnectTimeout).not.toBeNull();
+        }
+        expect(axios.post).not.toHaveBeenCalled();
+
+        // The tenth flips it.
+        await close(515);
+        expect(whatsapp.status).toBe('needs_repair');
+        expect(whatsapp.reconnectTimeout).toBeNull();
+        expect(axios.post).toHaveBeenCalledTimes(1);
+    });
+
+    test('a non-515 close and a successful open reset the 515 counter', async () => {
+        await whatsapp.connect();
+        const qrCallback = mockBaileys.default.mock.results[0].value.ev.on.mock.calls.find(c => c[0] === 'connection.update')[1];
+        const close = async (statusCode) => {
+            await qrCallback({ connection: 'close', lastDisconnect: { error: { output: { statusCode } } } });
+            if (whatsapp.reconnectTimeout) clearTimeout(whatsapp.reconnectTimeout);
+        };
+
+        await close(515);
+        await close(515);
+        expect(whatsapp.streamErrorCount).toBe(2);
+
+        await close(428);
+        expect(whatsapp.streamErrorCount).toBe(0);
+        // Backoff attempts still grow across all closes.
+        expect(whatsapp.reconnectAttempts).toBe(3);
+
+        await close(515);
+        expect(whatsapp.streamErrorCount).toBe(1);
+
+        try {
+            await qrCallback({ connection: 'open' });
+            expect(whatsapp.streamErrorCount).toBe(0);
+            expect(whatsapp.reconnectAttempts).toBe(0);
+        } finally {
+            if (whatsapp.heartbeatTimer) clearInterval(whatsapp.heartbeatTimer);
+            if (whatsapp.sleepTimeout) clearTimeout(whatsapp.sleepTimeout);
+            if (whatsapp.presenceInterval) clearInterval(whatsapp.presenceInterval);
+        }
     });
 
     test('should unwrap ephemeral message', async () => {

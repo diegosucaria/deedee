@@ -96,3 +96,161 @@ describe('Chat History Operations', () => {
         expect(remaining[1].id).toBe('m2');
     });
 });
+
+describe('getHistoryForChat hydration', () => {
+    let db;
+    let dbPath;
+
+    beforeEach(() => {
+        dbPath = path.join(__dirname, 'test-hydration-db');
+        if (fs.existsSync(dbPath)) fs.rmSync(dbPath, { recursive: true, force: true });
+        db = new AgentDB(dbPath);
+        jest.spyOn(console, 'log').mockImplementation(() => { });
+    });
+
+    afterEach(() => {
+        jest.restoreAllMocks();
+        try { if (db) db.close(); } catch (e) { /* ignore */ }
+        if (fs.existsSync(dbPath)) fs.rmSync(dbPath, { recursive: true, force: true });
+    });
+
+    it('keeps tool parts and ISO timestamps', () => {
+        const chatId = 'chat-tools';
+        db.createSession({ id: chatId, title: 'Tools' });
+        db.saveMessage({ id: 'u1', role: 'user', content: 'weather?', chat_id: chatId, timestamp: 1000 });
+        db.saveMessage({
+            id: 'm1', role: 'model', chat_id: chatId, timestamp: 2000,
+            parts: [{ functionCall: { name: 'getWeather', args: { city: 'X' } } }]
+        });
+        db.saveMessage({
+            id: 'f1', role: 'function', chat_id: chatId, timestamp: 3000,
+            parts: [{ functionResponse: { name: 'getWeather', response: { temp: 20 } } }]
+        });
+        db.saveMessage({ id: 'a1', role: 'assistant', content: 'It is 20 degrees.', chat_id: chatId, timestamp: 4000 });
+
+        const history = db.getHistoryForChat(chatId, 20);
+        expect(history.map(m => m.id)).toEqual(['u1', 'm1', 'f1', 'a1']);
+        expect(history.map(m => m.role)).toEqual(['user', 'model', 'user', 'model']);
+        expect(history[1].parts[0].functionCall.name).toBe('getWeather');
+        expect(history[2].parts[0].functionResponse.response.temp).toBe(20);
+        expect(history[3].parts[0].text).toBe('It is 20 degrees.');
+        expect(history[0].timestamp).toBe(new Date(1000).toISOString());
+        expect(history[0].metadata).toEqual({});
+        for (const m of history) {
+            expect(Object.keys(m).sort()).toEqual(['id', 'metadata', 'parts', 'role', 'timestamp']);
+        }
+    });
+
+    it('restores the caption of a media row whose parts hold only the file', () => {
+        const chatId = 'chat-media';
+        db.createSession({ id: chatId, title: 'Media' });
+        db.saveMessage({
+            id: 'img1', role: 'user', content: 'what is this?', chat_id: chatId, timestamp: 1000,
+            parts: [{ inlineData: { mimeType: 'image/jpeg', data: 'AAAA' } }]
+        });
+        db.saveMessage({
+            id: 'fc1', role: 'model', content: 'Thinking...', chat_id: chatId, timestamp: 2000,
+            parts: [{ functionCall: { name: 'lookup', args: {} } }]
+        });
+        const history = db.getHistoryForChat(chatId, 20);
+        expect(history[0].parts[0]).toEqual({ text: 'what is this?' });
+        expect(history[0].parts[1].inlineData.mimeType).toBe('image/jpeg');
+        // Tool rows never get their content text added.
+        expect(history[1].parts).toHaveLength(1);
+        expect(history[1].parts[0].functionCall.name).toBe('lookup');
+    });
+
+    it('keeps insertion order for rows saved in the same millisecond', () => {
+        const chatId = 'chat-same-ms';
+        db.createSession({ id: chatId, title: 'Same ms' });
+        const ts = '2026-01-01T00:00:00.000Z';
+        db.saveMessage({ id: 'a', role: 'user', content: 'first', chat_id: chatId, timestamp: ts });
+        db.saveMessage({ id: 'b', role: 'model', chat_id: chatId, timestamp: ts, parts: [{ functionCall: { name: 't', args: {} } }] });
+        db.saveMessage({ id: 'c', role: 'function', chat_id: chatId, timestamp: ts, parts: [{ functionResponse: { name: 't', response: {} } }] });
+        db.saveMessage({ id: 'd', role: 'assistant', content: 'done', chat_id: chatId, timestamp: ts });
+
+        expect(db.getHistoryForChat(chatId, 20).map(m => m.id)).toEqual(['a', 'b', 'c', 'd']);
+        // The limit still keeps the newest rows.
+        expect(db.getHistoryForChat(chatId, 2).map(m => m.id)).toEqual(['c', 'd']);
+    });
+
+    it('counts messages after a given message', () => {
+        const chatId = 'chat-count';
+        db.createSession({ id: chatId, title: 'Count' });
+        const ts = '2026-01-01T00:00:00.000Z';
+        db.saveMessage({ id: 'a', role: 'user', content: '1', chat_id: chatId, timestamp: ts });
+        db.saveMessage({ id: 'b', role: 'assistant', content: '2', chat_id: chatId, timestamp: ts });
+        db.saveMessage({ id: 'c', role: 'user', content: '3', chat_id: chatId, timestamp: '2026-01-01T00:00:01.000Z' });
+
+        expect(db.countMessagesAfter(chatId, 'a')).toBe(2);
+        expect(db.countMessagesAfter(chatId, 'c')).toBe(0);
+        expect(db.countMessagesAfter(chatId, 'missing')).toBeNull();
+    });
+
+    it('getHistoryForSummary drops oversized parts and keeps the caption', () => {
+        const chatId = 'chat-summary-window';
+        db.createSession({ id: chatId, title: 'Window' });
+        db.saveMessage({ id: 's-1', role: 'user', content: 'hello', chat_id: chatId, timestamp: '2026-01-01T00:00:00.000Z' });
+        db.saveMessage({
+            id: 's-2', role: 'user', content: 'photo caption', chat_id: chatId, timestamp: '2026-01-01T00:00:01.000Z',
+            parts: [{ inlineData: { mimeType: 'image/jpeg', data: 'A'.repeat(1024 * 1024) } }]
+        });
+        db.saveMessage({
+            id: 's-3', role: 'assistant', content: 'nice', chat_id: chatId, timestamp: '2026-01-01T00:00:02.000Z',
+            parts: [{ text: 'nice' }]
+        });
+
+        const rows = db.getHistoryForSummary(chatId, 100);
+        expect(rows.map(r => r.id)).toEqual(['s-1', 's-2', 's-3']);
+        expect(rows[1].parts).toEqual([{ text: 'photo caption' }]);
+        expect(rows[2].parts).toEqual([{ text: 'nice' }]);
+        expect(JSON.stringify(rows).length).toBeLessThan(2000);
+
+        // The plain history still carries the blob.
+        const full = db.getHistoryForChat(chatId, 100);
+        expect(full[1].parts.some(p => p.inlineData)).toBe(true);
+    });
+
+    it('converts integer timestamps in rowid batches', () => {
+        const chatId = 'chat-migrate-batches';
+        db.createSession({ id: chatId, title: 'Batches' });
+        const insertRaw = db.db.prepare('INSERT INTO messages (id, role, content, chat_id, timestamp) VALUES (?, ?, ?, ?, ?)');
+        for (let i = 0; i < 5; i++) insertRaw.run(`b-${i}`, 'user', `m${i}`, chatId, 1700000000000 + i * 1000);
+        db.db.prepare('DELETE FROM agent_settings WHERE key = ?').run('migration_messages_ts_iso');
+        const log = jest.spyOn(console, 'log').mockImplementation(() => { });
+
+        db._migrateMessageTimestampsToIso(2);
+
+        const rows = db.db.prepare('SELECT id, typeof(timestamp) as t FROM messages WHERE chat_id = ? ORDER BY timestamp').all(chatId);
+        expect(rows.map(r => r.t)).toEqual(['text', 'text', 'text', 'text', 'text']);
+        expect(rows.map(r => r.id)).toEqual(['b-0', 'b-1', 'b-2', 'b-3', 'b-4']);
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('Converting 5 message timestamps'));
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('Converted 5 message timestamps'));
+        log.mockRestore();
+    });
+
+    it('converts integer timestamps to ISO text once', () => {
+        const chatId = 'chat-migrate';
+        db.createSession({ id: chatId, title: 'Migrate' });
+        const insertRaw = db.db.prepare('INSERT INTO messages (id, role, content, chat_id, timestamp) VALUES (?, ?, ?, ?, ?)');
+        insertRaw.run('old-1', 'user', 'old', chatId, 1700000000000);
+        insertRaw.run('old-2', 'assistant', 'older reply', chatId, 1700000001000);
+        db.saveMessage({ id: 'new-1', role: 'user', content: 'new', chat_id: chatId, timestamp: '2026-01-01T00:00:00.000Z' });
+
+        // Before the migration the integer rows sort after the text row.
+        db.db.prepare('DELETE FROM agent_settings WHERE key = ?').run('migration_messages_ts_iso');
+        db._migrateMessageTimestampsToIso();
+
+        const rows = db.db.prepare('SELECT id, timestamp, typeof(timestamp) as t FROM messages WHERE chat_id = ? ORDER BY timestamp').all(chatId);
+        expect(rows.map(r => r.t)).toEqual(['text', 'text', 'text']);
+        expect(rows.map(r => r.id)).toEqual(['old-1', 'old-2', 'new-1']);
+        expect(rows[0].timestamp).toBe(new Date(1700000000000).toISOString());
+        expect(db.getAgentSetting('migration_messages_ts_iso')).not.toBeNull();
+
+        // A second call is a no-op: the flag is set, so a fresh integer row stays as is.
+        insertRaw.run('old-3', 'user', 'late', chatId, 1700000002000);
+        db._migrateMessageTimestampsToIso();
+        const late = db.db.prepare('SELECT typeof(timestamp) as t FROM messages WHERE id = ?').get('old-3');
+        expect(late.t).toBe('integer');
+    });
+});

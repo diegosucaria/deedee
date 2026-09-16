@@ -64,7 +64,8 @@ class SubAgentService {
             }
         };
 
-        // Timeout via AbortController
+        // Timeout via AbortController. The race below only stops the wait;
+        // abortChat tells the agent to leave its tool loop for this chat.
         const controller = new AbortController();
         const timer = setTimeout(() => controller.abort(), timeout * 60 * 1000);
 
@@ -87,6 +88,9 @@ class SubAgentService {
                 return result;
             } catch (err) {
                 const isTimeout = err.message === 'TIMEOUT';
+                if (isTimeout && typeof this.agent.abortChat === 'function') {
+                    this.agent.abortChat(chatId);
+                }
                 const partial = replies.join('\n').trim();
                 const status = isTimeout ? 'timeout' : 'failed';
                 const error = isTimeout ? `Timed out after ${timeout} minutes` : err.message;

@@ -411,8 +411,9 @@ class Scheduler {
                     source: msgSource,
                     metadata: msgMeta
                 }, async (reply) => {
+                    let sent;
                     if (this.agent.interface) {
-                        await this.agent.interface.send(reply);
+                        sent = await this.agent.interface.send(reply);
                     }
                     // Capture reply for smart notification.
                     // createAssistantMessage uses 'content', not 'text'.
@@ -424,6 +425,8 @@ class Scheduler {
                         // Always keep the latest text — final assistant message overwrites intermediate "Thinking..." messages
                         executionResult.text = replyText;
                     }
+                    // A false from the interface lets _deliverReply record the failure.
+                    return sent;
                 });
 
                 // Ensure result has text for smart notification

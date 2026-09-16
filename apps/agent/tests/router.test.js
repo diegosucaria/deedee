@@ -51,6 +51,20 @@ describe('Router', () => {
         expect(decision.toolMode).toBe('STANDARD');
     });
 
+    test('should fall back to PRO with every tool when routing fails', async () => {
+        jest.spyOn(console, 'error').mockImplementation(() => { });
+        const log = jest.spyOn(console, 'log').mockImplementation(() => { });
+        mockSendMessage.mockRejectedValue(new Error('network down'));
+
+        const decision = await router.route('turn on the lights', [], null);
+
+        expect(decision.model).toBe('PRO');
+        expect(decision.toolMode).toBe('STANDARD');
+        // No toolGroups: the agent skips scoping so home/workspace tools stay loaded.
+        expect(decision).not.toHaveProperty('toolGroups');
+        expect(log).toHaveBeenCalledWith('[Router] fallback: all tools');
+    });
+
     test('should stick to PRO for confirmation "ok" if lastModel was PRO', async () => {
         // Mock LLM response
         mockSendMessage.mockResolvedValueOnce({
