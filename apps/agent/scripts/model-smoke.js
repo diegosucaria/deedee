@@ -33,7 +33,8 @@ const ROLE_ORDER = ['ROUTER', 'LITE', 'FLASH', 'SEARCH', 'PRO', 'TTS', 'IMAGE', 
 const TEXT_ROLES = ['ROUTER', 'LITE', 'FLASH', 'SEARCH', 'PRO'];
 const CHECKS = ['get', 'text', 'tools', 'thinking', 'tts', 'image', 'embed', 'live'];
 
-// Planned per-role thinking levels (B4.3 moves this into ConfigService).
+// Per-role levels for the live check only. Runtime levels per call class live
+// in ConfigService.getThinking (docs/models.md, "Thinking levels").
 const THINKING_LEVELS = { ROUTER: 'MINIMAL', LITE: 'MINIMAL', FLASH: 'LOW', SEARCH: 'LOW', PRO: 'HIGH' };
 
 // Output budget for the text check when the model cannot think at MINIMAL.
