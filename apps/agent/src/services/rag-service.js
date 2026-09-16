@@ -38,6 +38,13 @@ class RagService {
         // agent.start() turns it into a background re-embed (startPendingReembed).
         this.pendingModelReembed = null;
         this.reembedInProgress = false;
+        // reindexAll lock: the running promise, or null. Scans skip while it is set.
+        this.reindexPromise = null;
+        // Embedding call limits: parallel calls per document, tries per call,
+        // first backoff delay (doubles per try). Tests lower the delay.
+        this.embedConcurrency = 3;
+        this.embedRetries = 3;
+        this.embedRetryBaseMs = 500;
         const dbDir = path.dirname(this.dbPath);
         if (!fs.existsSync(dbDir)) {
             fs.mkdirSync(dbDir, { recursive: true });
@@ -286,54 +293,123 @@ class RagService {
     }
 
     /**
-     * Force re-embed all documents. Call manually or after dimension change.
-     * Clears all embeddings and hashes, then triggers a full scan.
+     * Re-embed every indexed document with the configured model, then scan the
+     * vaults and journals for new files. Works document by document: a document
+     * keeps its old chunks until all its new ones embedded, so a failed call never
+     * drops content from vector or keyword search. The new embedding_model id is
+     * written only when every document succeeded; otherwise the old id stays and
+     * the next agent start retries. One run at a time: a second caller joins it.
+     * @returns {Promise<{documents:number, reembedded:number, failedDocuments:number, failedChunks:number, missing:number, complete:boolean}>}
      */
-    async reindexAll(vaultsDir, journalDir) {
-        console.log('[RAG] Starting full re-index...');
+    reindexAll(vaultsDir, journalDir) {
+        if (this.reindexPromise) {
+            console.log('[RAG] Re-index already running; joining it.');
+            return this.reindexPromise;
+        }
+        this.reindexPromise = this._reindexAll(vaultsDir, journalDir)
+            .finally(() => { this.reindexPromise = null; });
+        return this.reindexPromise;
+    }
 
-        // Clear all embeddings and hashes
-        this.db.prepare('UPDATE chunks SET embedding = NULL').run();
-        this.db.prepare("UPDATE documents SET hash = ''").run();
+    async _reindexAll(vaultsDir, journalDir) {
+        const currentModel = this.config.getModel('EMBEDDING');
+        console.log(`[RAG] Starting full re-index with ${currentModel} (${EMBEDDING_DIMENSIONS}D)...`);
 
-        // Recreate vec0
-        if (this.useVec) {
-            try { this.db.exec('DROP TABLE IF EXISTS chunks_vec'); } catch (e) { }
+        const docs = this.db.prepare('SELECT id, filepath, filename, vault_id FROM documents ORDER BY id').all();
+        const counts = { documents: docs.length, reembedded: 0, failedDocuments: 0, failedChunks: 0, missing: 0, complete: false };
+
+        for (const doc of docs) {
+            if (!doc.filepath || !fs.existsSync(doc.filepath)) {
+                counts.missing++;
+                continue;
+            }
             try {
-                this.db.exec(`
-                    CREATE VIRTUAL TABLE IF NOT EXISTS chunks_vec USING vec0(
-                        chunk_id INTEGER PRIMARY KEY,
-                        embedding float[${EMBEDDING_DIMENSIONS}]
-                    );
-                `);
+                const { failed } = await this._reembedDocument(doc);
+                if (failed > 0) {
+                    counts.failedDocuments++;
+                    counts.failedChunks += failed;
+                    console.error(`[RAG] Re-embed of ${doc.filename} kept the old vectors: ${failed} chunk(s) failed.`);
+                } else {
+                    counts.reembedded++;
+                }
             } catch (e) {
-                console.warn('[RAG] Failed to recreate vec0:', e.message);
+                counts.failedDocuments++;
+                console.error(`[RAG] Re-embed failed for ${doc.filename}:`, e.message);
             }
         }
 
-        // Re-scan if directories provided
-        if (vaultsDir) await this.scanAndIngest(vaultsDir);
-        if (journalDir) await this.scanJournals(journalDir);
+        // Pick up files that are not indexed yet. Unchanged files are skipped by hash.
+        if (vaultsDir) await this.scanAndIngest(vaultsDir, { fromReindex: true });
+        if (journalDir) await this.scanJournals(journalDir, { fromReindex: true });
 
-        // Documents ingested from outside the vaults (e.g. the durable memory file)
-        // are not covered by the scans above. Re-ingest those that still exist.
-        const leftovers = this.db.prepare("SELECT filepath, vault_id FROM documents WHERE hash = ''").all();
-        for (const doc of leftovers) {
-            if (!doc.filepath || !fs.existsSync(doc.filepath)) continue;
-            try {
-                await this.ingestDocument(doc.filepath, doc.vault_id);
-            } catch (e) {
-                console.error(`[RAG] Re-index failed for ${path.basename(doc.filepath)}:`, e.message);
-            }
+        counts.complete = counts.failedDocuments === 0;
+        if (counts.complete) {
+            // The index now reflects the configured model and dimensions.
+            this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_dimensions', ?)").run(String(EMBEDDING_DIMENSIONS));
+            this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_model', ?)").run(currentModel);
+            this.pendingModelReembed = null;
+            this.needsReindex = false;
+            console.log(`[RAG] Full re-index complete: ${counts.reembedded} documents re-embedded, ${counts.missing} missing on disk.`);
+        } else {
+            // Keep the old model id: the next agent start retries the whole run.
+            console.error(`[RAG] Re-index incomplete: ${counts.failedDocuments} of ${counts.documents} documents failed (${counts.failedChunks} chunks). The old embedding model id stays; the next start retries.`);
+            this._notify({
+                type: 'rag_reindex_failed',
+                severity: 'error',
+                title: `RAG re-embed for ${currentModel} incomplete`,
+                message: `${counts.failedDocuments} of ${counts.documents} documents (${counts.failedChunks} chunks) could not be embedded and kept their old vectors. The run retries on the next agent start; or run the reindexEmbeddings tool.`,
+                metadata: { ...counts, currentModel, link: '/system' }
+            });
         }
+        return counts;
+    }
 
-        // The index now reflects the configured model and dimensions.
-        this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_dimensions', ?)").run(String(EMBEDDING_DIMENSIONS));
-        this.db.prepare("INSERT OR REPLACE INTO rag_metadata (key, value) VALUES ('embedding_model', ?)").run(this.config.getModel('EMBEDDING'));
-        this.pendingModelReembed = null;
-        this.needsReindex = false;
+    /**
+     * Re-embed one document in place. New chunks are written next to the old
+     * ones; only when all of them embedded are the old chunks removed. On any
+     * failure the new chunks are removed instead and the old ones stay.
+     * @returns {Promise<{failed:number}>}
+     */
+    async _reembedDocument(doc) {
+        const buffer = fs.readFileSync(doc.filepath);
+        const hash = crypto.createHash('md5').update(buffer).digest('hex');
+        const oldChunkIds = new Set(this.db.prepare('SELECT id FROM chunks WHERE document_id = ?').all(doc.id).map(r => r.id));
+        const oldFtsRowids = new Set(this.db.prepare('SELECT rowid FROM chunks_fts WHERE document_id = ?').all(doc.id).map(r => r.rowid));
 
-        console.log('[RAG] Full re-index complete.');
+        let result;
+        try {
+            result = await this._indexContent(doc.id, doc.filepath, buffer);
+        } catch (e) {
+            this._swapChunks(doc.id, oldChunkIds, oldFtsRowids, false);
+            throw e;
+        }
+        const keepNew = result.failed === 0;
+        this._swapChunks(doc.id, oldChunkIds, oldFtsRowids, keepNew);
+        if (keepNew) {
+            this.db.prepare('UPDATE documents SET hash = ?, indexed_at = ? WHERE id = ?').run(hash, new Date().toISOString(), doc.id);
+        }
+        return { failed: result.failed };
+    }
+
+    /**
+     * Drop one generation of a document's chunks in one transaction: the old
+     * rows when keepNew is true, the rows added after the snapshot otherwise.
+     */
+    _swapChunks(docId, oldChunkIds, oldFtsRowids, keepNew) {
+        const chunkIds = this.db.prepare('SELECT id FROM chunks WHERE document_id = ?').all(docId).map(r => r.id);
+        const ftsRowids = this.db.prepare('SELECT rowid FROM chunks_fts WHERE document_id = ?').all(docId).map(r => r.rowid);
+        const dropChunks = chunkIds.filter(id => oldChunkIds.has(id) === keepNew);
+        const dropFts = ftsRowids.filter(id => oldFtsRowids.has(id) === keepNew);
+        const delVec = this.useVec ? this.db.prepare('DELETE FROM chunks_vec WHERE chunk_id = ?') : null;
+        const delChunk = this.db.prepare('DELETE FROM chunks WHERE id = ?');
+        const delFts = this.db.prepare('DELETE FROM chunks_fts WHERE rowid = ?');
+        this.db.transaction(() => {
+            for (const id of dropChunks) {
+                if (delVec) { try { delVec.run(id); } catch (e) { } }
+                delChunk.run(id);
+            }
+            for (const id of dropFts) delFts.run(id);
+        })();
     }
 
     /**
@@ -360,7 +436,12 @@ class RagService {
         });
 
         return this.reindexAll(vaultsDir, journalDir)
-            .then(() => {
+            .then((counts) => {
+                if (!counts?.complete) {
+                    // _reindexAll already posted rag_reindex_failed with the counts.
+                    console.warn(`[RAG] Re-embed incomplete; ${prevModel} stays recorded until a clean run.`);
+                    return false;
+                }
                 const stats = this.getStats();
                 console.log(`[RAG] Re-embed complete: ${stats.chunks} chunks now use ${currentModel}.`);
                 this._notify({
@@ -425,9 +506,6 @@ class RagService {
             console.log(`[RAG] Re-indexing ${filename}...`);
         }
 
-        const ext = path.extname(filepath).toLowerCase();
-        const mediaType = this._getMediaType(ext);
-
         // Insert Document if new
         let docId = existing ? existing.id : null;
         if (!docId) {
@@ -436,17 +514,31 @@ class RagService {
             docId = info.lastInsertRowid;
         }
 
+        return this._indexContent(docId, filepath, buffer);
+    }
+
+    /**
+     * Chunk, embed and store one file's content under docId.
+     * Media files get one multimodal vector, PDFs text chunks plus one native
+     * vector, everything else text chunks.
+     * @returns {Promise<{failed:number}>} embeddings that still failed after retries
+     */
+    async _indexContent(docId, filepath, buffer) {
+        const filename = path.basename(filepath);
+        const ext = path.extname(filepath).toLowerCase();
+        const mediaType = this._getMediaType(ext);
+
         // === Path A: Media files (image/audio/video) — one embedding per file, no chunking ===
         if (mediaType) {
             const fileSize = buffer.length;
             if (fileSize > MAX_MULTIMODAL_SIZE) {
                 console.warn(`[RAG] Skipping multimodal embedding for ${filename}: ${(fileSize / 1024 / 1024).toFixed(1)}MB exceeds ${MAX_MULTIMODAL_SIZE / 1024 / 1024}MB limit.`);
-                return;
+                return { failed: 0 };
             }
 
             console.log(`[RAG] Embedding ${mediaType.type} file: ${filename} (${(fileSize / 1024).toFixed(0)}KB)...`);
             try {
-                const embedding = await this._getMultimodalEmbedding(filepath, mediaType.mimeType);
+                const embedding = await this._withRetry(() => this._getMultimodalEmbedding(filepath, mediaType.mimeType), `${mediaType.type} ${filename}`);
                 const vectorBuf = Buffer.from(new Float32Array(embedding).buffer);
 
                 const insertResult = this.db.prepare('INSERT INTO chunks (document_id, content, embedding, chunk_index, content_type) VALUES (?, ?, ?, ?, ?)')
@@ -463,8 +555,9 @@ class RagService {
                 console.log(`[RAG] Multimodal ingestion complete for ${filename}.`);
             } catch (e) {
                 console.error(`[RAG] Failed to embed ${mediaType.type} ${filename}:`, e.message);
+                return { failed: 1 };
             }
-            return;
+            return { failed: 0 };
         }
 
         // === Path B: PDF files — text extraction for FTS + native multimodal embedding ===
@@ -488,12 +581,12 @@ class RagService {
             // Embed text chunks for FTS + vector search
             const chunks = this._chunkText(text, 2000, 400);
             console.log(`[RAG] Embedding ${chunks.length} text chunks + native PDF embedding for ${filename}...`);
-            await this._embedTextChunks(docId, chunks, 'text');
+            let failed = await this._embedTextChunks(docId, chunks, 'text');
 
             // Additionally: native multimodal PDF embedding for better visual/layout understanding
             if (buffer.length <= MAX_MULTIMODAL_SIZE) {
                 try {
-                    const pdfEmbedding = await this._getMultimodalEmbedding(filepath, 'application/pdf');
+                    const pdfEmbedding = await this._withRetry(() => this._getMultimodalEmbedding(filepath, 'application/pdf'), `PDF ${filename}`);
                     const vectorBuf = Buffer.from(new Float32Array(pdfEmbedding).buffer);
                     const insertResult = this.db.prepare('INSERT INTO chunks (document_id, content, embedding, chunk_index, content_type) VALUES (?, ?, ?, ?, ?)')
                         .run(docId, `[PDF] ${filename}`, vectorBuf, chunks.length, 'pdf');
@@ -505,11 +598,12 @@ class RagService {
                     console.log(`[RAG] Native PDF embedding added for ${filename}.`);
                 } catch (e) {
                     console.warn(`[RAG] Native PDF embedding failed for ${filename} (text chunks still indexed):`, e.message);
+                    failed++;
                 }
             }
 
             console.log(`[RAG] Ingestion complete for ${filename}.`);
-            return;
+            return { failed };
         }
 
         // === Path C: Text files (default) — unchanged behavior ===
@@ -517,44 +611,78 @@ class RagService {
         const chunks = this._chunkText(text, 2000, 400);
 
         console.log(`[RAG] Embedding ${chunks.length} chunks for ${filename}...`);
-        await this._embedTextChunks(docId, chunks, 'text');
+        const failed = await this._embedTextChunks(docId, chunks, 'text');
         console.log(`[RAG] Ingestion complete for ${filename}.`);
+        return { failed };
     }
 
     /**
-     * Embed text chunks and store in chunks table, FTS, and vec0.
-     * Shared by PDF text extraction (Path B) and plain text (Path C).
+     * Run one embedding call up to this.embedRetries times. Waits
+     * embedRetryBaseMs before the second try and doubles it each time.
+     * Rethrows the last error.
+     */
+    async _withRetry(fn, label) {
+        let lastError;
+        for (let attempt = 1; attempt <= this.embedRetries; attempt++) {
+            try {
+                return await fn();
+            } catch (e) {
+                lastError = e;
+                if (attempt < this.embedRetries) {
+                    const delay = this.embedRetryBaseMs * 2 ** (attempt - 1);
+                    console.warn(`[RAG] Embedding ${label} failed (try ${attempt}/${this.embedRetries}): ${e.message}. Retrying in ${delay}ms.`);
+                    await new Promise(resolve => setTimeout(resolve, delay));
+                }
+            }
+        }
+        throw lastError;
+    }
+
+    /**
+     * Embed text chunks and store them in chunks, FTS and vec0, at most
+     * this.embedConcurrency calls in flight. Shared by PDF text (Path B) and
+     * plain text (Path C).
+     * @returns {Promise<number>} chunks that still failed after retries
      */
     async _embedTextChunks(docId, chunks, contentType = 'text') {
-        for (let i = 0; i < chunks.length; i += 10) {
-            const batch = chunks.slice(i, i + 10);
-            await Promise.all(batch.map(async (chunk, idx) => {
-                const globalIdx = i + idx;
+        let failed = 0;
+        let next = 0;
+        const worker = async () => {
+            while (next < chunks.length) {
+                const idx = next++;
+                const chunk = chunks[idx];
                 try {
-                    const embedding = await this._getEmbedding(chunk, 'RETRIEVAL_DOCUMENT');
-                    const vectorBuf = Buffer.from(new Float32Array(embedding).buffer);
-
-                    const insertResult = this.db.prepare('INSERT INTO chunks (document_id, content, embedding, chunk_index, content_type) VALUES (?, ?, ?, ?, ?)')
-                        .run(docId, chunk, vectorBuf, globalIdx, contentType);
-
-                    // Insert into FTS (text chunks only)
-                    if (contentType === 'text') {
-                        this.db.prepare('INSERT INTO chunks_fts (content, chunk_index, document_id) VALUES (?, ?, ?)')
-                            .run(chunk, globalIdx, docId);
-                    }
-
-                    // Insert into vec0 if available
-                    if (this.useVec) {
-                        try {
-                            this.db.prepare('INSERT INTO chunks_vec (chunk_id, embedding) VALUES (?, ?)').run(insertResult.lastInsertRowid, vectorBuf);
-                        } catch (e) {
-                            console.warn(`[RAG] vec0 insert failed for chunk ${globalIdx}:`, e.message);
-                        }
-                    }
+                    const embedding = await this._withRetry(() => this._getEmbedding(chunk, 'RETRIEVAL_DOCUMENT'), `chunk ${idx}`);
+                    this._storeTextChunk(docId, chunk, embedding, idx, contentType);
                 } catch (e) {
-                    console.error(`[RAG] Failed to embed chunk ${globalIdx}:`, e.message);
+                    failed++;
+                    console.error(`[RAG] Failed to embed chunk ${idx} after ${this.embedRetries} tries:`, e.message);
                 }
-            }));
+            }
+        };
+        const workers = Math.min(this.embedConcurrency, chunks.length);
+        await Promise.all(Array.from({ length: workers }, worker));
+        return failed;
+    }
+
+    _storeTextChunk(docId, chunk, embedding, chunkIndex, contentType) {
+        const vectorBuf = Buffer.from(new Float32Array(embedding).buffer);
+        const insertResult = this.db.prepare('INSERT INTO chunks (document_id, content, embedding, chunk_index, content_type) VALUES (?, ?, ?, ?, ?)')
+            .run(docId, chunk, vectorBuf, chunkIndex, contentType);
+
+        // Insert into FTS (text chunks only)
+        if (contentType === 'text') {
+            this.db.prepare('INSERT INTO chunks_fts (content, chunk_index, document_id) VALUES (?, ?, ?)')
+                .run(chunk, chunkIndex, docId);
+        }
+
+        // Insert into vec0 if available
+        if (this.useVec) {
+            try {
+                this.db.prepare('INSERT INTO chunks_vec (chunk_id, embedding) VALUES (?, ?)').run(insertResult.lastInsertRowid, vectorBuf);
+            } catch (e) {
+                console.warn(`[RAG] vec0 insert failed for chunk ${chunkIndex}:`, e.message);
+            }
         }
     }
 
@@ -588,7 +716,11 @@ class RagService {
         return this.db.prepare(sql).all(...params);
     }
 
-    async scanAndIngest(vaultsDir) {
+    async scanAndIngest(vaultsDir, { fromReindex = false } = {}) {
+        if (this.reindexPromise && !fromReindex) {
+            console.log('[RAG] Re-index in progress. Skipping scan.');
+            return;
+        }
         if (this.isScanning) {
             console.log('[RAG] Scan already in progress. Skipping.');
             return;
@@ -653,7 +785,11 @@ class RagService {
      * Scan journal directory and ingest daily summaries into RAG.
      * Skips files under 200 chars (system-only noise like "No messages found").
      */
-    async scanJournals(journalDir) {
+    async scanJournals(journalDir, { fromReindex = false } = {}) {
+        if (this.reindexPromise && !fromReindex) {
+            console.log('[RAG] Re-index in progress. Skipping journal scan.');
+            return;
+        }
         if (!fs.existsSync(journalDir)) {
             console.log(`[RAG] Journal directory not found: ${journalDir}`);
             return;
@@ -753,8 +889,11 @@ class RagService {
         let vectorSql = 'SELECT chunks.id, chunks.content, chunks.embedding, chunk_index, document_id, chunks.content_type, documents.filename, documents.vault_id FROM chunks JOIN documents ON chunks.document_id = documents.id';
         const params = [];
         if (vaultId) {
-            vectorSql += ' WHERE documents.vault_id = ?';
+            vectorSql += ' WHERE documents.vault_id = ? AND chunks.embedding IS NOT NULL';
             params.push(vaultId);
+        } else {
+            // Rows without a vector (cleared by a dimension change) cannot be scored.
+            vectorSql += ' WHERE chunks.embedding IS NOT NULL';
         }
 
         const allChunks = this.db.prepare(vectorSql).all(...params);

@@ -653,7 +653,7 @@ const toolDefinitions = [
       {
         name: "reindexEmbeddings",
         category: "rag",
-        description: "Force re-embed all documents with the current embedding model and dimensions. Use after changing embedding settings or to improve search quality.",
+        description: "Re-embed all documents with the current embedding model and dimensions, one document at a time (old vectors stay until each is replaced). Use after changing embedding settings or to improve search quality. Reports documents that failed; run again to retry them.",
         parameters: {
           type: "OBJECT",
           properties: {},
