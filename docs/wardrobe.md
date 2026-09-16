@@ -31,7 +31,7 @@ Deedee includes a personal **Wardrobe Service** that catalogs your clothes, sugg
     -   **Scope**: Can be pool-restricted to explicit `garment_ids` or to an active trip's capsule.
 
 5.  **Virtual Mirror (1–4 Panels) — `visualize_outfit`**:
-    -   **Photorealistic Render**: Uses `gemini-3-pro-image-preview` with a stored reference selfie + garment crops.
+    -   **Photorealistic Render**: Uses the `IMAGE` role (default `gemini-3-pro-image`) with a stored reference selfie + garment crops.
     -   **Single-Panel**: Classic mirror-selfie framing of you in one outfit.
     -   **Multi-Panel**: Up to 4 outfits rendered side-by-side in one image (auto layout: single / horizontal row / 2×2 grid).
     -   **Onboarding**: First call without a selfie returns `needs_reference: true`; the agent prompts for one via `set_reference_selfie`.
@@ -243,9 +243,9 @@ All `/v1/wardrobe/*` routes are protected by `authMiddleware` (Bearer Token: `DE
 
 -   **Image Storage**: Persistent volume `data/wardrobe/{garments,outfits,profile}/…`. Served by Agent at `/internal/wardrobe/images/*`. Path traversal is guarded on BOTH the Next.js proxy (`wardrobe_images/[...path]/route.js`) and the agent handler.
 -   **Models** (all via `configService.getModel(...)` — no hardcoded ids):
-    -   **Detection / Attribute Pass / Brand Search**: `FLASH` (env `WORKER_FLASH`, default `gemini-3-flash-preview`).
+    -   **Detection / Attribute Pass / Brand Search**: `FLASH` (env `WORKER_FLASH`, default `gemini-3.6-flash`).
     -   **Match / Recommend / Critique / Pack**: `PRO` (env `WORKER_PRO`, default `gemini-3.1-pro-preview`).
-    -   **Virtual Mirror**: `IMAGE` (env `GEMINI_IMAGE_MODEL`, default `gemini-3-pro-image-preview`).
+    -   **Virtual Mirror**: `IMAGE` (env `GEMINI_IMAGE_MODEL`, default `gemini-3-pro-image`). All roles: [models.md](models.md).
 -   **Weather**: Spawned subagent, not a dedicated service. Uses the shared weather skill at [apps/agent/skills/weather/SKILL.md](../apps/agent/skills/weather/SKILL.md).
 -   **Cross-transport Photos**: `apps/interfaces/src/telegram.js` has a `photo` handler; `apps/interfaces/src/whatsapp.js` already forwards images as `inlineData`. The agent webhook at `/webhook` receives a generic `{parts: [{inlineData}]}` shape regardless of source.
 -   **Socket Events**:

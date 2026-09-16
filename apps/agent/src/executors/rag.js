@@ -41,8 +41,11 @@ class RagExecutor extends BaseExecutor {
                 try {
                     const vaultsDir = agent.vaults ? agent.vaults.vaultsDir : null;
                     const journalDir = agent.journal ? agent.journal.journalDir : null;
-                    await ragService.reindexAll(vaultsDir, journalDir);
-                    return { success: true, info: 'Full re-index complete. All documents re-embedded.' };
+                    const counts = await ragService.reindexAll(vaultsDir, journalDir);
+                    if (!counts.complete) {
+                        return { success: false, info: `Re-index incomplete: ${counts.failedDocuments} of ${counts.documents} documents failed (${counts.failedChunks} chunks) and kept their old vectors. Run again to retry.` };
+                    }
+                    return { success: true, info: `Full re-index complete. ${counts.reembedded} documents re-embedded${counts.missing ? `, ${counts.missing} missing on disk` : ''}.` };
                 } catch (e) {
                     return { error: `Re-index failed: ${e.message}` };
                 }

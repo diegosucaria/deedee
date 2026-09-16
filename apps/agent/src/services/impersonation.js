@@ -170,7 +170,7 @@ ${corpus}
 Output a concise list of rules for this specific relationship.
 `;
         try {
-            const analyzeModel = process.env.WORKER_PRO || 'gemini-1.5-pro-exp';
+            const analyzeModel = this._config.getModel('PRO');
             const result = await this.agent.client.models.generateContent({
                 model: analyzeModel,
                 contents: [{ role: 'user', parts: [{ text: prompt }] }]
@@ -204,7 +204,7 @@ Output a concise list of rules for this specific relationship.
      */
     async transcribeAudio(part) {
         try {
-            const transcribeModel = process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
+            const transcribeModel = this._config.getModel('FLASH');
             const result = await this.agent.client.models.generateContent({
                 model: transcribeModel,
                 contents: [{
@@ -516,7 +516,7 @@ ${transcript}
         // 4. Call LLM
         try {
             console.log('Prompt:', JSON.stringify({ prompt }));
-            const modelName = process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
+            const modelName = this._config.getModel('FLASH');
 
             const result = await this.agent.client.models.generateContent({
                 model: modelName,
@@ -667,7 +667,7 @@ Return a SINGLE, concise rule (max 10 words).
 `;
 
         try {
-            const learnModel = process.env.WORKER_FLASH || 'gemini-2.0-flash-exp';
+            const learnModel = this._config.getModel('FLASH');
             const result = await this.agent.client.models.generateContent({
                 model: learnModel,
                 contents: [{ role: 'user', parts: [{ text: prompt }] }]

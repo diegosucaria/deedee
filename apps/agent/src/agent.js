@@ -634,6 +634,14 @@ class Agent {
       });
     }
 
+    // Embedding model id changed since the last run: re-embed the RAG index in
+    // the background (rag-service.js keeps the old id until this completes).
+    try {
+      this.ragService.startPendingReembed(this.vaults?.vaultsDir, this.journal?.journalDir);
+    } catch (e) {
+      console.error('[RAG] Could not start the background re-embed:', e.message);
+    }
+
     this.interface.on('message', this.onMessage);
     console.log('Agent listening for messages.');
   }
@@ -1225,7 +1233,7 @@ class Agent {
                 // Initialize lite client specifically for low-latency, low-cost extraction
                 const { GoogleGenAI } = await this._loadClientLibrary();
                 const genAI = new GoogleGenAI({ apiKey: this.config.googleApiKey });
-                const liteModel = process.env.WORKER_LITE || process.env.WORKER_FLASH || 'gemini-2.5-flash';
+                const liteModel = this.configService.getModel('LITE');
 
                 for (const part of mediaParts) {
                   const isAudio = part.inlineData.mimeType.startsWith('audio/');

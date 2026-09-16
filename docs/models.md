@@ -1,0 +1,144 @@
+# Gemini model roles
+
+Deedee calls Gemini through nine roles. Each role is one env var, read once at
+agent start by `apps/agent/src/services/config-service.js` (`CONSTANTS.MODELS`).
+Code asks for a role, never for an id: `configService.getModel('FLASH')`.
+
+| Role | Env var | Default id | Used for | $/1M tokens in → out |
+|---|---|---|---|---|
+| ROUTER | `ROUTER_MODEL` | `gemini-3.1-flash-lite` | picks FLASH or PRO and the tool mode per message | 0.25 → 1.50 |
+| LITE | `WORKER_LITE` | `gemini-3.1-flash-lite` | transcription, image descriptions, tool scoping, summaries | 0.25 → 1.50 |
+| FLASH | `WORKER_FLASH` | `gemini-3.6-flash` | main chat, tool loops, sub-agents, most services | 0.75 → 3.75 |
+| SEARCH | `WORKER_GOOGLE_SEARCH` | `gemini-3.6-flash` | Google Search grounding | 0.75 → 3.75, plus grounding quota |
+| PRO | `WORKER_PRO` | `gemini-3.1-pro-preview` | hard reasoning, code, planning | 2.00 → 12.00 (4.00 → 18.00 above 200k input) |
+| TTS | `GEMINI_TTS_MODEL` | `gemini-2.5-flash-preview-tts` | voice notes | 0.50 → 10.00 |
+| IMAGE | `GEMINI_IMAGE_MODEL` | `gemini-3-pro-image` | image generation, wardrobe mirror | 2.00 in; 12.00 text out; 120.00 image out (`gemini-3.1-flash-image` is half the price per image, lighter model) |
+| EMBEDDING | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2` | RAG vectors (`EMBEDDING_DIMENSIONS`, 1536 in production) | 0.20 in |
+| LIVE | `WORKER_LIVE` | `gemini-3.8-live` | voice page at `/live` | audio 3.00 → 12.00; text 0.75 → 4.50 |
+
+Prices come from https://ai.google.dev/gemini-api/docs/pricing. The 3.x Flash
+price doubles on 2027-01-01. Grounded requests on 3.x models share one free pool
+of 5,000 per month, then cost $14 per 1,000.
+
+## Where the ids live and how to override them
+
+- `docker-compose.yml` sets every role for the `agent` service.
+- Balena device and fleet variables override compose. To change or roll back a
+  model without a deploy: set the variable in the Balena dashboard, restart the
+  `agent` service. The old ids are kept as comments in compose for this.
+- Never write an id in code. Use `configService.getModel('ROLE')`; the role→env
+  map is `CONSTANTS.MODEL_ENV_VARS`.
+
+## Pricing table and cost tracking
+
+`CONSTANTS.PRICING` in `config-service.js` holds one row per id. `calculateCost`
+looks for an exact row first. Ids that are missing fall through a name heuristic
+(`tts`, `embedding`, `image` split on `pro`/flash, `live`, `pro`, `lite`, then
+flash). Add a row whenever you add an id; the heuristic is a guess.
+
+Rules applied by `calculateCost`:
+
+- cached input tokens cost 10% of the input rate;
+- thinking tokens cost the output rate;
+- image models bill image output tokens at the image rate and text output tokens
+  at `outputText`, using `usageMetadata.candidatesTokensDetails`. Without that
+  split all output is billed at the image rate;
+- the `gemini-3.8-live` row uses the audio rates, since Live is voice. Text-only
+  turns are over-counted until Live usage is split by modality.
+
+## Smoke check
+
+`apps/agent/scripts/model-smoke.js` makes one real call per role with the ids
+the agent resolves. Run it inside the agent container, from `/app/apps/agent` or
+the repo root:
+
+```bash
+node scripts/model-smoke.js              # all roles, no image
+node scripts/model-smoke.js --with-image # also generates one image (~$0.07)
+node scripts/model-smoke.js --only LITE,FLASH --checks get,text
+node scripts/model-smoke.js --json
+```
+
+On the device: open a shell in the `agent` container from the Balena dashboard
+or with `balena ssh <device-uuid> agent`; `GOOGLE_API_KEY` is already in the
+container env.
+
+Per role it runs:
+
+| Check | Roles | Passes when |
+|---|---|---|
+| `get` | all | `models.get` returns the id |
+| `text` | ROUTER LITE FLASH SEARCH PRO | a 20-token reply has text (lowest thinking level the model accepts) |
+| `tools` | same | the model calls `getTime`, then answers a `functionResponse` with text |
+| `thinking` | same | text at the role level: ROUTER/LITE MINIMAL, FLASH/SEARCH LOW, PRO HIGH; prints `thoughtsTokenCount` |
+| `tts` | TTS | an `inlineData` part with an `audio/*` mime type |
+| `image` | IMAGE | an `inlineData` part with an `image/*` mime type (needs `--with-image`) |
+| `embed` | EMBEDDING | `values.length === EMBEDDING_DIMENSIONS` |
+| `live` | LIVE | `authTokens.create` with `liveConnectConstraints` returns a name starting `auth_tokens/` |
+
+Roles that share an id share the call. The output is a table with latency,
+tokens, thought tokens and an estimated cost; the exit code is 1 on any failure,
+2 on bad arguments or a missing key. A full run without the image costs about
+one cent. The script does not write to `token_usage`.
+
+Run it before and after every id change. A retired id fails at `get` with a 404.
+
+## Changing the embedding model
+
+`rag-service.js` stores the embedding model id and the dimension count in the
+`rag_metadata` table of `rag.db`.
+
+Where `rag.db` lives: `$DATA_DIR/rag.db`. The `agent` service in
+`docker-compose.yml` sets `DATA_DIR=/app/data`, the `agent-data` volume. Before
+this, `rag.db` sat under the container's working directory and was rebuilt on
+every release, so the model-change path below never ran. The first boot after
+this change builds a fresh index under the volume (one full embed of all
+documents); later boots reuse it.
+
+- Dimensions change: all vectors are cleared at start and re-embedded by the
+  next scan (existing behaviour).
+- Model id changes, dimensions do not: vectors from two models do not share a
+  space, so the whole index needs re-embedding. At start the agent keeps the old
+  id in `rag_metadata`, creates a `rag_reindex_required` notification ("RAG index
+  needs re-embedding for model X") and runs `reindexAll` in the background.
+  Search quality dips while it runs.
+- `reindexAll` works document by document. A document keeps its old chunks
+  until all its new ones embedded, so a failed call never drops content from
+  vector or keyword search. Each embedding call gets 3 tries with backoff
+  (0.5 s, 1 s), at most 3 calls in flight. One run at a time: a second caller
+  joins the running one, and the nightly scan skips while it runs.
+- When every document succeeded it records the new id and posts
+  `rag_reindex_complete`. If any document failed it keeps the old id, posts
+  `rag_reindex_failed` with the counts, and the next agent start retries.
+- Manual trigger: the `reindexEmbeddings` tool, or a `rag_metadata` edit.
+- Switching `GEMINI_EMBEDDING_MODEL` on the device: do it after the release
+  that carries this section has deployed, or the re-embed runs on a `rag.db`
+  that the next release throws away.
+
+Budget the re-embed before switching: chunk count × average chunk tokens ×
+$0.20 per million. `getStats()` (the `/system` page) shows the chunk count.
+
+## Live
+
+The `/live` page still gets its token from `google-auth-library`
+(`apps/agent/src/routes/live.js`). Moving it to ephemeral tokens is a separate
+change; the smoke's `live` check already exercises that path.
+
+## Thinking levels
+
+Only the eager media extraction sends `thinkingLevel` today (MINIMAL on LITE).
+Per-role levels in `ConfigService` are a later change; the smoke uses the
+planned mapping above. `gemini-3.7-flash`, `gemini-3.8-flash` and the Pro
+models reject MINIMAL.
+
+## Watch after a change
+
+For a week, run this against `data/agent.db`:
+
+```sql
+SELECT model, tag, COUNT(*), SUM(thoughts_tokens) * 1.0 / SUM(candidate_tokens), SUM(estimated_cost)
+FROM token_usage WHERE timestamp > date('now', '-7 day') GROUP BY 1, 2;
+```
+
+Expect only the new ids, daily cost within about 25% of the prior week, and no
+`model_failure` or `rag_reindex_failed` notifications.

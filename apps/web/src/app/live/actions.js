@@ -3,6 +3,14 @@
 import { fetchAPI } from '@/lib/api';
 import { requireActionSession } from '@/lib/auth/guard';
 
+// Used only when the agent's /v1/live/config call fails. Mirrors the agent's
+// WORKER_LIVE default (apps/agent/src/services/config-service.js).
+const DEFAULT_LIVE_MODEL = process.env.WORKER_LIVE || 'gemini-3.8-live';
+
+function withModelsPrefix(model) {
+    return model.startsWith('models/') ? model : `models/${model}`;
+}
+
 export async function getLiveToken() {
     await requireActionSession();
     try {
@@ -32,14 +40,10 @@ export async function getLiveConfig() {
     await requireActionSession();
     try {
         const response = await fetchAPI('/v1/live/config');
-        let model = response.model || 'models/gemini-2.0-flash-exp';
-        if (model && !model.startsWith('models/')) {
-            model = `models/${model}`;
-        }
-        return { model };
+        return { model: withModelsPrefix(response.model || DEFAULT_LIVE_MODEL) };
     } catch (error) {
         console.error('getLiveConfig Error:', error);
-        return { model: 'models/gemini-2.0-flash-exp' };
+        return { model: withModelsPrefix(DEFAULT_LIVE_MODEL) };
     }
 }
 

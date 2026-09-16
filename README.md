@@ -46,7 +46,7 @@ cd deedee
 cp .env.example .env
 nano .env
 # -> Fill in GOOGLE_API_KEY and TELEGRAM_TOKEN
-# -> Set WORKER_GOOGLE_SEARCH=gemini-2.5-pro (for Search Tool)
+# -> Model ids come from docker-compose.yml; override per role, see docs/models.md
 # -> Set ALLOWED_TELEGRAM_IDS to your ID (get it from @userinfobot)
 
 # 3. Launch
@@ -390,6 +390,7 @@ See the full documentation for details:
 ![System Architecture](docs/diagram.png)
 
 -   **[Architecture Deep Dive](docs/architecture.md)**: Detailed system map and component breakdown.
+-   **[Model Roles & Pricing](docs/models.md)**: Gemini ids per role, per-device overrides, the smoke check, embedding re-index.
 -   **[Technical Sequence Diagrams](docs/sequence-diagrams.md)**: Visualizing the API Flow and MCP Execution.
 -   **[Memory & Persistence](docs/memory.md)**: How the SQLite database and "Self-Improvement" Works.
 -   **[MCP Configuration](docs/mcp-configuration.md)**: Guide to adding external tools (Home Assistant, Plex, etc).
