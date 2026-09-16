@@ -166,6 +166,7 @@ const { createDjRouter } = require('./routes/dj');
 const { createWardrobeRouter } = require('./routes/wardrobe');
 const { createAutopilotRouter } = require('./routes/autopilot');
 const { createNotificationsRouter } = require('./routes/notifications');
+const { createApprovalsRouter } = require('./routes/approvals');
 
 // Mount Live Router (works without Agent instance for Config/Token)
 app.use('/live', createLiveRouter(agent));
@@ -190,6 +191,7 @@ if (agent) {
   app.use('/internal/wardrobe', createWardrobeRouter(agent));
   app.use('/v1/autopilot', createAutopilotRouter(agent));
   app.use('/internal/notifications', createNotificationsRouter(agent));
+  app.use('/internal/approvals', createApprovalsRouter(agent));
   app.use('/', createToolRouter(agent));
 }
 

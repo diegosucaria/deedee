@@ -87,6 +87,7 @@
 ### Recent Improvements (Jan 2026)
 - [x] **Smart Notifications**: Configurable channel (WhatsApp/Telegram) and heuristic silence for recurring tasks.
 - [x] **Delivery Ledger (Sep 2026)**: every owner notification gets a `notification_outbox` row with retries (1m, 5m, 15m, 1h), a one-time fallback to the other channel, dead-letter notifications and a Retry button under `/system/notifications`. See `docs/notifications.md`.
+- [x] **Approvals that reach the owner (Sep 2026)**: paused tool calls persist in `pending_confirmations`; jobs, watchers and system runs ask on the owner channel through the ledger instead of a dropped synthetic chat; `/confirm <id>` from any owner chat, a plain yes/no only in the chat that holds the card (and only when no `askUser` question is open there); jobs always ask on the owner channel with a copy in the origin web chat; Approve / Deny in web chat and Settings > Approvals; per-tool flags, new rules (email, first contact, locks/alarm/garage open/mass actions, appointments incl. Pilotfy, data-destroying deletes, `commitAndPush`) and a deny-list that holds in every mode. See `docs/security.md`, "Approvals".
 - [x] **Settings UI**: Reorganized settings into tabs (General, Communication, Interfaces, Backups) and added UI for new features.
 - [x] **Contact Import**: Added Import CSV/WhatsApp feature to People page.
 - [x] **Validation**: Enhanced API validation for configuration keys.

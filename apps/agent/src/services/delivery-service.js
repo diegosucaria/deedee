@@ -32,7 +32,7 @@ const TICK_STALE_MS = 10 * 60e3;
 const MAX_CONTENT_CHARS = 2_000_000;
 const DEAD_MESSAGE_CHARS = 2000;
 
-const KINDS = ['reply', 'reminder', 'job_notification', 'system_alert', 'ask_user', 'watcher'];
+const KINDS = ['reply', 'reminder', 'job_notification', 'system_alert', 'ask_user', 'watcher', 'approval'];
 const CHANNELS = ['whatsapp', 'telegram', 'web', 'slack'];
 
 /** 'whatsapp:assistant' -> { channel: 'whatsapp', session: 'assistant' } */

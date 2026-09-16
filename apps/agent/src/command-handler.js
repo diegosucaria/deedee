@@ -96,28 +96,17 @@ class CommandHandler {
             return true;
         }
 
-        if (cmd === '/confirm') {
-            if (!this.confirmationManager) {
-                await this.sendReply(chatId, message.source, 'Confirmation manager not initialized.');
+        // Approvals: /confirm [id], /approve [id], /cancel [id], /deny [id], /approvals.
+        // Pending rows live in the DB (services/approval-service.js); an id is
+        // needed only when more than one approval waits in this chat.
+        if (['/confirm', '/approve', '/cancel', '/deny', '/approvals'].includes(cmd)) {
+            const approvals = this.agent?.approvals;
+            if (!approvals) {
+                await this.sendReply(chatId, message.source, 'Approvals are not available.');
                 return true;
             }
-            const pending = this.confirmationManager.retrieve(chatId);
-            if (!pending) {
-                await this.sendReply(chatId, message.source, 'No pending action to confirm.');
-                return true;
-            }
-            // Clear it
-            this.confirmationManager.clear(chatId);
-            // Return instruction to Agent to execute
-            return { type: 'EXECUTE_PENDING', action: pending };
-        }
-
-        if (content === '/cancel') {
-            if (this.confirmationManager) {
-                this.confirmationManager.clear(chatId);
-                await this.sendReply(chatId, message.source, 'Action cancelled.');
-            }
-            return true;
+            const send = async (reply) => this.interface.send(reply);
+            return approvals.handleCommand(message, cmd, args[0], send);
         }
 
         if (content === '/summaries') {

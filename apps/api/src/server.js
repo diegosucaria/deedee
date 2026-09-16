@@ -68,6 +68,7 @@ app.use('/v1/live', require('./live'));
 app.use('/v1/vaults', require('./vaults'));
 app.use('/v1/people', require('./routes/people'));
 app.use('/v1/settings', require('./routes/settings'));
+app.use('/v1/approvals', require('./routes/approvals'));
 app.use('/v1/config', require('./routes/config'));
 app.use('/v1/aliases', require('./routes/aliases'));
 app.use('/v1/goals', require('./routes/goals'));

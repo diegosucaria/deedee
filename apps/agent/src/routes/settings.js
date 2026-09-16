@@ -84,7 +84,7 @@ function createSettingsRouter(agent) {
                 'communication_dry_run', 'communication_style', 'notification_channel',
                 'provider:xai', 'chatModel', 'visionModel',
                 'slack_monitored_channels', 'proactive_run_probability',
-                'partner_greeting'
+                'partner_greeting', 'approvals'
             ];
             if (!ALLOWED_KEYS.includes(key)) {
                 return res.status(400).json({ error: 'Invalid config key' });
@@ -113,6 +113,16 @@ function createSettingsRouter(agent) {
                 }
                 const name = typeof value.name === 'string' ? value.name.trim() : '';
                 storedValue = { contact, ...(name ? { name } : {}), dryRun: value.dryRun === true };
+            }
+
+            // Approvals: { ttlInteractiveMin, ttlDeferredHours, deny: string[] | string }.
+            // TTLs are clamped; the deny list is one glob per line (see docs/security.md).
+            if (key === 'approvals') {
+                if (!value || typeof value !== 'object' || Array.isArray(value)) {
+                    return res.status(400).json({ error: 'approvals needs { ttlInteractiveMin?: minutes, ttlDeferredHours?: hours, deny?: patterns }' });
+                }
+                const { normalizeApprovalSettings } = require('../services/approval-service');
+                storedValue = normalizeApprovalSettings(value);
             }
 
             const jsonValue = JSON.stringify(storedValue);

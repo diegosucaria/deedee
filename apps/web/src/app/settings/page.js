@@ -11,6 +11,7 @@ import ScrollableTabs from '@/components/ScrollableTabs';
 import PageShell from '@/components/PageShell';
 import InterfacesClient from '@/components/InterfacesClient';
 import PartnerGreetingSettings from '@/components/PartnerGreetingSettings';
+import ApprovalsSettings from '@/components/ApprovalsSettings';
 import SecurityClient from './security/SecurityClient';
 
 import { Suspense } from 'react';
@@ -127,6 +128,7 @@ function SettingsContent() {
         { id: 'communication', label: 'Communication' },
         { id: 'interfaces', label: 'Interfaces' },
         { id: 'security', label: 'Security' },
+        { id: 'approvals', label: 'Approvals' },
         { id: 'backups', label: 'Backups' },
         { id: 'environment', label: 'Environment' },
     ];
@@ -272,6 +274,16 @@ function SettingsContent() {
                                 </div>
                             )}
                         </div>
+                    </div>
+                )}
+
+                {/* Approvals Tab */}
+                {activeTab === 'approvals' && (
+                    <div className="space-y-8 animate-in fade-in slide-in-from-bottom-4 duration-500">
+                        <ApprovalsSettings
+                            value={config?.approvals}
+                            onSave={async (v) => { await handleSave('approvals', v); return { success: true }; }}
+                        />
                     </div>
                 )}
 

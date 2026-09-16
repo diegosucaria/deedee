@@ -18,6 +18,7 @@ Each one made a single attempt; the only trace was the dashboard bell.
 | `ask_user` | questions the `askUser` tool sends |
 | `watcher` | watcher replies redirected to `admin_chat_id` when the interface refused them |
 | `reply` | a normal chat reply the interface refused (`_deliverReply`) |
+| `approval` | cards for tool calls that wait for the owner, and their results (`services/approval-service.js`; see `docs/security.md`, "Approvals") |
 
 Channels: `whatsapp`, `telegram`, `web`, `slack`. The service builds the id
 each channel expects: WhatsApp gets `<digits>@s.whatsapp.net` unless the
@@ -55,7 +56,7 @@ copies. If the fallback also fails, only the primary keeps retrying. A
 message for someone else (a reply to a contact) never jumps channels.
 
 Dedupe: the same kind, target and content within 10 minutes is queued once.
-`askUser` turns this off (two equal questions are two questions), and so do
+`askUser` and approvals turn this off (two equal questions are two questions), and so do
 the scheduler paths: a job that fires every 5 minutes with the same text, or
 two reminders with the same words, mean every one of them. The dedupe stays
 on for `reply`, `system_alert` and `watcher`, where a repeat is an accident.
@@ -73,8 +74,9 @@ of holding the worker tick.
 A refused chat reply keeps its message id as the row id, so the retry and
 the owner-thread mirror reuse it and the history shows one copy.
 
-Expiry: `askUser` rows carry `expires_at`; a row past it dies instead of
-being sent late.
+Expiry: `askUser` and approval cards carry `expires_at`; a row past it dies
+instead of being sent late. Approval cards for jobs ask for the fallback
+channel right after the first failure, like system alerts.
 
 Answers from the other channel: a question sent to the owner channel may be
 answered from the owner's other chat (Telegram for a WhatsApp question, or

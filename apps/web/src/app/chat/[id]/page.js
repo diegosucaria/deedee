@@ -868,6 +868,31 @@ export default function ChatSessionPage({ params }) {
         activeSocket.emit('chat:message', socketPayload);
     };
 
+    // Approve / Deny buttons on an approval card send the slash command for
+    // that id; the agent answers with the result in this chat.
+    const [decidedApprovals, setDecidedApprovals] = useState(() => new Set());
+    const answerApproval = (id, approve) => {
+        if (!socketRef.current || !id) return;
+        setDecidedApprovals(prev => new Set(prev).add(id));
+        sendOption(`${approve ? '/confirm' : '/cancel'} ${id}`);
+    };
+    // Ids whose decision already shows later in the thread (the result message
+    // carries metadata.approval with the final status).
+    const approvalsDecidedInThread = useMemo(() => {
+        const done = new Set();
+        for (const m of messages) {
+            const a = m?.metadata?.approval;
+            if (a?.id && a.status && a.status !== 'pending') done.add(a.id);
+        }
+        return done;
+    }, [messages]);
+    const approvalOpen = (approval) => {
+        if (!approval?.id || approval.status !== 'pending') return false;
+        if (decidedApprovals.has(approval.id) || approvalsDecidedInThread.has(approval.id)) return false;
+        if (approval.expiresAt && Date.now() > new Date(approval.expiresAt).getTime()) return false;
+        return true;
+    };
+
     const sendOption = (text) => {
         if (!socketRef.current || !text) return;
         dispatchAnswer({
@@ -1352,6 +1377,25 @@ export default function ChatSessionPage({ params }) {
                                                 >
                                                     {msg.content}
                                                 </ReactMarkdown>
+                                            </div>
+                                        )}
+                                        {/* Approval card: Approve / Deny send /confirm <id> or /cancel <id>. */}
+                                        {approvalOpen(msg.metadata?.approval) && (
+                                            <div className="mt-2 flex flex-wrap gap-2">
+                                                <button
+                                                    type="button"
+                                                    onClick={() => answerApproval(msg.metadata.approval.id, true)}
+                                                    className="px-3 py-1 rounded-full text-xs border border-emerald-500/50 bg-emerald-500/10 text-emerald-200 hover:bg-emerald-500/30 transition-colors"
+                                                >
+                                                    Approve
+                                                </button>
+                                                <button
+                                                    type="button"
+                                                    onClick={() => answerApproval(msg.metadata.approval.id, false)}
+                                                    className="px-3 py-1 rounded-full text-xs border border-red-500/50 bg-red-500/10 text-red-200 hover:bg-red-500/30 transition-colors"
+                                                >
+                                                    Deny
+                                                </button>
                                             </div>
                                         )}
                                         {/* askUser options: chips that send the option text. Only on the last message. */}

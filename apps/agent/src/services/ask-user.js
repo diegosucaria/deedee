@@ -277,6 +277,17 @@ class AskUserService {
         return this.waits.has(replyChatId);
     }
 
+    /**
+     * Is a question waiting for an answer from this chat? Same matching as
+     * `intercept`: the reply chat itself, or the owner under another of his
+     * ids. Approvals check this so a yes/no meant for the question is not
+     * taken as an approval.
+     */
+    async isWaiting(chatId, source) {
+        if (this.waits.size === 0 || !chatId) return false;
+        return !!(await this._findWait(chatId, source));
+    }
+
     _close(wait, status) {
         this.agent.db.closePendingQuestion(wait.id, status);
         wait.finish({ [status]: true });
