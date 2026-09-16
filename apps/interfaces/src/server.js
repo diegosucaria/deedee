@@ -712,12 +712,16 @@ app.post('/send', async (req, res) => {
           return res.json({ success: true });
         }
 
+        // askUser questions carry { id, options } (rendered as chips);
+        // approvals carry { id, status, ... } (rendered as Approve / Deny).
+        let outMeta;
+        if (metadata.question) outMeta = { chatId: metadata.chatId, question: metadata.question };
+        if (metadata.approval) outMeta = { ...(outMeta || { chatId: metadata.chatId }), approval: metadata.approval };
         io.to(target).emit('agent:message', {
           content,
           type: type || 'text',
           timestamp: new Date().toISOString(),
-          // askUser questions carry { id, options }; the chat renders them as chips
-          metadata: metadata.question ? { chatId: metadata.chatId, question: metadata.question } : undefined
+          metadata: outMeta
         });
         sentIds.add(id);
         return res.json({ success: true });

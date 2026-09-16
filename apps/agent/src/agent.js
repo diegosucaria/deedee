@@ -13,6 +13,7 @@ const { MCPManager } = require('./mcp-manager');
 const { CommandHandler } = require('./command-handler');
 const { RateLimiter } = require('./rate-limiter');
 const { ConfirmationManager } = require('./confirmation-manager');
+const { ApprovalService } = require('./services/approval-service');
 const { ImpersonationService } = require('./services/impersonation');
 const { ToolExecutor } = require('./tool-executor');
 const path = require('path');
@@ -161,6 +162,9 @@ class Agent {
     this.partnerGreetingService = new PartnerGreetingService(this);
     this.subAgentService = new SubAgentService(this);
     this.askUser = new AskUserService(this);
+    // Owner approvals: paused tool calls persist in the DB and reach the owner
+    // through the delivery ledger (services/approval-service.js).
+    this.approvals = new ApprovalService(this, { rules: this.confirmationManager });
     this.browserLive = new BrowserLive(this);
     this.toolScoper = new ToolScoper(config.googleApiKey, this.db);
     this.notifications = new NotificationService(this.db, this.interface);
@@ -208,6 +212,7 @@ class Agent {
       await this.scheduler.stop();
     }
     if (this.delivery) this.delivery.stop();
+    if (this.approvals) this.approvals.stop();
     if (this.browserLive) {
       try { this.browserLive.close(); } catch (e) { console.warn('[Agent] browserLive close failed:', e.message); }
     }
@@ -492,6 +497,8 @@ class Agent {
     }
     // No askUser wait survives a restart; close the rows it left open.
     try { this.askUser.expireOnBoot(); } catch (e) { console.warn('[AskUser] expireOnBoot failed:', e.message); }
+    // Paused tool calls do survive a restart; drop only the overdue ones.
+    try { this.approvals.loadOnBoot(); } catch (e) { console.warn('[Approvals] loadOnBoot failed:', e.message); }
 
     // 1. Initialize the unified Client (Dynamic Import for ESM)
     const { GoogleGenAI } = await this._loadClientLibrary();
@@ -522,6 +529,7 @@ class Agent {
     // Drain undelivered notifications left from the previous run and keep
     // retrying refused sends every minute.
     this.delivery.start();
+    this.approvals.start();
 
     // Check for xAI config
     if (settings['provider:xai']?.apiKey) {
@@ -1125,9 +1133,22 @@ class Agent {
         return executionSummary;
       }
 
+      // 0a. Approvals: a plain yes/no with one approval pending in this chat
+      // decides it. Approved interactive calls resume below as EXECUTE_PENDING.
+      // Any other text falls through to askUser and the model.
+      let commandResult = false;
+      if (chatId && !isMultiModal && !isSubAgent) {
+        const decided = await this.approvals.intercept(message, activeSendCallback);
+        if (decided?.handled) {
+          if (decided.reply) executionSummary.replies.push(decided.reply);
+          return executionSummary;
+        }
+        if (decided?.execute) commandResult = { type: 'EXECUTE_PENDING', action: decided.execute };
+      }
+
       // 0b. askUser: a plain reply to a waiting question ends that wait and
       // goes no further. /stop and /cancel end it too, then run as usual.
-      if (chatId && !isMultiModal && !isSubAgent) {
+      if (chatId && !isMultiModal && !isSubAgent && !commandResult) {
         const answered = await this.askUser.intercept(message, activeSendCallback);
         if (answered) {
           executionSummary.replies.push(answered);
@@ -1142,12 +1163,12 @@ class Agent {
       }
 
       // 1. Slash Commands (only for text messages)
-      const commandResult = !isMultiModal ? await this.commandHandler.handle(message) : false;
+      if (!commandResult) commandResult = !isMultiModal ? await this.commandHandler.handle(message) : false;
 
       if (typeof commandResult === 'object' && commandResult.type === 'EXECUTE_PENDING') {
         // ... (existing slash command logic) ...
         const action = commandResult.action;
-        console.log(`${logPrefix} User confirmed action: ${action.name}`);
+        console.log(`${logPrefix} User confirmed action: ${action.name}${action.approvalId ? ` (approval ${action.approvalId})` : ''}`);
         const { result } = splitImages(await this._executeTool(action.name, action.args, message, activeSendCallback, (model, pTokens, cTokens, cached = 0, thoughts = 0) => {
           const cost = calculateCost(model, pTokens, cTokens, cached, thoughts);
           this.db.logTokenUsage({
@@ -1155,7 +1176,10 @@ class Agent {
             totalTokens: pTokens + cTokens, chatId, estimatedCost: cost,
             cachedTokens: cached, thoughtsTokens: thoughts
           });
-        }));
+        }, { approved: !!action.approvalId }));
+        if (action.approvalId) {
+          try { this.db.setConfirmationResult(action.approvalId, result); } catch (e) { console.warn('[Approvals] result store failed:', e.message); }
+        }
 
         executionSummary.toolOutputs.push({ name: action.name, result });
 
@@ -2194,20 +2218,22 @@ class Agent {
           let toolResult;
           let toolStatus = 'ok'; // 'ok' | 'error' | 'paused'
           try {
-            // SENSITIVE GUARD CHECK
-            const guard = this.confirmationManager.check(executionName, call.args);
-            if (guard.requiresConfirmation) {
-              console.log(`${logPrefix} Action ${executionName} requires confirmation.`);
-              this.confirmationManager.store(message.metadata?.chatId, executionName, call.args);
-
-              // Notify user specifically
-              const confirmMsg = createAssistantMessage(`🛑 **Safety Check**: I want to execute \`${executionName}\`.\n\nArgs: \`${JSON.stringify(call.args)}\`\n\n${guard.message}\n\nReply **/confirm** to proceed or **/cancel** to stop.`);
-              confirmMsg.metadata = { chatId: message.metadata?.chatId };
-              confirmMsg.source = message.source;
-              await activeSendCallback(confirmMsg).catch(console.error);
-
-              toolResult = { info: `Action PAUSED. ${guard.message} User must confirm.` };
-              toolStatus = 'paused';
+            // SENSITIVE GUARD CHECK: deny-list first, then the safety rules.
+            // A paused call is stored and the owner is asked where he can
+            // answer (this chat, or his notification channel for jobs and
+            // watchers). It resumes once he approves; the model must not retry.
+            const guard = this.approvals.check(executionName, call.args);
+            if (guard.denied) {
+              console.warn(`${logPrefix} Action ${executionName} denied by the owner's deny-list (${guard.pattern}).`);
+              toolResult = { error: guard.message };
+              toolStatus = 'error';
+            } else if (guard.requiresConfirmation) {
+              console.log(`${logPrefix} Action ${executionName} requires confirmation (${guard.rule || 'rule'}).`);
+              const paused = await this.approvals.request({
+                message, toolName: executionName, args: call.args, reason: guard.message, sendCallback: activeSendCallback
+              });
+              toolResult = paused.result;
+              toolStatus = paused.paused ? 'paused' : 'error';
             } else {
               // Execute normally
               toolResult = await this._executeTool(executionName, call.args, message, activeSendCallback, (model, pTokens, cTokens, cached = 0, thoughts = 0, tag = null) => {
@@ -2584,7 +2610,11 @@ class Agent {
 
 
 
-  async _executeTool(executionName, args, message, sendCallback, usageCallback = null) {
+  /**
+   * @param {{ approved?: boolean }} [options] - `approved` marks a call the owner approved
+   *   (executors may then open a first contact or skip their own guard).
+   */
+  async _executeTool(executionName, args, message, sendCallback, usageCallback = null, options = {}) {
     // RESOLVE SECRETS (Variable Substitution)
     // If an argument is "$SECRET_KEY", replace it with the actual value from SkillService.
     // browser_ tools skip this: the browser server swaps secret NAMES for
@@ -2789,6 +2819,7 @@ class Agent {
       const result = await this.toolExecutor.execute(executionName, args, {
         message,
         sendCallback,
+        approved: options.approved === true,
         processMessage: this.processMessage.bind(this),
         callServices: { client: this.client, interface: this.interface }
       });
