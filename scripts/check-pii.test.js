@@ -8,13 +8,15 @@ const path = require('path');
 const { spawnSync } = require('child_process');
 
 const guard = require('./check-pii');
-const { isAllowedDigits, isSequential, mask, shouldSkipPath, loadDenylist, scanLine, scanText, parseDiff, parseArgs, RULES } = guard;
+const { isAllowedDigits, isSequential, mask, shouldSkipPath, findDenylist, loadDenylist, scanLine, scanText, parseDiff, parseArgs, RULES, EPOCH_MS, TELEGRAM_SUPERGROUP } = guard;
 
 const j = (...parts) => parts.join('');
 const PHONE = j('5491', '123', '456', '789');            // 549 + 10 mixed digits
 const PHONE_12 = j('549', '2', '134', '576', '98');       // 549 + 9 mixed digits
 const LID = j('2468', '1357', '9024', '681');            // 15 mixed digits
 const MIXED_12 = j('4815', '1623', '4271');              // 12 mixed digits, no prefix
+const MIXED_10 = j('4815', '1623', '42');                // 10 mixed digits, Telegram-sized tail
+const MIXED_16 = j('4815', '1623', '4271', '8293');      // 16 mixed digits, card-sized
 
 const ruleIds = (hits) => hits.map((h) => h.rule);
 const scan = (line) => scanLine(line, RULES);
@@ -27,13 +29,23 @@ describe('isAllowedDigits', () => {
     });
 
     test('accepts epoch milliseconds, the 555 range and monotone sequences', () => {
-        for (const d of ['1700000000000', j('1758', '123456789'), j('1899', '876543210'), '15551234567', '5551234', '1234567890', '123456789012345', '9876543210']) {
+        for (const d of ['1700000000000', j('1512', '345678901'), j('1658', '123456789'), j('1758', '123456789'), j('1999', '876543210'), '15551234567', '5551234', '1234567890', '123456789012345', '9876543210']) {
             expect(isAllowedDigits(d)).toBe(true);
         }
     });
 
-    test('rejects real-looking numbers', () => {
-        for (const d of [PHONE, PHONE_12, LID, MIXED_12, j('98765', '43210', '12345'), j('99988', '87776', '66555'), j('1658', '123456789')]) {
+    test('epoch range is 1500000000000 to 1999999999999 (2017-07 to 2033-05)', () => {
+        expect(EPOCH_MS.test('1500000000000')).toBe(true);
+        expect(EPOCH_MS.test('1999999999999')).toBe(true);
+        expect(EPOCH_MS.test('1499999999999')).toBe(false);
+        expect(EPOCH_MS.test('2000000000000')).toBe(false);
+        expect(EPOCH_MS.test('15000000000000')).toBe(false); // 14 digits
+        expect(new Date(1500000000000).getUTCFullYear()).toBe(2017);
+        expect(new Date(1999999999999).getUTCFullYear()).toBe(2033);
+    });
+
+    test('rejects real-looking numbers, including timestamps outside the range', () => {
+        for (const d of [PHONE, PHONE_12, LID, MIXED_12, MIXED_16, j('98765', '43210', '12345'), j('99988', '87776', '66555'), j('1458', '123456789'), j('2058', '123456789')]) {
             expect(isAllowedDigits(d)).toBe(false);
         }
     });
@@ -58,7 +70,23 @@ describe('phone and id rules', () => {
         expect(scan(`r="0.${MIXED_12}"`)).toEqual([]);
         expect(scan(`t = ${j('1758', '000000000')}`)).toEqual([]);
         expect(scan(`sha = "ab${MIXED_12}cd"`)).toEqual([]);
-        expect(scan(`v = ${j('12345678', '9012345678')}`)).toEqual([]); // 18 digits, out of range and sequential
+        expect(scan(`v = ${j('12345678', '9012345678')}`)).toEqual([]); // 18 digits, sequential
+    });
+
+    test('has no upper bound on digit runs', () => {
+        expect(ruleIds(scan(`card: ${MIXED_16}`))).toEqual(['long-number']);
+        expect(ruleIds(scan(`n: ${j(MIXED_16, MIXED_12)}`))).toEqual(['long-number']); // 28 digits
+        expect(scan('card: 4000000000000002')).toEqual([]); // zero-heavy
+        expect(scan(`f = 0.${MIXED_16}`)).toEqual([]); // fraction
+    });
+
+    test('accepts a Telegram supergroup id with its sign only', () => {
+        expect(TELEGRAM_SUPERGROUP.test(`-100${MIXED_10}`)).toBe(true);
+        expect(scan(`chat_id: -100${MIXED_10}`)).toEqual([]);
+        expect(scan(`"chat_id": -100${MIXED_10},`)).toEqual([]);
+        expect(ruleIds(scan(`chat_id: 100${MIXED_10}`))).toEqual(['long-number']); // no sign
+        expect(ruleIds(scan(`chat_id: -100${MIXED_10}7`))).toEqual(['long-number']); // 11 digits after -100
+        expect(ruleIds(scan(`chat_id: -${MIXED_12}`))).toEqual(['long-number']); // sign, wrong prefix
     });
 
     test('flags WhatsApp ids once and accepts placeholders', () => {
@@ -129,14 +157,46 @@ describe('denylist', () => {
         expect(scanLine("name: 'Alex'", [...RULES, rule])).toEqual([]);
     });
 
-    test('returns null for a missing or empty file and throws on a bad regex', () => {
+    test('returns null for a missing or empty file', () => {
         expect(loadDenylist(path.join(dir, 'missing'))).toBeNull();
         const empty = path.join(dir, 'empty');
         fs.writeFileSync(empty, '# only a comment\n');
         expect(loadDenylist(empty)).toBeNull();
+    });
+
+    test('warns about a bad regex line, skips it and keeps the rest', () => {
         const bad = path.join(dir, 'bad');
-        fs.writeFileSync(bad, '(\n');
-        expect(() => loadDenylist(bad)).toThrow(/invalid regex/);
+        fs.writeFileSync(bad, 'zaphod\n(\nbeeblebrox\n');
+        const warnings = [];
+        const rule = loadDenylist(bad, (m) => warnings.push(m));
+        expect(rule.regexes).toHaveLength(2);
+        expect(warnings).toHaveLength(1);
+        expect(warnings[0]).toMatch(/invalid regex in .*bad line 2, skipped/);
+        expect(ruleIds(scanLine('Beeblebrox', [rule]))).toEqual(['denylist']);
+        // Only bad lines: no rule, one warning per line, no throw.
+        fs.writeFileSync(bad, '(\n[\n');
+        warnings.length = 0;
+        expect(loadDenylist(bad, (m) => warnings.push(m))).toBeNull();
+        expect(warnings).toHaveLength(2);
+    });
+
+    test('findDenylist prefers --denylist, then the repo root, then $HOME/.config/deedee', () => {
+        const root = path.join(dir, 'repo');
+        const home = path.join(dir, 'home');
+        fs.mkdirSync(root);
+        fs.mkdirSync(path.join(home, '.config', 'deedee'), { recursive: true });
+        expect(findDenylist(root, null, home)).toBeNull();
+        const homeFile = path.join(home, '.config', 'deedee', '.pii-denylist');
+        fs.writeFileSync(homeFile, 'zaphod\n');
+        expect(findDenylist(root, null, home)).toBe(homeFile);
+        const rootFile = path.join(root, '.pii-denylist');
+        fs.writeFileSync(rootFile, 'zaphod\n');
+        expect(findDenylist(root, null, home)).toBe(rootFile);
+        const explicit = path.join(dir, 'explicit');
+        fs.writeFileSync(explicit, 'zaphod\n');
+        expect(findDenylist(root, explicit, home)).toBe(explicit);
+        expect(findDenylist(root, path.join(dir, 'missing'), home)).toBeNull(); // explicit path wins even when absent
+        expect(findDenylist(root, null, '')).toBe(rootFile); // no home: root only
     });
 });
 
@@ -225,22 +285,53 @@ describe('command line', () => {
         if (r.status !== 0) throw new Error(r.stderr);
         return r.stdout;
     };
-    const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { cwd: repo, encoding: 'utf8' });
+    // HOME points at an empty directory so the developer's own denylist never leaks into these tests.
+    let home;
+    const run = (...args) => spawnSync(process.execPath, [SCRIPT, ...args], { cwd: repo, encoding: 'utf8', env: { ...process.env, HOME: home } });
     const write = (name, text) => fs.writeFileSync(path.join(repo, name), text);
 
     beforeEach(() => {
         repo = fs.mkdtempSync(path.join(os.tmpdir(), 'pii-repo-'));
+        home = fs.mkdtempSync(path.join(os.tmpdir(), 'pii-home-'));
         git('init', '-q');
         write('clean.js', "const owner = '5490000000000';\nconst when = 1700000000000;\n");
         git('add', '.');
         git('commit', '-qm', 'base');
     });
-    afterEach(() => fs.rmSync(repo, { recursive: true, force: true }));
+    afterEach(() => {
+        fs.rmSync(repo, { recursive: true, force: true });
+        fs.rmSync(home, { recursive: true, force: true });
+    });
 
-    test('tree scan passes a clean repo', () => {
+    test('tree scan passes a clean repo and hints that no denylist exists', () => {
         const r = run();
         expect(r.status).toBe(0);
         expect(r.stderr).toContain('pii-guard: clean');
+        expect(r.stderr).toMatch(/^pii-guard: no denylist found \(\.pii-denylist in the repo root or ~\/\.config\/deedee\/\)/m);
+        expect(run('--quiet').stderr).toBe('');
+    });
+
+    test('falls back to $HOME/.config/deedee/.pii-denylist', () => {
+        fs.mkdirSync(path.join(home, '.config', 'deedee'), { recursive: true });
+        fs.writeFileSync(path.join(home, '.config', 'deedee', '.pii-denylist'), 'zaphod\n');
+        write('names.txt', 'Contact: Zaphod\n');
+        git('add', '.');
+        const r = run('--staged');
+        expect(r.status).toBe(1);
+        expect(r.stdout).toMatch(/^names\.txt:1: Z\*+  \[denylist\]$/m);
+        expect(r.stderr).not.toContain('no denylist found');
+    });
+
+    test('a bad denylist line warns and is skipped instead of exiting 2', () => {
+        write('.pii-denylist', '(\nzaphod\n');
+        write('names.txt', 'Contact: Zaphod\n');
+        git('add', '.');
+        const r = run('--staged');
+        expect(r.status).toBe(1);
+        expect(r.stderr).toMatch(/^pii-guard: warning: invalid regex in .*\.pii-denylist line 1, skipped/m);
+        expect(r.stdout).toMatch(/\[denylist\]$/m);
+        write('.pii-denylist', '(\n');
+        expect(run('--staged').status).toBe(0);
     });
 
     test('tree scan reports a masked hit with hints and exits 1', () => {

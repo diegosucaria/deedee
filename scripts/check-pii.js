@@ -11,11 +11,12 @@
  *
  * Options:
  *   --fix-hints          print a placeholder suggestion for every rule that hit
- *   --denylist <file>    extra regex list (default: .pii-denylist in the repo root)
+ *   --denylist <file>    extra regex list (default: .pii-denylist in the repo root,
+ *                        then $HOME/.config/deedee/.pii-denylist)
  *   --quiet              print hits only, no summary
  *
  * What it blocks (see docs/security.md, "Personal data guard"):
- *   - Argentine phone numbers (549 + 8-10 digits) and other 11-15 digit runs
+ *   - Argentine phone numbers (549 + 8-10 digits) and any other run of 11 or more digits
  *   - WhatsApp ids: <digits>@s.whatsapp.net, <digits>@lid, <digits>@g.us
  *   - secret-looking tokens (Google, Slack, GitHub, Tailscale, private keys)
  *   - private LAN addresses (10.x.x.x, 192.168.x.x)
@@ -24,19 +25,27 @@
  * Allowed placeholders: digit runs with fewer than 4 distinct digits
  * (5490000000000, 100000000000001), 549 + a near-constant tail
  * (5490000000001), monotone sequences (1234567890), epoch milliseconds
- * (17xxxxxxxxxxx, 18xxxxxxxxxxx) and the fictional US 555 range (15551234567). A line that carries the marker
+ * (13 digits from 1500000000000 to 1999999999999, July 2017 to May 2033),
+ * the fictional US 555 range (15551234567) and Telegram supergroup ids
+ * (-100 followed by 10 digits). A line that carries the marker
  * "pii-guard: allow" is skipped; use it only for pattern definitions and
  * test fixtures.
  *
- * Exit codes: 0 clean, 1 hits found, 2 usage or git error. No dependencies.
+ * Exit codes: 0 clean, 1 hits found, 2 usage or git error. A missing denylist
+ * prints a hint; an invalid denylist line prints a warning and is skipped.
+ * No dependencies.
  */
 
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const { execFileSync } = require('child_process');
 
 const ALLOW_MARKER = /pii-guard:\s*allow/i;
-const EPOCH_MS = /^1[78]\d{11}$/;
+/** 13-digit epoch milliseconds: 1500000000000 (2017-07-14) to 1999999999999 (2033-05-18). */
+const EPOCH_MS = /^1[5-9]\d{11}$/;
+/** Telegram supergroup / channel chat id: -100 followed by 10 digits. */
+const TELEGRAM_SUPERGROUP = /^-100\d{10}$/;
 const FICTIONAL_555 = /^1?555\d{4,7}$/;
 
 const SKIP_PATH = /(^|\/)node_modules\//;
@@ -84,9 +93,11 @@ const RULES = [
         hint: 'use 5490000000000 (5490000000001, 5490000000002 ... when tests need distinct contacts)'
     },
     {
+        // Any run of 11 or more digits. A Telegram supergroup id (-100 + 10 digits)
+        // is matched with its sign so the allow check can wave it through.
         id: 'long-number',
-        regex: /(?<![\w.])\d{11,15}(?![\w.])/g,
-        allow: (m) => isAllowedDigits(m),
+        regex: /(?<![\w.])(?:-100\d{10}|\d{11,})(?![\w.])/g,
+        allow: (m) => TELEGRAM_SUPERGROUP.test(m) || isAllowedDigits(m),
         hint: 'use a zero-heavy placeholder such as 10000000000 or 100000000000001; for timestamps use 1700000000000'
     },
     {
@@ -173,21 +184,37 @@ function looksBinary(buffer) {
     return buffer.subarray(0, 8000).includes(0);
 }
 
-/** Read the denylist. Returns a rule or null. Throws on an invalid regex. */
-function loadDenylist(file) {
+const DENYLIST_NAME = '.pii-denylist';
+
+/**
+ * Pick the denylist file: an explicit --denylist path, else <repo root>/.pii-denylist,
+ * else $HOME/.config/deedee/.pii-denylist. Returns the first path that exists, or null.
+ */
+function findDenylist(root, explicit, home = os.homedir()) {
+    if (explicit) return fs.existsSync(explicit) ? explicit : null;
+    const candidates = [path.join(root, DENYLIST_NAME)];
+    if (home) candidates.push(path.join(home, '.config', 'deedee', DENYLIST_NAME));
+    return candidates.find((f) => fs.existsSync(f)) || null;
+}
+
+/**
+ * Read the denylist. Returns a rule or null. An invalid regex is reported through
+ * `warn(message)` and skipped; the other lines still apply.
+ */
+function loadDenylist(file, warn = () => {}) {
     if (!file || !fs.existsSync(file)) return null;
-    const patterns = fs.readFileSync(file, 'utf8')
-        .split(/\r?\n/)
-        .map((l) => l.trim())
-        .filter((l) => l && !l.startsWith('#'));
-    if (patterns.length === 0) return null;
-    const regexes = patterns.map((p) => {
+    const lines = fs.readFileSync(file, 'utf8').split(/\r?\n/);
+    const regexes = [];
+    lines.forEach((raw, i) => {
+        const p = raw.trim();
+        if (!p || p.startsWith('#')) return;
         try {
-            return new RegExp(p, 'gi');
+            regexes.push(new RegExp(p, 'gi'));
         } catch (e) {
-            throw new Error(`invalid regex in ${file}: ${p} (${e.message})`);
+            warn(`invalid regex in ${file} line ${i + 1}, skipped (${e.message})`);
         }
     });
+    if (regexes.length === 0) return null;
     return {
         id: 'denylist',
         regexes,
@@ -346,12 +373,13 @@ function main(argv, io = { log: console.log, error: console.error }) {
     }
 
     const rules = [...RULES];
-    try {
-        const denylist = loadDenylist(opts.denylist || path.join(root, '.pii-denylist'));
+    const denylistFile = findDenylist(root, opts.denylist);
+    if (denylistFile) {
+        const denylist = loadDenylist(denylistFile, (msg) => io.error(`pii-guard: warning: ${msg}`));
         if (denylist) rules.push(denylist);
-    } catch (e) {
-        io.error(`pii-guard: ${e.message}`);
-        return 2;
+    } else if (!opts.quiet) {
+        const looked = opts.denylist ? opts.denylist : `${DENYLIST_NAME} in the repo root or ~/.config/deedee/`;
+        io.error(`pii-guard: no denylist found (${looked}); names are not checked, see docs/security.md`);
     }
 
     let result;
@@ -402,11 +430,14 @@ function main(argv, io = { log: console.log, error: console.error }) {
 module.exports = {
     RULES,
     ALLOW_MARKER,
+    EPOCH_MS,
+    TELEGRAM_SUPERGROUP,
     isAllowedDigits,
     isSequential,
     isPlaceholderToken,
     mask,
     shouldSkipPath,
+    findDenylist,
     loadDenylist,
     scanLine,
     scanText,
