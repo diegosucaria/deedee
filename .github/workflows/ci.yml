@@ -57,3 +57,21 @@ jobs:
       - run: npm ci
 
       - run: npm run build
+
+  # Starts the real browser MCP server on the same Alpine image as the agent
+  # container and drives it: navigate, snapshot, screenshot, CDP port.
+  browser-smoke:
+    runs-on: ubuntu-latest
+    container: node:24.18.0-alpine
+    steps:
+      - uses: actions/checkout@v4
+
+      - run: apk add --no-cache chromium nss freetype harfbuzz ca-certificates ttf-freefont python3 make g++
+
+      - run: npm ci
+        env:
+          PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD: "1"
+
+      - run: node apps/agent/scripts/browser-smoke.js
+        env:
+          BROWSER_EXECUTABLE_PATH: /usr/bin/chromium-browser

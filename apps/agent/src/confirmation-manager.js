@@ -64,9 +64,27 @@ class ConfirmationManager {
                     /agent\.db/.test(args.command) ||
                     /\bstrings\s+.*\/app\/data/i.test(args.command) ||
                     // Interfaces volume contains credentials
-                    /\/app\/interfaces-data/i.test(args.command)
+                    /\/app\/interfaces-data/i.test(args.command) ||
+                    // Browser profile: secrets dotenv/JSON and Chromium cookies
+                    /browser[_-]profile/i.test(args.command) ||
+                    /browser-secrets/i.test(args.command)
                 ),
                 message: '⚠️ Direct database/credentials access via shell is not allowed. Use the proper tools instead.'
+            },
+            {
+                // Chromium's CDP port: Network.getAllCookies would dump every session.
+                // Anchor to a network context so a hash or id that contains 9222 passes.
+                condition: (name, args) => name === 'runShellCommand' && (
+                    /(?:127\.0\.0\.1|localhost|0\.0\.0\.0|:)9222\b/i.test(args.command) ||
+                    /\/json\/(?:list|version|new|activate)\b|\/devtools\/(?:page|browser)\//i.test(args.command)
+                ),
+                message: '⚠️ The browser debug port (CDP) exposes every logged-in session. Use the browser tools instead.'
+            },
+            {
+                // The browser profile holds the secrets files and Chromium's cookies.
+                condition: (name, args) => ['readFile', 'writeFile', 'listDirectory'].includes(name)
+                    && /browser[_-]profile|browser-secrets/i.test(String(args?.path || '')),
+                message: '⚠️ The browser profile holds secrets and cookies. Reading it is not allowed.'
             },
             {
                 condition: (name, args) => name === 'sendEmail' && !args.to.includes('@'), // loose check

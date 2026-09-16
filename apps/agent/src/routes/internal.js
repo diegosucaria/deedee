@@ -1,6 +1,7 @@
 const express = require('express');
 const fs = require('fs');
 const path = require('path');
+const browserSecrets = require('../utils/browser-secrets');
 
 function createInternalRouter(agent) {
     const router = express.Router();
@@ -709,46 +710,83 @@ function createInternalRouter(agent) {
     });
 
     // --- Browser Secrets ---
+    // The Settings UI edits a JSON map. The browser MCP server reads a dotenv
+    // rendering of it (--secrets), so a save writes both and restarts that
+    // server. The restart waits while a browser_ call is in flight.
+    const browserDataDir = () => process.env.DATA_DIR || agent.dataDir || (agent.db && agent.db.dbPath ? path.dirname(agent.db.dbPath) : path.join(process.cwd(), 'data'));
+
     router.get('/browser-secrets', (req, res) => {
         try {
-            // Determine Data Dir similar to AgentDB logic or standard convention
-            const dataDir = process.env.DATA_DIR || (agent.db && agent.db.dbPath ? path.dirname(agent.db.dbPath) : path.join(process.cwd(), 'data'));
-            const secretsFile = path.join(dataDir, 'browser_profile', 'browser-secrets.json');
-
-            if (!fs.existsSync(secretsFile)) {
-                return res.json({});
-            }
-
-            const content = fs.readFileSync(secretsFile, 'utf-8');
-            try {
-                const json = JSON.parse(content);
-                res.json(json);
-            } catch (e) {
-                // If invalid JSON, return empty or error? Let's return raw as text if needed, but UI expects JSON.
-                // Or empty object to be safe.
-                console.error('[API] Failed to parse browser-secrets.json:', e);
-                res.json({});
-            }
+            res.json(browserSecrets.readSecrets(browserDataDir()));
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    router.post('/browser-secrets', (req, res) => {
+    router.post('/browser-secrets', async (req, res) => {
         try {
-            const secrets = req.body; // Expects JSON object
-            if (typeof secrets !== 'object') return res.status(400).json({ error: 'Invalid format. Expected JSON object.' });
-
-            const dataDir = process.env.DATA_DIR || (agent.db && agent.db.dbPath ? path.dirname(agent.db.dbPath) : path.join(process.cwd(), 'data'));
-            const userProfileDir = path.join(dataDir, 'browser_profile');
-            const secretsFile = path.join(userProfileDir, 'browser-secrets.json');
-
-            // Ensure dir exists
-            if (!fs.existsSync(userProfileDir)) {
-                fs.mkdirSync(userProfileDir, { recursive: true });
+            const secrets = req.body;
+            if (!secrets || typeof secrets !== 'object' || Array.isArray(secrets)) {
+                return res.status(400).json({ error: 'Invalid format. Expected JSON object.' });
+            }
+            let count;
+            try {
+                count = browserSecrets.writeSecrets(browserDataDir(), secrets);
+            } catch (e) {
+                return res.status(400).json({ error: e.message });
             }
 
-            fs.writeFileSync(secretsFile, JSON.stringify(secrets, null, 2), 'utf-8');
-            res.json({ success: true });
+            let restart = { skipped: true };
+            if (agent.mcp?.restartServer && agent.mcp.config?.browser) {
+                try {
+                    restart = await agent.mcp.restartServer('browser');
+                } catch (e) {
+                    console.warn('[API] browser server restart after secrets save failed:', e.message);
+                    restart = { error: e.message };
+                }
+            }
+            res.json({ success: true, count, restart });
         } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // --- Browser live view ---
+    // The interfaces service forwards socket events here; the API proxies
+    // status and start for the /browser page. See services/browser-live.js.
+    const live = (res) => {
+        if (!agent.browserLive) { res.status(503).json({ error: 'Browser live view not ready' }); return null; }
+        return agent.browserLive;
+    };
+    const liveReply = (res, result) => {
+        if (result && result.error) return res.status(409).json(result);
+        res.json(result);
+    };
+
+    router.post('/browser/live/watch', async (req, res) => {
+        const bl = live(res); if (!bl) return;
+        try { res.json(await bl.watch(req.body?.watcherId)); } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.post('/browser/live/input', async (req, res) => {
+        const bl = live(res); if (!bl) return;
+        const event = req.body?.event;
+        if (!event || typeof event !== 'object' || typeof event.type !== 'string') {
+            return res.status(400).json({ error: 'event with a type is required' });
+        }
+        try { liveReply(res, await bl.input(event)); } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.post('/browser/live/navigate', async (req, res) => {
+        const bl = live(res); if (!bl) return;
+        if (typeof req.body?.url !== 'string') return res.status(400).json({ error: 'url is required' });
+        try { liveReply(res, await bl.navigate(req.body.url)); } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.post('/browser/live/start', async (req, res) => {
+        const bl = live(res); if (!bl) return;
+        try { liveReply(res, await bl.start()); } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.get('/browser/live/status', (req, res) => {
+        const bl = live(res); if (!bl) return;
+        try { res.json(bl.status()); } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
     // --- Logs ---

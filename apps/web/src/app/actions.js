@@ -210,6 +210,28 @@ export async function saveBrowserSecretsRaw(jsonContent) {
     }
 }
 
+// --- Browser live view ---
+const BROWSER_STATUS_DOWN = { running: false, url: null, agentBusy: false, watchers: 0 };
+
+export async function getBrowserStatus() {
+    await requireActionSession();
+    try {
+        return await fetchAPI('/v1/browser/status');
+    } catch (e) {
+        console.error('Failed to fetch browser status:', e);
+        return { ...BROWSER_STATUS_DOWN, error: 'Browser status unavailable' };
+    }
+}
+
+export async function startBrowser() {
+    await requireActionSession();
+    try {
+        return await fetchAPI('/v1/browser/start', { method: 'POST' });
+    } catch (e) {
+        return { error: e.message };
+    }
+}
+
 // --- Aliases ---
 export async function addAlias(prevState, formData) {
     try {

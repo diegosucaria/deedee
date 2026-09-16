@@ -37,8 +37,12 @@ const { MemoryPruningService } = require('./services/memory-pruning');
 const { DreamService } = require('./services/dream-service');
 const { PartnerGreetingService } = require('./services/partner-greeting');
 const { SubAgentService } = require('./services/subagent-service');
+const { AskUserService } = require('./services/ask-user');
+const { BrowserLive } = require('./services/browser-live');
 const { ToolScoper } = require('./services/tool-scoper');
 const { sanitizeToolResult, sanitizeToolArgs } = require('./utils/tool-result-sanitizer');
+const { buildFunctionResponseParts, stripInlineParts, imagesAsUserContent, isPartsRejection, splitImages } = require('./utils/function-response');
+const browserSecrets = require('./utils/browser-secrets');
 const { sanitizeFunctionDeclarations } = require('./utils/gemini-schema-sanitizer');
 const { filterCalendarResult } = require('./utils/calendar-filter');
 const { NotificationService } = require('./utils/notifications');
@@ -107,6 +111,7 @@ class Agent {
     this.db = config.db || new AgentDB();
     // Fallback for tests where dbPath might be undefined due to mocking
     const dataDir = this.db.dbPath ? path.dirname(this.db.dbPath) : path.join(process.cwd(), 'data');
+    this.dataDir = dataDir;
     this.smartContext = new SmartContextManager(this.db, this.client); // Client is null here, need to set later
 
     // Router
@@ -154,6 +159,8 @@ class Agent {
     this.dreamService = new DreamService(this);
     this.partnerGreetingService = new PartnerGreetingService(this);
     this.subAgentService = new SubAgentService(this);
+    this.askUser = new AskUserService(this);
+    this.browserLive = new BrowserLive(this);
     this.toolScoper = new ToolScoper(config.googleApiKey, this.db);
     this.notifications = new NotificationService(this.db, this.interface);
 
@@ -187,7 +194,7 @@ class Agent {
   async stopGeneration(chatId) {
     console.log(`[Agent] Stop requested for chat ${chatId}`);
     this.cancellationFlags.add(chatId);
-    // Cancel any active long-running MCP tool calls (e.g. browser_use_task)
+    // Cancel any active MCP tool calls (e.g. a long browser_ step)
     if (this.mcp) this.mcp.cancelActiveCalls();
   }
 
@@ -196,6 +203,9 @@ class Agent {
     console.log('[Agent] Stopping...');
     if (this.scheduler) {
       await this.scheduler.stop();
+    }
+    if (this.browserLive) {
+      try { this.browserLive.close(); } catch (e) { console.warn('[Agent] browserLive close failed:', e.message); }
     }
     if (this.mcp) {
       try {
@@ -492,10 +502,21 @@ class Agent {
     if (staleCount > 0) {
       console.log(`[SubAgent] Marked ${staleCount} stale sub-agent(s) as failed from previous session.`);
     }
+    // No askUser wait survives a restart; close the rows it left open.
+    try { this.askUser.expireOnBoot(); } catch (e) { console.warn('[AskUser] expireOnBoot failed:', e.message); }
 
     // 1. Initialize the unified Client (Dynamic Import for ESM)
     const { GoogleGenAI } = await this._loadClientLibrary();
     this.client = new GoogleGenAI({ apiKey: this.config.googleApiKey });
+
+    // Render the browser secrets dotenv from the saved JSON before the
+    // browser MCP server starts and reads it.
+    try {
+      const n = browserSecrets.regenerateEnv(this.dataDir);
+      if (n > 0) console.log(`[Agent] Browser secrets: ${n} name(s) available to the browser server.`);
+    } catch (e) {
+      console.warn('[Agent] Could not render browser secrets:', e.message);
+    }
 
     // Initialize MCP
     await this.mcp.init();
@@ -1112,6 +1133,16 @@ class Agent {
         return executionSummary;
       }
 
+      // 0b. askUser: a plain reply to a waiting question ends that wait and
+      // goes no further. /stop and /cancel end it too, then run as usual.
+      if (chatId && !isMultiModal && !isSubAgent) {
+        const answered = await this.askUser.intercept(message, activeSendCallback);
+        if (answered) {
+          executionSummary.replies.push(answered);
+          return executionSummary;
+        }
+      }
+
       // Clear stop flag for this chat on new message (unless it's the stop command itself, handled by command handler)
       if (message.content !== '/stop') {
         this.stopFlags.delete(chatId);
@@ -1125,14 +1156,14 @@ class Agent {
         // ... (existing slash command logic) ...
         const action = commandResult.action;
         console.log(`${logPrefix} User confirmed action: ${action.name}`);
-        const result = await this._executeTool(action.name, action.args, message, activeSendCallback, (model, pTokens, cTokens, cached = 0, thoughts = 0) => {
+        const { result } = splitImages(await this._executeTool(action.name, action.args, message, activeSendCallback, (model, pTokens, cTokens, cached = 0, thoughts = 0) => {
           const cost = calculateCost(model, pTokens, cTokens, cached, thoughts);
           this.db.logTokenUsage({
             model, promptTokens: pTokens, candidateTokens: cTokens,
             totalTokens: pTokens + cTokens, chatId, estimatedCost: cost,
             cachedTokens: cached, thoughtsTokens: thoughts
           });
-        });
+        }));
 
         executionSummary.toolOutputs.push({ name: action.name, result });
 
@@ -1761,11 +1792,13 @@ class Agent {
         }
       }
 
+      // Names only, read each turn so a fresh save shows up at once.
+      const browserSecretNames = browserSecrets.readSecretNames(this.dataDir);
       let systemInstruction = getSystemInstruction(
         timeString,
         activeGoals,
         facts,
-        { codingMode: !isLightweight, vaultContext, skillsContext, notificationContext, isLightweight, communicationStyle: this.settings?.communication_style || '', dynamicInTurn: !isLightweight }
+        { codingMode: !isLightweight, vaultContext, skillsContext, notificationContext, isLightweight, communicationStyle: this.settings?.communication_style || '', dynamicInTurn: !isLightweight, browserSecretNames }
       );
       // Time, goals, skills, vault and location change per message, so they go
       // in the user turn and the system instruction stays cacheable.
@@ -1774,7 +1807,8 @@ class Agent {
         activeGoals,
         skillsContext,
         vaultContext,
-        location: message.metadata?.location
+        location: message.metadata?.location,
+        browserSecretNames
       });
 
       console.log(`${logPrefix} [Context] System Instruction Size: ~${systemInstruction.length} chars(~${Math.round(systemInstruction.length / 4)} tokens)${isLightweight ? ' (lightweight)' : ''}.`);
@@ -1938,7 +1972,7 @@ class Agent {
         // CHECK STOP FLAG
         if (this.stopFlags.has(chatId) || this.stopFlags.has('GLOBAL_STOP')) {
           console.log(`${logPrefix} Stop flag detected for chat ${chatId}. Breaking loop.`);
-          // Cancel any active long-running MCP tool calls (e.g. browser_use_task)
+          // Cancel any active MCP tool calls (e.g. a long browser_ step)
           if (this.mcp) this.mcp.cancelActiveCalls();
           await activeSendCallback(createAssistantMessage('🛑 Execution stopped by user.'));
           this.stopFlags.delete(chatId);
@@ -2025,7 +2059,7 @@ class Agent {
         // Gmail/calendar/people tools are exempt from Tier 1 because the normal workflow is
         // list → fetch each item by ID (e.g. list emails → get each email). Multi-account
         // setups (work_/personal_ prefixes) multiply the call count further.
-        const LOOP_EXEMPT_TOOLS = new Set(['spawnAgent', 'readChatHistory', 'searchMemory', 'getFact', 'getAgentResult', 'listAgentTasks']);
+        const LOOP_EXEMPT_TOOLS = new Set(['spawnAgent', 'askUser', 'readChatHistory', 'searchMemory', 'getFact', 'getAgentResult', 'listAgentTasks']);
         function isLoopExemptTool(toolName) {
           if (!toolName) return false;
           if (LOOP_EXEMPT_TOOLS.has(toolName)) return true;
@@ -2203,6 +2237,24 @@ class Agent {
             toolResult = { info: 'No output from tool execution.' };
           }
 
+          // A browser server that is down (port 9222 busy, launch failure)
+          // is worth a notification: the model cannot fix it.
+          if (executionName.startsWith('browser_') && /not connected|connection closed|transport closed/i.test(String(toolResult?.error || ''))) {
+            this.notifications.create({
+              type: 'browser_down',
+              severity: 'error',
+              title: 'Browser server not connected',
+              message: `"${executionName}" failed: ${String(toolResult.error).slice(0, 200)}. Check the MCP status page; a reload restarts the browser server.`,
+              metadata: { toolName: executionName, chatId, source: message.source, link: '/brain' }
+            });
+          }
+
+          // Screenshots ride on `_images`; they go to the model as inlineData
+          // and never into the UI preview, the summary or the DB.
+          const split = splitImages(toolResult);
+          toolResult = split.result;
+          const images = split.images;
+
           if (this.interface.broadcast) {
             this.interface.broadcast('agent:tool_result', {
               chatId,
@@ -2217,7 +2269,7 @@ class Agent {
             }).catch(() => { });
           }
 
-          return { call, executionName, result: toolResult };
+          return { call, executionName, result: toolResult, images };
         };
 
         let results = [];
@@ -2238,7 +2290,7 @@ class Agent {
         const functionResponseParts = [];
         const dbFunctionResponseParts = [];
 
-        for (const { call, executionName, result } of results) {
+        for (const { call, executionName, result, images = [] } of results) {
           // Capture to Summary
           executionSummary.toolOutputs.push({ name: executionName, result });
 
@@ -2307,20 +2359,11 @@ class Agent {
             apiResponse = { info: "Tool executed successfully but returned no output." };
           }
 
-          functionResponseParts.push({
-            functionResponse: {
-              name: call.name,
-              response: apiResponse
-            }
-          });
-
-          // Build DB Payload
-          dbFunctionResponseParts.push({
-            functionResponse: {
-              name: call.name,
-              response: apiResponse
-            }
-          });
+          // Model payload carries the images as inlineData parts; the DB row
+          // only notes how many went out.
+          const built = buildFunctionResponseParts(call, apiResponse, images);
+          functionResponseParts.push(built.model);
+          dbFunctionResponseParts.push(built.db);
         }
 
         // 4. Save Function Results to DB
@@ -2336,18 +2379,33 @@ class Agent {
         const toolTimerLabel = `[Agent] Model Tool Response (${selectedModel}) - ${Date.now()}`;
         console.time(toolTimerLabel);
 
+        const hasInlineParts = functionResponseParts.some(p => p.functionResponse?.parts);
         try {
-          // FIX: Pass parts directly
-          const payload = functionResponseParts;
-
           // ENABLE STREAMING for Tool Responses
           // This allows "Thinking..." or large function arguments (JSON) to be visible to the user
-          response = await this._generateStream(session, payload, chatId, message.source, turnId);
+          response = await this._generateStream(session, functionResponseParts, chatId, message.source, turnId);
 
         } catch (e) {
-          console.error('[Agent] Tool response failed:', e);
-          console.log('[Agent] FAILING PAYLOAD (functionResponseParts):', JSON.stringify(functionResponseParts, null, 2));
-          throw e; // Re-throw to trigger retry logic if needed
+          if (hasInlineParts && isPartsRejection(e)) {
+            // The model rejected functionResponse.parts. Send the responses
+            // without them, then the images as a separate user content, then
+            // give up on the images.
+            console.warn(`${logPrefix} Model rejected functionResponse.parts (${e.message}). Falling back.`);
+            const textOnly = stripInlineParts(functionResponseParts);
+            response = await this._generateStream(session, textOnly, chatId, message.source, turnId);
+            const imageContent = imagesAsUserContent(functionResponseParts);
+            if (imageContent && !getFunctionCalls(response).length) {
+              try {
+                response = await this._generateStream(session, imageContent, chatId, message.source, turnId);
+              } catch (e2) {
+                console.warn(`${logPrefix} Image content also rejected (${e2.message}); continuing without the screenshot.`);
+              }
+            }
+          } else {
+            console.error('[Agent] Tool response failed:', e);
+            console.log('[Agent] FAILING PAYLOAD (functionResponseParts):', JSON.stringify(stripInlineParts(functionResponseParts), null, 2));
+            throw e; // Re-throw to trigger retry logic if needed
+          }
         }
 
         console.timeEnd(toolTimerLabel);
@@ -2530,7 +2588,9 @@ class Agent {
   async _executeTool(executionName, args, message, sendCallback, usageCallback = null) {
     // RESOLVE SECRETS (Variable Substitution)
     // If an argument is "$SECRET_KEY", replace it with the actual value from SkillService.
-    if (this.skillService) {
+    // browser_ tools skip this: the browser server swaps secret NAMES for
+    // values itself, so names must reach it as typed.
+    if (this.skillService && !String(executionName).startsWith('browser_')) {
       const allSecrets = this.skillService.getAllEnabledSecrets();
 
       const resolveSecrets = (obj) => {
@@ -2563,6 +2623,11 @@ class Agent {
     // Pre-call sanitization: catch common LLM mistakes that lead to
     // oversized tool responses (e.g. events.list with no timeMax).
     args = sanitizeToolArgs(executionName, args);
+
+    // --- ASK THE USER (blocks until the reply, a timeout or a stop) ---
+    if (executionName === 'askUser') {
+      return this.askUser.ask(message, args);
+    }
 
     // --- INTERNAL DB TOOLS ---
     if (executionName === 'rememberFact') {
@@ -2729,7 +2794,7 @@ class Agent {
         callServices: { client: this.client, interface: this.interface }
       });
 
-      // Side-channel usage tracking for MCP tools (e.g. browser-use, Browser Vision)
+      // Side-channel usage tracking for MCP tools that report their own model usage
       if (result && result._meta && result._meta.usage && usageCallback) {
         const u = result._meta.usage;
         console.log(`[Agent] Tracking usage from tool '${executionName}': ${u.model} (In: ${u.inputTokens}, Out: ${u.outputTokens}${u.tag ? `, tag=${u.tag}` : ''})`);

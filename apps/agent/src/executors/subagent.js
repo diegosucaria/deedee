@@ -30,6 +30,7 @@ class SubAgentExecutor extends BaseExecutor {
                 }
 
                 const parentChatId = context?.message?.metadata?.chatId || 'unknown';
+                const parentSource = context?.message?.source || null;
 
                 try {
                     const result = await subAgentService.spawn({
@@ -38,6 +39,7 @@ class SubAgentExecutor extends BaseExecutor {
                         tools,
                         timeoutMinutes,
                         parentChatId,
+                        parentSource,
                         waitForResult,
                         parentDepth: currentDepth,
                         lightweight,

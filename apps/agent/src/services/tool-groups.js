@@ -28,7 +28,6 @@ function mcpServerGroup(serverName = '') {
         'node-red': 'home',
         plex: 'media',
         browser: 'browser',
-        'browser-use': 'browser',
         pilotfy: 'flights',
         allende: 'health',
     }[serverName] || null;
@@ -42,7 +41,7 @@ const TOOL_GROUPS = {
     dj: 'vinyl records, DJ sets, track picks',
     docs: 'life vaults, notes, uploaded documents',
     media: 'Plex movies, shows and music',
-    browser: 'opening or acting on web pages (browser-use)',
+    browser: 'opening or acting on web pages (Playwright browser)',
     flights: 'Pilotfy flight school: lessons, bookings, flight hours',
     health: 'Sanatorio Allende medical appointments ("turnos"): search, book, cancel',
 };
@@ -55,7 +54,7 @@ const GROUP_NAME_WORDS = {
     workspace: ['gmail', 'google calendar', 'google drive', 'google docs', 'google sheets'],
     slack: ['slack'],
     media: ['plex'],
-    browser: ['browser-use', 'browser use'],
+    browser: ['browser', 'playwright'],
     flights: ['pilotfy'],
     health: ['allende'],
 };

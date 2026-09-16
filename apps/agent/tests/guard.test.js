@@ -25,6 +25,44 @@ describe('ConfirmationManager', () => {
         expect(check('runShellCommand', { command: 'ls -la' }).requiresConfirmation).toBe(false);
     });
 
+    test('blocks shell access to the browser profile, its secrets and the CDP port', () => {
+        expect(check('runShellCommand', { command: 'cat /app/data/browser_profile/browser-secrets.env' }).requiresConfirmation).toBe(true);
+        expect(check('runShellCommand', { command: 'cat data/browser_profile/browser-secrets.json' }).requiresConfirmation).toBe(true);
+        expect(check('runShellCommand', { command: 'ls /app/data/browser_profile/chromium/Default' }).requiresConfirmation).toBe(true);
+        expect(check('runShellCommand', { command: 'echo 19222' }).requiresConfirmation).toBe(false);
+        expect(check('runShellCommand', { command: 'ls /app/data/output' }).requiresConfirmation).toBe(false);
+        expect(check('readFile', { path: '/app/data/browser_profile/browser-secrets.env' }).requiresConfirmation).toBe(true);
+        expect(check('listDirectory', { path: '/app/data/browser_profile/chromium' }).requiresConfirmation).toBe(true);
+        expect(check('readFile', { path: '/app/data/notes.txt' }).requiresConfirmation).toBe(false);
+    });
+
+    test('blocks the CDP port only in a network context', () => {
+        const cdp = "The browser debug port (CDP) exposes every logged-in session. Use the browser tools instead.";
+        for (const command of [
+            'curl 127.0.0.1:9222/json/list',
+            'curl -s http://127.0.0.1:9222/json/version',
+            'curl http://localhost:9222/json/new?about:blank',
+            'wget -qO- 0.0.0.0:9222/json/activate/abc',
+            'node -e "new WebSocket(\'ws://localhost:9222/devtools/page/1\')"',
+            'websocat ws://127.0.0.1:9222/devtools/browser/abc-def',
+            'nc -z chromium:9222',
+        ]) {
+            const result = check('runShellCommand', { command });
+            expect(result.requiresConfirmation).toBe(true);
+            expect(result.message).toContain(cdp);
+        }
+        for (const command of [
+            'git show 9222abc',
+            'git log --oneline 9222',
+            'grep 9222 notes.txt',
+            'echo 19222',
+            'ls /app/data/devtools',
+            'cat docs/json/listing.md',
+        ]) {
+            expect(check('runShellCommand', { command }).requiresConfirmation).toBe(false);
+        }
+    });
+
     test('should block Plex destruction', () => {
         expect(check('media_delete', { id: 123 }).requiresConfirmation).toBe(true);
         expect(check('playlist_delete', { id: 1 }).requiresConfirmation).toBe(true);

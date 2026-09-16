@@ -66,4 +66,15 @@ Calendar filters are stored per-account in the `agent_settings` database (key: `
 You can still manually edit `mcp_config.json` if you have shell access, but the UI is recommended.
 
 ### Default Servers
-The system comes with default configurations (Home Assistant, Plex, Node-RED) that are automatically merged into your configuration on startup.
+The image ships default entries (Home Assistant, Plex, Node-RED, browser, Pilotfy, Allende). On startup the agent adds any default the saved config lacks. It also upgrades old saved entries: a saved `browser-use` entry is removed, and a saved `browser` entry that does not run `scripts/browser-mcp.js` is replaced by the default.
+
+### Placeholders and defaults
+`${VAR}` in `env`, `args` and `url` is replaced from the environment. `DATA_DIR` and `BROWSER_EXECUTABLE_PATH` may stay unset: `DATA_DIR` falls back to the agent data dir, `BROWSER_EXECUTABLE_PATH` to empty (Playwright then picks a browser). Any other unresolved placeholder disables the server until it is set.
+
+### Per-server options
+- `includeTools` / `excludeTools`: tool names or `*` globs.
+- `callTimeoutMs`: per-call timeout for that server (the SDK default is 60 s). The browser server uses 120000.
+- `cwd`: relative to the config file, with a fallback to the agent working dir.
+
+## Browser server
+The `browser` entry runs `@playwright/mcp` on the system Chromium. See `docs/agentic-browsing.md` for the profile path, secrets by name, the launcher stub, the live view and the smoke test. `POST /internal/browser-secrets` saves secrets and restarts only that server.

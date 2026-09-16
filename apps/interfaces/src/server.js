@@ -77,6 +77,22 @@ io.use((socket, next) => {
   return next(new Error('authentication_error'));
 });
 
+// Per-socket cap on browser input: at most `limit` events in any one-second
+// window. Extra events are dropped, not queued.
+const BROWSER_INPUT_PER_SECOND = 60;
+function makeInputGate(limit = BROWSER_INPUT_PER_SECOND) {
+  let windowStart = 0;
+  let count = 0;
+  return {
+    allow(now) {
+      if (now - windowStart >= 1000) { windowStart = now; count = 0; }
+      if (count >= limit) return false;
+      count++;
+      return true;
+    }
+  };
+}
+
 io.on("connection", (socket) => {
   const { chatId } = socket.handshake.query;
   // Reduce noise for frequent connect/disconnects if needed, or keep for debugging
@@ -170,6 +186,46 @@ io.on("connection", (socket) => {
         message: errorMessage,
         timestamp: new Date().toISOString()
       });
+    }
+  });
+
+  // Live browser view. Every connected socket passed the auth middleware
+  // above, so each may watch and drive the browser (single-owner app). The
+  // agent's /internal/browser/live/* routes do the CDP work; the axios
+  // interceptor adds the internal token.
+  const liveUrl = (p) => `${agentUrl}/internal/browser/live/${p}`;
+  const liveErr = (what) => (err) => {
+    if (!socket.browserWarned) {
+      socket.browserWarned = true;
+      console.warn(`[Interfaces] browser ${what} forward failed: ${err.message}`);
+    }
+  };
+  socket.on('browser:watch', async () => {
+    try {
+      const { data } = await axios.post(liveUrl('watch'), { watcherId: socket.id });
+      socket.browserWarned = false;
+      if (data && data.frame) socket.emit('browser:frame', data.frame);
+      if (data) {
+        const { frame, ...status } = data;
+        socket.emit('browser:status', status);
+      }
+    } catch (err) { liveErr('watch')(err); }
+  });
+  const inputGate = makeInputGate();
+  socket.on('browser:input', (event) => {
+    if (!event || typeof event !== 'object') return;
+    if (!inputGate.allow(Date.now())) return; // over 60 events/s: drop
+    axios.post(liveUrl('input'), { watcherId: socket.id, event }).catch(liveErr('input'));
+  });
+  socket.on('browser:navigate', async (data) => {
+    const url = typeof data === 'string' ? data : data?.url;
+    if (typeof url !== 'string') return;
+    try {
+      const { data: result } = await axios.post(liveUrl('navigate'), { url });
+      socket.emit('browser:navigated', result);
+    } catch (err) {
+      const message = err.response?.data?.error || err.message;
+      socket.emit('browser:navigated', { error: message });
     }
   });
 
@@ -648,7 +704,9 @@ app.post('/send', async (req, res) => {
         io.to(target).emit('agent:message', {
           content,
           type: type || 'text',
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          // askUser questions carry { id, options }; the chat renders them as chips
+          metadata: metadata.question ? { chatId: metadata.chatId, question: metadata.question } : undefined
         });
         return res.json({ success: true });
       }
@@ -826,8 +884,8 @@ app.post('/progress', async (req, res) => {
 app.post('/broadcast', (req, res) => {
   try {
     const { event, data } = req.body;
-    // Suppress noisy token logs
-    if (event !== 'agent:token') {
+    // Suppress noisy token and frame logs
+    if (event !== 'agent:token' && event !== 'browser:frame') {
       console.log(`[Interfaces] Broadcasting event: ${event}`);
     }
 
@@ -847,4 +905,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app };
+module.exports = { app, makeInputGate };

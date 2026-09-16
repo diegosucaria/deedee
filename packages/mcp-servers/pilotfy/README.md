@@ -6,7 +6,7 @@ make/cancel bookings at a flight school served by **Pilotfy**'s legacy
 per-user turn limit are auto-detected from the logged-in account.
 
 Single-file [`server.py`](server.py), built on FastMCP — same pattern as
-[`../../plex-mcp-server`](../../plex-mcp-server) and [`../browser-use`](../browser-use).
+[`../../plex-mcp-server`](../../plex-mcp-server) and [`../allende`](../allende).
 
 The API was reverse-engineered from the Pilotfy app and verified against the live
 API. The civil-twilight algorithm is ported verbatim from the app and

@@ -9,6 +9,14 @@ const fs = require('fs');
 // descriptions go to the model on every request but can never succeed.
 const GWS_MCP_SERVICES = 'gmail,calendar,drive,docs,sheets,slides';
 
+// ${VAR} placeholders that may stay unset: the server gets a default (or
+// nothing) instead of being disabled as "missing env".
+const OPTIONAL_VARS = ['DATA_DIR', 'BROWSER_EXECUTABLE_PATH'];
+const VAR_RE = /\$\{([^}]+)\}/g;
+
+// The browser entry that replaces older saved ones. Its args name this file.
+const BROWSER_LAUNCHER = 'browser-mcp.js';
+
 // "*" matches any run of characters; everything else is literal.
 function _toolPatternToRegex(pattern) {
     const escaped = String(pattern).replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
@@ -21,16 +29,34 @@ class MCPManager {
         this.toolCache = [];       // Array of all tools (Gemini format)
         this.toolMap = new Map();  // toolName -> { name: string, client: Client }
         this.configPath = path.resolve(__dirname, configPath);
-        this._activeAbortControllers = new Set(); // Track active long-running calls
+        this._activeAbortControllers = new Set(); // one per in-flight call; each carries .toolName and .serverName
+        this._pendingRestarts = new Set(); // servers to restart once their in-flight call ends
+        this._restarting = new Map(); // serverName -> promise of the restart in progress
         this._slimSkipped = new Map(); // serverName -> [missingVars]
+    }
+
+    /** Defaults for placeholders that may stay unset. */
+    _varDefaults() {
+        return {
+            DATA_DIR: process.env.DATA_DIR || (fs.existsSync('/app') && process.platform !== 'darwin' ? '/app/data' : path.join(process.cwd(), 'data')),
+            BROWSER_EXECUTABLE_PATH: process.env.BROWSER_EXECUTABLE_PATH || '',
+        };
+    }
+
+    /** Replaces every ${VAR} in `str` with process.env[VAR], a default, or ''. */
+    _resolveVars(str) {
+        if (typeof str !== 'string' || !str.includes('${')) return str;
+        const defaults = this._varDefaults();
+        return str.replace(VAR_RE, (_, key) => process.env[key] ?? defaults[key] ?? '');
     }
 
     /**
      * Returns the missing ${VAR} placeholders ONLY when the server is fully
      * unconfigured — i.e. not a single placeholder resolves to a value. That
-     * keeps the prior behavior for partially-configured servers (e.g.
-     * browser-use with GOOGLE_API_KEY set but BROWSER_EXECUTABLE_PATH unset)
-     * where the server has its own defaults and would otherwise spawn fine.
+     * keeps the prior behavior for partially-configured servers where the
+     * server has its own defaults and would otherwise spawn fine.
+     * OPTIONAL_VARS (DATA_DIR, BROWSER_EXECUTABLE_PATH) never count as
+     * missing, so the browser server starts on a dev box with neither set.
      * Returns [] when the server should still be attempted.
      */
     _findMissingEnvVars(serverConfig) {
@@ -38,12 +64,14 @@ class MCPManager {
         let present = 0;
         const check = (val) => {
             if (typeof val !== 'string') return;
-            for (const m of val.matchAll(/\$\{([^}]+)\}/g)) {
+            for (const m of val.matchAll(VAR_RE)) {
+                if (OPTIONAL_VARS.includes(m[1])) continue;
                 if (process.env[m[1]]) present++;
                 else missing.add(m[1]);
             }
         };
         if (serverConfig.env) Object.values(serverConfig.env).forEach(check);
+        if (Array.isArray(serverConfig.args)) serverConfig.args.forEach(check);
         if (serverConfig.url) check(serverConfig.url);
         return present === 0 && missing.size > 0 ? [...missing] : [];
     }
@@ -137,161 +165,232 @@ class MCPManager {
                 continue;
             }
 
-            try {
-                console.log(`[MCP] Connecting to server: ${name}...`);
-
-                // Resolve Env Vars
-                const env = { ...process.env };
-                if (serverConfig.env) {
-                    for (const [k, v] of Object.entries(serverConfig.env)) {
-                        if (v.startsWith('${') && v.endsWith('}')) {
-                            const varName = v.slice(2, -1);
-                            env[k] = process.env[varName] || '';
-                        } else {
-                            env[k] = v;
-                        }
-                    }
-                }
-
-                // GWS CLI token cache isolation: each GWS account gets its own HOME
-                // directory so the CLI doesn't share cached OAuth tokens between accounts.
-                // Without this, the second GWS server reuses the first's cached tokens
-                // and returns the wrong account's data for ALL tools (not just calendar).
-                if (name.startsWith('gws_')) {
-                    const dataDir = path.dirname(this.configPath); // /app/data
-                    const gwsHome = path.join(dataDir, `gws-home-${name}`);
-                    if (!fs.existsSync(gwsHome)) {
-                        fs.mkdirSync(gwsHome, { recursive: true });
-                    }
-                    env.HOME = gwsHome;
-                    console.log(`[MCP] GWS cache isolation: ${name} HOME=${gwsHome}`);
-                }
-
-                // SPECIAL HANDLING: Home Assistant
-                if (name === 'homeassistant') {
-                    // Map standard variables for 'ha-mcp' package (and others that use HASS_*)
-                    if (env.HA_URL) {
-                        env.HASS_URL = env.HA_URL;
-                        env.HOMEASSISTANT_URL = env.HA_URL; // Required by ha-mcp
-                    }
-                    if (env.HA_TOKEN) {
-                        env.HASS_TOKEN = env.HA_TOKEN;
-                        env.HOMEASSISTANT_TOKEN = env.HA_TOKEN; // Required by ha-mcp
-                    }
-
-                    // Also derive WebSocket URL for 'mcp-server-home-assistant' legacy support or fallback
-                    if (env.HA_URL && !env.HOME_ASSISTANT_WEB_SOCKET_URL) {
-                        try {
-                            const haUrl = new URL(env.HA_URL);
-                            const proto = haUrl.protocol === 'https:' ? 'wss:' : 'ws:';
-                            // Construct standard WS path
-                            const wsUrl = `${proto}//${haUrl.host}${haUrl.pathname.replace(/\/$/, '')}/api/websocket`;
-                            env.HOME_ASSISTANT_WEB_SOCKET_URL = wsUrl;
-                            console.log(`[MCP] Derived HOME_ASSISTANT_WEB_SOCKET_URL: ${wsUrl}`);
-                        } catch (e) {
-                            console.warn(`[MCP] Failed to derive WS URL from HA_URL: ${env.HA_URL}`, e);
-                        }
-                    }
-                    // Map Token for 'mcp-server-home-assistant'
-                    if (env.HA_TOKEN && !env.HOME_ASSISTANT_API_TOKEN) {
-                        env.HOME_ASSISTANT_API_TOKEN = env.HA_TOKEN;
-                    }
-                }
-
-                let transport;
-                if (serverConfig.transport === 'sse') {
-                    // Interpolate URL variables if needed
-                    let urlStr = serverConfig.url;
-                    if (urlStr.includes('${')) {
-                        // Simple replacement for now, reusing the 'env' logic or just matching?
-                        // We have the resolved 'env' object from above loop.
-                        // But that env loop puts vars INTO 'env' object.
-                        // We need values from process.env (or keys in that env block).
-
-                        // Let's do a replace against process.env
-                        urlStr = urlStr.replace(/\$\{([^}]+)\}/g, (_, key) => process.env[key] || '');
-                    }
-
-                    // SSE Transport
-                    const url = new URL(urlStr);
-                    console.log(`[MCP] Debug: Connecting to ${urlStr}`);
-                    console.log(`[MCP] Debug: Token present? ${!!env.HA_TOKEN}`);
-                    if (env.HA_TOKEN) console.log(`[MCP] Debug: Token length: ${env.HA_TOKEN.length}`);
-
-                    transport = new SSEClientTransport(url, {
-                        eventSourceInit: {
-                            headers: {
-                                "Authorization": `Bearer ${env.HA_TOKEN}`
-                            }
-                        }
-                    });
-                } else {
-                    // Default: Stdio Transport
-                    // Robust CWD Resolution: Relative to config directory, not process.cwd()
-                    // Robust Command: Sanitize absolute paths that might be invalid in this environment
-                    let command = serverConfig.command;
-                    if (command === '/usr/local/bin/node' || command === '/usr/bin/node') command = 'node';
-                    if (command === '/usr/bin/python3' || command === '/usr/local/bin/python3') command = 'python3';
-                    if (command === 'node') command = process.execPath; // Use current runtime
-
-                    // Robust CWD Resolution
-                    const configDir = path.dirname(this.configPath);
-                    let resolvedCwd = serverConfig.cwd
-                        ? path.resolve(configDir, serverConfig.cwd)
-                        : configDir;
-
-                    // Fix: usage of relative paths 'no longer works' if the config file was moved to /app/data
-                    // Strategy: If resolvedCwd doesn't exist, try resolving relative to process.cwd() or common roots
-                    if (!fs.existsSync(resolvedCwd)) {
-                        console.warn(`[MCP] CWD ${resolvedCwd} not found. Attempting auto-repair...`);
-
-                        // Try 1: Relative to process.cwd() (The Agent working directory)
-                        const candidate1 = path.resolve(process.cwd(), serverConfig.cwd);
-
-                        // Try 2: Hardcoded Docker Path (Fix for "../../packages" becoming "/packages")
-                        // If we are in /app/apps/agent, then ../../packages is /app/packages.
-                        // But configDir might be /app/data.
-                        const candidate2 = path.resolve('/app/packages', path.basename(serverConfig.cwd));
-
-                        if (fs.existsSync(candidate1)) {
-                            console.log(`[MCP] Auto-repaired CWD to: ${candidate1}`);
-                            resolvedCwd = candidate1;
-                        } else if (fs.existsSync(candidate2)) {
-                            console.log(`[MCP] Auto-repaired CWD to: ${candidate2}`);
-                            resolvedCwd = candidate2;
-                        } else {
-                            console.warn(`[MCP] Failed to repair CWD. Spawning might fail.`);
-                        }
-                    }
-
-                    console.log(`[MCP] Spawning ${name}: cmd=${command}, cwd=${resolvedCwd}`);
-
-                    transport = new StdioClientTransport({
-                        command: command,
-                        args: serverConfig.args || [],
-                        env: env,
-                        cwd: resolvedCwd
-                    });
-                }
-
-                const client = new Client({
-                    name: "DeedeeClient",
-                    version: "1.0.0",
-                }, {
-                    capabilities: {}
-                });
-
-                await client.connect(transport);
-                this.clients.set(name, client);
-                console.log(`[MCP] Connected to ${name}`);
-
-            } catch (error) {
-                console.error(`[MCP] Failed to connect to ${name}:`, error);
-            }
+            await this._connectServer(name, serverConfig);
         }
 
         // Initial Tool Cache Population
         await this._refreshToolCache();
+    }
+
+    /** Spawns (or connects to) one server and stores its client. Returns true on success. */
+    async _connectServer(name, serverConfig) {
+        try {
+            console.log(`[MCP] Connecting to server: ${name}...`);
+
+            // Resolve Env Vars
+            const env = { ...process.env };
+            if (serverConfig.env) {
+                for (const [k, v] of Object.entries(serverConfig.env)) {
+                    env[k] = this._resolveVars(v);
+                }
+            }
+
+            // GWS CLI token cache isolation: each GWS account gets its own HOME
+            // directory so the CLI doesn't share cached OAuth tokens between accounts.
+            // Without this, the second GWS server reuses the first's cached tokens
+            // and returns the wrong account's data for ALL tools (not just calendar).
+            if (name.startsWith('gws_')) {
+                const dataDir = path.dirname(this.configPath); // /app/data
+                const gwsHome = path.join(dataDir, `gws-home-${name}`);
+                if (!fs.existsSync(gwsHome)) {
+                    fs.mkdirSync(gwsHome, { recursive: true });
+                }
+                env.HOME = gwsHome;
+                console.log(`[MCP] GWS cache isolation: ${name} HOME=${gwsHome}`);
+            }
+
+            // SPECIAL HANDLING: Home Assistant
+            if (name === 'homeassistant') {
+                // Map standard variables for 'ha-mcp' package (and others that use HASS_*)
+                if (env.HA_URL) {
+                    env.HASS_URL = env.HA_URL;
+                    env.HOMEASSISTANT_URL = env.HA_URL; // Required by ha-mcp
+                }
+                if (env.HA_TOKEN) {
+                    env.HASS_TOKEN = env.HA_TOKEN;
+                    env.HOMEASSISTANT_TOKEN = env.HA_TOKEN; // Required by ha-mcp
+                }
+
+                // Also derive WebSocket URL for 'mcp-server-home-assistant' legacy support or fallback
+                if (env.HA_URL && !env.HOME_ASSISTANT_WEB_SOCKET_URL) {
+                    try {
+                        const haUrl = new URL(env.HA_URL);
+                        const proto = haUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+                        // Construct standard WS path
+                        const wsUrl = `${proto}//${haUrl.host}${haUrl.pathname.replace(/\/$/, '')}/api/websocket`;
+                        env.HOME_ASSISTANT_WEB_SOCKET_URL = wsUrl;
+                        console.log(`[MCP] Derived HOME_ASSISTANT_WEB_SOCKET_URL: ${wsUrl}`);
+                    } catch (e) {
+                        console.warn(`[MCP] Failed to derive WS URL from HA_URL: ${env.HA_URL}`, e);
+                    }
+                }
+                // Map Token for 'mcp-server-home-assistant'
+                if (env.HA_TOKEN && !env.HOME_ASSISTANT_API_TOKEN) {
+                    env.HOME_ASSISTANT_API_TOKEN = env.HA_TOKEN;
+                }
+            }
+
+            let transport;
+            if (serverConfig.transport === 'sse') {
+                // Interpolate URL variables if needed
+                let urlStr = serverConfig.url;
+                if (urlStr.includes('${')) {
+                    // Simple replacement for now, reusing the 'env' logic or just matching?
+                    // We have the resolved 'env' object from above loop.
+                    // But that env loop puts vars INTO 'env' object.
+                    // We need values from process.env (or keys in that env block).
+
+                    // Let's do a replace against process.env
+                    urlStr = urlStr.replace(/\$\{([^}]+)\}/g, (_, key) => process.env[key] || '');
+                }
+
+                // SSE Transport
+                const url = new URL(urlStr);
+                console.log(`[MCP] Debug: Connecting to ${urlStr}`);
+                console.log(`[MCP] Debug: Token present? ${!!env.HA_TOKEN}`);
+                if (env.HA_TOKEN) console.log(`[MCP] Debug: Token length: ${env.HA_TOKEN.length}`);
+
+                transport = new SSEClientTransport(url, {
+                    eventSourceInit: {
+                        headers: {
+                            "Authorization": `Bearer ${env.HA_TOKEN}`
+                        }
+                    }
+                });
+            } else {
+                // Default: Stdio Transport
+                // Robust CWD Resolution: Relative to config directory, not process.cwd()
+                // Robust Command: Sanitize absolute paths that might be invalid in this environment
+                let command = serverConfig.command;
+                if (command === '/usr/local/bin/node' || command === '/usr/bin/node') command = 'node';
+                if (command === '/usr/bin/python3' || command === '/usr/local/bin/python3') command = 'python3';
+                if (command === 'node') command = process.execPath; // Use current runtime
+
+                // Robust CWD Resolution
+                const configDir = path.dirname(this.configPath);
+                let resolvedCwd = serverConfig.cwd
+                    ? path.resolve(configDir, serverConfig.cwd)
+                    : configDir;
+
+                // Fix: usage of relative paths 'no longer works' if the config file was moved to /app/data
+                // Strategy: If resolvedCwd doesn't exist, try resolving relative to process.cwd() or common roots
+                if (!fs.existsSync(resolvedCwd)) {
+                    console.warn(`[MCP] CWD ${resolvedCwd} not found. Attempting auto-repair...`);
+
+                    // Try 1: Relative to process.cwd() (The Agent working directory)
+                    const candidate1 = path.resolve(process.cwd(), serverConfig.cwd);
+
+                    // Try 2: Hardcoded Docker Path (Fix for "../../packages" becoming "/packages")
+                    // If we are in /app/apps/agent, then ../../packages is /app/packages.
+                    // But configDir might be /app/data.
+                    const candidate2 = path.resolve('/app/packages', path.basename(serverConfig.cwd));
+
+                    if (fs.existsSync(candidate1)) {
+                        console.log(`[MCP] Auto-repaired CWD to: ${candidate1}`);
+                        resolvedCwd = candidate1;
+                    } else if (fs.existsSync(candidate2)) {
+                        console.log(`[MCP] Auto-repaired CWD to: ${candidate2}`);
+                        resolvedCwd = candidate2;
+                    } else {
+                        console.warn(`[MCP] Failed to repair CWD. Spawning might fail.`);
+                    }
+                }
+
+                console.log(`[MCP] Spawning ${name}: cmd=${command}, cwd=${resolvedCwd}`);
+
+                transport = new StdioClientTransport({
+                    command: command,
+                    args: (serverConfig.args || []).map(a => this._resolveVars(a)),
+                    env: env,
+                    cwd: resolvedCwd
+                });
+            }
+
+            const client = new Client({
+                name: "DeedeeClient",
+                version: "1.0.0",
+            }, {
+                capabilities: {}
+            });
+
+            await client.connect(transport);
+            this.clients.set(name, client);
+            console.log(`[MCP] Connected to ${name}`);
+            return true;
+
+        } catch (error) {
+            console.error(`[MCP] Failed to connect to ${name}:`, error);
+            return false;
+        }
+    }
+
+    /** Closes one client and forgets it. */
+    async _closeClient(name) {
+        const client = this.clients.get(name);
+        if (!client) return;
+        try {
+            if (client.transport && typeof client.transport.close === 'function') {
+                await client.transport.close();
+            } else if (typeof client.close === 'function') {
+                await client.close();
+            }
+            console.log(`[MCP] Closed connection to ${name}`);
+        } catch (e) {
+            console.warn(`[MCP] Error closing ${name}:`, e.message);
+        }
+        this.clients.delete(name);
+    }
+
+    /** True while a tool call to `serverName` is in flight. */
+    isServerBusy(serverName) {
+        for (const ac of this._activeAbortControllers) {
+            if (ac.serverName === serverName) return true;
+        }
+        return false;
+    }
+
+    /**
+     * Closes one server, spawns it again and refreshes the tool cache.
+     * For stdio servers this kills the child (the browser server takes Chromium
+     * with it), so while a call to that server is in flight the restart waits
+     * for the call to finish. Only one restart per server runs at a time: a
+     * second caller joins the one in progress instead of spawning a second
+     * child (which would leave the first as an orphan holding the CDP port
+     * and the profile lock). Returns { restarted } or { deferred }.
+     */
+    async restartServer(name) {
+        const serverConfig = this.config?.[name];
+        if (!serverConfig) throw new Error(`Unknown MCP server: ${name}`);
+        const inProgress = this._restarting.get(name);
+        if (inProgress) return inProgress;
+        if (this.isServerBusy(name)) {
+            this._pendingRestarts.add(name);
+            console.log(`[MCP] restart of ${name} deferred: a call is in flight`);
+            return { deferred: true };
+        }
+        this._pendingRestarts.delete(name);
+        const run = this._doRestart(name, serverConfig).finally(() => this._restarting.delete(name));
+        this._restarting.set(name, run);
+        return run;
+    }
+
+    async _doRestart(name, serverConfig) {
+        await this._closeClient(name);
+        if (serverConfig.disabled) return { restarted: false, disabled: true };
+        const ok = await this._connectServer(name, serverConfig);
+        await this._refreshToolCache();
+        console.log(`[MCP] ${name} restarted (${ok ? 'connected' : 'failed'})`);
+        return { restarted: ok };
+    }
+
+    /** True while restartServer(name) is running. */
+    isServerRestarting(name) {
+        return this._restarting.has(name);
+    }
+
+    _runPendingRestart(serverName) {
+        if (!this._pendingRestarts.has(serverName) || this.isServerBusy(serverName)) return;
+        this.restartServer(serverName).catch(e => console.error(`[MCP] deferred restart of ${serverName} failed:`, e.message));
     }
 
     async _refreshToolCache() {
@@ -365,9 +464,29 @@ class MCPManager {
      *   config; carry them to saved entries that don't set their own, since
      *   the merge above only adds whole servers that are missing.
      * - GWS entries saved with "-s all" move to GWS_MCP_SERVICES.
+     * - The old 'browser-use' entry goes away. A saved 'browser' entry whose
+     *   args do not name the launcher stub is the old Deedee server; it is
+     *   replaced by the default (or dropped when there is no default). Without
+     *   this the merge above keeps the saved entries and never starts the new one.
      */
     _migrateConfig(userConfig, defaultConfig = {}) {
         let changed = false;
+        if (userConfig['browser-use']) {
+            delete userConfig['browser-use'];
+            changed = true;
+            console.log('[MCP] removed the retired browser-use server from the saved config');
+        }
+        const browser = userConfig.browser;
+        if (browser && !(Array.isArray(browser.args) && browser.args.some(a => String(a).includes(BROWSER_LAUNCHER)))) {
+            if (defaultConfig.browser) {
+                userConfig.browser = JSON.parse(JSON.stringify(defaultConfig.browser));
+                console.log('[MCP] replaced the old browser server entry with the @playwright/mcp default');
+            } else {
+                delete userConfig.browser;
+                console.log('[MCP] removed the old browser server entry (no default to replace it)');
+            }
+            changed = true;
+        }
         for (const [key, def] of Object.entries(defaultConfig)) {
             const saved = userConfig[key];
             if (!saved || !def) continue;
@@ -465,71 +584,94 @@ class MCPManager {
 
     async callTool(name, args, { signal } = {}) {
         // Linear lookup removed. Using cache.
-        const owner = this.toolMap.get(name);
+        let owner = this.toolMap.get(name);
+
+        // toolMap still points at the old client while its server restarts;
+        // wait for the new one instead of failing with "Not connected".
+        if (owner && this._restarting.has(owner.name)) {
+            await this._restarting.get(owner.name).catch(() => {});
+            owner = this.toolMap.get(name);
+        }
 
         if (!owner) {
             // Try refresh once just in case
             await this._refreshToolCache();
-            const retryOwner = this.toolMap.get(name);
-            if (!retryOwner) {
+            owner = this.toolMap.get(name);
+            if (!owner) {
                 throw new Error(`Tool ${name} not found in any MCP server.`);
             }
-            return await this._callClient(retryOwner.client, retryOwner.originalName || name, args, signal);
         }
 
-        return await this._callClient(owner.client, owner.originalName || name, args, signal);
+        try {
+            return await this._callClient(owner.client, owner.originalName || name, args, signal, owner.name);
+        } catch (e) {
+            // A dead child (crash, killed) leaves a closed transport. Respawn once and retry.
+            if (!this._isClosedTransportError(e) || signal?.aborted) throw e;
+            console.warn(`[MCP] ${owner.name} transport closed during ${name}; restarting once`);
+            const r = await this.restartServer(owner.name);
+            const again = this.toolMap.get(name);
+            if (!r.restarted || !again) throw e;
+            return await this._callClient(again.client, again.originalName || name, args, signal, again.name);
+        }
+    }
+
+    _isClosedTransportError(e) {
+        const msg = String(e?.message || e || '').toLowerCase();
+        return msg.includes('not connected') || msg.includes('transport closed') || msg.includes('connection closed') || msg.includes('epipe');
     }
 
     /**
-     * Cancel all active long-running MCP tool calls.
-     * Called when the agent receives a stop request to abort in-flight browser_use_task etc.
+     * Cancel every in-flight MCP tool call.
+     * Called when the agent receives a stop request, so a long browser step ends at once.
      */
     cancelActiveCalls() {
         if (this._activeAbortControllers.size === 0) return;
-        console.log(`[MCP] Cancelling ${this._activeAbortControllers.size} active long-running call(s)...`);
+        console.log(`[MCP] Cancelling ${this._activeAbortControllers.size} active call(s)...`);
         for (const ac of this._activeAbortControllers) {
             try { ac.abort('Stop requested by user'); } catch {}
         }
         this._activeAbortControllers.clear();
     }
 
-    async _callClient(client, name, args, externalSignal) {
-        // Long-running tools get extended timeouts (default MCP SDK timeout is 60s)
-        const LONG_RUNNING_PREFIXES = ['browser_use_'];
-        const isLongRunning = LONG_RUNNING_PREFIXES.some(p => name.startsWith(p));
-        const timeout = isLongRunning ? 15 * 60 * 1000 : undefined; // 15 min or SDK default
+    async _callClient(client, name, args, externalSignal, serverName = null) {
+        // Per-server call timeout (`callTimeoutMs` in mcp_config.json); the SDK default is 60s.
+        const configured = serverName ? this.config?.[serverName]?.callTimeoutMs : undefined;
+        const timeout = Number.isFinite(configured) && configured > 0 ? configured : undefined;
 
-        // For long-running tools, create an AbortController so calls can be cancelled on stop
-        let ac, signal;
-        if (isLongRunning) {
-            ac = new AbortController();
-            this._activeAbortControllers.add(ac);
-            // If an external signal was provided (e.g., from stop), wire it to our controller
-            if (externalSignal) {
-                externalSignal.addEventListener('abort', () => ac.abort(externalSignal.reason), { once: true });
-            }
-            signal = ac.signal;
-        } else {
-            signal = externalSignal;
+        // Every call gets an AbortController so /stop can cancel it and so
+        // restartServer can see which server is busy.
+        const ac = new AbortController();
+        ac.toolName = name;
+        ac.serverName = serverName;
+        this._activeAbortControllers.add(ac);
+        if (externalSignal) {
+            if (externalSignal.aborted) ac.abort(externalSignal.reason);
+            else externalSignal.addEventListener('abort', () => ac.abort(externalSignal.reason), { once: true });
         }
+        const signal = ac.signal;
 
         try {
-            const options = {};
+            const options = { signal };
             if (timeout) options.timeout = timeout;
-            if (signal) options.signal = signal;
 
             const result = await client.callTool({
                 name: name,
                 arguments: args
-            }, undefined, Object.keys(options).length > 0 ? options : undefined);
+            }, undefined, options);
 
             // Let's return the simplified result
             if (result.content && result.content.length > 0) {
-                // Return text content
-                const text = result.content.map(c => c.text).join('\n');
+                // Text items join into `output`; image items (screenshots) go to
+                // `_images` so the agent can send them to the model as inlineData.
+                const text = result.content.filter(c => c.type !== 'image').map(c => c.text ?? '').join('\n');
                 const returnObj = { output: text };
+                const images = result.content
+                    .filter(c => c.type === 'image' && c.data)
+                    .map(c => ({ mimeType: c.mimeType || 'image/png', data: c.data }));
+                if (images.length > 0) returnObj._images = images;
+                if (result.isError) returnObj.error = text || 'Tool returned an error.';
 
-                // Extract usage metadata from MCP tool results (e.g. browser-use)
+                // Extract usage metadata from MCP tool results.
                 // Any MCP server can report token usage by including a "usage" field
                 // with { model, prompt_tokens, completion_tokens } in its JSON response.
                 try {
@@ -550,8 +692,8 @@ class MCPManager {
             }
             return result;
         } finally {
-            // Clean up tracked AbortController for long-running calls
-            if (ac) this._activeAbortControllers.delete(ac);
+            this._activeAbortControllers.delete(ac);
+            if (serverName) this._runPendingRestart(serverName);
         }
     }
 
@@ -559,20 +701,13 @@ class MCPManager {
 
     async close() {
         console.log('[MCP] Closing connections...');
-        for (const [name, client] of this.clients.entries()) {
-            try {
-                if (client.transport && typeof client.transport.close === 'function') {
-                    await client.transport.close();
-                } else if (typeof client.close === 'function') {
-                    await client.close();
-                }
-                console.log(`[MCP] Closed connection to ${name}`);
-            } catch (e) {
-                console.warn(`[MCP] Error closing ${name}:`, e.message);
-            }
+        // A restart in progress would otherwise spawn a child after this loop.
+        if (this._restarting.size > 0) await Promise.allSettled([...this._restarting.values()]);
+        for (const name of [...this.clients.keys()]) {
+            await this._closeClient(name);
         }
         this.clients.clear();
     }
 }
 
-module.exports = { MCPManager, GWS_MCP_SERVICES };
+module.exports = { MCPManager, GWS_MCP_SERVICES, OPTIONAL_VARS, BROWSER_LAUNCHER };

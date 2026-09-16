@@ -126,6 +126,9 @@ export default function ChatSessionPage({ params }) {
     const [selectedFiles, setSelectedFiles] = useState([]); // [{ file, name, size }]
     const [isSending, setIsSending] = useState(false);
     const isSendingRef = useRef(false);
+    // Set when the agent asks a question mid-run (askUser). The next send
+    // skips the outgoing queue: the run is waiting for exactly that message.
+    const pendingQuestionRef = useRef(null);
     const attachmentCount = selectedImages.length + selectedFiles.length + (audioBlob ? 1 : 0);
     const attachmentSlotsLeft = Math.max(0, MAX_ATTACHMENTS - attachmentCount);
 
@@ -506,6 +509,7 @@ export default function ChatSessionPage({ params }) {
                 }
 
                 setIsWaiting(false);
+                if (data.metadata?.question) pendingQuestionRef.current = data.metadata.question;
 
                 // Extract content
                 let msgContent = data.content;
@@ -854,6 +858,24 @@ export default function ChatSessionPage({ params }) {
         activeSocket.emit('chat:message', socketPayload);
     };
 
+    // Answer to an askUser question: send now, keep the running turn's
+    // latch and id as they are. The agent replies "Got it." and the run goes on.
+    const dispatchAnswer = ({ socketPayload, optimisticBubbles }) => {
+        const activeSocket = socketRef.current;
+        if (!activeSocket) return;
+        pendingQuestionRef.current = null;
+        for (const bubble of optimisticBubbles) addMessage(bubble);
+        activeSocket.emit('chat:message', socketPayload);
+    };
+
+    const sendOption = (text) => {
+        if (!socketRef.current || !text) return;
+        dispatchAnswer({
+            socketPayload: { content: text, files: [], chatId, metadata: {} },
+            optimisticBubbles: [{ role: 'user', content: text, type: 'text', timestamp: new Date().toISOString() }]
+        });
+    };
+
     // Pop the head of the queue (if any) and dispatch it. Returns true if
     // something was dispatched. Called from the chat:ack handler.
     const drainQueue = () => {
@@ -989,7 +1011,9 @@ export default function ChatSessionPage({ params }) {
                 }
             };
 
-            if (inFlightRef.current) {
+            if (pendingQuestionRef.current) {
+                dispatchAnswer({ socketPayload, optimisticBubbles });
+            } else if (inFlightRef.current) {
                 // Agent is still processing the prior turn — queue this one
                 // and dispatch it from the chat:ack handler. The optimistic
                 // bubbles live in the queue entry (not in `messages`) so
@@ -1328,6 +1352,21 @@ export default function ChatSessionPage({ params }) {
                                                 >
                                                     {msg.content}
                                                 </ReactMarkdown>
+                                            </div>
+                                        )}
+                                        {/* askUser options: chips that send the option text. Only on the last message. */}
+                                        {idx === displayItems.length - 1 && Array.isArray(msg.metadata?.question?.options) && msg.metadata.question.options.length > 0 && (
+                                            <div className="mt-2 flex flex-wrap gap-2">
+                                                {msg.metadata.question.options.map((opt, i) => (
+                                                    <button
+                                                        key={i}
+                                                        type="button"
+                                                        onClick={() => sendOption(String(opt))}
+                                                        className="px-3 py-1 rounded-full text-xs border border-indigo-500/50 bg-indigo-500/10 text-indigo-200 hover:bg-indigo-500/30 transition-colors"
+                                                    >
+                                                        {String(opt)}
+                                                    </button>
+                                                ))}
                                             </div>
                                         )}
                                         <div className="mt-1 text-[10px] opacity-50 flex items-center gap-2 text-zinc-500">

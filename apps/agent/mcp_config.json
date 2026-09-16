@@ -61,32 +61,36 @@
         "disabled": false
     },
     "browser": {
+        "transport": "stdio",
         "command": "node",
         "args": [
-            "index.js"
+            "scripts/browser-mcp.js",
+            "--headless",
+            "--user-data-dir",
+            "${DATA_DIR}/browser_profile/chromium",
+            "--secrets",
+            "${DATA_DIR}/browser_profile/browser-secrets.env",
+            "--output-dir",
+            "${DATA_DIR}/browser_profile/output",
+            "--config",
+            "playwright-mcp.config.json",
+            "--idle-timeout",
+            "600000",
+            "--timeout-navigation",
+            "45000",
+            "--image-responses",
+            "allow"
         ],
-        "cwd": "../../packages/mcp-servers/browser",
+        "cwd": "../../apps/agent",
         "env": {
-            "BROWSER_HEADLESS": "${BROWSER_HEADLESS}"
+            "PLAYWRIGHT_MCP_EXECUTABLE_PATH": "${BROWSER_EXECUTABLE_PATH}",
+            "DATA_DIR": "${DATA_DIR}"
         },
-        "disabled": true
-    },
-    "browser-use": {
-        "command": "python3",
-        "args": [
-            "server.py",
-            "--transport",
-            "stdio"
+        "excludeTools": [
+            "browser_run_code_unsafe",
+            "browser_close"
         ],
-        "cwd": "../../packages/mcp-servers/browser-use",
-        "env": {
-            "GOOGLE_API_KEY": "${GOOGLE_API_KEY}",
-            "WORKER_FLASH": "${WORKER_FLASH}",
-            "BROWSER_USE_HEADLESS": "${BROWSER_USE_HEADLESS}",
-            "BROWSER_EXECUTABLE_PATH": "${BROWSER_EXECUTABLE_PATH}",
-            "INTERFACES_URL": "${INTERFACES_URL}",
-            "DEEDEE_API_TOKEN": "${DEEDEE_API_TOKEN}"
-        },
+        "callTimeoutMs": 120000,
         "disabled": false
     },
     "pilotfy": {

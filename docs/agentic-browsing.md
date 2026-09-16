@@ -1,88 +1,162 @@
-# Agentic Browsing (Browser V2.1)
+# Agentic browsing (browser v3)
 
-DeeDee includes robust browser automation capabilities powered by Playwright. The V2.1 implementation relies on a highly reliable semantic approach using ARIA snapshots and ref-based interactions, with performance optimizations, network monitoring, multi-tab support, and diagnostic tools.
+Deedee browses with one MCP server: `@playwright/mcp` (pinned to 0.0.81),
+started by `mcp-manager` like every other server. It drives the system
+Chromium on a persistent profile. Spec: `specs/048-browser-v3.md`.
 
-## Architecture
--   **Service**: `@deedee/mcp-server-browser`
--   **Engine**: Playwright (System Chromium on Raspberry Pi)
--   **Persistence**: Uses a persistent profile in `browser-profile`. Cookies and logins survive restarts.
--   **Modularity**: The server is split into `state.js`, `snapshot.js`, `interactions.js`, `wait.js`, `vision.js`, `screencast.js`, `resource-blocker.js`, `console.js`, `network.js`, and `downloads.js`.
+## Parts
 
-## Primary Workflow: Ref-Based Interactions
+- **Server entry**: `browser` in `apps/agent/mcp_config.json`. The command is
+  `node scripts/browser-mcp.js …` with the Playwright CLI flags. Tools are named
+  `browser_*`. `browser_run_code_unsafe` and `browser_close` are excluded.
+- **Launcher stub**: `apps/agent/scripts/browser-mcp.js`. Before the real CLI it
+  clears a stale Chromium profile lock (only when the lock's pid is dead or not
+  Chromium), creates an empty secrets file when missing, and waits up to 15 s
+  for port 9222 to be free (on a restart the old Chromium may hold it for a
+  few seconds). A port still busy after that exits 1 with a clear message.
+- **Playwright config**: `apps/agent/playwright-mcp.config.json`. Adds
+  `--remote-debugging-port=9222` so the live viewer can attach, turns off the
+  Chromium sandbox (the container runs as root), and sets a 1280x800 viewport.
+- **Profile**: `${DATA_DIR}/browser_profile/chromium` (in the agent data
+  volume). Cookies and logins survive restarts and deploys.
+- **Output**: `${DATA_DIR}/browser_profile/output` (screenshots, downloads).
+- **Idle**: Chromium closes after 10 minutes without a tool call. The next
+  call starts it again on the same profile.
+- **Timeouts**: 45 s per navigation, 120 s per tool call (`callTimeoutMs`).
 
-Instead of brittle CSS selectors, the agent uses **refs** (e.g., `e1`, `e2`) mapped to interactive elements on the page.
+## How the model browses
 
-1. **Navigate**: `browser_navigate(url)` auto-returns a compact ARIA snapshot with refs.
-2. **Snapshot**: `browser_snapshot()` can be called anytime to get the current page structure and available refs.
-3. **Interact**: Use tools like `browser_click(ref)`, `browser_type(ref, text)`, `browser_fill_form`, etc., using the refs from the snapshot.
-4. **Auto-Snapshot**: Click, type (with submit), fill_form, select, and press_key automatically return an updated snapshot. Use `autoSnapshot: false` to opt out.
+1. `browser_navigate(url)` returns a snapshot: the page as an accessibility
+   tree where every element has a `ref` (like `e12`).
+2. `browser_click`, `browser_type`, `browser_select_option`, `browser_hover`
+   and `browser_fill_form` take that `ref`. Most actions return a new snapshot.
+3. `browser_take_screenshot` only to check visuals. The image goes to Gemini
+   as `functionResponse.parts[].inlineData`; the DB row and the UI keep only a
+   count. If the model rejects that shape, the agent resends the text result
+   and then the image as a separate user message.
+4. Browser calls run one at a time and are exempt from loop detection.
 
-## Tools Overview
+The prompt rules live in `apps/agent/src/prompts/system.js` (BROWSER PROTOCOL).
 
-### Navigation & Inspection
--   `browser_navigate`: Visit a website and get a snapshot.
--   `browser_snapshot`: Get the page's ARIA accessibility tree with refs. Supports interacting inside iframes via `frameSelector`.
--   `browser_screenshot`: Take a screenshot. Supports `--withLabels` to draw bounding boxes with ref labels without mutating the DOM.
--   `browser_extract_text`: Extract visible text content as Markdown. Uses Mozilla Readability for article content with fallback to Turndown. Supports `selector` param to target specific sections.
+## Secrets by name
 
-### Interaction (Ref-Based)
-All interaction tools support optional `timeoutMs` to handle slow SPAs, and `frameSelector` to interact with cross-origin iframes. Successful interactions automatically include an updated ARIA snapshot in the response (opt out with `autoSnapshot: false`).
--   `browser_click`: Click an element by ref.
--   `browser_type`: Type text into an element by ref.
--   `browser_fill_form`: Batch-fill multiple inputs quickly.
--   `browser_select`: Select dropdown options.
--   `browser_hover`: Hover over an element.
--   `browser_scroll`: Scroll to an element or directionally.
--   `browser_press_key`: Press keyboard keys.
--   `browser_drag`: Drag an element to another by their refs.
+Diego saves secrets in **Settings > Browser secrets** as a JSON map
+(`{"SITE_USER": "...", "SITE_PASSWORD": "..."}`). Names must match
+`^[A-Z0-9_]+$`. The agent stores `browser-secrets.json`, renders
+`browser-secrets.env` for the server's `--secrets` flag, and restarts the
+browser server (after any running browser call ends). It renders the `.env`
+again on every boot.
 
-### Waiting & Advanced
--   `browser_wait`: Wait for text to appear/disappear, URLs to match, load states, network responses (`networkUrl`), or fixed time.
--   `browser_evaluate`: Run arbitrary Javascript on the page.
+The model only ever sees the names, listed in each turn's context. It types a
+name with `browser_type`; the server swaps it for the value on an exact match.
+Tool output shows values as `<secret>NAME</secret>`. The `$SECRET` skill
+substitution is skipped for `browser_` tools so names reach the server as typed.
+The confirmation manager stops `runShellCommand`, `readFile` and
+`listDirectory` from touching `browser_profile/`, `browser-secrets*` or the
+CDP port 9222, so a page cannot talk the model into reading the values or
+dumping cookies with `Network.getAllCookies`.
 
-### Network Monitoring
--   `browser_network_log`: View recent network requests. Filter by `urlFilter`, `resourceType`, or `limit`. Essential for debugging API calls and understanding SPA data flow.
--   `browser_wait_for_response`: Wait for a network response matching a URL pattern. Returns the response body — critical for capturing AJAX results like flight prices or search results.
--   `browser_get_response_body`: Get the most recent response body matching a URL pattern.
+A save restarts Chromium. Someone using the live viewer at that moment sees the
+browser close; the profile keeps the cookies.
 
-### Console & Diagnostics
--   `browser_console_messages`: View captured browser console messages. Filter by `level` (error, warn, log, info, debug). Optionally `clear` after reading.
+## Live view
 
-### Performance
--   `browser_set_resource_blocking`: Control which resource types are blocked. Default blocks images, fonts, media, and known ad/tracker domains for faster page loads. Pass `["none"]` to disable blocking when you need images.
+`/browser` in the web app shows the page the MCP server drives and lets Diego
+type a URL, click, type and log in himself. The Sidebar links to it, and the
+chat widget (`LiveBrowserWidget`) shows the same frames while the agent uses
+the browser, with a link to the full page.
 
-### Multi-Tab
--   `browser_list_tabs`: List all open tabs with index, URL, and title.
--   `browser_new_tab`: Open a new tab, optionally navigating to a URL.
--   `browser_switch_tab`: Switch to a tab by index.
--   `browser_close_tab`: Close a tab by index.
+- **Agent**: `apps/agent/src/services/browser-live.js` speaks raw CDP over the
+  global `WebSocket` to Chromium's debug port (9222, read from
+  `playwright-mcp.config.json`). It picks the focused page target from
+  `/json/list`, runs `Page.startScreencast` (JPEG, quality 50, max 1280x800,
+  every 2nd frame), acks each frame and broadcasts at most 5 per second as
+  `browser:frame { data, w, h, url }`. `w` and `h` are viewport pixels; the
+  viewer scales mouse positions to them. Input maps to
+  `Input.dispatchMouseEvent`, `Input.insertText` (printable text) and
+  `Input.dispatchKeyEvent` (Enter, Tab, Backspace, Escape, Delete, arrows,
+  Home, End, PageUp, PageDown). The URL bar calls `Page.navigate`; only
+  `http`, `https` and `about:blank` pass.
+- **Watch pings**: the page sends `browser:watch` every 10 s. The screencast
+  starts on the first ping, stops 30 s after the last one, and reconnects
+  every 3 s while watched if Chromium closes. While watched the service
+  calls `browser_tabs list` every 5 minutes through `mcp.callTool`, so the
+  server's idle timer does not close Chromium under Diego. This call skips
+  the agent loop, history and the `agent:tool_call` broadcast.
+- **Start**: `mcp.callTool('browser_navigate', { url: 'about:blank' })`, so
+  the MCP server stays the only launcher.
+- **Status**: `browser:status { running, url, agentBusy, watchers }` goes out
+  on change. `agentBusy` is true while a `browser_` tool call is in flight.
+  The viewer then locks input until "Take over" is pressed; the lock returns
+  with the agent's next call.
+- **Routes**: agent `POST /internal/browser/live/watch|input|navigate|start`
+  and `GET /internal/browser/live/status` (bearer `DEEDEE_INTERNAL_TOKEN`).
+  The interfaces service maps socket events `browser:watch`, `browser:input`
+  and `browser:navigate` to them and drops input above 60 events per second
+  per socket. The API proxies `GET /v1/browser/status` and
+  `POST /v1/browser/start` for the page's first render.
+- **Access**: any signed-in web user can watch and drive the browser. Fine
+  for a single owner.
 
-### Downloads & Uploads
--   `browser_list_downloads`: List recently downloaded files with paths and sizes.
--   `browser_upload_file`: Upload files to a file input by ref. Paths are validated against an allowlist (user data dir, /tmp, ~/Downloads).
+### Login sequence
 
-### Cookies & Storage
--   `browser_get_cookies`: Get cookies, optionally filtered by URL.
--   `browser_set_cookie`: Set a cookie with name, value, domain, and optional attributes.
--   `browser_clear_cookies`: Clear cookies, optionally filtered by domain.
--   `browser_local_storage`: Interact with localStorage — `get`, `set`, `delete`, or `list` actions.
+Open `/browser`, press Start, type the site URL, log in with real keystrokes
+and handle the OTP on the phone. Cookies land in `browser_profile/chromium`.
+Leave; idle closes Chromium after 10 minutes. Later the model's
+`browser_navigate` relaunches on the same profile and the snapshot shows the
+site logged in.
 
-### Identity & Secrets
-To avoid leaking passwords in context, utilize the Secret Store:
-1.  **List Secrets**: `browser_list_secrets()` shows available keys (filters for `BROWSER_SECRET_` env vars and `browser-secrets.json`).
-2.  **Use Secrets**: `browser_fill_secret(ref, secretKey)` types the value securely directly into the Playwright frame.
+## Questions to the user
 
-## Resilience & Stability
--   **AI-Friendly Errors**: If Playwright fails due to an element being intercepted (e.g., covered by a modal) or timing out, the MCP server intercepts the crash and returns an actionable error message to the agent instead of throwing an unhandled exception. Recent console errors are appended to interaction failure messages for better diagnostics.
--   **Snapshot Truncation**: To protect LLM memory limits, `browser_snapshot` output is capped at 20,000 characters.
--   **Iframe Tunneling**: Elements inside cross-origin iframes (like Captchas or Stripe checkouts) can be accessed seamlessly by passing `frameSelector` to snapshot and interaction tools.
--   **Resource Blocking**: Images, fonts, media, and ad trackers are blocked by default, significantly reducing page load times on complex sites (airlines, e-commerce).
--   **Network Waiters Cleanup**: Pending network waiters are automatically rejected on page navigation to prevent hanging promises.
--   **Download Safety**: Filenames are sanitized (path traversal prevention, null byte removal, length limits), and files are saved atomically with timestamp suffixes to prevent race conditions.
--   **Upload Path Validation**: File uploads are restricted to allowed directories to prevent arbitrary filesystem access.
+- `askUser({ question, options?, timeoutSeconds? })` lets the model ask for an
+  OTP, a CAPTCHA or a choice and wait. Default wait 300 s, max 900 s. The next
+  plain text message in the reply chat is the answer; a number picks an option.
+  The web chat shows options as chips. The model gets `{ answer }`,
+  `{ cancelled: true }` or `{ timeout: true }`.
+  - Reply chat: a web, Telegram or WhatsApp assistant run asks in its own chat.
+    A scheduled job, a system run or a watcher run asks the owner on the
+    notification channel. A sub-agent asks in its parent's chat when that is a
+    live chat; otherwise the tool returns an error and the sub-agent reports
+    what it needs.
+  - One open question per reply chat. `/stop`, `/cancel` and the web Stop
+    button end the wait. Open rows in `pending_questions` expire on boot. The
+    first message within 120 s of an expiry gets "That question expired."
+    when it reads as an answer (an option number, an option's text, or, with
+    no options, a bare 4-8 digit code). Anything else, a single word included,
+    runs as a normal request.
+  - The question goes out through `interface.send`, so it shows at once even
+    though the run is still going. The interfaces -> agent `/chat` call has no
+    HTTP timeout; keep it that way, or the run dies while it waits.
 
-## Configuration (Env Vars)
--   `BROWSER_HEADLESS`: `true` (default) or `false`.
--   `BROWSER_USER_DATA_DIR`: Path to profile.
--   `BROWSER_EXECUTABLE_PATH`: Path to custom chromium executable (Automatic on Docker).
--   `INTERFACES_URL` / `DEEDEE_API_TOKEN`: Used for the CDP live screencast relay.
+## Failure modes
+
+- Chromium crash: the tool returns an error; the next call relaunches it.
+  The live view sees the socket close, shows "Browser closed" and Start.
+- Stale `SingletonLock` after a hard kill: the stub removes it.
+- Port 9222 busy: the stub waits up to 15 s, then exits 1; `getStatus` shows
+  the server down; `POST /internal/mcp/reload` starts it again once the port
+  is free.
+- Server death: the next call restarts the server once and retries.
+- Secrets file missing: the server starts with no secrets.
+
+## Smoke test
+
+`apps/agent/scripts/browser-smoke.js` starts the server with the args from
+`mcp_config.json` in a temp `DATA_DIR`, navigates to a `data:` URL, checks the
+snapshot text, checks that a screenshot returns an image, and checks that
+`http://127.0.0.1:<port>/json/version` answers. It uses its own CDP port
+(`SMOKE_CDP_PORT`, default 9333) through a temp copy of the Playwright config,
+so it runs beside the agent's live browser server without a false "port busy"
+FAIL. CI runs it on `node:24.18.0-alpine` with Alpine Chromium (job
+`browser-smoke`) from the repo root: `node apps/agent/scripts/browser-smoke.js`.
+Inside the agent container after a deploy the WORKDIR is `/app/apps/agent`, so
+run `node scripts/browser-smoke.js`. Set `BROWSER_EXECUTABLE_PATH` to use
+another binary.
+
+## Env
+
+- `BROWSER_EXECUTABLE_PATH`: Chromium binary. `/usr/bin/chromium-browser` in
+  the container; unset on a dev box lets Playwright pick its own.
+- `DATA_DIR`: agent data dir; `/app/data` in the container.
+- `PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD=1`: set in the image; the system Chromium
+  is used instead of a download.
