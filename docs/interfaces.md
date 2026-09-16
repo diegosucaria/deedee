@@ -2,6 +2,8 @@
 
 Deedee communicates with you through various "Interfaces". The main `apps/interfaces` service handles these connections.
 
+> Outbound owner notifications (reminders, job output, alerts, questions) go through the delivery ledger, which retries and falls back between WhatsApp and Telegram. See [notifications.md](./notifications.md).
+
 ## 📱 WhatsApp
 
 Deedee uses [Baileys](https://github.com/WhiskeySockets/Baileys) to connect to WhatsApp Multi-Device.
