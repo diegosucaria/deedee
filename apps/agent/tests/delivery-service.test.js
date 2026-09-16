@@ -60,9 +60,10 @@ describe('DeliveryService', () => {
             expect(formatTarget('whatsapp', 'abc')).toBeNull();
         });
 
-        test('telegram needs a numeric chat id', () => {
+        test('telegram keeps its chat id and refuses a WhatsApp JID', () => {
             expect(formatTarget('telegram', ' 42 ')).toBe('42');
             expect(formatTarget('telegram', '-1000000000001')).toBe('-1000000000001');
+            expect(formatTarget('telegram', 'tg-1')).toBe('tg-1');
             expect(formatTarget('telegram', OWNER_JID)).toBeNull();
             expect(formatTarget('telegram', '')).toBeNull();
         });
@@ -83,6 +84,7 @@ describe('DeliveryService', () => {
             const msg = sentMessages()[0];
             expect(msg).toEqual({
                 id: res.id,
+                role: 'assistant',
                 source: 'whatsapp',
                 content: 'Drink water',
                 type: 'text',

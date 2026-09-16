@@ -55,7 +55,9 @@ function formatTarget(channel, target) {
         return digits ? `${digits}@s.whatsapp.net` : null;
     }
     if (channel === 'telegram') {
-        return /^-?\d+$/.test(raw) ? raw : null;
+        // Telegram chat ids are numbers (groups negative). A WhatsApp JID here
+        // is the old routing bug; anything else passes through untouched.
+        return raw.includes('@') ? null : raw;
     }
     return raw;
 }
@@ -121,17 +123,18 @@ class DeliveryService {
         this.timer = null;
     }
 
-    /** Fresh settings from the DB when possible; the in-memory copy otherwise. */
+    /** Fresh DB settings win; the agent's in-memory copy fills the gaps. */
     settings() {
+        const memory = this.agent.settings || {};
         try {
             if (this.db && typeof this.db.getAllAgentSettings === 'function') {
                 const s = this.db.getAllAgentSettings();
-                if (s && typeof s === 'object') return s;
+                if (s && typeof s === 'object') return { ...memory, ...s };
             }
         } catch (e) {
             console.warn('[Delivery] settings read failed:', e.message);
         }
-        return this.agent.settings || {};
+        return memory;
     }
 
     /**
@@ -214,6 +217,7 @@ class DeliveryService {
         if (channel === 'whatsapp' && !metadata.session) metadata.session = 'assistant';
         const message = {
             id,
+            role: 'assistant',
             source: channel,
             content: p.content,
             type: p.type || 'text',
