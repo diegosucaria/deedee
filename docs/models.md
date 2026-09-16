@@ -120,9 +120,13 @@ $0.20 per million. `getStats()` (the `/system` page) shows the chunk count.
 
 ## Live
 
-The `/live` page still gets its token from `google-auth-library`
-(`apps/agent/src/routes/live.js`). Moving it to ephemeral tokens is a separate
-change; the smoke's `live` check already exercises that path.
+`POST /live/token` (`apps/agent/src/routes/live.js`) mints an ephemeral token
+with `client.authTokens.create`: v1alpha, one use, 30 minutes, locked to the
+LIVE model and to AUDIO. The `/live` page opens the
+`v1beta ... BidiGenerateContentConstrained` socket with it and sends a setup
+message with the Agent's Live prompt (`apps/agent/src/prompts/live.js`), the
+voice and the tool list. The smoke's `live` check makes the same call. Details
+in `docs/interfaces.md`, "Gemini Live".
 
 ## Thinking levels
 

@@ -97,15 +97,37 @@ You can configure which Slack channels should be scanned *per workspace* by sche
 ---
 
 ## 🎙️ Gemini Live (Real-Time)
-Deedee supports the high-performance **Gemini Live API** for real-time, low-latency voice interaction.
+Deedee supports the **Gemini Live API** for real-time, low-latency voice interaction at `/live`.
 
 ### Architecture
--   **Client**: The Web UI (`apps/web`) establishes a WebSocket connection directly to Google's servers.
--   **Proxy**: Initial authentication is handled via `POST /v1/live/token` on the API, which proxies to the Agent to generate an ephemeral token.
--   **Tools**: The Client acts as a "Tool Client", executing tools locally (like `get_weather`) or forwarding complex tool calls (like `send_whatsapp`) back to the Agent via `POST /v1/live/tools/execute` (which proxies to `POST /tools/execute` on the Agent).
+-   **Client**: The Web UI (`apps/web/src/app/live/page.js`) opens a WebSocket straight to Google:
+    `wss://generativelanguage.googleapis.com/ws/google.ai.generativelanguage.v1beta.GenerativeService.BidiGenerateContentConstrained?access_token=<token>`.
+    The pure helpers in `apps/web/src/app/live/live-session.js` pick the URL and build the setup message.
+-   **Token**: `POST /v1/live/token` on the API proxies to `POST /live/token` on the Agent. The Agent mints an
+    ephemeral token with `client.authTokens.create` and its `GOOGLE_API_KEY`: one use, a session of up to
+    30 minutes, and the browser must connect within 2 minutes. `liveConnectConstraints` plus
+    `lockAdditionalFields: []` lock the token to the `LIVE` model (`WORKER_LIVE`) and to
+    `responseModalities: ['AUDIO']`; the setup message supplies the rest. The response is `{ token, model, expiresAt }`.
+-   **Config**: `GET /v1/live/config` returns `{ model, voice, systemInstruction }`. The Agent builds the system
+    instruction in `apps/agent/src/prompts/live.js` from the chat prompt's identity, constitution and language
+    rules, the owner's communication style, and a facts block capped at about 1,500 tokens (the whole
+    instruction at about 3,000). The coding prompt and the tool protocols stay out. The Agent logs the size on
+    each call; the page logs the size of the whole setup message.
+-   **Setup**: camelCase, as the `@google/genai` SDK sends it: `setup.model`, `setup.generationConfig.responseModalities`,
+    `setup.generationConfig.speechConfig`, `setup.systemInstruction.parts` and `setup.tools` (`googleSearch` plus
+    the Agent's function declarations, cleaned by `cleanSchema`). Microphone audio goes out as `realtimeInput.audio`.
+-   **Tools**: The client forwards each `toolCall` to `POST /v1/live/tools/execute`, which proxies to
+    `POST /tools/execute` on the Agent, then answers Google with `toolResponse.functionResponses`.
+
+### Requirements
+-   `GOOGLE_API_KEY` on the `agent` service. Google rejects service-account OAuth tokens on the Live socket
+    (close code 1008, "Access to Gemini API is restricted with service accounts"), so the old
+    `google-auth-library` path is gone.
+-   Keep `lockAdditionalFields: []` when you change the constraints. A token with constraints and no field
+    mask makes Google ignore the browser's setup message, tools included.
 
 ### Features
--   **Language Detection**: Automatically detects language based on the user's voice (configured via system instruction).
+-   **Language Detection**: The Agent's Live prompt tells the model to speak the language the user speaks.
 -   **Interruptibility**: You can interrupt the model at any time.
 -   **Tool Use**: Full access to Deedee's toolset (WhatsApp, Calendar, etc.) via the proxy mechanism.
 

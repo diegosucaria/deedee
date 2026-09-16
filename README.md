@@ -439,7 +439,7 @@ MIT License. See [LICENSE](LICENSE) file.
 
 ### 3. Live API (WebSockets)
 - **Constraint**: The Live API schema validation is incredibly strict. It forbids `additionalProperties` and certain `$ref` structures.
-- **Solution**: Use the `cleanSchema` utility in `apps/web/src/app/live/page.js` to strip unauthorized keys before sending tools.
+- **Solution**: Use the `cleanSchema` utility in `apps/web/src/app/live/live-session.js` to strip unauthorized keys before sending tools.
 - **Handshake**: Voice preferences **MUST** be sent in the initial `setup` message.
 
 ### 4. Search Strategy (Hybrid)
