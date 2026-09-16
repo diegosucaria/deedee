@@ -106,6 +106,8 @@ router.post('/subagents/cleanup', (req, res) => proxyRequest(req, res, 'POST', '
 // Notifications
 router.get('/notifications', (req, res) => proxyRequest(req, res, 'GET', '/internal/notifications'));
 router.get('/notifications/count', (req, res) => proxyRequest(req, res, 'GET', '/internal/notifications/count'));
+router.get('/notifications/outbox', (req, res) => proxyRequest(req, res, 'GET', '/internal/notifications/outbox'));
+router.post('/notifications/outbox/:id/retry', (req, res) => proxyRequest(req, res, 'POST', `/internal/notifications/outbox/${encodeURIComponent(req.params.id)}/retry`));
 router.post('/notifications/:id/read', (req, res) => proxyRequest(req, res, 'POST', `/internal/notifications/${encodeURIComponent(req.params.id)}/read`));
 router.post('/notifications/read-all', (req, res) => proxyRequest(req, res, 'POST', '/internal/notifications/read-all'));
 router.post('/notifications/:id/dismiss', (req, res) => proxyRequest(req, res, 'POST', `/internal/notifications/${encodeURIComponent(req.params.id)}/dismiss`));

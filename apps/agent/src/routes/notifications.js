@@ -24,6 +24,31 @@ function createNotificationsRouter(agent) {
         }
     });
 
+    // GET /internal/notifications/outbox?limit=50&status=failed
+    // Delivery ledger: recent rows plus counts by status.
+    router.get('/outbox', (req, res) => {
+        try {
+            const { limit, status } = req.query;
+            const statusFilter = status && ['pending', 'sent', 'failed', 'dead'].includes(status) ? status : null;
+            const rows = agent.delivery.listRecent(parseInt(limit) || 50, statusFilter);
+            res.json({ rows, counts: agent.delivery.counts() });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
+    // POST /internal/notifications/outbox/:id/retry
+    // Puts a pending, failed or dead row back in line and tries at once.
+    router.post('/outbox/:id/retry', async (req, res) => {
+        try {
+            const result = await agent.delivery.retryNow(req.params.id);
+            if (!result) return res.status(404).json({ error: 'Row not found or already sent' });
+            res.json({ success: true, delivered: !!result.delivered, status: result.status, via: result.via || null, row: result.row });
+        } catch (e) {
+            res.status(500).json({ error: e.message });
+        }
+    });
+
     // GET /internal/notifications/count
     router.get('/count', (req, res) => {
         try {
