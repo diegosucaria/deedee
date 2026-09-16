@@ -214,6 +214,7 @@ export async function saveBrowserSecretsRaw(jsonContent) {
 const BROWSER_STATUS_DOWN = { running: false, url: null, agentBusy: false, watchers: 0 };
 
 export async function getBrowserStatus() {
+    await requireActionSession();
     try {
         return await fetchAPI('/v1/browser/status');
     } catch (e) {
@@ -223,6 +224,7 @@ export async function getBrowserStatus() {
 }
 
 export async function startBrowser() {
+    await requireActionSession();
     try {
         return await fetchAPI('/v1/browser/start', { method: 'POST' });
     } catch (e) {
