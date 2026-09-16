@@ -93,7 +93,8 @@ class MemoryPruningService {
         const prompt = getMemoryPruningPrompt(facts, currentDate);
 
         // 3. Call LLM 
-        const modelName = this.agent.configService.getModel('PRO');
+        // FLASH: the backup file written above covers a wrong verdict.
+        const modelName = this.agent.configService.getModel('FLASH');
 
         try {
             const response = await this.agent.client.models.generateContent({
