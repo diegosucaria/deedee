@@ -7,8 +7,8 @@ Code asks for a role, never for an id: `configService.getModel('FLASH')`.
 | Role | Env var | Default id | Used for | $/1M tokens in → out |
 |---|---|---|---|---|
 | ROUTER | `ROUTER_MODEL` | `gemini-3.1-flash-lite` | picks FLASH or PRO and the tool mode per message | 0.25 → 1.50 |
-| LITE | `WORKER_LITE` | `gemini-3.1-flash-lite` | transcription, image descriptions, tool scoping, summaries | 0.25 → 1.50 |
-| FLASH | `WORKER_FLASH` | `gemini-3.6-flash` | main chat, tool loops, sub-agents, most services | 0.75 → 3.75 |
+| LITE | `WORKER_LITE` | `gemini-3.1-flash-lite` | transcription, image descriptions, tool scoping, summaries, lightweight sub-agents, sub-agent result summaries | 0.25 → 1.50 |
+| FLASH | `WORKER_FLASH` | `gemini-3.6-flash` | main chat, tool loops, sub-agents, system jobs, nightly dream and pruning, most services | 0.75 → 3.75 |
 | SEARCH | `WORKER_GOOGLE_SEARCH` | `gemini-3.6-flash` | Google Search grounding | 0.75 → 3.75, plus grounding quota |
 | PRO | `WORKER_PRO` | `gemini-3.1-pro-preview` | hard reasoning, code, planning | 2.00 → 12.00 (4.00 → 18.00 above 200k input) |
 | TTS | `GEMINI_TTS_MODEL` | `gemini-2.5-flash-preview-tts` | voice notes | 0.50 → 10.00 |
@@ -28,6 +28,44 @@ of 5,000 per month, then cost $14 per 1,000.
   `agent` service. The old ids are kept as comments in compose for this.
 - Never write an id in code. Use `configService.getModel('ROLE')`; the role→env
   map is `CONSTANTS.MODEL_ENV_VARS`.
+
+## System jobs and sub-agents
+
+System jobs that run an agent turn no longer go through the router. Each
+`SYSTEM_JOBS` entry in `apps/agent/src/scheduler.js` names its model and tool
+list:
+
+| job | model | tools |
+|---|---|---|
+| `proactive_thought` | FLASH | `spawnAgent`, `getAgentResult`, `scheduleJob`, `setReminder`, `sendMessage`, `searchMemory`, `getFact`, `saveJobState`, `getJobState` |
+| `wardrobe_pretrip_check` | FLASH | `list_wardrobe_trips`, `start_wardrobe_trip`, `wardrobe_pack_for_trip`, `spawnAgent`, `getAgentResult`, `sendMessage` |
+| `wardrobe_morning_outfit` | FLASH | `spawnAgent`, `getAgentResult`, `recommend_outfit`, `sendMessage`, `getFact`, `searchMemory` |
+
+The PRO calls inside `recommend_outfit`, `wardrobe_pack_for_trip` and
+`consolidateMemory` stay. `nightly_consolidation` calls `consolidateMemory`
+through the tool executor, with no agent turn. `nightly_dream` and
+`nightly_memory_pruning` call FLASH.
+
+- Override per job: set `model` or `allowedTools` on the job's row in
+  `scheduled_jobs` (payload JSON). The row wins and survives restarts; the
+  defaults sit under `payload.scope`.
+- Roll back: `SYSTEM_JOBS_SCOPED=0` sends system jobs with no model and no
+  tool list, as before.
+
+Sub-agents (`apps/agent/src/services/subagent-service.js`):
+
+- `lightweight: true` with no `model` runs on LITE. `SUBAGENT_LIGHTWEIGHT_MODEL=FLASH`
+  rolls that back. `FLASH` is the default, `PRO` only when asked.
+- Tool loops per run: 20, or 50 when the allowlist names browser tools
+  (`metadata.maxToolLoops`; the agent's browser escalation still applies).
+- A result longer than `SUBAGENT_RESULT_CAP` (4,000 chars; 0 disables) is
+  compressed by LITE with MINIMAL thinking, tag `subagent_summary`. The full
+  text is kept in `subagents.result_full`; `getAgentResult(taskId, full: true)`
+  returns it.
+- Sub-agent turns do not ask for thought parts.
+
+Watch: `tag IN ('job', 'job_tool_loop')` by model, cost per day for
+`chat_id LIKE 'system_wardrobe%'`, and `tag LIKE 'subagent%'`.
 
 ## Pricing table and cost tracking
 
