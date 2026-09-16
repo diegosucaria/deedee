@@ -46,6 +46,7 @@ const browserSecrets = require('./utils/browser-secrets');
 const { sanitizeFunctionDeclarations } = require('./utils/gemini-schema-sanitizer');
 const { filterCalendarResult } = require('./utils/calendar-filter');
 const { NotificationService } = require('./utils/notifications');
+const { DeliveryService } = require('./services/delivery-service');
 
 
 // Compact, redacted JSON-ish preview of tool args/results for the chat UI.
@@ -163,6 +164,8 @@ class Agent {
     this.browserLive = new BrowserLive(this);
     this.toolScoper = new ToolScoper(config.googleApiKey, this.db);
     this.notifications = new NotificationService(this.db, this.interface);
+    // Delivery ledger: retries, backoff and the fallback channel for owner notifications.
+    this.delivery = new DeliveryService(this);
 
     // In-Memory Settings Cache
     this.settings = {};
@@ -204,6 +207,7 @@ class Agent {
     if (this.scheduler) {
       await this.scheduler.stop();
     }
+    if (this.delivery) this.delivery.stop();
     if (this.browserLive) {
       try { this.browserLive.close(); } catch (e) { console.warn('[Agent] browserLive close failed:', e.message); }
     }
@@ -321,6 +325,9 @@ class Agent {
     const originalSend = this.interface.send.bind(this.interface);
     this.interface.send = async (payload) => {
       const result = await originalSend(payload);
+      // A refused send never reached the owner. The ledger retries it under
+      // the same id, so the thread gets the message once it goes out.
+      if (result === false) return result;
       // Defer to setImmediate so the mirror runs after any in-flight microtasks,
       // including a follow-up db.saveMessage(reply) in paths that save AFTER
       // calling interface.send (e.g. agent.js xAI streaming path). The mirror's
@@ -362,6 +369,18 @@ class Agent {
       const content = String(reply?.content || '').slice(0, 200);
       console.error(`[Agent] Reply not delivered (chat ${chatId || '?'}, source ${source || '?'}).`);
 
+      // The ledger retries the reply with backoff and, when the chat is the
+      // owner's, tries the other owner channel after two failures.
+      let outboxId = null;
+      if (chatId && source) {
+        try {
+          const queued = await this.delivery.enqueueFailed('reply', source, chatId, reply, { origin: chatId, error: 'interface refused the reply' });
+          if (queued?.id) outboxId = queued.id;
+        } catch (e) {
+          console.error('[Agent] Failed to queue the reply for retry:', e.message);
+        }
+      }
+
       // One notification per (chat, source) every 30 minutes. A broken
       // interface fails every reply; repeats only add to the log count.
       const COOLDOWN_MS = 30 * 60 * 1000;
@@ -380,8 +399,8 @@ class Agent {
           type: 'delivery_failure',
           severity: 'error',
           title: 'Reply not delivered',
-          message: `The interface did not accept a reply for chat ${chatId || 'unknown'} (${source || 'unknown'}).`,
-          metadata: { chatId, source, content, link: chatId ? `/system/history?chatId=${encodeURIComponent(chatId)}` : '/system/history' }
+          message: `The interface did not accept a reply for chat ${chatId || 'unknown'} (${source || 'unknown'}).${outboxId ? ' It is queued for retry.' : ''}`,
+          metadata: { chatId, source, content, outboxId, link: chatId ? `/system/history?chatId=${encodeURIComponent(chatId)}` : '/system/history' }
         });
       } catch (e) {
         console.error('[Agent] Failed to record delivery failure:', e.message);
@@ -406,85 +425,51 @@ class Agent {
     // alert goes through, so it always leaves a dashboard notification too.
     const isWhatsAppRepair = String(key).startsWith('whatsapp_needs_repair');
     let delivered = false;
+    let queued = false;
     let notified = false;
 
-    const setting = this.db.getAgentSetting('owner_phone');
-    const ownerPhone = (setting && setting.value) || process.env.MY_PHONE || '';
-    if (!ownerPhone) {
-      console.warn('[Agent] deliverSystemAlert: no owner_phone configured; skipping WhatsApp.');
+    // The ledger honors notification_channel, tries the other owner channel
+    // at once when the first one refuses, and keeps retrying with backoff.
+    const owner = this.delivery.resolveOwnerTarget();
+    if (!owner) {
+      console.warn('[Agent] deliverSystemAlert: no owner channel configured (owner_phone or ALLOWED_TELEGRAM_IDS); dashboard only.');
     } else {
       try {
-        const result = await this.interface.send({
-          source: 'whatsapp:assistant',
-          content: text,
-          type: 'text',
-          metadata: { chatId: ownerPhone },
-          isNotification: true
-        });
-        delivered = result !== false;
+        const res = await this.delivery.deliver('system_alert', owner.channel, owner.target, { content: text }, { origin: key, immediateFallback: true });
+        delivered = !!res.delivered;
+        queued = !!res.queued;
         if (delivered) {
-          console.log(`[Agent] Delivered system alert to owner (key='${key}').`);
+          console.log(`[Agent] Delivered system alert to owner via ${res.via || owner.channel} (key='${key}').`);
         } else {
-          console.error(`[Agent] deliverSystemAlert: WhatsApp did not accept the alert (key='${key}').`);
+          console.error(`[Agent] deliverSystemAlert: no channel accepted the alert (key='${key}')${queued ? '; queued for retry' : ''}.`);
         }
       } catch (e) {
         console.error('[Agent] deliverSystemAlert send failed:', e.message);
       }
     }
 
-    if (!delivered) {
-      delivered = await this._sendTelegramAlert(text, key);
-    }
-
     if (!delivered || isWhatsAppRepair) {
-      notified = this._notifySystemAlert(text, key, delivered);
+      notified = this._notifySystemAlert(text, key, delivered, queued);
     }
 
-    // Only remember the alert when someone can see it; otherwise try again
-    // on the next trigger.
-    if (delivered || notified) this._systemAlertDedup.set(key, now);
-    return delivered || notified;
-  }
-
-  /**
-   * Send a system alert to the first allowed Telegram id, when Telegram is set up.
-   * @returns {Promise<boolean>} true when the interface accepted the message
-   */
-  async _sendTelegramAlert(text, key) {
-    const ids = String(process.env.ALLOWED_TELEGRAM_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
-    if (ids.length === 0) return false;
-    try {
-      const result = await this.interface.send({
-        source: 'telegram',
-        content: text,
-        type: 'text',
-        metadata: { chatId: ids[0] },
-        isNotification: true
-      });
-      if (result === false) {
-        console.error(`[Agent] deliverSystemAlert: Telegram did not accept the alert (key='${key}').`);
-        return false;
-      }
-      console.log(`[Agent] Delivered system alert to owner via Telegram (key='${key}').`);
-      return true;
-    } catch (e) {
-      console.error('[Agent] deliverSystemAlert Telegram send failed:', e.message);
-      return false;
-    }
+    // Remember the alert once someone can see it or the ledger owns it;
+    // otherwise try again on the next trigger.
+    if (delivered || notified || queued) this._systemAlertDedup.set(key, now);
+    return delivered || notified || queued;
   }
 
   /**
    * Record a system alert as a dashboard notification.
    * @returns {boolean} true when the notification was stored
    */
-  _notifySystemAlert(text, key, delivered) {
+  _notifySystemAlert(text, key, delivered, queued = false) {
     try {
       const n = this.notifications.create({
         type: 'system_alert',
         severity: 'error',
         title: delivered ? 'System alert' : 'System alert not delivered',
-        message: text,
-        metadata: { alertKey: key, delivered, link: '/settings/interfaces' }
+        message: queued ? `${text}\n\nThe owner channel refused it; the delivery ledger keeps retrying.` : text,
+        metadata: { alertKey: key, delivered, queued, link: '/settings/interfaces' }
       });
       return !!n;
     } catch (e) {
@@ -530,6 +515,10 @@ class Agent {
     // owner's phone but are never persisted to the agent DB, so the agent
     // can't reference them when the owner replies.
     this._installInterfaceMirror();
+
+    // Drain undelivered notifications left from the previous run and keep
+    // retrying refused sends every minute.
+    this.delivery.start();
 
     // Check for xAI config
     if (settings['provider:xai']?.apiKey) {
@@ -1385,9 +1374,16 @@ class Agent {
               // Prefix to explain context
               adminReply.content = `[WATCHER: ${contactString}]\n${reply.content}`;
 
-              console.log('Upstream callback identity check:', !!upstreamCallback.mock, upstreamCallback.name);
-              await upstreamCallback(adminReply);
-              console.log('Upstream called.');
+              const redirected = await upstreamCallback(adminReply);
+              if (redirected === false) {
+                // The ledger retries the redirect so the watcher result still reaches the owner.
+                try {
+                  await this.delivery.enqueueFailed('watcher', adminReply.source || message.source, adminChatId, adminReply,
+                    { origin: `watcher:${triggeredWatcher.id}`, error: 'interface refused the watcher redirect' });
+                } catch (e) {
+                  console.error('[Agent] Failed to queue the watcher redirect:', e.message);
+                }
+              }
             } else {
               console.log(`${logPrefix} Suppressed reply (No admin_chat_id configured).`);
             }

@@ -10,6 +10,7 @@
  */
 const crypto = require('crypto');
 const { createAssistantMessage } = require('@deedee/shared/src/types');
+const { DeliveryService, telegramOwnerIds } = require('./delivery-service');
 
 const DEFAULT_TIMEOUT_S = 300;
 const MAX_TIMEOUT_S = 900;
@@ -78,10 +79,16 @@ function questionText(question, options) {
 class AskUserService {
     constructor(agent) {
         this.agent = agent;
-        /** replyChatId -> { id, chatId, options, finish } */
+        /** replyChatId -> { id, chatId, options, ownerChannel, finish } */
         this.waits = new Map();
         /** replyChatId -> { id, at } for questions that ended without an answer */
         this.recentlyClosed = new Map();
+    }
+
+    /** The delivery ledger: retries, backoff and the fallback channel. */
+    _delivery() {
+        if (!this.agent.delivery) this.agent.delivery = new DeliveryService(this.agent);
+        return this.agent.delivery;
     }
 
     /**
@@ -108,12 +115,11 @@ class AskUserService {
             return { replyChatId: meta.chatId, replySource: source };
         }
 
-        // Owner channel, as scheduler.js does for reminders.
-        const settings = this.agent.settings || {};
-        const ownerPhone = String(settings.owner_phone || process.env.MY_PHONE || '').replace(/[^0-9]/g, '');
-        if (!ownerPhone) return { error: 'askUser unavailable: no owner_phone configured' };
-        const channel = settings.notification_channel || 'whatsapp';
-        return { replyChatId: `${ownerPhone}@s.whatsapp.net`, replySource: channel, ownerChannel: true };
+        // Owner channel: notification_channel plus the id that channel needs
+        // (owner_phone for WhatsApp, ALLOWED_TELEGRAM_IDS for Telegram).
+        const owner = this._delivery().resolveOwnerTarget();
+        if (!owner) return { error: 'askUser unavailable: no owner channel configured (owner_phone or ALLOWED_TELEGRAM_IDS)' };
+        return { replyChatId: owner.target, replySource: owner.channel, ownerChannel: true };
     }
 
     /**
@@ -152,10 +158,18 @@ class AskUserService {
         // WhatsApp mirror then skips it (same id).
         try { this.agent.db.saveMessage(outgoing); } catch (e) { console.warn('[AskUser] saveMessage failed:', e.message); }
 
-        const sent = await this.agent.interface.send(outgoing);
-        if (sent === false) {
+        // One attempt now. A refused question is retried until it expires and
+        // jumps to the other owner channel after two failures; the message id
+        // doubles as the ledger row id so the thread keeps a single copy.
+        const outcome = await this._delivery().deliver('ask_user', replySource, replyChatId, outgoing, {
+            id: outgoing.id, origin: chatId || message.source || 'askUser', expiresAt, dedupe: false
+        });
+        if (!outcome.delivered && !outcome.queued) {
             this.agent.db.closePendingQuestion(id, 'failed');
             return { error: 'askUser could not deliver the question' };
+        }
+        if (!outcome.delivered) {
+            console.warn(`[AskUser] Question ${id} not delivered yet; the ledger retries (outbox ${outcome.id}).`);
         }
 
         this.agent.notifications?.create({
@@ -171,7 +185,7 @@ class AskUserService {
         }
 
         return new Promise((resolve) => {
-            const wait = { id, chatId, replyChatId, options };
+            const wait = { id, chatId, replyChatId, options, ownerChannel: !!route.ownerChannel };
             let timer = null;
             let poll = null;
             wait.finish = (value) => {
@@ -183,7 +197,8 @@ class AskUserService {
             timer = setTimeout(() => {
                 this.agent.db.closePendingQuestion(id, 'timeout');
                 this._noteClosed(replyChatId, id, options);
-                wait.finish({ timeout: true });
+                // Tell the model when the question never reached anyone.
+                wait.finish(this._questionUndelivered(outgoing.id) ? { timeout: true, delivered: false } : { timeout: true });
             }, timeoutMs);
             poll = setInterval(() => {
                 if (this._stopRequested(chatId, replyChatId)) this._close(wait, 'cancelled');
@@ -270,12 +285,34 @@ class AskUserService {
         return !!(chatId && this.agent.cancellationFlags?.has(chatId));
     }
 
+    /** True when the ledger row for the question exists and never went out. */
+    _questionUndelivered(messageId) {
+        try {
+            const row = typeof this.agent.db?.getOutboxRow === 'function' ? this.agent.db.getOutboxRow(messageId) : null;
+            return !!row && row.status !== 'sent';
+        } catch {
+            return false;
+        }
+    }
+
+    /** The wait that went to the owner channel, if any (one at a time). */
+    _ownerWait() {
+        for (const wait of this.waits.values()) if (wait.ownerChannel) return wait;
+        return null;
+    }
+
     async _findWait(chatId, source) {
         const direct = this.waits.get(chatId);
         if (direct) return direct;
+        const channel = String(source || '').split(':')[0];
+        // A question sent to the owner channel (or its fallback) may be answered
+        // from the owner's Telegram while the wait is keyed to the WhatsApp JID.
+        if (channel === 'telegram') {
+            return telegramOwnerIds().includes(String(chatId)) ? this._ownerWait() : null;
+        }
         // The owner's WhatsApp replies may arrive under a LID JID while the
         // question went to the phone JID. Match through the owner id set.
-        if (!String(source || '').startsWith('whatsapp') || !this.agent._getOwnerWaIds) return null;
+        if (channel !== 'whatsapp' || !this.agent._getOwnerWaIds) return null;
         try {
             const ids = await this.agent._getOwnerWaIds();
             const norm = this.agent._normalizeWaChatId ? this.agent._normalizeWaChatId(chatId) : chatId;
@@ -284,6 +321,8 @@ class AskUserService {
                 const keyNorm = this.agent._normalizeWaChatId ? this.agent._normalizeWaChatId(key) : key;
                 if (ids.has(keyNorm)) return wait;
             }
+            // The owner answers on WhatsApp a question that went to Telegram.
+            return this._ownerWait();
         } catch (e) {
             console.warn('[AskUser] Owner id lookup failed:', e.message);
         }

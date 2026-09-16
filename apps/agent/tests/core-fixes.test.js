@@ -145,7 +145,7 @@ describe('Agent core fixes', () => {
             expect(await agent.deliverSystemAlert('wa down', 'whatsapp_needs_repair:assistant')).toBe(true);
 
             expect(agent.interface.send).toHaveBeenCalledTimes(2);
-            expect(agent.interface.send.mock.calls[0][0].source).toBe('whatsapp:assistant');
+            expect(agent.interface.send.mock.calls[0][0]).toMatchObject({ source: 'whatsapp', metadata: { chatId: '10000@s.whatsapp.net', session: 'assistant' } });
             expect(agent.interface.send.mock.calls[1][0]).toEqual(expect.objectContaining({ source: 'telegram', metadata: { chatId: '111' } }));
             expect(notifications.create).toHaveBeenCalledTimes(1);
             const n = notifications.create.mock.calls[0][0];

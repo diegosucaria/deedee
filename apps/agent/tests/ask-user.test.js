@@ -174,10 +174,34 @@ describe('AskUserService', () => {
             await first;
         });
 
-        test('a failed send closes the row and returns an error', async () => {
+        test('a refused send keeps the question open; the ledger retries until the timeout', async () => {
             agent.interface.send.mockResolvedValue(false);
-            await expect(svc.ask(webMsg('chat-1'), { question: 'Code?' })).resolves.toEqual({ error: expect.stringMatching(/deliver/) });
-            expect(db.getPendingQuestion('chat-1')).toBeUndefined();
+            const pending = svc.ask(webMsg('chat-1'), { question: 'Code?', timeoutSeconds: 30 });
+            await flush();
+
+            const row = db.getPendingQuestion('chat-1');
+            expect(row.status).toBe('pending');
+            const outbox = db.listRecentOutbox({ limit: 5 });
+            expect(outbox).toHaveLength(1);
+            expect(outbox[0]).toMatchObject({ kind: 'ask_user', channel: 'web', target: 'chat-1', status: 'failed', attempts: 1, expires_at: row.expires_at });
+            // The row id is the message id saved in the chat, so retries add no copies.
+            expect(db.getHistoryForChat('chat-1', 5).map(m => m.id)).toEqual([outbox[0].id]);
+            expect(agent.notifications.create).toHaveBeenCalledWith(expect.objectContaining({ type: 'ask_user' }));
+
+            jest.advanceTimersByTime(30_000);
+            await expect(pending).resolves.toEqual({ timeout: true, delivered: false });
+            expect(db.db.prepare('SELECT status FROM pending_questions WHERE id = ?').get(row.id).status).toBe('timeout');
+        });
+
+        test('without a ledger a refused send closes the row and returns an error', async () => {
+            agent.interface.send.mockResolvedValue(false);
+            db.enqueueOutbox = null; // hide the ledger helpers on this instance
+            try {
+                await expect(svc.ask(webMsg('chat-1'), { question: 'Code?' })).resolves.toEqual({ error: expect.stringMatching(/deliver/) });
+                expect(db.getPendingQuestion('chat-1')).toBeUndefined();
+            } finally {
+                delete db.enqueueOutbox;
+            }
         });
 
         test('an empty question is rejected without a send', async () => {
