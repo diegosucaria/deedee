@@ -1,6 +1,7 @@
 'use server';
 
 import { fetchAPI } from '@/lib/api';
+import { requireActionSession } from '@/lib/auth/guard';
 import { revalidatePath } from 'next/cache';
 
 // --- Tasks ---
@@ -15,6 +16,7 @@ export async function getTasks(includeSystem = false) {
 }
 
 export async function cancelTask(name) {
+    await requireActionSession();
     try {
         const encodedName = encodeURIComponent(name);
         await fetchAPI(`/v1/tasks/${encodedName}/cancel`, { method: 'POST' });
@@ -26,6 +28,7 @@ export async function cancelTask(name) {
 }
 
 export async function toggleTask(name, enabled) {
+    await requireActionSession();
     try {
         const encodedName = encodeURIComponent(name);
         await fetchAPI(`/v1/tasks/${encodedName}/toggle`, {
@@ -40,6 +43,7 @@ export async function toggleTask(name, enabled) {
 }
 
 export async function runTask(name) {
+    await requireActionSession();
     try {
         const encodedName = encodeURIComponent(name);
         await fetchAPI(`/v1/tasks/${encodedName}/run`, { method: 'POST' });
@@ -50,6 +54,7 @@ export async function runTask(name) {
 }
 
 export async function createTask(prevState, formData) {
+    await requireActionSession();
     try {
         const name = formData.get('name');
         const cron = formData.get('cron');
@@ -180,6 +185,7 @@ export async function toggleFactPin(key, pinned) {
 // Secure: No direct filesystem access from Web container
 
 export async function getBrowserSecretsRaw() {
+    await requireActionSession();
     try {
         const secrets = await fetchAPI('/v1/browser-secrets');
         return JSON.stringify(secrets, null, 2);
@@ -190,6 +196,7 @@ export async function getBrowserSecretsRaw() {
 }
 
 export async function saveBrowserSecretsRaw(jsonContent) {
+    await requireActionSession();
     try {
         const secrets = JSON.parse(jsonContent);
         await fetchAPI('/v1/browser-secrets', {
@@ -246,6 +253,7 @@ export async function deleteAlias(alias) {
 
 // --- History ---
 export async function deleteHistory(id) {
+    await requireActionSession();
     try {
         await fetchAPI(`/v1/history/${encodeURIComponent(id)}`, { method: 'DELETE' });
         revalidatePath('/history');
@@ -415,6 +423,7 @@ export async function getJobLogs(page = 1, limit = 50, { search, status } = {}) 
 }
 
 export async function deleteJobLogs(ids) {
+    await requireActionSession();
     try {
         await fetchAPI('/v1/logs/jobs/delete', {
             method: 'POST',
@@ -427,6 +436,7 @@ export async function deleteJobLogs(ids) {
 }
 
 export async function cleanupData() {
+    await requireActionSession();
     try {
         await fetchAPI('/v1/cleanup', { method: 'POST' });
         revalidatePath('/stats');
@@ -440,6 +450,7 @@ export async function cleanupData() {
 
 // --- Configuration ---
 export async function getEnvConfig() {
+    await requireActionSession();
     try {
         const res = await fetchAPI('/v1/config/env');
         return res.env || {};
@@ -450,6 +461,7 @@ export async function getEnvConfig() {
 }
 
 export async function getBackups() {
+    await requireActionSession();
     try {
         const res = await fetchAPI('/v1/backups');
         return res.files || [];
@@ -460,6 +472,7 @@ export async function getBackups() {
 }
 
 export async function triggerBackup() {
+    await requireActionSession();
     try {
         const res = await fetchAPI('/v1/backups', { method: 'POST' });
         return { success: true, ...res };
@@ -469,6 +482,7 @@ export async function triggerBackup() {
 }
 
 export async function getAgentConfig() {
+    await requireActionSession();
     try {
         return await fetchAPI('/v1/settings');
     } catch (error) {
@@ -478,6 +492,7 @@ export async function getAgentConfig() {
 }
 
 export async function updateAgentConfig(key, value) {
+    await requireActionSession();
     try {
         await fetchAPI('/v1/settings', {
             method: 'POST',
@@ -503,6 +518,7 @@ export async function getEgressIP({ refresh = false } = {}) {
 }
 
 export async function getVoiceSettings() {
+    await requireActionSession();
     try {
         const res = await fetchAPI('/v1/settings');
         // Expecting { settings: { key: value } } or array?
@@ -515,6 +531,7 @@ export async function getVoiceSettings() {
 }
 
 export async function saveVoiceSettings(voice) {
+    await requireActionSession();
     try {
         await fetchAPI('/v1/settings', {
             method: 'POST',
@@ -528,6 +545,7 @@ export async function saveVoiceSettings(voice) {
 }
 
 export async function previewVoice(voice, text) {
+    await requireActionSession();
     try {
         const res = await fetchAPI('/v1/settings/tts/preview', {
             method: 'POST',
@@ -544,6 +562,7 @@ export async function previewVoice(voice, text) {
 
 // --- GWS Auth Actions ---
 export async function uploadGWSCredentials(label, accountEmail, credentials) {
+    await requireActionSession();
     try {
         const res = await fetchAPI('/v1/settings/gws/upload', {
             method: 'POST',
@@ -557,6 +576,7 @@ export async function uploadGWSCredentials(label, accountEmail, credentials) {
 }
 
 export async function saveGWSAuthClient(clientData) {
+    await requireActionSession();
     try {
         const res = await fetchAPI('/v1/settings/gws/oauth/client', {
             method: 'POST',
@@ -570,6 +590,7 @@ export async function saveGWSAuthClient(clientData) {
 }
 
 export async function getGWSAuthClient() {
+    await requireActionSession();
     try {
         return await fetchAPI('/v1/settings/gws/oauth/client');
     } catch (error) {
@@ -579,6 +600,7 @@ export async function getGWSAuthClient() {
 }
 
 export async function getGWSAuthURL(label, email) {
+    await requireActionSession();
     try {
         const params = new URLSearchParams({ label, email });
         return await fetchAPI(`/v1/settings/gws/oauth/url?${params.toString()}`);
@@ -588,6 +610,7 @@ export async function getGWSAuthURL(label, email) {
 }
 
 export async function validateGWSAuth(label) {
+    await requireActionSession();
     try {
         return await fetchAPI(`/v1/settings/gws/validate/${encodeURIComponent(label)}`);
     } catch (error) {
@@ -631,6 +654,7 @@ export async function saveGWSCalendarFilter(label, calendarIds) {
 // --- WhatsApp Actions ---
 
 export async function getWhatsAppStatus() {
+    await requireActionSession();
     try {
         return await fetchAPI('/v1/whatsapp/status');
     } catch (error) {
@@ -640,6 +664,7 @@ export async function getWhatsAppStatus() {
 }
 
 export async function connectWhatsApp(session) {
+    await requireActionSession();
     try {
         const res = await fetchAPI('/v1/whatsapp/connect', {
             method: 'POST',
@@ -652,6 +677,7 @@ export async function connectWhatsApp(session) {
 }
 
 export async function disconnectWhatsApp(session) {
+    await requireActionSession();
     try {
         const res = await fetchAPI('/v1/whatsapp/disconnect', {
             method: 'POST',
@@ -664,6 +690,7 @@ export async function disconnectWhatsApp(session) {
 }
 
 export async function getWhatsAppContacts(session, query) {
+    await requireActionSession();
     try {
         let url = `/v1/whatsapp/contacts?session=${session}`;
         if (query) url += `&query=${encodeURIComponent(query)}`;
@@ -679,6 +706,7 @@ export async function getWhatsAppContacts(session, query) {
 // --- Slack Actions ---
 
 export async function getSlackStatus() {
+    await requireActionSession();
     try {
         return await fetchAPI('/v1/slack/status');
     } catch (error) {
@@ -690,6 +718,7 @@ export async function getSlackStatus() {
 // teamId re-logins an existing workspace: its monitored channels and listening
 // flag survive, and tokens for another workspace are rejected.
 export async function saveSlackCredentials(xoxc, xoxd, teamId = null) {
+    await requireActionSession();
     try {
         const res = await fetchAPI('/v1/slack/credentials', {
             method: 'POST',
@@ -702,6 +731,7 @@ export async function saveSlackCredentials(xoxc, xoxd, teamId = null) {
 }
 
 export async function testSlackCredentials(xoxc, xoxd) {
+    await requireActionSession();
     try {
         const res = await fetchAPI('/v1/slack/credentials', {
             method: 'POST',
@@ -714,6 +744,7 @@ export async function testSlackCredentials(xoxc, xoxd) {
 }
 
 export async function deleteSlackCredentials(teamId) {
+    await requireActionSession();
     try {
         await fetchAPI(`/v1/slack/credentials/${encodeURIComponent(teamId)}`, { method: 'DELETE' });
         return { success: true };
@@ -723,6 +754,7 @@ export async function deleteSlackCredentials(teamId) {
 }
 
 export async function setSlackListening(teamId, listening) {
+    await requireActionSession();
     try {
         const res = await fetchAPI('/v1/slack/listening', {
             method: 'POST',
@@ -735,6 +767,7 @@ export async function setSlackListening(teamId, listening) {
 }
 
 export async function getSlackChannels(teamId) {
+    await requireActionSession();
     try {
         const query = teamId ? `?teamId=${encodeURIComponent(teamId)}` : '';
         return await fetchAPI(`/v1/slack/channels${query}`);
@@ -755,6 +788,7 @@ export async function getSlackMonitoredChannels(teamId) {
 }
 
 export async function setSlackMonitoredChannels(teamId, channels) {
+    await requireActionSession();
     try {
         await fetchAPI('/v1/slack/monitored-channels', {
             method: 'POST',
@@ -768,6 +802,7 @@ export async function setSlackMonitoredChannels(teamId, channels) {
 
 // --- MCP & Tools ---
 export async function getMCPStatus() {
+    await requireActionSession();
     try {
         // API now returns Object { name: config }
         // We want array [{ name, status, type }]
@@ -791,6 +826,7 @@ export async function getMCPStatus() {
 }
 
 export async function addMCPServer(prevState, formData) {
+    await requireActionSession();
     try {
         const name = formData.get('name');
         const url = formData.get('url');
@@ -815,6 +851,7 @@ export async function addMCPServer(prevState, formData) {
 }
 
 export async function deleteMCPServer(name) {
+    await requireActionSession();
     try {
         await fetchAPI(`/v1/mcp/${encodeURIComponent(name)}`, { method: 'DELETE' });
         revalidatePath('/brain');
@@ -825,6 +862,7 @@ export async function deleteMCPServer(name) {
 }
 
 export async function reloadMCPServers() {
+    await requireActionSession();
     try {
         await fetchAPI(`/v1/mcp/reload`, { method: 'POST' });
         revalidatePath('/brain');
@@ -1355,6 +1393,7 @@ export async function dismissShoppingItem(id) {
 }
 
 export async function rewindChat(chatId, messageId) {
+    await requireActionSession();
     console.log('[DEBUG] rewindChat Action:', { chatId, messageId });
     try {
         const data = await fetchAPI(`/v1/chat/rewind`, {
@@ -1368,6 +1407,7 @@ export async function rewindChat(chatId, messageId) {
 }
 
 export async function forkChat(chatId, messageId) {
+    await requireActionSession();
     console.log('[DEBUG] forkChat Action:', { chatId, messageId });
     try {
         const data = await fetchAPI(`/v1/chat/fork`, {
@@ -1382,6 +1422,7 @@ export async function forkChat(chatId, messageId) {
 }
 
 export async function stopChat(chatId) {
+    await requireActionSession();
     try {
         await fetchAPI(`/v1/chat/stop`, {
             method: "POST",
@@ -1409,6 +1450,7 @@ export async function getTools() {
 // --- Chat Sessions ---
 
 export async function createSession() {
+    await requireActionSession();
     try {
         const session = await fetchAPI('/v1/sessions', {
             method: 'POST',
@@ -1708,6 +1750,7 @@ export async function deleteVaultFile(id, filename) {
 
 // --- Chat Files ---
 export async function uploadChatFile(chatId, formData) {
+    await requireActionSession();
     // Note: formData must contain 'file'
     // This is for Generic Chat Uploads (files.js)
     try {
@@ -1736,6 +1779,7 @@ export async function uploadChatFile(chatId, formData) {
 
 // --- People ---
 export async function getPeople({ limit, offset, search } = {}) {
+    await requireActionSession();
     try {
         const params = new URLSearchParams();
         if (limit) params.set('limit', limit);
@@ -1750,6 +1794,7 @@ export async function getPeople({ limit, offset, search } = {}) {
 }
 
 export async function getPerson(id) {
+    await requireActionSession();
     try {
         return await fetchAPI(`/v1/people/${encodeURIComponent(id)}`);
     } catch (error) {
@@ -1759,6 +1804,7 @@ export async function getPerson(id) {
 }
 
 export async function syncWhatsAppContacts() {
+    await requireActionSession();
     try {
         const res = await fetchAPI('/v1/people/sync', { method: 'POST' });
         revalidatePath('/people');
@@ -1769,6 +1815,7 @@ export async function syncWhatsAppContacts() {
 }
 
 export async function syncSlackContacts() {
+    await requireActionSession();
     try {
         const res = await fetchAPI('/v1/people/sync/slack', { method: 'POST' });
         revalidatePath('/people');
@@ -1779,6 +1826,7 @@ export async function syncSlackContacts() {
 }
 
 export async function createPerson(prevState, formData) {
+    await requireActionSession();
     try {
         const name = formData.get('name');
         const phone = formData.get('phone');
@@ -1804,6 +1852,7 @@ export async function createPerson(prevState, formData) {
 }
 
 export async function updatePerson(id, data) {
+    await requireActionSession();
     try {
         await fetchAPI(`/v1/people/${encodeURIComponent(id)}`, {
             method: 'PUT',
@@ -1817,6 +1866,7 @@ export async function updatePerson(id, data) {
 }
 
 export async function deletePerson(id) {
+    await requireActionSession();
     try {
         await fetchAPI(`/v1/people/${encodeURIComponent(id)}`, { method: 'DELETE' });
         revalidatePath('/people');
@@ -1850,6 +1900,7 @@ export async function getWatchers() {
 }
 
 export async function createWatcher(prevState, formData) {
+    await requireActionSession();
     try {
         const id = formData.get('id');
         const name = formData.get('name');
@@ -1880,6 +1931,7 @@ export async function createWatcher(prevState, formData) {
 }
 
 export async function deleteWatcher(id) {
+    await requireActionSession();
     try {
         await fetchAPI(`/v1/config/watchers/${encodeURIComponent(id)}`, { method: 'DELETE' });
         revalidatePath('/tasks');
@@ -1888,6 +1940,7 @@ export async function deleteWatcher(id) {
 }
 
 export async function toggleWatcher(id, status) {
+    await requireActionSession();
     try {
         // PUT endpoint usually expects JSON body for updates
         // Note: The backend route for PUT might not be defined in config.js based on previous grep.
@@ -1918,6 +1971,7 @@ export async function getAutopilotDrafts(status = 'pending') {
 }
 
 export async function approveDraft(id) {
+    await requireActionSession();
     try {
         const res = await fetchAPI(`/v1/autopilot/drafts/${id}/approve`, { method: 'POST' });
         revalidatePath('/autopilot');
@@ -1928,6 +1982,7 @@ export async function approveDraft(id) {
 }
 
 export async function rejectDraft(id) {
+    await requireActionSession();
     try {
         await fetchAPI(`/v1/autopilot/drafts/${id}`, { method: 'DELETE' });
         revalidatePath('/autopilot');
@@ -1938,6 +1993,7 @@ export async function rejectDraft(id) {
 }
 
 export async function editDraft(id, content) {
+    await requireActionSession();
     try {
         await fetchAPI(`/v1/autopilot/drafts/${id}`, {
             method: 'PUT',
@@ -1951,6 +2007,7 @@ export async function editDraft(id, content) {
 }
 
 export async function getAutopilotSettings() {
+    await requireActionSession();
     try {
         return await fetchAPI(`/v1/autopilot/settings`);
     } catch (error) {
@@ -1960,6 +2017,7 @@ export async function getAutopilotSettings() {
 }
 
 export async function updateAutopilotStatus(contactId, status, duration = 0) {
+    await requireActionSession();
     try {
         await fetchAPI(`/v1/autopilot/settings/${encodeURIComponent(contactId)}`, {
             method: 'POST',
@@ -2076,6 +2134,7 @@ export async function deleteVaultEmbedding(vaultId, filename) {
 }
 
 export async function repairWhatsAppSession(session) {
+    await requireActionSession();
     try {
         await fetchAPI('/v1/whatsapp/repair', { method: 'POST', body: JSON.stringify({ session }) });
         revalidatePath('/settings'); // Assuming this is where it's used
@@ -2109,6 +2168,7 @@ export async function cleanupSubAgentTasks() {
 // --- GSuite / Google Workspace ---
 
 export async function getGSuiteAccounts() {
+    await requireActionSession();
     try {
         const res = await fetchAPI('/v1/gsuite/accounts');
         return res.accounts || [];
@@ -2119,6 +2179,7 @@ export async function getGSuiteAccounts() {
 }
 
 export async function getGSuiteAuthUrl() {
+    await requireActionSession();
     try {
         const res = await fetchAPI('/v1/gsuite/auth-url', { method: 'POST' });
         return res;
@@ -2128,6 +2189,7 @@ export async function getGSuiteAuthUrl() {
 }
 
 export async function authenticateGSuite(code) {
+    await requireActionSession();
     try {
         const res = await fetchAPI('/v1/gsuite/auth', {
             method: 'POST',
@@ -2140,6 +2202,7 @@ export async function authenticateGSuite(code) {
 }
 
 export async function disconnectGSuite(email) {
+    await requireActionSession();
     try {
         const res = await fetchAPI('/v1/gsuite/disconnect', {
             method: 'POST',

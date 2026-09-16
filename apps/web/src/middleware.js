@@ -112,6 +112,24 @@ function isPublic(pathname) {
     return PUBLIC_PATHS.some((rx) => rx.test(pathname));
 }
 
+// Server actions are POSTed to whatever page the caller is on, so a public
+// page like /login is enough to reach every action in the app. Detect an
+// action invocation by its header (fetch from React) or by a form/flight
+// body POSTed to a page (progressive enhancement, no header). Such requests
+// need a session no matter which path they target.
+const ACTION_CONTENT_TYPES = ['multipart/form-data', 'application/x-www-form-urlencoded', 'text/plain'];
+
+export function isServerActionRequest(request) {
+    if (request.headers.has('next-action')) return true;
+    if (request.method !== 'POST') return false;
+    const contentType = (request.headers.get('content-type') || '').toLowerCase();
+    return ACTION_CONTENT_TYPES.some((t) => contentType.startsWith(t));
+}
+
+function unauthorizedJson() {
+    return new NextResponse(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+}
+
 export async function middleware(request) {
     const { pathname } = request.nextUrl;
 
@@ -120,7 +138,16 @@ export async function middleware(request) {
     const requestHeaders = new Headers(request.headers);
     requestHeaders.set('x-deedee-path', pathname);
 
-    if (isPublic(pathname)) {
+    // Next.js marks its own internal sub-requests with this header and used
+    // to skip the middleware for them (CVE-2025-29927). No external client
+    // has a reason to send it, so refuse the request outright.
+    if (request.headers.has('x-middleware-subrequest')) {
+        return unauthorizedJson();
+    }
+
+    const actionRequest = isServerActionRequest(request);
+
+    if (isPublic(pathname) && !actionRequest) {
         return NextResponse.next({ request: { headers: requestHeaders } });
     }
 
@@ -129,10 +156,10 @@ export async function middleware(request) {
 
     if (!payload) {
         // Unauthenticated. For HTML navigations send to /login with ?next=…
-        // For API/JSON requests return 401 so client code can react.
+        // For API/JSON requests and server actions return 401 so client code can react.
         const accept = request.headers.get('accept') || '';
-        if (pathname.startsWith('/api/')) {
-            return new NextResponse(JSON.stringify({ error: 'Unauthorized' }), { status: 401, headers: { 'Content-Type': 'application/json' } });
+        if (actionRequest || pathname.startsWith('/api/')) {
+            return unauthorizedJson();
         }
         if (!accept.includes('text/html')) {
             return new NextResponse('Unauthorized', { status: 401 });
