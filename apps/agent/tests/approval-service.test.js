@@ -257,7 +257,7 @@ describe('ApprovalService', () => {
             expect(await svc.handleCommand(msg('web', 'c', '/confirm'), '/confirm', undefined, send)).toBe(true);
             expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ content: 'No pending action to confirm.' }));
             expect(await svc.handleCommand(msg('web', 'c', '/cancel'), '/cancel', undefined, send)).toBe(true);
-            expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ content: 'No pending action to cancel.' }));
+            expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ content: 'Action cancelled.' }));
             await svc.request({ message: msg('web', 'c'), toolName: 'deleteVault', args: {}, reason: 'r' });
             expect(await svc.handleCommand(msg('web', 'c', '/confirm zzzzzz'), '/confirm', 'zzzzzz', send)).toBe(true);
             expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ content: expect.stringMatching(/No pending approval matches "zzzzzz"/) }));

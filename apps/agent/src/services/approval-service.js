@@ -432,6 +432,14 @@ class ApprovalService {
         return hits.length === 1 ? hits[0] : null;
     }
 
+    /** A row that is no longer pending, when the writer could have decided it. */
+    async _decidedRowFor(message, idArg) {
+        const row = this.db.getPendingConfirmation(String(idArg || '').trim().toLowerCase());
+        if (!row || row.status === 'pending') return null;
+        if (row.reply_chat_id === String(message?.metadata?.chatId)) return row;
+        return (await this._isOwnerChat(message)) && this._isOwnerRow(row) ? row : null;
+    }
+
     _listText(pending, lead) {
         const items = pending.map(r => `• ${r.id} — ${r.tool_name}: ${truncate(r.summary || '', 120)}`).join('\n');
         return `${lead}\n${items}\nReply /confirm <id> or /cancel <id>.`;
@@ -480,14 +488,17 @@ class ApprovalService {
         if (idArg) {
             row = this._match(pending, idArg);
             if (!row) {
-                const text = pending.length === 0
-                    ? `No pending approval matches "${idArg}".`
-                    : this._listText(pending, `No pending approval matches "${idArg}". Pending here:`);
+                const decided = await this._decidedRowFor(message, idArg);
+                let text;
+                if (decided) text = `Approval ${decided.id} (${decided.tool_name}) is already ${decided.status}.`;
+                else if (pending.length === 0) text = `No pending approval matches "${idArg}".`;
+                else text = this._listText(pending, `No pending approval matches "${idArg}". Pending here:`);
                 await this._reply(message, text, sendCallback);
                 return true;
             }
         } else if (pending.length === 0) {
-            await this._reply(message, decision === 'approved' ? 'No pending action to confirm.' : 'No pending action to cancel.', sendCallback);
+            // A bare /cancel also ends an askUser wait upstream; keep the old acknowledgement.
+            await this._reply(message, decision === 'approved' ? 'No pending action to confirm.' : 'Action cancelled.', sendCallback);
             return true;
         } else if (pending.length > 1) {
             await this._reply(message, this._listText(pending, `${pending.length} approvals are pending here. Which one?`), sendCallback);
