@@ -172,7 +172,12 @@ Defaults (`THINKING_DEFAULTS` in `config-service.js`):
 
 Call classes for the main agent turn: `subagent` when `metadata.isSubAgent`,
 `job` when `source` is `scheduler`, `watcher` for watcher alerts, `coding` when
-the session has the `code` tool group, else `chat`. Tool-loop turns of a `chat`
+the session has the `code` tool group, else `chat`. The router names `code`
+for repo, shell and git work, and a message that says `shell`, `git`, `repo`,
+`repository` or `codebase` as a word always gets it (`GROUP_NAME_WORDS` in
+`services/tool-groups.js`). The group keeps that name for 30 minutes per chat,
+like every other group. Today it changes the thinking class only: the shell and
+file tools stay core until tool deferral moves them behind `code`. Tool-loop turns of a `chat`
 session use `tool_loop`; the other classes keep their level through the loop.
 When the loop level differs from the session level the agent re-sends the full
 session config on each loop call (the SDK replaces, not merges, a per-call

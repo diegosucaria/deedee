@@ -81,6 +81,17 @@ describe('Agent thinking config per call class and source', () => {
         expect(cfg.thinkingConfig).toBeUndefined();
     });
 
+    test('the code group from the router makes a coding turn: PRO at HIGH', async () => {
+        const cfg = await run('web', { model: 'PRO', toolMode: 'STANDARD', toolGroups: ['code'] });
+        expect(cfg.thinkingConfig).toEqual({ thinkingLevel: 'HIGH', includeThoughts: true });
+    });
+
+    test('a message that names git is a coding turn even when the router gave no group', async () => {
+        agent.router.route = jest.fn().mockResolvedValue({ model: 'PRO', toolMode: 'STANDARD', toolGroups: [] });
+        await agent.processMessage({ content: 'run git status and tell me what changed', role: 'user', source: 'whatsapp', metadata: { chatId: 'thk-git', replyMode: 'text' } }, jest.fn());
+        expect(agent.client.chats.create.mock.calls[0][0].config.thinkingConfig).toEqual({ thinkingLevel: 'HIGH' });
+    });
+
     test('THINKING_PRO_CHAT env override reaches the session', async () => {
         process.env.THINKING_PRO_CHAT = 'HIGH';
         const cfg = await run('web');
@@ -110,6 +121,17 @@ describe('Agent thinking config per call class and source', () => {
 
         test('an unchanged loop level sends no per-call config', async () => {
             expect(await runLoop()).toBeUndefined();
+        });
+
+        test('a coding session keeps HIGH through the loop and sends no per-call config', async () => {
+            session.sendMessageStream
+                .mockImplementationOnce(async () => streamOf(functionCallChunk))
+                .mockImplementationOnce(async () => streamOf(textChunk));
+            agent._executeTool = jest.fn().mockResolvedValue({ ok: true });
+            await run('web', { model: 'PRO', toolMode: 'STANDARD', toolGroups: ['code'] });
+            expect(session.sendMessageStream).toHaveBeenCalledTimes(2);
+            expect(agent.client.chats.create.mock.calls[0][0].config.thinkingConfig).toEqual({ thinkingLevel: 'HIGH', includeThoughts: true });
+            expect(session.sendMessageStream.mock.calls[1][0].config).toBeUndefined();
         });
 
         test('THINKING_PRO_TOOL_LOOP re-sends the full session config with the loop level', async () => {
