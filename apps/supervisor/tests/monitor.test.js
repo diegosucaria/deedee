@@ -31,6 +31,21 @@ describe('Monitor', () => {
         return fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : null;
     }
 
+    function readAssessed() {
+        const file = path.join(stateDir, '.last_assessed_commit');
+        return fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : null;
+    }
+
+    /** A fresh Monitor on the same state dir, as after a Balena restart. */
+    async function restartSupervisor() {
+        const next = new Monitor(mockGit);
+        next.slackWebhookUrl = 'http://slack';
+        jest.spyOn(next, 'check').mockResolvedValue();
+        jest.spyOn(global, 'setInterval').mockReturnValue(1);
+        await next.start();
+        return next;
+    }
+
     function slackTexts() {
         return mockFetch.mock.calls
             .filter(([url]) => url === 'http://slack')
@@ -287,7 +302,7 @@ describe('Monitor', () => {
             expect(readBoot()).toBe('own0000');
         });
 
-        test('HEAD moves to a self-authored commit: window opens, boot file updated', async () => {
+        test('HEAD moves to a self-authored commit: window opens, assessed file updated, boot file kept', async () => {
             mockHead('self111', SELF, 'feat: self-improvement');
 
             await monitor.check();
@@ -295,18 +310,65 @@ describe('Monitor', () => {
             expect(monitor.lastUpdate).toBeGreaterThan(0);
             expect(monitor.selfCommit).toBe('self111');
             expect(monitor.lastAssessedHash).toBe('self111');
-            expect(readBoot()).toBe('self111');
+            expect(readAssessed()).toBe('self111');
+            expect(readBoot()).toBe('own0000');
             expect(slackTexts().some(t => t.includes('Deedee Updated') && t.includes('self111'))).toBe(true);
         });
 
-        test('HEAD moves to an owner commit: window stays closed, boot file updated', async () => {
+        test('the Updated alert fires once per commit', async () => {
+            mockHead('self111', SELF, 'feat: self-improvement');
+            await monitor.check();
+            await monitor.check();
+
+            expect(slackTexts().filter(t => t.includes('Deedee Updated'))).toHaveLength(1);
+        });
+
+        test('HEAD moves to an owner commit: window stays closed, boot file kept', async () => {
             mockHead('own2222', OWNER, 'feat: owner merge');
 
             await monitor.check();
 
             expect(monitor.lastUpdate).toBe(0);
             expect(monitor.selfCommit).toBeNull();
+            expect(readAssessed()).toBe('own2222');
+            expect(readBoot()).toBe('own0000');
+        });
+
+        test('self-commit seen by a tick, then a supervisor restart: window opens again', async () => {
+            mockHead('self111', SELF, 'feat: self-improvement');
+            await monitor.check();
+            expect(readAssessed()).toBe('self111');
+            expect(readBoot()).toBe('own0000');
+
+            // Balena deploys the new image and restarts the supervisor on the same HEAD.
+            const next = await restartSupervisor();
+
+            expect(next.lastUpdate).toBeGreaterThan(0);
+            expect(next.selfCommit).toBe('self111');
+            expect(readBoot()).toBe('self111');
+            expect(slackTexts().some(t => t.includes('Deedee Rebooted') && t.includes('New Update'))).toBe(true);
+        });
+
+        test('owner commit seen by a tick, then a supervisor restart: window stays closed', async () => {
+            mockHead('own2222', OWNER, 'feat: owner merge');
+            await monitor.check();
+
+            const next = await restartSupervisor();
+
+            expect(next.lastUpdate).toBe(0);
+            expect(next.selfCommit).toBeNull();
             expect(readBoot()).toBe('own2222');
+        });
+
+        test('a second restart on the same self-commit keeps the window closed', async () => {
+            mockHead('self111', SELF, 'feat: self-improvement');
+            await monitor.check();
+            await restartSupervisor();
+
+            const again = await restartSupervisor();
+
+            expect(again.lastUpdate).toBe(0);
+            expect(again.selfCommit).toBeNull();
         });
 
         test('an open window closes again when HEAD moves to an owner commit', async () => {
@@ -327,7 +389,8 @@ describe('Monitor', () => {
             await monitor.check();
 
             expect(monitor.lastUpdate).toBe(0);
-            expect(readBoot()).toBe('rev0000');
+            expect(readAssessed()).toBe('rev0000');
+            expect(readBoot()).toBe('own0000');
         });
 
         test('a failing health check right after a self-commit sees the open window', async () => {

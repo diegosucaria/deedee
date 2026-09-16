@@ -103,7 +103,49 @@ describe('Monitor + GitOps against a real git repository', () => {
         await monitor.check();
 
         expect(monitor.selfCommit).toBe(selfHash);
-        expect(monitor._readLastBootCommit()).toBe(selfHash);
+        expect(monitor._readLastAssessedCommit()).toBe(selfHash);
+        expect(monitor._readLastBootCommit()).not.toBe(selfHash);
+    });
+
+    test('a self-commit seen by a tick still opens the window after a supervisor restart', async () => {
+        global.fetch = jest.fn(() => Promise.resolve({ ok: true }));
+        await monitor.assessRollbackWindow();
+        await monitor.notifyStartup();
+
+        const selfHash = commitAs(SELF, 'feat: agent and supervisor change');
+        await monitor.check();
+        monitor.lastUpdate = 0; // the tick's window ran out before the deploy landed
+
+        const restarted = new Monitor(gitOps);
+        restarted.stateDir = stateDir;
+        restarted.supervisorEmail = SELF.email;
+        restarted.alertUser = jest.fn().mockResolvedValue();
+        restarted.check = jest.fn().mockResolvedValue();
+        jest.spyOn(global, 'setInterval').mockReturnValue(1);
+        await restarted.start();
+
+        expect(restarted.selfCommit).toBe(selfHash);
+        expect(restarted.lastUpdate).toBeGreaterThan(0);
+        expect(restarted._readLastBootCommit()).toBe(selfHash);
+    });
+
+    test('commitAndPush stages a bracket route path and a Dockerfile, and refuses a name with a space', async () => {
+        fs.mkdirSync(path.join(work, 'apps/web/src/app/chat/[id]'), { recursive: true });
+        fs.writeFileSync(path.join(work, 'apps/web/src/app/chat/[id]/page.js'), 'export default 1;\n');
+        fs.writeFileSync(path.join(work, 'apps/web/Dockerfile'), 'FROM scratch\n');
+
+        let result = await gitOps.commitAndPush('feat: route');
+        expect(result.success).toBe(true);
+        const files = git(['ls-tree', '-r', '--name-only', 'HEAD']).split('\n');
+        expect(files).toContain('apps/web/src/app/chat/[id]/page.js');
+        expect(files).toContain('apps/web/Dockerfile');
+
+        fs.writeFileSync(path.join(work, 'apps/web/my notes.md'), '# notes\n');
+        result = await gitOps.commitAndPush('feat: notes');
+        expect(result.success).toBe(false);
+        expect(result.skipped).toEqual(['apps/web/my notes.md']);
+        expect(result.error).toMatch(/Refusing a partial commit/);
+        expect(git(['ls-tree', '-r', '--name-only', 'HEAD']).split('\n')).not.toContain('apps/web/my notes.md');
     });
 
     test('rollback writes the revert with the env identity, not the repo config', async () => {

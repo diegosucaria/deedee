@@ -3,7 +3,13 @@ const path = require('path');
 
 // Files in the supervisor-only state dir. The agent can write anywhere in
 // the shared /app/source volume, so the trust anchors must not live there.
+// Two anchors: BOOT_FILE is HEAD at the last supervisor start and only
+// start() rewrites it. ASSESSED_FILE is the last HEAD the window rules ran
+// on, from start or from a tick. Keeping them apart lets a supervisor restart
+// on a deployed self-commit still open the window: HEAD differs from the
+// boot anchor even when a tick already saw the commit.
 const BOOT_FILE = '.last_boot_commit';
+const ASSESSED_FILE = '.last_assessed_commit';
 const ROLLBACK_FILE = '.last_rollback_commit';
 
 class Monitor {
@@ -116,6 +122,8 @@ class Monitor {
 
     _readLastBootCommit() { return this._readState(BOOT_FILE); }
     _writeLastBootCommit(hash) { this._writeState(BOOT_FILE, hash); }
+    _readLastAssessedCommit() { return this._readState(ASSESSED_FILE); }
+    _writeLastAssessedCommit(hash) { this._writeState(ASSESSED_FILE, hash); }
     _readLastRollbackCommit() { return this._readState(ROLLBACK_FILE); }
     _writeLastRollbackCommit(hash) { this._writeState(ROLLBACK_FILE, hash); }
 
@@ -124,8 +132,8 @@ class Monitor {
     /**
      * Open the danger window only when HEAD is new since the last boot AND the
      * supervisor wrote it AND it is not a revert. Any other start (reboot,
-     * deploy, owner merge, own rollback) keeps the window closed: we still
-     * alert, we never roll back.
+     * deploy of an owner merge, own rollback) keeps the window closed: we
+     * still alert, we never roll back. Records HEAD in .last_assessed_commit.
      */
     async assessRollbackWindow(head = null) {
         this.lastUpdate = 0;
@@ -143,6 +151,7 @@ class Monitor {
                 return;
             }
             this.lastAssessedHash = info.hash;
+            this._writeLastAssessedCommit(info.hash);
             const short = info.hash.substring(0, 7);
 
             const reason = this._closedReason(info);
@@ -171,7 +180,9 @@ class Monitor {
     /**
      * Balena restarts only the services whose image changed, so an agent-only
      * self-improvement never restarts the supervisor. Re-run the window rules
-     * whenever HEAD moved since the last assessment.
+     * whenever HEAD moved since the last assessment. This path never touches
+     * .last_boot_commit: when Balena later restarts the supervisor on that
+     * same commit, start() must still see it as new and open the window.
      */
     async _reassessIfHeadMoved() {
         if (!this.autoRollback) return;
@@ -181,11 +192,10 @@ class Monitor {
 
             const short = head.hash.substring(0, 7);
             console.log(`[Monitor] HEAD moved to ${short} since the last check. Reassessing rollback window.`);
-            const isNew = head.hash !== this._readLastBootCommit();
+            const isNew = head.hash !== this._readLastAssessedCommit();
             await this.assessRollbackWindow(head);
             if (!isNew) return;
 
-            this._writeLastBootCommit(head.hash);
             await this.alertUser(`🔁 *Deedee Updated*\n*Commit:* ${head.subject}\n*Hash:* \`${short}\``);
         } catch (err) {
             console.warn('[Monitor] HEAD re-check failed:', err.message);
