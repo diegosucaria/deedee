@@ -2317,3 +2317,29 @@ export async function deleteNotification(id) {
         return { success: false, error: error.message };
     }
 }
+
+// --- Approvals (tool calls paused for the owner) ---
+
+export async function getApprovals(limit = 50) {
+    await requireActionSession();
+    try {
+        const params = new URLSearchParams({ limit });
+        return await fetchAPI(`/v1/approvals?${params.toString()}`);
+    } catch (error) {
+        console.error('getApprovals Error:', error);
+        return { pending: [], recent: [], counts: { pending: 0, approved: 0, denied: 0, expired: 0 }, settings: null, error: 'Approvals unavailable' };
+    }
+}
+
+// decision: 'approve' | 'deny'. Approving runs the stored call and reports to the owner.
+export async function decideApproval(id, decision) {
+    await requireActionSession();
+    const action = decision === 'approve' ? 'approve' : 'deny';
+    try {
+        const result = await fetchAPI(`/v1/approvals/${encodeURIComponent(id)}/${action}`, { method: 'POST' });
+        revalidatePath('/settings');
+        return { success: true, ...result };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
