@@ -120,9 +120,10 @@ site logged in.
     what it needs.
   - One open question per reply chat. `/stop`, `/cancel` and the web Stop
     button end the wait. Open rows in `pending_questions` expire on boot. The
-    first message within 10 minutes of an expiry gets "That question expired."
-    when it reads as an answer (an option number, an option's text, or one
-    short token such as a code). Anything else runs as a normal request.
+    first message within 120 s of an expiry gets "That question expired."
+    when it reads as an answer (an option number, an option's text, or, with
+    no options, a bare 4-8 digit code). Anything else, a single word included,
+    runs as a normal request.
   - The question goes out through `interface.send`, so it shows at once even
     though the run is still going. The interfaces -> agent `/chat` call has no
     HTTP timeout; keep it that way, or the run dies while it waits.

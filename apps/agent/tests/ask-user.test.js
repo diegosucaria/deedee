@@ -306,8 +306,16 @@ describe('AskUserService', () => {
         });
 
         test('looksLikeLateAnswer', () => {
+            expect(looksLikeLateAnswer('1234', [])).toBe(true);
             expect(looksLikeLateAnswer('123456', [])).toBe(true);
-            expect(looksLikeLateAnswer('yes', [])).toBe(true);
+            expect(looksLikeLateAnswer('12345678', [])).toBe(true);
+            // Without options only a bare 4-8 digit code counts; words reach the model.
+            expect(looksLikeLateAnswer('123', [])).toBe(false);
+            expect(looksLikeLateAnswer('123456789', [])).toBe(false);
+            expect(looksLikeLateAnswer('yes', [])).toBe(false);
+            expect(looksLikeLateAnswer('ok', [])).toBe(false);
+            expect(looksLikeLateAnswer('hola', [])).toBe(false);
+            expect(looksLikeLateAnswer('luces', [])).toBe(false);
             expect(looksLikeLateAnswer('what is on my calendar today?', [])).toBe(false);
             expect(looksLikeLateAnswer('averyveryverylongtoken', [])).toBe(false);
             expect(looksLikeLateAnswer('1', ['A', 'B'])).toBe(true);
@@ -316,13 +324,35 @@ describe('AskUserService', () => {
             expect(looksLikeLateAnswer('ok', ['A', 'B'])).toBe(false);
         });
 
-        test('a reply long after the expiry is a normal message', async () => {
+        test('a one-word message after an expired free-text question reaches the model', async () => {
+            const cb = jest.fn().mockResolvedValue();
+            for (const word of ['hola', 'ok', 'luces']) {
+                const chatId = `chat-${word}`;
+                const pending = svc.ask(webMsg(chatId), { question: 'Code?', timeoutSeconds: 5 });
+                await flush();
+                jest.advanceTimersByTime(5_000);
+                await pending;
+                expect(await svc.intercept(reply(chatId, word), cb)).toBeNull();
+            }
+            expect(cb).not.toHaveBeenCalled();
+        });
+
+        test('a code more than 120 s after the expiry is a normal message', async () => {
             const pending = svc.ask(webMsg('chat-1'), { question: 'Code?', timeoutSeconds: 5 });
             await flush();
             jest.advanceTimersByTime(5_000);
             await pending;
-            jest.setSystemTime(Date.now() + 11 * 60 * 1000);
-            expect(await svc.intercept(reply('chat-1', 'new task'), jest.fn())).toBeNull();
+            jest.setSystemTime(Date.now() + 121 * 1000);
+            expect(await svc.intercept(reply('chat-1', '1234'), jest.fn())).toBeNull();
+        });
+
+        test('a code within 120 s of the expiry is told the question expired', async () => {
+            const pending = svc.ask(webMsg('chat-1'), { question: 'Code?', timeoutSeconds: 5 });
+            await flush();
+            jest.advanceTimersByTime(5_000);
+            await pending;
+            jest.setSystemTime(Date.now() + 119 * 1000);
+            expect((await svc.intercept(reply('chat-1', '1234'), jest.fn())).content).toBe('That question expired.');
         });
     });
 

@@ -16,9 +16,10 @@ const MAX_TIMEOUT_S = 900;
 const MIN_TIMEOUT_S = 5;
 const MAX_OPTIONS = 8;
 // A message this soon after a question expired may be its late answer.
-const LATE_REPLY_WINDOW_MS = 10 * 60 * 1000;
-// A free-text late answer (OTP, "yes") is one short token; a request has spaces.
-const LATE_TOKEN_RE = /^\S{1,12}$/;
+const LATE_REPLY_WINDOW_MS = 120 * 1000;
+// With no options, only a bare code (4-8 digits) reads as a late answer.
+// A word such as "ok" or "hola" is a new message and must reach the model.
+const LATE_CODE_RE = /^\d{4,8}$/;
 const STOP_POLL_MS = 1000;
 
 const LIVE_SOURCES = new Set(['web', 'telegram', 'whatsapp', 'whatsapp:assistant']);
@@ -52,7 +53,7 @@ function mapOptionAnswer(text, options) {
 
 /**
  * True when `text` reads as an answer to a question that already closed:
- * an option number, an option's text, or (with no options) one short token.
+ * an option number, an option's text, or (with no options) a bare code.
  * Anything else is a new request and must reach the model.
  */
 function looksLikeLateAnswer(text, options) {
@@ -60,7 +61,7 @@ function looksLikeLateAnswer(text, options) {
         if (/^\d{1,2}$/.test(text)) return options[Number(text) - 1] !== undefined;
         return options.some(o => o.toLowerCase() === text.toLowerCase());
     }
-    return LATE_TOKEN_RE.test(text);
+    return LATE_CODE_RE.test(text);
 }
 
 /** Options column (JSON text) back to an array. */
