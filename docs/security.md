@@ -49,7 +49,9 @@ DeeDee is single-user. Browser sessions are gated by a self-contained `/login` p
 - **Passkeys (WebAuthn)**: Optional. Self-service enrollment at `/settings/security`. Requires `WEBAUTHN_RP_ID` + HTTPS `WEBAUTHN_ORIGIN`. Disabled automatically on plain HTTP except `localhost`.
 - **Sessions**: Signed JWT (HS256 + `SESSION_SECRET`) in an `httpOnly; Secure; SameSite=Lax` cookie. 30-day TTL with sliding refresh — re-issued on the next authenticated request once the token is past half-life, so weekly use never requires re-login.
 - **Logout**: Clears the cookie and adds the JTI to the revocation list in `auth.json`. Rotate `SESSION_SECRET` to invalidate all outstanding sessions.
-- **Rate limit**: `/api/auth/login` and `/api/auth/passkey/login/*` are capped at 5 attempts per 15 minutes per IP.
+- **Rate limit**: `/api/auth/login`, `/api/auth/passkey/login/*` and `/api/auth/password` are capped at 5 attempts per 15 minutes per IP.
+  A second, global bucket counts failed password logins across all IPs: 50 failures in 10 minutes pause password sign-in (429, `paused: true`).
+  Only `/api/auth/login` reads or feeds that bucket, so passkey sign-in and the session-gated password change keep working during a spray.
 - **Cross-subdomain (two-subdomain deploy)**: Set `COOKIE_DOMAIN=.example.com` so the cookie rides to `api.example.com` for socket.io. WebAuthn RP ID stays scoped to the UI subdomain.
 - **Backups**: `web-data` (containing `auth.json`) is **excluded from the backup recipe**. Recovery is "set `LOGIN_PASSWORD` again, restart web, re-enroll passkeys" — safer than backing up the password hash and credential public keys.
 
