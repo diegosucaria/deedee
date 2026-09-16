@@ -430,9 +430,11 @@ Output pure JSON only.`;
 
         try {
             const modelName = this.config.getModel('FLASH');
+            const thinking = this.config.getThinkingConfig('FLASH', 'people_enrich', { model: modelName });
             const response = await this.agent.client.models.generateContent({
                 model: modelName,
-                contents: prompt
+                contents: prompt,
+                ...(thinking ? { config: { thinkingConfig: thinking } } : {})
             });
 
             this.config.logUsageFromResponse(this.agent.db, modelName, response, null, 'people_enrich');

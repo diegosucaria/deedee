@@ -156,7 +156,7 @@ Respond with JSON only.`;
                         { text: prompt }
                     ]
                 }],
-                config: { responseMimeType: 'application/json' }
+                config: { ...this._thinkingConfig('FLASH', modelName), responseMimeType: 'application/json' }
             });
             const elapsedMs = Date.now() - startedAt;
             try { this.config.logUsageFromResponse(this.db, modelName, result, null, 'wardrobe_detect'); } catch (e) { /* ignore */ }
@@ -303,6 +303,15 @@ Respond with JSON only.`;
         return Math.max(min, Math.min(max, n));
     }
 
+    /**
+     * `{ thinkingConfig }` for a text call on `role`, or `{}` (docs/models.md,
+     * "Thinking levels"). Image calls do not use it.
+     */
+    _thinkingConfig(role, modelName) {
+        const thinking = this.config.getThinkingConfig(role, 'wardrobe', { model: modelName });
+        return thinking ? { thinkingConfig: thinking } : {};
+    }
+
     _extractText(result) {
         try {
             if (typeof result?.text === 'function') return result.text();
@@ -443,7 +452,7 @@ Trust this hint as ground truth. Parse brand and model out of it (e.g. "ABC Warp
             const result = await this.agent.client.models.generateContent({
                 model: modelName,
                 contents: [{ role: 'user', parts }],
-                config: { responseMimeType: 'application/json' }
+                config: { ...this._thinkingConfig('FLASH', modelName), responseMimeType: 'application/json' }
             });
             const elapsedMs = Date.now() - startedAt;
             try { this.config.logUsageFromResponse(this.db, modelName, result, null, 'wardrobe_attrs'); } catch (e) { /* ignore */ }
@@ -631,7 +640,7 @@ Hard rules:
                         { text: prompt }
                     ]
                 }],
-                config: { tools: [{ googleSearch: {} }] }
+                config: { ...this._thinkingConfig('FLASH', modelName), tools: [{ googleSearch: {} }] }
             });
             try { this.config.logUsageFromResponse(this.db, modelName, result, null, 'wardrobe_brand'); } catch (e) { /* ignore */ }
             const text = this._extractText(result);
@@ -1642,7 +1651,7 @@ Respond with strict JSON:
             const result = await this.agent.client.models.generateContent({
                 model: modelName,
                 contents: [{ role: 'user', parts }],
-                config: { responseMimeType: 'application/json' }
+                config: { ...this._thinkingConfig('PRO', modelName), responseMimeType: 'application/json' }
             });
             try { this.config.logUsageFromResponse(this.db, modelName, result, null, 'wardrobe_match'); } catch (e) { /* ignore */ }
             const text = this._extractText(result);
@@ -1787,7 +1796,7 @@ Do not propose items outside the pool. Respond with strict JSON:
             const result = await this.agent.client.models.generateContent({
                 model: modelName,
                 contents: [{ role: 'user', parts: [{ text: prompt }] }],
-                config: { responseMimeType: 'application/json' }
+                config: { ...this._thinkingConfig('PRO', modelName), responseMimeType: 'application/json' }
             });
             try { this.config.logUsageFromResponse(this.db, modelName, result, null, 'wardrobe_recommend'); } catch (e) { /* ignore */ }
             const text = this._extractText(result);
@@ -2202,7 +2211,7 @@ Return STRICT JSON:
         const response = await this.agent.client.models.generateContent({
             model: modelName,
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            config: { responseMimeType: 'application/json' }
+            config: { ...this._thinkingConfig('FLASH', modelName), responseMimeType: 'application/json' }
         });
         try { this.config.logUsageFromResponse(this.db, modelName, response, null, 'wardrobe_variations'); } catch (e) { /* ignore */ }
 
@@ -2371,7 +2380,7 @@ Return STRICT JSON:
         const response = await this.agent.client.models.generateContent({
             model: modelName,
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            config: { responseMimeType: 'application/json' }
+            config: { ...this._thinkingConfig('FLASH', modelName), responseMimeType: 'application/json' }
         });
         try { this.config.logUsageFromResponse(this.db, modelName, response, null, 'wardrobe_outfits_for_garment'); } catch (e) { /* ignore */ }
 
@@ -2614,7 +2623,7 @@ Rules:
             const result = await this.agent.client.models.generateContent({
                 model: modelName,
                 contents: [{ role: 'user', parts: [{ text: prompt }] }],
-                config: { responseMimeType: 'application/json' }
+                config: { ...this._thinkingConfig('PRO', modelName), responseMimeType: 'application/json' }
             });
             try { this.config.logUsageFromResponse(this.db, modelName, result, null, 'wardrobe_critique'); } catch (e) { /* ignore */ }
             const text = this._extractText(result);
@@ -2728,7 +2737,7 @@ Rules: only use ids from the wardrobe list above. No external items.`;
                 const result = await this.agent.client.models.generateContent({
                     model: modelName,
                     contents: [{ role: 'user', parts: [{ text: prompt }] }],
-                    config: { responseMimeType: 'application/json' }
+                    config: { ...this._thinkingConfig('PRO', modelName), responseMimeType: 'application/json' }
                 });
                 try { this.config.logUsageFromResponse(this.db, modelName, result, null, 'wardrobe_pack'); } catch (e) { /* ignore */ }
                 const text = this._extractText(result);

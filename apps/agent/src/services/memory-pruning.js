@@ -94,12 +94,13 @@ class MemoryPruningService {
 
         // 3. Call LLM 
         const modelName = this.agent.configService.getModel('PRO');
+        const thinking = this.agent.configService.getThinkingConfig('PRO', 'pruning', { model: modelName });
 
         try {
             const response = await this.agent.client.models.generateContent({
                 model: modelName,
                 contents: [{ parts: [{ text: prompt }] }],
-                config: { responseMimeType: 'application/json' }
+                config: { responseMimeType: 'application/json', ...(thinking ? { thinkingConfig: thinking } : {}) }
             });
 
             this._config.logUsageFromResponse(this.agent.db, modelName, response, null, 'memory_pruning');

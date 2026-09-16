@@ -124,10 +124,11 @@ Rules:
 Return JSON only: {"send": true or false, "text": "the message", "reason": "one short sentence for the owner"}`;
 
         const model = this.config.getModel('FLASH');
+        const thinking = this.config.getThinkingConfig('FLASH', 'partner_greeting', { model });
         const response = await this.agent.client.models.generateContent({
             model,
             contents: [{ role: 'user', parts: [{ text: prompt }] }],
-            config: { responseMimeType: 'application/json', temperature: 0.8 }
+            config: { responseMimeType: 'application/json', temperature: 0.8, ...(thinking ? { thinkingConfig: thinking } : {}) }
         });
         this.config.logUsageFromResponse(this.agent.db, model, response, null, 'partner_greeting');
 

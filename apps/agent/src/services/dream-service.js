@@ -96,13 +96,14 @@ class DreamService {
         // 2. Generate Dream Content
         const prompt = getDreamPrompt(recentLogs, randomFacts, plexContext);
         const modelName = this.agent.configService.getModel('PRO');
+        const thinking = this.agent.configService.getThinkingConfig('PRO', 'dream', { model: modelName });
 
         let dreamContent = null;
         try {
             const response = await this.agent.client.models.generateContent({
                 model: modelName,
                 contents: [{ parts: [{ text: prompt }] }],
-                config: { responseMimeType: 'application/json' }
+                config: { responseMimeType: 'application/json', ...(thinking ? { thinkingConfig: thinking } : {}) }
             });
 
             this._config.logUsageFromResponse(this.agent.db, modelName, response, null, 'dream');

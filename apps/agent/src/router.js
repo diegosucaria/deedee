@@ -107,11 +107,13 @@ ${TOOL_GROUP_LINES}
                 routerPrompt = instructionText + `\nUser Input: "${userMessage}"`;
             }
 
+            const thinking = this.config.getThinkingConfig('ROUTER', 'router', { model: this.model });
             const response = await this.client.chats.create({
                 model: this.model,
                 config: {
                     responseMimeType: 'application/json',
                     temperature: 0.0,
+                    ...(thinking ? { thinkingConfig: thinking } : {})
                 }
             }).sendMessage({ message: routerPrompt });
 

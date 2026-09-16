@@ -17,9 +17,11 @@ class TitleService {
 
             const model = this.config.getModel('FLASH');
 
+            const thinking = this.config.getThinkingConfig('FLASH', 'title', { model });
             const result = await this.agent.client.models.generateContent({
                 model: model,
-                contents: [{ role: 'user', parts: [{ text: prompt }] }]
+                contents: [{ role: 'user', parts: [{ text: prompt }] }],
+                ...(thinking ? { config: { thinkingConfig: thinking } } : {})
             });
 
             this.config.logUsageFromResponse(this.agent.db, model, result, chatId, 'title');
