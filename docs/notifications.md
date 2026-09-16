@@ -55,10 +55,33 @@ copies. If the fallback also fails, only the primary keeps retrying. A
 message for someone else (a reply to a contact) never jumps channels.
 
 Dedupe: the same kind, target and content within 10 minutes is queued once.
-`askUser` turns this off (two equal questions are two questions).
+`askUser` turns this off (two equal questions are two questions), and so do
+the scheduler paths: a job that fires every 5 minutes with the same text, or
+two reminders with the same words, mean every one of them. The dedupe stays
+on for `reply`, `system_alert` and `watcher`, where a repeat is an accident.
+
+Same message twice: a retry carries the message id (`POST /send` body field
+`id`). The interfaces service keeps the ids it handed to a transport for
+24 h (`sent-ids.js`, in memory) and answers `{ success: true, duplicate:
+true }` for a repeat. WhatsApp and Telegram `sendMessage` check the same way.
+So a send whose HTTP answer was lost (interfaces restart mid-flight) is
+retried but not delivered twice. A send that never reached the transport
+is not marked and the retry goes out. `HttpInterface.send` gives up after
+120 s (`SEND_TIMEOUT_MS`), so a hung interfaces call fails the row instead
+of holding the worker tick.
+
+A refused chat reply keeps its message id as the row id, so the retry and
+the owner-thread mirror reuse it and the history shows one copy.
 
 Expiry: `askUser` rows carry `expires_at`; a row past it dies instead of
 being sent late.
+
+Answers from the other channel: a question sent to the owner channel may be
+answered from the owner's other chat (Telegram for a WhatsApp question, or
+the other way round) only when the question reached that channel (the row
+is `sent` through it, or its fallback is), or when that channel is the
+configured owner channel of a job, system or watcher question. A question
+the owner never saw on Telegram does not eat the next Telegram message.
 
 Boot: `loadJobs` no longer drops one-off reminders that came due while the
 process was down. Those less than 24 h overdue go out with a `(late)`
