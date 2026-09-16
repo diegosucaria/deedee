@@ -24,7 +24,7 @@ describe('GitOps Security Scan', () => {
 
     test('should detect Private Key', async () => {
         const file = 'key.pem';
-        fs.writeFileSync(path.join(testDir, file), '-----BEGIN PRIVATE KEY-----');
+        fs.writeFileSync(path.join(testDir, file), '-----BEGIN PRIVATE KEY-----'); // pii-guard: allow
         await expect(gitOps._scanForSecrets([file])).rejects.toThrow(/SECURITY ALERT/);
     });
 

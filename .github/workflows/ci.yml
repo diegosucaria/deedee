@@ -4,8 +4,32 @@ on:
   pull_request:
     branches:
       - master
+  push:
+    branches:
+      - master
 
 jobs:
+  pii-guard:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24.18.0
+
+      # Pull requests: only the lines this branch adds.
+      - name: Scan added lines
+        if: github.event_name == 'pull_request'
+        run: node scripts/check-pii.js --range origin/master...HEAD --fix-hints
+
+      # Pushes to master: every tracked text file.
+      - name: Scan the whole tree
+        if: github.event_name == 'push'
+        run: node scripts/check-pii.js --fix-hints
+
   test:
     runs-on: ubuntu-latest
     steps:

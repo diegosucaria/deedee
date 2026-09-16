@@ -79,8 +79,8 @@ describe('Impersonation Service Unit', () => {
 
     test('should resolve LID to Phone JID for history fetch', async () => {
         const lidChatId = '1234567890@lid';
-        const contactIdentifier = '5491122334455';
-        const expectedHistoryJid = '5491122334455@s.whatsapp.net';
+        const contactIdentifier = '5490000000000';
+        const expectedHistoryJid = '5490000000000@s.whatsapp.net';
 
         // Mock Remote History
         axios.get.mockResolvedValue({ data: [] });
@@ -142,7 +142,7 @@ describe('Impersonation Service Unit', () => {
 
     test('should fallback to LID JID if Phone JID has no history', async () => {
         const lidChatId = '1234567890@lid';
-        const contactIdentifier = '5491122334455';
+        const contactIdentifier = '5490000000000';
 
         // Mock axios to fail/empty first, succeed second
         axios.get.mockImplementation(async (url, config) => {
@@ -162,7 +162,7 @@ describe('Impersonation Service Unit', () => {
 
         await service.generateDraft(lidChatId, { content: 'Hi' }, 'User', '', contactIdentifier);
 
-        const expectedPhoneJid = '5491122334455@s.whatsapp.net';
+        const expectedPhoneJid = '5490000000000@s.whatsapp.net';
         // Verify Phone JID was tried
         expect(axios.get).toHaveBeenCalledWith(expect.stringContaining('/whatsapp/history'), expect.objectContaining({
             params: expect.objectContaining({ jid: expectedPhoneJid })

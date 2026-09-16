@@ -1167,11 +1167,8 @@ class Agent {
             if (wClean.length >= 8 && msgClean.length >= 8) {
               // Match last 8 digits (reduced from 9 to be safer for varying area codes)
               // 8 digits usually covers the number without area code in many places, or at least substantial overlap.
-              // For Argentina: 9 + 351 + 6/7 digits. 
-              // 5517678 is 7 digits.
-              // 3515517678 is 10 digits.
-              // 93515517678 is 11 digits.
-              // If we compare last 8: 515517678 vs ...
+              // For Argentina: 9 + 3-digit area code + 7 digits = 11 digits; without the 9 it is 10 digits.
+              // The last 8 digits are shared by both forms.
               // Use endsWith for suffix matching (handles country code prefix differences)
 
               if (msgClean.endsWith(wClean) || wClean.endsWith(msgClean)) {

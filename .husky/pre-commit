@@ -1,1 +1,4 @@
-# npm test
+# Fast local guard: block personal data and secrets in the staged diff.
+# Same rules as the CI pii-guard job (scripts/check-pii.js).
+# Names go in the gitignored .pii-denylist; see docs/security.md.
+node scripts/check-pii.js --staged --fix-hints || exit 1

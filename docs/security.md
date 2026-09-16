@@ -74,3 +74,44 @@ For the env-var inventory and two-subdomain vs single-subdomain recipes, see the
 ### Tools
 - **GSuite**: Full Read/Write access to Calendar and Mail.
 - **Home Assistant**: Full Control (lights, locks, etc). *Specific critical actions (unlock, disarm) require confirmation.*
+
+## Personal data guard
+
+The repo is public. `scripts/check-pii.js` blocks personal data and secrets before they land. It needs Node only, no packages.
+
+**What it blocks**
+- Argentine phone numbers (`549` + 8-10 digits) and any other run of 11 or more digits. There is no upper bound, so 16-digit card-like numbers are checked too.
+- WhatsApp ids with real-looking digits: `<digits>@s.whatsapp.net`, `<digits>@lid`, `<digits>@g.us`.
+- Secret-looking tokens: Google API keys (`AIza`) and OAuth tokens (`ya29.`), Slack tokens (`xoxb-`, `xoxa-`, `xoxp-`) and webhook URLs, GitHub tokens (`ghp_`, `github_pat_`), Tailscale keys (`tskey-`), private key blocks.
+- Private LAN addresses (`10.x.x.x`, `192.168.x.x` with numeric octets).
+- Anything that matches your local `.pii-denylist` (see below).
+
+**What it allows**
+- Digit runs with fewer than 4 distinct digits (`5490000000000`, `100000000000001`), `549` plus a near-constant tail (`5490000000001`), monotone sequences (`1234567890`) and the fictional US 555 range (`15551234567`).
+- Epoch milliseconds: 13-digit runs from `1500000000000` to `1999999999999`, that is 2017-07-14 to 2033-05-18. Timestamps outside that range trip the guard; use `1700000000000` in fixtures.
+- Telegram supergroup and channel ids: `-100` followed by 10 digits, sign included. The same digits without the sign are checked as a normal long number.
+- Token placeholders made of repeated characters (`AIzaXXXX...`, `xoxb-XXXX`).
+- A line that carries `pii-guard: allow`. Use it only for pattern definitions and synthetic test fixtures.
+
+**Where it runs**
+- `.husky/pre-commit` scans the staged diff on every commit.
+- The `pii-guard` job in `.github/workflows/ci.yml` scans added lines on pull requests (`--range origin/master...HEAD`) and the whole tree on pushes to `master`.
+
+**Run it yourself**
+```bash
+node scripts/check-pii.js                                # whole tree
+node scripts/check-pii.js --range origin/master...HEAD   # your branch
+node scripts/check-pii.js --staged --fix-hints           # staged changes, with placeholder hints
+```
+Each hit prints as `file:line: <masked match> [rule]`. Exit code 1 means hits, 2 means a usage or git error. Denylist problems never change the exit code.
+
+**Denylist for names**
+Names cannot go into a public pattern list. Put them in `.pii-denylist`: one regex per line, `#` starts a comment, matching ignores case. The guard looks in this order and uses the first file it finds:
+1. the path given with `--denylist <file>`;
+2. `.pii-denylist` at the repo root (gitignored, so it stays on your machine and CI never sees it);
+3. `$HOME/.config/deedee/.pii-denylist`, which covers every clone and worktree at once.
+
+When no file exists the guard prints one hint line (`pii-guard: no denylist found ...`) and checks the built-in rules only; the exit code does not change. A line that is not a valid regex prints a warning and is skipped; the other lines still apply.
+
+**History**
+Commits from before this guard may still hold phone numbers or ids. The guard does not scan history. The owner decides whether to rewrite history, which changes every commit hash and forces every clone to re-fetch, or to accept it and rotate anything that was exposed.

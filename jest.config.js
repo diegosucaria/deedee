@@ -7,7 +7,8 @@ const serverOnlyShim = require.resolve('next/dist/compiled/server-only/empty.js'
 module.exports = {
     testMatch: [
         "<rootDir>/apps/**/*.test.js",
-        "<rootDir>/packages/**/*.test.js"
+        "<rootDir>/packages/**/*.test.js",
+        "<rootDir>/scripts/**/*.test.js"
     ],
     testPathIgnorePatterns: [
         "/node_modules/",
