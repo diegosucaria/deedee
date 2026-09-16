@@ -41,6 +41,25 @@ describe('API Security', () => {
         expect(res.body.error).toEqual('Invalid API Token');
     });
 
+    test('Protected route should fail with a token that only shares a prefix', async () => {
+        const res = await request(app)
+            .post('/v1/chat')
+            .set('Authorization', `Bearer ${VALID_TOKEN}-and-more`)
+            .send({ message: 'hi', chatId: '1' });
+
+        expect(res.statusCode).toEqual(403);
+    });
+
+    test('tokenMatches compares in constant time and fails closed', () => {
+        const { tokenMatches } = require('../src/auth');
+        expect(tokenMatches('abc', 'abc')).toBe(true);
+        expect(tokenMatches('abd', 'abc')).toBe(false);
+        expect(tokenMatches('abcd', 'abc')).toBe(false);
+        expect(tokenMatches(undefined, undefined)).toBe(false);
+        expect(tokenMatches('undefined', undefined)).toBe(false);
+        expect(tokenMatches('', '')).toBe(false);
+    });
+
     test('Protected route should succeed with valid token', async () => {
         // Mock Agent Response
         axios.post.mockResolvedValue({
