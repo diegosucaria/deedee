@@ -582,6 +582,16 @@ class AgentDB {
       this.db.exec("ALTER TABLE token_usage ADD COLUMN thoughts_tokens INTEGER DEFAULT 0");
     } catch (err) { }
 
+    // Migration: prompt composition estimates on token_usage (JSON length / 4
+    // of the system instruction, the declarations and the history sent, plus
+    // the declaration count). NULL on rows written before this migration and
+    // on calls that do not go through the main chat path.
+    for (const col of ['sys_tokens_est INTEGER', 'tools_tokens_est INTEGER', 'history_tokens_est INTEGER', 'decl_count INTEGER']) {
+      try {
+        this.db.exec(`ALTER TABLE token_usage ADD COLUMN ${col}`);
+      } catch (err) { }
+    }
+
     // Migration: Add context_content to autopilot_drafts
     try {
       this.db.exec("ALTER TABLE autopilot_drafts ADD COLUMN context_content TEXT");
@@ -1527,12 +1537,16 @@ class AgentDB {
     return stmt.get(hours).count;
   }
 
-  logTokenUsage({ model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost, tag, cachedTokens, thoughtsTokens }) {
+  logTokenUsage({ model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost, tag, cachedTokens, thoughtsTokens,
+    sysTokensEst, toolsTokensEst, historyTokensEst, declCount }) {
     const stmt = this.db.prepare(`
-      INSERT INTO token_usage(model, prompt_tokens, candidate_tokens, total_tokens, chat_id, estimated_cost, tag, cached_tokens, thoughts_tokens)
-      VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO token_usage(model, prompt_tokens, candidate_tokens, total_tokens, chat_id, estimated_cost, tag, cached_tokens, thoughts_tokens,
+        sys_tokens_est, tools_tokens_est, history_tokens_est, decl_count)
+      VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    stmt.run(model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost, tag || null, cachedTokens || 0, thoughtsTokens || 0);
+    const est = (v) => (Number.isFinite(v) ? Math.round(v) : null);
+    stmt.run(model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost, tag || null, cachedTokens || 0, thoughtsTokens || 0,
+      est(sysTokensEst), est(toolsTokensEst), est(historyTokensEst), est(declCount));
   }
 
   // --- DJ Vinyls ---
