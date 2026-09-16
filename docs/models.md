@@ -88,9 +88,14 @@ Run it before and after every id change. A retired id fails at `get` with a 404.
 The agent calls Gemini through `@google/genai` 2.22.0 (`apps/agent/package.json`).
 The 2.0.0 major only broke the Interactions API, which Deedee does not use.
 Every call passes its options under `config`; the SDK drops any other key
-without a warning. Since 1.41.0 the SDK retries HTTP 408, 429 and 5xx on its
-own: five attempts, one second doubling up to sixty, before the agent's own
-retry loop sees the error.
+without a warning. The SDK can retry HTTP 408, 429 and 5xx (five attempts, one
+second doubling up to sixty), but only when the client is built with
+`httpOptions: { retryOptions }`. Deedee does not set it: every `new GoogleGenAI`
+passes only `apiKey`. So `_retryCall` in `apps/agent/src/agent.js` is the only
+retry layer. If SDK retries are wanted later, add
+`httpOptions: { retryOptions: { attempts: 2 } }` at the constructors and lower
+`MAX_RETRIES` in `_retryCall`, or the two loops nest and the worst-case wait
+grows.
 
 After a bump, run the smoke inside the agent container on the device:
 
