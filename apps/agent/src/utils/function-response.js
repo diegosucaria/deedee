@@ -2,7 +2,8 @@
  * Builds the functionResponse parts for one tool call.
  *
  * Gemini accepts binary data on a function response as
- * `functionResponse.parts[].inlineData` (typed in @google/genai 1.34.0).
+ * `functionResponse.parts[].inlineData` (typed since @google/genai 1.34.0,
+ * unchanged in 2.22.0).
  * The model payload carries the images; the DB row does not, it only notes
  * how many went out. Base64 screenshots would otherwise bloat history.
  */
