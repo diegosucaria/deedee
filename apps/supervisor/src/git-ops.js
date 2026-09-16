@@ -1,16 +1,20 @@
 const { exec, execFile } = require('child_process');
 const util = require('util');
-const { Verifier } = require('./verifier');
+const { Verifier, isSafePath } = require('./verifier');
 const execAsync = util.promisify(exec);
 const execFileAsync = util.promisify(execFile);
 
 // Untracked files may only enter a commit from these folders, with these
-// extensions. Root-level files, data/ and *.db never get staged. This keeps
-// personal files the agent drops into the work dir out of the public repo.
-// `.github/` stays out: a staged workflow file would run in CI with the
-// repository's secrets.
+// extensions (or the bare name `Dockerfile`). Root-level files, data/ and
+// *.db never get staged. This keeps personal files the agent drops into the
+// work dir out of the public repo. `.github/` stays out: a staged workflow
+// file would run in CI with the repository's secrets.
 const ALLOWED_PREFIXES = ['apps/', 'packages/', 'docs/', 'specs/'];
-const ALLOWED_EXTENSIONS = ['.js', '.jsx', '.ts', '.json', '.md', '.yml', '.yaml', '.py', '.txt'];
+const ALLOWED_EXTENSIONS = [
+  '.js', '.jsx', '.mjs', '.cjs', '.ts', '.json', '.md', '.yml', '.yaml',
+  '.py', '.txt', '.css', '.sh', '.svg', '.png'
+];
+const ALLOWED_BASENAMES = ['Dockerfile'];
 
 // A parent process (a git hook, for one) may export these to point git at
 // another repository. GitOps must only ever touch workDir, so it drops them.
@@ -56,7 +60,7 @@ class GitOps {
   }
 
   /**
-   * Like run(), but keeps stdout as is. `git status --porcelain` lines start
+   * Like run(), but keeps stdout as is. `git status --porcelain` entries start
    * with a space for unstaged edits; trim() would eat it.
    */
   async runRaw(command) {
@@ -149,32 +153,45 @@ class GitOps {
     }
   }
 
+  /** True when the path starts with one of the allowed folders. */
+  _underAllowedPrefix(file) {
+    const normalized = String(file).replace(/\\/g, '/').replace(/^\.\//, '');
+    return ALLOWED_PREFIXES.some(prefix => normalized.startsWith(prefix));
+  }
+
   /**
-   * True when a path may be staged: inside an allowed folder, with an allowed
-   * extension, no `..`, and no `data` segment.
+   * True when a path may be staged: only safe characters, inside an allowed
+   * folder, with an allowed extension (or named Dockerfile), no `..`, and no
+   * `data` segment.
    */
   isAllowedPath(file) {
     const path = require('path');
     const normalized = String(file).replace(/\\/g, '/').replace(/^\.\//, '');
     if (!normalized || normalized.startsWith('/')) return false;
+    if (!isSafePath(normalized)) return false;
     const segments = normalized.split('/');
     if (segments.includes('..') || segments.includes('data')) return false;
     if (!ALLOWED_PREFIXES.some(prefix => normalized.startsWith(prefix))) return false;
+    if (ALLOWED_BASENAMES.includes(path.basename(normalized))) return true;
     return ALLOWED_EXTENSIONS.includes(path.extname(normalized).toLowerCase());
   }
 
   /**
-   * Parse `git status --porcelain` into tracked changes and untracked files.
+   * Parse `git status --porcelain -z` into tracked changes and untracked
+   * files. Entries end in NUL, so paths arrive as they are: no C-quoting for
+   * spaces or non-ASCII. A rename or copy sends the new path first and the
+   * old path as the next entry; only the new one matters here.
    */
   _parseStatus(statusOutput) {
     const tracked = [];
     const untracked = [];
-    for (const line of statusOutput.split('\n')) {
-      if (line.trim() === '') continue;
-      const code = line.substring(0, 2);
-      let file = line.substring(3).trim();
-      // Renames read "R  old -> new"; keep the new path.
-      if (file.includes(' -> ')) file = file.split(' -> ').pop();
+    const entries = statusOutput.split('\0');
+    for (let i = 0; i < entries.length; i++) {
+      const entry = entries[i];
+      if (entry === '') continue;
+      const code = entry.substring(0, 2);
+      const file = entry.substring(3);
+      if (code.includes('R') || code.includes('C')) i++; // skip the old path
       if (code === '??') untracked.push(file);
       else tracked.push(file);
     }
@@ -187,13 +204,15 @@ class GitOps {
       // 0. Work out what to stage. Never `git add .`.
       let trackedToStage = [];
       let untrackedToStage = [];
-      let stageAllTracked = false;
 
       if (files.includes('.')) {
-        const statusOutput = await this.runRaw('git status --porcelain --untracked-files=all');
+        const statusOutput = await this.runRaw('git status --porcelain -z --untracked-files=all');
         const { tracked, untracked } = this._parseStatus(statusOutput);
-        trackedToStage = tracked;
-        stageAllTracked = true;
+        // Tracked files with an unsafe name stay out of the commit as well.
+        for (const file of tracked) {
+          if (isSafePath(file)) trackedToStage.push(file);
+          else skipped.push(file);
+        }
         for (const file of untracked) {
           if (this.isAllowedPath(file)) untrackedToStage.push(file);
           else skipped.push(file);
@@ -212,6 +231,13 @@ class GitOps {
         console.warn(`[GitOps] Skipping ${skipped.length} file(s) outside the allowed paths: ${skipped.join(', ')}`);
       }
 
+      // A skipped file inside an allowed folder is most likely part of the
+      // change. Fail so the agent sees the drop instead of a partial commit.
+      const dropped = skipped.filter(file => this._underAllowedPrefix(file));
+      if (dropped.length > 0) {
+        throw new Error(`Refusing a partial commit: ${dropped.length} file(s) under the allowed folders have an unsupported name or extension: ${dropped.join(', ')}. Rename, delete or move them, then retry.`);
+      }
+
       const filesToScan = [...trackedToStage, ...untrackedToStage];
 
       // 1. Security Scan + Verifier
@@ -221,12 +247,13 @@ class GitOps {
       // SAFE EXECUTION: Prevent shell injection by avoiding 'git add ${files} and git commit -m "${message}"'
       // Use execFileAsync via runSafe
 
-      // 2. Git Add: tracked changes with -u, allowed untracked files by name
-      if (stageAllTracked) {
-        await this.runSafe('git', ['add', '-u']);
+      // 2. Git Add: tracked changes with -u, allowed untracked files by name.
+      // --literal-pathspecs: `[id]` in a Next.js route folder is a glob to git.
+      if (trackedToStage.length > 0) {
+        await this.runSafe('git', ['--literal-pathspecs', 'add', '-u', '--', ...trackedToStage]);
       }
       if (untrackedToStage.length > 0) {
-        await this.runSafe('git', ['add', '--', ...untrackedToStage]);
+        await this.runSafe('git', ['--literal-pathspecs', 'add', '--', ...untrackedToStage]);
       }
 
       // 3. Git Commit

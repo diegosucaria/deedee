@@ -1,7 +1,18 @@
-const { exec } = require('child_process');
+const { exec, execFile } = require('child_process');
 const util = require('util');
 const path = require('path');
 const execAsync = util.promisify(exec);
+const execFileAsync = util.promisify(execFile);
+
+// Characters a path may carry before it reaches `node --check` or `git add`.
+// Letters, digits, `. _ / @ - + [ ]`. Brackets and plus serve Next.js route
+// folders (`[id]`) and patch files; nothing here means anything to a shell,
+// and no shell ever sees these names anyway.
+const SAFE_PATH_RE = /^[A-Za-z0-9._/@+\[\]-]+$/;
+
+function isSafePath(file) {
+  return typeof file === 'string' && SAFE_PATH_RE.test(file);
+}
 
 class Verifier {
   constructor(workDir = '/app/source') {
@@ -11,12 +22,19 @@ class Verifier {
   async verify(files) {
     console.log('[Verifier] Starting pre-flight checks...');
 
+    // 0. File names come from `git status`, so the agent picks them. Refuse
+    // anything outside the safe set before any command sees it.
+    const unsafe = files.filter(file => !isSafePath(file));
+    if (unsafe.length > 0) {
+      throw new Error(`Unsafe file name(s), commit aborted: ${unsafe.join(', ')}`);
+    }
+
     // 1. Syntax Check (Fast)
     for (const file of files) {
-      if (file.endsWith('.js')) {
+      if (/\.(js|mjs|cjs)$/.test(file)) {
         try {
-          // Check syntax without executing
-          await execAsync(`node --check ${file}`, { cwd: this.workDir });
+          // Check syntax without executing. No shell: the name is one argument.
+          await execFileAsync('node', ['--check', file], { cwd: this.workDir });
         } catch (error) {
           throw new Error(`Syntax Error in ${file}: ${error.stderr}`);
         }
@@ -54,4 +72,4 @@ class Verifier {
   }
 }
 
-module.exports = { Verifier };
+module.exports = { Verifier, isSafePath, SAFE_PATH_RE };
