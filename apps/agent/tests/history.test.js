@@ -211,6 +211,24 @@ describe('getHistoryForChat hydration', () => {
         expect(full[1].parts.some(p => p.inlineData)).toBe(true);
     });
 
+    it('converts integer timestamps in rowid batches', () => {
+        const chatId = 'chat-migrate-batches';
+        db.createSession({ id: chatId, title: 'Batches' });
+        const insertRaw = db.db.prepare('INSERT INTO messages (id, role, content, chat_id, timestamp) VALUES (?, ?, ?, ?, ?)');
+        for (let i = 0; i < 5; i++) insertRaw.run(`b-${i}`, 'user', `m${i}`, chatId, 1700000000000 + i * 1000);
+        db.db.prepare('DELETE FROM agent_settings WHERE key = ?').run('migration_messages_ts_iso');
+        const log = jest.spyOn(console, 'log').mockImplementation(() => { });
+
+        db._migrateMessageTimestampsToIso(2);
+
+        const rows = db.db.prepare('SELECT id, typeof(timestamp) as t FROM messages WHERE chat_id = ? ORDER BY timestamp').all(chatId);
+        expect(rows.map(r => r.t)).toEqual(['text', 'text', 'text', 'text', 'text']);
+        expect(rows.map(r => r.id)).toEqual(['b-0', 'b-1', 'b-2', 'b-3', 'b-4']);
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('Converting 5 message timestamps'));
+        expect(log).toHaveBeenCalledWith(expect.stringContaining('Converted 5 message timestamps'));
+        log.mockRestore();
+    });
+
     it('converts integer timestamps to ISO text once', () => {
         const chatId = 'chat-migrate';
         db.createSession({ id: chatId, title: 'Migrate' });

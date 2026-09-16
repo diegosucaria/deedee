@@ -594,22 +594,38 @@ class AgentDB {
   // Mixed integer/text values break ORDER BY, so rewrite them as ISO text.
   // The flag lives in agent_settings (kv_store rows are memory facts that
   // reach the model prompt).
-  _migrateMessageTimestampsToIso() {
+  _migrateMessageTimestampsToIso(batchSize = 5000) {
     const FLAG = 'migration_messages_ts_iso';
     try {
       const done = this.db.prepare('SELECT value FROM agent_settings WHERE key = ?').get(FLAG);
       if (done) return;
-      const info = this.db.prepare(`
-        UPDATE messages
-        SET timestamp = strftime('%Y-%m-%dT%H:%M:%fZ', timestamp / 1000.0, 'unixepoch')
+
+      // Count first so the log shows the size of the job, then update in
+      // rowid ranges. One UPDATE over a large table held the write lock
+      // for too long on the Pi.
+      const scope = this.db.prepare(`
+        SELECT COUNT(*) AS n, MIN(rowid) AS lo, MAX(rowid) AS hi FROM messages
         WHERE typeof(timestamp) IN ('integer', 'real')
-      `).run();
+      `).get();
+      let changed = 0;
+      if (scope.n > 0) {
+        console.log(`[DB] Converting ${scope.n} message timestamps to ISO text (rowid ${scope.lo}-${scope.hi}, batches of ${batchSize})...`);
+        const update = this.db.prepare(`
+          UPDATE messages
+          SET timestamp = strftime('%Y-%m-%dT%H:%M:%fZ', timestamp / 1000.0, 'unixepoch')
+          WHERE rowid BETWEEN ? AND ? AND typeof(timestamp) IN ('integer', 'real')
+        `);
+        for (let from = scope.lo; from <= scope.hi; from += batchSize) {
+          changed += update.run(from, from + batchSize - 1).changes;
+        }
+      }
       this.db.prepare(`
         INSERT INTO agent_settings(key, value, category) VALUES(?, ?, 'system')
         ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
       `).run(FLAG, JSON.stringify(new Date().toISOString()));
-      if (info.changes > 0) {
-        console.log(`[DB] Converted ${info.changes} message timestamps to ISO text.`);
+      if (changed > 0) {
+        console.log(`[DB] Converted ${changed} message timestamps to ISO text.`);
+        try { this.db.pragma('wal_checkpoint(TRUNCATE)'); } catch (e) { /* not in WAL mode */ }
       }
     } catch (err) {
       console.error('[DB] Timestamp migration failed:', err.message);
