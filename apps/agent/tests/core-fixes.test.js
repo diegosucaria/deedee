@@ -116,6 +116,72 @@ describe('Agent core fixes', () => {
         });
     });
 
+    describe('deliverSystemAlert', () => {
+        const envBackup = {};
+        beforeEach(() => {
+            envBackup.ids = process.env.ALLOWED_TELEGRAM_IDS;
+            envBackup.phone = process.env.MY_PHONE;
+            delete process.env.ALLOWED_TELEGRAM_IDS;
+            process.env.MY_PHONE = '10000';
+            notifications.create.mockReturnValue({ id: 'n1' });
+        });
+        afterEach(() => {
+            if (envBackup.ids === undefined) delete process.env.ALLOWED_TELEGRAM_IDS; else process.env.ALLOWED_TELEGRAM_IDS = envBackup.ids;
+            if (envBackup.phone === undefined) delete process.env.MY_PHONE; else process.env.MY_PHONE = envBackup.phone;
+        });
+
+        test('a delivered alert sets the dedup and leaves no notification', async () => {
+            agent.interface.send.mockResolvedValue(true);
+            expect(await agent.deliverSystemAlert('disk full', 'disk_full')).toBe(true);
+            expect(notifications.create).not.toHaveBeenCalled();
+            expect(await agent.deliverSystemAlert('disk full', 'disk_full')).toBe(false);
+            expect(agent.interface.send).toHaveBeenCalledTimes(1);
+        });
+
+        test('a refused WhatsApp send falls back to a notification and Telegram', async () => {
+            process.env.ALLOWED_TELEGRAM_IDS = '111, 222';
+            agent.interface.send.mockResolvedValue(false).mockResolvedValueOnce(false).mockResolvedValueOnce(true);
+
+            expect(await agent.deliverSystemAlert('wa down', 'whatsapp_needs_repair:assistant')).toBe(true);
+
+            expect(agent.interface.send).toHaveBeenCalledTimes(2);
+            expect(agent.interface.send.mock.calls[0][0].source).toBe('whatsapp:assistant');
+            expect(agent.interface.send.mock.calls[1][0]).toEqual(expect.objectContaining({ source: 'telegram', metadata: { chatId: '111' } }));
+            expect(notifications.create).toHaveBeenCalledTimes(1);
+            const n = notifications.create.mock.calls[0][0];
+            expect(n.type).toBe('system_alert');
+            expect(n.metadata.alertKey).toBe('whatsapp_needs_repair:assistant');
+            expect(n.metadata.delivered).toBe(true);
+
+            // Dedup is set: the repeat is suppressed.
+            expect(await agent.deliverSystemAlert('wa down', 'whatsapp_needs_repair:assistant')).toBe(false);
+            expect(agent.interface.send).toHaveBeenCalledTimes(2);
+        });
+
+        test('without Telegram a refused send still leaves a notification', async () => {
+            agent.interface.send.mockResolvedValue(false);
+            expect(await agent.deliverSystemAlert('slack token', 'slack_token_expired:T1')).toBe(true);
+            expect(agent.interface.send).toHaveBeenCalledTimes(1);
+            expect(notifications.create).toHaveBeenCalledTimes(1);
+            expect(notifications.create.mock.calls[0][0].title).toBe('System alert not delivered');
+        });
+
+        test('a whatsapp_needs_repair alert creates a notification even when WhatsApp accepted it', async () => {
+            agent.interface.send.mockResolvedValue(true);
+            await agent.deliverSystemAlert('wa down', 'whatsapp_needs_repair:user');
+            expect(notifications.create).toHaveBeenCalledTimes(1);
+            expect(notifications.create.mock.calls[0][0].title).toBe('System alert');
+        });
+
+        test('does not set the dedup when nothing reached anyone', async () => {
+            agent.interface.send.mockResolvedValue(false);
+            notifications.create.mockReturnValue(null); // persist failed
+            expect(await agent.deliverSystemAlert('lost', 'lost_alert')).toBe(false);
+            expect(await agent.deliverSystemAlert('lost', 'lost_alert')).toBe(false);
+            expect(agent.interface.send).toHaveBeenCalledTimes(2);
+        });
+    });
+
     describe('error path', () => {
         test('rewinds with deleteMessagesSince and reports an undelivered error reply', async () => {
             agent.router = { route: jest.fn().mockRejectedValue(new Error('boom')) };

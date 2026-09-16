@@ -392,26 +392,93 @@ class Agent {
       return false;
     }
 
+    // A WhatsApp session that needs repair may be the very channel this
+    // alert goes through, so it always leaves a dashboard notification too.
+    const isWhatsAppRepair = String(key).startsWith('whatsapp_needs_repair');
+    let delivered = false;
+    let notified = false;
+
     const setting = this.db.getAgentSetting('owner_phone');
     const ownerPhone = (setting && setting.value) || process.env.MY_PHONE || '';
     if (!ownerPhone) {
-      console.warn('[Agent] deliverSystemAlert: no owner_phone configured; dropping alert.');
-      return false;
+      console.warn('[Agent] deliverSystemAlert: no owner_phone configured; skipping WhatsApp.');
+    } else {
+      try {
+        const result = await this.interface.send({
+          source: 'whatsapp:assistant',
+          content: text,
+          type: 'text',
+          metadata: { chatId: ownerPhone },
+          isNotification: true
+        });
+        delivered = result !== false;
+        if (delivered) {
+          console.log(`[Agent] Delivered system alert to owner (key='${key}').`);
+        } else {
+          console.error(`[Agent] deliverSystemAlert: WhatsApp did not accept the alert (key='${key}').`);
+        }
+      } catch (e) {
+        console.error('[Agent] deliverSystemAlert send failed:', e.message);
+      }
     }
 
+    if (!delivered) {
+      delivered = await this._sendTelegramAlert(text, key);
+    }
+
+    if (!delivered || isWhatsAppRepair) {
+      notified = this._notifySystemAlert(text, key, delivered);
+    }
+
+    // Only remember the alert when someone can see it; otherwise try again
+    // on the next trigger.
+    if (delivered || notified) this._systemAlertDedup.set(key, now);
+    return delivered || notified;
+  }
+
+  /**
+   * Send a system alert to the first allowed Telegram id, when Telegram is set up.
+   * @returns {Promise<boolean>} true when the interface accepted the message
+   */
+  async _sendTelegramAlert(text, key) {
+    const ids = String(process.env.ALLOWED_TELEGRAM_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+    if (ids.length === 0) return false;
     try {
-      await this.interface.send({
-        source: 'whatsapp:assistant',
+      const result = await this.interface.send({
+        source: 'telegram',
         content: text,
         type: 'text',
-        metadata: { chatId: ownerPhone },
+        metadata: { chatId: ids[0] },
         isNotification: true
       });
-      this._systemAlertDedup.set(key, now);
-      console.log(`[Agent] Delivered system alert to owner (key='${key}').`);
+      if (result === false) {
+        console.error(`[Agent] deliverSystemAlert: Telegram did not accept the alert (key='${key}').`);
+        return false;
+      }
+      console.log(`[Agent] Delivered system alert to owner via Telegram (key='${key}').`);
       return true;
     } catch (e) {
-      console.error('[Agent] deliverSystemAlert send failed:', e.message);
+      console.error('[Agent] deliverSystemAlert Telegram send failed:', e.message);
+      return false;
+    }
+  }
+
+  /**
+   * Record a system alert as a dashboard notification.
+   * @returns {boolean} true when the notification was stored
+   */
+  _notifySystemAlert(text, key, delivered) {
+    try {
+      const n = this.notifications.create({
+        type: 'system_alert',
+        severity: 'error',
+        title: delivered ? 'System alert' : 'System alert not delivered',
+        message: text,
+        metadata: { alertKey: key, delivered, link: '/settings/interfaces' }
+      });
+      return !!n;
+    } catch (e) {
+      console.error('[Agent] Failed to record system alert notification:', e.message);
       return false;
     }
   }
