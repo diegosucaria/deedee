@@ -25,3 +25,13 @@ export async function requireSession() {
     }
     return { session, response: null };
 }
+
+// Server actions have no response object to return, so a missing session
+// is reported by throwing. Call it first in any action that reads secrets,
+// changes settings, creates work or sends messages. The middleware already
+// gates action calls; this is defense in depth.
+export async function requireActionSession() {
+    const session = await getSession();
+    if (!session) throw new Error('Unauthorized');
+    return session;
+}

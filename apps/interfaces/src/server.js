@@ -1,5 +1,6 @@
 const { Server } = require("socket.io");
 const http = require('http');
+const crypto = require('crypto');
 const express = require('express');
 const { TelegramService } = require('./telegram');
 const { WhatsAppService } = require('./whatsapp');
@@ -207,13 +208,30 @@ if (!isWhatsAppDisabled) {
 let slack = new SlackManager(agentUrl);
 slack.start().catch(err => console.error('[Interfaces] Slack init error:', err.message));
 
+// Constant-time compare of two secrets. False when either is missing or
+// the lengths differ (timingSafeEqual needs equal-length buffers).
+function tokenMatches(presented, expected) {
+  if (typeof presented !== 'string' || typeof expected !== 'string' || !expected) return false;
+  const a = Buffer.from(presented);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
 // Authentication Middleware
 const authMiddleware = (req, res, next) => {
   // Skip auth for health check
   if (req.path === '/health') return next();
 
+  const expected = process.env.DEEDEE_API_TOKEN;
+  if (!expected) {
+    // Fail closed: with no token configured nothing but /health answers.
+    console.error('[Interfaces] DEEDEE_API_TOKEN is not set; refusing request.');
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+
   const token = req.headers.authorization?.split(' ')[1];
-  if (token !== process.env.DEEDEE_API_TOKEN) {
+  if (!tokenMatches(token, expected)) {
     return res.status(401).json({ error: 'Unauthorized' });
   }
   next();

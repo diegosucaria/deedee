@@ -1,12 +1,6 @@
 import { NextResponse } from 'next/server';
 import { buildAuthenticationOptions } from '@/lib/auth/webauthn';
-import { rateLimitLogin } from '@/lib/auth/rate-limit';
-
-function clientIp(req) {
-    const fwd = req.headers.get('x-forwarded-for');
-    if (fwd) return fwd.split(',')[0].trim();
-    return req.headers.get('x-real-ip') || 'unknown';
-}
+import { rateLimitLogin, clientIp } from '@/lib/auth/rate-limit';
 
 export async function POST(request) {
     const limit = rateLimitLogin(clientIp(request));

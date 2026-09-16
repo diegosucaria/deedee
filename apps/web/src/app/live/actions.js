@@ -1,6 +1,7 @@
 'use server';
 
 import { fetchAPI } from '@/lib/api';
+import { requireActionSession } from '@/lib/auth/guard';
 
 // Used only when the agent's /v1/live/config call fails. Mirrors the agent's
 // WORKER_LIVE default (apps/agent/src/services/config-service.js).
@@ -11,6 +12,7 @@ function withModelsPrefix(model) {
 }
 
 export async function getLiveToken() {
+    await requireActionSession();
     try {
         const response = await fetchAPI('/v1/live/token', {
             method: 'POST',
@@ -22,6 +24,7 @@ export async function getLiveToken() {
 }
 
 export async function executeLiveTool(name, args) {
+    await requireActionSession();
     try {
         const response = await fetchAPI('/v1/live/tools/execute', {
             method: 'POST',
@@ -34,6 +37,7 @@ export async function executeLiveTool(name, args) {
 }
 
 export async function getLiveConfig() {
+    await requireActionSession();
     try {
         const response = await fetchAPI('/v1/live/config');
         return { model: withModelsPrefix(response.model || DEFAULT_LIVE_MODEL) };
@@ -44,6 +48,7 @@ export async function getLiveConfig() {
 }
 
 export async function getAgentTools() {
+    await requireActionSession();
     try {
         const response = await fetchAPI('/v1/live/tools');
         return { success: true, tools: response.tools || [] };

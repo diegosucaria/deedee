@@ -2,13 +2,7 @@ import { NextResponse } from 'next/server';
 import { requireSession } from '@/lib/auth/guard';
 import { readStore, writeStore } from '@/lib/auth/store';
 import { hashPassword, verifyPassword } from '@/lib/auth/password';
-import { rateLimitLogin } from '@/lib/auth/rate-limit';
-
-function clientIp(req) {
-    const fwd = req.headers.get('x-forwarded-for');
-    if (fwd) return fwd.split(',')[0].trim();
-    return req.headers.get('x-real-ip') || 'unknown';
-}
+import { rateLimitLogin, recordLoginFailure, clientIp } from '@/lib/auth/rate-limit';
 
 export async function POST(request) {
     const { session, response } = await requireSession();
@@ -40,6 +34,7 @@ export async function POST(request) {
     }
     const ok = await verifyPassword(currentPassword, store.password);
     if (!ok) {
+        recordLoginFailure();
         return NextResponse.json({ error: 'Current password is incorrect' }, { status: 401 });
     }
 
