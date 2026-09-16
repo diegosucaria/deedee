@@ -423,6 +423,33 @@ class AgentDB {
 
       CREATE INDEX IF NOT EXISTS idx_pending_questions_reply
         ON pending_questions(reply_chat_id, status);
+
+      CREATE TABLE IF NOT EXISTS notification_outbox (
+        id TEXT PRIMARY KEY,
+        kind TEXT NOT NULL,
+        channel TEXT NOT NULL,
+        target TEXT NOT NULL,
+        payload TEXT NOT NULL,
+        status TEXT NOT NULL DEFAULT 'pending',
+        attempts INTEGER NOT NULL DEFAULT 0,
+        next_attempt_at TEXT,
+        last_error TEXT,
+        created_at TEXT NOT NULL,
+        sent_at TEXT,
+        origin TEXT,
+        content_hash TEXT,
+        expires_at TEXT,
+        delivered_via TEXT,
+        fallback_channel TEXT,
+        fallback_target TEXT,
+        fallback_status TEXT,
+        fallback_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_outbox_due
+        ON notification_outbox(status, next_attempt_at);
+      CREATE INDEX IF NOT EXISTS idx_outbox_dedupe
+        ON notification_outbox(kind, target, content_hash, created_at);
     `);
 
     // Seed wr_user_profile singleton (id=1) with preferred brands if missing
@@ -2966,6 +2993,165 @@ class AgentDB {
       INSERT INTO notifications (id, type, severity, title, message, metadata, created_at)
       VALUES (?, ?, ?, ?, ?, ?, ?)
     `).run(id, type, severity, title, message, metadataStr, createdAt);
+  }
+
+  // --- Notification outbox (delivery ledger) ---
+  //
+  // One row per outbound owner notification. services/delivery-service.js
+  // owns the state machine: pending -> sent, or pending -> failed (retry
+  // with backoff) -> dead. A row that a fallback channel delivered is 'sent'
+  // with delivered_via set to that channel.
+
+  static get OUTBOX_STATUSES() { return ['pending', 'sent', 'failed', 'dead']; }
+
+  _mapOutboxRow(row) {
+    if (!row) return null;
+    let payload = {};
+    try { payload = row.payload ? JSON.parse(row.payload) : {}; } catch { payload = {}; }
+    return { ...row, payload };
+  }
+
+  /**
+   * Insert a ledger row. `attempts` and `status` may be preset when the
+   * caller already made the first attempt (a reply the interface refused).
+   */
+  enqueueOutbox({ id, kind, channel, target, payload, origin, contentHash, expiresAt,
+    status = 'pending', attempts = 0, lastError = null, nextAttemptAt = null, createdAt = null }) {
+    const rowId = id || crypto.randomUUID();
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO notification_outbox
+        (id, kind, channel, target, payload, status, attempts, next_attempt_at, last_error, created_at, origin, content_hash, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(rowId, kind, channel, target, JSON.stringify(payload || {}), status, attempts,
+      nextAttemptAt || now, lastError, createdAt || now, origin || null, contentHash || null, expiresAt || null);
+    return this.getOutboxRow(rowId);
+  }
+
+  getOutboxRow(id) {
+    return this._mapOutboxRow(this.db.prepare('SELECT * FROM notification_outbox WHERE id = ?').get(id));
+  }
+
+  /**
+   * Rows whose next attempt is due. Each claimed row gets a short lease so a
+   * second tick (or a crash mid-send) does not pick it again at once.
+   */
+  claimDueOutbox(limit = 20, { now = new Date(), leaseMs = 2 * 60 * 1000 } = {}) {
+    const safeLimit = Math.min(Math.max(1, limit), 200);
+    const nowIso = now.toISOString();
+    const rows = this.db.prepare(`
+      SELECT * FROM notification_outbox
+      WHERE status IN ('pending', 'failed') AND next_attempt_at <= ?
+      ORDER BY next_attempt_at ASC
+      LIMIT ?
+    `).all(nowIso, safeLimit);
+    if (rows.length === 0) return [];
+    const lease = new Date(now.getTime() + leaseMs).toISOString();
+    const bump = this.db.prepare('UPDATE notification_outbox SET next_attempt_at = ? WHERE id = ?');
+    const tx = this.db.transaction((ids) => { for (const id of ids) bump.run(lease, id); });
+    tx(rows.map(r => r.id));
+    return rows.map(r => this._mapOutboxRow(r));
+  }
+
+  markOutboxSent(id, { via = null, now = new Date() } = {}) {
+    this.db.prepare(`
+      UPDATE notification_outbox
+      SET status = 'sent', sent_at = ?, delivered_via = COALESCE(?, channel), attempts = attempts + 1, last_error = NULL
+      WHERE id = ?
+    `).run(now.toISOString(), via, id);
+    return this.getOutboxRow(id);
+  }
+
+  /**
+   * Record a failed attempt. Schedules the next one with backoff, or moves
+   * the row to 'dead' once it used up its attempts.
+   * @param {string} id
+   * @param {string} error
+   * @param {{ backoffMs?: number[], maxAttempts?: number, now?: Date }} opts
+   */
+  markOutboxFailed(id, error, { backoffMs = [60e3, 300e3, 900e3, 3600e3], maxAttempts = 6, now = new Date() } = {}) {
+    const row = this.getOutboxRow(id);
+    if (!row) return null;
+    const attempts = row.attempts + 1;
+    const message = String(error || 'send failed').slice(0, 500);
+    if (attempts >= maxAttempts) {
+      return this.deadLetterOutbox(id, message, { attempts, now });
+    }
+    const delay = backoffMs[Math.min(attempts - 1, backoffMs.length - 1)];
+    const nextAt = new Date(now.getTime() + delay).toISOString();
+    this.db.prepare(`
+      UPDATE notification_outbox
+      SET status = 'failed', attempts = ?, next_attempt_at = ?, last_error = ?
+      WHERE id = ?
+    `).run(attempts, nextAt, message, id);
+    return this.getOutboxRow(id);
+  }
+
+  deadLetterOutbox(id, error, { attempts = null, now = new Date() } = {}) {
+    this.db.prepare(`
+      UPDATE notification_outbox
+      SET status = 'dead', attempts = COALESCE(?, attempts), next_attempt_at = NULL, last_error = ?
+      WHERE id = ?
+    `).run(attempts, String(error || 'gave up').slice(0, 500), id);
+    return this.getOutboxRow(id);
+  }
+
+  /** Note the one fallback attempt made for a row. */
+  noteOutboxFallback(id, { channel, target, status, error = null, now = new Date() }) {
+    this.db.prepare(`
+      UPDATE notification_outbox
+      SET fallback_channel = ?, fallback_target = ?, fallback_status = ?, fallback_at = ?,
+          last_error = CASE WHEN ? IS NULL THEN last_error ELSE ? END
+      WHERE id = ?
+    `).run(channel, target, status, now.toISOString(), error, error ? String(error).slice(0, 500) : null, id);
+    return this.getOutboxRow(id);
+  }
+
+  /** Put a row back in line for an attempt right now (Retry button). */
+  resetOutboxRow(id, { now = new Date() } = {}) {
+    const res = this.db.prepare(`
+      UPDATE notification_outbox
+      SET status = 'pending', next_attempt_at = ?, sent_at = NULL
+      WHERE id = ? AND status != 'sent'
+    `).run(now.toISOString(), id);
+    return res.changes > 0 ? this.getOutboxRow(id) : null;
+  }
+
+  /** A row with the same kind, target and content created after `since`. */
+  findOutboxDuplicate(kind, target, contentHash, since) {
+    if (!contentHash) return null;
+    const sinceIso = since instanceof Date ? since.toISOString() : since;
+    return this._mapOutboxRow(this.db.prepare(`
+      SELECT * FROM notification_outbox
+      WHERE kind = ? AND target = ? AND content_hash = ? AND created_at >= ?
+      ORDER BY created_at DESC LIMIT 1
+    `).get(kind, target, contentHash, sinceIso));
+  }
+
+  listRecentOutbox({ limit = 50, status = null } = {}) {
+    const safeLimit = Math.min(Math.max(1, limit), 500);
+    const where = status ? 'WHERE status = ?' : '';
+    const params = status ? [status, safeLimit] : [safeLimit];
+    return this.db.prepare(`
+      SELECT * FROM notification_outbox ${where}
+      ORDER BY created_at DESC LIMIT ?
+    `).all(...params).map(r => this._mapOutboxRow(r));
+  }
+
+  countOutboxByStatus() {
+    const counts = { pending: 0, sent: 0, failed: 0, dead: 0 };
+    for (const row of this.db.prepare('SELECT status, COUNT(*) AS n FROM notification_outbox GROUP BY status').all()) {
+      counts[row.status] = row.n;
+    }
+    return counts;
+  }
+
+  /** Drop sent and dead rows older than `days`. Returns the number removed. */
+  cleanupOutbox(days = 30) {
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    return this.db.prepare(`
+      DELETE FROM notification_outbox WHERE status IN ('sent', 'dead') AND created_at < ?
+    `).run(cutoff).changes;
   }
 
   // --- Wardrobe: Garments ---
