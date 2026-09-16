@@ -5,6 +5,7 @@ const { Monitor } = require('./monitor');
 const { HealthMonitor } = require('./health-monitor');
 const { Writable } = require('stream');
 const Docker = require('dockerode');
+const crypto = require('crypto');
 
 class PrefixWriter extends Writable {
   constructor(prefix, destination) {
@@ -40,21 +41,29 @@ healthMonitor.start();
 
 app.use(express.json());
 
-// Security: Simple Token Auth
+// Constant-time compare of two secrets. False when either is missing or
+// the lengths differ (timingSafeEqual needs equal-length buffers).
+function tokenMatches(presented, expected) {
+  if (typeof presented !== 'string' || typeof expected !== 'string' || !expected) return false;
+  const a = Buffer.from(presented);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length) return false;
+  return crypto.timingSafeEqual(a, b);
+}
+
+// Security: Simple Token Auth. Protect all routes except /health.
 app.use((req, res, next) => {
-  // Skip auth for health checks or internal metrics if needed?
-  // Protect all routes except /health
   if (req.path === '/health') return next();
 
-  const token = req.headers['x-supervisor-token'];
   const validToken = process.env.SUPERVISOR_TOKEN;
-
   if (!validToken) {
-    console.warn('[Supervisor] WARNING: SUPERVISOR_TOKEN not set. Allowing request (Insecure).');
-    return next();
+    // Fail closed: with no token configured nothing but /health answers.
+    console.error('[Supervisor] SUPERVISOR_TOKEN is not set; refusing request.');
+    return res.status(401).json({ error: 'Unauthorized' });
   }
 
-  if (token !== validToken) {
+  const token = req.headers['x-supervisor-token'];
+  if (!tokenMatches(token, validToken)) {
     console.warn(`[Supervisor] Unauthorized access attempt from ${req.ip}`);
     return res.status(403).json({ error: 'Unauthorized' });
   }
@@ -77,7 +86,7 @@ if (gitRemote && githubPat && gitRemote.startsWith('https://')) {
 
 git.configure(gitName, gitEmail, gitRemote).then(() => {
   console.log('[Supervisor] Git configured. Starting monitor...');
-  monitor.start();
+  return monitor.start();
 }).catch(console.error);
 
 app.get('/health', (req, res) => {

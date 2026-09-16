@@ -59,17 +59,15 @@ describe('GitOps Shell Injection Prevention', () => {
         expect(messageArg).toBe(maliciousMessage);
     });
 
-    test('should use execFile for add with malicious filenames', async () => {
-        const maliciousFile = '; rm -rf /';
+    test('a malicious file name is refused before any git or node command', async () => {
+        // Inside an allowed folder, so only the character filter stops it
+        const maliciousFile = 'apps/agent/; rm -rf x.js';
 
-        await gitOps.commitAndPush('safe message', [maliciousFile]);
+        const result = await gitOps.commitAndPush('safe message', [maliciousFile]);
 
-        // Verify execFile was called for add
-        expect(mockExecFile).toHaveBeenCalledWith(
-            'git',
-            expect.arrayContaining(['add', maliciousFile]),
-            expect.any(Object),
-            expect.any(Function)
-        );
+        expect(result.success).toBe(false);
+        expect(result.skipped).toEqual([maliciousFile]);
+        expect(gitOps.verifier.verify).not.toHaveBeenCalled();
+        expect(mockExecFile.mock.calls.some(call => call[1].includes('add'))).toBe(false);
     });
 });

@@ -1,11 +1,18 @@
 const request = require('supertest');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
 
 describe('Supervisor API', () => {
   let app;
+  let stateDir;
 
   beforeEach(() => {
     jest.resetModules(); // Ensure clean state
     process.env.SUPERVISOR_TOKEN = 'test-token';
+    // Keep the monitor's state files out of /app/state on the test machine
+    stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'supervisor-state-'));
+    process.env.SUPERVISOR_STATE_DIR = stateDir;
     // Mock GitOps BEFORE requiring app
     jest.mock('../src/git-ops', () => {
       return {
@@ -16,7 +23,8 @@ describe('Supervisor API', () => {
             return { success: true, message: 'Mock Pushed' };
           }),
           workDir: '/tmp/mock-source',
-          run: jest.fn().mockResolvedValue('hash|mock subject'),
+          run: jest.fn().mockResolvedValue('hash'),
+          runSafe: jest.fn().mockResolvedValue('hash\towner@example.test\tmock subject'),
           rollback: jest.fn().mockResolvedValue({ success: true }),
           pull: jest.fn().mockResolvedValue({ success: true })
         }))
@@ -25,6 +33,11 @@ describe('Supervisor API', () => {
 
     // Require app AFTER mocking
     app = require('../src/server').app;
+  });
+
+  afterEach(() => {
+    delete process.env.SUPERVISOR_STATE_DIR;
+    fs.rmSync(stateDir, { recursive: true, force: true });
   });
 
   test('GET /health', async () => {
@@ -41,6 +54,46 @@ describe('Supervisor API', () => {
 
     expect(res.statusCode).toBe(200);
     expect(res.body.success).toBe(true);
+  });
+
+  test('fails closed when SUPERVISOR_TOKEN is unset', async () => {
+    delete process.env.SUPERVISOR_TOKEN;
+
+    const noHeader = await request(app).post('/cmd/commit').send({ message: 'test commit' });
+    expect(noHeader.statusCode).toBe(401);
+
+    // 'undefined' === undefined was never true, but make the fail-closed path explicit.
+    const literalUndefined = await request(app)
+      .post('/cmd/commit')
+      .set('x-supervisor-token', 'undefined')
+      .send({ message: 'test commit' });
+    expect(literalUndefined.statusCode).toBe(401);
+
+    const rollback = await request(app).post('/cmd/rollback');
+    expect(rollback.statusCode).toBe(401);
+
+    const pull = await request(app).post('/cmd/pull');
+    expect(pull.statusCode).toBe(401);
+
+    const health = await request(app).get('/health');
+    expect(health.statusCode).toBe(200);
+  });
+
+  test('rejects missing, wrong and prefix-sharing tokens', async () => {
+    const missing = await request(app).post('/cmd/commit').send({ message: 'test commit' });
+    expect(missing.statusCode).toBe(403);
+
+    const wrong = await request(app)
+      .post('/cmd/commit')
+      .set('x-supervisor-token', 'test-tokem')
+      .send({ message: 'test commit' });
+    expect(wrong.statusCode).toBe(403);
+
+    const longer = await request(app)
+      .post('/cmd/commit')
+      .set('x-supervisor-token', 'test-token-and-more')
+      .send({ message: 'test commit' });
+    expect(longer.statusCode).toBe(403);
   });
 
   test('POST /cmd/commit failure (validation)', async () => {

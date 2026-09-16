@@ -2,6 +2,7 @@ version: '2.1'
 
 volumes:
   repo-data:
+  supervisor-state: # Supervisor-only: .last_boot_commit, .last_assessed_commit, .last_rollback_commit. The agent must not reach it.
   agent-data: # For SQLite DB
   interfaces-data: # For WhatsApp Sessions
   web-data: # For auth.json (login password hash + passkeys). Do NOT include in backups.
@@ -17,6 +18,7 @@ services:
       - INTERFACES_URL=http://interfaces:5000
       # DEEDEE_INTERNAL_TOKEN required at runtime — agent rejects /internal/*
       # callers without a matching bearer token. Inject via Balena/.env.
+      # SUPERVISOR_TOKEN also required — sent on every call to the supervisor.
       - RATE_LIMIT_HOURLY=50
       - RATE_LIMIT_DAILY=500
       - MAX_TOOL_LOOPS=50
@@ -52,8 +54,13 @@ services:
       - GIT_USER_NAME=Deedee Agent
       - GIT_USER_EMAIL=deedee@bot
       - PORT=4000
+      - SUPERVISOR_STATE_DIR=/app/state
+      # SUPERVISOR_TOKEN required at runtime — the supervisor refuses every
+      # request when it is unset. Inject via Balena/.env; agent and api send
+      # it as X-Supervisor-Token.
     volumes:
       - repo-data:/app/source
+      - supervisor-state:/app/state
       - /var/run/docker.sock:/var/run/docker.sock
     labels:
       io.balena.features.balena-socket: '1'
@@ -93,6 +100,7 @@ services:
       # Required at runtime (inject via Balena/.env, never bake into the image):
       #   DEEDEE_API_TOKEN        — bearer for /v1/* (iOS Shortcuts etc.)
       #   DEEDEE_INTERNAL_TOKEN   — bearer for agent /internal/*
+      #   SUPERVISOR_TOKEN        — X-Supervisor-Token on calls to the supervisor
       #   SESSION_SECRET          — must match the web service; verifies the
       #                             session cookie on /socket.io upgrade
       #   WEB_ORIGIN              — UI origin, used for CORS with credentials
