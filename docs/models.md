@@ -12,7 +12,7 @@ Code asks for a role, never for an id: `configService.getModel('FLASH')`.
 | SEARCH | `WORKER_GOOGLE_SEARCH` | `gemini-3.6-flash` | Google Search grounding | 0.75 → 3.75, plus grounding quota |
 | PRO | `WORKER_PRO` | `gemini-3.1-pro-preview` | hard reasoning, code, planning | 2.00 → 12.00 (4.00 → 18.00 above 200k input) |
 | TTS | `GEMINI_TTS_MODEL` | `gemini-2.5-flash-preview-tts` | voice notes | 0.50 → 10.00 |
-| IMAGE | `GEMINI_IMAGE_MODEL` | `gemini-3.1-flash-image` | image generation, wardrobe mirror | 0.50 in; 3.00 text out; 60.00 image out |
+| IMAGE | `GEMINI_IMAGE_MODEL` | `gemini-3-pro-image` | image generation, wardrobe mirror | 2.00 in; 12.00 text out; 120.00 image out (`gemini-3.1-flash-image` is half the price per image, lighter model) |
 | EMBEDDING | `GEMINI_EMBEDDING_MODEL` | `gemini-embedding-2` | RAG vectors (`EMBEDDING_DIMENSIONS`, 1536 in production) | 0.20 in |
 | LIVE | `WORKER_LIVE` | `gemini-3.8-live` | voice page at `/live` | audio 3.00 → 12.00; text 0.75 → 4.50 |
 

@@ -31,7 +31,7 @@ describe('ConfigService model roles', () => {
         expect(c.getModel('FLASH')).toBe('gemini-3.6-flash');
         expect(c.getModel('SEARCH')).toBe('gemini-3.6-flash');
         expect(c.getModel('PRO')).toBe('gemini-3.1-pro-preview');
-        expect(c.getModel('IMAGE')).toBe('gemini-3.1-flash-image');
+        expect(c.getModel('IMAGE')).toBe('gemini-3-pro-image');
         expect(c.getModel('TTS')).toBe('gemini-2.5-flash-preview-tts');
         expect(c.getModel('LIVE')).toBe('gemini-3.8-live');
         expect(c.getModel('EMBEDDING')).toBe('gemini-embedding-2');

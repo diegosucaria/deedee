@@ -19,7 +19,7 @@ const CONSTANTS = {
         FLASH: process.env.WORKER_FLASH || 'gemini-3.6-flash',
         LITE: process.env.WORKER_LITE || 'gemini-3.1-flash-lite',
         PRO: process.env.WORKER_PRO || 'gemini-3.1-pro-preview',
-        IMAGE: process.env.GEMINI_IMAGE_MODEL || 'gemini-3.1-flash-image',
+        IMAGE: process.env.GEMINI_IMAGE_MODEL || 'gemini-3-pro-image',
         TTS: process.env.GEMINI_TTS_MODEL || 'gemini-2.5-flash-preview-tts',
         ROUTER: process.env.ROUTER_MODEL || 'gemini-3.1-flash-lite',
         SEARCH: process.env.WORKER_GOOGLE_SEARCH || 'gemini-3.6-flash',
@@ -70,7 +70,7 @@ const CONSTANTS = {
         // Live sessions are voice, so the AUDIO rates are used here. Text-only turns are
         // over-counted (4x in, 2.7x out) until usage is split by modality.
         'gemini-3.8-live': { tier1: { input: 3.00, output: 12.00 }, tier2: { input: 3.00, output: 12.00 } },
-        'gemini-2.5-flash-native-audio-preview-12-2025': { tier1: { input: 0.30, output: 2.50 }, tier2: { input: 0.30, output: 2.50 } }, // approximated as flash text
+        'gemini-2.5-flash-native-audio-preview-12-2025': { tier1: { input: 3.00, output: 12.00 }, tier2: { input: 3.00, output: 12.00 } }, // audio rates (text is 0.50/2.00); same approximation as gemini-3.8-live
         // --- Embedding models (input only, no output) ---
         'gemini-embedding-2': { tier1: { input: 0.20, output: 0 }, tier2: { input: 0.20, output: 0 } },
         'gemini-embedding-2-preview': { tier1: { input: 0.20, output: 0 }, tier2: { input: 0.20, output: 0 } }, // retired Aug 2026

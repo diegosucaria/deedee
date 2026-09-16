@@ -6,7 +6,7 @@ const { parseArgs, buildPlan, runSmoke, formatTable, main, DEFAULTS, ROLE_ORDER 
 const MODELS = {
     ROUTER: 'gemini-3.1-flash-lite', LITE: 'gemini-3.1-flash-lite', FLASH: 'gemini-3.6-flash',
     SEARCH: 'gemini-3.6-flash', PRO: 'gemini-3.1-pro-preview', TTS: 'gemini-2.5-flash-preview-tts',
-    IMAGE: 'gemini-3.1-flash-image', EMBEDDING: 'gemini-embedding-2', LIVE: 'gemini-3.8-live'
+    IMAGE: 'gemini-3-pro-image', EMBEDDING: 'gemini-embedding-2', LIVE: 'gemini-3.8-live'
 };
 
 const usage = (extra = {}) => ({ promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15, ...extra });
@@ -121,7 +121,7 @@ describe('model-smoke runSmoke', () => {
 
         const image = res.rows.find(r => r.check === 'image');
         expect(image.note).toMatch(/^image\/png/);
-        expect(image.cost).toBeCloseTo((10 / 1e6) * 0.5 + (1290 / 1e6) * 60 + (10 / 1e6) * 3, 9);
+        expect(image.cost).toBeCloseTo((10 / 1e6) * 2.0 + (1290 / 1e6) * 120 + (10 / 1e6) * 12, 9); // gemini-3-pro-image rates
 
         expect(res.rows.find(r => r.check === 'tts').note).toMatch(/^audio\//);
         expect(res.rows.find(r => r.check === 'embed').note).toBe('768 dims');
