@@ -76,7 +76,8 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - `POST /v1/whatsapp`: Control WhatsApp sessions (connect/disconnect).
     - `GET /v1/whatsapp/contacts`: Search synced WhatsApp contacts.
     - `GET/POST /v1/gsuite/*`: Google Workspace OAuth and Account Management.
-    - `POST /v1/live/token`: Proxy for Gemini Live ephemeral tokens.
+    - `POST /v1/live/token`: Proxy for Gemini Live ephemeral tokens (`authTokens.create` on the Agent).
+    - `GET /v1/live/config`: Proxy for the Live model, voice and the Agent's Live system instruction.
     - `POST /v1/live/tools/execute`: Proxy for Gemini Live client-side tool execution.
     - `GET /v1/vaults`: List and manage Life Vaults.
     - `GET/POST /v1/browser-secrets`: Securely manage browser automation credentials.
