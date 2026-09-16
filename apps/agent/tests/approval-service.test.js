@@ -88,6 +88,16 @@ describe('ApprovalService', () => {
             expect(await svc.route(watcherMsg())).toMatchObject({ replyChatId: OWNER_JID, mode: 'deferred' });
         });
 
+        test('a job created from a web chat still asks on the owner channel, with a copy in that web chat', async () => {
+            const job = msg('web', 'web-chat-7', 'Scheduled Task: set the AC', { jobName: 'ac-morning' });
+            expect(await svc.route(job)).toEqual({
+                replyChatId: OWNER_JID, replyChannel: 'whatsapp', mode: 'deferred', ownerChannel: true,
+                mirror: { channel: 'web', chatId: 'web-chat-7' }
+            });
+            // A system run in a synthetic chat has nothing to mirror.
+            expect(await svc.route(msg('system', 'system_dream_1700000000000', 'System Maintenance'))).not.toHaveProperty('mirror');
+        });
+
         test('notification_channel telegram sends the card to Telegram', async () => {
             agent.settings.notification_channel = 'telegram';
             expect(await svc.route(schedulerMsg())).toMatchObject({ replyChatId: TG_OWNER, replyChannel: 'telegram', mode: 'deferred' });
@@ -141,6 +151,23 @@ describe('ApprovalService', () => {
             expect(sent.content).toContain('password: <redacted>');
             expect(sent.content).not.toContain('"x"');
             expect(res.result.info).toMatch(/notification channel/);
+        });
+
+        test('a job from a web chat: the card goes to the owner channel, a copy to the web chat, and the row is keyed by the owner', async () => {
+            const job = msg('web', 'web-chat-7', 'Scheduled Task: set the AC', { jobName: 'ac-morning' });
+            const res = await svc.request({ message: job, toolName: 'sendEmail', args: { to: 'alice@example.com' }, reason: 'Email.' });
+            expect(res.result.info).toMatch(/notification channel/);
+            const row = db.getPendingConfirmation(res.id);
+            expect(row).toMatchObject({ mode: 'deferred', reply_chat_id: OWNER_JID, reply_channel: 'whatsapp', origin_chat_id: 'web-chat-7', origin_source: 'web' });
+            const ttl = new Date(row.expires_at).getTime() - Date.now();
+            expect(ttl).toBeGreaterThan(5.9 * 3600e3);
+            const sent = sentTexts(agent);
+            expect(sent).toHaveLength(2);
+            expect(sent[0]).toMatchObject({ source: 'whatsapp', metadata: { chatId: OWNER_JID, session: 'assistant' } });
+            expect(sent[0].content).toContain('scheduled job "ac-morning"');
+            expect(sent[1]).toMatchObject({ source: 'web', metadata: { chatId: 'web-chat-7', approval: { id: res.id, status: 'pending', mirror: true } } });
+            expect(sent[1].content).toContain('Asked on your whatsapp too');
+            expect(sent[1].content).toContain(`/confirm ${res.id}`);
         });
 
         test('a watcher run asks the owner, never the contact', async () => {
@@ -230,19 +257,19 @@ describe('ApprovalService', () => {
             expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ content: expect.stringMatching(/already denied/) }));
         });
 
-        test('with several pending, a plain yes lists the ids and /confirm <id> picks one (prefix allowed)', async () => {
+        test('with several pending, a plain yes falls through, a bare /confirm lists the ids and /confirm <id> picks one (prefix allowed)', async () => {
             const a = await svc.request({ message: msg('web', 'c'), toolName: 'deleteVault', args: { id: 'v' }, reason: 'r' });
             const b = await svc.request({ message: msg('web', 'c'), toolName: 'commitAndPush', args: { message: 'm' }, reason: 'r' });
             const send = jest.fn().mockResolvedValue(true);
-            const res = await svc.intercept(msg('web', 'c', 'yes'), send);
-            expect(res.handled).toBe(true);
+            expect(await svc.intercept(msg('web', 'c', 'yes'), send)).toBeNull(); // the model gets it; the card asked for /confirm <id>
+            expect(send).not.toHaveBeenCalled();
+            expect(db.getPendingConfirmation(a.id).status).toBe('pending');
+            const bare = await svc.handleCommand(msg('web', 'c', '/confirm'), '/confirm', undefined, send);
+            expect(bare).toBe(true);
             const listed = send.mock.calls[0][0].content;
             expect(listed).toContain('2 approvals are pending');
             expect(listed).toContain(a.id);
             expect(listed).toContain(b.id);
-            expect(db.getPendingConfirmation(a.id).status).toBe('pending');
-            const bare = await svc.handleCommand(msg('web', 'c', '/confirm'), '/confirm', undefined, send);
-            expect(bare).toBe(true);
             expect(db.getPendingConfirmation(b.id).status).toBe('pending');
             const picked = await svc.handleCommand(msg('web', 'c', `/confirm ${b.id.slice(0, 4)}`), '/confirm', b.id.slice(0, 4), send);
             expect(picked).toEqual({ type: 'EXECUTE_PENDING', action: { name: 'commitAndPush', args: { message: 'm' }, approvalId: b.id } });
@@ -272,6 +299,42 @@ describe('ApprovalService', () => {
             expect(await svc.handleCommand(msg('whatsapp:assistant', '15550001234@s.whatsapp.net', '/confirm'), '/confirm', undefined, send)).toBe(true);
             expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ content: 'No pending action to confirm.' }));
             expect(db.listPendingConfirmations()).toHaveLength(1);
+        });
+
+        test("a plain yes/no counts only in the chat that holds the card; the owner's other chats need /confirm <id>", async () => {
+            // A job's card went to the owner's WhatsApp.
+            const req = await svc.request({ message: schedulerMsg('morning'), toolName: 'sendEmail', args: { to: 'alice@example.com' }, reason: 'r' });
+            const send = jest.fn().mockResolvedValue(true);
+            // "yes", "ok", "no" in a web chat or on Telegram answer whatever the model asked there, not the job.
+            expect(await svc.intercept(msg('web', 'web-chat-77', 'yes'), send)).toBeNull();
+            expect(await svc.intercept(msg('web', 'web-chat-77', 'ok'), send)).toBeNull();
+            expect(await svc.intercept(msg('telegram', TG_OWNER, 'no'), send)).toBeNull();
+            expect(send).not.toHaveBeenCalled();
+            expect(agent._executeTool).not.toHaveBeenCalled();
+            expect(db.getPendingConfirmation(req.id).status).toBe('pending');
+            // A bare /cancel elsewhere ends nothing here.
+            expect(await svc.handleCommand(msg('web', 'web-chat-99', '/cancel'), '/cancel', undefined, send)).toBe(true);
+            expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ content: expect.stringMatching(/^Action cancelled\. 1 approval\(s\) wait elsewhere/) }));
+            expect(db.getPendingConfirmation(req.id).status).toBe('pending');
+            // /approvals lists it from any owner chat; /confirm <id> decides it from any owner chat.
+            await svc.handleCommand(msg('web', 'web-chat-77', '/approvals'), '/approvals', undefined, send);
+            expect(send.mock.calls.at(-1)[0].content).toContain(req.id);
+            const res = await svc.handleCommand(msg('web', 'web-chat-77', `/confirm ${req.id}`), '/confirm', req.id, send);
+            expect(res).toBe(true);
+            expect(db.getPendingConfirmation(req.id)).toMatchObject({ status: 'approved', decided_via: 'chat' });
+            expect(agent._executeTool).toHaveBeenCalledTimes(1);
+            expect(sentTexts(agent).pop()).toMatchObject({ source: 'web', metadata: { chatId: 'web-chat-77' } });
+        });
+
+        test('a plain yes in a mirrored web chat falls through; the web buttons send /confirm <id> and that works', async () => {
+            const job = msg('web', 'web-chat-7', 'Scheduled Task: mail', { jobName: 'mail' });
+            const req = await svc.request({ message: job, toolName: 'sendEmail', args: { to: 'alice@example.com' }, reason: 'r' });
+            const send = jest.fn().mockResolvedValue(true);
+            expect(await svc.intercept(msg('web', 'web-chat-7', 'yes'), send)).toBeNull();
+            expect(db.getPendingConfirmation(req.id).status).toBe('pending');
+            expect(await svc.handleCommand(msg('web', 'web-chat-7', `/cancel ${req.id}`), '/cancel', req.id, send)).toBe(true);
+            expect(db.getPendingConfirmation(req.id).status).toBe('denied');
+            expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ content: 'Denied: sendEmail will not run.' }));
         });
 
         test('non-vocabulary text and slash commands fall through (askUser and the model get them)', async () => {
@@ -311,17 +374,24 @@ describe('ApprovalService', () => {
             expect(db.getOutboxRow(out[0].id)).toMatchObject({ kind: 'approval', status: 'sent' });
         });
 
-        test("the owner's LID id and his Telegram both count as the owner", async () => {
+        test("the owner's LID id is the same WhatsApp chat; his Telegram needs the id", async () => {
             const req = await svc.request({ message: schedulerMsg(), toolName: 'sendEmail', args: {}, reason: 'r' });
-            expect(await svc.pendingFor(msg('whatsapp:assistant', '200000000000002@lid', 'yes'))).toHaveLength(1);
+            expect(await svc.pendingHere(msg('whatsapp:assistant', '200000000000002@lid', 'yes'))).toHaveLength(1);
+            expect(await svc.pendingHere(msg('telegram', TG_OWNER, 'yes'))).toHaveLength(0);
             expect(await svc.pendingFor(msg('telegram', TG_OWNER, 'yes'))).toHaveLength(1);
             expect(await svc.pendingFor(msg('telegram', '999', 'yes'))).toHaveLength(0);
             const send = jest.fn().mockResolvedValue(true);
-            const res = await svc.intercept(msg('telegram', TG_OWNER, 'ok'), send);
-            expect(res.handled).toBe(true);
+            expect(await svc.intercept(msg('telegram', TG_OWNER, 'ok'), send)).toBeNull();
+            expect(db.getPendingConfirmation(req.id).status).toBe('pending');
+            expect(await svc.handleCommand(msg('telegram', TG_OWNER, `/confirm ${req.id}`), '/confirm', req.id, send)).toBe(true);
             expect(db.getPendingConfirmation(req.id).status).toBe('approved');
             expect(agent._executeTool).toHaveBeenCalledTimes(1);
             expect(sentTexts(agent).pop()).toMatchObject({ source: 'telegram', metadata: { chatId: TG_OWNER } });
+            // The LID chat is the owner's WhatsApp chat: a plain word works there.
+            const again = await svc.request({ message: schedulerMsg('two'), toolName: 'sendEmail', args: {}, reason: 'r' });
+            const res = await svc.intercept(msg('whatsapp:assistant', '200000000000002@lid', 'dale'), send);
+            expect(res.handled).toBe(true);
+            expect(db.getPendingConfirmation(again.id).status).toBe('approved');
         });
 
         test('a failing tool is reported as approved-but-failed and stored', async () => {
@@ -361,24 +431,40 @@ describe('ApprovalService', () => {
     });
 
     describe('coexistence with askUser', () => {
-        test('yes/no go to the approval; anything else answers the question', async () => {
+        test('while a question waits in the chat, yes/no belong to the question; afterwards they decide the approval', async () => {
             const ask = new AskUserService(agent);
             agent.askUser = ask;
             const chat = msg('web', 'chat-1');
             const req = await svc.request({ message: chat, toolName: 'deleteVault', args: { id: 'v' }, reason: 'r' });
-            const pending = ask.ask(chat, { question: 'Which vault?', options: ['health', 'taxes'], timeoutSeconds: 60 });
+            const pending = ask.ask(chat, { question: 'Also remove the index?', options: ['yes', 'no'], timeoutSeconds: 60 });
             await new Promise(r => setImmediate(r)); // ask() registers its wait after the card is sent
             const send = jest.fn().mockResolvedValue(true);
 
-            // processMessage order: approvals first, then askUser.
-            expect(await svc.intercept(msg('web', 'chat-1', 'taxes'), send)).toBeNull();
-            expect(await ask.intercept(msg('web', 'chat-1', 'taxes'), send)).toMatchObject({ content: 'Got it.' });
-            await expect(pending).resolves.toEqual({ answer: 'taxes' });
+            // processMessage order: askUser first when a question is open here; approvals never take the word.
+            expect(await svc.intercept(msg('web', 'chat-1', 'no'), send)).toBeNull();
             expect(db.getPendingConfirmation(req.id).status).toBe('pending');
+            expect(await ask.intercept(msg('web', 'chat-1', 'no'), send)).toMatchObject({ content: 'Got it.' });
+            await expect(pending).resolves.toEqual({ answer: 'no' });
+            expect(ask.hasPending('chat-1')).toBe(false);
 
             const res = await svc.intercept(msg('web', 'chat-1', 'no'), send);
             expect(res.handled).toBe(true);
             expect(db.getPendingConfirmation(req.id).status).toBe('denied');
+        });
+
+        test("a question the owner is answering on WhatsApp shields a job's approval there too", async () => {
+            const ask = new AskUserService(agent);
+            agent.askUser = ask;
+            const req = await svc.request({ message: schedulerMsg(), toolName: 'sendEmail', args: {}, reason: 'r' });
+            const pending = ask.ask(schedulerMsg('other'), { question: 'Send the photo?', options: ['yes', 'no'], timeoutSeconds: 60 });
+            await new Promise(r => setImmediate(r));
+            const send = jest.fn().mockResolvedValue(true);
+            expect(await svc.intercept(msg('whatsapp:assistant', OWNER_JID, 'yes'), send)).toBeNull();
+            expect(await svc.intercept(msg('whatsapp:assistant', '200000000000002@lid', 'yes'), send)).toBeNull();
+            expect(db.getPendingConfirmation(req.id).status).toBe('pending');
+            expect(agent._executeTool).not.toHaveBeenCalled();
+            ask.cancelAll();
+            await expect(pending).resolves.toEqual({ cancelled: true });
         });
     });
 
@@ -441,6 +527,19 @@ describe('ApprovalService', () => {
             } finally {
                 jest.useRealTimers();
             }
+        });
+
+        test('an overdue row not yet swept cannot be approved from the settings card or by id; it is marked expired', async () => {
+            const req = await svc.request({ message: msg('web', 'c'), toolName: 'deleteVault', args: {}, reason: 'r' });
+            db.db.prepare('UPDATE pending_confirmations SET expires_at = ? WHERE id = ?').run(new Date(Date.now() - 1000).toISOString(), req.id);
+            const res = await svc.decide(req.id, 'approved', { via: 'web' });
+            expect(res).toMatchObject({ handled: false, status: 'expired' });
+            expect(res.error).toMatch(/already expired/);
+            expect(agent._executeTool).not.toHaveBeenCalled();
+            expect(db.getPendingConfirmation(req.id)).toMatchObject({ status: 'expired', decided_via: 'sweeper' });
+            const send = jest.fn().mockResolvedValue(true);
+            await svc.handleCommand(msg('web', 'c', `/confirm ${req.id}`), '/confirm', req.id, send);
+            expect(send).toHaveBeenLastCalledWith(expect.objectContaining({ content: expect.stringMatching(/is already expired/) }));
         });
 
         test('rows survive a restart: a new service on the same DB still finds and decides them', async () => {

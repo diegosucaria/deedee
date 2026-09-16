@@ -69,7 +69,9 @@ jest.mock('../src/db', () => ({
     getPerson: jest.fn().mockReturnValue(null),
     markStaleSubAgents: jest.fn().mockReturnValue(0),
     expirePendingQuestions: jest.fn().mockReturnValue([]),
+    createPendingQuestion: jest.fn(),
     getPendingQuestion: jest.fn().mockReturnValue(undefined),
+    closePendingQuestion: jest.fn(),
     close: jest.fn().mockResolvedValue(),
     ...confirmationHelpers
   }))
@@ -210,6 +212,82 @@ describe('approvals through the Agent', () => {
     const report = mockInterface.sentMessages.find(m => m.metadata?.approval?.status === 'approved');
     expect(report.metadata.chatId).toBe(OWNER_JID);
     expect(report.content).toMatch(/Approved and done: sendEmail/);
+  });
+
+  test('while askUser waits in the chat, a plain no answers the question; the approval keeps waiting', async () => {
+    nextCall = { name: 'deleteVault', args: { id: 'vault-2' } };
+    const msg = createUserMessage('Delete the old vault', 'telegram', 'user1');
+    msg.metadata = { chatId: 'tg-2' };
+    await agent.processMessage(msg, async () => {});
+    const card = mockInterface.sentMessages.find(m => m.metadata?.approval);
+    const id = card.metadata.approval.id;
+    expect(rows.get(id).status).toBe('pending');
+
+    // The model asks a yes/no question in the same chat.
+    const question = createUserMessage('x', 'telegram', 'user1');
+    question.metadata = { chatId: 'tg-2' };
+    const asked = agent.askUser.ask(question, { question: 'Also drop the index?', options: ['yes', 'no'], timeoutSeconds: 30 });
+    await new Promise(r => setImmediate(r));
+    expect(agent.askUser.hasPending('tg-2')).toBe(true);
+
+    const no = createUserMessage('no', 'telegram', 'user1');
+    no.metadata = { chatId: 'tg-2' };
+    const ack = [];
+    await agent.processMessage(no, async (r) => { ack.push(r); });
+    await expect(asked).resolves.toEqual({ answer: 'no' });
+    expect(ack.map(r => r.content)).toEqual(['Got it.']);
+    expect(rows.get(id).status).toBe('pending');
+    expect(agent.toolExecutor.execute).not.toHaveBeenCalled();
+
+    // With the question answered, the same word decides the approval.
+    const no2 = createUserMessage('no', 'telegram', 'user1');
+    no2.metadata = { chatId: 'tg-2' };
+    const ack2 = [];
+    await agent.processMessage(no2, async (r) => { ack2.push(r); });
+    expect(rows.get(id).status).toBe('denied');
+    expect(ack2.map(r => r.content).join('\n')).toMatch(/Denied: deleteVault/);
+    expect(agent.toolExecutor.execute).not.toHaveBeenCalled();
+  });
+
+  test("a job created from a chat still asks on the owner channel; a plain yes in that chat does not decide it", async () => {
+    nextCall = { name: 'sendEmail', args: { to: 'alice@example.com', subject: 'Hi' } };
+    // scheduler.js runs persisted jobs with the creating chat's source and id.
+    const job = {
+      role: 'user', content: 'Scheduled Task: mail Alice', source: 'telegram',
+      metadata: { chatId: 'tg-7', jobName: 'mail' }
+    };
+    const first = await agent.processMessage(job, async () => {});
+    expect(first.toolOutputs.find(o => o.name === 'sendEmail').result.info).toMatch(/notification channel/);
+    const cards = mockInterface.sentMessages.filter(m => m.metadata?.approval);
+    expect(cards.map(c => [c.source, c.metadata.chatId])).toEqual([['whatsapp', OWNER_JID]]);
+    const id = cards[0].metadata.approval.id;
+    expect(rows.get(id)).toMatchObject({ mode: 'deferred', reply_chat_id: OWNER_JID, origin_chat_id: 'tg-7', origin_source: 'telegram' });
+
+    // "yes" in the creating chat is not an answer: it reaches the model and the row stays pending.
+    nextCall = { name: 'getJobState', args: { name: 'mail' } };
+    agent.toolExecutor.execute.mockResolvedValue({ state: null });
+    const yes = createUserMessage('yes', 'telegram', 'user1');
+    yes.metadata = { chatId: 'tg-7' };
+    const second = await agent.processMessage(yes, async () => true);
+    expect(second.toolOutputs.map(o => o.name)).toEqual(['getJobState']);
+    expect(rows.get(id).status).toBe('pending');
+    expect(agent.toolExecutor.execute.mock.calls.map(c => c[0])).not.toContain('sendEmail');
+
+    // /confirm <id> from a chat that is not the owner's is refused; from the owner's Telegram it runs the call in the job's context.
+    const confirm = createUserMessage(`/confirm ${id}`, 'telegram', 'user1');
+    confirm.metadata = { chatId: 'tg-7' };
+    await agent.processMessage(confirm, async () => true);
+    expect(rows.get(id).status).toBe('pending');
+    process.env.ALLOWED_TELEGRAM_IDS = 'tg-7';
+    try {
+      await agent.processMessage({ ...confirm, id: 'm-confirm-2' }, async () => true);
+    } finally {
+      delete process.env.ALLOWED_TELEGRAM_IDS;
+    }
+    expect(rows.get(id).status).toBe('approved');
+    const call = agent.toolExecutor.execute.mock.calls.find(c => c[0] === 'sendEmail');
+    expect(call[2].approved).toBe(true);
+    expect(call[2].message).toMatchObject({ source: 'telegram', metadata: { chatId: 'tg-7', jobName: 'mail', approvalId: id } });
   });
 
   test('a call on the deny-list fails at once, with no card and no owner prompt', async () => {

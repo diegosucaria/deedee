@@ -1133,26 +1133,35 @@ class Agent {
         return executionSummary;
       }
 
-      // 0a. Approvals: a plain yes/no with one approval pending in this chat
-      // decides it. Approved interactive calls resume below as EXECUTE_PENDING.
-      // Any other text falls through to askUser and the model.
+      // 0. Two services may claim a plain reply. When a question from askUser
+      // waits in this chat, that question gets the reply first. Otherwise a
+      // plain yes/no with exactly one approval pending in this chat decides
+      // it (approved interactive calls resume below as EXECUTE_PENDING), and
+      // askUser then handles late replies. Anything else reaches the model.
       let commandResult = false;
       if (chatId && !isMultiModal && !isSubAgent) {
+        const questionOpen = await this.askUser.isWaiting(chatId, message.source);
+        if (questionOpen) {
+          const answered = await this.askUser.intercept(message, activeSendCallback);
+          if (answered) {
+            executionSummary.replies.push(answered);
+            return executionSummary;
+          }
+        }
+
         const decided = await this.approvals.intercept(message, activeSendCallback);
         if (decided?.handled) {
           if (decided.reply) executionSummary.replies.push(decided.reply);
           return executionSummary;
         }
         if (decided?.execute) commandResult = { type: 'EXECUTE_PENDING', action: decided.execute };
-      }
 
-      // 0b. askUser: a plain reply to a waiting question ends that wait and
-      // goes no further. /stop and /cancel end it too, then run as usual.
-      if (chatId && !isMultiModal && !isSubAgent && !commandResult) {
-        const answered = await this.askUser.intercept(message, activeSendCallback);
-        if (answered) {
-          executionSummary.replies.push(answered);
-          return executionSummary;
+        if (!questionOpen && !commandResult) {
+          const answered = await this.askUser.intercept(message, activeSendCallback);
+          if (answered) {
+            executionSummary.replies.push(answered);
+            return executionSummary;
+          }
         }
       }
 

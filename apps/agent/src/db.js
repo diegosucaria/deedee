@@ -3239,15 +3239,23 @@ class AgentDB {
   /**
    * Close a pending row. Only one caller wins: the UPDATE is guarded on
    * status = 'pending', so a second yes (or a yes after the sweeper) does
-   * nothing and returns null.
+   * nothing and returns null. An approve or deny also needs the row to be
+   * within its expiry, so a row the sweeper has not marked yet cannot run.
    */
   decidePendingConfirmation(id, status, { via = null, now = new Date() } = {}) {
     if (!['approved', 'denied', 'expired'].includes(status)) throw new Error(`bad confirmation status '${status}'`);
-    const res = this.db.prepare(`
-      UPDATE pending_confirmations
-      SET status = ?, decided_at = ?, decided_via = ?
-      WHERE id = ? AND status = 'pending'
-    `).run(status, now.toISOString(), via, id);
+    const nowIso = now.toISOString();
+    const res = status === 'expired'
+      ? this.db.prepare(`
+          UPDATE pending_confirmations
+          SET status = ?, decided_at = ?, decided_via = ?
+          WHERE id = ? AND status = 'pending'
+        `).run(status, nowIso, via, id)
+      : this.db.prepare(`
+          UPDATE pending_confirmations
+          SET status = ?, decided_at = ?, decided_via = ?
+          WHERE id = ? AND status = 'pending' AND expires_at > ?
+        `).run(status, nowIso, via, id, nowIso);
     return res.changes > 0 ? this.getPendingConfirmation(id) : null;
   }
 

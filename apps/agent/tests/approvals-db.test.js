@@ -74,6 +74,14 @@ describe('pending_confirmations helpers', () => {
         expect(db.getPendingConfirmation('abcd1234').status).toBe('approved');
     });
 
+    test('an overdue row cannot be approved or denied, only expired', () => {
+        db.createPendingConfirmation(base({ expiresAt: new Date(Date.now() - 1000).toISOString() }));
+        expect(db.decidePendingConfirmation('abcd1234', 'approved', { via: 'web' })).toBeNull();
+        expect(db.decidePendingConfirmation('abcd1234', 'denied', { via: 'chat' })).toBeNull();
+        expect(db.getPendingConfirmation('abcd1234').status).toBe('pending');
+        expect(db.decidePendingConfirmation('abcd1234', 'expired', { via: 'sweeper' }).status).toBe('expired');
+    });
+
     test('rejects unknown statuses', () => {
         db.createPendingConfirmation(base());
         expect(() => db.decidePendingConfirmation('abcd1234', 'maybe')).toThrow(/bad confirmation status/);

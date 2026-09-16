@@ -7,13 +7,17 @@
  * pending_confirmations row, builds a short card and sends it through the
  * delivery ledger: to the same chat when the owner is typing there (web,
  * Telegram, his own WhatsApp chat), to the owner channel when the run came
- * from a job, a watcher, the system or another chat. The row is keyed by
- * the chat that must answer, never by a contact's chat.
+ * from a job, a watcher, the system or another chat. A job created from a
+ * web chat still asks on the owner channel; the web chat gets a copy of the
+ * card. The row is keyed by the chat that must answer, never by a
+ * contact's chat.
  *
- * Answers: `/confirm [id]`, `/cancel [id]` and, when exactly one approval
- * waits in that chat, a plain yes/no in a strict vocabulary. Anything else
- * falls through to askUser and the model. With several pending, the reply
- * lists the ids and asks for `/confirm <id>`.
+ * Answers: a plain yes/no in a strict vocabulary counts only in the chat
+ * that holds the card, only when exactly one approval waits there, and
+ * only while no askUser question is open in that chat. Everywhere else the
+ * word falls through to askUser and the model. `/confirm <id>` and
+ * `/cancel <id>` work from any of the owner's chats; the bare commands act
+ * only with exactly one approval pending in the chat they are typed in.
  *
  * Approved interactive calls resume through the EXECUTE_PENDING path of
  * processMessage, in the chat where they started. Approved deferred calls
@@ -136,6 +140,24 @@ function humanDuration(ms) {
     return `${h} h`;
 }
 
+/** Chat ids the scheduler invents when a job has no origin chat. */
+function isSyntheticChatId(chatId) {
+    return /^(?:scheduled|system)_/.test(String(chatId || ''));
+}
+
+/**
+ * A run nobody is typing in: a scheduled job (whatever chat it was created
+ * from), a system job or a watcher run. Its approvals go to the owner channel.
+ */
+function isUnattendedRun(message) {
+    const meta = message?.metadata || {};
+    const source = String(message?.source || '');
+    if (String(message?.content || '').startsWith('SYSTEM_WATCHER_ALERT')) return true;
+    if (meta.jobName) return true;
+    if (source === 'scheduler' || source === 'system') return true;
+    return isSyntheticChatId(meta.chatId);
+}
+
 /** Where the run came from, for the card. */
 function describeOrigin(message) {
     const meta = message?.metadata || {};
@@ -224,7 +246,8 @@ class ApprovalService {
     /**
      * Who answers, and where.
      * - web, Telegram and the owner's own WhatsApp chat: that chat ('interactive')
-     * - jobs, system runs, watcher runs, other chats: the owner channel ('deferred')
+     * - jobs, system runs, watcher runs, other chats: the owner channel ('deferred');
+     *   a job created from a web chat also gets a copy of the card there ('mirror')
      * - sub-agents: no route; they report to the parent
      */
     async route(message) {
@@ -233,8 +256,8 @@ class ApprovalService {
         const chatId = meta.chatId;
         if (meta.isSubAgent || source === 'subagent') return { error: 'sub-agent' };
 
-        const isWatcherRun = String(message?.content || '').startsWith('SYSTEM_WATCHER_ALERT');
-        if (!isWatcherRun && chatId && isLiveSource(source)) {
+        const unattended = isUnattendedRun(message);
+        if (!unattended && chatId && isLiveSource(source)) {
             const channel = splitChannel(source).channel;
             if (channel !== 'whatsapp' || await this._isOwnerWaChat(chatId)) {
                 return { replyChatId: String(chatId), replyChannel: source, mode: 'interactive' };
@@ -243,7 +266,13 @@ class ApprovalService {
 
         const owner = this._delivery().resolveOwnerTarget();
         if (!owner) return { error: 'no owner channel configured (owner_phone or ALLOWED_TELEGRAM_IDS)' };
-        return { replyChatId: owner.target, replyChannel: owner.channel, mode: 'deferred', ownerChannel: true };
+        const route = { replyChatId: owner.target, replyChannel: owner.channel, mode: 'deferred', ownerChannel: true };
+        // A job scheduled from a web chat runs with that chat id: show the card
+        // there too, so the owner sees it when he opens the chat.
+        if (unattended && chatId && splitChannel(source).channel === 'web' && !isSyntheticChatId(chatId)) {
+            route.mirror = { channel: 'web', chatId: String(chatId) };
+        }
+        return route;
     }
 
     async _isOwnerWaChat(chatId) {
@@ -354,6 +383,8 @@ class ApprovalService {
         } catch (e) { console.warn('[Approvals] notification failed:', e.message); }
         this._broadcast({ id: row.id, status: 'pending', chatId: route.replyChatId, toolName, summary: row.summary, expiresAt: row.expires_at });
 
+        if (route.mirror) await this._mirrorCard(row, route, describeOrigin(message), ttlMs);
+
         const where = route.ownerChannel ? 'on his notification channel' : 'in this chat';
         return {
             paused: true,
@@ -368,8 +399,31 @@ class ApprovalService {
         };
     }
 
+    /**
+     * A copy of the card in the web chat the job was created from. The
+     * answer still belongs to the owner channel, so the copy asks for the
+     * command with the id (the web buttons send it).
+     */
+    async _mirrorCard(row, route, origin, ttlMs) {
+        const copy = createAssistantMessage(this.buildCard(row, { origin, ttlMs, mirrorOf: route.replyChannel }));
+        copy.source = route.mirror.channel;
+        copy.metadata = {
+            chatId: route.mirror.chatId,
+            approval: { id: row.id, status: 'pending', toolName: row.tool_name, summary: row.summary, expiresAt: row.expires_at, mode: row.mode, mirror: true }
+        };
+        try { this.db.saveMessage(copy); } catch (e) { console.warn('[Approvals] mirror saveMessage failed:', e.message); }
+        try {
+            const outcome = await this._delivery().deliver('approval', route.mirror.channel, route.mirror.chatId, copy, {
+                id: copy.id, origin: `approval:${row.id}`, expiresAt: row.expires_at, dedupe: false
+            });
+            if (!outcome.delivered && !outcome.queued) console.warn(`[Approvals] Mirror card for ${row.id} not delivered: ${outcome.error || outcome.status}`);
+        } catch (e) {
+            console.warn('[Approvals] mirror deliver failed:', e.message);
+        }
+    }
+
     /** The text the owner reads. Short: what, key args, why, how to answer. */
-    buildCard(row, { others = [], origin = '', ttlMs = null } = {}) {
+    buildCard(row, { others = [], origin = '', ttlMs = null, mirrorOf = null } = {}) {
         const lines = [
             `🛑 Approval needed (id ${row.id})`,
             `Tool: ${row.tool_name}`,
@@ -377,7 +431,9 @@ class ApprovalService {
             `Why: ${row.reason || 'the safety rules paused it'}`
         ];
         if (origin) lines.push(`From: ${origin}`);
-        if (others.length > 0) {
+        if (mirrorOf) {
+            lines.push(`Asked on your ${splitChannel(mirrorOf).channel} too. Answer there with yes or no, or here with /confirm ${row.id} · /cancel ${row.id}.`);
+        } else if (others.length > 0) {
             lines.push(`Also pending here: ${others.map(o => `${o.id} (${o.tool_name})`).join(', ')}`);
             lines.push(`Reply /confirm ${row.id} or /cancel ${row.id}.`);
         } else {
@@ -399,26 +455,53 @@ class ApprovalService {
     // --- answering ---
 
     /**
-     * Pending rows the writer of `message` may decide: rows keyed to this chat,
-     * plus every owner-channel row when the writer is the owner (any of his ids).
+     * Pending rows whose card sits in `message`'s chat: the same reply chat
+     * id, or the owner's own WhatsApp chat under another of his ids (LID vs
+     * phone JID). These are the rows a plain yes/no or a bare /confirm may
+     * decide.
      */
-    async pendingFor(message) {
+    async pendingHere(message) {
         if (!this.hasStore()) return [];
         const chatId = message?.metadata?.chatId;
         if (!chatId) return [];
         const all = this.db.listPendingConfirmations();
         const direct = all.filter(r => r.reply_chat_id === String(chatId));
-        if (!(await this._isOwnerChat(message))) return direct;
+        const channel = splitChannel(message?.source).channel;
+        if (channel !== 'whatsapp' || !(await this._isOwnerWaChat(chatId))) return direct;
         const seen = new Set(direct.map(r => r.id));
-        const ownerRows = all.filter(r => !seen.has(r.id) && this._isOwnerRow(r));
-        return [...direct, ...ownerRows];
+        const sameOwnerChat = [];
+        for (const row of all) {
+            if (seen.has(row.id) || splitChannel(row.reply_channel).channel !== 'whatsapp') continue;
+            if (await this._isOwnerWaChat(row.reply_chat_id)) sameOwnerChat.push(row);
+        }
+        return [...direct, ...sameOwnerChat];
     }
 
-    _isOwnerRow(row) {
-        if (row.mode === 'deferred') return true;
-        const channel = splitChannel(row.reply_channel).channel;
-        if (channel === 'web') return false;
-        try { return this._delivery().isOwnerTarget(channel, row.reply_chat_id); } catch { return false; }
+    /**
+     * Pending rows the writer of `message` may decide by id: the rows in
+     * this chat, plus every other row when the writer is the owner (any of
+     * his ids, any channel). Every row is the owner's to decide; only the
+     * plain-word shortcut is limited to the card's chat.
+     */
+    async pendingFor(message) {
+        const direct = await this.pendingHere(message);
+        if (!this.hasStore() || !(await this._isOwnerChat(message))) return direct;
+        const seen = new Set(direct.map(r => r.id));
+        const others = this.db.listPendingConfirmations().filter(r => !seen.has(r.id));
+        return [...direct, ...others];
+    }
+
+    /** Is an askUser question waiting for this chat? Its answer wins over a plain yes/no. */
+    async _questionOpen(message) {
+        const ask = this.agent.askUser;
+        if (!ask) return false;
+        try {
+            if (typeof ask.isWaiting === 'function') return !!(await ask.isWaiting(message.metadata.chatId, message.source));
+            return typeof ask.hasPending === 'function' && ask.hasPending(message.metadata.chatId);
+        } catch (e) {
+            console.warn('[Approvals] askUser lookup failed:', e.message);
+            return false;
+        }
     }
 
     /** Exact id, else the one pending row whose id starts with `idArg`. */
@@ -437,7 +520,7 @@ class ApprovalService {
         const row = this.db.getPendingConfirmation(String(idArg || '').trim().toLowerCase());
         if (!row || row.status === 'pending') return null;
         if (row.reply_chat_id === String(message?.metadata?.chatId)) return row;
-        return (await this._isOwnerChat(message)) && this._isOwnerRow(row) ? row : null;
+        return (await this._isOwnerChat(message)) ? row : null;
     }
 
     _listText(pending, lead) {
@@ -446,10 +529,11 @@ class ApprovalService {
     }
 
     /**
-     * Called at the top of processMessage, before askUser. A plain yes/no
-     * with exactly one approval pending in this chat decides it. Returns
-     * null when the message is not an answer (it goes on to askUser and the
-     * model).
+     * Called at the top of processMessage. A plain yes/no decides an
+     * approval only when its card sits in this chat, it is the only one
+     * pending here, and no askUser question is open here. Returns null in
+     * every other case (the message goes on to askUser and the model); with
+     * several pending the card already asks for `/confirm <id>`.
      * @returns {Promise<null | { handled: boolean, reply?: object, execute?: { name: string, args: object, approvalId: string } }>}
      */
     async intercept(message, sendCallback) {
@@ -461,25 +545,24 @@ class ApprovalService {
         const decision = decisionWord(text);
         if (!decision) return null;
 
-        const pending = await this.pendingFor(message);
-        if (pending.length === 0) return null;
+        const pending = await this.pendingHere(message);
+        if (pending.length !== 1) return null;
+        if (await this._questionOpen(message)) return null;
         try { this.db.saveMessage(message); } catch { /* history is best effort */ }
-        if (pending.length > 1) {
-            const lead = `${pending.length} approvals are pending here. Which one?`;
-            return { handled: true, reply: await this._reply(message, this._listText(pending, lead), sendCallback) };
-        }
         return this.decide(pending[0].id, decision, { via: 'chat', message, sendCallback });
     }
 
     /**
      * Slash commands: /confirm [id], /approve [id], /cancel [id], /deny [id], /approvals.
+     * With an id, any pending row the owner may decide. Without one, only the
+     * single row whose card sits in this chat.
      * @returns {Promise<true | { type: 'EXECUTE_PENDING', action: object }>}
      */
     async handleCommand(message, cmd, idArg, sendCallback) {
         const command = String(cmd || '').toLowerCase();
         const pending = await this.pendingFor(message);
         if (command === '/approvals') {
-            const text = pending.length === 0 ? 'No approvals are pending here.' : this._listText(pending, `${pending.length} pending approval(s):`);
+            const text = pending.length === 0 ? 'No approvals are pending.' : this._listText(pending, `${pending.length} pending approval(s):`);
             await this._reply(message, text, sendCallback);
             return true;
         }
@@ -492,19 +575,23 @@ class ApprovalService {
                 let text;
                 if (decided) text = `Approval ${decided.id} (${decided.tool_name}) is already ${decided.status}.`;
                 else if (pending.length === 0) text = `No pending approval matches "${idArg}".`;
-                else text = this._listText(pending, `No pending approval matches "${idArg}". Pending here:`);
+                else text = this._listText(pending, `No pending approval matches "${idArg}". Pending:`);
                 await this._reply(message, text, sendCallback);
                 return true;
             }
-        } else if (pending.length === 0) {
-            // A bare /cancel also ends an askUser wait upstream; keep the old acknowledgement.
-            await this._reply(message, decision === 'approved' ? 'No pending action to confirm.' : 'Action cancelled.', sendCallback);
-            return true;
-        } else if (pending.length > 1) {
-            await this._reply(message, this._listText(pending, `${pending.length} approvals are pending here. Which one?`), sendCallback);
-            return true;
         } else {
-            row = pending[0];
+            const here = await this.pendingHere(message);
+            if (here.length === 0) {
+                // A bare /cancel also ends an askUser wait upstream; keep the old acknowledgement.
+                const elsewhere = pending.length > 0 ? ` ${pending.length} approval(s) wait elsewhere; use /confirm <id> or /cancel <id>.` : '';
+                await this._reply(message, (decision === 'approved' ? 'No pending action to confirm.' : 'Action cancelled.') + elsewhere, sendCallback);
+                return true;
+            }
+            if (here.length > 1) {
+                await this._reply(message, this._listText(here, `${here.length} approvals are pending here. Which one?`), sendCallback);
+                return true;
+            }
+            row = here[0];
         }
         const res = await this.decide(row.id, decision, { via: 'chat', message, sendCallback });
         if (res.execute) return { type: 'EXECUTE_PENDING', action: res.execute };
@@ -524,7 +611,13 @@ class ApprovalService {
         if (!this.hasStore()) return { handled: false, error: 'approval store unavailable', status: 'missing' };
         const row = this.db.decidePendingConfirmation(id, decision, { via });
         if (!row) {
-            const existing = this.db.getPendingConfirmation(id);
+            let existing = this.db.getPendingConfirmation(id);
+            if (existing && existing.status === 'pending') {
+                // Past its expiry, not yet swept: mark it now so the answer is honest.
+                this.sweep();
+                existing = this.db.getPendingConfirmation(id) || existing;
+                if (existing.status === 'pending') existing = { ...existing, status: 'expired' };
+            }
             const why = !existing ? `No pending approval with id ${id}.` : `Approval ${id} (${existing.tool_name}) is already ${existing.status}.`;
             if (message) return { handled: true, reply: await this._reply(message, why, sendCallback), status: existing?.status || 'missing' };
             return { handled: false, error: why, status: existing?.status || 'missing' };
@@ -677,5 +770,5 @@ class ApprovalService {
 
 module.exports = {
     ApprovalService, normalizeApprovalSettings, decisionWord, normalizeWord, summarizeArgs, summarizeResult,
-    splitPatterns, envDenyPatterns, DEFAULTS, APPROVE_WORDS, DENY_WORDS, SWEEP_MS
+    splitPatterns, envDenyPatterns, isUnattendedRun, DEFAULTS, APPROVE_WORDS, DENY_WORDS, SWEEP_MS
 };
