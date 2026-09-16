@@ -450,6 +450,29 @@ class AgentDB {
         ON notification_outbox(status, next_attempt_at);
       CREATE INDEX IF NOT EXISTS idx_outbox_dedupe
         ON notification_outbox(kind, target, content_hash, created_at);
+
+      CREATE TABLE IF NOT EXISTS pending_confirmations (
+        id TEXT PRIMARY KEY,
+        origin_chat_id TEXT,
+        origin_source TEXT,
+        origin_meta TEXT,
+        reply_chat_id TEXT NOT NULL,
+        reply_channel TEXT,
+        mode TEXT NOT NULL DEFAULT 'interactive',
+        tool_name TEXT NOT NULL,
+        args TEXT NOT NULL,
+        summary TEXT,
+        reason TEXT,
+        status TEXT NOT NULL DEFAULT 'pending',
+        created_at TEXT NOT NULL,
+        expires_at TEXT NOT NULL,
+        decided_at TEXT,
+        decided_via TEXT,
+        result TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_pending_confirmations_reply
+        ON pending_confirmations(reply_chat_id, status);
     `);
 
     // Seed wr_user_profile singleton (id=1) with preferred brands if missing
@@ -3151,6 +3174,127 @@ class AgentDB {
     const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
     return this.db.prepare(`
       DELETE FROM notification_outbox WHERE status IN ('sent', 'dead') AND created_at < ?
+    `).run(cutoff).changes;
+  }
+
+  // --- Approvals: pending confirmations ---
+  //
+  // A tool call the safety rules paused. The row outlives the run and the
+  // process: the owner may answer from any of his chats, minutes or hours
+  // later. `mode` is 'interactive' when the origin chat is where the owner
+  // answers (web, telegram, his WhatsApp chat) and 'deferred' when the run
+  // came from a job, a watcher or the system and the prompt went to the
+  // owner channel instead.
+
+  _mapConfirmationRow(row) {
+    if (!row) return null;
+    let args = {};
+    let originMeta = null;
+    let result = null;
+    try { args = JSON.parse(row.args || '{}'); } catch { args = {}; }
+    try { originMeta = row.origin_meta ? JSON.parse(row.origin_meta) : null; } catch { originMeta = null; }
+    try { result = row.result ? JSON.parse(row.result) : null; } catch { result = row.result; }
+    return { ...row, args, origin_meta: originMeta, result };
+  }
+
+  createPendingConfirmation({ id, originChatId, originSource, originMeta, replyChatId, replyChannel, mode,
+    toolName, args, summary, reason, expiresAt, createdAt = null }) {
+    const rowId = id || crypto.randomUUID();
+    const now = new Date().toISOString();
+    this.db.prepare(`
+      INSERT INTO pending_confirmations
+        (id, origin_chat_id, origin_source, origin_meta, reply_chat_id, reply_channel, mode, tool_name, args,
+         summary, reason, status, created_at, expires_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'pending', ?, ?)
+    `).run(rowId, originChatId || null, originSource || null, originMeta ? JSON.stringify(originMeta) : null,
+      replyChatId, replyChannel || null, mode || 'interactive', toolName, JSON.stringify(args || {}),
+      summary || null, reason || null, createdAt || now, expiresAt);
+    return this.getPendingConfirmation(rowId);
+  }
+
+  getPendingConfirmation(id) {
+    return this._mapConfirmationRow(this.db.prepare('SELECT * FROM pending_confirmations WHERE id = ?').get(id));
+  }
+
+  /**
+   * Open rows, oldest first. `replyChatId` narrows to one chat. Rows past
+   * their expiry are left out even before the sweeper marks them.
+   */
+  listPendingConfirmations({ replyChatId = null, now = new Date() } = {}) {
+    const nowIso = now.toISOString();
+    const rows = replyChatId
+      ? this.db.prepare(`
+          SELECT * FROM pending_confirmations
+          WHERE status = 'pending' AND reply_chat_id = ? AND expires_at > ?
+          ORDER BY created_at ASC
+        `).all(replyChatId, nowIso)
+      : this.db.prepare(`
+          SELECT * FROM pending_confirmations
+          WHERE status = 'pending' AND expires_at > ?
+          ORDER BY created_at ASC
+        `).all(nowIso);
+    return rows.map(r => this._mapConfirmationRow(r));
+  }
+
+  /**
+   * Close a pending row. Only one caller wins: the UPDATE is guarded on
+   * status = 'pending', so a second yes (or a yes after the sweeper) does
+   * nothing and returns null.
+   */
+  decidePendingConfirmation(id, status, { via = null, now = new Date() } = {}) {
+    if (!['approved', 'denied', 'expired'].includes(status)) throw new Error(`bad confirmation status '${status}'`);
+    const res = this.db.prepare(`
+      UPDATE pending_confirmations
+      SET status = ?, decided_at = ?, decided_via = ?
+      WHERE id = ? AND status = 'pending'
+    `).run(status, now.toISOString(), via, id);
+    return res.changes > 0 ? this.getPendingConfirmation(id) : null;
+  }
+
+  /** What the approved call returned (or the error), for the settings card. */
+  setConfirmationResult(id, result) {
+    let text;
+    try { text = JSON.stringify(result === undefined ? null : result); } catch { text = String(result); }
+    if (text && text.length > 4000) text = JSON.stringify(text.slice(0, 4000) + '...');
+    this.db.prepare('UPDATE pending_confirmations SET result = ? WHERE id = ?').run(text, id);
+  }
+
+  /** Sweeper: every open row past its expiry becomes 'expired'. Returns them. */
+  expirePendingConfirmations({ now = new Date() } = {}) {
+    const nowIso = now.toISOString();
+    const rows = this.db.prepare(`
+      SELECT * FROM pending_confirmations WHERE status = 'pending' AND expires_at <= ?
+    `).all(nowIso).map(r => this._mapConfirmationRow(r));
+    if (rows.length > 0) {
+      this.db.prepare(`
+        UPDATE pending_confirmations
+        SET status = 'expired', decided_at = ?, decided_via = 'sweeper'
+        WHERE status = 'pending' AND expires_at <= ?
+      `).run(nowIso, nowIso);
+    }
+    return rows;
+  }
+
+  listRecentConfirmations({ limit = 50 } = {}) {
+    const safeLimit = Math.min(Math.max(1, limit), 500);
+    return this.db.prepare(`
+      SELECT * FROM pending_confirmations ORDER BY created_at DESC LIMIT ?
+    `).all(safeLimit).map(r => this._mapConfirmationRow(r));
+  }
+
+  countConfirmationsByStatus() {
+    const counts = { pending: 0, approved: 0, denied: 0, expired: 0 };
+    for (const row of this.db.prepare('SELECT status, COUNT(*) AS n FROM pending_confirmations GROUP BY status').all()) {
+      counts[row.status] = row.n;
+    }
+    return counts;
+  }
+
+  /** Drop decided rows older than `days`. Returns the number removed. */
+  cleanupConfirmations(days = 30) {
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    return this.db.prepare(`
+      DELETE FROM pending_confirmations WHERE status != 'pending' AND created_at < ?
     `).run(cutoff).changes;
   }
 
