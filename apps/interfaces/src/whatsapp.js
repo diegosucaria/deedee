@@ -5,6 +5,7 @@ const fs = require('fs');
 const QRCode = require('qrcode');
 const Database = require('better-sqlite3');
 const child_process = require('child_process');
+const { SentIds } = require('./sent-ids');
 
 /**
  * Converts a WAV audio buffer to OGG/Opus format using ffmpeg.
@@ -511,6 +512,8 @@ class WhatsAppService {
         this.agentUrl = agentUrl;
         this.sessionId = sessionId;
         this.sock = null;
+        // Message ids sent in the last 24 h; a retry with the same id is skipped.
+        this.sentIds = new SentIds();
         this.qr = null;
         this.status = 'disconnected';
         this.reconnectAttempts = 0;
@@ -1093,8 +1096,20 @@ class WhatsAppService {
         }
     }
 
+    /**
+     * @param {string} toJid
+     * @param {string} content - text, or base64 for audio/image
+     * @param {{ type?: string, caption?: string, id?: string }} [options] - `id` is the
+     *   agent's message id; a repeat within 24 h is not sent again.
+     * @returns {Promise<{ duplicate: boolean }>}
+     */
     async sendMessage(toJid, content, options = {}) {
         if (!this.sock) throw new Error(`${this.logPrefix} WhatsApp not initialized`);
+
+        if (this.sentIds.has(options.id)) {
+            console.log(`${this.logPrefix} Message ${options.id} already sent; skipping the repeat.`);
+            return { duplicate: true };
+        }
 
         try {
             // Ensure target JID exists and has a domain
@@ -1115,6 +1130,8 @@ class WhatsAppService {
                 if (options.caption) imagePayload.caption = options.caption;
                 await this.sock.sendMessage(targetJid, imagePayload);
             }
+            this.sentIds.add(options.id);
+            return { duplicate: false };
 
         } catch (e) {
             console.error(`${this.logPrefix} Send Failed:`, e.message);

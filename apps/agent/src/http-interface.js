@@ -1,6 +1,10 @@
 const axios = require('axios');
 const EventEmitter = require('events');
 
+// A send that the interfaces service never answers fails after this long,
+// so the delivery ledger can retry it (same id, so a repeat is deduped).
+const SEND_TIMEOUT_MS = 120e3;
+
 class HttpInterface extends EventEmitter {
   /**
    * @param {string} interfacesUrl - e.g. 'http://interfaces:5000'
@@ -60,6 +64,9 @@ class HttpInterface extends EventEmitter {
       }
 
       await axios.post(`${this.interfacesUrl}/send`, {
+        // The message id travels with the send so a retry of the same message
+        // (delivery ledger) is recognized and not sent twice.
+        id: message.id || null,
         source: finalSource,
         content: content,
         metadata: metadata,
@@ -70,7 +77,8 @@ class HttpInterface extends EventEmitter {
       }, {
         headers: {
           'Authorization': `Bearer ${this.apiToken}`
-        }
+        },
+        timeout: SEND_TIMEOUT_MS
       });
       return true;
     } catch (error) {
@@ -120,4 +128,4 @@ class HttpInterface extends EventEmitter {
   }
 }
 
-module.exports = { HttpInterface };
+module.exports = { HttpInterface, SEND_TIMEOUT_MS };
