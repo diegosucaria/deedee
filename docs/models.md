@@ -64,8 +64,9 @@ Sub-agents (`apps/agent/src/services/subagent-service.js`):
   returns it.
 - Sub-agent turns do not ask for thought parts.
 
-Watch: `tag IN ('job', 'job_tool_loop')` by model, cost per day for
-`chat_id LIKE 'system_wardrobe%'`, and `tag LIKE 'subagent%'`.
+Watch in `token_usage`: cost per day and model for `chat_id LIKE 'system_%'`,
+and `tag = 'subagent_summary'`. The `job` and `subagent` tags arrive with the
+usage-attribution change.
 
 ## Pricing table and cost tracking
 
