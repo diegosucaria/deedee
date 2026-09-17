@@ -33,7 +33,7 @@ const { ConfirmationManager, stableJson } = require('../confirmation-manager');
 const { DeliveryService, telegramOwnerIds, splitChannel } = require('./delivery-service');
 const { isLiveSource } = require('./ask-user');
 const { TurnTaint, classifyToolResult } = require('../utils/untrusted-content');
-const { isTwoStepTool, stepKey, parseToolOutput } = require('../utils/two-step-tools');
+const { isTwoStepTool, isPreviewCall, stepKey, parseToolOutput } = require('../utils/two-step-tools');
 const { GuardianService, DRY_RUN_USAGE_TAG } = require('./guardian-service');
 // Breaker state of live runs, by root run id (see acquireRun).
 const ACTIVE_RUNS = new Map();
@@ -213,9 +213,42 @@ function summarizeResult(result) {
 
 // Statuses a tool returns when the action happened, and ones that mean it did not.
 const DONE_STATUS_RE = /^(?:ok|success|succeeded|done|booked|cancelled|canceled|sent|created|updated|deleted|removed|completed|scheduled|approved|saved)$/i;
-const FAILED_STATUS = new Set(['failed', 'failure', 'fail', 'error', 'errored', 'rejected', 'reject', 'invalid', 'denied',
-    'refused', 'not_found', 'notfound', 'unavailable', 'timeout', 'timed_out', 'validation_failed', 'unauthorized', 'forbidden']);
-const failedStatus = (status) => FAILED_STATUS.has(String(status || '').trim().toLowerCase());
+// Words that make a status a failure, wherever they sit in it
+// ("validation_failed", "booking_failed", "error_timeout").
+const FAILED_WORDS = new Set(['failed', 'failure', 'fail', 'error', 'errored', 'rejected', 'reject', 'invalid', 'denied',
+    'refused', 'unavailable', 'timeout', 'unauthorized', 'forbidden', 'notfound']);
+function failedStatus(status) {
+    const text = String(status || '').trim().toLowerCase();
+    if (!text) return false;
+    if (text.replace(/[\s_-]+/g, '') === 'notfound') return true;
+    return text.split(/[\s_-]+/).some(w => FAILED_WORDS.has(w));
+}
+
+/** Something in the value, not just a present key: '', '  ', [] and {} are nothing. */
+function present(value) {
+    if (value === undefined || value === null || value === false) return false;
+    if (typeof value === 'string') return value.trim() !== '';
+    if (Array.isArray(value)) return value.length > 0;
+    if (typeof value === 'object') return Object.keys(value).length > 0;
+    return true;
+}
+
+/**
+ * Did the call fail? A tool reports failure as `error`, as `success: false`,
+ * or inside its own output (`{"status": "failed"}`), and the approval paths
+ * and the tool loop must read all three the same way.
+ */
+function callFailed(result) {
+    if (result === undefined || result === null) return false;
+    if (typeof result === 'string') return false;
+    if (present(result.error)) return true;
+    if (result.success === false || result.ok === false) return true;
+    const data = parseToolOutput(result);
+    if (!data) return false;
+    if (present(data.error)) return true;
+    if (data.success === false || data.ok === false) return true;
+    return failedStatus(data.status);
+}
 // Keys that only restate the outcome; left out of the fallback detail.
 const OUTCOME_KEYS = new Set(['ok', 'success', 'status', 'error']);
 
@@ -257,9 +290,7 @@ function approvedResultText(toolName, result, { untrusted = false } = {}) {
         // Third-party text stays out of the line: it would land in the chat
         // history as our own words, with no untrusted marker.
         const data = parseToolOutput(result);
-        const failed = (result && typeof result === 'object' && result.error) || (data && (data.error || data.success === false || data.ok === false
-            || failedStatus(data.status)));
-        return failed ? `⚠️ ${name} did not work.` : `✅ Done: ${name}.`;
+        return callFailed(result) ? `⚠️ ${name} did not work.` : `✅ Done: ${name}.`;
     }
     if (result === undefined || result === null) return `✅ Done: ${name}.`;
     if (typeof result === 'string') {
@@ -269,8 +300,7 @@ function approvedResultText(toolName, result, { untrusted = false } = {}) {
     const data = parseToolOutput(result);
     const rawOutput = !data && typeof result.output === 'string' ? result.output.trim() : '';
 
-    const truthy = (v) => v !== undefined && v !== null && v !== false && v !== '';
-    const error = truthy(result.error) ? result.error : (data && truthy(data.error) ? data.error : null);
+    const error = present(result.error) ? result.error : (data && present(data.error) ? data.error : null);
     if (error !== null) {
         const src = data && data.error === error ? data : result;
         let text;
@@ -562,8 +592,12 @@ class ApprovalService {
      * A call ran. Cards waiting for that same action can no longer run it a
      * second time on a later "ok", so they go. Called by the tool loop and by
      * the approval paths, after the call returned without an error.
+     * @param {{ exceptId?: string|null, serverName?: string|null }} [opts]
+     *   serverName: the tool's MCP server, so a two-step check step retires nothing
      */
-    noteRan(toolName, args, { exceptId = null } = {}) {
+    noteRan(toolName, args, { exceptId = null, serverName = null } = {}) {
+        // A check step books nothing, so it retires nothing.
+        if (isPreviewCall(toolName, args, serverName)) return;
         const rows = this._pendingSameAction(toolName, args).filter(r => r.id !== exceptId);
         if (rows.length > 0) this._supersede(rows, 'the same action ran');
     }
@@ -731,7 +765,7 @@ class ApprovalService {
                 console.log(`[Approvals] ${toolName} already waits for approval (${existing.id}); no second card.`);
                 const where = existing.mode === 'interactive' ? 'in this chat' : 'on his notification channel';
                 const row = this._record({
-                    ...withHits, outcome: 'escalated', decidedBy: 'owner', approvalId: existing.id,
+                    ...withHits, outcome: 'escalated_duplicate', decidedBy: 'owner', approvalId: existing.id,
                     reason: 'A card for this action already waits for him.'
                 });
                 return { run: false, status: 'paused', decisionId: row?.id, result: { info: pausedInfo(toolName, existing.reason || why, where, true) } };
@@ -1388,7 +1422,7 @@ class ApprovalService {
         if (result === undefined || result === null) result = { info: 'No output from tool execution.' };
         try { this.db.setConfirmationResult(row.id, result); } catch (e) { console.warn('[Approvals] result store failed:', e.message); }
         // It ran: no other card may run it again.
-        if (!(result && typeof result === 'object' && result.error)) this.noteRan(row.tool_name, row.args, { exceptId: row.id });
+        if (!callFailed(result)) this.noteRan(row.tool_name, row.args, { exceptId: row.id });
         let untrusted = true;
         try {
             const serverName = this.agent.mcp?.toolMap?.get?.(row.tool_name)?.name || null;
@@ -1500,6 +1534,6 @@ class ApprovalService {
 module.exports = {
     ApprovalService, normalizeApprovalSettings, decisionWord, normalizeWord, summarizeArgs, summarizeResult,
     splitPatterns, envDenyPatterns, isUnattendedRun, DEFAULTS, APPROVE_WORDS, DENY_WORDS, SWEEP_MS,
-    sourceKind, describeTarget, redactTarget, BREAKER_DENIALS,
+    sourceKind, describeTarget, redactTarget, BREAKER_DENIALS, callFailed, failedStatus,
     APPROVAL_CONTINUATION, continuationOf, consentCover, approvedResultText, SAFETY_RULES, OUTWARD_RULES
 };

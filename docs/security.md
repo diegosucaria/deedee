@@ -177,8 +177,14 @@ two-step tool the target argument, for anything else every argument).
 - Once the call has run (the tool loop, an approval, a guardian allow), cards
   waiting for that same action are marked `expired`
   (`decided_via: superseded`), so a later "ok" cannot run it a second time. A
-  call that failed leaves them alone, and so does a call nobody could be asked
-  about (a sub-agent, no owner channel): the waiting card stays.
+  call that failed leaves them alone (`callFailed` reads `error`,
+  `success: false` and a failure status inside the tool's own output), and so
+  does a check step and a call nobody could be asked about (a sub-agent, no
+  owner channel): the waiting card stays. A call that times out after the
+  action happened also leaves its card, so a later "ok" could repeat it: the
+  gate cannot tell that case from a call that never ran.
+- A call that waits on an existing card leaves its own history row
+  (`escalated_duplicate`), so the owner's answer still settles one row per card.
 
 Before this, an explicit "book it" in his chat still raised a card for the
 check step and another for the booking.

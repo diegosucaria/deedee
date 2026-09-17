@@ -13,7 +13,7 @@ const { MCPManager } = require('./mcp-manager');
 const { CommandHandler } = require('./command-handler');
 const { RateLimiter } = require('./rate-limiter');
 const { ConfirmationManager } = require('./confirmation-manager');
-const { ApprovalService, APPROVAL_CONTINUATION, continuationOf, approvedResultText } = require('./services/approval-service');
+const { ApprovalService, APPROVAL_CONTINUATION, continuationOf, approvedResultText, callFailed } = require('./services/approval-service');
 const { isPreviewCall, previewSummary, stepKey } = require('./utils/two-step-tools');
 const { ImpersonationService } = require('./services/impersonation');
 const { ToolExecutor } = require('./tool-executor');
@@ -1383,7 +1383,7 @@ class Agent {
         }, { approved: !!action.approvalId, taint: approvedTaint }));
         if (action.approvalId) {
           try { this.db.setConfirmationResult(action.approvalId, result); } catch (e) { console.warn('[Approvals] result store failed:', e.message); }
-          if (!(result && typeof result === 'object' && result.error)) {
+          if (!callFailed(result)) {
             try { this.approvals.noteRan(action.name, action.args, { exceptId: action.approvalId }); } catch (e) { console.warn('[Approvals] could not retire waiting cards:', e.message); }
           }
         }
@@ -2554,9 +2554,12 @@ class Agent {
               }, { taint: turnTaint, approvalRun });
               if (toolResult && typeof toolResult === 'object' && toolResult.error) {
                 toolStatus = 'error';
-              } else {
-                // It ran: a card waiting for this same action can no longer run it again.
-                try { this.approvals.noteRan(executionName, call.args); } catch (e) { console.warn(`${logPrefix} Could not retire waiting cards: ${e.message}`); }
+              }
+              // The action really happened: a card waiting for it can no longer
+              // run it again. A check step does nothing, so it retires nothing,
+              // and neither does a call the tool itself reports as failed.
+              if (!callFailed(toolResult) && !isPreviewCall(executionName, call.args, serverName)) {
+                try { this.approvals.noteRan(executionName, call.args, { serverName }); } catch (e) { console.warn(`${logPrefix} Could not retire waiting cards: ${e.message}`); }
               }
               // A preview step's summary goes on the card if the real call pauses.
               if (isPreviewCall(executionName, call.args, serverName) && approvalRun?.previews) {

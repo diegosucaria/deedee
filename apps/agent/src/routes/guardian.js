@@ -6,7 +6,7 @@ const express = require('express');
  * route; the web app reaches it through the API gateway at /v1/guardian.
  */
 const OUTCOMES = ['auto_allowed', 'auto_denied', 'escalated', 'escalated_approved', 'escalated_denied', 'escalated_expired',
-    'escalated_failed', 'deny_list', 'breaker_stop', 'ran_unasked', 'owner_instructed'];
+    'escalated_failed', 'deny_list', 'breaker_stop', 'ran_unasked', 'owner_instructed', 'escalated_duplicate'];
 const RISKS = ['low', 'medium', 'high'];
 const SOURCE_KINDS = ['chat', 'job', 'watcher', 'subagent', 'system'];
 const DAY_RE = /^\d{4}-\d{2}-\d{2}(?:T[\d:.]+Z?)?$/;

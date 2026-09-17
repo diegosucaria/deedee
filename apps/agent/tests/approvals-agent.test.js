@@ -420,6 +420,32 @@ describe('approvals through the Agent', () => {
       expect(replies.map(r => r.content).join('\n')).toMatch(/Action \*\*consolidateMemory\*\* executed/);
     });
 
+    test('a check step leaves the card waiting; the real booking retires it', async () => {
+      agent.mcp.toolMap = new Map([['book_appointment', { name: 'allende' }]]);
+      // A job asks to book the slot, so a card waits on the owner channel.
+      nextCall = { name: 'book_appointment', args: { slot_ref: 'ref-1', confirm: true } };
+      agent.toolExecutor.execute.mockResolvedValue({ output: JSON.stringify({ status: 'booked', summary: 'Book it.' }) });
+      await agent.processMessage({
+        role: 'user', content: 'Scheduled Task: check slots', source: 'scheduler',
+        metadata: { chatId: 'scheduled_slots_1700000000000', jobName: 'slots' }
+      }, async () => true);
+      const card = mockInterface.sentMessages.find(m => m.metadata?.approval);
+      const id = card.metadata.approval.id;
+      expect(rows.get(id).status).toBe('pending');
+
+      // He asks whether the slot is still free: the check step books nothing.
+      nextCall = { name: 'book_appointment', args: { slot_ref: 'ref-1', confirm: false } };
+      agent.toolExecutor.execute.mockResolvedValue({ output: JSON.stringify({ status: 'needs_confirmation', summary: 'Book it.' }) });
+      await agent.processMessage(ownerMsg('is that slot still free?'), async () => true);
+      expect(rows.get(id).status).toBe('pending');
+
+      // He books it himself: now the waiting card cannot book it again.
+      nextCall = { name: 'book_appointment', args: { slot_ref: 'ref-1', confirm: true } };
+      agent.toolExecutor.execute.mockResolvedValue({ output: JSON.stringify({ status: 'booked', summary: 'Book it.' }) });
+      await agent.processMessage(ownerMsg('book it'), async () => true);
+      expect(rows.get(id)).toMatchObject({ status: 'expired', decided_via: 'superseded' });
+    });
+
     test('a reply that starts with a copied time stamp loses it', async () => {
       nextCall = { name: 'deleteVault', args: { id: 'vault-11' } };
       await agent.processMessage(ownerMsg('Delete the old vault'), async () => true);

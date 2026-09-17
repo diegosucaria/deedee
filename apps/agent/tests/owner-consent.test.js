@@ -10,7 +10,7 @@ const path = require('path');
 const { AgentDB } = require('../src/db');
 const { DeliveryService } = require('../src/services/delivery-service');
 const {
-    ApprovalService, APPROVAL_CONTINUATION, consentCover, approvedResultText, decisionWord
+    ApprovalService, APPROVAL_CONTINUATION, consentCover, approvedResultText, decisionWord, callFailed
 } = require('../src/services/approval-service');
 const { GuardianService } = require('../src/services/guardian-service');
 const { ConfirmationManager } = require('../src/confirmation-manager');
@@ -117,6 +117,15 @@ describe('approvedResultText', () => {
         // A status is a failure only when it says so; an empty error is not one.
         expect(approvedResultText('x', { output: JSON.stringify({ status: 'no_errors' }) })).toBe('Finished: x (no_errors).');
         expect(approvedResultText('x', { error: '' })).toBe('✅ Done: x.');
+        expect(approvedResultText('x', { error: [] })).toBe('✅ Done: x.');
+        // A failure word anywhere in the status counts.
+        expect(approvedResultText('x', { output: JSON.stringify({ status: 'booking_failed' }) })).toBe('⚠️ x did not work (booking_failed).');
+        expect(callFailed({ output: JSON.stringify({ status: 'validation_failed' }) })).toBe(true);
+        expect(callFailed({ output: JSON.stringify({ status: 'booked' }) })).toBe(false);
+        expect(callFailed({ success: false })).toBe(true);
+        expect(callFailed({ error: '  ' })).toBe(false);
+        expect(callFailed(null)).toBe(false);
+        expect(callFailed('plain')).toBe(false);
         // A failed check says why; the tool's message wins over its summary.
         expect(approvedResultText('book_turn', { output: JSON.stringify({ status: 'validation_failed', problems: ['date is in the past'] }) })).toBe('⚠️ book_turn did not work: date is in the past');
         expect(approvedResultText('book_turn', { output: JSON.stringify({ status: 'booked', message: 'Added to the waitlist for this slot.', summary: 'Book A' }) })).toBe('✅ Done: book_turn. Added to the waitlist for this slot.');
@@ -359,8 +368,13 @@ describe('ApprovalService.review with the owner\'s word', () => {
         expect(again.result.info).toMatch(/Action PAUSED/);
         expect(db.listPendingConfirmations()).toHaveLength(1);
         expect(agent.interface.send.mock.calls.filter(c => c[0].metadata?.approval)).toHaveLength(1);
-        // Every gated call still leaves a row in the history.
-        expect(db.getGuardianDecision(again.decisionId)).toMatchObject({ outcome: 'escalated', approval_id: db.listPendingConfirmations()[0].id });
+        // Every gated call still leaves a row in the history, and one answer
+        // settles one row.
+        const cardId = db.listPendingConfirmations()[0].id;
+        expect(db.getGuardianDecision(again.decisionId)).toMatchObject({ outcome: 'escalated_duplicate', approval_id: cardId });
+        await svc.decide(cardId, 'approved', { via: 'web' });
+        const outcomes = db.listGuardianDecisions({ limit: 20 }).rows.map(r => r.outcome).sort();
+        expect(outcomes.filter(o => o === 'escalated_approved')).toHaveLength(1);
     });
 
     test('changed arguments are a different action: a fresh card, and the old one goes', async () => {
@@ -399,7 +413,10 @@ describe('ApprovalService.review with the owner\'s word', () => {
         expect(out.run).toBe(true);
         // The card stands until the call really ran (the tool loop says so).
         expect(db.getPendingConfirmation(asked.id).status).toBe('pending');
-        svc.noteRan(BOOK.toolName, { ...BOOK.args, observaciones: 'x' });
+        // A check step books nothing, so it retires nothing.
+        svc.noteRan(BOOK.toolName, BOOK_PREVIEW.args, { serverName: 'allende' });
+        expect(db.getPendingConfirmation(asked.id).status).toBe('pending');
+        svc.noteRan(BOOK.toolName, { ...BOOK.args, observaciones: 'x' }, { serverName: 'allende' });
         expect(db.getPendingConfirmation(asked.id)).toMatchObject({ status: 'expired', decided_via: 'superseded' });
         // His later plain "ok" in that chat has nothing to approve.
         expect(await svc.intercept({ ...ownerWa('ok'), id: 'm-ok' }, jest.fn())).toBeNull();
@@ -412,12 +429,16 @@ describe('ApprovalService.review with the owner\'s word', () => {
         expect(db.getPendingConfirmation(b.id).status).toBe('approved');
         expect(db.getPendingConfirmation(a.id)).toMatchObject({ status: 'expired', decided_via: 'superseded' });
         expect(agent._executeTool).toHaveBeenCalledTimes(1);
-        // A call that fails leaves the other card alone.
-        const c = await svc.request({ message: web('book'), toolName: 'sendEmail', args: { to: 'x@example.com' }, reason: 'r' });
-        const d = await svc.request({ message: job(), toolName: 'sendEmail', args: { to: 'x@example.com' }, reason: 'r' });
-        agent._executeTool.mockResolvedValueOnce({ error: 'smtp down' });
-        await svc.decide(d.id, 'approved', { via: 'web' });
-        expect(db.getPendingConfirmation(c.id).status).toBe('pending');
+        // A call that fails leaves the other card alone, including a failure
+        // the tool reports inside its own output.
+        for (const failure of [{ error: 'smtp down' }, { output: JSON.stringify({ status: 'failed', summary: 'Slot taken.' }) }]) {
+            const c = await svc.request({ message: web('book'), toolName: 'sendEmail', args: { to: 'x@example.com' }, reason: 'r' });
+            const d = await svc.request({ message: job(), toolName: 'sendEmail', args: { to: 'x@example.com' }, reason: 'r' });
+            agent._executeTool.mockResolvedValueOnce(failure);
+            await svc.decide(d.id, 'approved', { via: 'web' });
+            expect(db.getPendingConfirmation(c.id).status).toBe('pending');
+            svc._supersede([db.getPendingConfirmation(c.id)], 'test cleanup');
+        }
     });
 
     test('a bare "cancelar" on a cancel card asks which answer he means', async () => {

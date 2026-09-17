@@ -3550,7 +3550,8 @@ class AgentDB {
   // escalated_approved, escalated_denied, escalated_expired,
   // escalated_failed (nobody could be asked), deny_list, breaker_stop,
   // ran_unasked (mode off), owner_instructed (the owner asked for it in his
-  // own chat, so no card). An escalated row follows its approval row.
+  // own chat, so no card), escalated_duplicate (a card for that action was
+  // already waiting). An escalated row follows its approval row.
 
   /** An escalated decision takes the owner's answer (or the expiry). */
   _settleGuardianDecision(approvalIds, status) {
