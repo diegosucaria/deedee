@@ -464,7 +464,7 @@ export default function SubAgentsTable() {
                                                                             <span className="text-[10px] uppercase text-zinc-500 font-bold">Result</span>
                                                                             {trimmed && (
                                                                                 <span className="ml-2 text-[10px] text-amber-400">
-                                                                                    the list showed the first {task.result.length.toLocaleString()} of {full.length.toLocaleString()} characters
+                                                                                    the list showed a shortened result of {task.result.length.toLocaleString()} characters; the whole text is {full.length.toLocaleString()}
                                                                                 </span>
                                                                             )}
                                                                             {full === undefined && (
