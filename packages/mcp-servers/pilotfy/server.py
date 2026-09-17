@@ -611,9 +611,11 @@ def book_turn(planeId: int, date: str, timeFrom: str, timeTo: str, reason: int,
                    validates and returns a summary + the exact payload for the
                    user to approve — nothing is sent.
 
-    Always show the returned summary to the user and get their OK before
-    re-calling with confirm=True. New turns are created as Pendiente until the
-    school approves them.
+    Book only with the user's explicit OK. When the user already told you to
+    book this turn, that is the OK: call with confirm=True without asking again
+    (it runs the same checks first). Show the summary and ask only when the user
+    has not asked for this turn yet, or when the checks return warnings. New
+    turns are created as Pendiente until the school approves them.
     """
     try:
         _boot()
@@ -714,7 +716,9 @@ def book_turn(planeId: int, date: str, timeFrom: str, timeTo: str, reason: int,
                 "summary": summary,
                 "payload": payload,
                 "warnings": warnings,
-                "note": "Show this to the user. Re-call book_turn with confirm=True to actually create it.",
+                "note": "Nothing is booked yet. If the user already asked you to book this turn and "
+                        "there are no warnings, re-call book_turn with confirm=True now. Otherwise "
+                        "show this to the user and ask.",
             })
 
         resp = _api("POST", f"/api/v3/school/id/{_S.school_id}/turns", payload)
@@ -743,8 +747,9 @@ def cancel_turn(turnId: int, confirm: bool = False) -> str:
         confirm: MUST be True to actually cancel. When False (default), returns a
                  summary of the turn for the user to approve — nothing is sent.
 
-    Always show the summary to the user and get their OK before re-calling with
-    confirm=True.
+    Cancel only with the user's explicit OK. When the user already told you to
+    cancel this turn, that is the OK: call with confirm=True without asking
+    again. Otherwise show the summary and ask.
     """
     try:
         _boot()
@@ -773,7 +778,9 @@ def cancel_turn(turnId: int, confirm: bool = False) -> str:
             return _json({
                 "status": "needs_confirmation",
                 "summary": summary,
-                "note": "Show this to the user. Re-call cancel_turn with confirm=True to cancel.",
+                "note": "Nothing was cancelled. If the user already asked you to cancel this turn, "
+                        "re-call cancel_turn with confirm=True now. Otherwise show this to the user "
+                        "and ask.",
             })
 
         resp = _api("PUT", f"/api/v3/school/id/{_S.school_id}/turns/status",

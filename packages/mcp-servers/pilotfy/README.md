@@ -42,7 +42,9 @@ The booking request sends exactly one instructor field — `instructorId`,
 assistant should:
 
 1. Call the tool with `confirm=False` (or omit it).
-2. Read back the returned `summary` to the user and get an explicit OK.
+2. Read back the returned `summary` to the user and get an explicit OK. When
+   the user already asked for this exact turn or cancellation and there are no
+   warnings, that request is the OK: do not ask again.
 3. Re-call the **same** tool with `confirm=True` to actually perform it.
 
 `book_turn` validation (run on both calls) checks: date format and the
