@@ -4,11 +4,14 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 const { LocalTools, commandHeads } = require('../src/local/index');
 
+// Under a git hook, GIT_DIR and friends point at the real repository. Drop
+// every GIT_ variable so these commands only touch the temp dir.
 function git(cwd, ...args) {
+    const env = Object.fromEntries(Object.entries(process.env).filter(([k]) => !k.startsWith('GIT_')));
     execFileSync('git', args, {
         cwd,
         stdio: 'pipe',
-        env: { ...process.env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }
+        env: { ...env, GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' }
     });
 }
 
