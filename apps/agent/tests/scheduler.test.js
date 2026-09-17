@@ -722,6 +722,34 @@ describe('Scheduler & Smart Notifications', () => {
             expect(saved.payload.scope.model).toBe('FLASH');
         });
 
+        it('reregisterSystemJob rebuilds one job from the persisted payload', async () => {
+            scheduler.ensureSystemJobs();
+            // The owner edits the scope: the route saves the row, then asks for
+            // a re-register so the next run reads it.
+            agent.db.getScheduledJobs.mockReturnValue([{
+                name: 'wardrobe_morning_outfit',
+                cronExpression: '15 7 * * *',
+                taskType: 'agent_instruction',
+                payload: { task: 'old', isSystem: true, model: 'PRO', allowedTools: ['sendMessage'] },
+                enabled: true
+            }]);
+            expect(scheduler.reregisterSystemJob('wardrobe_morning_outfit')).toBe(true);
+
+            await runSystemJob('wardrobe_morning_outfit');
+            const meta = passedMetadata();
+            expect(meta.forceModel).toBe('PRO');
+            expect(meta.allowedTools).toEqual(['sendMessage']);
+            // Its neighbours keep running on their defaults.
+            agent.processMessage.mockClear();
+            await runSystemJob('wardrobe_pretrip_check');
+            expect(passedMetadata().forceModel).toBe('FLASH');
+        });
+
+        it('reregisterSystemJob returns false for a name that is not a system job', () => {
+            scheduler.ensureSystemJobs();
+            expect(scheduler.reregisterSystemJob('not_a_system_job')).toBe(false);
+        });
+
         it('a persisted model alone keeps the default tool list', async () => {
             agent.db.getScheduledJobs.mockReturnValue([{
                 name: 'wardrobe_pretrip_check',

@@ -152,6 +152,17 @@ function createInternalRouter(agent) {
                     expiresAt: j.metadata?.expiresAt || null,
                     nextInvocation: j.nextInvocation(),
                     model: j.metadata?.payload?.model || j.metadata?.payload?.scope?.model || 'auto',
+                    allowedTools: j.metadata?.payload?.allowedTools || j.metadata?.payload?.scope?.allowedTools || null,
+                    // What the code ships with, so the UI can mark an owner
+                    // edit as an override and offer to clear it.
+                    scopeDefaults: {
+                        model: j.metadata?.payload?.scope?.model || null,
+                        allowedTools: j.metadata?.payload?.scope?.allowedTools || null
+                    },
+                    scopeOverride: {
+                        model: j.metadata?.payload?.model || null,
+                        allowedTools: j.metadata?.payload?.allowedTools || null
+                    },
                     weekdaysOnly: j.metadata?.payload?.weekdaysOnly || false,
                     daytimeOnly: j.metadata?.payload?.daytimeOnly || false
                 }));
@@ -188,6 +199,78 @@ function createInternalRouter(agent) {
                 return res.status(404).json({ error: 'Job not found or failed to toggle' });
             }
             res.json({ success: true });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // Owner edit of a system job's scope: which model it runs on and which
+    // tools it may call. The values land in the persisted payload, which is
+    // what Scheduler._systemJobOverrides reads on the next run.
+    const SCOPE_MODELS = ['FLASH', 'LITE', 'PRO'];
+
+    router.patch('/tasks/:id/scope', (req, res) => {
+        if (!agent.scheduler) return res.status(503).json({ error: 'Scheduler not ready' });
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const { id } = req.params;
+            const job = agent.scheduler.jobs[id];
+            if (!job) return res.status(404).json({ error: 'Job not found' });
+            if (!job.metadata?.payload?.isSystem) {
+                return res.status(400).json({ error: 'Only system jobs are edited here. Use the task form for your own jobs.' });
+            }
+
+            const body = req.body || {};
+            const payload = { ...(job.metadata.payload || {}) };
+
+            // 'auto', null or '' clears the override and puts the job back on
+            // its built-in default.
+            if ('model' in body) {
+                const raw = body.model;
+                if (raw === null || raw === '' || raw === 'auto') {
+                    delete payload.model;
+                } else if (typeof raw === 'string' && SCOPE_MODELS.includes(raw.toUpperCase())) {
+                    payload.model = raw.toUpperCase();
+                } else {
+                    return res.status(400).json({ error: 'model must be auto, FLASH, LITE or PRO' });
+                }
+            }
+
+            if ('allowedTools' in body) {
+                const raw = body.allowedTools;
+                if (raw === null || (Array.isArray(raw) && raw.length === 0)) {
+                    delete payload.allowedTools;
+                } else if (Array.isArray(raw) && raw.every(t => typeof t === 'string' && t.trim())) {
+                    payload.allowedTools = raw.map(t => t.trim());
+                } else {
+                    return res.status(400).json({ error: 'allowedTools must be an array of tool names' });
+                }
+            }
+
+            const cronExpression = typeof job.metadata.cronExpression === 'string'
+                ? job.metadata.cronExpression
+                : new Date(job.metadata.cronExpression).toISOString();
+
+            agent.db.saveScheduledJob({
+                name: id,
+                cronExpression,
+                taskType: job.metadata.payload?.taskType || 'agent_instruction',
+                payload,
+                expiresAt: job.metadata.expiresAt || null,
+                enabled: job.metadata.enabled !== false
+            });
+            job.metadata.payload = payload;
+
+            // Rebuild the job so the next run reads the new scope.
+            agent.scheduler.reregisterSystemJob(id);
+
+            if (agent.interface) {
+                agent.interface.broadcast('jobs:update', { action: 'scope', name: id });
+            }
+
+            res.json({
+                success: true,
+                model: payload.model || 'auto',
+                allowedTools: payload.allowedTools || null
+            });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 

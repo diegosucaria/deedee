@@ -53,6 +53,26 @@ export async function runTask(name) {
     }
 }
 
+// The model and tool list a system job runs with. Send model 'auto' or an
+// empty tool list to drop an override and go back to the built-in default.
+export async function setJobScope(name, scope = {}) {
+    await requireActionSession();
+    try {
+        const body = {};
+        if ('model' in scope) body.model = scope.model;
+        if ('allowedTools' in scope) body.allowedTools = scope.allowedTools;
+        const encodedName = encodeURIComponent(name);
+        const result = await fetchAPI(`/v1/tasks/${encodedName}/scope`, {
+            method: 'PATCH',
+            body: JSON.stringify(body)
+        });
+        revalidatePath('/tasks');
+        return { success: true, ...result };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function createTask(prevState, formData) {
     await requireActionSession();
     try {
@@ -2154,6 +2174,17 @@ export async function getSubAgentTasks({ page = 1, limit = 50, search, status } 
     } catch (error) {
         console.error('getSubAgentTasks Error:', error);
         return { tasks: [], total: 0, page: 1, limit, totalPages: 0 };
+    }
+}
+
+// The list query leaves out result_full to stay small; the expanded row asks
+// for one task and gets the whole result.
+export async function getSubAgentTask(id) {
+    try {
+        return await fetchAPI(`/v1/subagents/${encodeURIComponent(id)}`);
+    } catch (error) {
+        console.error('getSubAgentTask Error:', error);
+        return null;
     }
 }
 
