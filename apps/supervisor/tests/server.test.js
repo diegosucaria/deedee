@@ -117,6 +117,38 @@ describe('Supervisor API', () => {
     expect(res.body.error).toBe('Syntax Error');
   });
 
+  test('GET /logs stops a balena stream that opens after the client left', async () => {
+    jest.resetModules();
+    const stop = jest.fn();
+    let opened;
+    const opening = new Promise((resolve) => { opened = resolve; });
+    let started;
+    const streamStarted = new Promise((resolve) => { started = resolve; });
+    jest.doMock('../src/balena-logs', () => ({
+      balenaApiAvailable: () => true,
+      BalenaLogs: jest.fn().mockImplementation(() => ({
+        stream: jest.fn(async () => { started(); await opening; return { stop }; })
+      }))
+    }));
+    const http = require('http');
+    const server = require('../src/server').app.listen(0);
+    try {
+      const port = server.address().port;
+      const req = http.get({ port, path: '/logs/agent', headers: { 'x-supervisor-token': 'test-token' } });
+      req.on('error', () => {});
+      await streamStarted;
+      req.destroy();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(stop).not.toHaveBeenCalled();
+      opened();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(stop).toHaveBeenCalledTimes(1);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+      jest.dontMock('../src/balena-logs');
+    }
+  });
+
   test('GET /logs refuses a service outside the list when the balena API is in use', async () => {
     process.env.BALENA_SUPERVISOR_ADDRESS = 'http://127.0.0.1:1';
     process.env.BALENA_SUPERVISOR_API_KEY = 'key';

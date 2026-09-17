@@ -95,6 +95,35 @@ describe('balena logs', () => {
         }
     });
 
+    test('a journal stream that breaks ends the response and its heartbeat', async () => {
+        jest.useFakeTimers();
+        try {
+            let fail;
+            const fetchImpl = jest.fn(async (url) => {
+                if (url.endsWith('/v2/containerId')) {
+                    return { ok: true, json: async () => ({ services: { agent: 'id-agent' } }) };
+                }
+                return { ok: true, body: new ReadableStream({ start(controller) { fail = (e) => controller.error(e); } }) };
+            });
+            const out = new PassThrough();
+            let text = '';
+            out.on('data', (c) => { text += c.toString(); });
+            const ended = new Promise((resolve) => out.on('end', resolve));
+            const warn = jest.spyOn(console, 'warn').mockImplementation(() => {});
+            const logs = new BalenaLogs({ env: ENV, fetchImpl });
+            await logs.stream({ services: ['agent'], out });
+
+            fail(new Error('connection reset'));
+            jest.useRealTimers();
+            await ended;
+            warn.mockRestore();
+            expect(out.writableEnded).toBe(true);
+            expect(text).toBe('');
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     test('an unknown service is a 404', async () => {
         const fetchImpl = jest.fn(async () => ({ ok: true, json: async () => ({ services: { agent: 'id' } }) }));
         const logs = new BalenaLogs({ env: ENV, fetchImpl });

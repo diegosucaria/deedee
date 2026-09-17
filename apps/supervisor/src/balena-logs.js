@@ -117,15 +117,22 @@ class BalenaLogs {
     // timing out when no service writes for minutes. The dockerode path sends
     // the same line.
     const heartbeat = follow
-      ? setInterval(() => { if (!out.writableEnded) out.write('[SYSTEM] HEARTBEAT\n'); }, HEARTBEAT_MS)
+      ? setInterval(() => { if (!out.writableEnded && !out.destroyed) out.write('[SYSTEM] HEARTBEAT\n'); }, HEARTBEAT_MS)
       : null;
     if (heartbeat && typeof heartbeat.unref === 'function') heartbeat.unref();
     const stopHeartbeat = () => { if (heartbeat) clearInterval(heartbeat); };
-    stream.on('error', stopHeartbeat);
-    stream.on('end', () => {
+    // End the response when the journal stream ends or breaks (a supervisor
+    // restart, a dropped connection). An open, silent response would keep
+    // the logs page from ever reconnecting.
+    const finish = () => {
       stopHeartbeat();
-      if (typeof out.end === 'function') out.end();
+      if (typeof out.end === 'function' && !out.writableEnded && !out.destroyed) out.end();
+    };
+    stream.on('error', (error) => {
+      console.warn(`[BalenaLogs] Journal stream ended with an error: ${error.message}`);
+      finish();
     });
+    stream.on('end', finish);
 
     return {
       stop: () => {

@@ -155,7 +155,14 @@ app.get('/logs/:container', async (req, res) => {
     if (name !== 'all' && !LOG_SERVICES.includes(name)) {
       return res.status(404).json({ error: `Container '${name}' not found` });
     }
-    let handle;
+    // Listen for the close before the await: a client that leaves while
+    // the stream is still opening must stop it once it opens.
+    let handle = null;
+    let closed = false;
+    req.on('close', () => {
+      closed = true;
+      if (handle) handle.stop();
+    });
     try {
       res.setHeader('Content-Type', 'text/plain; charset=utf-8');
       res.setHeader('X-Accel-Buffering', 'no');
@@ -167,7 +174,7 @@ app.get('/logs/:container', async (req, res) => {
         until,
         out: res
       });
-      req.on('close', () => handle.stop());
+      if (closed) handle.stop();
     } catch (err) {
       console.error(`[Supervisor] Log Error (${name}):`, err.message);
       if (!res.headersSent) res.status(err.status || 500).json({ error: err.message });
