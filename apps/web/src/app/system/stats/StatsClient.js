@@ -1,9 +1,9 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-import { LatencyChart, TokenEfficiencyChart, DailyCostChart, ServiceCostBreakdown, StackedDailyCostChart, ModelCostBreakdown, CacheHitRateChart, ModelUsageChart } from '@/components/InteractiveCharts';
-import { RefreshCw, Activity, Cpu, DollarSign, Database, PieChart, Server, Zap, BarChart3 } from 'lucide-react';
-import { getStatsUsage, getDailyCostTrend, getSystemStats, getCostByTag, getDailyCostByCategory, getCostByModel, getLatencyPercentiles, getTokenBreakdownTrend, getCacheHitRate, getModelUsage } from '../../actions';
+import { LatencyChart, TokenEfficiencyChart, DailyCostChart, ServiceCostBreakdown, StackedDailyCostChart, ModelCostBreakdown, CacheHitRateChart, ModelUsageChart, PromptCompositionChart, RawTagCostTable, PrefixChurnTile } from '@/components/InteractiveCharts';
+import { RefreshCw, Activity, Cpu, DollarSign, Database, PieChart, Server, Zap, BarChart3, Layers, Tags, Repeat } from 'lucide-react';
+import { getStatsUsage, getDailyCostTrend, getSystemStats, getCostByTag, getDailyCostByCategory, getCostByModel, getLatencyPercentiles, getTokenBreakdownTrend, getCacheHitRate, getModelUsage, getPromptComposition, getCostByRawTag, getPrefixChurn } from '../../actions';
 import { useSocket } from '@/hooks/useSocket';
 
 const COST_PERIODS = [
@@ -23,6 +23,9 @@ export default function StatsClient({ startDate, endDate }) {
     const [dbStats, setDbStats] = useState(null);
     const [costByTag, setCostByTag] = useState(null);
     const [costByModel, setCostByModel] = useState([]);
+    const [promptComposition, setPromptComposition] = useState([]);
+    const [costByRawTag, setCostByRawTag] = useState([]);
+    const [prefixChurn, setPrefixChurn] = useState([]);
     const [costPeriod, setCostPeriod] = useState(1); // days
     const [loading, setLoading] = useState(true);
 
@@ -100,12 +103,18 @@ export default function StatsClient({ startDate, endDate }) {
             const qs = (startDate || endDate)
                 ? buildQs()
                 : buildQs({ days });
-            const [tagData, modelData] = await Promise.all([
+            const [tagData, modelData, compositionData, rawTagData, churnData] = await Promise.all([
                 getCostByTag(qs),
-                getCostByModel(qs)
+                getCostByModel(qs),
+                getPromptComposition(qs),
+                getCostByRawTag(qs),
+                getPrefixChurn(qs)
             ]);
             setCostByTag(tagData);
             setCostByModel(modelData);
+            setPromptComposition(compositionData);
+            setCostByRawTag(rawTagData);
+            setPrefixChurn(churnData);
         } catch (e) {
             console.error('[StatsClient] CostBreakdown Error:', e);
         }
@@ -211,6 +220,47 @@ export default function StatsClient({ startDate, endDate }) {
                         ? <StackedDailyCostChart data={dailyCostByCategory} />
                         : <DailyCostChart data={dailyCostData} />
                     }
+                </div>
+            </div>
+
+            {/* What fills the prompt — Full Width */}
+            <div className="lg:col-span-2 bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[300px] flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold flex items-center gap-2 text-zinc-300">
+                        <Layers className="w-5 h-5 text-sky-400" />
+                        What Fills the Prompt
+                    </h2>
+                    <span className="text-xs text-zinc-500">estimates against billed prompt tokens</span>
+                </div>
+                <div className="w-full h-[340px]">
+                    <PromptCompositionChart data={promptComposition} />
+                </div>
+            </div>
+
+            {/* Cost by raw tag */}
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[300px] flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold flex items-center gap-2 text-zinc-300">
+                        <Tags className="w-5 h-5 text-amber-400" />
+                        Cost by Tag
+                    </h2>
+                    <span className="text-xs text-zinc-500">a turn against its tool loop</span>
+                </div>
+                <div className="flex-1 max-h-[320px] overflow-auto">
+                    <RawTagCostTable data={costByRawTag} />
+                </div>
+            </div>
+
+            {/* Prefix churn */}
+            <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6 min-h-[300px] flex flex-col">
+                <div className="flex items-center justify-between mb-4">
+                    <h2 className="text-xl font-semibold flex items-center gap-2 text-zinc-300">
+                        <Repeat className="w-5 h-5 text-violet-400" />
+                        Prefix Changes per Day
+                    </h2>
+                </div>
+                <div className="flex-1">
+                    <PrefixChurnTile data={prefixChurn} />
                 </div>
             </div>
 

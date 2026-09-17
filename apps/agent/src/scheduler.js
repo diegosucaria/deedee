@@ -645,30 +645,41 @@ class Scheduler {
         const SYSTEM_JOBS = [
             {
                 name: 'nightly_consolidation',
+                // Runs the consolidateMemory tool directly, with no agent turn,
+                // so a model and a tool list would change nothing.
+                scopable: false,
                 cron: '0 0 * * *', // Midnight
                 task: 'Run consolidateMemory tool to summarize yesterday\'s logs into the journal.',
                 silent: true
             },
             {
                 name: 'nightly_backup',
+                // Direct call to the backup manager: no model, no tools.
+                scopable: false,
                 cron: '0 2 * * *', // 2 AM
                 task: 'Perform nightly backup of data to GCS.',
                 silent: true
             },
             {
                 name: 'nightly_rag_scan',
+                // Direct call to the RAG service: no model, no tools.
+                scopable: false,
                 cron: '0 3 * * *', // 3 AM
                 task: 'Scan vaults and ingest missing files into RAG.',
                 silent: true
             },
             {
                 name: 'nightly_memory_pruning',
+                // Direct call to the pruning service: no model, no tools.
+                scopable: false,
                 cron: '0 4 * * *', // 4 AM
                 task: 'Prune stale or obsolete facts from memory.',
                 silent: true
             },
             {
                 name: 'nightly_dream',
+                // Direct call to the dream service: no agent turn here.
+                scopable: false,
                 cron: '30 4 * * *', // 4:30 AM
                 task: 'Enter REM sleep and dream based on recent memories and Plex activity.',
                 silent: true
@@ -821,6 +832,8 @@ NEVER contact anyone other than the owner.`,
                 // Target comes from the partner_greeting setting; runs
                 // directly (no agent loop). Random 0-75 min delay inside.
                 name: 'partner_good_morning',
+                // Direct call to the greeting service, which picks its own model.
+                scopable: false,
                 cron: '0 7 * * *',
                 task: 'Send the owner\'s good-morning message to their partner (partner_greeting setting).',
                 silent: true,
@@ -828,12 +841,18 @@ NEVER contact anyone other than the owner.`,
             },
             {
                 name: 'partner_good_night',
+                // Direct call to the greeting service, which picks its own model.
+                scopable: false,
                 cron: '30 22 * * *', // Random 0-45 min delay inside
                 task: 'Send the owner\'s good-night message to their partner (partner_greeting setting).',
                 silent: true,
                 defaultEnabled: false
             }
         ];
+
+        // Kept on the instance so reregisterSystemJob can find one definition
+        // again after the owner edits its model or tool list.
+        this._systemJobDefs = SYSTEM_JOBS;
 
         console.log('[Scheduler] Verifying system jobs...');
 
@@ -850,223 +869,247 @@ NEVER contact anyone other than the owner.`,
                 this.cancelJob(sysJob.name);
             }
 
-            const existing = persistedStates[sysJob.name];
-            const defaultEnabled = sysJob.defaultEnabled !== false;
-            const isEnabled = existing && 'enabled' in existing
-                ? existing.enabled
-                : defaultEnabled;
-            if (!existing && !defaultEnabled) {
-                console.log(`[Scheduler] System job '${sysJob.name}' starts disabled by default. Enable it from the Tasks UI when you're ready.`);
-            }
-
-            // Owner overrides live on the persisted row as `model` and
-            // `allowedTools`; the defaults sit under `scope` so a code change
-            // still reaches jobs the owner never touched.
-            const overrides = this._systemJobOverrides(existing);
-            const scope = this._systemJobScope(sysJob, overrides);
-
-            // Use the standard scheduleJob logic which handles the callback wrapper
-            // We manually construct the instruction wrapper to match 'agent_instruction' type
-            const callback = async () => {
-                console.log(`[Scheduler] Executing SYSTEM task: ${sysJob.task} `);
-
-                // Direct Execution for Backup (Bypass Agent LLM to avoid context window usage/failures and ensure reliability)
-                if (sysJob.name === 'nightly_backup') {
-                    let result;
-                    try {
-                        result = await this.agent.backupManager.performBackup();
-                        console.log('[Scheduler] Nightly Backup Result:', result);
-                    } catch (err) {
-                        console.error('[Scheduler] Nightly Backup Failed:', err);
-                        if (this.agent.notifications) {
-                            this.agent.notifications.create({
-                                type: 'backup_failed',
-                                severity: 'error',
-                                title: 'Nightly backup failed',
-                                message: `The scheduled backup failed: ${err.message}`,
-                                metadata: { error: err.message, link: '/system' }
-                            });
-                        }
-                        result = { error: err.message };
-                        throw err;
-                    }
-                    return result; // Return for logging
-                }
-
-                // Partner greetings: direct call, no agent loop. The model only
-                // drafts the text; the service decides whether to send.
-                if (sysJob.name === 'partner_good_morning' || sysJob.name === 'partner_good_night') {
-                    const kind = sysJob.name === 'partner_good_morning' ? 'morning' : 'night';
-                    return await this.agent.partnerGreetingService.run(kind, { randomDelay: true });
-                }
-
-                // Nightly RAG Scan
-                if (sysJob.name === 'nightly_rag_scan') {
-                    if (this.agent.ragService && this.agent.vaults) {
-                        try {
-                            console.log('[Scheduler] Starting Nightly RAG Scan...');
-                            await this.agent.ragService.scanAndIngest(this.agent.vaults.vaultsDir);
-
-                            // Also scan and embed journal entries
-                            if (this.agent.journal) {
-                                await this.agent.ragService.scanJournals(this.agent.journal.journalDir);
-                            }
-
-                            return { success: true };
-                        } catch (e) {
-                            console.error('[Scheduler] RAG Scan Failed:', e);
-                            throw e;
-                        }
-                    } else {
-                        return { error: 'RAG Service or Vaults not available' };
-                    }
-                }
-
-                // Nightly Memory Pruning
-                if (sysJob.name === 'nightly_memory_pruning') {
-                    if (this.agent.memoryPruning) {
-                        try {
-                            console.log('[Scheduler] Starting Nightly Memory Pruning...');
-                            const result = await this.agent.memoryPruning.prune();
-                            return result;
-                        } catch (e) {
-                            console.error('[Scheduler] Memory Pruning Failed:', e);
-                            throw e;
-                        }
-                    } else {
-                        return { error: 'MemoryPruning Service not available' };
-                    }
-                }
-
-                // Nightly Dreaming
-                if (sysJob.name === 'nightly_dream') {
-                    if (this.agent.dreamService) {
-                        console.log('[Scheduler] Agent is entering REM sleep...');
-                        try {
-                            const result = await this.agent.dreamService.dream();
-                            return result;
-                        } catch (error) {
-                            console.error('[Scheduler] Nightly dream failed:', error);
-                            throw error;
-                        }
-                    } else {
-                        return { error: 'DreamService not available' };
-                    }
-                }
-
-                // Nightly Consolidation + Maintenance
-                if (sysJob.name === 'nightly_consolidation') {
-                    // Also run log cleanup
-                    try {
-                        if (this.agent.db) {
-                            this.agent.db.cleanupJobLogs(30);
-                            this.agent.db.cleanupMetrics(30);
-                            this.agent.db.cleanupTokenUsage(30);
-                        }
-                    } catch (e) {
-                        console.error('[Scheduler] Log cleanup failed:', e);
-                    }
-                    // Keep people's WhatsApp IDs linked to their phone numbers (no model call).
-                    if (this.agent.peopleService) {
-                        try {
-                            const links = await this.agent.peopleService.linkWhatsAppIdentities();
-                            if (links.linked || links.upgraded) {
-                                console.log(`[Scheduler] WhatsApp IDs: ${links.linked} linked, ${links.upgraded} moved onto phone numbers.`);
-                            }
-                        } catch (e) {
-                            console.warn('[Scheduler] WhatsApp ID linking failed:', e.message);
-                        }
-                    }
-                    // Call the tool directly. An agent turn here loaded every
-                    // declaration and all facts to make one tool call; the PRO
-                    // extraction inside executors/memory.js stays.
-                    if (!this.agent.toolExecutor) {
-                        return { error: 'ToolExecutor not available' };
-                    }
-                    try {
-                        const result = await this.agent.toolExecutor.execute('consolidateMemory', {}, {
-                            message: { role: 'user', source: 'scheduler', metadata: { chatId: `system_${sysJob.name}_${Date.now()}` } },
-                            callServices: { client: this.agent.client, interface: this.agent.interface }
-                        });
-                        console.log('[Scheduler] Nightly consolidation result:', typeof result === 'string' ? result.slice(0, 200) : JSON.stringify(result || {}).slice(0, 200));
-                        return result;
-                    } catch (e) {
-                        console.error('[Scheduler] Nightly consolidation failed:', e);
-                        throw e;
-                    }
-                }
-
-                // Proactive Thought (Probabilistic execution).
-                if (sysJob.name === 'proactive_thought') {
-                    // Run only a small fraction of eligible hours. The loop is the
-                    // biggest discretionary cost (~28% of spend) and most runs
-                    // surface nothing the owner acts on, so keep it rare. Tunable
-                    // live via agent_settings 'proactive_run_probability' (0..1)
-                    // without a redeploy; defaults to 0.05 (~5%, down from 20%).
-                    let probability = 0.05;
-                    try {
-                        const raw = parseFloat(this.agent.db.getAllAgentSettings().proactive_run_probability);
-                        if (Number.isFinite(raw) && raw >= 0 && raw <= 1) probability = raw;
-                    } catch { /* keep default */ }
-                    if (Math.random() >= probability) {
-                        console.log(`[Scheduler] Proactive loop skipped this hour (RNG, p=${probability}).`);
-                        return { success: true, skipped: true };
-                    }
-                    // Random delay 1-30 minutes to avoid predictable timing
-                    const delayMinutes = Math.floor(Math.random() * 30) + 1;
-                    const delayMs = delayMinutes * 60 * 1000;
-                    console.log(`[Scheduler] Proactive loop ACTIVATED this hour (p=${probability})! Delaying ${delayMinutes}m before waking Agent...`);
-                    await new Promise(resolve => setTimeout(resolve, delayMs));
-                    console.log('[Scheduler] Proactive loop delay complete. Waking up Agent...');
-                }
-
-                let executionResult = null;
-                await this.agent.processMessage({
-                    role: 'user',
-                    content: `System Maintenance: ${sysJob.task} `,
-                    source: 'scheduler',
-                    metadata: {
-                        chatId: `system_${sysJob.name}_${Date.now()}`,
-                        // saveJobState/getJobState refuse to run without it.
-                        jobName: sysJob.name,
-                        ...(scope.model ? { forceModel: scope.model } : {}),
-                        ...(scope.allowedTools ? { allowedTools: scope.allowedTools } : {})
-                    }
-                }, async (reply) => {
-                    // Capture reply for smart notification.
-                    // createAssistantMessage uses 'content', not 'text'.
-                    const replyText = reply.content || reply.text;
-                    if (!executionResult) {
-                        executionResult = reply;
-                        if (replyText) executionResult.text = replyText;
-                    } else if (replyText) {
-                        // Always keep the latest text — final assistant message overwrites intermediate "Thinking..." messages
-                        executionResult.text = replyText;
-                    }
-                });
-
-                // Ensure result has text for smart notification
-                if (executionResult && !executionResult.text) {
-                    executionResult.text = String(executionResult.content || '');
-                }
-
-                // Now safely pass the final result through the Notification Logic!
-                return await this._processSmartNotification(executionResult, { task: sysJob.task }, sysJob.silent);
-            };
-
-            this.scheduleJob(sysJob.name, sysJob.cron, callback, {
-                persist: true, // Persist so they show up in DB listing if needed, though mostly for consistent ID
-                enabled: isEnabled,
-                taskType: 'agent_instruction',
-                payload: {
-                    task: sysJob.task,
-                    isSystem: true,
-                    ...(sysJob.model || sysJob.allowedTools ? { scope: { model: sysJob.model || null, allowedTools: sysJob.allowedTools || null } } : {}),
-                    ...overrides
-                }
-            });
+            this._scheduleSystemJob(sysJob, persistedStates[sysJob.name]);
         }
 
+    }
+
+    /**
+     * Register one system job: its callback, its enabled flag and the model
+     * and tool list it runs with. Split out of ensureSystemJobs so a scope
+     * edit can re-register a single job without touching the others.
+     */
+    _scheduleSystemJob(sysJob, existing) {
+        const defaultEnabled = sysJob.defaultEnabled !== false;
+        const isEnabled = existing && 'enabled' in existing
+            ? existing.enabled
+            : defaultEnabled;
+        if (!existing && !defaultEnabled) {
+            console.log(`[Scheduler] System job '${sysJob.name}' starts disabled by default. Enable it from the Tasks UI when you're ready.`);
+        }
+
+        // Owner overrides live on the persisted row as `model` and
+        // `allowedTools`; the defaults sit under `scope` so a code change
+        // still reaches jobs the owner never touched.
+        const overrides = this._systemJobOverrides(existing);
+        const scope = this._systemJobScope(sysJob, overrides);
+
+        // Use the standard scheduleJob logic which handles the callback wrapper
+        // We manually construct the instruction wrapper to match 'agent_instruction' type
+        const callback = async () => {
+            console.log(`[Scheduler] Executing SYSTEM task: ${sysJob.task} `);
+
+            // Direct Execution for Backup (Bypass Agent LLM to avoid context window usage/failures and ensure reliability)
+            if (sysJob.name === 'nightly_backup') {
+                let result;
+                try {
+                    result = await this.agent.backupManager.performBackup();
+                    console.log('[Scheduler] Nightly Backup Result:', result);
+                } catch (err) {
+                    console.error('[Scheduler] Nightly Backup Failed:', err);
+                    if (this.agent.notifications) {
+                        this.agent.notifications.create({
+                            type: 'backup_failed',
+                            severity: 'error',
+                            title: 'Nightly backup failed',
+                            message: `The scheduled backup failed: ${err.message}`,
+                            metadata: { error: err.message, link: '/system' }
+                        });
+                    }
+                    result = { error: err.message };
+                    throw err;
+                }
+                return result; // Return for logging
+            }
+
+            // Partner greetings: direct call, no agent loop. The model only
+            // drafts the text; the service decides whether to send.
+            if (sysJob.name === 'partner_good_morning' || sysJob.name === 'partner_good_night') {
+                const kind = sysJob.name === 'partner_good_morning' ? 'morning' : 'night';
+                return await this.agent.partnerGreetingService.run(kind, { randomDelay: true });
+            }
+
+            // Nightly RAG Scan
+            if (sysJob.name === 'nightly_rag_scan') {
+                if (this.agent.ragService && this.agent.vaults) {
+                    try {
+                        console.log('[Scheduler] Starting Nightly RAG Scan...');
+                        await this.agent.ragService.scanAndIngest(this.agent.vaults.vaultsDir);
+
+                        // Also scan and embed journal entries
+                        if (this.agent.journal) {
+                            await this.agent.ragService.scanJournals(this.agent.journal.journalDir);
+                        }
+
+                        return { success: true };
+                    } catch (e) {
+                        console.error('[Scheduler] RAG Scan Failed:', e);
+                        throw e;
+                    }
+                } else {
+                    return { error: 'RAG Service or Vaults not available' };
+                }
+            }
+
+            // Nightly Memory Pruning
+            if (sysJob.name === 'nightly_memory_pruning') {
+                if (this.agent.memoryPruning) {
+                    try {
+                        console.log('[Scheduler] Starting Nightly Memory Pruning...');
+                        const result = await this.agent.memoryPruning.prune();
+                        return result;
+                    } catch (e) {
+                        console.error('[Scheduler] Memory Pruning Failed:', e);
+                        throw e;
+                    }
+                } else {
+                    return { error: 'MemoryPruning Service not available' };
+                }
+            }
+
+            // Nightly Dreaming
+            if (sysJob.name === 'nightly_dream') {
+                if (this.agent.dreamService) {
+                    console.log('[Scheduler] Agent is entering REM sleep...');
+                    try {
+                        const result = await this.agent.dreamService.dream();
+                        return result;
+                    } catch (error) {
+                        console.error('[Scheduler] Nightly dream failed:', error);
+                        throw error;
+                    }
+                } else {
+                    return { error: 'DreamService not available' };
+                }
+            }
+
+            // Nightly Consolidation + Maintenance
+            if (sysJob.name === 'nightly_consolidation') {
+                // Also run log cleanup
+                try {
+                    if (this.agent.db) {
+                        this.agent.db.cleanupJobLogs(30);
+                        this.agent.db.cleanupMetrics(30);
+                        this.agent.db.cleanupTokenUsage(30);
+                    }
+                } catch (e) {
+                    console.error('[Scheduler] Log cleanup failed:', e);
+                }
+                // Keep people's WhatsApp IDs linked to their phone numbers (no model call).
+                if (this.agent.peopleService) {
+                    try {
+                        const links = await this.agent.peopleService.linkWhatsAppIdentities();
+                        if (links.linked || links.upgraded) {
+                            console.log(`[Scheduler] WhatsApp IDs: ${links.linked} linked, ${links.upgraded} moved onto phone numbers.`);
+                        }
+                    } catch (e) {
+                        console.warn('[Scheduler] WhatsApp ID linking failed:', e.message);
+                    }
+                }
+                // Call the tool directly. An agent turn here loaded every
+                // declaration and all facts to make one tool call; the PRO
+                // extraction inside executors/memory.js stays.
+                if (!this.agent.toolExecutor) {
+                    return { error: 'ToolExecutor not available' };
+                }
+                try {
+                    const result = await this.agent.toolExecutor.execute('consolidateMemory', {}, {
+                        message: { role: 'user', source: 'scheduler', metadata: { chatId: `system_${sysJob.name}_${Date.now()}` } },
+                        callServices: { client: this.agent.client, interface: this.agent.interface }
+                    });
+                    console.log('[Scheduler] Nightly consolidation result:', typeof result === 'string' ? result.slice(0, 200) : JSON.stringify(result || {}).slice(0, 200));
+                    return result;
+                } catch (e) {
+                    console.error('[Scheduler] Nightly consolidation failed:', e);
+                    throw e;
+                }
+            }
+
+            // Proactive Thought (Probabilistic execution).
+            if (sysJob.name === 'proactive_thought') {
+                // Run only a small fraction of eligible hours. The loop is the
+                // biggest discretionary cost (~28% of spend) and most runs
+                // surface nothing the owner acts on, so keep it rare. Tunable
+                // live via agent_settings 'proactive_run_probability' (0..1)
+                // without a redeploy; defaults to 0.05 (~5%, down from 20%).
+                let probability = 0.05;
+                try {
+                    const raw = parseFloat(this.agent.db.getAllAgentSettings().proactive_run_probability);
+                    if (Number.isFinite(raw) && raw >= 0 && raw <= 1) probability = raw;
+                } catch { /* keep default */ }
+                if (Math.random() >= probability) {
+                    console.log(`[Scheduler] Proactive loop skipped this hour (RNG, p=${probability}).`);
+                    return { success: true, skipped: true };
+                }
+                // Random delay 1-30 minutes to avoid predictable timing
+                const delayMinutes = Math.floor(Math.random() * 30) + 1;
+                const delayMs = delayMinutes * 60 * 1000;
+                console.log(`[Scheduler] Proactive loop ACTIVATED this hour (p=${probability})! Delaying ${delayMinutes}m before waking Agent...`);
+                await new Promise(resolve => setTimeout(resolve, delayMs));
+                console.log('[Scheduler] Proactive loop delay complete. Waking up Agent...');
+            }
+
+            let executionResult = null;
+            await this.agent.processMessage({
+                role: 'user',
+                content: `System Maintenance: ${sysJob.task} `,
+                source: 'scheduler',
+                metadata: {
+                    chatId: `system_${sysJob.name}_${Date.now()}`,
+                    // saveJobState/getJobState refuse to run without it.
+                    jobName: sysJob.name,
+                    ...(scope.model ? { forceModel: scope.model } : {}),
+                    ...(scope.allowedTools ? { allowedTools: scope.allowedTools } : {})
+                }
+            }, async (reply) => {
+                // Capture reply for smart notification.
+                // createAssistantMessage uses 'content', not 'text'.
+                const replyText = reply.content || reply.text;
+                if (!executionResult) {
+                    executionResult = reply;
+                    if (replyText) executionResult.text = replyText;
+                } else if (replyText) {
+                    // Always keep the latest text — final assistant message overwrites intermediate "Thinking..." messages
+                    executionResult.text = replyText;
+                }
+            });
+
+            // Ensure result has text for smart notification
+            if (executionResult && !executionResult.text) {
+                executionResult.text = String(executionResult.content || '');
+            }
+
+            // Now safely pass the final result through the Notification Logic!
+            return await this._processSmartNotification(executionResult, { task: sysJob.task }, sysJob.silent);
+        };
+
+        this.scheduleJob(sysJob.name, sysJob.cron, callback, {
+            persist: true, // Persist so they show up in DB listing if needed, though mostly for consistent ID
+            enabled: isEnabled,
+            taskType: 'agent_instruction',
+            payload: {
+                task: sysJob.task,
+                isSystem: true,
+                // false when the callback runs the work directly and never
+                // reaches processMessage; the UI hides the scope editor and
+                // the route refuses an edit for those.
+                scopable: sysJob.scopable !== false,
+                ...(sysJob.model || sysJob.allowedTools ? { scope: { model: sysJob.model || null, allowedTools: sysJob.allowedTools || null } } : {}),
+                ...overrides
+            }
+        });
+    }
+
+    /**
+     * Re-register a system job after its model or tool list changed, so the
+     * next run reads the new payload. Returns false when the name is unknown.
+     */
+    reregisterSystemJob(name) {
+        const sysJob = (this._systemJobDefs || []).find(j => j.name === name);
+        if (!sysJob) return false;
+        const rows = this.agent.db ? this.agent.db.getScheduledJobs() : [];
+        this._scheduleSystemJob(sysJob, rows.find(j => j.name === name));
+        return true;
     }
 
     /** SYSTEM_JOBS_SCOPED=0 sends system jobs with no model and no tool list, as before. */

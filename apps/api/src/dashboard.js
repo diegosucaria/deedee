@@ -30,6 +30,9 @@ router.get('/stats/cost-trend', (req, res) => proxyRequest(req, res, 'GET', '/in
 router.get('/stats/daily-cost', (req, res) => proxyRequest(req, res, 'GET', '/internal/stats/daily-cost'));
 router.get('/stats/cost-by-tag', (req, res) => proxyRequest(req, res, 'GET', '/internal/stats/cost-by-tag'));
 router.get('/stats/daily-cost-by-category', (req, res) => proxyRequest(req, res, 'GET', '/internal/stats/daily-cost-by-category'));
+router.get('/stats/prompt-composition', (req, res) => proxyRequest(req, res, 'GET', '/internal/stats/prompt-composition'));
+router.get('/stats/cost-by-raw-tag', (req, res) => proxyRequest(req, res, 'GET', '/internal/stats/cost-by-raw-tag'));
+router.get('/stats/prefix-churn', (req, res) => proxyRequest(req, res, 'GET', '/internal/stats/prefix-churn'));
 router.get('/stats/cost-by-model', (req, res) => proxyRequest(req, res, 'GET', '/internal/stats/cost-by-model'));
 router.get('/stats/latency-percentiles', (req, res) => proxyRequest(req, res, 'GET', '/internal/stats/latency-percentiles'));
 router.get('/stats/token-breakdown', (req, res) => proxyRequest(req, res, 'GET', '/internal/stats/token-breakdown'));
@@ -57,6 +60,7 @@ router.post('/cron-helper', (req, res) => proxyRequest(req, res, 'POST', '/inter
 router.post('/tasks/:id/cancel', (req, res) => proxyRequest(req, res, 'POST', `/internal/tasks/${encodeURIComponent(req.params.id)}/cancel`));
 router.post('/tasks/:id/toggle', (req, res) => proxyRequest(req, res, 'POST', `/internal/tasks/${encodeURIComponent(req.params.id)}/toggle`, req.body));
 router.post('/tasks/:id/run', (req, res) => proxyRequest(req, res, 'POST', `/internal/tasks/${encodeURIComponent(req.params.id)}/run`));
+router.patch('/tasks/:id/scope', (req, res) => proxyRequest(req, res, 'PATCH', `/internal/tasks/${encodeURIComponent(req.params.id)}/scope`, req.body));
 
 // History
 router.get('/history', (req, res) => proxyRequest(req, res, 'GET', '/internal/history'));

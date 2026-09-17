@@ -110,6 +110,47 @@ describe('Agent thinking config per call class and source', () => {
         expect(cfg.thinkingConfig).toEqual({ thinkingLevel: 'HIGH', includeThoughts: true });
     });
 
+    describe("the owner's quick / deep pick (metadata.thinking)", () => {
+        test('quick and deep reach the session config', async () => {
+            const quick = await run('web', { model: 'FLASH', toolMode: 'STANDARD', toolGroups: [] }, { thinking: 'MINIMAL' });
+            expect(quick.thinkingConfig).toEqual({ thinkingLevel: 'MINIMAL', includeThoughts: true });
+
+            agent.client.chats.create.mockClear();
+            const deep = await run('web', { model: 'FLASH', toolMode: 'STANDARD', toolGroups: [] }, { thinking: 'HIGH' });
+            expect(deep.thinkingConfig).toEqual({ thinkingLevel: 'HIGH', includeThoughts: true });
+        });
+
+        test('it beats the env default and is still clamped for Pro', async () => {
+            const warn = jest.spyOn(console, 'warn').mockImplementation(() => { });
+            process.env.THINKING_PRO_CHAT = 'MEDIUM';
+            const cfg = await run('web', { model: 'PRO', toolMode: 'STANDARD', toolGroups: [] }, { thinking: 'MINIMAL' });
+            // Pro has no MINIMAL: the guard raises it to LOW.
+            expect(cfg.thinkingConfig).toEqual({ thinkingLevel: 'LOW', includeThoughts: true });
+            warn.mockRestore();
+        });
+
+        test('auto and junk leave the defaults in charge', async () => {
+            const auto = await run('web', { model: 'PRO', toolMode: 'STANDARD', toolGroups: [] }, { thinking: 'auto' });
+            expect(auto.thinkingConfig).toEqual({ thinkingLevel: 'MEDIUM', includeThoughts: true });
+
+            agent.client.chats.create.mockClear();
+            const junk = await run('web', { model: 'PRO', toolMode: 'STANDARD', toolGroups: [] }, { thinking: 'TURBO' });
+            expect(junk.thinkingConfig).toEqual({ thinkingLevel: 'MEDIUM', includeThoughts: true });
+        });
+
+        test('the reply says which level the turn ran with', async () => {
+            agent.router.route = jest.fn().mockResolvedValue({ model: 'FLASH', toolMode: 'STANDARD', toolGroups: [] });
+            const send = jest.fn();
+            await agent.processMessage({
+                content: 'hello', role: 'user', source: 'web',
+                metadata: { chatId: 'thk-reply', replyMode: 'text', thinking: 'HIGH' }
+            }, send);
+            const replies = send.mock.calls.map(([m]) => m).filter(m => m?.metadata?.thinking);
+            expect(replies.length).toBeGreaterThan(0);
+            expect(replies[replies.length - 1].metadata.thinking).toBe('HIGH');
+        });
+    });
+
     test('the first turn is sent without a per-call config', async () => {
         await run('web');
         expect(session.sendMessageStream.mock.calls[0][0].config).toBeUndefined();

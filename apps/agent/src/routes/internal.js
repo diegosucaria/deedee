@@ -147,11 +147,25 @@ function createInternalRouter(agent) {
                     cron: j.metadata?.cronExpression || 'unknown',
                     task: j.metadata?.payload?.task || '',
                     isSystem: j.metadata?.payload?.isSystem || false,
+                    // A system job that runs its work directly takes no model
+                    // and no tools, so the UI offers no scope editor for it.
+                    scopable: j.metadata?.payload?.scopable !== false,
                     isOneOff: j.metadata?.payload?.isOneOff || false,
                     enabled: j.metadata?.enabled !== false,
                     expiresAt: j.metadata?.expiresAt || null,
                     nextInvocation: j.nextInvocation(),
                     model: j.metadata?.payload?.model || j.metadata?.payload?.scope?.model || 'auto',
+                    allowedTools: j.metadata?.payload?.allowedTools || j.metadata?.payload?.scope?.allowedTools || null,
+                    // What the code ships with, so the UI can mark an owner
+                    // edit as an override and offer to clear it.
+                    scopeDefaults: {
+                        model: j.metadata?.payload?.scope?.model || null,
+                        allowedTools: j.metadata?.payload?.scope?.allowedTools || null
+                    },
+                    scopeOverride: {
+                        model: j.metadata?.payload?.model || null,
+                        allowedTools: j.metadata?.payload?.allowedTools || null
+                    },
                     weekdaysOnly: j.metadata?.payload?.weekdaysOnly || false,
                     daytimeOnly: j.metadata?.payload?.daytimeOnly || false
                 }));
@@ -188,6 +202,81 @@ function createInternalRouter(agent) {
                 return res.status(404).json({ error: 'Job not found or failed to toggle' });
             }
             res.json({ success: true });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // Owner edit of a system job's scope: which model it runs on and which
+    // tools it may call. The values land in the persisted payload, which is
+    // what Scheduler._systemJobOverrides reads on the next run.
+    const SCOPE_MODELS = ['FLASH', 'LITE', 'PRO'];
+
+    router.patch('/tasks/:id/scope', (req, res) => {
+        if (!agent.scheduler) return res.status(503).json({ error: 'Scheduler not ready' });
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const { id } = req.params;
+            const job = agent.scheduler.jobs[id];
+            if (!job) return res.status(404).json({ error: 'Job not found' });
+            if (!job.metadata?.payload?.isSystem) {
+                return res.status(400).json({ error: 'Only system jobs are edited here. Use the task form for your own jobs.' });
+            }
+            if (job.metadata.payload.scopable === false) {
+                return res.status(400).json({ error: 'This job does its work directly, without a model call, so a model and a tool list would change nothing.' });
+            }
+
+            const body = req.body || {};
+            const payload = { ...(job.metadata.payload || {}) };
+
+            // 'auto', null or '' clears the override and puts the job back on
+            // its built-in default.
+            if ('model' in body) {
+                const raw = body.model;
+                if (raw === null || raw === '' || raw === 'auto') {
+                    delete payload.model;
+                } else if (typeof raw === 'string' && SCOPE_MODELS.includes(raw.toUpperCase())) {
+                    payload.model = raw.toUpperCase();
+                } else {
+                    return res.status(400).json({ error: 'model must be auto, FLASH, LITE or PRO' });
+                }
+            }
+
+            if ('allowedTools' in body) {
+                const raw = body.allowedTools;
+                if (raw === null || (Array.isArray(raw) && raw.length === 0)) {
+                    delete payload.allowedTools;
+                } else if (Array.isArray(raw) && raw.every(t => typeof t === 'string' && t.trim())) {
+                    payload.allowedTools = raw.map(t => t.trim());
+                } else {
+                    return res.status(400).json({ error: 'allowedTools must be an array of tool names' });
+                }
+            }
+
+            const cronExpression = typeof job.metadata.cronExpression === 'string'
+                ? job.metadata.cronExpression
+                : new Date(job.metadata.cronExpression).toISOString();
+
+            agent.db.saveScheduledJob({
+                name: id,
+                cronExpression,
+                taskType: job.metadata.payload?.taskType || 'agent_instruction',
+                payload,
+                expiresAt: job.metadata.expiresAt || null,
+                enabled: job.metadata.enabled !== false
+            });
+            job.metadata.payload = payload;
+
+            // Rebuild the job so the next run reads the new scope.
+            agent.scheduler.reregisterSystemJob(id);
+
+            if (agent.interface) {
+                agent.interface.broadcast('jobs:update', { action: 'scope', name: id });
+            }
+
+            res.json({
+                success: true,
+                model: payload.model || 'auto',
+                allowedTools: payload.allowedTools || null
+            });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
@@ -357,6 +446,35 @@ function createInternalRouter(agent) {
             const days = Math.max(1, Math.min(parseInt(req.query.days || '1', 10) || 1, 365));
             const result = agent.db.getCostByTag(start, end, days);
             res.json(result);
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    // #233 columns: what fills the prompt, the tag as written, and how often
+    // the cached prefix moves.
+    router.get('/stats/prompt-composition', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const start = safeDate(req.query.start), end = safeDate(req.query.end);
+            const days = Math.max(1, Math.min(parseInt(req.query.days || '7', 10) || 7, 365));
+            res.json(agent.db.getPromptComposition(start, end, days));
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.get('/stats/cost-by-raw-tag', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const start = safeDate(req.query.start), end = safeDate(req.query.end);
+            const days = Math.max(1, Math.min(parseInt(req.query.days || '7', 10) || 7, 365));
+            res.json(agent.db.getCostByRawTag(start, end, days));
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.get('/stats/prefix-churn', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const start = safeDate(req.query.start), end = safeDate(req.query.end);
+            const days = Math.max(1, Math.min(parseInt(req.query.days || '7', 10) || 7, 365));
+            res.json(agent.db.getPrefixChurn(start, end, days));
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 

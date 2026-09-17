@@ -646,3 +646,170 @@ export function ModelCostBreakdown({ data }) {
         </div>
     );
 }
+
+// --- Prompt composition, raw tags and prefix churn (the #233 columns) ---
+
+// Estimated parts of the prompt. One hue each, same order everywhere.
+const COMPOSITION_COLORS = {
+    system: '#60a5fa',
+    tools: '#f59e0b',
+    history: '#a78bfa',
+};
+
+const shortTag = (tag) => String(tag || 'untagged');
+
+/**
+ * What fills the prompt: the system text, the tool declarations and the
+ * history, stacked against the prompt tokens the provider billed. One bar per
+ * tag and model, so a chat turn and its tool loop stand side by side.
+ */
+export function PromptCompositionChart({ data }) {
+    if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-zinc-600">No Data</div>;
+
+    const rows = [...data]
+        .sort((a, b) => (b.calls || 0) - (a.calls || 0))
+        .slice(0, 10)
+        .map(d => ({
+            label: `${shortTag(d.tag)} · ${shortModelName(d.model)}`,
+            system: Math.round(d.sys_tokens || 0),
+            tools: Math.round(d.tools_tokens || 0),
+            history: Math.round(d.history_tokens || 0),
+            billed: Math.round(d.prompt_tokens || 0),
+            calls: d.calls || 0,
+            decls: Math.round(d.decl_count || 0),
+        }));
+
+    return (
+        <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={rows} margin={{ top: 5, right: 20, left: 10, bottom: 40 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                <XAxis dataKey="label" stroke="#71717a" fontSize={11} angle={-25} textAnchor="end" interval={0} height={60} />
+                <YAxis stroke="#71717a" fontSize={12} tickFormatter={fmtTokens} />
+                <Tooltip content={({ active, payload, label }) => {
+                    if (!active || !payload || !payload.length) return null;
+                    const d = payload[0]?.payload || {};
+                    const estimated = d.system + d.tools + d.history;
+                    return (
+                        <div className="bg-zinc-900 border border-zinc-700 p-3 rounded shadow-lg text-sm">
+                            <p className="text-zinc-400 mb-2">{label}</p>
+                            {payload.map((p, i) => (
+                                <p key={i} className="font-mono text-zinc-300 flex items-center gap-2">
+                                    <span className="w-2.5 h-2.5 rounded-full inline-block" style={{ backgroundColor: p.color }} />
+                                    {p.name}: <span className="font-bold">{fmtTokens(p.value)}</span>
+                                </p>
+                            ))}
+                            <p className="text-zinc-500 mt-2 text-xs">
+                                Estimated {fmtTokens(estimated)} of {fmtTokens(d.billed)} billed · {d.calls} calls · {d.decls} declarations
+                            </p>
+                        </div>
+                    );
+                }} />
+                <Legend />
+                <Bar dataKey="system" name="System" stackId="parts" fill={COMPOSITION_COLORS.system} stroke="#18181b" strokeWidth={2} />
+                <Bar dataKey="tools" name="Tools" stackId="parts" fill={COMPOSITION_COLORS.tools} stroke="#18181b" strokeWidth={2} />
+                <Bar dataKey="history" name="History" stackId="parts" fill={COMPOSITION_COLORS.history} stroke="#18181b" strokeWidth={2} radius={[4, 4, 0, 0]} />
+                <Bar dataKey="billed" name="Billed prompt" fill="#3f3f46" stroke="#18181b" strokeWidth={2} radius={[4, 4, 0, 0]} />
+            </BarChart>
+        </ResponsiveContainer>
+    );
+}
+
+/**
+ * Cost by the tag as written: a chat turn and its tool loop stay apart, which
+ * the category breakdown deliberately rolls together.
+ */
+export function RawTagCostTable({ data }) {
+    if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-zinc-600">No Data</div>;
+
+    const rows = [...data].sort((a, b) => (b.cost || 0) - (a.cost || 0));
+    const totalCost = rows.reduce((s, r) => s + (r.cost || 0), 0);
+
+    return (
+        <div className="overflow-auto">
+            <table className="w-full text-sm">
+                <thead>
+                    <tr className="text-zinc-500 text-xs border-b border-zinc-800">
+                        <th className="text-left py-2 px-1">Tag</th>
+                        <th className="text-right py-2 px-1">Calls</th>
+                        <th className="text-right py-2 px-1">Tokens</th>
+                        <th className="text-right py-2 px-1">Cost</th>
+                        <th className="text-right py-2 px-1">%</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {rows.map((r) => {
+                        const pct = totalCost > 0 ? ((r.cost || 0) / totalCost) * 100 : 0;
+                        return (
+                            <tr key={r.tag} className="border-b border-zinc-800/50 hover:bg-zinc-800/30">
+                                <td className="py-2 px-1 font-mono text-zinc-300">{shortTag(r.tag)}</td>
+                                <td className="text-right py-2 px-1 font-mono text-zinc-400">{(r.calls || 0).toLocaleString()}</td>
+                                <td className="text-right py-2 px-1 font-mono text-zinc-400">{fmtTokens(r.tokens || 0)}</td>
+                                <td className="text-right py-2 px-1 font-mono text-zinc-200">${(r.cost || 0).toFixed(4)}</td>
+                                <td className="text-right py-2 px-1 font-mono text-zinc-500">{pct.toFixed(1)}%</td>
+                            </tr>
+                        );
+                    })}
+                </tbody>
+                <tfoot>
+                    <tr className="border-t-2 border-zinc-700">
+                        <td className="py-2 px-1 font-semibold text-zinc-200">Total</td>
+                        <td />
+                        <td />
+                        <td className="text-right py-2 px-1 font-mono font-semibold text-yellow-400">${totalCost.toFixed(4)}</td>
+                        <td className="text-right py-2 px-1 font-mono font-semibold text-zinc-400">100%</td>
+                    </tr>
+                </tfoot>
+            </table>
+        </div>
+    );
+}
+
+/**
+ * Turns against prefix changes per day. A change means the cached front of the
+ * prompt moved, so the next call pays full price for it.
+ */
+export function PrefixChurnTile({ data }) {
+    if (!data || data.length === 0) return <div className="h-full flex items-center justify-center text-zinc-600">No Data</div>;
+
+    const rows = data.map(d => ({
+        date: d.date,
+        turns: d.turns || 0,
+        changed: Math.round(d.changed || 0),
+    }));
+    const turns = rows.reduce((s, r) => s + r.turns, 0);
+    const changed = rows.reduce((s, r) => s + r.changed, 0);
+    const pct = turns > 0 ? (changed / turns) * 100 : 0;
+
+    return (
+        <div className="flex flex-col h-full">
+            <div className="flex items-baseline gap-2 mb-2">
+                <span className="text-3xl font-semibold text-zinc-100">{pct.toFixed(1)}%</span>
+                <span className="text-xs text-zinc-500">of {turns.toLocaleString()} turns changed the cached prefix</span>
+            </div>
+            <div className="flex-1 min-h-[160px]">
+                <ResponsiveContainer width="100%" height="100%">
+                    <BarChart data={rows} margin={{ top: 5, right: 20, left: 10, bottom: 5 }}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                        <XAxis dataKey="date" stroke="#71717a" fontSize={11} />
+                        <YAxis stroke="#71717a" fontSize={12} allowDecimals={false} />
+                        <Tooltip content={({ active, payload, label }) => {
+                            if (!active || !payload || !payload.length) return null;
+                            const d = payload[0]?.payload || {};
+                            const dayPct = d.turns > 0 ? (d.changed / d.turns) * 100 : 0;
+                            return (
+                                <div className="bg-zinc-900 border border-zinc-700 p-3 rounded shadow-lg text-sm">
+                                    <p className="text-zinc-400 mb-2">{label}</p>
+                                    <p className="font-mono text-zinc-300">Turns: <span className="font-bold">{d.turns}</span></p>
+                                    <p className="font-mono text-zinc-300">Changed: <span className="font-bold">{d.changed}</span> ({dayPct.toFixed(1)}%)</p>
+                                </div>
+                            );
+                        }} />
+                        <Legend />
+                        <Bar dataKey="turns" name="Turns" fill="#60a5fa" stroke="#18181b" strokeWidth={2} radius={[4, 4, 0, 0]} />
+                        <Bar dataKey="changed" name="Prefix changed" fill="#f59e0b" stroke="#18181b" strokeWidth={2} radius={[4, 4, 0, 0]} />
+                    </BarChart>
+                </ResponsiveContainer>
+            </div>
+        </div>
+    );
+}

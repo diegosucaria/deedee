@@ -269,6 +269,41 @@ describe('ConfigService thinking levels', () => {
         warn.mockRestore();
     });
 
+    test('an explicit level beats both env vars', () => {
+        const { ConfigService } = loadWithEnv();
+        Object.assign(process.env, { THINKING_FLASH: 'LOW', THINKING_FLASH_CHAT: 'MEDIUM' });
+        const c = new ConfigService();
+        expect(c.getThinking('FLASH', 'chat').thinkingLevel).toBe('MEDIUM');
+        expect(c.getThinking('FLASH', 'chat', { level: 'MINIMAL' }).thinkingLevel).toBe('MINIMAL');
+        expect(c.getThinking('FLASH', 'chat', { level: 'high' }).thinkingLevel).toBe('HIGH');
+        // Anything that is not a level leaves the env defaults alone.
+        for (const level of ['auto', '', null, undefined, 'TURBO', 7]) {
+            expect(c.getThinking('FLASH', 'chat', { level }).thinkingLevel).toBe('MEDIUM');
+        }
+        delete process.env.THINKING_FLASH;
+        delete process.env.THINKING_FLASH_CHAT;
+    });
+
+    test('an explicit level is still clamped by the model guard', () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => { });
+        const { ConfigService } = loadWithEnv();
+        const c = new ConfigService();
+        // Pro has no MINIMAL, so a quick pick lands on its lowest level.
+        expect(c.getThinking('PRO', 'chat', { level: 'MINIMAL' }).thinkingLevel).toBe('LOW');
+        expect(c.getThinking('PRO', 'chat', { level: 'HIGH' }).thinkingLevel).toBe('HIGH');
+        // A 2.x id takes no level at all.
+        expect(c.getThinking('FLASH', 'chat', { level: 'HIGH', model: 'gemini-2.5-flash' }).thinkingLevel).toBeNull();
+        warn.mockRestore();
+    });
+
+    test('getThinkingConfig carries the explicit level and never a budget', () => {
+        const { ConfigService } = loadWithEnv();
+        const c = new ConfigService();
+        const cfg = c.getThinkingConfig('FLASH', 'chat', { level: 'HIGH', source: 'web' });
+        expect(cfg).toEqual({ thinkingLevel: 'HIGH', includeThoughts: true });
+        expect(cfg.thinkingBudget).toBeUndefined();
+    });
+
     test('guard: Pro never gets MINIMAL, even by env', () => {
         const warn = jest.spyOn(console, 'warn').mockImplementation(() => { });
         const { ConfigService } = loadWithEnv();
