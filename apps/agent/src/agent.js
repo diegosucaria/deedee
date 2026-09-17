@@ -3108,9 +3108,11 @@ class Agent {
 
     // --- INTERNAL DB TOOLS ---
     if (executionName === 'rememberFact') {
+      // Only the two kinds the index knows. 'state' would hide the fact for good.
+      const kind = ['profile', 'note'].includes(String(args.kind || '')) ? args.kind : undefined;
       this.db.setKey(args.key, args.value, {
         source: 'tool', confidence: 'user_explicit',
-        kind: args.kind, summary: args.summary
+        kind, summary: args.summary
       });
       return { success: true };
     }
@@ -3123,36 +3125,40 @@ class Agent {
       // The prompt lists one line per fact, so the model often has a near miss.
       const near = this.db.findFacts?.(args.key, 5) || [];
       if (near.length === 0) return { info: 'No fact with that key, and nothing close.' };
-      this.db.touchFacts?.(near.map(f => f.key));
-      if (near.length === 1) return { key: near[0].key, value: near[0].value, info: `No exact key '${args.key}'; this one is close.` };
+      if (near.length === 1) {
+        this.db.touchFacts?.(near[0].key);
+        return { key: near[0].key, value: near[0].value, info: `No exact key '${args.key}'; this one is close.` };
+      }
       return { info: `No exact key '${args.key}'. Closest keys: ${near.map(f => f.key).join(', ')}. Ask for one by name.` };
     }
     if (executionName === 'updateFact') {
-      const exact = this.db.getKey(args.key);
-      if (exact !== null && exact !== undefined) {
-        this.db.setKey(args.key, args.value, { source: 'tool', confidence: 'user_explicit', summary: args.summary });
-        return { success: true, key: args.key };
+      // By key only: a fact must never be rewritten because a word appears in
+      // some other fact's value.
+      const exact = this.db.getFact?.(args.key);
+      const near = exact ? [exact] : (this.db.findFacts?.(args.key, 5, { keysOnly: true }) || []);
+      if (near.length === 0) return { error: `No fact with a key like '${args.key}'. Use rememberFact to write a new one.` };
+      if (near.length > 1) return { info: 'Several keys match; nothing changed.', candidates: near.map(f => f.key) };
+      if (near[0].pinned && args.force !== true) {
+        return { error: `'${near[0].key}' is pinned. Ask the owner, then call again with force: true.` };
       }
-      const near = this.db.findFacts?.(args.key, 5) || [];
-      if (near.length === 0) return { error: `No fact matches '${args.key}'. Use rememberFact to write a new one.` };
-      if (near.length > 1) return { info: 'Several facts match; nothing changed.', candidates: near.map(f => f.key) };
-      this.db.setKey(near[0].key, args.value, { source: 'tool', confidence: 'user_explicit', summary: args.summary });
-      return { success: true, key: near[0].key, info: `Matched '${near[0].key}'.` };
+      this.db.setKey(near[0].key, args.value, { source: 'tool', confidence: 'user_explicit', summary: args.summary, kind: near[0].kind });
+      return { success: true, key: near[0].key, ...(exact ? {} : { info: `Matched '${near[0].key}'.` }) };
     }
     if (executionName === 'forgetFact') {
-      const matches = this.db.getKey(args.key) !== null && this.db.getKey(args.key) !== undefined
-        ? [{ key: args.key, pinned: 0, kind: null }]
-        : (this.db.findFacts?.(args.key, 5) || []);
-      if (matches.length === 0) return { error: `No fact matches '${args.key}'.` };
-      if (matches.length > 1) return { info: 'Several facts match; nothing deleted.', candidates: matches.map(f => f.key) };
-      const row = this.db.getFact?.(matches[0].key) || matches[0];
-      const kind = row.kind || matches[0].kind || 'profile';
-      const protectedFact = !!row.pinned || kind === 'profile';
-      if (protectedFact && args.force !== true) {
-        return { error: `'${matches[0].key}' is ${row.pinned ? 'pinned' : 'a durable fact about the owner'}. Ask him, then call again with force: true.` };
+      // By key only, like updateFact.
+      const exact = this.db.getFact?.(args.key);
+      const matches = exact ? [exact] : (this.db.findFacts?.(args.key, 5, { keysOnly: true }) || []);
+      if (matches.length === 0) return { error: `No fact with a key like '${args.key}'.` };
+      if (matches.length > 1) return { info: 'Several keys match; nothing deleted.', candidates: matches.map(f => f.key) };
+      const row = matches[0];
+      const kind = row.kind || 'profile';
+      if ((row.pinned || kind === 'profile') && args.force !== true) {
+        return { error: `'${row.key}' is ${row.pinned ? 'pinned' : 'a durable fact about the owner'}. Ask him, then call again with force: true.` };
       }
-      const gone = this.db.deleteFact?.(matches[0].key);
-      return gone ? { success: true, key: matches[0].key } : { error: `Could not delete '${matches[0].key}'.` };
+      // A copy goes to the file the nightly pruning writes, so nothing is lost outright.
+      this.db.backupFact?.(row, 'forgetFact');
+      const gone = this.db.deleteFact?.(row.key);
+      return gone ? { success: true, key: row.key, info: 'A copy is in data/pruned_memories.json.' } : { error: `Could not delete '${row.key}'.` };
     }
     if (executionName === 'saveJobState') {
       const jobName = message.metadata?.jobName;

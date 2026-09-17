@@ -8,6 +8,7 @@ const {
     CONSTITUTION,
     LANGUAGE_MATCHING_RULES,
     FACTS_HEADER,
+    FACTS_RECALL_RULE,
     formatCommunicationStyle
 } = require('./system');
 
@@ -55,8 +56,10 @@ function compactFacts(formatted, maxChars = MAX_FACTS_CHARS) {
  * Build the Live system instruction.
  * @returns {{ text: string, stats: object }} the prompt and its size figures for the log.
  */
-function getLiveSystemInstruction({ facts = '', communicationStyle = '', ownerName = '', dateString = '' } = {}) {
-    const compact = compactFacts(facts);
+function getLiveSystemInstruction({ facts = '', factsPreCapped = false, communicationStyle = '', ownerName = '', dateString = '' } = {}) {
+    // The facts index arrives capped and already says what it left out; only a
+    // raw dump needs cutting here.
+    const compact = factsPreCapped ? { text: facts, hidden: 0 } : compactFacts(facts);
     const owner = ownerName ? ` Your owner's name is ${ownerName}.` : '';
 
     const sections = [
@@ -73,7 +76,8 @@ ${dedent(LANGUAGE_MATCHING_RULES)}
 4. If a tool fails, say so in one sentence and offer the next step. Never invent a result.
 5. If you did not understand, ask a short question.`,
         `${FACTS_HEADER}
-${compact.text || 'No specific preferences stored.'}`,
+${compact.text || 'Nothing stored yet.'}
+${FACTS_RECALL_RULE}`,
         dedent(formatCommunicationStyle(communicationStyle)).trim()
     ].filter(Boolean);
 

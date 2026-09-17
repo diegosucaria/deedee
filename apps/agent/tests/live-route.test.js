@@ -134,7 +134,8 @@ describe('GET /live/config', () => {
         const factsStart = text.indexOf(FACTS_HEADER);
         const factsEnd = text.indexOf('COMMUNICATION STYLE');
         expect(factsEnd).toBeGreaterThan(factsStart);
-        expect(factsEnd - factsStart).toBeLessThanOrEqual(MAX_FACTS_CHARS + 200);
+        // The block, plus the heading and the rule that explains it.
+        expect(factsEnd - factsStart).toBeLessThanOrEqual(MAX_FACTS_CHARS + 900);
         expect(logSpy.mock.calls.some(c => c.join(' ').includes('TRUNCATED'))).toBe(true);
     });
 
@@ -143,7 +144,7 @@ describe('GET /live/config', () => {
         expect(res.status).toBe(200);
         expect(res.body.model.startsWith('models/')).toBe(true);
         expect(res.body.voice).toBe('Kore');
-        expect(res.body.systemInstruction).toContain('No specific preferences stored.');
+        expect(res.body.systemInstruction).toContain('Nothing stored yet.');
         expect(res.body.systemInstruction).not.toContain('COMMUNICATION STYLE');
     });
 });

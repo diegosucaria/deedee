@@ -29,18 +29,27 @@ function timeString() {
 /** The agent's brain for a voice call: model, voice and system instruction. */
 function buildLiveConfig(agent) {
     let facts = '';
+    let preCapped = false;
     try {
         // The same index the chat prompt carries, so there is one renderer.
         if (typeof agent?.db?.getFactsIndex === 'function' && String(process.env.FACTS_INDEX || '1') !== '0') {
-            facts = agent.db.getFactsIndex().text;
-        } else if (typeof agent?.db?.getFactsFormatted === 'function') {
+            // Already one line per fact and already inside a budget, with its
+            // own count of what it left out: a second trim would cut lines and
+            // print a second, wrong count.
+            const index = agent.db.getFactsIndex();
+            facts = index ? index.text : '';
+            preCapped = !!index;
+        }
+        if (!facts && typeof agent?.db?.getFactsFormatted === 'function') {
             facts = agent.db.getFactsFormatted('');
+            preCapped = false;
         }
     } catch (e) {
         console.warn('[Live] Could not load facts for the voice prompt:', e.message);
     }
     const { text, stats } = getLiveSystemInstruction({
         facts,
+        factsPreCapped: preCapped,
         communicationStyle: agent?.settings?.communication_style || '',
         ownerName: agent?.settings?.owner_name || '',
         dateString: timeString()

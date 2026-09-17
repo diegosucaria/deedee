@@ -130,6 +130,7 @@ const CATEGORIES = Object.freeze({
         match: (name, args, ctx) => {
             if (EVERYDAY_REMOVALS.has(name)) return false;
             if (ctx.rule === 'delete-or-remove' || ctx.rule === 'shell-system-damage') return true;
+            if (name === 'forgetFact') return true;
             if (/^(?:media|playlist|collection)_delete$/.test(name)) return true;
             if (name === 'runShellCommand') return SHELL_DELETE_RE.test(asText(args?.command));
             if (DELETE_RE.test(name.replace(/([a-z])([A-Z])/g, '$1_$2'))) return true;

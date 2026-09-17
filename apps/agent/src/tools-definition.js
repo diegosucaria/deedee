@@ -50,7 +50,9 @@ const toolDefinitions = [
       {
         name: "forgetFact",
         category: "memory",
-        description: "Drop a fact from memory. A pinned fact, or a durable fact about the owner, needs force: true and only when he asked for it himself.",
+        requiresConfirmation: true,
+        confirmationReason: "Forgetting a fact removes something the owner told me.",
+        description: "Drop a fact from memory, by key. A pinned fact, or a durable fact about the owner, needs force: true and only when he asked for it himself. A copy goes to data/pruned_memories.json.",
         parameters: {
           type: "OBJECT",
           properties: {

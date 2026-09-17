@@ -39,6 +39,8 @@ describe('the facts index', () => {
         db.setKey('job:weather:last_run', '2026-09-17', {});
         db.setKey('notified_backup_done', '1', {});
         db.setKey('system_web_navigator_state', 'x', {});
+        // A system_ key is an ordinary fact about his setup, not state.
+        db.setKey('system_apartment_code', '1234', { category: 'system' });
 
         const index = db.getFactsIndex();
         expect(index.text).toContain('USER PROFILE');
@@ -49,8 +51,10 @@ describe('the facts index', () => {
         expect(index.text).not.toContain('job:weather');
         expect(index.text).not.toContain('notified_backup_done');
         expect(index.text).not.toContain('system_web_navigator_state');
-        expect(index).toMatchObject({ shown: 3, total: 6, hidden: 3 });
-        expect(index.text).toContain('+3 more facts');
+        expect(index.text).toContain('system_apartment_code');
+        expect(index).toMatchObject({ shown: 4, total: 7, hidden: 0, state: 3 });
+        // Nothing was cut, so nothing claims to be missing.
+        expect(index.text).not.toMatch(/more facts are stored/);
     });
 
     test('a fact written for one day drops out after five', () => {
@@ -77,12 +81,12 @@ describe('the facts index', () => {
         db.setKey('user_pinned_one', 'keep me', {});
         db.toggleFactPin('user_pinned_one', 1);
 
-        const index = db.getFactsIndex({ profileChars: 600, notesChars: 200 });
+        const index = db.getFactsIndex({ indexChars: 800 });
         expect(index.chars).toBeLessThan(1200);
         expect(index.text).toContain('- user_pinned_one: keep me');
         expect(index.shown).toBeLessThan(index.total);
         expect(index.hidden).toBeGreaterThan(100);
-        expect(index.text).toMatch(/\+\d+ more facts/);
+        expect(index.text).toMatch(/\d+ more facts are stored/);
     });
 
     test('the same facts give the same block, so the cached prefix survives', () => {
@@ -91,12 +95,19 @@ describe('the facts index', () => {
         expect(db.getFactsIndex().text).toBe(db.getFactsIndex().text);
     });
 
-    test('a fact the owner asked for rises in the list', () => {
+    test('reading a fact is recorded, and does not reorder the block', () => {
         for (let i = 0; i < 10; i++) db.setKey(`user_x_${i}`, `v${i}`, {});
+        const before = db.getFactsIndex().text;
         db.touchFacts('user_x_0');
-        const first = db.getFactsIndex().text.split('\n').find(l => l.startsWith('- '));
-        expect(first).toBe('- user_x_0: v0');
         expect(db.getFact('user_x_0').use_count).toBe(1);
+        // The order follows the facts, not what was read: a search must not
+        // move the block, or the cached prefix dies every time.
+        expect(db.getFactsIndex().text).toBe(before);
+    });
+
+    test('a failed read falls back instead of claiming an empty memory', () => {
+        const broken = { db: { prepare: () => { throw new Error('disk gone'); } }, getFactsIndex: db.getFactsIndex };
+        expect(broken.getFactsIndex()).toBeNull();
     });
 
     test('an empty memory gives an empty block', () => {
@@ -121,11 +132,25 @@ describe('finding a fact that is not in the list', () => {
         fs.rmSync(dir, { recursive: true, force: true });
     });
 
-    test('findFacts matches the key, then the value', () => {
+    test('findFacts takes whole words, and reads wildcards literally', () => {
         expect(db.findFacts('user_home_city').map(f => f.key)).toEqual(['user_home_city']);
         expect(db.findFacts('home').map(f => f.key).sort()).toEqual(['user_home_address', 'user_home_city']);
         expect(db.findFacts('elm').map(f => f.key)).toEqual(['user_home_address']);
+        // Both words must appear, so a two-word question still finds its fact.
+        expect(db.findFacts('home elm').map(f => f.key)).toEqual(['user_home_address']);
+        expect(db.findFacts('home nonsense')).toEqual([]);
+        expect(db.findFacts('%')).toEqual([]);
         expect(db.findFacts('')).toEqual([]);
+        // By key only, for the tools that change or delete a fact.
+        expect(db.findFacts('elm', 5, { keysOnly: true })).toEqual([]);
+    });
+
+    test('a correction clears a summary written for the old value', async () => {
+        db.setKey('user_favourite_bar', 'The Anchor', { summary: 'drinks at The Anchor' });
+        expect(db.getFactsIndex().text).toContain('- user_favourite_bar: drinks at The Anchor');
+        await runTool(db, 'updateFact', { key: 'user_favourite_bar', value: 'The Harbour' });
+        const line = db.getFactsIndex().text.split('\n').find(l => l.startsWith('- user_favourite_bar:'));
+        expect(line).toBe('- user_favourite_bar: The Harbour');
     });
 
     test('getFact answers with the value, and with near keys on a miss', async () => {
@@ -155,7 +180,12 @@ describe('finding a fact that is not in the list', () => {
         expect(db.getKey('user_home_address')).toBe('12 Elm Street');
 
         const none = await runTool(db, 'updateFact', { key: 'nothing_like_this', value: 'x' });
-        expect(none.error).toMatch(/No fact matches/);
+        expect(none.error).toMatch(/No fact with a key like/);
+
+        // A word that only appears in another fact's value rewrites nothing.
+        const byValue = await runTool(db, 'updateFact', { key: 'elm', value: 'x' });
+        expect(byValue.error).toMatch(/No fact with a key like/);
+        expect(db.getKey('user_home_address')).toBe('12 Elm Street');
     });
 
     test('forgetFact protects the owner\'s own facts and pinned ones until he asks', async () => {
@@ -168,11 +198,18 @@ describe('finding a fact that is not in the list', () => {
 
         db.setKey('device_lamp', 'light.lamp', { category: 'system' });
         await expect(runTool(db, 'forgetFact', { key: 'device_lamp' })).resolves.toMatchObject({ success: true });
+        // A copy survives in the file the nightly pruning writes.
+        const backup = JSON.parse(fs.readFileSync(path.join(dir, 'pruned_memories.json'), 'utf8'));
+        expect(backup.map(r => r.key)).toContain('device_lamp');
 
         db.setKey('note_pinned', 'x', { category: 'system' });
         db.toggleFactPin('note_pinned', 1);
         const pinned = await runTool(db, 'forgetFact', { key: 'note_pinned' });
         expect(pinned.error).toMatch(/pinned/);
+        // A pinned fact is not rewritten either, without his word.
+        const rewrite = await runTool(db, 'updateFact', { key: 'note_pinned', value: 'y' });
+        expect(rewrite.error).toMatch(/pinned/);
+        expect(db.getKey('note_pinned')).toBe('x');
     });
 
     test('searchMemory returns facts beside chats and documents', async () => {

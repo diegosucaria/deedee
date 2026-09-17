@@ -88,11 +88,23 @@ const EFFECTIVE_TAG_SQL = `
 // now carries one line each, newest and most used first, inside a character
 // budget; the full value comes back through getFact or searchMemory.
 const FACT_SUMMARY_CHARS = 80;
-const FACT_PROFILE_CHARS = 4000;
-const FACT_NOTES_CHARS = 2000;
+// One budget for the whole block: about 3,000 tokens of a chat turn, against
+// the 13,400 every fact in full used to cost. On the owner's 642 facts that
+// shows roughly 240 lines; the rest come back through getFact and searchMemory.
+const FACT_INDEX_CHARS = 12000;
+const FACT_NOTES_SHARE = 0.25;
+
+/** The block's character budget: FACTS_INDEX_CHARS, within reason. */
+function factsIndexBudget() {
+  const raw = parseInt(process.env.FACTS_INDEX_CHARS || '', 10);
+  if (!Number.isFinite(raw)) return FACT_INDEX_CHARS;
+  return Math.max(2000, Math.min(40000, raw));
+}
 // Keys that hold state: a job's bookkeeping, a notification flag, a Node-RED
-// dump. They stay in the table and out of the prompt.
-const STATE_KEY_RE = /^(?:job:|notified_|config:|system_|ha_nodes|node_red)/i;
+// dump. They stay in the table and out of the prompt. `system_` is NOT state:
+// on the device those are ordinary facts about his setup (the apartment code,
+// which tyres the car takes), so they belong in the notes.
+const STATE_KEY_RE = /^(?:job:|notified_|config:|sys_|sch_|system_web_navigator_|ha_nodes|node_red)/i;
 // Keys that are durable facts about the owner and the people around him.
 const PROFILE_KEY_RE = /^(?:user_|relationship_|preference_|work_|family_|contact_|partner_|colleague_|project_|goal_|birthday)/i;
 // Keys that are the agent's own notes about doing its job.
@@ -907,6 +919,27 @@ class AgentDB {
   }
 
   // --- Extended CRUD ---
+  /**
+   * Keep a copy of a fact before it goes, in the same file the nightly pruning
+   * writes, so a deletion is never final without a trace.
+   */
+  backupFact(row, reason = 'forgetFact') {
+    if (!row) return;
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const dir = this.dbPath ? path.dirname(this.dbPath) : path.join(process.cwd(), 'data');
+      const file = path.join(dir, 'pruned_memories.json');
+      let current = [];
+      try { if (fs.existsSync(file)) current = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { current = []; }
+      if (!Array.isArray(current)) current = [];
+      current.push({ ...row, pruned_at: new Date().toISOString(), reason });
+      fs.writeFileSync(file, JSON.stringify(current, null, 2));
+    } catch (e) {
+      console.warn('[DB] Could not back up a fact before deleting it:', e.message);
+    }
+  }
+
   /** @returns {boolean} whether a row was there to delete */
   deleteFact(key) {
     return this.db.prepare('DELETE FROM kv_store WHERE key = ?').run(key).changes > 0;
@@ -1493,8 +1526,14 @@ class AgentDB {
         category = COALESCE(excluded.category, kv_store.category),
         confidence = COALESCE(excluded.confidence, kv_store.confidence),
         source = COALESCE(excluded.source, kv_store.source),
-        kind = COALESCE(excluded.kind, kv_store.kind),
-        summary = COALESCE(excluded.summary, kv_store.summary)
+        -- A summary or a kind written for the old value must not survive a new
+        -- one: the prompt shows the summary, so it would state the old fact.
+        kind = CASE WHEN excluded.kind IS NOT NULL THEN excluded.kind
+                    WHEN excluded.value <> kv_store.value THEN NULL
+                    ELSE kv_store.kind END,
+        summary = CASE WHEN excluded.summary IS NOT NULL THEN excluded.summary
+                       WHEN excluded.value <> kv_store.value THEN NULL
+                       ELSE kv_store.summary END
     `);
     stmt.run(key, valStr, category || null, confidence || null, source || null,
       kind ? String(kind) : null, summary ? String(summary).slice(0, FACT_SUMMARY_CHARS) : null);
@@ -1520,20 +1559,29 @@ class AgentDB {
    * find the fact the owner means. Exact key first.
    * @returns {Array<{ key: string, value: any, kind: string, summary: string|null, pinned: number }>}
    */
-  findFacts(term, limit = 5) {
+  findFacts(term, limit = 5, { keysOnly = false } = {}) {
     const q = String(term || '').trim().toLowerCase();
     if (!q) return [];
-    const like = `%${q}%`;
+    // % and _ are wildcards in LIKE, so a term holding them must not widen the
+    // search. Every word has to appear, so a two-word query finds the fact that
+    // holds both rather than nothing.
+    const esc = (t) => t.replace(/[\\%_]/g, (c) => `\\${c}`);
+    const words = q.split(/[\s_]+/).filter(Boolean).slice(0, 6);
+    if (words.length === 0) return [];
+    const target = keysOnly
+      ? 'LOWER(key)'
+      : "LOWER(key) || ' ' || LOWER(COALESCE(summary, '')) || ' ' || LOWER(COALESCE(value, ''))";
+    const where = words.map(() => `${target} LIKE ? ESCAPE '\\'`).join(' AND ');
     const rows = this.db.prepare(`
       SELECT * FROM kv_store
-      WHERE LOWER(key) = ? OR LOWER(key) LIKE ? OR LOWER(COALESCE(summary,'')) LIKE ? OR LOWER(value) LIKE ?
-      ORDER BY (LOWER(key) = ?) DESC, (LOWER(key) LIKE ?) DESC, pinned DESC, updated_at DESC
+      WHERE LOWER(key) = ? OR (${where})
+      ORDER BY (LOWER(key) = ?) DESC, (LOWER(key) LIKE ? ESCAPE '\\') DESC, pinned DESC, updated_at DESC
       LIMIT ?
-    `).all(q, like, like, like, q, like, Math.max(1, Math.min(20, Number(limit) || 5)));
-    return rows.map(row => {
+    `).all(q, ...words.map((w) => `%${esc(w)}%`), q, `%${esc(q)}%`, Math.max(1, Math.min(20, Number(limit) || 5)));
+    return rows.map((row) => {
       let value = row.value;
       try { value = JSON.parse(row.value); } catch { /* keep raw */ }
-      return { ...row, value, kind: row.kind || factKind(row.key, row.category) };
+      return { ...row, value, kind: factKind(row.key, row.category, row.kind) };
     });
   }
 
@@ -1582,53 +1630,64 @@ class AgentDB {
    * searchMemory still reach them.
    * @returns {{ text: string, shown: number, total: number, hidden: number, chars: number }}
    */
-  getFactsIndex({ profileChars = FACT_PROFILE_CHARS, notesChars = FACT_NOTES_CHARS, now = Date.now() } = {}) {
+  getFactsIndex({ indexChars = factsIndexBudget(), now = Date.now() } = {}) {
     let rows = [];
     try {
       rows = this.db.prepare('SELECT key, value, category, kind, summary, pinned, last_used_at, updated_at FROM kv_store').all();
     } catch (e) {
+      // The caller falls back to the full list rather than tell the model
+      // there is nothing stored.
       console.warn('[Memory] Facts index read failed:', e.message);
-      return { text: '', shown: 0, total: 0, hidden: 0, chars: 0 };
+      return null;
     }
     const total = rows.length;
     const usable = [];
+    let stateRows = 0;
     for (const row of rows) {
       const kind = factKind(row.key, row.category, row.kind);
-      if (kind === 'state') continue;
-      if (factIsStale(row.key, now)) continue;
-      usable.push({ key: row.key, kind, pinned: row.pinned ? 1 : 0, line: factSummary(row), used: row.last_used_at || '', updated: row.updated_at || '' });
+      if (kind === 'state' || factIsStale(row.key, now)) { stateRows++; continue; }
+      usable.push({ key: row.key, kind, pinned: row.pinned ? 1 : 0, line: factSummary(row), updated: row.updated_at || '' });
     }
+    // Stable order: pinned first, the owner's facts before the agent's notes,
+    // newest first, then the key. Nothing here depends on what was read
+    // lately, so the block moves only when the facts do and the cached prefix
+    // survives.
     usable.sort((a, b) => (b.pinned - a.pinned)
       || (a.kind === b.kind ? 0 : a.kind === 'profile' ? -1 : 1)
-      || String(b.used).localeCompare(String(a.used))
       || String(b.updated).localeCompare(String(a.updated))
       || a.key.localeCompare(b.key));
 
-    const take = (kind, budget) => {
+    const render = (f) => `- ${f.key}: ${f.line}`;
+    const fit = (list, budget) => {
       const lines = [];
       let used = 0;
       let left = 0;
-      for (const f of usable) {
-        if (f.kind !== kind) continue;
-        const line = `- ${f.key}: ${f.line}`;
+      for (const f of list) {
+        const line = render(f);
         if (used + line.length + 1 > budget) { left++; continue; }
         lines.push(line);
         used += line.length + 1;
       }
-      return { lines, left };
+      return { lines, left, used };
     };
-    const profile = take('profile', profileChars);
-    const notes = take('note', notesChars);
+    const profileRows = usable.filter(f => f.kind === 'profile');
+    const noteRows = usable.filter(f => f.kind === 'note');
+    // The notes take at most a quarter, and only what they need; the profile
+    // takes the rest, and lends back what it leaves.
+    const notesWanted = noteRows.reduce((n, f) => n + render(f).length + 1, 0);
+    const notesBudget = Math.min(Math.round(indexChars * FACT_NOTES_SHARE), notesWanted);
+    const profile = fit(profileRows, indexChars - notesBudget);
+    const notes = fit(noteRows, indexChars - profile.used);
 
     const parts = [];
     if (profile.lines.length > 0) parts.push(`USER PROFILE (durable facts about the owner):\n${profile.lines.join('\n')}`);
     if (notes.lines.length > 0) parts.push(`AGENT NOTES (what you learned about doing the job):\n${notes.lines.join('\n')}`);
-    const hidden = profile.left + notes.left + (total - usable.length);
+    const hidden = profile.left + notes.left;
     if (parts.length > 0 && hidden > 0) {
-      parts.push(`(+${hidden} more facts, job state included, not listed here: getFact(key) for the full value, searchMemory(query) to find one.)`);
+      parts.push(`(${hidden} more facts are stored and not listed. getFact(key) reads any fact by name; searchMemory(query) finds one by words. Use them before saying you do not know.)`);
     }
     const text = parts.join('\n');
-    return { text, shown: profile.lines.length + notes.lines.length, total, hidden, chars: text.length };
+    return { text, shown: profile.lines.length + notes.lines.length, total, hidden, state: stateRows, chars: text.length };
   }
 
   getFactsFormatted(query = '') {
