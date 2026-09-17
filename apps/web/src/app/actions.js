@@ -386,6 +386,33 @@ export async function getDailyCostByCategory(query = '') {
     }
 }
 
+export async function getPromptComposition(query = '') {
+    try {
+        return await fetchAPI(`/v1/stats/prompt-composition${query}`);
+    } catch (error) {
+        console.error('getPromptComposition Error:', error);
+        return [];
+    }
+}
+
+export async function getCostByRawTag(query = '') {
+    try {
+        return await fetchAPI(`/v1/stats/cost-by-raw-tag${query}`);
+    } catch (error) {
+        console.error('getCostByRawTag Error:', error);
+        return [];
+    }
+}
+
+export async function getPrefixChurn(query = '') {
+    try {
+        return await fetchAPI(`/v1/stats/prefix-churn${query}`);
+    } catch (error) {
+        console.error('getPrefixChurn Error:', error);
+        return [];
+    }
+}
+
 export async function getCostByModel(query = '') {
     try {
         return await fetchAPI(`/v1/stats/cost-by-model${query}`);

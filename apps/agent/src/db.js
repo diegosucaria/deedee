@@ -2253,6 +2253,117 @@ class AgentDB {
   }
 
   /**
+   * What fills the prompt, by tag and model: the billed prompt tokens beside
+   * the system, tools and history estimates written with each row. Rows from
+   * before those columns existed carry NULL and are left out.
+   * @param {string} [start] - ISO start date
+   * @param {string} [end] - ISO end date
+   * @param {number} [days] - Fallback window when there is no start or end
+   * @returns {Array<{ tag: string, model: string, calls: number, prompt_tokens: number,
+   *   sys_tokens: number, tools_tokens: number, history_tokens: number, decl_count: number }>}
+   */
+  getPromptComposition(start, end, days = 7) {
+    let sql = `
+      SELECT
+        COALESCE(tag, 'untagged') as tag,
+        model,
+        COUNT(*) as calls,
+        AVG(prompt_tokens) as prompt_tokens,
+        AVG(sys_tokens_est) as sys_tokens,
+        AVG(tools_tokens_est) as tools_tokens,
+        AVG(history_tokens_est) as history_tokens,
+        AVG(decl_count) as decl_count
+      FROM token_usage
+      WHERE sys_tokens_est IS NOT NULL AND `;
+    const params = [];
+    if (start && end) {
+      sql += `timestamp >= ? AND timestamp <= ?`;
+      params.push(start, end);
+    } else if (start) {
+      sql += `timestamp >= ?`;
+      params.push(start);
+    } else if (end) {
+      sql += `timestamp <= ?`;
+      params.push(end);
+    } else {
+      sql += `timestamp >= datetime('now', '-' || ? || ' days', 'localtime')`;
+      params.push(days);
+    }
+    sql += ` GROUP BY tag, model ORDER BY calls DESC`;
+    return this.db.prepare(sql).all(...params);
+  }
+
+  /**
+   * Cost by the tag as written, so a turn and its tool loop stay apart
+   * (`chat` against `chat_tool_loop`). Rows with no tag fall back to the same
+   * chat_id classification the category chart uses.
+   * @param {string} [start] - ISO start date
+   * @param {string} [end] - ISO end date
+   * @param {number} [days] - Fallback window when there is no start or end
+   * @returns {Array<{ tag: string, cost: number, tokens: number, calls: number }>}
+   */
+  getCostByRawTag(start, end, days = 7) {
+    let sql = `
+      SELECT
+        COALESCE(tag, ${EFFECTIVE_TAG_SQL}) as tag,
+        SUM(estimated_cost) as cost,
+        SUM(total_tokens) as tokens,
+        COUNT(*) as calls
+      FROM token_usage
+      WHERE `;
+    const params = [];
+    if (start && end) {
+      sql += `timestamp >= ? AND timestamp <= ?`;
+      params.push(start, end);
+    } else if (start) {
+      sql += `timestamp >= ?`;
+      params.push(start);
+    } else if (end) {
+      sql += `timestamp <= ?`;
+      params.push(end);
+    } else {
+      sql += `timestamp >= datetime('now', '-' || ? || ' days', 'localtime')`;
+      params.push(days);
+    }
+    sql += ` GROUP BY tag ORDER BY cost DESC`;
+    return this.db.prepare(sql).all(...params);
+  }
+
+  /**
+   * Turns against prefix changes per day. A change means the cached part of
+   * the prompt moved, so the next call pays full price for it.
+   * @param {string} [start] - ISO start date
+   * @param {string} [end] - ISO end date
+   * @param {number} [days] - Fallback window when there is no start or end
+   * @returns {Array<{ date: string, turns: number, changed: number }>}
+   */
+  getPrefixChurn(start, end, days = 7) {
+    let sql = `
+      SELECT
+        date(timestamp, 'localtime') as date,
+        COUNT(*) as turns,
+        SUM(value) as changed
+      FROM metrics
+      WHERE type = 'prefix_hash' AND `;
+    const params = [];
+    if (start && end) {
+      sql += `timestamp >= ? AND timestamp <= ?`;
+      params.push(start, end);
+    } else if (start) {
+      sql += `timestamp >= ?`;
+      params.push(start);
+    } else if (end) {
+      sql += `timestamp <= ?`;
+      params.push(end);
+    } else {
+      sql += `timestamp >= datetime('now', '-' || ? || ' days', 'localtime')`;
+      params.push(days);
+    }
+    sql += ` GROUP BY date(timestamp, 'localtime') ORDER BY date(timestamp, 'localtime')`;
+    return this.db.prepare(sql).all(...params);
+  }
+
+  /**
    * Get daily cost trend broken down by service category for stacked bar chart.
    * @param {string} [start] - ISO start date
    * @param {string} [end] - ISO end date

@@ -443,6 +443,35 @@ function createInternalRouter(agent) {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
+    // #233 columns: what fills the prompt, the tag as written, and how often
+    // the cached prefix moves.
+    router.get('/stats/prompt-composition', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const start = safeDate(req.query.start), end = safeDate(req.query.end);
+            const days = Math.max(1, Math.min(parseInt(req.query.days || '7', 10) || 7, 365));
+            res.json(agent.db.getPromptComposition(start, end, days));
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.get('/stats/cost-by-raw-tag', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const start = safeDate(req.query.start), end = safeDate(req.query.end);
+            const days = Math.max(1, Math.min(parseInt(req.query.days || '7', 10) || 7, 365));
+            res.json(agent.db.getCostByRawTag(start, end, days));
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
+    router.get('/stats/prefix-churn', (req, res) => {
+        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
+        try {
+            const start = safeDate(req.query.start), end = safeDate(req.query.end);
+            const days = Math.max(1, Math.min(parseInt(req.query.days || '7', 10) || 7, 365));
+            res.json(agent.db.getPrefixChurn(start, end, days));
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
     router.get('/stats/daily-cost-by-category', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
         try {
