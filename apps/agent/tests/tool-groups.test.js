@@ -72,6 +72,14 @@ describe('groupsNamedIn', () => {
         expect(groupsNamedIn(undefined)).toEqual([]);
     });
 
+    test('product names still fire with a suffix on them', () => {
+        expect(groupsNamedIn('mira mi google calendario')).toEqual(['workspace']);
+        expect(groupsNamedIn('mandame los gmails')).toEqual(['workspace']);
+        expect(groupsNamedIn('slackeame el resumen')).toEqual(['slack']);
+        expect(groupsNamedIn('proba en varios browsers')).toEqual(['browser']);
+        expect(groupsNamedIn('this is a complex problem')).toEqual([]);
+    });
+
     test('shell, git and repo name the code group, as whole words only', () => {
         expect(groupsNamedIn('fix the failing test in the repo and commit')).toEqual(['code']);
         expect(groupsNamedIn('run git status')).toEqual(['code']);
@@ -79,6 +87,7 @@ describe('groupsNamedIn', () => {
         expect(groupsNamedIn('Refactor the codebase, then push.')).toEqual(['code']);
         expect(groupsNamedIn('send me the digital report')).toEqual([]);
         expect(groupsNamedIn('is the seashell shop open?')).toEqual([]);
+        expect(groupsNamedIn('check the github actions run')).toEqual([]);
         const m = new ToolGroupMemory();
         expect(m.merge('c3', ['code'])).toEqual(['code']);
     });

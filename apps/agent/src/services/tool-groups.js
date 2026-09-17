@@ -53,7 +53,6 @@ const TOOL_GROUPS = {
 // Words that name an integration outright. A message that names one always
 // gets its group, whatever the router decided: asking for "the allende mcp"
 // and getting a tool set without it made the model improvise through the shell.
-// Matched as whole words, so "git" does not fire on "digital".
 const GROUP_NAME_WORDS = {
     home: ['home assistant', 'homeassistant', 'node-red', 'node red', 'nodered'],
     workspace: ['gmail', 'google calendar', 'google drive', 'google docs', 'google sheets'],
@@ -66,11 +65,19 @@ const GROUP_NAME_WORDS = {
 };
 
 const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+// The short code words need the whole word, so "git" does not fire on
+// "digital", "legit" or "github". Product names match from the start of a word
+// only, so inflections and Spanglish still fire: "gmails", "google calendario",
+// "slackeame", "browsers".
+const WHOLE_WORD_GROUPS = new Set(['code']);
 const GROUP_NAME_PATTERNS = Object.fromEntries(
-    Object.entries(GROUP_NAME_WORDS).map(([g, words]) => [g, new RegExp(`\\b(?:${words.map(escapeRe).join('|')})\\b`, 'i')])
+    Object.entries(GROUP_NAME_WORDS).map(([g, words]) => {
+        const tail = WHOLE_WORD_GROUPS.has(g) ? '\\b' : '';
+        return [g, new RegExp(`\\b(?:${words.map(escapeRe).join('|')})${tail}`, 'i')];
+    })
 );
 
-/** Groups whose integration is named in `text` as a whole word (case-insensitive). */
+/** Groups whose integration is named in `text` (case-insensitive, from a word start). */
 function groupsNamedIn(text) {
     const t = String(text || '');
     if (!t) return [];
