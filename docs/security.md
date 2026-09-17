@@ -145,8 +145,12 @@ his approval. It counts when all of these hold:
 - the run has read no untrusted content and carries no taint from the run
   that created it. A forwarded WhatsApp or Telegram message arrives tainted
   (`a forwarded message`), since it holds someone else's words;
-- a web message counts only in a web chat, not in a WhatsApp or Slack chat
-  opened on the web (an id with `@`).
+- the window the model reads holds no rows other people wrote: a contact's
+  messages, a watcher alert, a row stored with taint. That covers a WhatsApp
+  or Slack chat opened on the web and a chat forked from one
+  (`originsHaveForeignText` over `AgentDB.getRecentMessageOrigins`, same
+  window as the model: 20 rows on Flash, 50 otherwise). A web message in a
+  chat whose id holds `@` never counts either.
 
 Then a call the rules above pause runs with no card and no guardian call,
 and the history stores `owner_instructed`. Three limits stay:
@@ -158,20 +162,23 @@ and the history stores `owner_instructed`. Three limits stay:
   `file-browser-profile`, a malformed call) take the usual path;
 - email, a first message to a contact and the house rules (`email-send`,
   `first-contact`, `ha-critical`, `ha-bulk`) run on his word only while the
-  history the model reads this turn holds no third-party text: no untrusted
-  envelope (rows stored before envelopes existed are judged by the tool
-  name, `historyHasUntrusted`), and no row other people wrote in the same
-  window, such as a contact's message, a watcher alert or a tainted row, a
-  forked chat included (`originsHaveForeignText`). Otherwise they take the
+  history the model reads this turn holds no untrusted envelope, that is no
+  tool result a third party wrote. Rows stored before envelopes existed are
+  judged by the tool name (`historyHasUntrusted`). Otherwise they take the
   usual path.
 
-**One card per action.** A card waits for an action (same tool, same target:
-`stepKey` in `apps/agent/src/utils/two-step-tools.js`). If the same call comes
-again where that card sits, the call pauses on it with no new card and no
-guardian call. If the action runs another way (his own request, a guardian
-allow, a call no rule gates) or he approves one of two copies, the other
-waiting cards are marked `expired` (`decided_via: superseded`), so a later
-"ok" cannot run it a second time.
+**One card per action.** Two calls are the same action when the tool and the
+target match (`stepKey` in `apps/agent/src/utils/two-step-tools.js`: for a
+two-step tool the target argument, for anything else every argument).
+- The very same call, argument for argument, pausing again where its card
+  already sits and in the same kind of card, waits on that card: no second
+  card, no second guardian call. A changed argument is a different action: it
+  gets its own card, and the older one goes.
+- Once the call has run (the tool loop, an approval, a guardian allow), cards
+  waiting for that same action are marked `expired`
+  (`decided_via: superseded`), so a later "ok" cannot run it a second time. A
+  call that failed leaves them alone, and so does a call nobody could be asked
+  about (a sub-agent, no owner channel): the waiting card stays.
 
 Before this, an explicit "book it" in his chat still raised a card for the
 check step and another for the booking.

@@ -1383,6 +1383,9 @@ class Agent {
         }, { approved: !!action.approvalId, taint: approvedTaint }));
         if (action.approvalId) {
           try { this.db.setConfirmationResult(action.approvalId, result); } catch (e) { console.warn('[Approvals] result store failed:', e.message); }
+          if (!(result && typeof result === 'object' && result.error)) {
+            try { this.approvals.noteRan(action.name, action.args, { exceptId: action.approvalId }); } catch (e) { console.warn('[Approvals] could not retire waiting cards:', e.message); }
+          }
         }
 
         executionSummary.toolOutputs.push({ name: action.name, result });
@@ -1880,17 +1883,26 @@ class Agent {
       // Third-party text the model reads in this history: the owner's word in
       // his chat then no longer covers messages, email or the house on its
       // own (ApprovalService.review). Unreadable history counts as untrusted.
-      // Rows other people wrote count too: a contact's messages in a chat
-      // opened (or forked) on the web, Slack, forwarded messages.
+      // Two checks, both on the window the model reads. An untrusted envelope
+      // (a tool result a third party wrote) holds back messages, email and the
+      // house; rows other people wrote (a contact's messages in a chat opened
+      // or forked on the web, Slack, a forwarded message, a watcher alert)
+      // hold back the owner's word altogether. Unreadable counts as present.
       let historyUntrusted = true;
+      let foreignText = true;
       try {
-        historyUntrusted = historyHasUntrusted(history, (name) => this.mcp?.toolMap?.get?.(name)?.name || null)
-          || (typeof this.db.getRecentMessageOrigins === 'function'
-            ? originsHaveForeignText(this.db.getRecentMessageOrigins(chatId, decision.model === 'FLASH' ? 20 : 50))
-            : true);
+        historyUntrusted = historyHasUntrusted(history, (name) => this.mcp?.toolMap?.get?.(name)?.name || null);
       } catch (e) {
         console.warn(`${logPrefix} History trust check failed: ${e.message}`);
         historyUntrusted = true;
+      }
+      try {
+        foreignText = typeof this.db.getRecentMessageOrigins === 'function'
+          ? originsHaveForeignText(this.db.getRecentMessageOrigins(chatId, decision.model === 'FLASH' ? 20 : 50))
+          : true;
+      } catch (e) {
+        console.warn(`${logPrefix} Chat origin check failed: ${e.message}`);
+        foreignText = true;
       }
 
       const historyChars = JSON.stringify(history).length;
@@ -2518,7 +2530,7 @@ class Agent {
             const serverName = this.mcp?.toolMap?.get?.(executionName)?.name || null;
             const review = await this.approvals.review({
               message, toolName: executionName, args: call.args, taint: turnTaint, serverName,
-              run: approvalRun, sendCallback: activeSendCallback, historyUntrusted
+              run: approvalRun, sendCallback: activeSendCallback, historyUntrusted, foreignText
             });
             if (!review.run) {
               console.log(`${logPrefix} Action ${executionName} held by the approval gate (${review.status}).`);
@@ -2542,6 +2554,9 @@ class Agent {
               }, { taint: turnTaint, approvalRun });
               if (toolResult && typeof toolResult === 'object' && toolResult.error) {
                 toolStatus = 'error';
+              } else {
+                // It ran: a card waiting for this same action can no longer run it again.
+                try { this.approvals.noteRan(executionName, call.args); } catch (e) { console.warn(`${logPrefix} Could not retire waiting cards: ${e.message}`); }
               }
               // A preview step's summary goes on the card if the real call pauses.
               if (isPreviewCall(executionName, call.args, serverName) && approvalRun?.previews) {

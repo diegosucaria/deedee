@@ -114,6 +114,9 @@ describe('approvedResultText', () => {
         expect(approvedResultText('x', { success: false })).toBe('⚠️ x did not work.');
         expect(approvedResultText('x', 'plain text')).toBe('✅ Done: x. plain text');
         expect(approvedResultText('x', { output: 'plain MCP text' })).toBe('✅ Done: x. plain MCP text');
+        // A status is a failure only when it says so; an empty error is not one.
+        expect(approvedResultText('x', { output: JSON.stringify({ status: 'no_errors' }) })).toBe('Finished: x (no_errors).');
+        expect(approvedResultText('x', { error: '' })).toBe('✅ Done: x.');
         // A failed check says why; the tool's message wins over its summary.
         expect(approvedResultText('book_turn', { output: JSON.stringify({ status: 'validation_failed', problems: ['date is in the past'] }) })).toBe('⚠️ book_turn did not work: date is in the past');
         expect(approvedResultText('book_turn', { output: JSON.stringify({ status: 'booked', message: 'Added to the waitlist for this slot.', summary: 'Book A' }) })).toBe('✅ Done: book_turn. Added to the waitlist for this slot.');
@@ -217,7 +220,7 @@ describe('ApprovalService.review with the owner\'s word', () => {
         fs.rmSync(dir, { recursive: true, force: true });
     });
 
-    const review = (message, call, extra = {}) => svc.review({ message, ...call, run: ApprovalService.newRun('r1'), historyUntrusted: false, ...extra });
+    const review = (message, call, extra = {}) => svc.review({ message, ...call, run: ApprovalService.newRun('r1'), historyUntrusted: false, foreignText: false, ...extra });
 
     test('a booking he asked for in his WhatsApp chat runs with no card and no guardian call', async () => {
         const out = await review(ownerWa('book that slot'), BOOK);
@@ -228,10 +231,17 @@ describe('ApprovalService.review with the owner\'s word', () => {
         expect(db.getGuardianDecision(out.decisionId)).toMatchObject({ outcome: 'owner_instructed', decided_by: 'owner', tool_name: 'book_appointment', source_kind: 'chat' });
     });
 
-    test('the same holds with third-party text in the history: a booking lands on him', async () => {
+    test('the same holds with an untrusted tool result in the history: a booking lands on him', async () => {
         const out = await review(web(), BOOK, { historyUntrusted: true });
         expect(out.run).toBe(true);
         expect(gen).not.toHaveBeenCalled();
+    });
+
+    test('rows other people wrote in the chat hold back his word for everything', async () => {
+        for (const extra of [{ foreignText: true }, { foreignText: null }]) {
+            const out = await review(ownerWa('book that slot'), BOOK, extra);
+            expect(out.run).toBe(false);
+        }
     });
 
     test('email he asked for runs only while the history is clean', async () => {
@@ -267,7 +277,7 @@ describe('ApprovalService.review with the owner\'s word', () => {
     test('a cancellation (floor) asks once, with no guardian call, and the card names the preview', async () => {
         const run = ApprovalService.newRun('r2');
         run.previews.set(stepKey('cancel_appointment', CANCEL.args), 'Cancel appointment #7 on 2026-04-14 at 11:15 with Dr X.');
-        const out = await svc.review({ message: ownerWa('cancel the later one'), ...CANCEL, run, historyUntrusted: false });
+        const out = await svc.review({ message: ownerWa('cancel the later one'), ...CANCEL, run, historyUntrusted: false, foreignText: false });
         expect(out).toMatchObject({ run: false, status: 'paused' });
         expect(gen).not.toHaveBeenCalled();
         const [row] = db.listPendingConfirmations();
@@ -341,31 +351,58 @@ describe('ApprovalService.review with the owner\'s word', () => {
         expect(out.run).toBe(false);
     });
 
-    test('a card for the same action is reused in its chat, never sent twice', async () => {
+    test('the very same call is reused in its chat, never carded twice', async () => {
         const first = await review(ownerWa('cancel it'), CANCEL);
         expect(first.status).toBe('paused');
-        const again = await review(ownerWa('cancel it'), { ...CANCEL, args: { ...CANCEL.args, reasonId: 4 } });
+        const again = await review(ownerWa('cancel it'), CANCEL);
         expect(again).toMatchObject({ run: false, status: 'paused' });
         expect(again.result.info).toMatch(/Action PAUSED/);
         expect(db.listPendingConfirmations()).toHaveLength(1);
         expect(agent.interface.send.mock.calls.filter(c => c[0].metadata?.approval)).toHaveLength(1);
+        // Every gated call still leaves a row in the history.
+        expect(db.getGuardianDecision(again.decisionId)).toMatchObject({ outcome: 'escalated', approval_id: db.listPendingConfirmations()[0].id });
     });
 
-    test('when the action runs another way, its waiting card cannot run it again', async () => {
+    test('changed arguments are a different action: a fresh card, and the old one goes', async () => {
+        const first = await review(ownerWa('cancel it'), CANCEL);
+        const changed = await review(ownerWa('with another reason'), { ...CANCEL, args: { ...CANCEL.args, reasonId: 5 } });
+        expect(changed.status).toBe('paused');
+        const pending = db.listPendingConfirmations();
+        expect(pending).toHaveLength(1);
+        expect(pending[0].args).toMatchObject({ reasonId: 5 });
+        expect(db.getPendingConfirmation(first.decisionId ? pending[0].id : pending[0].id).status).toBe('pending');
+        const rows = db.listRecentConfirmations({ limit: 10 });
+        expect(rows.filter(r => r.status === 'expired' && r.decided_via === 'superseded')).toHaveLength(1);
+    });
+
+    test('a job card in the same chat does not swallow a request he makes there', async () => {
+        await svc.request({ message: job(), toolName: CANCEL.toolName, args: CANCEL.args, reason: 'r' });
+        const out = await review(ownerWa('cancel it'), CANCEL);
+        expect(out.status).toBe('paused');
+        const pending = db.listPendingConfirmations();
+        expect(pending).toHaveLength(1);
+        expect(pending[0].mode).toBe('interactive');
+    });
+
+    test('a call that cannot be asked about keeps the waiting card', async () => {
+        const asked = await svc.request({ message: ownerWa('cancel it'), toolName: CANCEL.toolName, args: CANCEL.args, reason: 'r' });
+        const sub = { role: 'user', content: 'x', source: 'subagent', timestamp: new Date().toISOString(), metadata: { chatId: 'sub-1', isSubAgent: true } };
+        const out = await review(sub, CANCEL);
+        expect(out.run).toBe(false);
+        expect(db.getPendingConfirmation(asked.id).status).toBe('pending');
+    });
+
+    test('once the action has run, its waiting card cannot run it again', async () => {
         // A job asked for the booking; the owner then books the same slot himself.
         const asked = await svc.request({ message: job(), toolName: BOOK.toolName, args: BOOK.args, reason: 'r' });
-        expect(db.getPendingConfirmation(asked.id).status).toBe('pending');
         const out = await review(ownerWa('book that slot'), BOOK);
         expect(out.run).toBe(true);
+        // The card stands until the call really ran (the tool loop says so).
+        expect(db.getPendingConfirmation(asked.id).status).toBe('pending');
+        svc.noteRan(BOOK.toolName, { ...BOOK.args, observaciones: 'x' });
         expect(db.getPendingConfirmation(asked.id)).toMatchObject({ status: 'expired', decided_via: 'superseded' });
         // His later plain "ok" in that chat has nothing to approve.
         expect(await svc.intercept({ ...ownerWa('ok'), id: 'm-ok' }, jest.fn())).toBeNull();
-    });
-
-    test('a call no rule gates also retires a waiting card for the same action', async () => {
-        const asked = await svc.request({ message: job(), toolName: 'getFact', args: { key: 'k' }, reason: 'r' });
-        expect((await review(ownerWa('what is k'), { toolName: 'getFact', args: { key: 'k' } })).run).toBe(true);
-        expect(db.getPendingConfirmation(asked.id).status).toBe('expired');
     });
 
     test('approving one card retires its duplicates in other chats', async () => {
@@ -375,6 +412,12 @@ describe('ApprovalService.review with the owner\'s word', () => {
         expect(db.getPendingConfirmation(b.id).status).toBe('approved');
         expect(db.getPendingConfirmation(a.id)).toMatchObject({ status: 'expired', decided_via: 'superseded' });
         expect(agent._executeTool).toHaveBeenCalledTimes(1);
+        // A call that fails leaves the other card alone.
+        const c = await svc.request({ message: web('book'), toolName: 'sendEmail', args: { to: 'x@example.com' }, reason: 'r' });
+        const d = await svc.request({ message: job(), toolName: 'sendEmail', args: { to: 'x@example.com' }, reason: 'r' });
+        agent._executeTool.mockResolvedValueOnce({ error: 'smtp down' });
+        await svc.decide(d.id, 'approved', { via: 'web' });
+        expect(db.getPendingConfirmation(c.id).status).toBe('pending');
     });
 
     test('a bare "cancelar" on a cancel card asks which answer he means', async () => {

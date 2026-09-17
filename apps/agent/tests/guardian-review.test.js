@@ -339,10 +339,10 @@ describe('approval guardian review', () => {
         setApprovals({ always_ask: ['category:send_message', 'searchContacts'] });
         gen.mockResolvedValue(verdictOf({ verdict: 'allow', reason: 'fine', risk: 'low' }));
         // A message to the owner himself is never gated on its own.
-        const own = await svc.review({ message: webMsg('remind me'), toolName: 'sendMessage', args: { to: 'me', content: 'hi' }, run: ApprovalService.newRun() });
+        const own = await svc.review({ message: webMsg('remind me'), toolName: 'sendMessage', args: { to: 'me', content: 'hi' }, run: ApprovalService.newRun(), foreignText: false });
         expect(own.status).toBe('paused');
         expect(db.getGuardianDecision(own.decisionId)).toMatchObject({ outcome: 'escalated', always_ask: ['category:send_message'] });
-        const glob = await svc.review({ message: webMsg('find Ana'), toolName: 'searchContacts', args: { query: 'Ana' }, run: ApprovalService.newRun() });
+        const glob = await svc.review({ message: webMsg('find Ana'), toolName: 'searchContacts', args: { query: 'Ana' }, run: ApprovalService.newRun(), foreignText: false });
         expect(glob.status).toBe('paused');
 
         // In the owner's own chat his additions ask him with no guardian call.

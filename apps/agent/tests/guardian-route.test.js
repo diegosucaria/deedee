@@ -85,7 +85,7 @@ describe('Guardian router', () => {
 
         // Removing everything still leaves the floor in force.
         await request(app).put('/internal/guardian/policy').send({ mode: 'smart', always_ask: [] });
-        const out = await agent.approvals.review({ message: { role: 'user', content: 'push it', source: 'web', metadata: { chatId: 'w1' } }, toolName: 'commitAndPush', args: {} });
+        const out = await agent.approvals.review({ message: { role: 'user', content: 'push it', source: 'web', metadata: { chatId: 'w1' } }, toolName: 'commitAndPush', args: {}, foreignText: false });
         expect(out.status).toBe('paused');
         // The owner typing in his own chat gets the card straight away, with no guardian call.
         expect(db.listGuardianDecisions().rows[0]).toMatchObject({ outcome: 'escalated', model_verdict: null, floor: ['publish'] });

@@ -29,7 +29,7 @@
  */
 const crypto = require('crypto');
 const { createAssistantMessage } = require('@deedee/shared/src/types');
-const { ConfirmationManager } = require('../confirmation-manager');
+const { ConfirmationManager, stableJson } = require('../confirmation-manager');
 const { DeliveryService, telegramOwnerIds, splitChannel } = require('./delivery-service');
 const { isLiveSource } = require('./ask-user');
 const { TurnTaint, classifyToolResult } = require('../utils/untrusted-content');
@@ -213,7 +213,9 @@ function summarizeResult(result) {
 
 // Statuses a tool returns when the action happened, and ones that mean it did not.
 const DONE_STATUS_RE = /^(?:ok|success|succeeded|done|booked|cancelled|canceled|sent|created|updated|deleted|removed|completed|scheduled|approved|saved)$/i;
-const FAILED_STATUS_RE = /fail|error|reject|invalid|denied|refused|not_?found|unavailable|timeout|timed_?out/i;
+const FAILED_STATUS = new Set(['failed', 'failure', 'fail', 'error', 'errored', 'rejected', 'reject', 'invalid', 'denied',
+    'refused', 'not_found', 'notfound', 'unavailable', 'timeout', 'timed_out', 'validation_failed', 'unauthorized', 'forbidden']);
+const failedStatus = (status) => FAILED_STATUS.has(String(status || '').trim().toLowerCase());
 // Keys that only restate the outcome; left out of the fallback detail.
 const OUTCOME_KEYS = new Set(['ok', 'success', 'status', 'error']);
 
@@ -256,7 +258,7 @@ function approvedResultText(toolName, result, { untrusted = false } = {}) {
         // history as our own words, with no untrusted marker.
         const data = parseToolOutput(result);
         const failed = (result && typeof result === 'object' && result.error) || (data && (data.error || data.success === false || data.ok === false
-            || FAILED_STATUS_RE.test(typeof data.status === 'string' ? data.status : '')));
+            || failedStatus(data.status)));
         return failed ? `⚠️ ${name} did not work.` : `✅ Done: ${name}.`;
     }
     if (result === undefined || result === null) return `✅ Done: ${name}.`;
@@ -267,8 +269,8 @@ function approvedResultText(toolName, result, { untrusted = false } = {}) {
     const data = parseToolOutput(result);
     const rawOutput = !data && typeof result.output === 'string' ? result.output.trim() : '';
 
-    const error = result.error !== undefined && result.error !== null && result.error !== false ? result.error
-        : (data && data.error !== undefined && data.error !== null && data.error !== false ? data.error : null);
+    const truthy = (v) => v !== undefined && v !== null && v !== false && v !== '';
+    const error = truthy(result.error) ? result.error : (data && truthy(data.error) ? data.error : null);
     if (error !== null) {
         const src = data && data.error === error ? data : result;
         let text;
@@ -282,7 +284,7 @@ function approvedResultText(toolName, result, { untrusted = false } = {}) {
 
     const status = data && typeof data.status === 'string' ? data.status.trim() : '';
     const detail = resultDetail(data);
-    if (FAILED_STATUS_RE.test(status) || (data && (data.success === false || data.ok === false))) {
+    if (failedStatus(status) || (data && (data.success === false || data.ok === false))) {
         // Why it failed: listed problems, then the service's own message, before the tool's summary.
         const nested = data && [data.portal, data.result, data.response].find(o => o && typeof o === 'object' && !Array.isArray(o));
         const problems = data && ['problems', 'errors'].map(k => (Array.isArray(data[k]) ? data[k].filter(v => typeof v === 'string' && v.trim()) : []))
@@ -298,6 +300,11 @@ function approvedResultText(toolName, result, { untrusted = false } = {}) {
     }
     const extra = detail || (rawOutput ? oneLine(rawOutput) : compactFields(data));
     return `✅ Done: ${name}${extra ? `. ${extra}` : '.'}`;
+}
+
+/** The same call, argument for argument (key order does not matter). */
+function sameArgs(a, b) {
+    try { return stableJson(a ?? {}) === stableJson(b ?? {}); } catch { return false; }
 }
 
 /** What the model reads when a call waits for the owner. No id: nothing for it to repeat. */
@@ -551,10 +558,14 @@ class ApprovalService {
         }
     }
 
-    /** A call runs now: its waiting duplicates go. Returns the review result. */
-    _running(toolName, args, result) {
-        this._supersede(this._pendingSameAction(toolName, args), 'the same action ran');
-        return result;
+    /**
+     * A call ran. Cards waiting for that same action can no longer run it a
+     * second time on a later "ok", so they go. Called by the tool loop and by
+     * the approval paths, after the call returned without an error.
+     */
+    noteRan(toolName, args, { exceptId = null } = {}) {
+        const rows = this._pendingSameAction(toolName, args).filter(r => r.id !== exceptId);
+        if (rows.length > 0) this._supersede(rows, 'the same action ran');
     }
 
     /** Drop one hold on a run's breaker state; it goes once no run uses it. */
@@ -651,9 +662,11 @@ class ApprovalService {
      *   run?: object|null, sendCallback?: Function|null, historyUntrusted?: boolean|null }} p
      *   historyUntrusted: the history the model reads this turn holds an untrusted envelope
      *   (null when unknown, which counts as yes)
+     *   foreignText: rows other people wrote sit in the window the model reads (a contact's
+     *   messages, a watcher alert, a tainted row). Only `false` allows the owner's word.
      * @returns {Promise<{ run: true, decisionId?: string } | { run: false, status: 'error'|'paused', result: object, decisionId?: string }>}
      */
-    async review({ message, toolName, args, taint = null, serverName = null, run = null, sendCallback = null, historyUntrusted = null }) {
+    async review({ message, toolName, args, taint = null, serverName = null, run = null, sendCallback = null, historyUntrusted = null, foreignText = null }) {
         const settings = this.settings();
         const meta = message?.metadata || {};
         const kind = sourceKind(message);
@@ -685,35 +698,43 @@ class ApprovalService {
             gated = true;
             why = `The owner asked to approve these himself (always-ask: ${hits.additions.join(', ')}).`;
         }
-        if (!gated) return this._running(toolName, args, { run: true });
+        if (!gated) return { run: true };
 
         const floorHit = hits.floor.length > 0 || hits.additions.length > 0;
         const withHits = { ...base, floor: hits.floor, alwaysAsk: hits.additions };
 
-        const ownerAsked = await this._ownerConsent(message, taint);
+        // Text other people wrote sits in this chat: his word does not carry here.
+        const ownerAsked = foreignText === false && await this._ownerConsent(message, taint);
         const cover = ownerAsked ? consentCover(guard.rule, { floorHit, historyUntrusted }) : 'none';
         if (cover === 'run') {
             const row = this._record({ ...withHits, outcome: 'owner_instructed', decidedBy: 'owner', reason: 'The owner asked for it in his own chat.' });
             console.log(`[Approvals] ${toolName} runs without a card: the owner asked for it in his chat.`);
-            return this._running(toolName, args, { run: true, decisionId: row?.id });
+            return { run: true, decisionId: row?.id };
         }
 
         if (settings.mode === 'off' && !floorHit) {
             const row = this._record({ ...withHits, outcome: 'ran_unasked', decidedBy: 'none', reason: 'Approvals are off.' });
-            return this._running(toolName, args, { run: true, decisionId: row?.id });
+            return { run: true, decisionId: row?.id };
         }
 
-        // A card for this very action already waits where this run would ask:
-        // the owner answers that one. No second card, no guardian call.
+        // The very same call already waits where this run would ask, in the
+        // same kind of card: the owner answers that one. No second card, no
+        // guardian call. Different arguments are a different action.
         const same = this._pendingSameAction(toolName, args);
         if (same.length > 0) {
             let route = null;
             try { route = await this.route(message); } catch { route = null; }
-            const existing = route && route.replyChatId ? same.find(r => r.reply_chat_id === route.replyChatId) : null;
+            const existing = route && route.replyChatId
+                ? same.find(r => r.reply_chat_id === route.replyChatId && r.mode === route.mode && sameArgs(r.args, args))
+                : null;
             if (existing) {
                 console.log(`[Approvals] ${toolName} already waits for approval (${existing.id}); no second card.`);
                 const where = existing.mode === 'interactive' ? 'in this chat' : 'on his notification channel';
-                return { run: false, status: 'paused', result: { info: pausedInfo(toolName, existing.reason || why, where, true) } };
+                const row = this._record({
+                    ...withHits, outcome: 'escalated', decidedBy: 'owner', approvalId: existing.id,
+                    reason: 'A card for this action already waits for him.'
+                });
+                return { run: false, status: 'paused', decisionId: row?.id, result: { info: pausedInfo(toolName, existing.reason || why, where, true) } };
             }
         }
 
@@ -748,7 +769,7 @@ class ApprovalService {
         if (verdict && verdict.verdict === 'allow' && !floorHit) {
             const row = this._record({ ...withHits, ...guardianFields, outcome: 'auto_allowed', decidedBy: 'guardian' });
             console.log(`[Guardian] ${toolName} allowed (${verdict.risk}): ${verdict.reason}`);
-            return this._running(toolName, args, { run: true, decisionId: row?.id });
+            return { run: true, decisionId: row?.id };
         }
 
         if (verdict && verdict.verdict === 'deny') {
@@ -769,13 +790,13 @@ class ApprovalService {
             ...withHits, ...guardianFields, verdict: verdict ? 'escalate' : null,
             outcome: 'escalated', decidedBy: 'owner'
         });
-        // The new card replaces waiting cards for the same action in other chats.
-        this._supersede(same, 'a newer card asks for the same action');
         const preview = isTwoStepTool(toolName, serverName) ? (run?.previews?.get?.(stepKey(toolName, args)) || null) : null;
         const paused = await this.request({
             message, toolName, args, reason, sendCallback, taintSources: guard.tainted ? taintSources : null,
             modelReason: why || null, guardianDecisionId: row?.id || null, ownerConsent: ownerAsked, preview
         });
+        // Only once this card exists: the older ones it replaces can go.
+        if (paused.paused) this._supersede(same.filter(r => r.id !== paused.id), 'a newer card asks for the same action');
         if (row?.id && !paused.paused && typeof this.db.updateGuardianDecision === 'function') {
             try { this.db.updateGuardianDecision(row.id, { outcome: 'escalated_failed', decidedBy: 'nobody' }); } catch (e) {
                 console.warn('[Guardian] decision update failed:', e.message);
@@ -846,6 +867,7 @@ class ApprovalService {
         const floorHit = hits.floor.length > 0 || hits.additions.length > 0;
         // An owner message in a chat with no untrusted input reads as the owner
         // typing in his own chat, with a clean history.
+        // A chat call with an owner message and no taint reads as his own chat, clean.
         const ownerAsked = runKind === 'chat' && !!ownerMessage && sources.length === 0;
         const cover = gated && ownerAsked ? consentCover(guard.rule, { floorHit, historyUntrusted: false }) : 'none';
         const base = {
@@ -1330,9 +1352,6 @@ class ApprovalService {
             return { handled: true, row, reply };
         }
 
-        // Other waiting cards for the same action must not run it again.
-        this._supersede(this._pendingSameAction(row.tool_name, row.args).filter(r => r.id !== row.id), 'the same action was approved');
-
         if (message && row.mode === 'interactive' && row.reply_chat_id === String(message.metadata?.chatId)) {
             return { handled: false, row, execute: { name: row.tool_name, args: row.args, approvalId: row.id } };
         }
@@ -1368,6 +1387,8 @@ class ApprovalService {
         }
         if (result === undefined || result === null) result = { info: 'No output from tool execution.' };
         try { this.db.setConfirmationResult(row.id, result); } catch (e) { console.warn('[Approvals] result store failed:', e.message); }
+        // It ran: no other card may run it again.
+        if (!(result && typeof result === 'object' && result.error)) this.noteRan(row.tool_name, row.args, { exceptId: row.id });
         let untrusted = true;
         try {
             const serverName = this.agent.mcp?.toolMap?.get?.(row.tool_name)?.name || null;
