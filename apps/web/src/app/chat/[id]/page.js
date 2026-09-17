@@ -1154,7 +1154,10 @@ export default function ChatSessionPage({ params }) {
             if (msg.type === 'function_response' && Array.isArray(msg._toolResponses)) {
                 msg._toolResponses.forEach((r, i) => {
                     const resultStr = typeof r.result === 'string' ? r.result : JSON.stringify(r.result ?? {});
-                    const isError = !!(r.result && typeof r.result === 'object' && (r.result.error || r.result._error));
+                    // Untrusted results are stored in a data envelope; read the status from its content.
+                    const inner = r.result && typeof r.result === 'object' && r.result.untrusted === true && r.result.content && typeof r.result.content === 'object'
+                        ? r.result.content : r.result;
+                    const isError = !!(inner && typeof inner === 'object' && (inner.error || inner._error));
                     // Confirmation guard pauses save the literal "Action PAUSED" marker as the
                     // function response — surface that as a distinct status in history too.
                     const isPaused = !isError && typeof r.result === 'object' && r.result?.info && /^Action PAUSED/i.test(r.result.info);
