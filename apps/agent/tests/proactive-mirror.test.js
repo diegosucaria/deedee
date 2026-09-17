@@ -2,7 +2,11 @@ const { AgentDB } = require('../src/db');
 const fs = require('fs');
 const path = require('path');
 
-const tmpDir = path.join(__dirname, 'tmp_mirror_db');
+const os = require('os');
+// A unique directory per run: a fixed path under the tests folder is shared
+// between runs, and removing it while SQLite still holds the WAL throws under
+// parallel load, which failed every test in this file.
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deedee-mirror-'));
 
 // Stub for axios so the LID resolve call doesn't try to hit the network.
 jest.mock('axios', () => ({
@@ -35,7 +39,7 @@ describe('Agent proactive-mirror wrapper', () => {
     let agent;
 
     beforeEach(() => {
-        if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+        if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
         db = new AgentDB(tmpDir);
         db.setAgentSetting('owner_phone', OWNER_PHONE);
         agent = makeAgentStub(db);
@@ -44,7 +48,7 @@ describe('Agent proactive-mirror wrapper', () => {
 
     afterEach(() => {
         if (db) db.close();
-        if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+        if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
     });
 
     function flush() {
@@ -202,7 +206,7 @@ describe('Agent proactive-mirror — LID resolve retry on failure', () => {
     let axios;
 
     beforeEach(() => {
-        if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+        if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
         db = new AgentDB(tmpDir);
         db.setAgentSetting('owner_phone', OWNER_PHONE);
         agent = makeAgentStub(db);
@@ -212,7 +216,7 @@ describe('Agent proactive-mirror — LID resolve retry on failure', () => {
 
     afterEach(() => {
         if (db) db.close();
-        if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+        if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
         axios.get.mockReset();
     });
 
