@@ -3,18 +3,22 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname } from 'next/navigation';
-import { MessageSquare, ClipboardList, Database, Activity, Terminal, ChevronLeft, ChevronRight, Settings, Mic, Users, Disc, ShieldAlert, Shirt, Globe } from 'lucide-react';
+import { MessageSquare, ClipboardList, Database, Activity, Terminal, ChevronLeft, ChevronRight, Settings, Mic, Users, Disc, ShieldAlert, ShieldCheck, Shirt, Globe } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
-import { useState } from 'react';
+import { useState, useEffect, useCallback } from 'react';
 import NotificationBell from './NotificationBell';
 import { useHealthStatus } from '@/hooks/useHealthStatus';
+import { useSocket } from '@/hooks/useSocket';
+import { getApprovals } from '@/app/actions';
+import { approvalEventKind } from '@/lib/approvals';
 
 const navItems = [
     { name: 'Chat', href: '/', icon: MessageSquare },
     { name: 'Live', href: '/live', icon: Mic },
     { name: 'Browser', href: '/browser', icon: Globe },
     { name: 'Tasks', href: '/tasks', icon: ClipboardList },
+    { name: 'Approvals', href: '/approvals', icon: ShieldCheck, badge: 'approvals' },
     { name: 'Brain', href: '/brain', icon: Activity },
     { name: 'DJ Crate', href: '/dj', icon: Disc },
     { name: 'Wardrobe', href: '/wardrobe', icon: Shirt },
@@ -44,10 +48,44 @@ function StatusDot({ status, detail }) {
     );
 }
 
+/**
+ * Pending approvals for the sidebar badge. Refreshed on every
+ * `agent:approval` event, so a decision on WhatsApp clears the badge too.
+ */
+function usePendingApprovals() {
+    const [count, setCount] = useState(0);
+    const { socket } = useSocket();
+
+    const refresh = useCallback(async () => {
+        try {
+            const data = await getApprovals(50);
+            const pending = data?.counts?.pending;
+            setCount(typeof pending === 'number' ? pending : (data?.pending?.length || 0));
+        } catch {
+            /* the badge is a hint, not a promise */
+        }
+    }, []);
+
+    useEffect(() => { refresh(); }, [refresh]);
+
+    useEffect(() => {
+        if (!socket) return;
+        const handler = (event) => {
+            if (approvalEventKind(event) === 'ignore') return;
+            refresh();
+        };
+        socket.on('agent:approval', handler);
+        return () => socket.off('agent:approval', handler);
+    }, [socket, refresh]);
+
+    return count;
+}
+
 export function Sidebar() {
     const pathname = usePathname();
     const [isCollapsed, setIsCollapsed] = useState(false);
     const health = useHealthStatus();
+    const pendingApprovals = usePendingApprovals();
 
     return (
         <div className={clsx(
@@ -78,6 +116,7 @@ export function Sidebar() {
             <nav className="flex flex-1 flex-col gap-2 px-2 w-full">
                 {navItems.map((item) => {
                     const isActive = pathname === item.href;
+                    const badgeCount = item.badge === 'approvals' ? pendingApprovals : 0;
                     return (
                         <Link
                             key={item.href}
@@ -93,12 +132,19 @@ export function Sidebar() {
                                 )
                             )}
                         >
-                            <item.icon
-                                className={clsx(
-                                    'h-5 w-5 transition-colors shrink-0',
-                                    isActive ? 'text-indigo-400' : 'group-hover:text-zinc-200'
+                            <span className="relative shrink-0">
+                                <item.icon
+                                    className={clsx(
+                                        'h-5 w-5 transition-colors shrink-0',
+                                        isActive ? 'text-indigo-400' : 'group-hover:text-zinc-200'
+                                    )}
+                                />
+                                {badgeCount > 0 && (
+                                    <span className="absolute -top-1.5 -right-1.5 flex items-center justify-center min-w-[16px] h-[16px] px-1 rounded-full bg-amber-500 text-black text-[10px] font-bold leading-none">
+                                        {badgeCount > 9 ? '9+' : badgeCount}
+                                    </span>
                                 )}
-                            />
+                            </span>
                             <span className={clsx(
                                 "ml-3 text-sm font-medium transition-all overflow-hidden hidden md:block",
                                 isCollapsed ? "w-0 opacity-0" : "w-auto opacity-100"

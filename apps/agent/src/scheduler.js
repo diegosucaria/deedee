@@ -606,16 +606,27 @@ class Scheduler {
 
             const crypto = require('crypto');
             const jobName = payload?.task ? payload.task.substring(0, 50) : 'Unknown job';
-            this.agent.db.createNotification({
+            // Build the row first and broadcast that same row. The bell needs
+            // the id, the title and the link; a bare { type } left it with an
+            // unkeyed, blank entry that still raised the unread count.
+            const notification = {
                 id: crypto.randomUUID(),
                 type: 'delivery_failure',
                 severity: 'warning',
-                title: `📬 Undelivered notification`,
+                title: '📬 Undelivered notification',
                 message: messageText.length > 2000 ? messageText.substring(0, 2000) + '...' : messageText,
-                metadata: { jobName, errorReason }
-            });
+                metadata: { jobName, errorReason, link: '/system/notifications' },
+                created_at: new Date().toISOString()
+            };
+            this.agent.db.createNotification(notification);
             console.log(`[Scheduler] Fallback notification created for failed delivery (${jobName}).`);
-            this.agent.interface?.broadcast('notification:new', { type: 'delivery_failure' });
+            if (this.agent.interface?.broadcast) {
+                Promise.resolve(this.agent.interface.broadcast('notification:new', {
+                    ...notification,
+                    is_read: false,
+                    is_dismissed: false
+                })).catch(() => { });
+            }
         } catch (err) {
             console.error('[Scheduler] Failed to create fallback notification:', err.message);
         }

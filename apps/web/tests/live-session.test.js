@@ -5,7 +5,9 @@ const {
     cleanSchema,
     buildLiveSetup,
     realtimeAudioMessage,
-    messageSizeBytes
+    messageSizeBytes,
+    sessionCountdown,
+    closeOutcome
 } = require('../src/app/live/live-session.js');
 
 describe('liveWebSocketUrl', () => {
@@ -87,5 +89,50 @@ describe('cleanSchema and realtimeAudioMessage', () => {
         expect(realtimeAudioMessage('QUJD', 48000)).toEqual({
             realtimeInput: { audio: { mimeType: 'audio/pcm;rate=48000', data: 'QUJD' } }
         });
+    });
+});
+
+describe('sessionCountdown', () => {
+    const now = Date.parse('2026-09-16T12:00:00Z');
+
+    test('counts down and warns in the last five minutes', () => {
+        expect(sessionCountdown('2026-09-16T12:29:30Z', now)).toMatchObject({
+            known: true, expired: false, warn: false, label: '29:30'
+        });
+        expect(sessionCountdown('2026-09-16T12:04:05Z', now)).toMatchObject({
+            known: true, expired: false, warn: true, label: '4:05'
+        });
+    });
+
+    test('a past cut-off is expired, not negative', () => {
+        const done = sessionCountdown('2026-09-16T11:59:00Z', now);
+        expect(done).toMatchObject({ known: true, expired: true, warn: false, label: '0:00' });
+        expect(done.remainingMs).toBe(0);
+    });
+
+    test('without a cut-off the page shows no clock', () => {
+        expect(sessionCountdown(null, now).known).toBe(false);
+        expect(sessionCountdown('not a date', now).known).toBe(false);
+    });
+});
+
+describe('closeOutcome', () => {
+    test('a socket that opened and then closed ended the session', () => {
+        expect(closeOutcome({ code: 1000, reason: '' }, true)).toEqual({
+            status: 'ended',
+            message: 'Session ended (1000).'
+        });
+    });
+
+    test('a refused handshake stays an error and keeps the close code', () => {
+        expect(closeOutcome({ code: 1008, reason: 'Request contains an invalid argument.' }, false)).toEqual({
+            status: 'error',
+            message: 'Could not start the session (1008).'
+        });
+    });
+
+    test('a close without a code still reads as plain words', () => {
+        expect(closeOutcome({}, false).message).toBe('Could not start the session.');
+        expect(closeOutcome(undefined, true).message).toBe('Session ended.');
     });
 });

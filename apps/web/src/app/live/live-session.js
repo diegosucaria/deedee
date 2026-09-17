@@ -92,3 +92,50 @@ export function realtimeAudioMessage(base64, sampleRate) {
 export function messageSizeBytes(message) {
     return new TextEncoder().encode(JSON.stringify(message)).length;
 }
+
+// The ephemeral token lasts 30 minutes (apps/agent/src/routes/live.js), and
+// the socket closes when it runs out. The page counts down from `expiresAt`
+// so the cut is never a surprise.
+export const SESSION_WARN_MS = 5 * 60 * 1000;
+
+function twoDigits(n) {
+    return n < 10 ? `0${n}` : String(n);
+}
+
+/**
+ * Time left in a live session.
+ * @param {string|number|null} expiresAt ISO string or epoch ms
+ * @returns {{ known: boolean, remainingMs: number, expired: boolean, warn: boolean, label: string }}
+ */
+export function sessionCountdown(expiresAt, now = Date.now()) {
+    const end = typeof expiresAt === 'number' ? expiresAt : Date.parse(expiresAt || '');
+    if (!Number.isFinite(end)) {
+        return { known: false, remainingMs: 0, expired: false, warn: false, label: '' };
+    }
+    const remainingMs = Math.max(0, end - now);
+    const totalSeconds = Math.floor(remainingMs / 1000);
+    return {
+        known: true,
+        remainingMs,
+        expired: remainingMs === 0,
+        warn: remainingMs > 0 && remainingMs <= SESSION_WARN_MS,
+        label: `${Math.floor(totalSeconds / 60)}:${twoDigits(totalSeconds % 60)}`
+    };
+}
+
+/**
+ * What a socket close means. A session that never opened did not "end": the
+ * handshake failed, so keep the error state and keep the close code on
+ * screen. The log overlay is the only place a phone shows why.
+ * @param {{ code?: number, reason?: string }} event
+ * @param {boolean} opened true once the socket opened
+ * @returns {{ status: 'ended'|'error', message: string }}
+ */
+export function closeOutcome(event, opened) {
+    const code = event?.code;
+    const suffix = Number.isFinite(code) ? ` (${code})` : '';
+    if (opened) {
+        return { status: 'ended', message: `Session ended${suffix}.` };
+    }
+    return { status: 'error', message: `Could not start the session${suffix}.` };
+}

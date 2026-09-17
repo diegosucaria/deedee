@@ -470,6 +470,9 @@ app.post('/whatsapp/disconnect', async (req, res) => {
   await service.disconnect(true); // Explicitly clear session on manual disconnect
   // Auto-restart to generate new QR
   setTimeout(() => service.start(), 1000);
+  // Answer: without this the caller waits for a socket timeout and the card
+  // stays stuck on its spinner.
+  res.json({ success: true, message: `Disconnected ${session}.` });
 });
 
 app.post('/whatsapp/repair', async (req, res) => {

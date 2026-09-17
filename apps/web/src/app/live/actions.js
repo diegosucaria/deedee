@@ -47,14 +47,17 @@ export async function getLiveConfig() {
         return {
             model: withModelsPrefix(response.model || DEFAULT_LIVE_MODEL),
             voice: response.voice || DEFAULT_VOICE,
-            systemInstruction: response.systemInstruction || FALLBACK_SYSTEM_INSTRUCTION
+            systemInstruction: response.systemInstruction || FALLBACK_SYSTEM_INSTRUCTION,
+            // Present only on builds whose config route reports the session cut.
+            expiresAt: response.expiresAt || null
         };
     } catch (error) {
         console.error('getLiveConfig Error:', error);
         return {
             model: withModelsPrefix(DEFAULT_LIVE_MODEL),
             voice: DEFAULT_VOICE,
-            systemInstruction: FALLBACK_SYSTEM_INSTRUCTION
+            systemInstruction: FALLBACK_SYSTEM_INSTRUCTION,
+            expiresAt: null
         };
     }
 }
