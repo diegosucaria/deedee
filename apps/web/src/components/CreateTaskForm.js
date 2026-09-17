@@ -17,7 +17,7 @@ const PRESETS = {
     'one_time': { label: 'One-Time Task', cron: '' },
 };
 
-const MODEL_OPTIONS = [
+export const MODEL_OPTIONS = [
     { value: 'auto', label: 'Auto (Router)' },
     { value: 'FLASH', label: 'Flash' },
     { value: 'LITE', label: 'Lite' },

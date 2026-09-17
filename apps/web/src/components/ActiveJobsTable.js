@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import { getTasks, runTask, cancelTask, toggleTask } from '@/app/actions';
-import { Clock, Play, Trash2, RefreshCw, CalendarOff, Edit, Plus } from 'lucide-react';
+import { Clock, Play, Trash2, RefreshCw, CalendarOff, Edit, Plus, Sun, CalendarDays } from 'lucide-react';
 import CreateTaskForm from './CreateTaskForm';
+import SystemJobScopeForm from './SystemJobScopeForm';
 import cronstrue from 'cronstrue';
 import { useSocket } from '@/hooks/useSocket';
 
@@ -12,6 +13,7 @@ export default function ActiveJobsTable({ onViewHistory, systemOnly = false }) {
     const [loading, setLoading] = useState(true);
     const [actionLoading, setActionLoading] = useState(null);
     const [editingJob, setEditingJob] = useState(null);
+    const [scopeJob, setScopeJob] = useState(null);
     const [selectedNames, setSelectedNames] = useState(new Set());
     const [deleting, setDeleting] = useState(false);
 
@@ -210,8 +212,23 @@ export default function ActiveJobsTable({ onViewHistory, systemOnly = false }) {
                 </div>
             )}
 
+            {scopeJob && (
+                <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4" onMouseDown={e => { if (e.target === e.currentTarget) setScopeJob(null); }}>
+                    <div className="w-full max-w-2xl">
+                        <SystemJobScopeForm
+                            job={scopeJob}
+                            onSaved={() => {
+                                setScopeJob(null);
+                                loadJobs();
+                            }}
+                            onCancel={() => setScopeJob(null)}
+                        />
+                    </div>
+                </div>
+            )}
+
             <div className="overflow-x-auto scrollbar-hide">
-                <table className="w-full text-sm text-left min-w-[700px]">
+                <table className="w-full text-sm text-left min-w-[860px]">
                     <thead className="bg-zinc-950 text-zinc-500 uppercase text-xs">
                         <tr>
                             {!systemOnly && (
@@ -227,6 +244,8 @@ export default function ActiveJobsTable({ onViewHistory, systemOnly = false }) {
                             <th className="px-2 py-3">Job Name</th>
                             <th className="px-2 py-3">Schedule / Type</th>
                             <th className="px-2 py-3">Task</th>
+                            <th className="px-2 py-3">Model</th>
+                            <th className="px-2 py-3">Run Window</th>
                             <th className="px-2 py-3">Next Run</th>
                             <th className="px-2 py-3">Expires At</th>
                             <th className="px-3 py-3 text-right">Actions</th>
@@ -235,7 +254,7 @@ export default function ActiveJobsTable({ onViewHistory, systemOnly = false }) {
                     <tbody className="divide-y divide-zinc-800">
                         {jobs.length === 0 ? (
                             <tr>
-                                <td colSpan={systemOnly ? 6 : 7} className="px-4 py-8 text-center text-zinc-500">
+                                <td colSpan={systemOnly ? 8 : 9} className="px-4 py-8 text-center text-zinc-500">
                                     No active jobs found.
                                 </td>
                             </tr>
@@ -280,6 +299,33 @@ export default function ActiveJobsTable({ onViewHistory, systemOnly = false }) {
                                             {job.task || '-'}
                                         </div>
                                     </td>
+                                    <td className="px-4 py-4 whitespace-nowrap">
+                                        <span className={`font-mono text-xs ${job.model && job.model !== 'auto' ? 'text-sky-400' : 'text-zinc-500'}`}>
+                                            {job.model || 'auto'}
+                                        </span>
+                                        {job.scopeOverride?.model && (
+                                            <span className="ml-2 text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400">
+                                                yours
+                                            </span>
+                                        )}
+                                        {job.allowedTools?.length > 0 && (
+                                            <div className="text-[10px] text-zinc-500 mt-0.5">{job.allowedTools.length} tools</div>
+                                        )}
+                                    </td>
+                                    <td className="px-4 py-4 whitespace-nowrap text-xs text-zinc-400">
+                                        {job.weekdaysOnly || job.daytimeOnly ? (
+                                            <div className="flex flex-col gap-0.5">
+                                                {job.weekdaysOnly && (
+                                                    <span className="flex items-center gap-1"><CalendarDays className="w-3 h-3" /> Weekdays</span>
+                                                )}
+                                                {job.daytimeOnly && (
+                                                    <span className="flex items-center gap-1"><Sun className="w-3 h-3" /> Daytime</span>
+                                                )}
+                                            </div>
+                                        ) : (
+                                            <span className="text-zinc-600">Any time</span>
+                                        )}
+                                    </td>
                                     <td className="px-2 py-4 text-zinc-400 whitespace-nowrap">
                                         <div className="flex flex-col">
                                             <span>{job.nextInvocation ? new Date(job.nextInvocation).toLocaleString() : '-'}</span>
@@ -323,6 +369,15 @@ export default function ActiveJobsTable({ onViewHistory, systemOnly = false }) {
                                             >
                                                 <Play className="w-4 h-4" />
                                             </button>
+                                            {systemOnly && (
+                                                <button
+                                                    onClick={() => setScopeJob(job)}
+                                                    className="p-1.5 hover:bg-zinc-700/50 rounded text-indigo-400 transition-colors"
+                                                    title="Edit the model and tools"
+                                                >
+                                                    <Edit className="w-4 h-4" />
+                                                </button>
+                                            )}
                                             {!systemOnly && (
                                                 <>
                                                     <button
