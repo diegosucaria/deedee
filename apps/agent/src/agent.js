@@ -138,7 +138,20 @@ class Agent {
     this.mcp = new MCPManager(path.join(dataDir, 'mcp_config.json'));
 
     // Tools Setup
-    this.local = new LocalTools('/app/source');
+    // The supervisor says which files git tracks, from its own index; the
+    // index inside /app/source is one the shell can write.
+    this.local = new LocalTools('/app/source', {
+      isTracked: async (file) => {
+        const url = `${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/tracked?path=${encodeURIComponent(file)}`;
+        const res = await fetch(url, {
+          headers: { 'x-supervisor-token': process.env.SUPERVISOR_TOKEN || '' },
+          signal: AbortSignal.timeout(5000)
+        });
+        if (!res.ok) return false;
+        const body = await res.json();
+        return body && body.tracked === true;
+      }
+    });
     this.journal = new JournalManager();
     this.vaults = new VaultManager(dataDir); // Initialize Vaults with dynamic path
     this.backupManager = new BackupManager(this);
@@ -2983,8 +2996,8 @@ class Agent {
         this.notifications.create({
           type: 'self_improvement',
           severity: 'info',
-          title: 'Self-improvement commit pushed',
-          message: args.message,
+          title: 'Self-improvement pull request opened',
+          message: toolResult.pullRequest ? `#${toolResult.pullRequest.number}: ${args.message}` : args.message,
           metadata: { link: '/system' }
         });
         if (process.env.SLACK_WEBHOOK_URL) {
@@ -2993,7 +3006,7 @@ class Agent {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                text: `🚀 *New Feature Deployed via Self-Improvement*\n\n*Commit:* ${args.message}\n*Files:* All changed files`
+                text: `🔀 *Self-improvement pull request opened*\n\n*Title:* ${args.message}${toolResult.pullRequest ? `\n*Pull request:* #${toolResult.pullRequest.number}` : ''}\nNothing deploys until the owner merges it.`
               })
             });
             console.log('[Agent] Sent Slack notification for self-improvement.');

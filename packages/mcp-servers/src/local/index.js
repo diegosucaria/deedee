@@ -1,14 +1,202 @@
 const fs = require('fs/promises');
 const path = require('path');
-const { exec } = require('child_process');
+const { exec, execFile } = require('child_process');
 const util = require('util');
 const execAsync = util.promisify(exec);
+const execFileAsync = util.promisify(execFile);
 
 const BLOCKED_BINARIES = [
   'vi', 'nano', 'emacs', 'vim', 'top', 'htop', 'shutdown', 'init', 'halt',
   'passwd', 'mkfs', 'fdisk', 'parted', 'dd', 'env', 'printenv', 'sudo', 'su',
   'sqlite3'
 ];
+
+// Words that run the next word as a command. `sh -c '<script>'` runs its
+// script. Checking only the first word of the whole line let
+// `sh -c env`, `cd x && vi` or `nohup top` through.
+const SHELL_WRAPPERS = new Set(['sh', 'bash', 'dash', 'ash', 'zsh', 'ksh']);
+// Programs that run the string after -c: `flock /tmp/l -c env`, `script -c env`.
+const C_FLAG_WRAPPERS = new Set([...SHELL_WRAPPERS, 'flock', 'script']);
+const PREFIX_WRAPPERS = new Set([
+  'nohup', 'exec', 'time', 'nice', 'timeout', 'xargs', 'command', 'busybox', 'stdbuf',
+  'setsid', 'unshare', 'nsenter', 'ionice', 'chroot', 'flock', 'taskset', 'chrt'
+]);
+// Wrappers whose first plain argument is not the command: `chroot /dir env`,
+// `flock /tmp/lock env`, `taskset 0x1 env`, `chrt 10 env`.
+const ARG_WRAPPERS = new Set(['chroot', 'flock', 'taskset', 'chrt']);
+// Shell words that sit where a command name goes but are not programs.
+const RESERVED_WORDS = new Set([
+  'if', 'then', 'else', 'elif', 'fi', 'do', 'done', 'while', 'until', 'esac',
+  '{', '}', '!', '[[', ']]', 'coproc'
+]);
+// Words that start a line whose other words are not commands:
+// `for i in a b`, `select x in a b`, `case $x in`.
+const LIST_WORDS = new Set(['for', 'select', 'case']);
+
+/**
+ * Splits a command line into simple commands: one array of words per
+ * command, split at ; & | ( ) ` and newlines outside quotes. Quoted text
+ * stays inside its word. Redirect targets (`>file`, `2>&1`, `</dev/null`)
+ * are not words. Heredoc bodies are data: they are skipped up to their
+ * closing line, and parsing goes on after it.
+ */
+function splitSimpleCommands(command) {
+  const text = String(command);
+  const commands = [];
+  let words = [];
+  let word = '';
+  let inWord = false;
+  // What the next finished word is: a redirect target, a heredoc delimiter,
+  // or a normal word.
+  let nextWord = null;
+  let pendingHeredocs = [];
+  const endWord = () => {
+    if (inWord) {
+      if (nextWord === 'target') {
+        nextWord = null;
+      } else if (nextWord === 'heredoc') {
+        pendingHeredocs.push(word);
+        nextWord = null;
+      } else {
+        words.push(word);
+      }
+    }
+    word = '';
+    inWord = false;
+  };
+  const endCommand = () => {
+    endWord();
+    if (nextWord === 'target') nextWord = null;
+    if (words.length) commands.push(words);
+    words = [];
+  };
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch === "'") {
+      const close = text.indexOf("'", i + 1);
+      const end = close === -1 ? text.length : close;
+      word += text.slice(i + 1, end);
+      inWord = true;
+      i = end;
+    } else if (ch === '"') {
+      inWord = true;
+      for (i++; i < text.length && text[i] !== '"'; i++) {
+        if (text[i] === '\\' && i + 1 < text.length) i++;
+        word += text[i];
+      }
+    } else if (ch === '\\') {
+      if (i + 1 < text.length) {
+        i++;
+        if (text[i] !== '\n') word += text[i];
+      }
+      inWord = true;
+    } else if (ch === '<' && text[i + 1] === '<' && text[i + 2] === '<') {
+      // Here-string: the next word is data.
+      endWord();
+      nextWord = 'target';
+      i += 2;
+    } else if (ch === '<' && text[i + 1] === '<') {
+      endWord();
+      nextWord = 'heredoc';
+      i++;
+      if (text[i + 1] === '-') i++;
+    } else if ((ch === '<' || ch === '>') && text[i + 1] !== '(') {
+      // A file descriptor number glued to the redirect is not a word.
+      if (inWord && /^\d+$/.test(word)) {
+        word = '';
+        inWord = false;
+      }
+      endWord();
+      while (i + 1 < text.length && '<>&|'.includes(text[i + 1])) i++;
+      nextWord = 'target';
+    } else if (ch === '<' || ch === '>') {
+      // Process substitution `<(cmd)`: the `(` starts a command.
+      endWord();
+    } else if (ch === '\n') {
+      endCommand();
+      if (pendingHeredocs.length) {
+        // Skip each body up to the line that closes it.
+        let lineStart = i + 1;
+        for (const delimiter of pendingHeredocs) {
+          for (;;) {
+            if (lineStart >= text.length) break;
+            let lineEnd = text.indexOf('\n', lineStart);
+            if (lineEnd === -1) lineEnd = text.length;
+            const line = text.slice(lineStart, lineEnd).replace(/^\t+/, '');
+            lineStart = lineEnd + 1;
+            if (line === delimiter) break;
+          }
+        }
+        pendingHeredocs = [];
+        i = lineStart - 1;
+      }
+    } else if (';&|()`'.includes(ch)) {
+      endCommand();
+    } else if (/\s/.test(ch)) {
+      endWord();
+    } else {
+      word += ch;
+      inWord = true;
+    }
+  }
+  endCommand();
+  return commands;
+}
+
+/**
+ * The program name of every command the line would start, looking through
+ * wrappers and shell keywords: `nohup top`, `timeout 5 vi`, `bash -c "env"`,
+ * `if true; then sudo id; fi`. Guard rail only; `node -e` or `python -c`
+ * can start anything and are not parsed.
+ */
+function commandHeads(command, depth = 0) {
+  const heads = [];
+  for (const words of splitSimpleCommands(command)) {
+    let i = 0;
+    while (i < words.length) {
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]) || RESERVED_WORDS.has(words[i])) {
+        i++;
+      } else if (words[i] === 'function') {
+        i += 2;
+      } else {
+        break;
+      }
+    }
+    if (i < words.length && LIST_WORDS.has(words[i])) continue;
+    while (i < words.length) {
+      const name = path.basename(words[i]);
+      const cFlag = C_FLAG_WRAPPERS.has(name)
+        ? words.findIndex((w, k) => k > i && /^-[a-zA-Z]*c[a-zA-Z]*$/.test(w))
+        : -1;
+      if (cFlag !== -1 && cFlag + 1 < words.length) {
+        heads.push(name);
+        if (depth < 3) heads.push(...commandHeads(words[cFlag + 1], depth + 1));
+        break;
+      }
+      if (PREFIX_WRAPPERS.has(name)) {
+        // `command -v vi` asks where vi is; it does not run it.
+        if (name === 'command' && words.slice(i + 1).some(w => /^-[a-zA-Z]*[vV]/.test(w))) {
+          heads.push(name);
+          break;
+        }
+        i++;
+        const skipFlags = () => { while (i < words.length && /^-/.test(words[i])) i++; };
+        if (ARG_WRAPPERS.has(name)) {
+          // Flags, the one argument, then flags again.
+          skipFlags();
+          i++;
+          skipFlags();
+        } else {
+          while (i < words.length && (/^-/.test(words[i]) || /^\d+(?:\.\d+)?[smhd]?$/.test(words[i]))) i++;
+        }
+        continue;
+      }
+      heads.push(name);
+      break;
+    }
+  }
+  return heads;
+}
 
 // Subfolders of the data volume the shell may read. Everything else there —
 // the browser profile and its secrets file, the WhatsApp session, the Google
@@ -108,41 +296,168 @@ function shellEnv(env = process.env) {
  * appears, and the value side of "NAME=value" / "NAME: value" lines whose name
  * looks secret (covers .env files and variables this process doesn't have).
  */
-function redactSecrets(text, env = process.env) {
+// Variables whose names match SECRET_NAME but whose values are never
+// secrets. The shell exports PWD and OLDPWD as the current and previous
+// directory; redacting them turned every source line naming /app/apps/agent
+// into a marker the agent could not write back.
+const NON_SECRET_VALUE_NAMES = new Set(['PWD', 'OLDPWD']);
+
+function redactSecrets(text, env = process.env, { lineRules = true } = {}) {
   if (typeof text !== 'string' || text.length === 0) return text;
   let out = text;
   const values = Object.entries(env)
-    .filter(([name, value]) => isSecretName(name) && typeof value === 'string' && value.length >= 6)
+    .filter(([name, value]) => !NON_SECRET_VALUE_NAMES.has(name) && isSecretName(name) && typeof value === 'string' && value.length >= 6)
     .sort((a, b) => b[1].length - a[1].length);
   for (const [name, value] of values) {
     if (out.includes(value)) out = out.split(value).join(`[REDACTED:${name}]`);
   }
-  out = out.replace(SECRET_LINE, (line, prefix, name, separator) => (
-    isSecretName(name) ? `${prefix}${name}${separator}[REDACTED]` : line
-  ));
+  if (lineRules) {
+    out = out.replace(SECRET_LINE, (line, prefix, name, separator) => (
+      isSecretName(name) ? `${prefix}${name}${separator}[REDACTED]` : line
+    ));
+  }
   for (const { regex, replacement } of SECRET_PATTERNS) {
     out = out.replace(regex, replacement);
   }
   return out;
 }
 
+// Path segments the file tools never write under. `.git/` holds hooks and
+// config that git runs; `.github/` holds workflows that CI runs with the
+// repository's secrets.
+const WRITE_DENIED_SEGMENTS = ['.git', '.github'];
+
+// A read that went through the redactor carries this marker. Writing it back
+// would replace real lines with the marker, so writeFile refuses it.
+const REDACTION_MARKER = '[REDACTED';
+
+// Flags for the one git command the file tools run (is this path tracked?).
+// No hook, no fsmonitor, no system config: the tree belongs to the agent.
+const SAFE_GIT_FLAGS = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
+
+/** How many times `needle` occurs in `text`. */
+function countOf(text, needle) {
+  return String(text).split(needle).length - 1;
+}
+
+/** True when `child` is `root` or sits below it. Both must be absolute. */
+function isInside(root, child) {
+  const rel = path.relative(root, child);
+  return rel === '' || (!rel.startsWith('..') && !path.isAbsolute(rel));
+}
+
+/**
+ * realpath of the path, or of its nearest existing ancestor with the missing
+ * tail joined back on. A file that does not exist yet resolves through the
+ * symlinks of the folders above it.
+ */
+async function realpathNearest(fullPath) {
+  const missing = [];
+  let current = fullPath;
+  for (;;) {
+    try {
+      const real = await fs.realpath(current);
+      return missing.length ? path.join(real, ...missing.reverse()) : real;
+    } catch (error) {
+      if (error.code !== 'ENOENT' && error.code !== 'ENOTDIR') throw error;
+      // A link whose target is missing: realpath fails, but a write would
+      // follow the link and create the target, wherever it points.
+      const link = await fs.lstat(current).catch(() => null);
+      if (link && link.isSymbolicLink()) {
+        throw new Error(`Access denied: '${current}' is a link to a missing target.`);
+      }
+      const parent = path.dirname(current);
+      if (parent === current) throw error;
+      missing.push(path.basename(current));
+      current = parent;
+    }
+  }
+}
+
 class LocalTools {
-  constructor(workDir = '/app') {
+  /**
+   * @param {string} workDir - Relative paths resolve here.
+   * @param {object} [options]
+   * @param {string[]} [options.allowedRoots] - Folders the file tools may
+   *   reach. Defaults to workDir alone.
+   */
+  constructor(workDir = '/app', options = {}) {
     this.workDir = workDir;
+    // (relative path) => Promise<boolean>. On the device the supervisor
+    // answers from its own index. Without it, git in the tree answers, which
+    // is fine for tests and local runs but is an index the shell can write.
+    this.isTrackedFn = typeof options.isTracked === 'function' ? options.isTracked : null;
+    this.allowedRoots = options.allowedRoots && options.allowedRoots.length
+      ? options.allowedRoots
+      : [workDir];
   }
 
-  _resolveSafe(targetPath) {
-    const fullPath = path.resolve(this.workDir, targetPath);
-    if (!fullPath.startsWith(path.resolve(this.workDir))) {
-      throw new Error(`Access denied: Path '${targetPath}' resolves outside of working directory.`);
+  /**
+   * Resolves a path the way the kernel will: through every symlink. The check
+   * runs on the real path, so a link inside the tree that points at / (or
+   * anywhere else) is refused. Returns { fullPath, realPath, root, relative }.
+   * This is a guard for the file tools, not a boundary against the shell,
+   * which can still move a link between this check and the open.
+   */
+  async _resolveSafe(targetPath) {
+    if (typeof targetPath !== 'string' || targetPath === '') {
+      throw new Error('Access denied: a path is required.');
     }
-    return fullPath;
+    const fullPath = path.resolve(this.workDir, targetPath);
+    const realPath = await realpathNearest(fullPath);
+    for (const root of this.allowedRoots) {
+      let realRoot;
+      try {
+        realRoot = await fs.realpath(path.resolve(root));
+      } catch {
+        continue;
+      }
+      if (isInside(realRoot, realPath)) {
+        return { fullPath, realPath, root: realRoot, relative: path.relative(realRoot, realPath) };
+      }
+    }
+    throw new Error(`Access denied: Path '${targetPath}' resolves outside of working directory.`);
+  }
+
+  /**
+   * True when git tracks this path. Tracked source skips the redactor's line
+   * rules, which turn ordinary code into [REDACTED] that a read-modify-write
+   * would store. Any failure (no git, no repo, no answer) counts as
+   * untracked, so the output gets every rule.
+   */
+  async _isTracked(root, relative) {
+    if (!relative || relative.split(path.sep).some(seg => seg.toLowerCase() === '.git')) return false;
+    if (this.isTrackedFn) {
+      try {
+        const realWorkDir = await fs.realpath(path.resolve(this.workDir));
+        if (root !== realWorkDir) return false;
+        return (await this.isTrackedFn(relative.split(path.sep).join('/'))) === true;
+      } catch {
+        return false;
+      }
+    }
+    try {
+      await execFileAsync('git', [
+        ...SAFE_GIT_FLAGS, '--literal-pathspecs', 'ls-files', '--error-unmatch', '--', relative
+      ], {
+        cwd: root,
+        env: { ...shellEnv(), GIT_CONFIG_NOSYSTEM: '1', GIT_CONFIG_GLOBAL: '/dev/null' },
+        timeout: 5000
+      });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async readFile(filePath) {
     try {
-      const fullPath = this._resolveSafe(filePath);
-      return redactSecrets(await fs.readFile(fullPath, 'utf8'));
+      const { realPath, root, relative } = await this._resolveSafe(filePath);
+      const content = await fs.readFile(realPath, 'utf8');
+      // Secret values and token shapes go from every file. Only the
+      // name-based line rules are skipped for tracked source.
+      const tracked = await this._isTracked(root, relative);
+      return redactSecrets(content, process.env, { lineRules: !tracked });
     } catch (error) {
       throw new Error(`Failed to read file: ${error.message}`);
     }
@@ -150,10 +465,24 @@ class LocalTools {
 
   async writeFile(filePath, content) {
     try {
-      const fullPath = this._resolveSafe(filePath);
-      await fs.mkdir(path.dirname(fullPath), { recursive: true });
-      await fs.writeFile(fullPath, content, 'utf8');
-      return { success: true, path: fullPath };
+      const { realPath, relative } = await this._resolveSafe(filePath);
+      const segments = relative.split(path.sep).map(seg => seg.toLowerCase());
+      const denied = WRITE_DENIED_SEGMENTS.find(name => segments.includes(name));
+      if (denied) {
+        throw new Error(`Access denied: writing under ${denied}/ is not allowed.`);
+      }
+      if (typeof content === 'string' && content.includes(REDACTION_MARKER)) {
+        // Refuse only markers the file on disk does not hold already. A file
+        // that quotes the marker (the redactor, its tests, the docs) can
+        // still be rewritten; a redacted read written back adds markers.
+        const current = await fs.readFile(realPath, 'utf8').catch(() => '');
+        if (countOf(content, REDACTION_MARKER) > countOf(current, REDACTION_MARKER)) {
+          throw new Error('The content holds more [REDACTED] markers than the file on disk, so it likely came from a redacted read. Writing it would replace real lines. Rewrite those lines, or edit the file with a command that changes only the lines you mean to change.');
+        }
+      }
+      await fs.mkdir(path.dirname(realPath), { recursive: true });
+      await fs.writeFile(realPath, content, 'utf8');
+      return { success: true, path: realPath };
     } catch (error) {
       throw new Error(`Failed to write file: ${error.message}`);
     }
@@ -161,8 +490,8 @@ class LocalTools {
 
   async listDirectory(dirPath) {
     try {
-      const fullPath = this._resolveSafe(dirPath);
-      const files = await fs.readdir(fullPath, { withFileTypes: true });
+      const { realPath } = await this._resolveSafe(dirPath);
+      const files = await fs.readdir(realPath, { withFileTypes: true });
       return files.map(dirent => ({
         name: dirent.name,
         type: dirent.isDirectory() ? 'directory' : 'file'
@@ -174,12 +503,9 @@ class LocalTools {
 
   async runShellCommand(command, options = {}) {
     // Basic validation to prevent running interactive tools that hang or highly destructive commands
-    const binary = command.trim().split(' ')[0];
-
-    const binaryName = path.basename(binary);
-
-    if (BLOCKED_BINARIES.includes(binaryName)) {
-      throw new Error(`Command '${binaryName}' is blocked for security or stability reasons.`);
+    const blocked = commandHeads(command).find(name => BLOCKED_BINARIES.includes(name));
+    if (blocked) {
+      throw new Error(`Command '${blocked}' is blocked for security or stability reasons.`);
     }
 
     // Block commands that target credentials or the databases directly
@@ -209,4 +535,4 @@ class LocalTools {
   }
 }
 
-module.exports = { LocalTools, redactSecrets, isSecretName, shellEnv, SHELL_BASE_VARS, BLOCKED_PATTERNS };
+module.exports = { LocalTools, commandHeads, redactSecrets, isSecretName, shellEnv, SHELL_BASE_VARS, BLOCKED_PATTERNS };

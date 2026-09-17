@@ -1,14 +1,14 @@
-const { exec, execFile } = require('child_process');
+const { execFile } = require('child_process');
+const fs = require('fs');
+const path = require('path');
 const util = require('util');
-const { Verifier, isSafePath } = require('./verifier');
-const execAsync = util.promisify(exec);
+const { Verifier, isSafePath, regularFileInside, snapshotFiles, scrubProcessSecrets } = require('./verifier');
 const execFileAsync = util.promisify(execFile);
 
 // Untracked files may only enter a commit from these folders, with these
 // extensions (or the bare name `Dockerfile`). Root-level files, data/ and
 // *.db never get staged. This keeps personal files the agent drops into the
-// work dir out of the public repo. `.github/` stays out: a staged workflow
-// file would run in CI with the repository's secrets.
+// work dir out of the public repo.
 const ALLOWED_PREFIXES = ['apps/', 'packages/', 'docs/', 'specs/'];
 const ALLOWED_EXTENSIONS = [
   '.js', '.jsx', '.mjs', '.cjs', '.ts', '.json', '.md', '.yml', '.yaml',
@@ -16,18 +16,60 @@ const ALLOWED_EXTENSIONS = [
 ];
 const ALLOWED_BASENAMES = ['Dockerfile'];
 
+// No change under these folders ever goes out, tracked or not. A workflow
+// file on a branch of this repository runs in CI with the repository's
+// secrets as soon as a pull request opens.
+const DENIED_SEGMENTS = ['.git', '.github'];
+
+// Every git command carries these. The supervisor keeps its own git dir, so
+// the repository config is its own; the flags still switch off everything in
+// git that starts another program, in case that config is ever shared again.
+const SAFE_GIT_FLAGS = [
+  '-c', 'core.hooksPath=/dev/null',
+  '-c', 'core.fsmonitor=false',
+  '-c', 'commit.gpgSign=false',
+  '-c', 'credential.helper=',
+  '-c', 'protocol.ext.allow=never'
+];
+
 // A parent process (a git hook, for one) may export these to point git at
-// another repository. GitOps must only ever touch workDir, so it drops them.
+// another repository. GitOps must only ever touch its own git dir.
 const REDIRECTING_GIT_VARS = [
   'GIT_DIR', 'GIT_WORK_TREE', 'GIT_INDEX_FILE', 'GIT_PREFIX', 'GIT_COMMON_DIR',
-  'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE'
+  'GIT_OBJECT_DIRECTORY', 'GIT_ALTERNATE_OBJECT_DIRECTORIES', 'GIT_NAMESPACE',
+  'GIT_CONFIG', 'GIT_CONFIG_PARAMETERS', 'GIT_CONFIG_COUNT', 'GIT_EXEC_PATH',
+  'GIT_SSH', 'GIT_SSH_COMMAND', 'GIT_ASKPASS', 'GIT_EXTERNAL_DIFF', 'GIT_PAGER', 'GIT_EDITOR'
 ];
+
+const SELF_PR_FILE = 'self-pull-requests.json';
+const MAX_RECORDED_PRS = 50;
+const GITHUB_API = 'https://api.github.com';
+
+// Credential-named variables of the supervisor (GITHUB_PAT, the balena API
+// key, SUPERVISOR_TOKEN). Git never needs them: the token travels as a
+// per-command header. A git child without them has nothing to give away
+// through its own /proc entry.
+const CREDENTIAL_VAR = /TOKEN|SECRET|PASS|KEY|CREDENTIAL|AUTH|COOKIE|PRIVATE|(?:^|_)PAT(?:_|$)/i;
 
 /** process.env without the variables that redirect git away from cwd. */
 function cleanGitEnv() {
   const env = { ...process.env };
   for (const key of REDIRECTING_GIT_VARS) delete env[key];
+  for (const key of Object.keys(env)) {
+    if (CREDENTIAL_VAR.test(key)) delete env[key];
+  }
   return env;
+}
+
+/** Environment for every git command: no system or global config, no prompt. */
+function gitEnv(extra = {}) {
+  return {
+    ...cleanGitEnv(),
+    GIT_CONFIG_NOSYSTEM: '1',
+    GIT_CONFIG_GLOBAL: '/dev/null',
+    GIT_TERMINAL_PROMPT: '0',
+    ...extra
+  };
 }
 
 /**
@@ -44,21 +86,47 @@ function splitRemoteCredentials(remoteUrl) {
   return { url: `${scheme}${rest}`, token: token || null };
 }
 
+/** `owner/repo` for an https GitHub URL, or null. */
+function githubSlug(url) {
+  const match = String(url || '').match(/^https:\/\/github\.com\/([A-Za-z0-9_.-]+)\/([A-Za-z0-9_.-]+?)(?:\.git)?\/?$/);
+  return match ? `${match[1]}/${match[2]}` : null;
+}
+
+/** UTC time as 20260917-090312, for branch names. */
+function stamp(date = new Date()) {
+  return date.toISOString().replace(/[-:]/g, '').replace('T', '-').replace(/\..*$/, '');
+}
+
+/** True when any segment of the path is .git or .github (any case). */
+function hasDeniedSegment(file) {
+  return String(file).replace(/\\/g, '/').split('/')
+    .some(segment => DENIED_SEGMENTS.includes(segment.toLowerCase()));
+}
+
+/**
+ * Git for the supervisor.
+ *
+ * The work tree (/app/source) belongs to the agent, which writes it as root.
+ * So the supervisor never runs anything from it: it keeps its own git dir in
+ * the supervisor-only state volume (hooks, config and index the agent cannot
+ * reach), runs no tests, and never pushes to master. A self-improvement
+ * becomes a branch `deedee/self/<time>` and a pull request; CI runs the suite
+ * and the owner merges. A rollback becomes a revert pull request.
+ */
 class GitOps {
-  constructor(workDir = '/app/source', identity = null) {
+  constructor(workDir = '/app/source', identity = null, options = {}) {
     this.workDir = workDir;
+    this.stateDir = options.stateDir || process.env.SUPERVISOR_STATE_DIR || '/app/state';
+    this.gitDir = options.gitDir || path.join(this.stateDir, 'repo.git');
+    this.fetch = options.fetch || ((...args) => fetch(...args));
+    // `owner/repo` for the REST API. Derived from the remote URL when unset.
+    this.repoSlug = options.repoSlug || null;
     this.verifier = new Verifier(workDir);
-    // The GitHub token never enters the stored remote URL: `.git/config` sits
-    // on a volume the agent can read, and `git remote -v` would print it.
-    // Network commands carry it as a per-command header instead.
+    // The GitHub token never enters a stored remote URL. Network commands
+    // carry it as a per-command header; the REST API gets it as a bearer.
     this.token = null;
-    // The remote URL configure() was given, without credentials. Remote
-    // commands address this URL, never the name `origin`: the agent writes
-    // .git/config, so the name could point anywhere.
+    // The remote URL configure() was given, without credentials.
     this.remoteUrl = null;
-    // The author identity travels with every commit and revert as `-c`
-    // flags. The agent can rewrite .git/config in the shared volume; the
-    // env values it cannot touch.
     this.identity = identity || {
       name: process.env.GIT_USER_NAME || 'Deedee Supervisor',
       email: process.env.GIT_USER_EMAIL || 'supervisor@deedee.bot'
@@ -72,9 +140,7 @@ class GitOps {
 
   /**
    * `-c http.<remote URL>.extraheader=…` for commands that talk to the
-   * remote. The header is bound to the configured URL: a global
-   * `http.extraheader` follows whatever host the command reaches, and the
-   * agent can rewrite .git/config to name its own.
+   * remote. Bound to the configured URL, so no other host ever sees it.
    */
   _authArgs() {
     if (!this.token || !this.remoteUrl) return [];
@@ -82,15 +148,10 @@ class GitOps {
     return ['-c', `http.${this.remoteUrl}.extraheader=Authorization: Basic ${basic}`];
   }
 
-  /**
-   * What a remote command points at: the configured URL. Without one, a
-   * token has nothing to bind to, so the command is refused rather than
-   * sent to whatever `origin` names today.
-   */
+  /** The configured URL. Remote commands never go by the name `origin`. */
   _remoteTarget() {
     if (this.remoteUrl) return this.remoteUrl;
-    if (this.token) throw new Error('Remote command refused: no remote URL is configured to bind the credentials to.');
-    return 'origin';
+    throw new Error('No remote URL is configured.');
   }
 
   /** Replaces the token and its base64 form wherever they appear. */
@@ -104,104 +165,257 @@ class GitOps {
   }
 
   /**
-   * Runs a git command that talks to the remote. Credentials ride along as a
-   * per-command header, and never reach the logs or a thrown message: git
-   * repeats its argv in the failure text, and commitAndPush hands that text
-   * back to the agent.
+   * Runs git against the supervisor's own git dir and the shared work tree.
+   * No shell; every argument is one argv entry. Errors never carry the token.
+   * @param {string[]} args
+   * @param {object} [opts] - { authed, env, raw }
    */
-  async _runAuthed(args) {
+  async git(args, { authed = false, env = {}, raw = false, quiet = false } = {}) {
+    const argv = [
+      ...SAFE_GIT_FLAGS,
+      `--git-dir=${this.gitDir}`,
+      `--work-tree=${this.workDir}`,
+      ...(authed ? this._authArgs() : []),
+      ...args
+    ];
     try {
-      const { stdout, stderr } = await execFileAsync('git', [...this._authArgs(), ...args], {
+      const { stdout, stderr } = await execFileAsync('git', argv, {
         cwd: this.workDir,
-        env: cleanGitEnv()
+        env: gitEnv(env),
+        maxBuffer: 64 * 1024 * 1024
       });
-      if (stderr) console.warn(`Git Warning (Remote): ${this._scrub(stderr)}`);
-      return stdout.trim();
+      if (stderr) console.warn(`Git Warning: ${this._scrub(stderr).trim()}`);
+      return raw ? stdout : stdout.trim();
     } catch (error) {
-      const message = this._scrub(error.message);
-      console.error(`Git Error (Remote): ${message}`);
+      const message = this._scrub(`${error.message}${error.stderr ? `\n${error.stderr}` : ''}`);
+      if (!quiet) console.error(`Git Error: ${message}`);
       throw new Error(message);
     }
   }
 
-  async run(command) {
+  /** The commit a revision names, or null when it does not exist. */
+  async _revParse(rev) {
     try {
-      const { stdout, stderr } = await execAsync(command, { cwd: this.workDir, env: cleanGitEnv() });
-      if (stderr) console.warn(`Git Warning: ${stderr}`);
-      return stdout.trim();
+      return await this.git(['rev-parse', '--verify', '--quiet', `${rev}^{commit}`]);
+    } catch {
+      return null;
+    }
+  }
+
+  async _fetchMaster() {
+    await this.git(['fetch', '-q', this._remoteTarget(), '+refs/heads/master:refs/remotes/origin/master'], { authed: true });
+  }
+
+  async configure(name, email, remoteUrl, token = null) {
+    this.identity = { name, email };
+
+    // A URL that already carries credentials (an older GIT_REMOTE_URL) gives
+    // up its token here; only the clean URL is kept.
+    const split = splitRemoteCredentials(remoteUrl);
+    this.token = token || split.token || null;
+    this.remoteUrl = split.url || null;
+
+    fs.mkdirSync(path.dirname(this.gitDir), { recursive: true });
+    if (!fs.existsSync(path.join(this.gitDir, 'HEAD'))) {
+      console.log(`[GitOps] Creating the supervisor's git dir at ${this.gitDir}`);
+      await this.git(['init', '-q']);
+    }
+    await this.git(['symbolic-ref', 'HEAD', 'refs/heads/master']);
+
+    if (!this.remoteUrl) {
+      console.log('[GitOps] No remote URL configured. Skipping sync.');
+      return;
+    }
+    console.log(`[GitOps] Remote: ${this.remoteUrl}${this.token ? ' (credentials passed per command)' : ''}`);
+    await this._fetchMaster();
+
+    if (!(await this._revParse('HEAD'))) {
+      // First start with this git dir. The work tree still matches the commit
+      // the old in-tree .git had checked out; start the index there so local
+      // edits stay edits, then move forward like a pull.
+      const base = await this._legacyBase();
+      if (base) {
+        await this.git(['reset', '-q', '--mixed', base]);
+      } else if (await this._workTreeHasContent()) {
+        // Files are there, but their commit is not: a commit the old flow
+        // never pushed, or a HEAD that could not be read. A hard reset would
+        // overwrite every local edit. Set only the index, so the files show
+        // up as edits against origin/master. pullLatestChanges resets them.
+        console.warn('[GitOps] The work tree holds files, but its previous commit was not found. Keeping the files as local edits against origin/master; pull to reset them.');
+        await this.git(['reset', '-q', '--mixed', 'refs/remotes/origin/master']);
+        return;
+      } else {
+        // No commit and no files: a new device or a wiped volume. Check the
+        // files out. `--mixed` would set only the index, and every tracked
+        // file would read as deleted in the next self-improvement.
+        console.log('[GitOps] No previous commit in the work tree. Checking out origin/master.');
+        await this.git(['reset', '-q', '--hard', 'refs/remotes/origin/master']);
+      }
+    }
+    if (await this._dirtyMatchesUpstream()) {
+      // A merged self-improvement: its edits are still uncommitted in the
+      // work tree and equal origin/master, so a fast-forward would refuse.
+      console.log('[GitOps] Local edits already match origin/master. Moving to it.');
+      await this.git(['reset', '-q', '--hard', 'refs/remotes/origin/master']);
+      return;
+    }
+    try {
+      await this.git(['merge', '--ff-only', '-q', 'refs/remotes/origin/master']);
     } catch (error) {
-      console.error(`Git Error: ${error.message}`);
-      throw error;
+      console.warn(`[GitOps] Could not fast-forward the work tree to origin/master: ${error.message}`);
     }
   }
 
   /**
-   * Like run(), but keeps stdout as is. `git status --porcelain` entries start
-   * with a space for unstaged edits; trim() would eat it.
+   * True when the work tree differs from HEAD and every differing path
+   * (tracked edits and deletions, plus untracked files at paths
+   * origin/master adds) holds exactly what origin/master holds. Then a hard
+   * reset to origin/master loses nothing.
    */
-  async runRaw(command) {
+  async _dirtyMatchesUpstream() {
     try {
-      const { stdout, stderr } = await execAsync(command, { cwd: this.workDir, env: cleanGitEnv() });
-      if (stderr) console.warn(`Git Warning: ${stderr}`);
-      return stdout;
-    } catch (error) {
-      console.error(`Git Error: ${error.message}`);
-      throw error;
-    }
-  }
-
-  async runSafe(file, args) {
-    try {
-      const { stdout, stderr } = await execFileAsync(file, args, { cwd: this.workDir, env: cleanGitEnv() });
-      if (stderr) console.warn(`Git Warning (Safe): ${stderr}`);
-      return stdout.trim();
-    } catch (error) {
-      console.error(`Git Error (Safe): ${error.message}`);
-      throw error;
-    }
-  }
-
-  async configure(name, email, remoteUrl, token = null) {
-    // Initialize (idempotent) to ensure repo exists without causing 'not a git repository' errors
-    await this.run('git init');
-    await this.run('git checkout -B master');
-
-    // Repo config only serves merges during `git pull`. Commits and reverts
-    // carry the identity per command (see _identityArgs).
-    this.identity = { name, email };
-    await this.runSafe('git', ['config', 'user.name', name]);
-    await this.runSafe('git', ['config', 'user.email', email]);
-
-    // A URL that already carries credentials (an older GIT_REMOTE_URL) gives
-    // up its token here; only the clean URL is stored.
-    const split = splitRemoteCredentials(remoteUrl);
-    this.token = token || split.token || null;
-    const cleanUrl = split.url;
-    this.remoteUrl = cleanUrl || null;
-
-    if (cleanUrl) {
-      console.log(`[GitOps] Configuring remote: ${cleanUrl}${this.token ? ' (credentials passed per command)' : ''}`);
-      // Check existing remotes to avoid 'No such remote' or 'Remote already exists' errors.
-      // set-url also scrubs a token an earlier release stored in .git/config.
-      const remotes = await this.run('git remote');
-      if (remotes.includes('origin')) {
-        await this.runSafe('git', ['remote', 'set-url', 'origin', cleanUrl]);
-      } else {
-        await this.runSafe('git', ['remote', 'add', 'origin', cleanUrl]);
+      const upstream = 'refs/remotes/origin/master';
+      const split = (text) => text.split('\0').filter(Boolean);
+      const dirty = split(await this.git(['diff', '--name-only', '-z', '--no-renames', 'HEAD', '--'], { raw: true }));
+      const incoming = new Set(split(await this.git(['diff', '--name-only', '-z', '--no-renames', 'HEAD', upstream, '--'], { raw: true })));
+      const untracked = split(await this.git(['ls-files', '--others', '--exclude-standard', '-z'], { raw: true }))
+        .filter(file => incoming.has(file));
+      const paths = [...new Set([...dirty, ...untracked])];
+      if (paths.length === 0 || paths.length > 1000) return false;
+      for (const file of paths) {
+        const upstreamBlob = await this._revParseObject(`${upstream}:${file}`);
+        const fullPath = regularFileInside(this.workDir, file);
+        let exists = true;
+        try { fs.lstatSync(path.join(this.workDir, file)); } catch { exists = false; }
+        if (!exists) {
+          if (upstreamBlob) return false;
+          continue;
+        }
+        if (!fullPath || !upstreamBlob) return false;
+        const local = await this.git(['hash-object', '--no-filters', '--', file]);
+        if (local !== upstreamBlob) return false;
       }
-      // Pull after setting up the remote to ensure content is retrieved
-      console.log('[GitOps] Pulling from origin/master...');
-      await this._runAuthed(['pull', this._remoteTarget(), 'master']);
-    } else {
-      console.log('[GitOps] No remote URL configured. Skipping pull.');
+      return true;
+    } catch (error) {
+      console.warn(`[GitOps] Could not compare local edits with origin/master: ${error.message}`);
+      return false;
     }
   }
 
-  async _scanForSecrets(files) {
-    const fs = require('fs');
-    const path = require('path');
+  /**
+   * True when the supervisor's own index lists this path. The agent asks
+   * this before it reads a file unredacted; the index inside the work tree
+   * is the agent's to write, so it cannot answer.
+   */
+  async isTracked(file) {
+    if (typeof file !== 'string' || file === '' || file.length > 4096 || file.includes('\0')) return false;
+    const normal = file.replace(/\\/g, '/');
+    if (normal.startsWith('/') || normal.split('/').some(seg => seg === '..')) return false;
+    if (hasDeniedSegment(normal)) return false;
+    try {
+      await this.git(['--literal-pathspecs', 'ls-files', '--error-unmatch', '--', normal], { quiet: true });
+      return true;
+    } catch {
+      // Not in the index yet. A file the agent added in a self-improvement
+      // stays untracked until the owner merges and the agent pulls; its own
+      // pull request commit already holds it, so it counts as tracked.
+      return this._inOpenSelfPullRequest(normal);
+    }
+  }
 
-    // Patterns for secrets
+  /** True when a recent self pull request commit that was not closed holds the path. */
+  async _inOpenSelfPullRequest(file) {
+    const commits = this.listSelfPullRequests()
+      .filter(entry => !entry.closedUnmerged && !entry.mergedAt && /^[0-9a-f]{40}$/.test(String(entry.commit || '')))
+      .slice(0, 10)
+      .map(entry => entry.commit);
+    for (const commit of commits) {
+      try {
+        await this.git(['cat-file', '-e', `${commit}:${file}`], { quiet: true });
+        return true;
+      } catch {
+        // not in this one
+      }
+    }
+    return false;
+  }
+
+  /**
+   * True when any top-level entry of origin/master exists in the work tree.
+   * An empty volume (or one holding only data the repository does not
+   * track) has none.
+   */
+  async _workTreeHasContent() {
+    try {
+      const names = (await this.git(['ls-tree', '--name-only', '-z', 'refs/remotes/origin/master'], { raw: true }))
+        .split('\0').filter(Boolean);
+      return names.some((name) => {
+        try {
+          fs.lstatSync(path.join(this.workDir, name));
+          return true;
+        } catch {
+          return false;
+        }
+      });
+    } catch (error) {
+      // When in doubt, keep the files.
+      console.warn(`[GitOps] Could not list origin/master: ${error.message}`);
+      return true;
+    }
+  }
+
+  /** The object a revision names, or null. */
+  async _revParseObject(rev) {
+    try {
+      return await this.git(['rev-parse', '--verify', '--quiet', rev]);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * The commit the work tree's own .git had checked out, read as plain files
+   * (nothing runs) and fetched from the remote. Null when there is none.
+   */
+  async _legacyBase() {
+    try {
+      const dotGit = path.join(this.workDir, '.git');
+      const readSmall = (rel) => {
+        const file = regularFileInside(dotGit, rel);
+        if (!file || fs.statSync(file).size > 1024 * 1024) return null;
+        return fs.readFileSync(file, 'utf8');
+      };
+      let head = (readSmall('HEAD') || '').trim();
+      const ref = head.match(/^ref: (refs\/heads\/[A-Za-z0-9._/-]+)$/);
+      if (ref && !ref[1].includes('..')) {
+        head = (readSmall(ref[1]) || '').trim();
+        if (!head) {
+          const packed = readSmall('packed-refs') || '';
+          const line = packed.split('\n').find(l => l.endsWith(` ${ref[1]}`));
+          head = line ? line.split(' ')[0] : '';
+        }
+      }
+      if (!/^[0-9a-f]{40}$/.test(head)) return null;
+      if (!(await this._revParse(head))) {
+        await this.git(['fetch', '-q', this._remoteTarget(), head], { authed: true });
+      }
+      return await this._revParse(head);
+    } catch (error) {
+      console.warn(`[GitOps] Could not read the work tree's previous commit: ${error.message}`);
+      return null;
+    }
+  }
+
+  /** Reads each path of the shared tree once; see readPinned. */
+  _snapshotFiles(files) {
+    return snapshotFiles(this.workDir, files);
+  }
+
+  /**
+   * @param {string[]} files
+   * @param {Map} [snapshot] - bytes read once by _snapshotFiles(); read here when absent
+   */
+  async _scanForSecrets(files, snapshot = null) {
     const patterns = [
       { name: 'OpenAI API Key', regex: /sk-[a-zA-Z0-9]{20,}/ },
       { name: 'GitHub Token', regex: /(ghp|gho|ghu|ghs|ghr)_[a-zA-Z0-9]{36}/ },
@@ -211,17 +425,16 @@ class GitOps {
     ];
 
     for (const file of files) {
-      if (file === '.') {
-        continue; // Handled by git status check in caller
-      }
+      if (file === '.') continue;
 
-      const fullPath = path.resolve(this.workDir, file);
-      if (!fs.existsSync(fullPath)) continue;
+      // Only a regular file, read once without following any link. A link
+      // is committed as a link; following it would read whatever it points
+      // at, which could be a file of this container.
+      const entry = snapshot && snapshot.has(file) ? snapshot.get(file) : this._snapshotFiles([file]).get(file);
+      if (!entry || entry.type !== 'file') continue;
+      if (entry.data.length > 5 * 1024 * 1024) continue;
 
-      const stat = fs.statSync(fullPath);
-      if (stat.isDirectory()) continue; // Skip directories for now (unless recursive needed)
-
-      const content = fs.readFileSync(fullPath, 'utf-8');
+      const content = entry.data.toString('utf-8');
 
       for (const p of patterns) {
         if (p.regex.test(content)) {
@@ -247,10 +460,10 @@ class GitOps {
    * `data` segment.
    */
   isAllowedPath(file) {
-    const path = require('path');
     const normalized = String(file).replace(/\\/g, '/').replace(/^\.\//, '');
     if (!normalized || normalized.startsWith('/')) return false;
     if (!isSafePath(normalized)) return false;
+    if (hasDeniedSegment(normalized)) return false;
     const segments = normalized.split('/');
     if (segments.includes('..') || segments.includes('data')) return false;
     if (!ALLOWED_PREFIXES.some(prefix => normalized.startsWith(prefix))) return false;
@@ -260,9 +473,9 @@ class GitOps {
 
   /**
    * Parse `git status --porcelain -z` into tracked changes and untracked
-   * files. Entries end in NUL, so paths arrive as they are: no C-quoting for
-   * spaces or non-ASCII. A rename or copy sends the new path first and the
-   * old path as the next entry; only the new one matters here.
+   * files. Entries end in NUL, so paths arrive as they are. A rename or copy
+   * sends the new path first and the old path as the next entry; only the
+   * new one matters here.
    */
   _parseStatus(statusOutput) {
     const tracked = [];
@@ -280,33 +493,175 @@ class GitOps {
     return { tracked, untracked };
   }
 
+  /** Throws unless a remote, a token and a GitHub repository are configured. */
+  _requireGithub() {
+    const slug = this.repoSlug || githubSlug(this.remoteUrl);
+    if (!this.remoteUrl || !this.token || !slug) {
+      throw new Error('Self-improvement needs GIT_REMOTE_URL (an https GitHub URL) and GITHUB_PAT.');
+    }
+    return slug;
+  }
+
+  /** One GitHub REST call with the token as a bearer. Errors carry no token. */
+  async _github(method, apiPath, body) {
+    const res = await this.fetch(`${GITHUB_API}${apiPath}`, {
+      method,
+      headers: {
+        Authorization: `Bearer ${this.token}`,
+        Accept: 'application/vnd.github+json',
+        'X-GitHub-Api-Version': '2022-11-28',
+        'User-Agent': 'deedee-supervisor',
+        ...(body ? { 'Content-Type': 'application/json' } : {})
+      },
+      body: body ? JSON.stringify(body) : undefined,
+      signal: AbortSignal.timeout(15000)
+    });
+    const text = await res.text();
+    if (!res.ok) {
+      throw new Error(`GitHub API ${method} ${apiPath} returned ${res.status}: ${this._scrub(text).slice(0, 300)}`);
+    }
+    return text ? JSON.parse(text) : {};
+  }
+
+  /**
+   * Builds a commit from a tree without touching HEAD, the index or the work
+   * tree. `prepareIndex(env)` fills a throwaway index that starts from
+   * `parent`. Returns the new commit, or null when the tree did not change.
+   */
+  async _commitFromTempIndex(parent, message, prepareIndex) {
+    const indexFile = path.join(this.gitDir, `index.tmp-${process.pid}-${Date.now()}`);
+    const env = { GIT_INDEX_FILE: indexFile };
+    try {
+      await this.git(['read-tree', parent], { env });
+      await prepareIndex(env);
+      const tree = await this.git(['write-tree'], { env });
+      const parentTree = await this.git(['rev-parse', `${parent}^{tree}`]);
+      if (tree === parentTree) return null;
+      return await this.git([...this._identityArgs(), 'commit-tree', tree, '-p', parent, '-m', message]);
+    } finally {
+      fs.rmSync(indexFile, { force: true });
+    }
+  }
+
+  /**
+   * Writes snapshot entries into the index named by `env`: a file or a link
+   * becomes a blob hashed from the bytes already read, a missing path leaves
+   * the index. Blobs come from a private copy, never from the shared tree.
+   */
+  async _stageSnapshot(files, snapshot, env) {
+    fs.mkdirSync(this.gitDir, { recursive: true });
+    const tmp = fs.mkdtempSync(path.join(this.gitDir, 'stage.tmp-'));
+    try {
+      let n = 0;
+      for (const file of files) {
+        const entry = snapshot.get(file);
+        if (!entry || entry.type === 'missing') {
+          await this.git(['update-index', '--force-remove', '--', file], { env });
+          continue;
+        }
+        if (entry.type !== 'file' && entry.type !== 'symlink') {
+          throw new Error(`${file} is not a regular file or a symlink.`);
+        }
+        const blobFile = path.join(tmp, String(n++));
+        fs.writeFileSync(blobFile, entry.type === 'file' ? entry.data : entry.target, { mode: 0o600 });
+        const blob = await this.git(['hash-object', '-w', '--no-filters', '--', blobFile], { env });
+        const mode = entry.type === 'symlink' ? '120000' : (entry.executable ? '100755' : '100644');
+        await this.git(['update-index', '--add', '--cacheinfo', `${mode},${blob},${file}`], { env });
+      }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
+  /** Pushes a commit to a new branch and opens a pull request against master. */
+  async _pushAndOpenPullRequest(slug, commit, branch, title, body) {
+    await this.git(['push', '-q', this._remoteTarget(), `${commit}:refs/heads/${branch}`], { authed: true });
+    try {
+      const pr = await this._github('POST', `/repos/${slug}/pulls`, { title, head: branch, base: 'master', body });
+      return { number: pr.number, url: pr.html_url };
+    } catch (error) {
+      throw new Error(`Pushed branch ${branch}, but could not open the pull request: ${error.message}`);
+    }
+  }
+
+  // ----- Self pull request record (supervisor state volume) -----
+
+  _selfPrFile() {
+    return path.join(this.stateDir, SELF_PR_FILE);
+  }
+
+  /** Pull requests this supervisor opened for self-improvement, newest first. */
+  listSelfPullRequests() {
+    try {
+      const list = JSON.parse(fs.readFileSync(this._selfPrFile(), 'utf8'));
+      return Array.isArray(list) ? list : [];
+    } catch {
+      return [];
+    }
+  }
+
+  _writeSelfPullRequests(list) {
+    fs.mkdirSync(this.stateDir, { recursive: true });
+    fs.writeFileSync(this._selfPrFile(), JSON.stringify(list.slice(0, MAX_RECORDED_PRS), null, 2));
+  }
+
+  recordSelfPullRequest(entry) {
+    this._writeSelfPullRequests([entry, ...this.listSelfPullRequests().filter(e => e.number !== entry.number)]);
+  }
+
+  updateSelfPullRequest(number, patch) {
+    this._writeSelfPullRequests(this.listSelfPullRequests().map(e => (e.number === number ? { ...e, ...patch } : e)));
+  }
+
+  /** GET /repos/:slug/pulls/:number. */
+  async getPullRequest(number) {
+    const slug = this._requireGithub();
+    return this._github('GET', `/repos/${slug}/pulls/${Number(number)}`);
+  }
+
+  // ----- Commands -----
+
+  /**
+   * Opens a pull request with the work tree's changes. Never pushes master,
+   * never runs a test or a hook. The changes stay in the work tree.
+   */
   async commitAndPush(message, files = ['.']) {
     const skipped = [];
     try {
+      const slug = this._requireGithub();
+
       // 0. Work out what to stage. Never `git add .`.
-      let trackedToStage = [];
-      let untrackedToStage = [];
+      const trackedToStage = [];
+      const untrackedToStage = [];
+      const denied = [];
 
       if (files.includes('.')) {
-        const statusOutput = await this.runRaw('git status --porcelain -z --untracked-files=all');
+        const statusOutput = await this.git(['status', '--porcelain', '-z', '--untracked-files=all'], { raw: true });
         const { tracked, untracked } = this._parseStatus(statusOutput);
-        // Tracked files with an unsafe name stay out of the commit as well.
         for (const file of tracked) {
-          if (isSafePath(file)) trackedToStage.push(file);
+          if (hasDeniedSegment(file)) denied.push(file);
+          else if (isSafePath(file)) trackedToStage.push(file);
           else skipped.push(file);
         }
         for (const file of untracked) {
-          if (this.isAllowedPath(file)) untrackedToStage.push(file);
+          if (hasDeniedSegment(file)) denied.push(file);
+          else if (this.isAllowedPath(file)) untrackedToStage.push(file);
           else skipped.push(file);
         }
       } else {
         for (const file of files) {
-          if (this.isAllowedPath(file)) untrackedToStage.push(file);
+          if (hasDeniedSegment(file)) denied.push(file);
+          else if (this.isAllowedPath(file)) untrackedToStage.push(file);
           else skipped.push(file);
         }
-        if (untrackedToStage.length === 0) {
-          throw new Error(`No file in the allowed folders to commit. Skipped: ${skipped.join(', ')}`);
-        }
+      }
+
+      if (denied.length > 0) {
+        throw new Error(`Refusing the change: ${denied.join(', ')} ${denied.length === 1 ? 'is' : 'are'} under .git/ or .github/. Workflows and git internals never go through self-improvement. Undo those edits (pullLatestChanges resets the tree) and retry.`);
+      }
+
+      if (!files.includes('.') && untrackedToStage.length === 0) {
+        throw new Error(`No file in the allowed folders to commit. Skipped: ${skipped.join(', ')}`);
       }
 
       if (skipped.length > 0) {
@@ -321,79 +676,138 @@ class GitOps {
       }
 
       const filesToScan = [...trackedToStage, ...untrackedToStage];
+      if (filesToScan.length === 0) throw new Error('Nothing to commit.');
 
-      // 1. Security Scan + Verifier
-      await this._scanForSecrets(filesToScan);
-      await this.verifier.verify(filesToScan);
-
-      // SAFE EXECUTION: Prevent shell injection by avoiding 'git add ${files} and git commit -m "${message}"'
-      // Use execFileAsync via runSafe
-
-      // 2. Git Add: tracked changes with -u, allowed untracked files by name.
-      // --literal-pathspecs: `[id]` in a Next.js route folder is a glob to git.
-      if (trackedToStage.length > 0) {
-        await this.runSafe('git', ['--literal-pathspecs', 'add', '-u', '--', ...trackedToStage]);
+      // 1. Read every file once. The scan, the syntax check and the commit
+      // all use these bytes; nothing opens the agent's paths by name again.
+      const snapshot = this._snapshotFiles(filesToScan);
+      const odd = filesToScan.filter(file => snapshot.get(file).type === 'other');
+      if (odd.length > 0) {
+        throw new Error(`Refusing the change: ${odd.join(', ')} ${odd.length === 1 ? 'is' : 'are'} not a regular file or a symlink (a folder, a path through a link, or a file that changed while it was read). Fix and retry.`);
       }
-      if (untrackedToStage.length > 0) {
-        await this.runSafe('git', ['--literal-pathspecs', 'add', '--', ...untrackedToStage]);
+      const untrackedMissing = untrackedToStage.filter(file => snapshot.get(file).type === 'missing');
+      if (untrackedMissing.length > 0 && !files.includes('.')) {
+        throw new Error(`No such file: ${untrackedMissing.join(', ')}`);
       }
 
-      // 3. Git Commit
-      // Pass message as a separate argument to avoid shell interpretation
-      await this.runSafe('git', [...this._identityArgs(), 'commit', '-m', message]);
+      // 2. Secret scan and syntax check. Both only read the snapshot.
+      await this._scanForSecrets(filesToScan, snapshot);
+      await this.verifier.verify(filesToScan, snapshot);
 
-      // 4. Git Push. Credentials travel with the command, not in .git/config,
-      // and the command names the configured URL, not the remote `origin`.
-      await this._runAuthed(['push', this._remoteTarget(), 'master']);
+      // 3. Build the commit in a throwaway index on top of HEAD, from the
+      // snapshot. `git add` would open each path by name again.
+      const commit = await this._commitFromTempIndex('HEAD', message, async (env) => {
+        await this._stageSnapshot(filesToScan, snapshot, env);
+      });
+      if (!commit) throw new Error('Nothing to commit: the staged files match HEAD.');
 
-      return { success: true, message: 'Pushed to origin/master', skipped };
+      // 4. Push a branch and open the pull request.
+      const branch = `deedee/self/${stamp()}`;
+      const title = String(message).split('\n')[0].slice(0, 250);
+      const body = [
+        'Opened by the Deedee supervisor from a self-improvement request.',
+        '',
+        'The supervisor ran no tests: CI runs the full suite on this pull request.',
+        'Nothing reaches master or the device until the owner merges.',
+        '',
+        'Do not merge without the owner\'s review.'
+      ].join('\n');
+      const pullRequest = await this._pushAndOpenPullRequest(slug, commit, branch, title, body);
 
+      this.recordSelfPullRequest({
+        number: pullRequest.number,
+        branch,
+        commit,
+        openedAt: new Date().toISOString()
+      });
+
+      return {
+        success: true,
+        message: `Opened pull request #${pullRequest.number} from ${branch}. CI runs the tests and the owner reviews and merges; nothing reaches master or the device before that. The changes stay uncommitted in the work tree. After the merge, call pullLatestChanges.`,
+        branch,
+        commit,
+        pullRequest,
+        skipped
+      };
     } catch (error) {
-      console.error('[GitOps] Validation or Git Error:', error.message);
-      return { success: false, error: error.message, skipped };
+      const messageText = scrubProcessSecrets(this._scrub(error.message));
+      console.error('[GitOps] Validation or Git Error:', messageText);
+      return { success: false, error: messageText, skipped };
     }
   }
 
   /**
-   * Revert HEAD and push. With `expectedHead`, refuse when HEAD moved: the
-   * monitor only ever reverts the self-commit it recorded at start.
+   * Opens a pull request that reverts a commit on master (the newest one when
+   * none is named). Never pushes master: the owner merges the revert.
+   * @param {object} [opts] - { commit, reason }
    */
-  async rollback({ expectedHead } = {}) {
+  async rollback({ commit, reason } = {}) {
     try {
-      if (expectedHead) {
-        const head = await this.run('git rev-parse HEAD');
-        if (head !== expectedHead) {
-          const msg = `Rollback aborted: HEAD ${head.substring(0, 7)} is not the self-commit ${expectedHead.substring(0, 7)}.`;
-          console.warn(`[GitOps] ${msg}`);
-          return { success: false, error: msg };
-        }
+      const slug = this._requireGithub();
+      if (commit !== undefined && !/^[0-9a-f]{7,40}$/i.test(String(commit))) {
+        throw new Error('The commit to revert must be a hash.');
       }
 
-      console.log('[GitOps] Rolling back last commit...');
-      // Ensure clean state
-      await this.run('git reset --hard HEAD');
+      await this._fetchMaster();
+      const tip = await this._revParse('refs/remotes/origin/master');
+      if (!tip) throw new Error('origin/master is not available.');
+      const target = await this._revParse(commit || tip);
+      if (!target) throw new Error(`Commit ${commit} was not found.`);
+      try {
+        await this.git(['merge-base', '--is-ancestor', target, tip]);
+      } catch {
+        throw new Error(`Commit ${target.substring(0, 7)} is not on master.`);
+      }
+      const parent = await this._revParse(`${target}^1`);
+      if (!parent) throw new Error(`Commit ${target.substring(0, 7)} has no parent to return to.`);
+      const subject = await this.git(['log', '-1', '--format=%s', target]);
 
-      // Revert the last commit. This creates a new commit under our identity.
-      await this.runSafe('git', [...this._identityArgs(), 'revert', '--no-edit', 'HEAD']);
-      const revertCommit = await this.run('git rev-parse HEAD');
+      const message = `Revert "${subject}"\n\nThis reverts commit ${target}.${reason ? `\n\n${reason}` : ''}`;
+      const patchFile = path.join(this.gitDir, `revert.tmp-${process.pid}-${Date.now()}.patch`);
+      let revertCommit;
+      try {
+        const diff = await this.git(['diff', '--binary', '--no-ext-diff', '--no-textconv', parent, target], { raw: true });
+        fs.writeFileSync(patchFile, diff);
+        revertCommit = await this._commitFromTempIndex(tip, message, async (env) => {
+          if (diff) await this.git(['apply', '--cached', '-R', patchFile], { env });
+        });
+      } catch (error) {
+        throw new Error(`Could not build a clean revert of ${target.substring(0, 7)} on master: ${error.message}`);
+      } finally {
+        fs.rmSync(patchFile, { force: true });
+      }
+      if (!revertCommit) throw new Error(`Reverting ${target.substring(0, 7)} changes nothing on master.`);
 
-      // Push the new revert commit
-      await this._runAuthed(['push', this._remoteTarget(), 'master']);
+      const branch = `deedee/revert/${stamp()}`;
+      const body = [
+        `Reverts ${target} ("${subject}").`,
+        reason ? `\n${reason}\n` : '',
+        'Opened by the Deedee supervisor. It never pushes master: merging this pull request is the rollback.',
+        '',
+        'Do not merge without the owner\'s review.'
+      ].join('\n');
+      const pullRequest = await this._pushAndOpenPullRequest(slug, revertCommit, branch, `Revert "${subject}"`.slice(0, 250), body);
 
-      return { success: true, message: 'Rolled back last change successfully.', revertCommit };
+      return {
+        success: true,
+        message: `Opened pull request #${pullRequest.number} that reverts ${target.substring(0, 7)}. Merging it rolls the change back; nothing was pushed to master.`,
+        revertCommit,
+        branch,
+        pullRequest
+      };
     } catch (error) {
-      console.error('[GitOps] Rollback Error:', error.message);
-      return { success: false, error: error.message };
+      const messageText = scrubProcessSecrets(this._scrub(error.message));
+      console.error('[GitOps] Rollback Error:', messageText);
+      return { success: false, error: messageText };
     }
   }
 
+  /** Resets the work tree to origin/master. */
   async pull() {
     try {
       console.log('[GitOps] Pulling latest changes...');
-      // Fetch by URL and write the tracking ref here, so the reset below does
-      // not depend on what .git/config calls origin.
-      await this._runAuthed(['fetch', this._remoteTarget(), '+refs/heads/master:refs/remotes/origin/master']);
-      await this.run('git reset --hard origin/master'); // Force sync to origin
+      await this._fetchMaster();
+      await this.git(['reset', '-q', '--hard', 'refs/remotes/origin/master']);
       return { success: true, message: 'Pulled latest changes.' };
     } catch (error) {
       console.error('[GitOps] Pull Error:', error.message);
@@ -402,4 +816,12 @@ class GitOps {
   }
 }
 
-module.exports = { GitOps, cleanGitEnv, splitRemoteCredentials };
+module.exports = {
+  GitOps,
+  cleanGitEnv,
+  gitEnv,
+  splitRemoteCredentials,
+  githubSlug,
+  hasDeniedSegment,
+  SAFE_GIT_FLAGS
+};

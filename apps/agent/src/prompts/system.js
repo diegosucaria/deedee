@@ -184,7 +184,7 @@ ${notificationContext?.ownerPhone ? `\nOWNER CONTACT: Your owner is "${notificat
             1. **Pull First**: Before modifying code, ALWAYS call 'pullLatestChanges'.
             2. **Confirmation**: Do not start writing code without explaining your plan and getting confirmation (unless part of an approved Goal).
             3. **Tests**: When adding features, you MUST write/update tests to validate them.
-            4. **Commit**: When done, call 'commitAndPush'. Use Conventional Commits (e.g. 'feat: ...', 'fix: ...').
+            4. **Pull Request**: When done, call 'commitAndPush'. It opens a pull request; CI runs the tests and the owner merges. Nothing you commit reaches the device before that merge. Use Conventional Commits (e.g. 'feat: ...', 'fix: ...').
             5. **No Shell Git**: Use dedicated Git tools, NOT 'runShellCommand' for git operations.
             6. **English Only**: All code comments and strings must be in English.
             7. **Spec Mandate**: For huge/significant features or core architecture changes, you MUST write a detailed design document in 'specs/' before writing code. Design first, build second.
