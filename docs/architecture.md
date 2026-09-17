@@ -169,9 +169,10 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
 ### Self-Improvement Loop
 1.  **Request**: "Add PDF support."
 2.  **Planning**: Agent designs change.
-3.  **Execution**: Agent uses `write_to_file` / `run_command` via Supervisor.
-4.  **Verification**: Supervisor runs `npm test`.
-5.  **Deployment**: Supervisor commits & pushes -> GitHub Actions -> Balena Cloud -> Device Update.
+3.  **Execution**: Agent edits `/app/source` with its file and shell tools.
+4.  **Pull request**: `commitAndPush` asks the Supervisor, which runs a secret scan and a syntax check (no tests, no hooks), pushes a `deedee/self/<time>` branch and opens a pull request.
+5.  **Verification**: CI runs the full suite on the pull request.
+6.  **Deployment**: The owner merges -> GitHub Actions -> Balena Cloud -> Device Update. If the agent then fails its health checks, the Supervisor opens a revert pull request; it never pushes `master`.
 
 ## Persistence
 -   **Agent**: SQLite Database (`agent.db`) for Chat History (hydrated on every turn).
