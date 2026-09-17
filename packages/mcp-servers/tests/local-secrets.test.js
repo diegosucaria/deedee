@@ -62,6 +62,26 @@ describe('LocalTools keeps credentials out of tool output', () => {
         expect(text).toContain('HOST=example.com');
     });
 
+    test('a block key does not shield the secret line under it', async () => {
+        const yaml = [
+            'jobs:',
+            '  deploy:',
+            '    env:',
+            '      DEPLOY_TOKEN: abc123xyz',
+            '      FLEET: org/app',
+            '    with:',
+            '      password: abc123xyz',
+            ''
+        ].join('\n');
+        fs.writeFileSync(path.join(dir, 'deploy.yml'), yaml);
+        const text = await tools.readFile('deploy.yml');
+        expect(text).toContain('DEPLOY_TOKEN: [REDACTED]');
+        expect(text).toContain('password: [REDACTED]');
+        expect(text).not.toContain('abc123xyz');
+        expect(text).toContain('FLEET: org/app');
+        expect(text).toContain('    env:');
+    });
+
     test('redactSecrets leaves ordinary text alone', () => {
         expect(redactSecrets('nothing to hide here', {})).toBe('nothing to hide here');
     });

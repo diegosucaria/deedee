@@ -62,8 +62,10 @@ function isSecretName(name) {
 }
 
 // A `NAME=value` or `NAME: value` line. The name decides whether the value
-// goes; see isSecretName.
-const SECRET_LINE = /^(\s*(?:export\s+)?)(["']?[A-Za-z0-9_.-]+["']?)(\s*[=:]\s*)(?!\[REDACTED)(\S.*)$/gm;
+// goes; see isSecretName. The gap around `=` or `:` must stay on the line:
+// if it could span a newline, a block key such as `env:` would match with the
+// next line as its value and that line would never be tested on its own.
+const SECRET_LINE = /^([ \t]*(?:export[ \t]+)?)(["']?[A-Za-z0-9_.-]+["']?)([ \t]*[=:][ \t]*)(?!\[REDACTED)(\S.*)$/gm;
 
 // Credential shapes that no environment variable of this process holds, so
 // value matching cannot find them: GitHub tokens (fine-grained and classic)
