@@ -15,13 +15,30 @@ const BLOCKED_BINARIES = [
 // script. Checking only the first word of the whole line let
 // `sh -c env`, `cd x && vi` or `nohup top` through.
 const SHELL_WRAPPERS = new Set(['sh', 'bash', 'dash', 'ash', 'zsh', 'ksh']);
-const PREFIX_WRAPPERS = new Set(['nohup', 'exec', 'time', 'nice', 'timeout', 'xargs', 'command', 'busybox', 'stdbuf']);
+// Programs that run the string after -c: `flock /tmp/l -c env`, `script -c env`.
+const C_FLAG_WRAPPERS = new Set([...SHELL_WRAPPERS, 'flock', 'script']);
+const PREFIX_WRAPPERS = new Set([
+  'nohup', 'exec', 'time', 'nice', 'timeout', 'xargs', 'command', 'busybox', 'stdbuf',
+  'setsid', 'unshare', 'nsenter', 'ionice', 'chroot', 'flock', 'taskset', 'chrt'
+]);
+// Wrappers whose first plain argument is not the command: `chroot /dir env`,
+// `flock /tmp/lock env`, `taskset 0x1 env`, `chrt 10 env`.
+const ARG_WRAPPERS = new Set(['chroot', 'flock', 'taskset', 'chrt']);
+// Shell words that sit where a command name goes but are not programs.
+const RESERVED_WORDS = new Set([
+  'if', 'then', 'else', 'elif', 'fi', 'do', 'done', 'while', 'until', 'esac',
+  '{', '}', '!', '[[', ']]', 'coproc'
+]);
+// Words that start a line whose other words are not commands:
+// `for i in a b`, `select x in a b`, `case $x in`.
+const LIST_WORDS = new Set(['for', 'select', 'case']);
 
 /**
  * Splits a command line into simple commands: one array of words per
  * command, split at ; & | ( ) ` and newlines outside quotes. Quoted text
- * stays inside its word. After a heredoc (<<) the rest of the text is data,
- * so it stops at the next newline.
+ * stays inside its word. Redirect targets (`>file`, `2>&1`, `</dev/null`)
+ * are not words. Heredoc bodies are data: they are skipped up to their
+ * closing line, and parsing goes on after it.
  */
 function splitSimpleCommands(command) {
   const text = String(command);
@@ -29,14 +46,27 @@ function splitSimpleCommands(command) {
   let words = [];
   let word = '';
   let inWord = false;
-  let heredoc = false;
+  // What the next finished word is: a redirect target, a heredoc delimiter,
+  // or a normal word.
+  let nextWord = null;
+  let pendingHeredocs = [];
   const endWord = () => {
-    if (inWord) words.push(word);
+    if (inWord) {
+      if (nextWord === 'target') {
+        nextWord = null;
+      } else if (nextWord === 'heredoc') {
+        pendingHeredocs.push(word);
+        nextWord = null;
+      } else {
+        words.push(word);
+      }
+    }
     word = '';
     inWord = false;
   };
   const endCommand = () => {
     endWord();
+    if (nextWord === 'target') nextWord = null;
     if (words.length) commands.push(words);
     words = [];
   };
@@ -55,15 +85,51 @@ function splitSimpleCommands(command) {
         word += text[i];
       }
     } else if (ch === '\\') {
-      if (i + 1 < text.length) word += text[++i];
+      if (i + 1 < text.length) {
+        i++;
+        if (text[i] !== '\n') word += text[i];
+      }
       inWord = true;
-    } else if (ch === '<' && text[i + 1] === '<') {
-      heredoc = true;
+    } else if (ch === '<' && text[i + 1] === '<' && text[i + 2] === '<') {
+      // Here-string: the next word is data.
       endWord();
+      nextWord = 'target';
+      i += 2;
+    } else if (ch === '<' && text[i + 1] === '<') {
+      endWord();
+      nextWord = 'heredoc';
       i++;
+      if (text[i + 1] === '-') i++;
+    } else if ((ch === '<' || ch === '>') && text[i + 1] !== '(') {
+      // A file descriptor number glued to the redirect is not a word.
+      if (inWord && /^\d+$/.test(word)) {
+        word = '';
+        inWord = false;
+      }
+      endWord();
+      while (i + 1 < text.length && '<>&|'.includes(text[i + 1])) i++;
+      nextWord = 'target';
+    } else if (ch === '<' || ch === '>') {
+      // Process substitution `<(cmd)`: the `(` starts a command.
+      endWord();
     } else if (ch === '\n') {
       endCommand();
-      if (heredoc) break;
+      if (pendingHeredocs.length) {
+        // Skip each body up to the line that closes it.
+        let lineStart = i + 1;
+        for (const delimiter of pendingHeredocs) {
+          for (;;) {
+            if (lineStart >= text.length) break;
+            let lineEnd = text.indexOf('\n', lineStart);
+            if (lineEnd === -1) lineEnd = text.length;
+            const line = text.slice(lineStart, lineEnd).replace(/^\t+/, '');
+            lineStart = lineEnd + 1;
+            if (line === delimiter) break;
+          }
+        }
+        pendingHeredocs = [];
+        i = lineStart - 1;
+      }
     } else if (';&|()`'.includes(ch)) {
       endCommand();
     } else if (/\s/.test(ch)) {
@@ -79,16 +145,34 @@ function splitSimpleCommands(command) {
 
 /**
  * The program name of every command the line would start, looking through
- * wrappers: `nohup top`, `timeout 5 vi`, `bash -c "env"`. Guard rail only;
- * `node -e` or `python -c` can start anything and are not parsed.
+ * wrappers and shell keywords: `nohup top`, `timeout 5 vi`, `bash -c "env"`,
+ * `if true; then sudo id; fi`. Guard rail only; `node -e` or `python -c`
+ * can start anything and are not parsed.
  */
 function commandHeads(command, depth = 0) {
   const heads = [];
   for (const words of splitSimpleCommands(command)) {
     let i = 0;
-    while (i < words.length && /^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i])) i++;
+    while (i < words.length) {
+      if (/^[A-Za-z_][A-Za-z0-9_]*=/.test(words[i]) || RESERVED_WORDS.has(words[i])) {
+        i++;
+      } else if (words[i] === 'function') {
+        i += 2;
+      } else {
+        break;
+      }
+    }
+    if (i < words.length && LIST_WORDS.has(words[i])) continue;
     while (i < words.length) {
       const name = path.basename(words[i]);
+      const cFlag = C_FLAG_WRAPPERS.has(name)
+        ? words.findIndex((w, k) => k > i && /^-[a-zA-Z]*c[a-zA-Z]*$/.test(w))
+        : -1;
+      if (cFlag !== -1 && cFlag + 1 < words.length) {
+        heads.push(name);
+        if (depth < 3) heads.push(...commandHeads(words[cFlag + 1], depth + 1));
+        break;
+      }
       if (PREFIX_WRAPPERS.has(name)) {
         // `command -v vi` asks where vi is; it does not run it.
         if (name === 'command' && words.slice(i + 1).some(w => /^-[a-zA-Z]*[vV]/.test(w))) {
@@ -96,16 +180,18 @@ function commandHeads(command, depth = 0) {
           break;
         }
         i++;
-        while (i < words.length && (/^-/.test(words[i]) || /^\d+(?:\.\d+)?[smhd]?$/.test(words[i]))) i++;
+        const skipFlags = () => { while (i < words.length && /^-/.test(words[i])) i++; };
+        if (ARG_WRAPPERS.has(name)) {
+          // Flags, the one argument, then flags again.
+          skipFlags();
+          i++;
+          skipFlags();
+        } else {
+          while (i < words.length && (/^-/.test(words[i]) || /^\d+(?:\.\d+)?[smhd]?$/.test(words[i]))) i++;
+        }
         continue;
       }
       heads.push(name);
-      if (SHELL_WRAPPERS.has(name) && depth < 3) {
-        const flag = words.findIndex((w, k) => k > i && /^-[a-zA-Z]*c[a-zA-Z]*$/.test(w));
-        if (flag !== -1 && flag + 1 < words.length) {
-          heads.push(...commandHeads(words[flag + 1], depth + 1));
-        }
-      }
       break;
     }
   }
