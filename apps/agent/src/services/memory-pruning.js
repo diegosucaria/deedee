@@ -25,6 +25,22 @@ class MemoryPruningService {
      * the owner stated himself, preferences, and anything touched in the last
      * 7 days. Returns a reason string, or null when the fact may go.
      */
+    /**
+     * The date in a `..._on_YYYY-MM-DD` key when that date has not passed yet.
+     * Returns null for undated keys, unreadable dates and dates in the past.
+     * @param {string} key
+     * @returns {string|null}
+     */
+    _futureDateIn(key) {
+        const m = String(key || '').match(/_on_(\d{4}-\d{2}-\d{2})$/);
+        if (!m) return null;
+        const when = new Date(`${m[1]}T00:00:00`);
+        if (Number.isNaN(when.getTime())) return null;
+        const startOfToday = new Date();
+        startOfToday.setHours(0, 0, 0, 0);
+        return when >= startOfToday ? m[1] : null;
+    }
+
     _protectedReason(fact) {
         if (!fact) return null;
         if (fact.pinned) return 'pinned';
@@ -33,6 +49,14 @@ class MemoryPruningService {
         // The consolidation prompt writes 'preference'; older rows say 'preferences'.
         if (category === 'preference' || category === 'preferences') return `category=${category}`;
         if (category === 'relationship' || category === 'relationships') return `category=${category}`;
+
+        // A key that carries a date still to come describes something that has
+        // not happened yet: a flight, a concert, a medical appointment. The
+        // deterministic pass only removes dates in the past, but the model is
+        // free to name any key, and these rows are usually category 'temporal'
+        // and older than the recency window, so nothing else here would stop it.
+        const future = this._futureDateIn(fact.key);
+        if (future) return `dated ${future}, still to come`;
 
         const cutoff = Date.now() - RECENT_DAYS * 24 * 60 * 60 * 1000;
         for (const stamp of [fact.updated_at, fact.created_at]) {
