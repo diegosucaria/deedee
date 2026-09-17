@@ -267,8 +267,13 @@ outcome, tool, run kind and risk).
 - `POST /feedback/:id { feedback: should_allow | should_deny | null, note? }`:
   never changes the decision.
 
-The web page is not built yet. A save from Settings > Approvals keeps the
-guardian keys it does not send.
+The web app shows all of this on the **Guardian** page (`/guardian`, next to
+Approvals in the sidebar). History has filters, a row detail with the exact
+input the guardian saw, and feedback buttons. Stats covers the routes above.
+Policy holds the mode, `smart_policy`, the read-only floor, the owner's
+additions and a dry-run form. Every server action calls
+`requireActionSession`. A save from Settings > Approvals keeps the guardian
+keys it does not send.
 
 **Honest limit**: this lowers approval fatigue. It is not a security
 boundary. The boundaries stay: scrubbed environments, the deny-list, owner
