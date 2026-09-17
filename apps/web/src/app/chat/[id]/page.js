@@ -7,6 +7,7 @@ import ReactMarkdown from 'react-markdown';
 import { Send, Play, Wifi, WifiOff, Mic, Image as ImageIcon, X, Loader2, StopCircle, Box, ChevronDown, Activity, DollarSign, Code2, Paperclip, FileIcon, Menu } from 'lucide-react';
 import clsx from 'clsx';
 import { getSession, getUserLocation, getVaults, updateSession, uploadChatFile, getAgentConfig, rewindChat, forkChat, stopChat } from '../../actions';
+import { resolveModelPref, modelOptions, MODEL_PREF_KEY, AUTO_MODEL } from '@/lib/model-pref';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
 import { approvalEventKind, isApprovalOpen } from '@/lib/approvals';
 
@@ -94,14 +95,14 @@ export default function ChatSessionPage({ params }) {
     const [selectedVault, setSelectedVault] = useState('none');
 
     // Model State
-    const [selectedModel, setSelectedModel] = useState('auto');
+    const [selectedModel, setSelectedModel] = useState(AUTO_MODEL);
     // The provider config is the only source of model ids; an empty list
     // means the picker shows 'auto' alone until the config loads.
     const [configuredModels, setConfiguredModels] = useState([]);
 
     // Load Model Pref
     useEffect(() => {
-        const saved = localStorage.getItem('deedee_model_pref');
+        const saved = localStorage.getItem(MODEL_PREF_KEY);
         if (saved) setSelectedModel(saved);
     }, []);
 
@@ -159,8 +160,16 @@ export default function ChatSessionPage({ params }) {
     useEffect(() => {
         getVaults().then(setVaults).catch(console.error);
         getAgentConfig().then(config => {
-            if (config && config['provider:xai']?.models) {
-                setConfiguredModels(config['provider:xai'].models);
+            const models = config?.['provider:xai']?.models;
+            if (!models) return;
+            setConfiguredModels(models);
+            // Drop a saved id the config no longer names, or the picker would
+            // read "Auto" while every message still carried the retired id.
+            const saved = localStorage.getItem(MODEL_PREF_KEY);
+            const resolved = resolveModelPref(saved, models);
+            if (saved && resolved !== saved) {
+                localStorage.removeItem(MODEL_PREF_KEY);
+                setSelectedModel(resolved);
             }
         }).catch(console.error);
     }, []);
@@ -1206,12 +1215,12 @@ export default function ChatSessionPage({ params }) {
                             onChange={(e) => {
                                 const m = e.target.value;
                                 setSelectedModel(m);
-                                localStorage.setItem('deedee_model_pref', m);
+                                localStorage.setItem(MODEL_PREF_KEY, m);
                             }}
                             className="appearance-none bg-transparent text-zinc-300 text-sm pl-2 pr-8 py-1.5 cursor-pointer outline-none border-none w-24 md:w-32"
                         >
-                            <option value="auto">Auto (Gemini)</option>
-                            {configuredModels.map(m => (
+                            <option value={AUTO_MODEL}>Auto (Gemini)</option>
+                            {modelOptions(configuredModels, selectedModel).map(m => (
                                 <option key={m} value={m}>{m}</option>
                             ))}
                         </select>
