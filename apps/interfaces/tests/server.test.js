@@ -212,4 +212,27 @@ describe('Interfaces API Tests', () => {
       expect(res.body.messages).toEqual(['msg1']);
     });
   });
+
+  describe('WhatsApp disconnect', () => {
+    test('POST /whatsapp/disconnect answers once the session is cleared', async () => {
+      process.env.ENABLE_WHATSAPP = 'true';
+      const disconnect = jest.fn(() => Promise.resolve());
+      jest.doMock('../src/whatsapp', () => ({
+        WhatsAppService: class {
+          start() { return Promise.resolve(); }
+          disconnect(...args) { return disconnect(...args); }
+        }
+      }));
+      app = await loadApp();
+
+      const res = await request(app)
+        .post('/whatsapp/disconnect')
+        .set('Authorization', 'Bearer valid-token')
+        .send({ session: 'user' });
+
+      expect(res.statusCode).toBe(200);
+      expect(res.body.success).toBe(true);
+      expect(disconnect).toHaveBeenCalledWith(true);
+    });
+  });
 });
