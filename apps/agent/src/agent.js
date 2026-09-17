@@ -43,6 +43,7 @@ const { AskUserService } = require('./services/ask-user');
 const { BrowserLive } = require('./services/browser-live');
 const { ToolScoper } = require('./services/tool-scoper');
 const { sanitizeToolResult, sanitizeToolArgs } = require('./utils/tool-result-sanitizer');
+const { classifyToolResult, wrapUntrusted, TurnTaint } = require('./utils/untrusted-content');
 const { buildFunctionResponseParts, stripInlineParts, imagesAsUserContent, isPartsRejection, splitImages } = require('./utils/function-response');
 const browserSecrets = require('./utils/browser-secrets');
 const { sanitizeFunctionDeclarations } = require('./utils/gemini-schema-sanitizer');
@@ -1052,9 +1053,14 @@ class Agent {
 
     const runId = crypto.randomUUID();
     const e2eStart = Date.now();
+    // Untrusted sources this run has read (email, web, a contact's chat).
+    // Once set, side effects need the owner's approval. A sub-agent starts
+    // with its parent's sources.
+    const turnTaint = new TurnTaint(message.metadata?.untrustedTaint);
     const executionSummary = {
       toolOutputs: [], // List of { name, result }
-      replies: []      // List of text/audio replies
+      replies: [],     // List of text/audio replies
+      untrustedSources: turnTaint.sources // live list, read by the sub-agent service
     };
 
     // Watcher in-flight lock state (set inside the watcher block; cleaned up in finally).
@@ -1466,6 +1472,8 @@ class Agent {
           // Create a pseudo-message for the Agent to ACT on
           message.content = `SYSTEM_WATCHER_ALERT: A message from ${contactString} ("${message.content}") matched watcher conditions. \nINSTRUCTION: ${triggeredWatcher.instruction} \n\nIMPORTANT: DO NOT REPLY TO THE SENDER directly. They are a contact, not the user. \n- If you need to send them a message, use the 'sendMessage' tool explicitly.\n- If you need to confirm the action, just say "Done" and I will redirect it to the Admin.`;
           message.role = 'user'; // Treat as a command from me
+          // The prompt quotes the contact's text: the run starts tainted.
+          turnTaint.add('a contact\'s message (watcher)');
           // Proceed to normal flow...
         }
       }
@@ -2311,12 +2319,15 @@ class Agent {
 
           let toolResult;
           let toolStatus = 'ok'; // 'ok' | 'error' | 'paused'
+          let executed = false; // false when the guard paused or denied the call
           try {
             // SENSITIVE GUARD CHECK: deny-list first, then the safety rules.
             // A paused call is stored and the owner is asked where he can
             // answer (this chat, or his notification channel for jobs and
             // watchers). It resumes once he approves; the model must not retry.
-            const guard = this.approvals.check(executionName, call.args);
+            // A run that already read untrusted content asks before side effects.
+            const serverName = this.mcp?.toolMap?.get?.(executionName)?.name || null;
+            const guard = this.approvals.check(executionName, call.args, { taint: turnTaint, serverName });
             if (guard.denied) {
               console.warn(`${logPrefix} Action ${executionName} denied by the owner's deny-list (${guard.pattern}).`);
               toolResult = { error: guard.message };
@@ -2330,6 +2341,7 @@ class Agent {
               toolStatus = paused.paused ? 'paused' : 'error';
             } else {
               // Execute normally
+              executed = true;
               toolResult = await this._executeTool(executionName, call.args, message, activeSendCallback, (model, pTokens, cTokens, cached = 0, thoughts = 0, tag = null) => {
                 const cost = calculateCost(model, pTokens, cTokens, cached, thoughts);
                 e2eCost += cost;
@@ -2341,7 +2353,7 @@ class Agent {
                   totalTokens: pTokens + cTokens, chatId, estimatedCost: cost,
                   tag, cachedTokens: cached, thoughtsTokens: thoughts
                 });
-              });
+              }, { taint: turnTaint });
               if (toolResult && typeof toolResult === 'object' && toolResult.error) {
                 toolStatus = 'error';
               }
@@ -2388,7 +2400,7 @@ class Agent {
             }).catch(() => { });
           }
 
-          return { call, executionName, result: toolResult, images };
+          return { call, executionName, result: toolResult, images, executed };
         };
 
         let results = [];
@@ -2409,7 +2421,8 @@ class Agent {
         const functionResponseParts = [];
         const dbFunctionResponseParts = [];
 
-        for (const { call, executionName, result, images = [] } of results) {
+        const newlyTainted = [];
+        for (const { call, executionName, result, images = [], executed = true } of results) {
           // Capture to Summary
           executionSummary.toolOutputs.push({ name: executionName, result });
 
@@ -2460,11 +2473,6 @@ class Agent {
             });
           }
 
-          // Inject loop warning into tool result so the model sees it
-          if (call._loopWarning && typeof dbToolResult === 'object' && dbToolResult !== null) {
-            dbToolResult = { ...dbToolResult, _loopWarning: call._loopWarning };
-          }
-
           // Build API Payload (Send CLEAN result to Model)
           // SDK Requirement: 'response' must be an object map.
           let apiResponse = dbToolResult;
@@ -2478,11 +2486,36 @@ class Agent {
             apiResponse = { info: "Tool executed successfully but returned no output." };
           }
 
+          // UNTRUSTED CONTENT: text written by a third party goes to the model
+          // (and into history) inside a data envelope. A call the guard paused
+          // or denied carries only our own text, so it stays as it is.
+          if (executed) {
+            const serverName = this.mcp?.toolMap?.get?.(executionName)?.name || null;
+            const verdict = classifyToolResult(executionName, { serverName, args: call.args, result });
+            if (verdict.untrusted) {
+              apiResponse = wrapUntrusted(executionName, apiResponse, verdict.kind);
+              newlyTainted.push(`${verdict.kind} (${executionName})`);
+            }
+          }
+
+          // Inject loop warning into tool result so the model sees it
+          if (call._loopWarning && apiResponse && typeof apiResponse === 'object') {
+            apiResponse = { ...apiResponse, _loopWarning: call._loopWarning };
+          }
+
           // Model payload carries the images as inlineData parts; the DB row
           // only notes how many went out.
           const built = buildFunctionResponseParts(call, apiResponse, images);
           functionResponseParts.push(built.model);
           dbFunctionResponseParts.push(built.db);
+        }
+
+        // Taint applies from the next batch on: calls in this batch were
+        // chosen before the model read these results.
+        if (newlyTainted.length > 0) {
+          const was = turnTaint.tainted;
+          newlyTainted.forEach(s => turnTaint.add(s));
+          if (!was) console.log(`${logPrefix} Run read untrusted content (${turnTaint.describe()}); side effects now need the owner's approval.`);
         }
 
         // 4. Save Function Results to DB
@@ -2925,6 +2958,8 @@ class Agent {
         message,
         sendCallback,
         approved: options.approved === true,
+        // Sources of untrusted content this run has read; a spawned sub-agent inherits them.
+        untrustedTaint: options.taint?.tainted ? [...options.taint.sources] : [],
         processMessage: this.processMessage.bind(this),
         callServices: { client: this.client, interface: this.interface }
       });
