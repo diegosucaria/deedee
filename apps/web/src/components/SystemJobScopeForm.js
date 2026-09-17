@@ -60,7 +60,13 @@ export default function SystemJobScopeForm({ job, onSaved, onCancel }) {
         setUsingDefaultTools(true);
     };
 
+    // An empty list means 'back to the built-in one' on the route side, so an
+    // owner who unticks every tool would get the defaults back, not an empty
+    // list. Block the save and say so instead of saving the opposite.
+    const noToolPicked = !usingDefaultTools && selected.size === 0;
+
     const save = async () => {
+        if (noToolPicked) return;
         setSaving(true);
         setError(null);
         const scope = { model };
@@ -174,6 +180,11 @@ export default function SystemJobScopeForm({ job, onSaved, onCancel }) {
                     ))}
                 </div>
             )}
+            {noToolPicked && (
+                <p className="text-xs text-amber-400 mt-2">
+                    Pick at least one tool, or press &quot;Back to the defaults&quot;. An empty list puts the built-in one back.
+                </p>
+            )}
             {toolsError && <p className="text-xs text-red-400 mt-2">{toolsError}</p>}
             {error && <p className="text-xs text-red-400 mt-2">{error}</p>}
 
@@ -183,7 +194,7 @@ export default function SystemJobScopeForm({ job, onSaved, onCancel }) {
                 </button>
                 <button
                     onClick={save}
-                    disabled={saving}
+                    disabled={saving || noToolPicked}
                     className="px-3 py-2 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-sm font-medium flex items-center gap-2"
                 >
                     {saving ? <Loader2 className="w-4 h-4 animate-spin" /> : <Save className="w-4 h-4" />}
