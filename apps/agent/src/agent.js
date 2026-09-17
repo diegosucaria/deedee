@@ -2897,8 +2897,8 @@ class Agent {
         this.notifications.create({
           type: 'self_improvement',
           severity: 'info',
-          title: 'Self-improvement commit pushed',
-          message: args.message,
+          title: 'Self-improvement pull request opened',
+          message: toolResult.pullRequest ? `#${toolResult.pullRequest.number}: ${args.message}` : args.message,
           metadata: { link: '/system' }
         });
         if (process.env.SLACK_WEBHOOK_URL) {
@@ -2907,7 +2907,7 @@ class Agent {
               method: 'POST',
               headers: { 'Content-Type': 'application/json' },
               body: JSON.stringify({
-                text: `🚀 *New Feature Deployed via Self-Improvement*\n\n*Commit:* ${args.message}\n*Files:* All changed files`
+                text: `🔀 *Self-improvement pull request opened*\n\n*Title:* ${args.message}${toolResult.pullRequest ? `\n*Pull request:* #${toolResult.pullRequest.number}` : ''}\nNothing deploys until the owner merges it.`
               })
             });
             console.log('[Agent] Sent Slack notification for self-improvement.');
