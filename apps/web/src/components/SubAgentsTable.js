@@ -2,6 +2,7 @@
 
 import { useState, useEffect, Fragment, useMemo, useRef, useCallback } from 'react';
 import { getSubAgentTasks, cleanupSubAgentTasks, getSubAgentTask } from '@/app/actions';
+import { needsFullResult, fullResultEntry } from '@/lib/full-result-cache';
 import { RefreshCw, Bot, Trash2, ChevronDown, ChevronUp, ChevronRight, ChevronLeft } from 'lucide-react';
 import { useSocket } from '@/hooks/useSocket';
 
@@ -198,17 +199,25 @@ export default function SubAgentsTable() {
         }
     }, [page, pageSize, searchQuery, statusFilter]);
 
+    // The status the list shows for the open row. A row opened while the
+    // sub-agent still runs has no full result yet, so the read repeats once the
+    // status changes.
+    const expandedStatus = useMemo(
+        () => (expandedId ? tasks.find(t => t.id === expandedId)?.status : undefined),
+        [expandedId, tasks]
+    );
+
     // Read the whole result of one task when its row opens.
     useEffect(() => {
-        if (!expandedId || fullResults[expandedId] !== undefined) return;
+        if (!needsFullResult(fullResults, expandedId, expandedStatus)) return;
         let alive = true;
         (async () => {
             const row = await getSubAgentTask(expandedId);
             if (!alive) return;
-            setFullResults(prev => ({ ...prev, [expandedId]: row?.result_full ?? null }));
+            setFullResults(prev => ({ ...prev, [expandedId]: fullResultEntry(expandedStatus, row) }));
         })();
         return () => { alive = false; };
-    }, [expandedId, fullResults]);
+    }, [expandedId, expandedStatus, fullResults]);
 
     const debounceRef = useRef(null);
     useEffect(() => {
@@ -456,8 +465,10 @@ export default function SubAgentsTable() {
                                                                         {task.task}
                                                                     </pre>
                                                                 </div>
-                                                                {(task.result || fullResults[task.id]) && (() => {
-                                                                    const full = fullResults[task.id];
+                                                                {(task.result || fullResults[task.id]?.text) && (() => {
+                                                                    const entry = fullResults[task.id];
+                                                                    const full = entry?.text || null;
+                                                                    const reading = !entry || entry.status !== task.status;
                                                                     const trimmed = !!full && !!task.result && full.length > task.result.length;
                                                                     return (
                                                                         <div>
@@ -467,8 +478,11 @@ export default function SubAgentsTable() {
                                                                                     the list showed a shortened result of {task.result.length.toLocaleString()} characters; the whole text is {full.length.toLocaleString()}
                                                                                 </span>
                                                                             )}
-                                                                            {full === undefined && (
+                                                                            {reading && (
                                                                                 <span className="ml-2 text-[10px] text-zinc-500">reading the full text...</span>
+                                                                            )}
+                                                                            {!reading && entry?.failed && (
+                                                                                <span className="ml-2 text-[10px] text-amber-400">could not read the full text; this is what the list holds</span>
                                                                             )}
                                                                             <pre className="mt-1 text-xs text-zinc-300 whitespace-pre-wrap bg-zinc-900 p-3 rounded-lg border border-zinc-800 max-h-48 overflow-y-auto">
                                                                                 {full || task.result}
