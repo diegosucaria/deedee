@@ -43,6 +43,7 @@ class SubAgentExecutor extends BaseExecutor {
                         waitForResult,
                         parentDepth: currentDepth,
                         lightweight,
+                        untrustedTaint: Array.isArray(context?.untrustedTaint) ? context.untrustedTaint : [],
                     });
                     return { success: true, ...result };
                 } catch (err) {

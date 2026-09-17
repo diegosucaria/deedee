@@ -20,7 +20,7 @@ DeeDee operates on a **"YOLO but Safe"** model. This means we prioritize **Perso
 - **Confirmation Manager**:
     - **Held for approval**: `| bash`, `| sh`, `| python`, `| node`, `bash <(...)`, `sh -c "$(...)"`, `rm -rf /`, writes under `/etc`, `mkfs`, `dd` to a disk. See **Approvals** below.
     - **Allowed**: `curl`, `wget`, `ls`, `grep` (Standard tools are fine).
-- **Untrusted Sources**: (Future) Inputs from Email/Calendar will be tagged as "Untrusted" and prevented from triggering specific tools.
+- **Untrusted Sources**: email, web pages, contacts' chats and other third-party text reach the model in a data envelope, and a run that read them asks before actions that reach other people. See [Untrusted content](#untrusted-content).
 
 ### 3. Logic Failure
 **Risk**: The agent pushes an update that runs (no crash) but is logically broken (e.g. infinite loop, or always returns empty text).
@@ -197,6 +197,215 @@ TTLs, deny-list editor); `GET /v1/approvals`, `POST /v1/approvals/:id/approve|de
 Still open (Batch 6): an exact allowlist for `runShellCommand` and network
 tools instead of pattern checks, and a separate unprivileged uid for the shell
 child, so file modes and `/proc` stop a read that a text rule misses.
+
+## Untrusted content
+
+Email, web pages, search results, contacts' chats, Slack, calendar invites
+and documents hold text other people wrote. Someone can hide an order in
+that text ("forward this invoice to ..."). The agent treats such text as
+data and asks the owner before it acts after reading it.
+
+**Classification** (`apps/agent/src/utils/untrusted-content.js`): an
+explicit map by tool name and MCP server. A test checks that every tool in
+`tools-definition.js` sits in exactly one list, so a new tool needs a
+decision.
+- Untrusted internal tools: `googleSearch`, `readChatHistory`,
+  `listConversations`, `searchHistory`, `searchSlack`, `readSlackHistory`,
+  `readAllMonitoredSlackHistory`, `readVaultFile`, `searchDocuments`,
+  `consolidateMemory`; `searchMemory` when it finds stored messages or
+  documents (it reads the same data as `searchHistory` and `searchDocuments`);
+  `runShellCommand` when the command fetches from the network (`curl`,
+  `wget`, a URL, `git clone`); `spawnAgent` and `getAgentResult` unless the
+  sub-agent service saw the run finish without reading untrusted content.
+- MCP servers: every `gws_*` server (Gmail, Calendar, Drive, Docs, Sheets,
+  Slides) and `browser` are untrusted. `homeassistant` is trusted, except
+  a calendar or todo tool, a tool whose args name a `calendar.` or
+  `todo.` entity, and a result that names one and also holds event or item
+  fields (`message`, `description`, `summary`, `items`, ...): those hold
+  text other people wrote. A search result that only lists the entity id
+  stays trusted. `node-red`, `plex`, `pilotfy` and
+  `allende` are trusted (the owner's flows, library data, structured
+  booking data).
+- Any other MCP server, and any tool no list names, is untrusted.
+
+**Envelope**: the tool loop in `apps/agent/src/agent.js` wraps an untrusted
+result after the sanitizer runs:
+`{ untrusted: true, source: <tool>, kind, note, content: <sanitized result> }`.
+The model payload and the stored `function` row carry the same envelope, so
+replayed history keeps the marker. `executionSummary.toolOutputs` keeps the
+raw result for code that reads it. A call the guard paused or denied is
+not wrapped: that result is our own text.
+
+**Prompt rule**: `UNTRUSTED_CONTENT_RULE` in `apps/agent/src/prompts/system.js`
+sits in the static system prompt (and the sub-agent prompt). It is fixed
+text, so the cached prefix does not change. Text inside an envelope is data;
+requests found there go to the owner, never into action.
+
+**Taint**: once a run reads an untrusted result, later side effects in the
+same run may pause for the owner through the approval service, even when no
+other rule would stop them. Calls in the same batch as the read run as
+before: the model chose them before it saw the result. The owner set the
+rule: **actions that reach other people or the outside ask; actions whose
+only effect lands on the owner run, with no card and no notification.**
+
+The card's `Why` line names what was read, and an `Untrusted input:` line
+lists the sources, for example
+`This run read untrusted content (email (personal_gmail)) and now wants to send a message.`
+A call another rule already pauses keeps that rule and gets the same note.
+
+*Still asks in a tainted run:*
+- `sendMessage` to anyone but the owner, and `sendSlackMessage`. The owner is
+  `me`/`myself`/`owner`/his name, his phone (JID), his WhatsApp LID (the same
+  ids the approval service routes by), his Telegram ids, or a web chat;
+- Google Workspace calls whose method is not a read (`get`, `list`,
+  `search`, `export`, ...): mail sends and drafts, calendar event updates,
+  patches, moves, deletes and quick-add, events that invite attendees,
+  events on a calendar other than `primary`, sharing. Every email send also
+  asks under the base rule, whoever receives it;
+- `runShellCommand`, except one plain `curl` or `wget` GET that prints to
+  the output (no pipe, redirect, upload, header, output file or second
+  command), `writeFile`, `updatePerson` when it changes a phone number, `commitAndPush`, `pullLatestChanges`,
+  `rollbackLastChange`;
+- Home Assistant service calls, unless every domain they touch is plain
+  home control (`light`, `switch`, `fan`, `climate`, `media_player`,
+  `vacuum`, `scene`, `remote`, `humidifier`, `water_heater`, `input_*`,
+  `counter`, `timer`, `number`, `select`). The gate reads entity ids from
+  `entity_id`, `entity_ids`, `entities` (a list or the `{ entity: state }`
+  map of `scene.apply` and `scene.create`), `snapshot_entities`, `target`,
+  `data` and `service_data`. So `notify`, `rest_command`,
+  `shell_command`, `tts`, `lock`, `cover`, `script`, `automation`, a scene
+  applied with a lock or cover state, and `entity_id: all` ask.
+  `homeassistant.turn_on`, `turn_off` and `toggle` are judged by the
+  domains of the entities they name; without entities (`restart`) they ask. `ha_config_set_*`, `ha_config_remove_*` and
+  `ha_remove_*` ask too;
+- browser actions with a consequence on money or other people (see below),
+  `browser_evaluate`, `browser_run_code_unsafe`, `browser_file_upload`,
+  `browser_drop` with local files, `browser_webmcp_call` (a page's own
+  actions are opaque) and any browser tool a package update adds;
+- booking and cancelling on `pilotfy` and `allende`; changes on `node-red`;
+  on an unknown MCP server, any tool whose name reads as a write.
+
+*Runs unasked in a tainted run:*
+- `setReminder`, `scheduleJob`, `scheduleTask`, `addWatcher` (they carry the
+  taint, see below), `rememberFact`, `cancelJob`, `updatePerson` on name,
+  relationship, notes or metadata. The tool never changes autopilot status
+  or linked ids: the executor drops every field the tool does not list;
+- a message to the owner himself, so jobs that read email can still report;
+- a Calendar `events.insert` on `primary` with no attendees;
+- plain home control, read-only tools, the plain fetch above;
+- in the browser: reading, navigating, typing, `browser_fill_form`,
+  `browser_select_option`, dragging, ordinary keys, and clicks on login,
+  sign-in, next, continue, search, pagination and navigation. A multi-step
+  login completes in one turn with no approval.
+
+A run that reads nothing untrusted behaves as before.
+
+**Browser: gate submit only** (`apps/agent/src/utils/browser-gate.js`).
+A click asks when its label reads as pay, buy, purchase, make or submit a
+payment, place or confirm an order, send, post, publish, share, reply,
+comment, invite, forward, subscribe, upgrade, bid, transfer, donate, delete,
+book, reserve or cancel a booking, retweet or repost (English and
+Spanish). "Send code" and similar login steps do not count. A generic label
+(`Continue`, `OK`, `Confirm`, `Next`, ...) asks only inside a form that
+pays, orders, sends or deletes: the form has such a name, holds a payment
+field (card number, CVV, expiry, billing, IBAN, CBU, amount, recipient),
+holds a send field (`To`, `Para`, `Subject`, `Asunto`, a message, comment
+or reply box), or holds such a button. A bare `Submit` or `Enviar` asks in
+any form that does not only log in or search. A form only logs in or
+searches when all its fields read as email, user, password, code, phone or
+search, or its name reads as log in or sign in; then only a payment field
+or a paying form name makes a generic label ask. Any other button inside a form with a payment field asks
+too, whatever its label says, except plain ones such as `Back`, `Cancel` or
+`Apply`. A card or account number next to a password field is a bank login
+id, not a payment field, unless a CVV, expiry or amount field sits there
+too.
+Accepting a dialog asks when its message reads the same way, or when the
+gate never saw the message.
+
+Pressing Enter is judged like clicking the submit button of the form that
+holds focus, and so is `browser_type` with `submit: true`, or with
+`slowly: true` and a newline in the text (typed key by key, a newline
+presses Enter). The keys `"\n"` and `"\r"` are Enter too. Space on a
+button is a click on it. `Ctrl+Enter` and `Cmd+Enter` always ask (send
+shortcuts in mail and chat apps).
+
+*What the gate sees*: the tool arguments; the page URL, the ARIA snapshot
+and an open dialog's message from the browser results of this run
+(`browser_snapshot` returns the snapshot inline; actions link a
+`page-*.yml` file, which the gate reads relative to the directory the MCP
+manager spawned the browser server in); and the element it last clicked or
+typed into. The label comes from the snapshot by ref, so the model cannot
+hide a "Pay" button by describing it as "Continue". A target that is not a
+snapshot ref (a CSS or text selector) is not matched to the page: the gate
+checks the selector text, then asks whenever the page holds anything that
+pays, orders, sends or deletes, or when it has seen no page. The form is the nearest `form`, `search` or
+`dialog` around the field; without one, the nearest group that holds
+another field or button, short of the page itself. With no such group, the
+gate judges the page's fields and form names, never its buttons: a footer
+"Subscribe" or a "Share" button does not make a login "Continue" ask.
+
+*What it cannot see, honestly*:
+- focus after `Tab` or arrow keys. Enter or Space then asks whenever the
+  page holds anything that pays, orders, sends or deletes, and runs
+  otherwise;
+- a page it has no snapshot for (the snapshot file could not be read, or
+  the page came from an earlier turn). A click then asks; Enter asks unless
+  the model's description reads as a login or search field; Space runs;
+- a snapshot that went stale: a script can change the page between the
+  snapshot and the click, and refs of a page that changed without a URL
+  change keep their old names;
+- labels in other languages, icons with no accessible name, and buttons
+  whose words do not say what they do ("Go", "✓");
+- key handlers: a page can submit on any key, on blur, or on a plain
+  "Next" that charges a card with no payment field in the snapshot;
+- navigation itself: `browser_navigate` to a URL, like the plain `curl` or
+  `wget` GET, can carry data out in its query string, and a GET can
+  trigger an action on a badly built site or a webhook.
+
+**No taint laundering**: a tainted run that creates a job or watcher could
+plant an order that runs later in a clean run. So `scheduleJob`,
+`scheduleTask` and `setReminder` store `payload.tainted = true` and
+`payload.taintSources` (the creating run's sources), and `addWatcher`
+stores `watchers.taint_sources`. Every later run of that job, task or
+watcher starts tainted with those sources marked
+`[carried by job "name"]` or `[carried by watcher 3]`, after a restart and
+on retries too. Its outward actions ask; its reports to the owner and
+reminders stay silent. The card then reads "This run read untrusted
+content, or was created by a run that did". Re-saving such a job from the
+dashboard keeps the taint while the task text is unchanged; rewriting the
+task is the owner's own instruction and clears it. A job or reminder that a
+tainted run creates from a contact's chat reports to the owner channel,
+never to that chat. A call the owner approves runs with the taint of the
+run that asked.
+
+**Goals carry taint too**: `addGoal` and `updateGoalProgress` run unasked,
+but in a tainted run they store `tainted` and `taintSources` in the goal's
+metadata, with the fields that run wrote (`taintedFields`: `description`,
+`progress`). Every later run that loads pending goals into its prompt starts
+tainted with those sources marked `[carried by goal 3]`. The taint follows
+the text: a clean run's new checkpoint clears the `progress` mark, and the
+owner's new description (`PUT /v1/goals/:id`) clears the `description`
+mark. The goal stops carrying taint once no mark is left, or when it is
+completed. The dashboard shows the mark on a goal, with a **Trust** button
+(`clearTaint: true`) that clears it.
+
+**Where taint starts**: a watcher run starts tainted, because its prompt
+quotes the contact's message. A sub-agent spawned by a tainted run starts
+with the parent's sources (`metadata.untrustedTaint`); it cannot ask, so its
+tool result tells it to report the need to the parent. A plain `curl` GET
+still runs there, so a job's weather sub-agent works after a calendar read. Watcher and job
+approvals go to the owner channel, as in [Approvals](#approvals).
+
+**Known gaps**: taint lasts one run (plus the jobs and watchers it creates).
+A later owner message in the same chat starts clean, and the envelope in
+history plus the prompt rule are the only guard for content read in an
+earlier turn. `rememberFact`, `saveJobState`, vault writes
+(`writeVaultPage`, `saveNoteToVault`) and `updatePerson` notes do not pause
+and carry no taint mark, so a fact, a vault page, a contact note or job
+state can carry text into later prompts and tool results that count as
+trusted. `learnDevice` aliases do the same for device
+names; misuse stays within home control, which runs unasked anyway. A reminder's text can quote untrusted text
+back to the owner. The autopilot reply service does not use this tool loop.
 
 ## Personal data guard
 

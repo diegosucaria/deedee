@@ -43,6 +43,8 @@ class MCPManager {
         this.toolCache = [];       // Array of all tools (Gemini format)
         this.toolMap = new Map();  // toolName -> { name: string, client: Client }
         this.configPath = path.resolve(__dirname, configPath);
+        // Working directory each stdio server was spawned in, by server name.
+        this.serverCwds = {};
         this._activeAbortControllers = new Set(); // one per in-flight call; each carries .toolName and .serverName
         this._pendingRestarts = new Set(); // servers to restart once their in-flight call ends
         this._restarting = new Map(); // serverName -> promise of the restart in progress
@@ -336,6 +338,7 @@ class MCPManager {
                 }
 
                 console.log(`[MCP] Spawning ${name}: cmd=${command}, cwd=${resolvedCwd}`);
+                this.serverCwds[name] = resolvedCwd;
 
                 transport = new StdioClientTransport({
                     command: command,

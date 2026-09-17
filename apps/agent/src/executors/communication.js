@@ -2,6 +2,7 @@ const { BaseExecutor } = require('./base');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const { taintPayloadFields } = require('../utils/untrusted-content');
 
 class CommunicationExecutor extends BaseExecutor {
     async execute(name, args, context, callServices) {
@@ -18,7 +19,9 @@ class CommunicationExecutor extends BaseExecutor {
                 const svc = service || 'whatsapp';
 
                 // ALIAS RESOLUTION
-                let target = to;
+                // Trim as the approval guard does (ConfirmationManager.isOwnerTarget):
+                // "me " must resolve to the owner, not search the people table.
+                let target = typeof to === 'string' ? to.trim() : to;
 
                 // Fetch owner phone from DB or Env
                 let ownerPhone = process.env.MY_PHONE;
@@ -230,12 +233,14 @@ class CommunicationExecutor extends BaseExecutor {
             case 'addWatcher': {
                 const { contactString, condition, instruction } = args;
                 console.log(`[CommunicationExecutor] Adding watcher for '${contactString}'`);
-                // Use AgentDB directly
+                // A tainted run's watcher keeps the taint: its runs ask before outward actions.
+                const { taintSources } = taintPayloadFields(context?.untrustedTaint);
                 const result = services.db.createWatcher({
                     contactString,
                     condition,
                     instruction,
-                    status: 'active'
+                    status: 'active',
+                    ...(taintSources ? { taintSources } : {})
                 });
                 return { success: true, info: `Watcher added. ID: ${result.lastInsertRowid}` };
             }

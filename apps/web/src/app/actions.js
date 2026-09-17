@@ -138,6 +138,16 @@ export async function deleteGoal(id) {
     } catch (e) { return { success: false, error: e.message }; }
 }
 
+/** The owner read the goal and trusts its text: later runs stop starting tainted. */
+export async function trustGoal(id) {
+    try {
+        await fetchAPI(`/v1/goals/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ clearTaint: true }) });
+        revalidatePath('/brain');
+        revalidatePath('/goals');
+        return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+}
+
 export async function updateGoal(id, status) {
     try {
         await fetchAPI(`/v1/goals/${encodeURIComponent(id)}`, { method: 'PUT', body: JSON.stringify({ status }) });

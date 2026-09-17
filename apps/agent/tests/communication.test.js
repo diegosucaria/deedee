@@ -266,4 +266,23 @@ describe('CommunicationExecutor LID targets', () => {
             metadata: expect.objectContaining({ chatId: '5490000000000@s.whatsapp.net' })
         }));
     });
+
+    test('sendMessage trims the target like the approval guard, so "me " is the owner, not a people search', async () => {
+        const send = jest.fn().mockResolvedValue({ success: true });
+        const db = {
+            isVerifiedContact: jest.fn().mockReturnValue(true),
+            verifyContact: jest.fn(),
+            getAgentSetting: jest.fn((key) => ({ owner_phone: { value: '15550000000' }, owner_name: { value: 'Sam' } }[key] || null)),
+            searchPeople: jest.fn().mockReturnValue([{ name: 'Alex Example', phone: '15550001111', notes: 'call me later' }]),
+        };
+        const exec = new CommunicationExecutor({ interface: { send }, db });
+        for (const to of ['me ', ' me', 'Sam ']) {
+            send.mockClear();
+            await exec.execute('sendMessage', { to, content: 'Hi' }, { message: {} });
+            expect(db.searchPeople).not.toHaveBeenCalled();
+            expect(send).toHaveBeenCalledWith(expect.objectContaining({
+                metadata: expect.objectContaining({ chatId: '15550000000@s.whatsapp.net' })
+            }));
+        }
+    });
 });

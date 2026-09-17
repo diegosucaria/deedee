@@ -1,4 +1,5 @@
 const express = require('express');
+const { taintFromPayload } = require('../utils/untrusted-content');
 const fs = require('fs');
 const path = require('path');
 const browserSecrets = require('../utils/browser-secrets');
@@ -310,8 +311,15 @@ function createInternalRouter(agent) {
                 console.warn(`[Scheduler] Tool scoping failed for '${name}', falling back to all tools:`, e.message);
             }
 
+            // A job a tainted run created stays tainted while its task text is
+            // unchanged. Rewriting the task is the owner's own instruction.
+            const prev = existingJob?.metadata?.payload;
+            const keepTaint = prev && prev.tainted === true && prev.task === task
+                ? { tainted: true, ...(Array.isArray(prev.taintSources) ? { taintSources: prev.taintSources } : {}) }
+                : {};
             const payload = {
                 task,
+                ...keepTaint,
                 ...(model && model !== 'auto' ? { model: model.toUpperCase() } : {}),
                 ...(allowedTools ? { allowedTools } : {}),
                 ...(weekdaysOnly ? { weekdaysOnly: true } : {}),
@@ -327,6 +335,7 @@ function createInternalRouter(agent) {
                     source: 'scheduler',
                     metadata: {
                         chatId: `scheduled_${name}_${Date.now()}`,
+                        ...(payload.tainted ? { untrustedTaint: taintFromPayload(payload, `job "${name}"`) } : {}),
                         ...(payload.model ? { forceModel: payload.model } : {}),
                         ...(payload.allowedTools ? { allowedTools: payload.allowedTools } : {})
                     }
@@ -701,8 +710,8 @@ function createInternalRouter(agent) {
     router.put('/goals/:id', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
         try {
-            const { status, description } = req.body;
-            agent.db.updateGoal(req.params.id, { status, description });
+            const { status, description, clearTaint } = req.body;
+            agent.db.updateGoal(req.params.id, { status, description, clearTaint: clearTaint === true });
             res.json({ success: true });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });

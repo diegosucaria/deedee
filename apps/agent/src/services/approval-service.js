@@ -32,6 +32,7 @@ const { createAssistantMessage } = require('@deedee/shared/src/types');
 const { ConfirmationManager } = require('../confirmation-manager');
 const { DeliveryService, telegramOwnerIds, splitChannel } = require('./delivery-service');
 const { isLiveSource } = require('./ask-user');
+const { TurnTaint } = require('../utils/untrusted-content');
 
 const DEFAULTS = Object.freeze({ ttlInteractiveMin: 30, ttlDeferredHours: 6, deny: [] });
 const MAX_TTL_INTERACTIVE_MIN = 24 * 60;
@@ -179,7 +180,7 @@ class ApprovalService {
      */
     constructor(agent, opts = {}) {
         this.agent = agent;
-        this.rules = opts.rules || new ConfirmationManager(agent.db);
+        this.rules = opts.rules || new ConfirmationManager(agent.db, { isOwnerChat: (channel, target) => this._delivery().isOwnerTarget(channel, target) });
         this.sweepMs = opts.sweepMs ?? SWEEP_MS;
         this.timer = null;
         this._warnedNoStore = false;
@@ -225,10 +226,14 @@ class ApprovalService {
     // --- guard ---
 
     /**
-     * Deny-list first (every mode, no prompt), then the safety rules.
-     * @returns {{ denied?: boolean, pattern?: string, requiresConfirmation?: boolean, message?: string, rule?: string }}
+     * Deny-list first (every mode, no prompt), then the safety rules, then
+     * the taint rule: once the run has read untrusted content (email, web,
+     * a contact's chat), side effects ask the owner even when no other rule
+     * would. A call a rule already pauses gets the taint noted in its reason.
+     * @param {{ taint?: import('../utils/untrusted-content').TurnTaint|null, serverName?: string|null }} [opts]
+     * @returns {{ denied?: boolean, pattern?: string, requiresConfirmation?: boolean, message?: string, rule?: string, tainted?: boolean }}
      */
-    check(toolName, args) {
+    check(toolName, args, { taint = null, serverName = null } = {}) {
         const deny = this.rules.denyCheck(toolName, args, this.settings().deny);
         if (deny.denied) {
             console.warn(`[Approvals] ${toolName} blocked by deny pattern "${deny.pattern}".`);
@@ -238,7 +243,14 @@ class ApprovalService {
                 message: `Blocked by the owner's deny-list (pattern "${deny.pattern}"). The action did not run. Do not retry it or work around it; tell the user it is blocked.`
             };
         }
-        return this.rules.check(toolName, args);
+        const ruled = this.rules.check(toolName, args);
+        if (!taint || !taint.tainted || typeof this.rules.taintCheck !== 'function') return ruled;
+        const tainted = this.rules.taintCheck(toolName, args, { taint, serverName });
+        if (!tainted.requiresConfirmation) return ruled;
+        if (ruled.requiresConfirmation) {
+            return { ...ruled, tainted: true, message: `${ruled.message} ${tainted.message}` };
+        }
+        return { ...tainted, tainted: true };
     }
 
     // --- routing ---
@@ -305,7 +317,7 @@ class ApprovalService {
      * Pause a tool call until the owner answers.
      * @returns {Promise<{ paused: boolean, id?: string, delivered?: boolean, result: object }>}
      */
-    async request({ message, toolName, args, reason, sendCallback = null }) {
+    async request({ message, toolName, args, reason, sendCallback = null, taintSources = null }) {
         const why = reason || 'This action needs the owner\'s approval.';
         if (!this.hasStore()) {
             return { paused: false, result: { error: `'${toolName}' needs the owner's approval and the approval store is unavailable. The action did not run.` } };
@@ -331,6 +343,9 @@ class ApprovalService {
         for (const key of ['jobName', 'allowedTools', 'forceModel', 'session', 'phoneNumber', 'isGroup', 'groupName']) {
             if (meta[key] !== undefined) originMeta[key] = meta[key];
         }
+        // What tainted the run: shown on the card, and kept so an approved
+        // call runs with the same taint.
+        if (Array.isArray(taintSources) && taintSources.length > 0) originMeta.untrustedTaint = taintSources.slice(0, 20).map(String);
         const row = this.db.createPendingConfirmation({
             id: this._newId(),
             originChatId: meta.chatId ? String(meta.chatId) : null,
@@ -430,6 +445,11 @@ class ApprovalService {
             `Args: ${row.summary || summarizeArgs(row.args)}`,
             `Why: ${row.reason || 'the safety rules paused it'}`
         ];
+        const taintSources = Array.isArray(row.origin_meta?.untrustedTaint) ? row.origin_meta.untrustedTaint : [];
+        if (taintSources.length > 0) {
+            const shown = taintSources.slice(0, 3).join('; ');
+            lines.push(`Untrusted input: ${shown}${taintSources.length > 3 ? ` (+${taintSources.length - 3} more)` : ''}`);
+        }
         if (origin) lines.push(`From: ${origin}`);
         if (mirrorOf) {
             lines.push(`Asked on your ${splitChannel(mirrorOf).channel} too. Answer there with yes or no, or here with /confirm ${row.id} · /cancel ${row.id}.`);
@@ -658,7 +678,9 @@ class ApprovalService {
         };
         let result;
         try {
-            result = await this.agent._executeTool(row.tool_name, row.args, originMessage, relay, null, { approved: true });
+            const sources = row.origin_meta?.untrustedTaint;
+            const taint = Array.isArray(sources) && sources.length > 0 ? new TurnTaint(sources) : null;
+            result = await this.agent._executeTool(row.tool_name, row.args, originMessage, relay, null, taint ? { approved: true, taint } : { approved: true });
         } catch (e) {
             result = { error: e.message || String(e) };
         }

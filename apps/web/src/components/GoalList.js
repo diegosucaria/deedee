@@ -1,8 +1,8 @@
 'use client';
 
 import { useFormState } from 'react-dom';
-import { addGoal, deleteGoal, updateGoal } from '@/app/actions';
-import { Trash2, CheckCircle, Circle, Plus } from 'lucide-react';
+import { addGoal, deleteGoal, updateGoal, trustGoal } from '@/app/actions';
+import { Trash2, CheckCircle, Circle, Plus, ShieldAlert } from 'lucide-react';
 
 const initialState = { success: false, error: null };
 
@@ -63,6 +63,24 @@ export default function GoalList({ goals }) {
                                         <p className="mt-1 text-xs text-indigo-300/80 font-mono whitespace-pre-wrap break-words">
                                             checkpoint: {goal.progress}
                                         </p>
+                                    )}
+                                    {goal.metadata?.tainted === true && (
+                                        <div className="mt-1 flex flex-wrap items-center gap-2 text-xs text-amber-300/90">
+                                            <ShieldAlert className="h-3.5 w-3.5" />
+                                            <span>
+                                                Written after reading untrusted content
+                                                {Array.isArray(goal.metadata.taintSources) && goal.metadata.taintSources.length > 0 ? ` (${goal.metadata.taintSources.slice(0, 2).join(', ')})` : ''}.
+                                                Runs that load it ask before they reach other people.
+                                            </span>
+                                            <button
+                                                onClick={() => {
+                                                    if (confirm('Trust this goal? Later runs will load it without asking first.')) trustGoal(goal.id);
+                                                }}
+                                                className="rounded border border-amber-400/30 px-2 py-0.5 hover:bg-amber-400/10"
+                                            >
+                                                Trust
+                                            </button>
+                                        </div>
                                     )}
                                     <p className="mt-1 text-xs text-zinc-500">
                                         Created: {new Date(goal.created_at).toLocaleDateString()}

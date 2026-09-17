@@ -1,16 +1,37 @@
 const { BaseExecutor } = require('./base');
+const { taintPayloadFields, taintFromPayload } = require('../utils/untrusted-content');
+
+/**
+ * Where a job, task or reminder created in this run reports, and the taint
+ * it carries. A run that read untrusted content stores its sources on the
+ * job (payload.tainted, payload.taintSources), so every later run starts
+ * tainted and its outward actions ask the owner. Such a job never reports
+ * to a contact's chat: when the run did not come from one of the owner's
+ * chats, the target is dropped and the owner channel gets the result.
+ */
+function originFor(context, scheduler) {
+    const message = context?.message || {};
+    let targetChatId = message.metadata?.chatId;
+    let targetSource = message.source;
+    const taint = taintPayloadFields(context?.untrustedTaint);
+    if (taint.tainted && targetChatId && scheduler && typeof scheduler._isOwnerOrigin === 'function'
+        && !scheduler._isOwnerOrigin(targetSource, targetChatId)) {
+        targetChatId = undefined;
+        targetSource = undefined;
+    }
+    return { targetChatId, targetSource, taint };
+}
 
 class SchedulerExecutor extends BaseExecutor {
     async execute(name, args, context, callServices) {
         const services = this.getServices(callServices);
         const { scheduler } = services;
-        const { message, processMessage } = context;
+        const { processMessage } = context;
 
         switch (name) {
             case 'scheduleJob': {
                 const { name: jobName, cron, task, expiresAt } = args;
-                const targetChatId = message.metadata?.chatId;
-                const targetSource = message.source;
+                const { targetChatId, targetSource, taint } = originFor(context, scheduler);
 
                 // NOTE: Recurring jobs (scheduleJob) generally do NOT retry on failure in the same way 
                 // because they run again on the next cron interval. 
@@ -18,7 +39,9 @@ class SchedulerExecutor extends BaseExecutor {
                 // We'll leave recurring jobs as-is for now (simple execution) unless requested otherwise.
 
                 const callback = async () => {
-                    const meta = { chatId: targetChatId || `scheduled_${jobName}_${Date.now()}` };
+                    const meta = { chatId: targetChatId || `scheduled_${jobName}_${Date.now()}`, jobName };
+                    const inherited = taintFromPayload(taint, `job "${jobName}"`);
+                    if (inherited.length > 0) meta.untrustedTaint = inherited;
                     await processMessage({
                         role: 'user',
                         content: `Scheduled Task: ${task}`,
@@ -34,7 +57,7 @@ class SchedulerExecutor extends BaseExecutor {
                 scheduler.scheduleJob(jobName, cron, callback, {
                     persist: true,
                     taskType: 'agent_instruction',
-                    payload: { task, targetChatId, targetSource },
+                    payload: { task, targetChatId, targetSource, ...taint },
                     expiresAt: expiresAt
                 });
                 return { success: true, info: `Job '${jobName}' scheduled for '${cron}'` + (expiresAt ? ` until ${expiresAt}` : '') };
@@ -47,8 +70,8 @@ class SchedulerExecutor extends BaseExecutor {
                 if (date < new Date()) return { error: "Time must be in the future." };
 
                 const parsedName = `reminder_${date.getTime()}_${Math.floor(Math.random() * 1000)}`;
-                const targetChatId = message.metadata?.chatId;
-                const targetSource = message.source;
+                // A reminder only delivers its text; under taint it goes to the owner alone.
+                const { targetChatId, targetSource, taint } = originFor(context, scheduler);
 
                 // Reminders deliver a static text message. Do NOT route them through the
                 // LLM — that caused double-messages (the agent would call sendMessage(to="me")
@@ -63,7 +86,8 @@ class SchedulerExecutor extends BaseExecutor {
                     isReminder: true,
                     targetChatId,
                     targetSource,
-                    retryCount: 0
+                    retryCount: 0,
+                    ...taint
                 };
 
                 const callback = scheduler._buildDirectReminderCallback(parsedName, initialPayload);
@@ -83,8 +107,7 @@ class SchedulerExecutor extends BaseExecutor {
                 if (date < new Date()) return { error: "Time must be in the future." };
 
                 const parsedName = `task_${date.getTime()}_${Math.floor(Math.random() * 1000)}`;
-                const targetChatId = message.metadata?.chatId;
-                const targetSource = message.source;
+                const { targetChatId, targetSource, taint } = originFor(context, scheduler);
 
                 // Use the shared scheduler helper so in-memory scheduled tasks match
                 // what loadJobs reconstructs after a restart — smart notification for
@@ -96,7 +119,8 @@ class SchedulerExecutor extends BaseExecutor {
                     isOneOff: true,
                     targetChatId,
                     targetSource,
-                    retryCount: 0
+                    retryCount: 0,
+                    ...taint
                 };
 
                 const callback = scheduler._buildAgentInstructionCallback(parsedName, initialPayload);
@@ -137,4 +161,4 @@ class SchedulerExecutor extends BaseExecutor {
     }
 }
 
-module.exports = { SchedulerExecutor };
+module.exports = { SchedulerExecutor, originFor };

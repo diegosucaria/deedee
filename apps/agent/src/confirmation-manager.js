@@ -16,12 +16,23 @@
  */
 const { toolDefinitions } = require('./tools-definition');
 const { BLOCKED_PATTERNS: SHELL_BLOCKED } = require('@deedee/mcp-servers/src/local/index');
+const { taintedAction, haEntityIds } = require('./utils/untrusted-content');
+
+/** The "Why" line of a taint approval: what the call does and what was read. */
+function taintReason(action, taint) {
+    const carried = taint.sources.some(s => s.includes(' [carried by '));
+    const what = carried ? 'read untrusted content, or was created by a run that did' : 'read untrusted content';
+    return `This run ${what} (${taint.describe()}) and now wants to ${action}. ` +
+        'The content may have asked for it, so the owner decides.';
+}
 
 const HA_CALL_TOOLS = new Set(['ha_call_service', 'call_service']);
 // Domains where any service call changes physical security. Climate,
 // covers (except opening a garage) and bulk light/switch control are
 // everyday actions and run unasked.
 const HA_GUARDED_DOMAINS = new Set(['lock', 'alarm_control_panel']);
+// homeassistant.* services that switch named entities through their own domain.
+const HA_GENERIC_TOGGLE = new Set(['turn_on', 'turn_off', 'toggle']);
 // A cover whose id reads as a garage or gate: opening it lets people in.
 const GARAGE_COVER_RE = /garage|gate|port[oó]n|cochera|driveway/i;
 const COVER_OPEN_SERVICES = new Set(['open_cover', 'open_cover_tilt', 'set_cover_position', 'set_cover_tilt_position', 'toggle', 'toggle_cover_tilt']);
@@ -142,11 +153,13 @@ function buildToolFlags(definitions = toolDefinitions) {
 class ConfirmationManager {
     /**
      * @param {object} db - AgentDB (isVerifiedContact, searchPeople, getAgentSetting); a stub is fine in tests
-     * @param {{ toolFlags?: Map<string, {message: string}> }} [opts]
+     * @param {{ toolFlags?: Map<string, {message: string}>, isOwnerChat?: (channel: string, target: string) => boolean }} [opts]
+     *   isOwnerChat: the delivery service's owner check (phone JID, LID, Telegram id).
      */
     constructor(db, opts = {}) {
         this.db = db || {};
         this.toolFlags = opts.toolFlags || buildToolFlags();
+        this.isOwnerChat = typeof opts.isOwnerChat === 'function' ? opts.isOwnerChat : null;
 
         this.rules = [
             {
@@ -155,11 +168,23 @@ class ConfirmationManager {
                     if (!HA_CALL_TOOLS.has(name)) return false;
                     const domain = asString(args.domain);
                     const service = asString(args.service);
-                    if (domain === 'homeassistant' || domain === 'hassio') return true;
+                    // Entities named anywhere in the call: target, data, and the
+                    // { entity: state } map scene.apply and scene.create take.
+                    const ids = haEntityIds(args);
+                    if (ids.some(id => HA_GUARDED_DOMAINS.has(entityDomain(id)))) return true;
+                    if (domain === 'hassio') return true;
+                    if (domain === 'homeassistant') {
+                        // Generic on/off acts through each entity's own domain; with
+                        // named, unguarded entities it is plain home control.
+                        if (!HA_GENERIC_TOGGLE.has(service) || ids.length === 0) return true;
+                        return ids.some(id => id === 'all' || !entityDomain(id) || GARAGE_COVER_RE.test(id)
+                            || (entityDomain(id) === 'automation' && service !== 'turn_on'));
+                    }
+                    if (domain === 'scene' && ids.some(id => entityDomain(id) === 'cover' && GARAGE_COVER_RE.test(id))) return true;
                     if (HA_GUARDED_DOMAINS.has(domain)) return true;
                     if (domain === 'automation' && service === 'turn_off') return true;
                     if (domain === 'script' && service.includes('delete')) return true;
-                    if (domain === 'cover' && isGarageOpen(args.entity_id, service)) return true;
+                    if (domain === 'cover' && ids.some(id => isGarageOpen(id, service))) return true;
                     if (asString(args.entity_id) === 'all') {
                         if (['light', 'switch', 'media_player'].includes(domain) && service === 'turn_off') return false;
                         if (domain === 'light' && service === 'turn_on') return false;
@@ -259,6 +284,68 @@ class ConfirmationManager {
         ];
     }
 
+    /** Owner phone digits and lower-cased name from settings, env as fallback. */
+    _ownerIdentity() {
+        let ownerPhone = process.env.MY_PHONE || '';
+        let ownerName = 'owner';
+        try {
+            if (typeof this.db.getAgentSetting === 'function') {
+                ownerPhone = this.db.getAgentSetting('owner_phone')?.value || ownerPhone;
+                ownerName = String(this.db.getAgentSetting('owner_name')?.value || ownerName).toLowerCase();
+            }
+        } catch { /* settings unavailable: nobody counts as the owner */ }
+        return { ownerDigits: String(ownerPhone).replace(/[^0-9]/g, ''), ownerName };
+    }
+
+    /**
+     * Is `sendMessage` addressed to the owner himself (an alias, his phone,
+     * his WhatsApp LID, or one of his Telegram ids)? The same ids the
+     * approval service routes by. Anything unclear counts as someone else.
+     */
+    isOwnerTarget(args) {
+        const a = args && typeof args === 'object' ? args : {};
+        const service = asString(a.service) || 'whatsapp';
+        const raw = asString(a.to).trim();
+        if (!raw) return false;
+        const { ownerDigits, ownerName } = this._ownerIdentity();
+        const lower = raw.toLowerCase();
+        if (['me', 'myself', 'owner', ownerName].includes(lower)) return true;
+        if (service === 'telegram') {
+            const ids = String(process.env.ALLOWED_TELEGRAM_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+            return ids.includes(raw);
+        }
+        // Every web chat is the owner's.
+        if (service === 'web') return true;
+        if (service !== 'whatsapp') return false;
+        const lid = /^\+?[0-9]+@lid$/i.test(raw);
+        if (!lid && /[a-zA-Z]/.test(raw.replace(/@(?:s\.whatsapp\.net|c\.us)$/i, ''))) return false;
+        const digits = raw.replace(/@.*$/, '').replace(/[^0-9]/g, '');
+        if (!digits) return false;
+        if (!lid && ownerDigits && digits === ownerDigits) return true;
+        if (this.isOwnerChat) {
+            try {
+                return !!this.isOwnerChat('whatsapp', lid ? `${digits}@lid` : `${digits}@s.whatsapp.net`);
+            } catch { return false; }
+        }
+        return false;
+    }
+
+    /**
+     * A run that read untrusted content must ask before this call?
+     * @returns {{ requiresConfirmation: boolean, message?: string, rule?: string }}
+     */
+    taintCheck(name, args, { taint = null, serverName = null } = {}) {
+        if (!taint || !taint.tainted) return { requiresConfirmation: false };
+        let action;
+        try {
+            action = taintedAction(asString(name), args, { serverName, isOwnerTarget: (a) => this.isOwnerTarget(a), browser: taint.browser || null });
+        } catch (e) {
+            action = `run ${asString(name)}`;
+        }
+        if (!action) return { requiresConfirmation: false };
+        return { requiresConfirmation: true, rule: 'untrusted-content', message: taintReason(action, taint) };
+    }
+
     /**
      * Does `sendMessage` reach someone the owner never messaged through Deedee?
      * Mirrors the executor's target resolution: aliases for the owner, names
@@ -271,14 +358,7 @@ class ConfirmationManager {
         const raw = asString(args.to).trim();
         if (!raw) return false;
         let target = raw;
-        let ownerPhone = process.env.MY_PHONE || '';
-        let ownerName = 'owner';
-        try {
-            if (typeof this.db.getAgentSetting === 'function') {
-                ownerPhone = this.db.getAgentSetting('owner_phone')?.value || ownerPhone;
-                ownerName = String(this.db.getAgentSetting('owner_name')?.value || ownerName).toLowerCase();
-            }
-        } catch { /* settings unavailable: treat the target as a stranger */ }
+        const { ownerDigits, ownerName } = this._ownerIdentity();
         const lower = target.toLowerCase();
         if (['me', 'myself', 'owner', ownerName].includes(lower)) return false;
         if (/[a-zA-Z]/.test(target) && !target.includes('@')) {
@@ -289,7 +369,6 @@ class ConfirmationManager {
         }
         const digits = target.replace(/[^0-9]/g, '');
         if (!digits || digits.length < 5) return false;
-        const ownerDigits = String(ownerPhone).replace(/[^0-9]/g, '');
         if (ownerDigits && digits === ownerDigits) return false;
         if (typeof this.db.isVerifiedContact !== 'function') return true;
         return !this.db.isVerifiedContact(service, digits);
@@ -350,4 +429,4 @@ class ConfirmationManager {
     }
 }
 
-module.exports = { ConfirmationManager, buildToolFlags, denyKey, globToRegExp, stableJson, HA_GUARDED_DOMAINS, bulkOperationGuarded, isGarageOpen };
+module.exports = { ConfirmationManager, taintReason, buildToolFlags, denyKey, globToRegExp, stableJson, HA_GUARDED_DOMAINS, bulkOperationGuarded, isGarageOpen };

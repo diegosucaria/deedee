@@ -79,6 +79,12 @@ const EFFECTIVE_TAG_SQL = `
     ELSE 'web_chat'
   END`;
 
+/** The goal fields a tainted run wrote. A tainted row without the list counts as fully tainted. */
+function goalTaintedFields(meta) {
+  if (!meta || meta.tainted !== true) return [];
+  return Array.isArray(meta.taintedFields) ? meta.taintedFields.map(String) : ['description', 'progress'];
+}
+
 class AgentDB {
   constructor(dataDir) {
     // Determine data directory
@@ -271,7 +277,8 @@ class AgentDB {
         instruction TEXT NOT NULL,
         status TEXT DEFAULT 'active', -- active, triggered, paused
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        last_triggered_at DATETIME
+        last_triggered_at DATETIME,
+        taint_sources TEXT -- JSON array: set when a run that read untrusted content created it
       );
 
       CREATE TABLE IF NOT EXISTS dj_vinyls (
@@ -504,6 +511,13 @@ class AgentDB {
       this.migrateSessions();
     } catch (err) {
       console.warn('[DB] Session migration failed (non-fatal):', err.message);
+    }
+
+    // Migration: a watcher created by a tainted run stores that taint.
+    try {
+      this.db.exec("ALTER TABLE watchers ADD COLUMN taint_sources TEXT");
+    } catch (e) {
+      // Ignore if column exists
     }
 
     try {
@@ -766,17 +780,24 @@ class AgentDB {
     this.db.prepare('DELETE FROM goals WHERE id = ?').run(id);
   }
 
-  updateGoal(id, { status, description }) {
+  /**
+   * The owner's edit of a goal (dashboard, API). A new description is his own
+   * text, so the taint a run left on the old one goes; `clearTaint` drops all
+   * of it (he read the goal and trusts it).
+   */
+  updateGoal(id, { status, description, clearTaint = false } = {}) {
     const updates = [];
     const args = [];
     if (status) { updates.push('status = ?'); args.push(status); }
     if (description) { updates.push('description = ?'); args.push(description); }
 
-    if (updates.length === 0) return;
-
-    args.push(id);
-    const sql = `UPDATE goals SET ${updates.join(', ')} WHERE id = ?`;
-    this.db.prepare(sql).run(...args);
+    if (updates.length > 0) {
+      args.push(id);
+      const sql = `UPDATE goals SET ${updates.join(', ')} WHERE id = ?`;
+      this.db.prepare(sql).run(...args);
+    }
+    if (clearTaint) this.clearGoalTaint(id);
+    else if (description) this.clearGoalTaint(id, 'description');
   }
 
   listAliases() {
@@ -1473,6 +1494,48 @@ class AgentDB {
     }));
   }
 
+  /**
+   * Mark a goal as written by a run that read untrusted content. Merges
+   * { tainted, taintSources } into its metadata; later runs that load the
+   * goal into their prompt start tainted.
+   */
+  /**
+   * Mark a goal's text as written by a tainted run. `field` is the text that
+   * run wrote: 'progress' (updateGoalProgress) or 'description'. The taint
+   * lasts while some tainted text is still there (see clearGoalTaint).
+   */
+  markGoalTainted(id, { taintSources = [] } = {}, field = 'progress') {
+    const row = this.db.prepare('SELECT metadata FROM goals WHERE id = ?').get(id);
+    if (!row) return { changes: 0 };
+    let meta = {};
+    try { meta = row.metadata ? JSON.parse(row.metadata) : {}; } catch { meta = {}; }
+    const sources = [...new Set([...(Array.isArray(meta.taintSources) ? meta.taintSources : []), ...taintSources])].slice(0, 10);
+    const fields = [...new Set([...goalTaintedFields(meta), field])];
+    meta = { ...meta, tainted: true, taintSources: sources, taintedFields: fields };
+    return this.db.prepare('UPDATE goals SET metadata = ? WHERE id = ?').run(JSON.stringify(meta), id);
+  }
+
+  /**
+   * Drop the taint from one field of a goal (its text was replaced by clean
+   * text), or from all of them. The goal stops carrying taint once no
+   * tainted field is left.
+   */
+  clearGoalTaint(id, field = null) {
+    const row = this.db.prepare('SELECT metadata FROM goals WHERE id = ?').get(id);
+    if (!row) return { changes: 0 };
+    let meta = {};
+    try { meta = row.metadata ? JSON.parse(row.metadata) : {}; } catch { meta = {}; }
+    if (meta.tainted !== true) return { changes: 0 };
+    const fields = field ? goalTaintedFields(meta).filter(f => f !== field) : [];
+    if (fields.length > 0) {
+      meta = { ...meta, taintedFields: fields };
+    } else {
+      const { tainted, taintSources, taintedFields, ...rest } = meta;
+      meta = rest;
+    }
+    return this.db.prepare('UPDATE goals SET metadata = ? WHERE id = ?').run(JSON.stringify(meta), id);
+  }
+
   updateGoalProgress(id, progress) {
     const stmt = this.db.prepare(
       "UPDATE goals SET progress = ?, last_activity_at = CURRENT_TIMESTAMP WHERE id = ?"
@@ -1490,16 +1553,20 @@ class AgentDB {
   // --- Watchers ---
   createWatcher(watcher) {
     const stmt = this.db.prepare(`
-        INSERT INTO watchers (name, contact_string, person_id, condition, instruction, status)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO watchers (name, contact_string, person_id, condition, instruction, status, taint_sources)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
+    const taint = Array.isArray(watcher.taintSources) && watcher.taintSources.length > 0
+      ? JSON.stringify(watcher.taintSources.map(String))
+      : null;
     return stmt.run(
       watcher.name || 'New Watcher',
       watcher.contactString,
       watcher.personId || null,
       watcher.condition,
       watcher.instruction,
-      watcher.status || 'active'
+      watcher.status || 'active',
+      taint
     );
   }
 

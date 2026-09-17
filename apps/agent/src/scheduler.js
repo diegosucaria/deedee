@@ -1,4 +1,5 @@
 const schedule = require('node-schedule');
+const { taintFromPayload } = require('./utils/untrusted-content');
 
 // A one-off reminder that came due while the process was down is still
 // delivered, marked "(late)", when it is less than this overdue.
@@ -18,6 +19,26 @@ class Scheduler {
             this.agent.delivery = new DeliveryService(this.agent);
         }
         return this.agent.delivery;
+    }
+
+    /**
+     * Is (source, chatId) one of the owner's own chats? Web chats are his;
+     * Telegram and WhatsApp by his ids (phone JID, LID). Runs with no chat
+     * (scheduler, system) report to the owner channel anyway.
+     */
+    _isOwnerOrigin(source, chatId) {
+        const channel = String(source || '').split(':')[0];
+        if (!chatId || !['whatsapp', 'telegram', 'slack', 'web'].includes(channel)) return true;
+        if (channel === 'web') return true;
+        if (channel === 'slack') return false;
+        try {
+            const delivery = this._delivery();
+            const target = channel === 'whatsapp' && !String(chatId).includes('@')
+                ? `${String(chatId).replace(/\D/g, '')}@s.whatsapp.net` : String(chatId);
+            return !!delivery.isOwnerTarget(channel, target);
+        } catch {
+            return false;
+        }
     }
 
     /** setReminder jobs: explicit flag, taskType, or the legacy "Reminder: ..." task. */
@@ -431,6 +452,9 @@ class Scheduler {
                 ...(currentPayload.model ? { forceModel: currentPayload.model } : {}),
                 ...(currentPayload.allowedTools ? { allowedTools: currentPayload.allowedTools } : {})
             };
+            // Created by a run that read untrusted content: start tainted.
+            const inherited = taintFromPayload(currentPayload, `job "${name}"`);
+            if (inherited.length > 0) msgMeta.untrustedTaint = inherited;
 
             let executionResult = null;
             try {

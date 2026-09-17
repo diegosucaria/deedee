@@ -43,6 +43,20 @@ const { AskUserService } = require('./services/ask-user');
 const { BrowserLive } = require('./services/browser-live');
 const { ToolScoper } = require('./services/tool-scoper');
 const { sanitizeToolResult, sanitizeToolArgs } = require('./utils/tool-result-sanitizer');
+const { classifyToolResult, wrapUntrusted, TurnTaint, taintFromPayload, taintPayloadFields } = require('./utils/untrusted-content');
+const { BrowserPageState } = require('./utils/browser-gate');
+
+/** The taint stored on a watcher row (taint_sources JSON), as { tainted, taintSources }. */
+function watcherTaint(watcher) {
+  const raw = watcher?.taint_sources;
+  if (!raw) return null;
+  try {
+    const list = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return Array.isArray(list) ? { tainted: true, taintSources: list } : { tainted: true };
+  } catch {
+    return { tainted: true };
+  }
+}
 const { buildFunctionResponseParts, stripInlineParts, imagesAsUserContent, isPartsRejection, splitImages } = require('./utils/function-response');
 const browserSecrets = require('./utils/browser-secrets');
 const { sanitizeFunctionDeclarations } = require('./utils/gemini-schema-sanitizer');
@@ -237,6 +251,27 @@ class Agent {
   // resolve is retried on the next send — bounded by _ownerLidRetryAfterMs
   // so a permanently-down resolve endpoint doesn't generate one HTTP call
   // per send.
+  /**
+   * Pending goals as prompt lines. A goal a tainted run wrote or updated may
+   * hold injected instructions: loading it taints this run, so its outward
+   * actions ask.
+   */
+  _formatGoals(goals, turnTaint) {
+    return (goals || []).map(g => {
+      for (const src of taintFromPayload(g.metadata, `goal ${g.id}`)) turnTaint.add(src);
+      return `- [${g.id}] ${g.description}${g.progress ? `\n    checkpoint: ${g.progress}` : ''}`;
+    }).join('\n');
+  }
+
+  /**
+   * The browser MCP server's working directory: @playwright/mcp writes snapshot
+   * file links relative to it. The cwd the manager spawned it in, not the
+   * config directory. Null (the agent's own cwd) before the server starts.
+   */
+  _browserServerDir() {
+    return this.mcp?.serverCwds?.browser || null;
+  }
+
   async _getOwnerWaIds() {
     const now = Date.now();
     const haveCache = !!this._ownerWaIds;
@@ -1052,9 +1087,15 @@ class Agent {
 
     const runId = crypto.randomUUID();
     const e2eStart = Date.now();
+    // Untrusted sources this run has read (email, web, a contact's chat).
+    // Once set, side effects need the owner's approval. A sub-agent starts
+    // with its parent's sources.
+    // A job or watcher created by a tainted run carries that taint here too.
+    const turnTaint = new TurnTaint(message.metadata?.untrustedTaint, { browser: new BrowserPageState({ baseDir: () => this._browserServerDir() }) });
     const executionSummary = {
       toolOutputs: [], // List of { name, result }
-      replies: []      // List of text/audio replies
+      replies: [],     // List of text/audio replies
+      untrustedSources: turnTaint.sources // live list, read by the sub-agent service
     };
 
     // Watcher in-flight lock state (set inside the watcher block; cleaned up in finally).
@@ -1213,6 +1254,13 @@ class Agent {
       if (typeof commandResult === 'object' && commandResult.type === 'EXECUTE_PENDING') {
         // ... (existing slash command logic) ...
         const action = commandResult.action;
+        // An approved call from a tainted run keeps that run's taint (a job it creates stays tainted).
+        let approvedTaint = null;
+        try {
+          const row = action.approvalId && typeof this.db.getPendingConfirmation === 'function' ? this.db.getPendingConfirmation(action.approvalId) : null;
+          const sources = row?.origin_meta?.untrustedTaint;
+          if (Array.isArray(sources) && sources.length > 0) approvedTaint = new TurnTaint(sources);
+        } catch { approvedTaint = null; }
         console.log(`${logPrefix} User confirmed action: ${action.name}${action.approvalId ? ` (approval ${action.approvalId})` : ''}`);
         const { result } = splitImages(await this._executeTool(action.name, action.args, message, activeSendCallback, (model, pTokens, cTokens, cached = 0, thoughts = 0) => {
           const cost = calculateCost(model, pTokens, cTokens, cached, thoughts);
@@ -1221,7 +1269,7 @@ class Agent {
             totalTokens: pTokens + cTokens, chatId, estimatedCost: cost,
             cachedTokens: cached, thoughtsTokens: thoughts
           });
-        }, { approved: !!action.approvalId }));
+        }, { approved: !!action.approvalId, taint: approvedTaint }));
         if (action.approvalId) {
           try { this.db.setConfirmationResult(action.approvalId, result); } catch (e) { console.warn('[Approvals] result store failed:', e.message); }
         }
@@ -1466,6 +1514,10 @@ class Agent {
           // Create a pseudo-message for the Agent to ACT on
           message.content = `SYSTEM_WATCHER_ALERT: A message from ${contactString} ("${message.content}") matched watcher conditions. \nINSTRUCTION: ${triggeredWatcher.instruction} \n\nIMPORTANT: DO NOT REPLY TO THE SENDER directly. They are a contact, not the user. \n- If you need to send them a message, use the 'sendMessage' tool explicitly.\n- If you need to confirm the action, just say "Done" and I will redirect it to the Admin.`;
           message.role = 'user'; // Treat as a command from me
+          // The prompt quotes the contact's text: the run starts tainted.
+          turnTaint.add('a contact\'s message (watcher)');
+          // A watcher a tainted run created carries that run's sources.
+          for (const s of taintFromPayload(watcherTaint(triggeredWatcher), `watcher ${triggeredWatcher.id}`)) turnTaint.add(s);
           // Proceed to normal flow...
         }
       }
@@ -1570,9 +1622,7 @@ class Agent {
         // --- PREPARE SYSTEM PROMPT FOR GROK ---
         const contextQuery = message.content || (message.parts ? message.parts.map(p => p.text).join(' ') : '');
         const facts = this.db.getFactsFormatted(contextQuery);
-        const activeGoals = this.db.getPendingGoals()
-          .map(g => `- [${g.id}] ${g.description}${g.progress ? `\n    checkpoint: ${g.progress}` : ''}`)
-          .join('\n');
+        const activeGoals = this._formatGoals(this.db.getPendingGoals(), turnTaint);
 
         let vaultContext = null;
         const activeTopic = this.activeTopics.get(chatId);
@@ -1846,9 +1896,7 @@ class Agent {
       // Lightweight sub-agents skip expensive context loading (facts, goals, skills, vault)
       const contextQuery = message.content || (message.parts ? message.parts.map(p => p.text).join(' ') : '');
       const facts = isLightweight ? '' : this.db.getFactsFormatted(contextQuery);
-      const activeGoals = isLightweight ? '' : this.db.getPendingGoals()
-        .map(g => `- [${g.id}] ${g.description}${g.progress ? `\n    checkpoint: ${g.progress}` : ''}`)
-        .join('\n');
+      const activeGoals = isLightweight ? '' : this._formatGoals(this.db.getPendingGoals(), turnTaint);
       const skillsContext = isLightweight ? null : this.skillService.getContextualInstructions(contextQuery);
 
       let vaultContext = null;
@@ -2311,12 +2359,15 @@ class Agent {
 
           let toolResult;
           let toolStatus = 'ok'; // 'ok' | 'error' | 'paused'
+          let executed = false; // false when the guard paused or denied the call
           try {
             // SENSITIVE GUARD CHECK: deny-list first, then the safety rules.
             // A paused call is stored and the owner is asked where he can
             // answer (this chat, or his notification channel for jobs and
             // watchers). It resumes once he approves; the model must not retry.
-            const guard = this.approvals.check(executionName, call.args);
+            // A run that already read untrusted content asks before side effects.
+            const serverName = this.mcp?.toolMap?.get?.(executionName)?.name || null;
+            const guard = this.approvals.check(executionName, call.args, { taint: turnTaint, serverName });
             if (guard.denied) {
               console.warn(`${logPrefix} Action ${executionName} denied by the owner's deny-list (${guard.pattern}).`);
               toolResult = { error: guard.message };
@@ -2324,12 +2375,14 @@ class Agent {
             } else if (guard.requiresConfirmation) {
               console.log(`${logPrefix} Action ${executionName} requires confirmation (${guard.rule || 'rule'}).`);
               const paused = await this.approvals.request({
-                message, toolName: executionName, args: call.args, reason: guard.message, sendCallback: activeSendCallback
+                message, toolName: executionName, args: call.args, reason: guard.message, sendCallback: activeSendCallback,
+                taintSources: guard.tainted ? [...turnTaint.sources] : null
               });
               toolResult = paused.result;
               toolStatus = paused.paused ? 'paused' : 'error';
             } else {
               // Execute normally
+              executed = true;
               toolResult = await this._executeTool(executionName, call.args, message, activeSendCallback, (model, pTokens, cTokens, cached = 0, thoughts = 0, tag = null) => {
                 const cost = calculateCost(model, pTokens, cTokens, cached, thoughts);
                 e2eCost += cost;
@@ -2341,9 +2394,13 @@ class Agent {
                   totalTokens: pTokens + cTokens, chatId, estimatedCost: cost,
                   tag, cachedTokens: cached, thoughtsTokens: thoughts
                 });
-              });
+              }, { taint: turnTaint });
               if (toolResult && typeof toolResult === 'object' && toolResult.error) {
                 toolStatus = 'error';
+              }
+              // Browser calls run one at a time: the next call's gate sees this page state.
+              if (serverName === 'browser' || (!serverName && String(executionName).startsWith('browser_'))) {
+                try { turnTaint.browser.observe(executionName, call.args, toolResult); } catch (e) { console.warn(`${logPrefix} Browser page state not updated: ${e.message}`); }
               }
             }
           } catch (toolErr) {
@@ -2388,7 +2445,7 @@ class Agent {
             }).catch(() => { });
           }
 
-          return { call, executionName, result: toolResult, images };
+          return { call, executionName, result: toolResult, images, executed };
         };
 
         let results = [];
@@ -2409,7 +2466,8 @@ class Agent {
         const functionResponseParts = [];
         const dbFunctionResponseParts = [];
 
-        for (const { call, executionName, result, images = [] } of results) {
+        const newlyTainted = [];
+        for (const { call, executionName, result, images = [], executed = true } of results) {
           // Capture to Summary
           executionSummary.toolOutputs.push({ name: executionName, result });
 
@@ -2460,11 +2518,6 @@ class Agent {
             });
           }
 
-          // Inject loop warning into tool result so the model sees it
-          if (call._loopWarning && typeof dbToolResult === 'object' && dbToolResult !== null) {
-            dbToolResult = { ...dbToolResult, _loopWarning: call._loopWarning };
-          }
-
           // Build API Payload (Send CLEAN result to Model)
           // SDK Requirement: 'response' must be an object map.
           let apiResponse = dbToolResult;
@@ -2478,11 +2531,36 @@ class Agent {
             apiResponse = { info: "Tool executed successfully but returned no output." };
           }
 
+          // UNTRUSTED CONTENT: text written by a third party goes to the model
+          // (and into history) inside a data envelope. A call the guard paused
+          // or denied carries only our own text, so it stays as it is.
+          if (executed) {
+            const serverName = this.mcp?.toolMap?.get?.(executionName)?.name || null;
+            const verdict = classifyToolResult(executionName, { serverName, args: call.args, result });
+            if (verdict.untrusted) {
+              apiResponse = wrapUntrusted(executionName, apiResponse, verdict.kind);
+              newlyTainted.push(`${verdict.kind} (${executionName})`);
+            }
+          }
+
+          // Inject loop warning into tool result so the model sees it
+          if (call._loopWarning && apiResponse && typeof apiResponse === 'object') {
+            apiResponse = { ...apiResponse, _loopWarning: call._loopWarning };
+          }
+
           // Model payload carries the images as inlineData parts; the DB row
           // only notes how many went out.
           const built = buildFunctionResponseParts(call, apiResponse, images);
           functionResponseParts.push(built.model);
           dbFunctionResponseParts.push(built.db);
+        }
+
+        // Taint applies from the next batch on: calls in this batch were
+        // chosen before the model read these results.
+        if (newlyTainted.length > 0) {
+          const was = turnTaint.tainted;
+          newlyTainted.forEach(s => turnTaint.add(s));
+          if (!was) console.log(`${logPrefix} Run read untrusted content (${turnTaint.describe()}); side effects now need the owner's approval.`);
         }
 
         // 4. Save Function Results to DB
@@ -2792,13 +2870,21 @@ class Agent {
       return { matches: matches.map(m => `[${m.timestamp}] ${m.role}: ${(m.content || '').substring(0, 200)}`) };
     }
     if (executionName === 'addGoal') {
-      const metadata = { chatId: message.metadata?.chatId };
+      // A goal a tainted run writes carries the taint into every run that loads it.
+      const taint = taintPayloadFields(options.taint?.tainted ? options.taint.sources : []);
+      const fields = taint.tainted ? { taintedFields: args.progress ? ['description', 'progress'] : ['description'] } : {};
+      const metadata = { chatId: message.metadata?.chatId, ...taint, ...fields };
       const info = this.db.addGoal(args.description, metadata, args.progress || null);
       return { success: true, id: info.lastInsertRowid };
     }
     if (executionName === 'updateGoalProgress') {
       const res = this.db.updateGoalProgress(args.id, args.progress);
       if (!res.changes) return { success: false, error: `Goal ${args.id} not found` };
+      const taint = taintPayloadFields(options.taint?.tainted ? options.taint.sources : []);
+      // The run replaced the checkpoint text: the taint follows that text.
+      // A clean update removes the taint an earlier checkpoint left.
+      if (taint.tainted) this.db.markGoalTainted(args.id, taint, 'progress');
+      else this.db.clearGoalTaint(args.id, 'progress');
       return { success: true };
     }
     if (executionName === 'completeGoal') {
@@ -2925,6 +3011,8 @@ class Agent {
         message,
         sendCallback,
         approved: options.approved === true,
+        // Sources of untrusted content this run has read; a spawned sub-agent inherits them.
+        untrustedTaint: options.taint?.tainted ? [...options.taint.sources] : [],
         processMessage: this.processMessage.bind(this),
         callServices: { client: this.client, interface: this.interface }
       });

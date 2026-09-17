@@ -115,7 +115,8 @@ describe('browser screenshots as inlineData', () => {
     const fr = sent.flatMap(m => (Array.isArray(m) ? m : m.parts || [])).find(p => p.functionResponse);
     expect(fr).toBeDefined();
     expect(fr.functionResponse.name).toBe('browser_take_screenshot');
-    expect(fr.functionResponse.response).toEqual({ output: 'Took the viewport screenshot' });
+    // A web page is untrusted: the result reaches the model in the data envelope.
+    expect(fr.functionResponse.response).toMatchObject({ untrusted: true, source: 'browser_take_screenshot', kind: 'a web page', content: { output: 'Took the viewport screenshot' } });
     expect(fr.functionResponse.parts).toEqual([{ inlineData: { mimeType: 'image/png', data: PNG } }]);
 
     // DB row: no base64, just the count.
