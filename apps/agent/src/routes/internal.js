@@ -147,6 +147,9 @@ function createInternalRouter(agent) {
                     cron: j.metadata?.cronExpression || 'unknown',
                     task: j.metadata?.payload?.task || '',
                     isSystem: j.metadata?.payload?.isSystem || false,
+                    // A system job that runs its work directly takes no model
+                    // and no tools, so the UI offers no scope editor for it.
+                    scopable: j.metadata?.payload?.scopable !== false,
                     isOneOff: j.metadata?.payload?.isOneOff || false,
                     enabled: j.metadata?.enabled !== false,
                     expiresAt: j.metadata?.expiresAt || null,
@@ -216,6 +219,9 @@ function createInternalRouter(agent) {
             if (!job) return res.status(404).json({ error: 'Job not found' });
             if (!job.metadata?.payload?.isSystem) {
                 return res.status(400).json({ error: 'Only system jobs are edited here. Use the task form for your own jobs.' });
+            }
+            if (job.metadata.payload.scopable === false) {
+                return res.status(400).json({ error: 'This job does its work directly, without a model call, so a model and a tool list would change nothing.' });
             }
 
             const body = req.body || {};

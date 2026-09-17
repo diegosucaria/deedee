@@ -10,12 +10,12 @@ const { createInternalRouter } = require('../src/routes/internal');
 function makeAgent() {
     const job = {
         metadata: {
-            name: 'nightly_dream',
-            cronExpression: '30 4 * * *',
+            name: 'wardrobe_morning_outfit',
+            cronExpression: '15 7 * * *',
             enabled: true,
             expiresAt: null,
             payload: {
-                task: 'Enter REM sleep.',
+                task: "Pick today's outfit.",
                 isSystem: true,
                 scope: { model: 'FLASH', allowedTools: ['searchMemory'] }
             }
@@ -24,7 +24,7 @@ function makeAgent() {
     };
     return {
         db: { saveScheduledJob: jest.fn() },
-        scheduler: { jobs: { nightly_dream: job }, reregisterSystemJob: jest.fn().mockReturnValue(true) },
+        scheduler: { jobs: { wardrobe_morning_outfit: job }, reregisterSystemJob: jest.fn().mockReturnValue(true) },
         interface: { broadcast: jest.fn() },
         _job: job
     };
@@ -43,25 +43,25 @@ describe('PATCH /internal/tasks/:id/scope', () => {
 
     test('saves the model and tool list, re-registers the job and broadcasts', async () => {
         const res = await request(app)
-            .patch('/internal/tasks/nightly_dream/scope')
+            .patch('/internal/tasks/wardrobe_morning_outfit/scope')
             .send({ model: 'pro', allowedTools: ['searchMemory', ' getFact '] });
 
         expect(res.status).toBe(200);
         expect(res.body).toEqual({ success: true, model: 'PRO', allowedTools: ['searchMemory', 'getFact'] });
 
         const saved = agent.db.saveScheduledJob.mock.calls[0][0];
-        expect(saved.name).toBe('nightly_dream');
-        expect(saved.cronExpression).toBe('30 4 * * *');
+        expect(saved.name).toBe('wardrobe_morning_outfit');
+        expect(saved.cronExpression).toBe('15 7 * * *');
         expect(saved.enabled).toBe(true);
         expect(saved.payload.model).toBe('PRO');
         expect(saved.payload.allowedTools).toEqual(['searchMemory', 'getFact']);
         // The task and the system flag survive the edit.
         expect(saved.payload.isSystem).toBe(true);
-        expect(saved.payload.task).toBe('Enter REM sleep.');
+        expect(saved.payload.task).toBe("Pick today's outfit.");
         expect(saved.payload.scope).toEqual({ model: 'FLASH', allowedTools: ['searchMemory'] });
 
-        expect(agent.scheduler.reregisterSystemJob).toHaveBeenCalledWith('nightly_dream');
-        expect(agent.interface.broadcast).toHaveBeenCalledWith('jobs:update', { action: 'scope', name: 'nightly_dream' });
+        expect(agent.scheduler.reregisterSystemJob).toHaveBeenCalledWith('wardrobe_morning_outfit');
+        expect(agent.interface.broadcast).toHaveBeenCalledWith('jobs:update', { action: 'scope', name: 'wardrobe_morning_outfit' });
     });
 
     test('model auto and an empty tool list clear the override', async () => {
@@ -69,7 +69,7 @@ describe('PATCH /internal/tasks/:id/scope', () => {
         agent._job.metadata.payload.allowedTools = ['getFact'];
 
         const res = await request(app)
-            .patch('/internal/tasks/nightly_dream/scope')
+            .patch('/internal/tasks/wardrobe_morning_outfit/scope')
             .send({ model: 'auto', allowedTools: [] });
 
         expect(res.status).toBe(200);
@@ -81,14 +81,14 @@ describe('PATCH /internal/tasks/:id/scope', () => {
 
     test('a field left out of the body keeps its value', async () => {
         agent._job.metadata.payload.allowedTools = ['getFact'];
-        await request(app).patch('/internal/tasks/nightly_dream/scope').send({ model: 'LITE' });
+        await request(app).patch('/internal/tasks/wardrobe_morning_outfit/scope').send({ model: 'LITE' });
         const saved = agent.db.saveScheduledJob.mock.calls[0][0];
         expect(saved.payload.model).toBe('LITE');
         expect(saved.payload.allowedTools).toEqual(['getFact']);
     });
 
     test('cron, task and name in the body are ignored', async () => {
-        await request(app).patch('/internal/tasks/nightly_dream/scope').send({
+        await request(app).patch('/internal/tasks/wardrobe_morning_outfit/scope').send({
             model: 'FLASH',
             name: 'other_job',
             cron: '* * * * *',
@@ -97,20 +97,20 @@ describe('PATCH /internal/tasks/:id/scope', () => {
             isSystem: false
         });
         const saved = agent.db.saveScheduledJob.mock.calls[0][0];
-        expect(saved.name).toBe('nightly_dream');
-        expect(saved.cronExpression).toBe('30 4 * * *');
-        expect(saved.payload.task).toBe('Enter REM sleep.');
+        expect(saved.name).toBe('wardrobe_morning_outfit');
+        expect(saved.cronExpression).toBe('15 7 * * *');
+        expect(saved.payload.task).toBe("Pick today's outfit.");
         expect(saved.payload.isSystem).toBe(true);
     });
 
     test('a bad model or a bad tool list is a 400 and saves nothing', async () => {
-        const bad = await request(app).patch('/internal/tasks/nightly_dream/scope').send({ model: 'gpt-9' });
+        const bad = await request(app).patch('/internal/tasks/wardrobe_morning_outfit/scope').send({ model: 'gpt-9' });
         expect(bad.status).toBe(400);
 
-        const badTools = await request(app).patch('/internal/tasks/nightly_dream/scope').send({ allowedTools: 'searchMemory' });
+        const badTools = await request(app).patch('/internal/tasks/wardrobe_morning_outfit/scope').send({ allowedTools: 'searchMemory' });
         expect(badTools.status).toBe(400);
 
-        const badToolItem = await request(app).patch('/internal/tasks/nightly_dream/scope').send({ allowedTools: ['ok', 3] });
+        const badToolItem = await request(app).patch('/internal/tasks/wardrobe_morning_outfit/scope').send({ allowedTools: ['ok', 3] });
         expect(badToolItem.status).toBe(400);
 
         expect(agent.db.saveScheduledJob).not.toHaveBeenCalled();
@@ -129,10 +129,32 @@ describe('PATCH /internal/tasks/:id/scope', () => {
         expect(agent.db.saveScheduledJob).not.toHaveBeenCalled();
     });
 
+    test('a job that runs its work directly refuses a scope edit', async () => {
+        agent.scheduler.jobs.nightly_backup = {
+            metadata: {
+                name: 'nightly_backup',
+                cronExpression: '0 2 * * *',
+                enabled: true,
+                payload: { task: 'Back up to GCS.', isSystem: true, scopable: false }
+            },
+            nextInvocation: () => null
+        };
+
+        const res = await request(app).patch('/internal/tasks/nightly_backup/scope').send({ model: 'PRO' });
+        expect(res.status).toBe(400);
+        expect(res.body.error).toMatch(/directly/);
+        expect(agent.db.saveScheduledJob).not.toHaveBeenCalled();
+        expect(agent.scheduler.reregisterSystemJob).not.toHaveBeenCalled();
+
+        const list = await request(app).get('/internal/tasks?includeSystem=true');
+        expect(list.body.jobs.find(j => j.name === 'nightly_backup').scopable).toBe(false);
+        expect(list.body.jobs.find(j => j.name === 'wardrobe_morning_outfit').scopable).toBe(true);
+    });
+
     test('GET /internal/tasks marks the defaults apart from the override', async () => {
         agent._job.metadata.payload.model = 'PRO';
         const res = await request(app).get('/internal/tasks?includeSystem=true');
-        const job = res.body.jobs.find(j => j.name === 'nightly_dream');
+        const job = res.body.jobs.find(j => j.name === 'wardrobe_morning_outfit');
         expect(job.model).toBe('PRO');
         expect(job.allowedTools).toEqual(['searchMemory']);
         expect(job.scopeDefaults).toEqual({ model: 'FLASH', allowedTools: ['searchMemory'] });

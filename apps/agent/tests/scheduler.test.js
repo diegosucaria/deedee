@@ -691,6 +691,19 @@ describe('Scheduler & Smart Notifications', () => {
             }
         });
 
+        it('marks the jobs that never reach an agent turn as not scopable', () => {
+            scheduler.ensureSystemJobs();
+            const payloadOf = (name) => agent.db.saveScheduledJob.mock.calls.find(([j]) => j.name === name)[0].payload;
+
+            for (const name of Object.keys(AGENT_TURN_JOBS)) {
+                expect(payloadOf(name).scopable).toBe(true);
+            }
+            for (const name of ['nightly_backup', 'nightly_rag_scan', 'nightly_memory_pruning',
+                'nightly_dream', 'nightly_consolidation', 'partner_good_morning', 'partner_good_night']) {
+                expect(payloadOf(name).scopable).toBe(false);
+            }
+        });
+
         it('persists the defaults under scope, not as an override', () => {
             scheduler.ensureSystemJobs();
             const saved = agent.db.saveScheduledJob.mock.calls.find(([j]) => j.name === 'wardrobe_morning_outfit')[0];

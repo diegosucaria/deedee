@@ -645,30 +645,41 @@ class Scheduler {
         const SYSTEM_JOBS = [
             {
                 name: 'nightly_consolidation',
+                // Runs the consolidateMemory tool directly, with no agent turn,
+                // so a model and a tool list would change nothing.
+                scopable: false,
                 cron: '0 0 * * *', // Midnight
                 task: 'Run consolidateMemory tool to summarize yesterday\'s logs into the journal.',
                 silent: true
             },
             {
                 name: 'nightly_backup',
+                // Direct call to the backup manager: no model, no tools.
+                scopable: false,
                 cron: '0 2 * * *', // 2 AM
                 task: 'Perform nightly backup of data to GCS.',
                 silent: true
             },
             {
                 name: 'nightly_rag_scan',
+                // Direct call to the RAG service: no model, no tools.
+                scopable: false,
                 cron: '0 3 * * *', // 3 AM
                 task: 'Scan vaults and ingest missing files into RAG.',
                 silent: true
             },
             {
                 name: 'nightly_memory_pruning',
+                // Direct call to the pruning service: no model, no tools.
+                scopable: false,
                 cron: '0 4 * * *', // 4 AM
                 task: 'Prune stale or obsolete facts from memory.',
                 silent: true
             },
             {
                 name: 'nightly_dream',
+                // Direct call to the dream service: no agent turn here.
+                scopable: false,
                 cron: '30 4 * * *', // 4:30 AM
                 task: 'Enter REM sleep and dream based on recent memories and Plex activity.',
                 silent: true
@@ -821,6 +832,8 @@ NEVER contact anyone other than the owner.`,
                 // Target comes from the partner_greeting setting; runs
                 // directly (no agent loop). Random 0-75 min delay inside.
                 name: 'partner_good_morning',
+                // Direct call to the greeting service, which picks its own model.
+                scopable: false,
                 cron: '0 7 * * *',
                 task: 'Send the owner\'s good-morning message to their partner (partner_greeting setting).',
                 silent: true,
@@ -828,6 +841,8 @@ NEVER contact anyone other than the owner.`,
             },
             {
                 name: 'partner_good_night',
+                // Direct call to the greeting service, which picks its own model.
+                scopable: false,
                 cron: '30 22 * * *', // Random 0-45 min delay inside
                 task: 'Send the owner\'s good-night message to their partner (partner_greeting setting).',
                 silent: true,
@@ -1075,6 +1090,10 @@ NEVER contact anyone other than the owner.`,
             payload: {
                 task: sysJob.task,
                 isSystem: true,
+                // false when the callback runs the work directly and never
+                // reaches processMessage; the UI hides the scope editor and
+                // the route refuses an edit for those.
+                scopable: sysJob.scopable !== false,
                 ...(sysJob.model || sysJob.allowedTools ? { scope: { model: sysJob.model || null, allowedTools: sysJob.allowedTools || null } } : {}),
                 ...overrides
             }
