@@ -316,8 +316,28 @@ class GitOps {
       await this.git(['--literal-pathspecs', 'ls-files', '--error-unmatch', '--', normal], { quiet: true });
       return true;
     } catch {
-      return false;
+      // Not in the index yet. A file the agent added in a self-improvement
+      // stays untracked until the owner merges and the agent pulls; its own
+      // pull request commit already holds it, so it counts as tracked.
+      return this._inOpenSelfPullRequest(normal);
     }
+  }
+
+  /** True when a recent self pull request commit that was not closed holds the path. */
+  async _inOpenSelfPullRequest(file) {
+    const commits = this.listSelfPullRequests()
+      .filter(entry => !entry.closedUnmerged && !entry.mergedAt && /^[0-9a-f]{40}$/.test(String(entry.commit || '')))
+      .slice(0, 10)
+      .map(entry => entry.commit);
+    for (const commit of commits) {
+      try {
+        await this.git(['cat-file', '-e', `${commit}:${file}`], { quiet: true });
+        return true;
+      } catch {
+        // not in this one
+      }
+    }
+    return false;
   }
 
   /**

@@ -334,6 +334,17 @@ describe('GitOps pull request flow against real git', () => {
         expect(await gitOps.isTracked('')).toBe(false);
     });
 
+    test('a file added in an open self pull request counts as tracked', async () => {
+        fs.writeFileSync(path.join(work, 'apps/agent/src/fresh.js'), 'fresh();\n');
+        expect(await gitOps.isTracked('apps/agent/src/fresh.js')).toBe(false);
+        const result = await gitOps.commitAndPush('feat: fresh');
+        expect(result.success).toBe(true);
+        expect(await gitOps.isTracked('apps/agent/src/fresh.js')).toBe(true);
+        expect(await gitOps.isTracked('apps/agent/src/other.js')).toBe(false);
+        gitOps.updateSelfPullRequest(result.pullRequest.number, { closedUnmerged: true });
+        expect(await gitOps.isTracked('apps/agent/src/fresh.js')).toBe(false);
+    });
+
     test('the token never reaches the stored config', async () => {
         expect(fs.readFileSync(path.join(stateDir, 'repo.git', 'config'), 'utf8')).not.toContain(TOKEN);
     });
