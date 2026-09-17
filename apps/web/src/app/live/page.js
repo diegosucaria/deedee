@@ -2,19 +2,32 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { getLiveToken, executeLiveTool, getLiveConfig, getAgentTools } from './actions';
-import { liveWebSocketUrl, buildLiveSetup, realtimeAudioMessage, messageSizeBytes } from './live-session';
+import { liveWebSocketUrl, buildLiveSetup, realtimeAudioMessage, messageSizeBytes, sessionCountdown } from './live-session';
 import { Mic, MicOff, PhoneOff, Settings2, Terminal, X } from 'lucide-react';
 import AudioSettingsDialog from '@/components/AudioSettingsDialog';
 import clsx from 'clsx';
 import { useRouter } from 'next/navigation';
 
+// Plain words for each state; the socket close code stays in the console.
+const STATUS_LABELS = {
+    idle: 'Idle',
+    connecting: 'Connecting',
+    active: 'Listening',
+    ended: 'Session ended',
+    error: 'Error'
+};
+
 export default function GeminiLivePage() {
     const router = useRouter();
     const [isConnected, setIsConnected] = useState(false);
     const [isMuted, setIsMuted] = useState(false);
-    const [status, setStatus] = useState('idle'); // idle, connecting, active, error
+    const [status, setStatus] = useState('idle'); // idle, connecting, active, ended, error
     const [volume, setVolume] = useState(0);
     const [logs, setLogs] = useState([]);
+    // When the ephemeral token runs out. The socket closes at that moment,
+    // so the page counts down and warns first.
+    const [expiresAt, setExpiresAt] = useState(null);
+    const [countdown, setCountdown] = useState(() => sessionCountdown(null));
 
     const audioContextRef = useRef(null);
     const wsRef = useRef(null);
@@ -33,9 +46,31 @@ export default function GeminiLivePage() {
         return () => disconnect();
     }, []);
 
+    // The token ran out: close the socket and say so, rather than waiting for
+    // the server to drop it with a bare close code.
+    useEffect(() => {
+        if (!countdown.expired || !isConnected) return;
+        disconnect();
+        setStatus('ended');
+        log('Session ended.');
+    }, [countdown.expired, isConnected]);
+
+    // Tick once a second while a session is open.
+    useEffect(() => {
+        if (!expiresAt) {
+            setCountdown(sessionCountdown(null));
+            return;
+        }
+        const tick = () => setCountdown(sessionCountdown(expiresAt));
+        tick();
+        const timer = setInterval(tick, 1000);
+        return () => clearInterval(timer);
+    }, [expiresAt]);
+
     const connect = async () => {
         try {
             setStatus('connecting');
+            setExpiresAt(null);
             log('Getting Config & Token...');
 
             // Parallel fetch for speed
@@ -46,6 +81,9 @@ export default function GeminiLivePage() {
             ]);
 
             if (!auth.success || !auth.token) throw new Error(auth.error || 'No token');
+            // The token response carries the cut-off; the config route may
+            // carry it too on older builds.
+            setExpiresAt(auth.expiresAt || config.expiresAt || null);
             const tools = toolsRes.success ? toolsRes.tools : [];
             log(`Loaded ${tools.length} Tools.`);
 
@@ -125,9 +163,12 @@ export default function GeminiLivePage() {
             };
 
             ws.onclose = (event) => {
-                log(`WS Closed: ${event.code} - ${event.reason || 'No Reason'}`);
+                // The close code means nothing to the owner; say what happened.
+                console.log(`[Live] Socket closed: ${event.code} ${event.reason || ''}`.trim());
+                log('Session ended.');
                 setIsConnected(false);
-                setStatus('idle');
+                setStatus('ended');
+                setExpiresAt(null);
                 stopAudio();
             };
 
@@ -252,6 +293,7 @@ export default function GeminiLivePage() {
         wsRef.current?.close();
         stopAudio();
         setIsConnected(false);
+        setExpiresAt(null);
     };
 
     // Helpers
@@ -345,6 +387,7 @@ export default function GeminiLivePage() {
                 className={clsx(
                     "absolute w-72 h-72 md:w-96 md:h-96 rounded-full blur-[100px] transition-all duration-300",
                     status === 'active' ? "bg-indigo-600/50 scale-110" : "bg-zinc-800/30 scale-100",
+                    countdown.warn && status === 'active' && "bg-amber-600/40",
                     status === 'error' && "bg-red-600/40"
                 )}
                 style={{ transform: `scale(${1 + volume})` }}
@@ -353,8 +396,25 @@ export default function GeminiLivePage() {
             {/* Status */}
             <div className="z-10 flex flex-col items-center gap-8">
                 <div className="text-2xl font-light tracking-widest uppercase opacity-80">
-                    {status === 'active' ? 'Listening' : status}
+                    {STATUS_LABELS[status] || status}
                 </div>
+
+                {status === 'ended' && (
+                    <p className="text-sm text-zinc-400 max-w-xs text-center">
+                        A voice session lasts 30 minutes. Tap the microphone to start again.
+                    </p>
+                )}
+
+                {isConnected && countdown.known && (
+                    <p className={clsx(
+                        "text-sm text-center",
+                        countdown.warn ? "text-amber-400" : "text-zinc-500"
+                    )}>
+                        {countdown.warn
+                            ? `Ends in ${countdown.label}. Start a new session to keep talking.`
+                            : `Ends in ${countdown.label}`}
+                    </p>
+                )}
 
                 {/* Visualizer (Simple) */}
                 <div className="flex gap-1 h-12 items-center">
