@@ -813,3 +813,65 @@ export function PrefixChurnTile({ data }) {
         </div>
     );
 }
+
+/**
+ * Guardian outcomes per day, stacked. `data` rows come from
+ * outcomesPerDay() in lib/guardian.js; `groups` is OUTCOME_GROUPS (fixed
+ * order and colors, so a series keeps its color whatever the range holds).
+ */
+export function GuardianOutcomesChart({ data, groups }) {
+    const total = (data || []).reduce((s, d) => s + (groups || []).reduce((t, g) => t + (Number(d[g.key]) || 0), 0), 0);
+    if (!data || data.length === 0 || total === 0) return <div className="h-full flex items-center justify-center text-zinc-600">No Data</div>;
+
+    return (
+        <ResponsiveContainer width="100%" height="100%">
+            <BarChart data={data} margin={{ top: 5, right: 20, left: 0, bottom: 5 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#27272a" vertical={false} />
+                <XAxis
+                    dataKey="date"
+                    stroke="#71717a"
+                    fontSize={12}
+                    tickFormatter={(date) => new Date(date + 'T00:00:00').toLocaleDateString([], { month: 'numeric', day: 'numeric' })}
+                />
+                <YAxis stroke="#71717a" fontSize={12} allowDecimals={false} />
+                <Tooltip
+                    cursor={{ fill: '#27272a' }}
+                    content={({ active, payload, label }) => {
+                        if (!active || !payload || payload.length === 0) return null;
+                        const dayTotal = payload.reduce((sum, entry) => sum + (Number(entry.value) || 0), 0);
+                        return (
+                            <div style={{ backgroundColor: '#18181b', border: '1px solid #3f3f46', borderRadius: 8, padding: '10px 14px', color: '#e4e4e7', fontSize: 13 }}>
+                                <div style={{ fontWeight: 600, marginBottom: 6, color: '#a1a1aa' }}>{label}</div>
+                                {payload.filter(e => e.value > 0).map((entry, i) => (
+                                    <div key={i} style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 16, marginBottom: 2 }}>
+                                        <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                                            <span style={{ width: 8, height: 8, borderRadius: 2, backgroundColor: entry.color, display: 'inline-block' }} />
+                                            {entry.name}
+                                        </span>
+                                        <span style={{ fontFamily: 'monospace' }}>{entry.value}</span>
+                                    </div>
+                                ))}
+                                <div style={{ borderTop: '1px solid #3f3f46', marginTop: 6, paddingTop: 6, display: 'flex', justifyContent: 'space-between', gap: 16, fontWeight: 700 }}>
+                                    <span>Total</span>
+                                    <span style={{ fontFamily: 'monospace' }}>{dayTotal}</span>
+                                </div>
+                            </div>
+                        );
+                    }}
+                />
+                <Legend wrapperStyle={{ fontSize: 12, color: '#a1a1aa' }} />
+                {(groups || []).map((g, i) => (
+                    <Bar
+                        key={g.key}
+                        dataKey={g.key}
+                        stackId="outcomes"
+                        fill={g.color}
+                        stroke="#18181b"
+                        strokeWidth={2}
+                        radius={i === groups.length - 1 ? [4, 4, 0, 0] : [0, 0, 0, 0]}
+                    />
+                ))}
+            </BarChart>
+        </ResponsiveContainer>
+    );
+}
