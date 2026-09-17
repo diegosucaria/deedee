@@ -211,13 +211,17 @@ explicit map by tool name and MCP server. A test checks that every tool in
 decision.
 - Untrusted internal tools: `googleSearch`, `readChatHistory`,
   `listConversations`, `searchHistory`, `searchSlack`, `readSlackHistory`,
-  `readAllMonitoredSlackHistory`, `readVaultFile`, `searchDocuments`;
+  `readAllMonitoredSlackHistory`, `readVaultFile`, `searchDocuments`,
+  `consolidateMemory`; `searchMemory` when it finds stored messages or
+  documents (it reads the same data as `searchHistory` and `searchDocuments`);
   `runShellCommand` when the command fetches from the network (`curl`,
   `wget`, a URL, `git clone`); `spawnAgent` and `getAgentResult` unless the
   sub-agent service saw the run finish without reading untrusted content.
 - MCP servers: every `gws_*` server (Gmail, Calendar, Drive, Docs, Sheets,
-  Slides) and `browser` are untrusted. `homeassistant` is trusted except
-  `ha_config_get_calendar_events`. `node-red`, `plex`, `pilotfy` and
+  Slides) and `browser` are untrusted. `homeassistant` is trusted, except
+  a calendar or todo tool, and any tool whose args or result name a
+  `calendar.` or `todo.` entity: their attributes hold text other people
+  wrote. `node-red`, `plex`, `pilotfy` and
   `allende` are trusted (the owner's flows, library data, structured
   booking data).
 - Any other MCP server, and any tool no list names, is untrusted.
@@ -247,17 +251,25 @@ Side effects that pause in a tainted run:
   `sendSlackMessage`;
 - Google Workspace calls whose method is not a read (`get`, `list`,
   `search`, `export`, ...): sends, drafts, event insert or delete, sharing;
-- `runShellCommand`, `writeFile`, `commitAndPush`, `pullLatestChanges`,
+- `runShellCommand`, except one plain `curl` or `wget` GET that prints to
+  the output (no pipe, redirect, upload, header, output file or second
+  command), `writeFile`, `commitAndPush`, `pullLatestChanges`,
   `rollbackLastChange`;
 - `scheduleJob`, `scheduleTask`, `addWatcher` (they would run the text later
   in a clean run);
-- Home Assistant service calls on `lock`, `alarm_control_panel`, `cover`,
-  `automation`, `script`, `homeassistant`, `hassio` or `entity_id: all`, and
-  `ha_config_set_*` / `ha_config_remove_*`;
-- browser typing and submitting: `browser_type`, `browser_fill_form`,
-  `browser_select_option`, `browser_file_upload`, `browser_evaluate`,
-  `browser_press_key` with Enter, accepting a dialog, and `browser_click` on
-  an element whose description reads as submit, pay, send, confirm or book;
+- Home Assistant service calls, unless every domain they touch is plain
+  home control (`light`, `switch`, `fan`, `climate`, `media_player`,
+  `vacuum`, `scene`, `remote`, `humidifier`, `water_heater`, `input_*`,
+  `counter`, `timer`, `number`, `select`). So `notify`, `rest_command`,
+  `shell_command`, `tts`, `lock`, `cover`, `script`, `automation` and
+  `entity_id: all` ask. `ha_config_set_*`, `ha_config_remove_*` and
+  `ha_remove_*` ask too;
+- browser tools, except those that read, move or wait (`browser_snapshot`,
+  `browser_take_screenshot`, `browser_navigate`, `browser_tabs`,
+  `browser_webmcp_list`, ...). `browser_click` asks when the element reads as
+  submit, pay, send, confirm or book; `browser_press_key` asks on Enter;
+  accepting a dialog asks. Typing, forms, uploads, `browser_evaluate`,
+  `browser_webmcp_call` and any browser tool a package update adds ask;
 - booking and cancelling on `pilotfy` and `allende`; changes on `node-red`;
   on an unknown MCP server, any tool whose name reads as a write.
 
@@ -268,7 +280,8 @@ untrusted behaves as before.
 **Where taint starts**: a watcher run starts tainted, because its prompt
 quotes the contact's message. A sub-agent spawned by a tainted run starts
 with the parent's sources (`metadata.untrustedTaint`); it cannot ask, so its
-tool result tells it to report the need to the parent. Watcher and job
+tool result tells it to report the need to the parent. A plain `curl` GET
+still runs there, so a job's weather sub-agent works after a calendar read. Watcher and job
 approvals go to the owner channel, as in [Approvals](#approvals).
 
 **Known gaps**: taint lasts one run. A later owner message in the same chat
