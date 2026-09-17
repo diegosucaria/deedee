@@ -18,6 +18,9 @@ import { readStore, updateStore } from './store.js';
 export const SESSION_COOKIE_NAME = 'deedee_session';
 const ALG = 'HS256';
 const DEFAULT_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
+// A passkey is the strong sign-in: the device holds the key and asks for a
+// face or a fingerprint, so its session may live longer than a password's.
+const DEFAULT_PASSKEY_TTL_SECONDS = 30 * 24 * 60 * 60; // 30 days
 
 let cachedSecret = null;
 let cachedSecretSource = null;
@@ -50,9 +53,21 @@ function loadSecret() {
     return cachedSecret;
 }
 
-function ttlSeconds() {
-    const v = parseInt(process.env.SESSION_TTL_SECONDS || '', 10);
-    return Number.isFinite(v) && v > 60 ? v : DEFAULT_TTL_SECONDS;
+function envSeconds(name) {
+    const v = parseInt(process.env[name] || '', 10);
+    return Number.isFinite(v) && v > 60 ? v : null;
+}
+
+/**
+ * How long a session lives, by how the owner signed in.
+ * SESSION_TTL_PASSKEY_SECONDS covers passkeys, SESSION_TTL_SECONDS the rest.
+ * @param {string|null} method - 'passkey', 'password', 'google'
+ */
+function ttlSeconds(method = null) {
+    if (String(method || '') === 'passkey') {
+        return envSeconds('SESSION_TTL_PASSKEY_SECONDS') || envSeconds('SESSION_TTL_SECONDS') || DEFAULT_PASSKEY_TTL_SECONDS;
+    }
+    return envSeconds('SESSION_TTL_SECONDS') || DEFAULT_TTL_SECONDS;
 }
 
 function isProd() {
@@ -73,7 +88,7 @@ export function cookieAttributes() {
 
 export async function issueSession({ extra = {} } = {}) {
     const secret = loadSecret();
-    const ttl = ttlSeconds();
+    const ttl = ttlSeconds(extra.method);
     const jti = randomBytes(16).toString('base64url');
     const now = Math.floor(Date.now() / 1000);
     const token = await new SignJWT({ ...extra })
@@ -100,13 +115,16 @@ export async function verifySession(token) {
     }
 }
 
-// True if the session is older than half its TTL — refresh on the next
-// authenticated request to extend the rolling expiry.
+// Refresh on the next authenticated request once the session is a day old,
+// or past half its life if that comes first. A month-long session that only
+// slid at half-life sat 15 days without moving; a browser that drops the
+// cookie in between then looks like an expiry.
+const REFRESH_AFTER_SECONDS = 24 * 60 * 60;
 export function shouldRefresh(payload) {
     if (!payload?.iat || !payload?.exp) return false;
     const total = payload.exp - payload.iat;
     const elapsed = Math.floor(Date.now() / 1000) - payload.iat;
-    return elapsed > total / 2;
+    return elapsed > Math.min(REFRESH_AFTER_SECONDS, total / 2);
 }
 
 export function revokeJti(jti, exp) {

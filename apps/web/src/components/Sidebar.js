@@ -2,8 +2,8 @@
 
 import Link from 'next/link';
 import Image from 'next/image';
-import { usePathname } from 'next/navigation';
-import { MessageSquare, ClipboardList, Database, Activity, Terminal, ChevronLeft, ChevronRight, Settings, Mic, Users, Disc, ShieldAlert, ShieldCheck, ShieldHalf, Shirt, Globe } from 'lucide-react';
+import { usePathname, useSearchParams } from 'next/navigation';
+import { MessageSquare, ClipboardList, Database, Activity, Terminal, ChevronLeft, ChevronRight, Settings, Mic, Users, Disc, ShieldAlert, ShieldCheck, Shirt, Globe } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useState, useEffect, useCallback } from 'react';
@@ -12,14 +12,16 @@ import { useHealthStatus } from '@/hooks/useHealthStatus';
 import { useSocket } from '@/hooks/useSocket';
 import { getApprovals } from '@/app/actions';
 import { approvalEventKind } from '@/lib/approvals';
+import { isNavActive } from '@/lib/nav';
 
 const navItems = [
     { name: 'Chat', href: '/', icon: MessageSquare },
     { name: 'Live', href: '/live', icon: Mic },
     { name: 'Browser', href: '/browser', icon: Globe },
     { name: 'Tasks', href: '/tasks', icon: ClipboardList },
-    { name: 'Approvals', href: '/approvals', icon: ShieldCheck, badge: 'approvals' },
-    { name: 'Guardian', href: '/guardian', icon: ShieldHalf },
+    // Approvals and the guardian are tabs of the Brain page; the entry keeps
+    // the pending badge one click away.
+    { name: 'Approvals', href: '/brain?tab=approvals', icon: ShieldCheck, badge: 'approvals' },
     { name: 'Brain', href: '/brain', icon: Activity },
     { name: 'DJ Crate', href: '/dj', icon: Disc },
     { name: 'Wardrobe', href: '/wardrobe', icon: Shirt },
@@ -84,6 +86,7 @@ function usePendingApprovals() {
 
 export function Sidebar() {
     const pathname = usePathname();
+    const activeTab = useSearchParams().get('tab');
     const [isCollapsed, setIsCollapsed] = useState(false);
     const health = useHealthStatus();
     const pendingApprovals = usePendingApprovals();
@@ -116,7 +119,7 @@ export function Sidebar() {
 
             <nav className="flex flex-1 flex-col gap-2 px-2 w-full">
                 {navItems.map((item) => {
-                    const isActive = pathname === item.href;
+                    const isActive = isNavActive(item.href, pathname, activeTab, navItems);
                     const badgeCount = item.badge === 'approvals' ? pendingApprovals : 0;
                     return (
                         <Link

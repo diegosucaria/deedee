@@ -13,6 +13,9 @@ export async function GET() {
     return NextResponse.json({
         authenticated: true,
         method: session.method || null,
+        // So the owner can tell a session that ended from a cookie his browser dropped.
+        issuedAt: session.iat ? session.iat * 1000 : null,
+        expiresAt: session.exp ? session.exp * 1000 : null,
         passwordSet: !!store.password,
         passkeysEnabled: passkeysEnabled(),
         passkeyCount: (store.passkeys || []).length,

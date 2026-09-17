@@ -17,6 +17,10 @@ import { jwtVerify, SignJWT } from 'jose';
 const SESSION_COOKIE_NAME = 'deedee_session';
 const ALG = 'HS256';
 const DEFAULT_TTL_SECONDS = 30 * 24 * 60 * 60;
+// Mirrors @/lib/auth/session: a passkey session may live longer than a
+// password one, and a refresh must keep the same lifetime it was issued with.
+const DEFAULT_PASSKEY_TTL_SECONDS = 30 * 24 * 60 * 60;
+const REFRESH_AFTER_SECONDS = 24 * 60 * 60;
 
 let cachedKey = null;
 let cachedSecret = null;
@@ -30,9 +34,16 @@ function secret() {
     return cachedKey;
 }
 
-function ttlSeconds() {
-    const v = parseInt(process.env.SESSION_TTL_SECONDS || '', 10);
-    return Number.isFinite(v) && v > 60 ? v : DEFAULT_TTL_SECONDS;
+function envSeconds(name) {
+    const v = parseInt(process.env[name] || '', 10);
+    return Number.isFinite(v) && v > 60 ? v : null;
+}
+
+function ttlSeconds(method = null) {
+    if (String(method || '') === 'passkey') {
+        return envSeconds('SESSION_TTL_PASSKEY_SECONDS') || envSeconds('SESSION_TTL_SECONDS') || DEFAULT_PASSKEY_TTL_SECONDS;
+    }
+    return envSeconds('SESSION_TTL_SECONDS') || DEFAULT_TTL_SECONDS;
 }
 
 function isProd() {
@@ -57,21 +68,21 @@ async function verifyToken(token) {
     }
 }
 
-// Once a session is past half its TTL, re-issue it on the next
-// authenticated request so a user who keeps coming back never has to
-// log in again. New JTI on each refresh; the old one is left to expire
-// naturally (no revocation needed since we replace the cookie).
+// Once a session is a day old (or past half its life, whichever comes
+// first), re-issue it on the next authenticated request, so a user who keeps
+// coming back never has to log in again. New JTI on each refresh; the old one
+// is left to expire naturally (no revocation needed since we replace the cookie).
 function shouldRefresh(payload) {
     if (!payload?.iat || !payload?.exp) return false;
     const total = payload.exp - payload.iat;
     const elapsed = Math.floor(Date.now() / 1000) - payload.iat;
-    return elapsed > total / 2;
+    return elapsed > Math.min(REFRESH_AFTER_SECONDS, total / 2);
 }
 
 async function reissue(payload) {
     const key = secret();
     if (!key) return null;
-    const ttl = ttlSeconds();
+    const ttl = ttlSeconds(payload.method);
     const now = Math.floor(Date.now() / 1000);
     const jti = crypto.randomUUID();
     const carry = {};
