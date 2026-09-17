@@ -52,6 +52,10 @@ class GitOps {
     // on a volume the agent can read, and `git remote -v` would print it.
     // Network commands carry it as a per-command header instead.
     this.token = null;
+    // The remote URL configure() was given, without credentials. Remote
+    // commands address this URL, never the name `origin`: the agent writes
+    // .git/config, so the name could point anywhere.
+    this.remoteUrl = null;
     // The author identity travels with every commit and revert as `-c`
     // flags. The agent can rewrite .git/config in the shared volume; the
     // env values it cannot touch.
@@ -66,11 +70,27 @@ class GitOps {
     return ['-c', `user.name=${this.identity.name}`, '-c', `user.email=${this.identity.email}`];
   }
 
-  /** `-c http.extraheader=…` for commands that talk to the remote. */
+  /**
+   * `-c http.<remote URL>.extraheader=…` for commands that talk to the
+   * remote. The header is bound to the configured URL: a global
+   * `http.extraheader` follows whatever host the command reaches, and the
+   * agent can rewrite .git/config to name its own.
+   */
   _authArgs() {
-    if (!this.token) return [];
+    if (!this.token || !this.remoteUrl) return [];
     const basic = Buffer.from(`x-access-token:${this.token}`).toString('base64');
-    return ['-c', `http.extraheader=Authorization: Basic ${basic}`];
+    return ['-c', `http.${this.remoteUrl}.extraheader=Authorization: Basic ${basic}`];
+  }
+
+  /**
+   * What a remote command points at: the configured URL. Without one, a
+   * token has nothing to bind to, so the command is refused rather than
+   * sent to whatever `origin` names today.
+   */
+  _remoteTarget() {
+    if (this.remoteUrl) return this.remoteUrl;
+    if (this.token) throw new Error('Remote command refused: no remote URL is configured to bind the credentials to.');
+    return 'origin';
   }
 
   /** Replaces the token and its base64 form wherever they appear. */
@@ -157,6 +177,7 @@ class GitOps {
     const split = splitRemoteCredentials(remoteUrl);
     this.token = token || split.token || null;
     const cleanUrl = split.url;
+    this.remoteUrl = cleanUrl || null;
 
     if (cleanUrl) {
       console.log(`[GitOps] Configuring remote: ${cleanUrl}${this.token ? ' (credentials passed per command)' : ''}`);
@@ -170,7 +191,7 @@ class GitOps {
       }
       // Pull after setting up the remote to ensure content is retrieved
       console.log('[GitOps] Pulling from origin/master...');
-      await this._runAuthed(['pull', 'origin', 'master']);
+      await this._runAuthed(['pull', this._remoteTarget(), 'master']);
     } else {
       console.log('[GitOps] No remote URL configured. Skipping pull.');
     }
@@ -321,8 +342,9 @@ class GitOps {
       // Pass message as a separate argument to avoid shell interpretation
       await this.runSafe('git', [...this._identityArgs(), 'commit', '-m', message]);
 
-      // 4. Git Push. Credentials travel with the command, not in .git/config.
-      await this._runAuthed(['push', 'origin', 'master']);
+      // 4. Git Push. Credentials travel with the command, not in .git/config,
+      // and the command names the configured URL, not the remote `origin`.
+      await this._runAuthed(['push', this._remoteTarget(), 'master']);
 
       return { success: true, message: 'Pushed to origin/master', skipped };
 
@@ -356,7 +378,7 @@ class GitOps {
       const revertCommit = await this.run('git rev-parse HEAD');
 
       // Push the new revert commit
-      await this._runAuthed(['push', 'origin', 'master']);
+      await this._runAuthed(['push', this._remoteTarget(), 'master']);
 
       return { success: true, message: 'Rolled back last change successfully.', revertCommit };
     } catch (error) {
@@ -368,7 +390,9 @@ class GitOps {
   async pull() {
     try {
       console.log('[GitOps] Pulling latest changes...');
-      await this._runAuthed(['fetch', 'origin']);
+      // Fetch by URL and write the tracking ref here, so the reset below does
+      // not depend on what .git/config calls origin.
+      await this._runAuthed(['fetch', this._remoteTarget(), '+refs/heads/master:refs/remotes/origin/master']);
       await this.run('git reset --hard origin/master'); // Force sync to origin
       return { success: true, message: 'Pulled latest changes.' };
     } catch (error) {

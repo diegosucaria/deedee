@@ -78,15 +78,40 @@ describe('GitOps keeps the token out of .git/config', () => {
         expect(gitOps.token).toBe(TOKEN);
     });
 
-    test('pull and push carry the credentials as a per-command header', async () => {
+    test('pull and push carry the credentials as a header bound to the remote URL', async () => {
         gitOps.token = TOKEN;
+        gitOps.remoteUrl = REMOTE;
         const basic = Buffer.from(`x-access-token:${TOKEN}`).toString('base64');
 
-        await gitOps._runAuthed(['push', 'origin', 'master']);
+        await gitOps._runAuthed(['push', gitOps._remoteTarget(), 'master']);
 
         expect(execFileCalls()[0]).toEqual([
-            '-c', `http.extraheader=Authorization: Basic ${basic}`, 'push', 'origin', 'master'
+            '-c', `http.${REMOTE}.extraheader=Authorization: Basic ${basic}`, 'push', REMOTE, 'master'
         ]);
+    });
+
+    test('remote commands name the configured URL, not the remote origin', async () => {
+        await gitOps.configure('Name', 'mail@example.test', REMOTE, TOKEN);
+        jest.clearAllMocks();
+
+        await gitOps.commitAndPush('msg', ['apps/agent/src/x.js']).catch(() => {});
+        await gitOps.pull();
+
+        const remoteCalls = execFileCalls().filter(args => args.includes('push') || args.includes('fetch'));
+        expect(remoteCalls.length).toBeGreaterThan(0);
+        for (const args of remoteCalls) {
+            expect(args).toContain(REMOTE);
+            expect(args).not.toContain('origin');
+        }
+    });
+
+    test('with a token but no configured URL, a remote command is refused', async () => {
+        gitOps.token = TOKEN;
+        gitOps.remoteUrl = null;
+
+        expect(() => gitOps._remoteTarget()).toThrow(/no remote URL/i);
+        expect((await gitOps.pull()).success).toBe(false);
+        expect(execFileCalls().some(args => args.includes('push') || args.includes('fetch'))).toBe(false);
     });
 
     test('a failed remote command never returns the token', async () => {
@@ -109,5 +134,10 @@ describe('GitOps keeps the token out of .git/config', () => {
     test('with no token the commands stay plain', async () => {
         await gitOps._runAuthed(['fetch', 'origin']);
         expect(execFileCalls()[0]).toEqual(['fetch', 'origin']);
+    });
+
+    test('configure stores the clean URL for later commands', async () => {
+        await gitOps.configure('Name', 'mail@example.test', `https://${TOKEN}@github.com/owner/repo.git`);
+        expect(gitOps.remoteUrl).toBe(REMOTE);
     });
 });
