@@ -54,13 +54,19 @@ describe('Agent thinking config per call class and source', () => {
 
     test('web keeps thought summaries and gets the chat level', async () => {
         const cfg = await run('web');
-        expect(cfg.thinkingConfig).toEqual({ thinkingLevel: 'LOW', includeThoughts: true });
+        expect(cfg.thinkingConfig).toEqual({ thinkingLevel: 'MEDIUM', includeThoughts: true });
         expect(cfg.thinkingConfig.thinkingBudget).toBeUndefined();
     });
 
     test('WhatsApp gets the level but no thought summaries', async () => {
         const cfg = await run('whatsapp');
-        expect(cfg.thinkingConfig).toEqual({ thinkingLevel: 'LOW' });
+        expect(cfg.thinkingConfig).toEqual({ thinkingLevel: 'MEDIUM' });
+    });
+
+    test('a PRO turn the router named no group for still thinks at MEDIUM', async () => {
+        agent.router.route = jest.fn().mockResolvedValue({ model: 'PRO', toolMode: 'STANDARD', toolGroups: [] });
+        await agent.processMessage({ content: 'design the terraform module for the new cluster', role: 'user', source: 'whatsapp', metadata: { chatId: 'thk-tf', replyMode: 'text' } }, jest.fn());
+        expect(agent.client.chats.create.mock.calls[0][0].config.thinkingConfig).toEqual({ thinkingLevel: 'MEDIUM' });
     });
 
     test('scheduler runs are jobs: PRO at MEDIUM, no thoughts', async () => {
@@ -86,6 +92,12 @@ describe('Agent thinking config per call class and source', () => {
         expect(cfg.thinkingConfig).toEqual({ thinkingLevel: 'HIGH', includeThoughts: true });
     });
 
+    test('a sub-agent sent to the repo is a coding turn, not a subagent one', async () => {
+        agent.router.route = jest.fn().mockResolvedValue({ model: 'PRO', toolMode: 'STANDARD', toolGroups: [] });
+        await agent.processMessage({ content: 'fix the failing test in the repo', role: 'user', source: 'subagent', metadata: { chatId: 'thk-sub-code', replyMode: 'text', isSubAgent: true, taskId: 't2' } }, jest.fn());
+        expect(agent.client.chats.create.mock.calls[0][0].config.thinkingConfig).toEqual({ thinkingLevel: 'HIGH' });
+    });
+
     test('a message that names git is a coding turn even when the router gave no group', async () => {
         agent.router.route = jest.fn().mockResolvedValue({ model: 'PRO', toolMode: 'STANDARD', toolGroups: [] });
         await agent.processMessage({ content: 'run git status and tell me what changed', role: 'user', source: 'whatsapp', metadata: { chatId: 'thk-git', replyMode: 'text' } }, jest.fn());
@@ -108,19 +120,27 @@ describe('Agent thinking config per call class and source', () => {
         const textChunk = { candidates: [{ content: { parts: [{ text: 'done' }] } }] };
         const streamOf = (chunk) => ({ stream: (async function* () { yield chunk; })(), response: Promise.resolve(chunk) });
 
-        const runLoop = async () => {
+        const runLoop = async (decision) => {
             session.sendMessageStream
                 .mockImplementationOnce(async () => streamOf(functionCallChunk))
                 .mockImplementationOnce(async () => streamOf(textChunk));
             agent._executeTool = jest.fn().mockResolvedValue({ ok: true });
-            await run('web');
+            await run('web', decision);
             expect(agent._executeTool).toHaveBeenCalledTimes(1);
             expect(session.sendMessageStream).toHaveBeenCalledTimes(2);
             return session.sendMessageStream.mock.calls[1][0].config;
         };
 
         test('an unchanged loop level sends no per-call config', async () => {
-            expect(await runLoop()).toBeUndefined();
+            expect(await runLoop({ model: 'FLASH', toolMode: 'STANDARD', toolGroups: [] })).toBeUndefined();
+        });
+
+        test('a PRO chat drops to LOW in the loop and re-sends the session config', async () => {
+            const cfg = await runLoop();
+            const sessionCfg = agent.client.chats.create.mock.calls[0][0].config;
+            expect(sessionCfg.thinkingConfig).toEqual({ thinkingLevel: 'MEDIUM', includeThoughts: true });
+            expect(cfg.thinkingConfig).toEqual({ thinkingLevel: 'LOW', includeThoughts: true });
+            expect(cfg.tools).toBe(sessionCfg.tools);
         });
 
         test('a coding session keeps HIGH through the loop and sends no per-call config', async () => {
@@ -135,11 +155,11 @@ describe('Agent thinking config per call class and source', () => {
         });
 
         test('THINKING_PRO_TOOL_LOOP re-sends the full session config with the loop level', async () => {
-            process.env.THINKING_PRO_TOOL_LOOP = 'MEDIUM';
+            process.env.THINKING_PRO_TOOL_LOOP = 'HIGH';
             const cfg = await runLoop();
             const sessionCfg = agent.client.chats.create.mock.calls[0][0].config;
-            expect(sessionCfg.thinkingConfig).toEqual({ thinkingLevel: 'LOW', includeThoughts: true });
-            expect(cfg.thinkingConfig).toEqual({ thinkingLevel: 'MEDIUM', includeThoughts: true });
+            expect(sessionCfg.thinkingConfig).toEqual({ thinkingLevel: 'MEDIUM', includeThoughts: true });
+            expect(cfg.thinkingConfig).toEqual({ thinkingLevel: 'HIGH', includeThoughts: true });
             expect(cfg.tools).toBe(sessionCfg.tools);
             expect(cfg.systemInstruction).toBe(sessionCfg.systemInstruction);
         });

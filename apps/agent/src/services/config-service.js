@@ -34,7 +34,7 @@ const MODEL_THINKING_LEVELS = {
 };
 
 // Default level per role and call class. '*' is the role's fallback for a class
-// not listed. Env `THINKING_<ROLE>` replaces the fallback and
+// not listed. Env `THINKING_<ROLE>` sets every class of that role and
 // `THINKING_<ROLE>_<CLASS>` one class (see docs/models.md, "Thinking levels").
 const THINKING_DEFAULTS = {
     ROUTER: { '*': 'MINIMAL' },
@@ -48,8 +48,8 @@ const THINKING_DEFAULTS = {
     },
     PRO: {
         '*': 'LOW',
-        chat: 'LOW', tool_loop: 'LOW', dream: 'LOW', pruning: 'LOW',
-        job: 'MEDIUM', subagent: 'MEDIUM', consolidation: 'MEDIUM', wardrobe: 'MEDIUM', impersonation: 'MEDIUM',
+        tool_loop: 'LOW', dream: 'LOW', pruning: 'LOW',
+        chat: 'MEDIUM', job: 'MEDIUM', subagent: 'MEDIUM', consolidation: 'MEDIUM', wardrobe: 'MEDIUM', impersonation: 'MEDIUM',
         coding: 'HIGH',
     },
 };

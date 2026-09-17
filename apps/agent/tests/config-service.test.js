@@ -198,7 +198,7 @@ describe('ConfigService thinking levels', () => {
         ['FLASH', 'partner_greeting', 'MINIMAL'],
         ['FLASH', 'dj', 'MINIMAL'],
         ['FLASH', 'wardrobe', 'LOW'],
-        ['PRO', 'chat', 'LOW'],
+        ['PRO', 'chat', 'MEDIUM'],
         ['PRO', 'tool_loop', 'LOW'],
         ['PRO', 'dream', 'LOW'],
         ['PRO', 'pruning', 'LOW'],
@@ -217,17 +217,20 @@ describe('ConfigService thinking levels', () => {
         const { ConfigService } = loadWithEnv();
         const c = new ConfigService();
         expect(c.getThinking('PRO', 'JOB').thinkingLevel).toBe('MEDIUM');
-        expect(c.getThinking('PRO').thinkingLevel).toBe('LOW');
-        expect(c.getThinking('pro', 'chat').thinkingLevel).toBe('LOW');
+        expect(c.getThinking('PRO').thinkingLevel).toBe('MEDIUM');
+        expect(c.getThinking('pro', 'chat').thinkingLevel).toBe('MEDIUM');
+        expect(c.getThinking('PRO', 'dream').thinkingLevel).toBe('LOW');
     });
 
-    test('THINKING_<ROLE> replaces the role fallback, THINKING_<ROLE>_<CLASS> one class', () => {
+    test('THINKING_<ROLE> sets every class of the role, THINKING_<ROLE>_<CLASS> one class', () => {
         const { ConfigService } = loadWithEnv();
         Object.assign(process.env, { THINKING_PRO: 'HIGH', THINKING_PRO_CHAT: 'medium', THINKING_FLASH_TITLE: 'LOW' });
         const c = new ConfigService();
         expect(c.getThinking('PRO', 'chat').thinkingLevel).toBe('MEDIUM');
         expect(c.getThinking('PRO', 'job').thinkingLevel).toBe('HIGH');
         expect(c.getThinking('PRO', 'tool_loop').thinkingLevel).toBe('HIGH');
+        // Every listed class, not only the ones missing from the table.
+        expect(c.getThinking('PRO', 'pruning').thinkingLevel).toBe('HIGH');
         expect(c.getThinking('FLASH', 'title').thinkingLevel).toBe('LOW');
         expect(c.getThinking('FLASH', 'chat').thinkingLevel).toBe('LOW');
     });
@@ -236,7 +239,7 @@ describe('ConfigService thinking levels', () => {
         const { ConfigService } = loadWithEnv();
         process.env.THINKING_PRO_TOOL_LOOP = 'MEDIUM';
         const c = new ConfigService();
-        expect(c.getThinking('PRO', 'chat').thinkingLevel).toBe('LOW');
+        expect(c.getThinking('PRO', 'chat').thinkingLevel).toBe('MEDIUM');
         expect(c.getThinking('PRO', 'tool_loop').thinkingLevel).toBe('MEDIUM');
     });
 
@@ -310,8 +313,8 @@ describe('ConfigService thinking levels', () => {
     test('getThinkingConfig never carries thinkingBudget and omits a false includeThoughts', () => {
         const { ConfigService } = loadWithEnv();
         const c = new ConfigService();
-        expect(c.getThinkingConfig('PRO', 'chat', { source: 'web' })).toEqual({ thinkingLevel: 'LOW', includeThoughts: true });
-        expect(c.getThinkingConfig('PRO', 'chat', { source: 'whatsapp' })).toEqual({ thinkingLevel: 'LOW' });
+        expect(c.getThinkingConfig('PRO', 'chat', { source: 'web' })).toEqual({ thinkingLevel: 'MEDIUM', includeThoughts: true });
+        expect(c.getThinkingConfig('PRO', 'chat', { source: 'whatsapp' })).toEqual({ thinkingLevel: 'MEDIUM' });
         expect(c.getThinkingConfig('FLASH', 'title')).toEqual({ thinkingLevel: 'MINIMAL' });
         expect(Object.keys(c.getThinkingConfig('PRO', 'coding'))).not.toContain('thinkingBudget');
     });

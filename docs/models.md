@@ -166,26 +166,36 @@ Defaults (`THINKING_DEFAULTS` in `config-service.js`):
 | SEARCH | `search` (the googleSearch polyfill) | LOW |
 | FLASH | `chat`, `tool_loop`, `job`, `subagent`, `watcher`, `coding`, `wardrobe`, `impersonation` | LOW |
 | FLASH | `summarization`, `title`, `scoper`, `people_enrich`, `cron_helper`, `analysis`, `transcribe`, `partner_greeting`, `dj`, `impersonation_learn`, any other | MINIMAL |
-| PRO | `chat`, `tool_loop`, `dream`, `pruning`, `dj`, any other | LOW |
-| PRO | `job`, `subagent`, `consolidation`, `wardrobe`, `impersonation` | MEDIUM |
+| PRO | `tool_loop`, `dream`, `pruning`, `dj`, any other | LOW |
+| PRO | `chat`, `job`, `subagent`, `consolidation`, `wardrobe`, `impersonation` | MEDIUM |
 | PRO | `coding` | HIGH |
 
-Call classes for the main agent turn: `subagent` when `metadata.isSubAgent`,
-`job` when `source` is `scheduler`, `watcher` for watcher alerts, `coding` when
-the session has the `code` tool group, else `chat`. The router names `code`
-for repo, shell and git work, and a message that says `shell`, `git`, `repo`,
-`repository` or `codebase` as a word always gets it (`GROUP_NAME_WORDS` in
-`services/tool-groups.js`). The group keeps that name for 30 minutes per chat,
-like every other group. Today it changes the thinking class only: the shell and
-file tools stay core until tool deferral moves them behind `code`. Tool-loop turns of a `chat`
-session use `tool_loop`; the other classes keep their level through the loop.
+PRO `chat` sits at MEDIUM because the router sends only deep work to Pro:
+Terraform, GCP, Kubernetes, planning, analysis, history search. LOW there made
+those turns thinner than they were before this change.
+
+Call classes for the main agent turn: `coding` on a code signal, else
+`subagent` when `metadata.isSubAgent`, `job` when `source` is `scheduler`,
+`watcher` for watcher alerts, else `chat`. The code signal is the `code` tool
+group on the session, the router asking for `code`, or a message that says
+`shell`, `git`, `repo`, `repository` or `codebase` as a word
+(`GROUP_NAME_WORDS` in `services/tool-groups.js`). Sub-agents and jobs never
+get scoped groups, so for them the signal is the router's pick and their own
+prompt; a sub-agent sent to change the repo thinks at `coding`, not `subagent`.
+Jobs and watcher runs keep their own class either way. The group keeps its name
+for 30 minutes per chat, like every other group. Today it changes the thinking
+class only: the shell and file tools stay core until tool deferral moves them
+behind `code`. Tool-loop turns of a `chat` session use `tool_loop`, one step
+down at LOW; the other classes keep their level through the loop.
 When the loop level differs from the session level the agent re-sends the full
 session config on each loop call (the SDK replaces, not merges, a per-call
 config).
 
 Env overrides, read on every call, so a Balena variable is the rollback:
 
-- `THINKING_<ROLE>` replaces the role fallback (`THINKING_PRO=HIGH`).
+- `THINKING_<ROLE>` sets every class of that role, not only the ones missing
+  from the table: `THINKING_PRO=HIGH` raises chat, jobs, dream and pruning at
+  once.
 - `THINKING_<ROLE>_<CLASS>` sets one class (`THINKING_PRO_TOOL_LOOP=MEDIUM`,
   `THINKING_FLASH_TITLE=LOW`). The class part is the class name in upper case.
 - Values: `MINIMAL`, `LOW`, `MEDIUM`, `HIGH`. Anything else is ignored with one

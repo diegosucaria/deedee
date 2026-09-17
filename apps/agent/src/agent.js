@@ -1728,11 +1728,13 @@ class Agent {
       // stays loaded.
       // Watcher runs are skipped too: their instructions are free-form and
       // often need tools (calendar, messaging) the router can't infer.
+      // Text of this turn, for the named-integration backstop and the coding class.
+      const messageText = message.content || (message.parts || []).map(p => p.text || '').join(' ');
       let loadedGroups = [];
       if (!message.metadata?.isSubAgent && message.source !== 'scheduler' && !isWatcherRun && Array.isArray(decision?.toolGroups)) {
         this._toolGroupMemory = this._toolGroupMemory || new ToolGroupMemory();
         // Integrations the user names are always loaded, on top of the router's pick.
-        const named = groupsNamedIn(message.content || (message.parts || []).map(p => p.text || '').join(' '));
+        const named = groupsNamedIn(messageText);
         const groups = this._toolGroupMemory.merge(chatId, [...decision.toolGroups, ...named]);
         loadedGroups = groups;
         const before = internalTools.length + externalTools.length;
@@ -1894,15 +1896,20 @@ class Agent {
       // 2. Send Message to Gemini (with Retry Logic)
       const MAX_EMPTY_RETRIES = 2;
       // Thinking level by call class (docs/models.md, "Thinking levels"). The
-      // `code` group comes from the router or from a message that names shell,
-      // git or the repo (groupsNamedIn) and sticks to the chat for a while. The
-      // tool loop re-sends the session config with its own level only when it
-      // differs, so an unchanged loop keeps the request byte-identical.
+      // code signal is the loaded `code` group, the router's own pick, or a
+      // message that names shell, git or the repo (groupsNamedIn). Sub-agents
+      // skip group scoping, so they read the signal from their own prompt: one
+      // doing repo work thinks as `coding`, not `subagent`.
+      // The tool loop re-sends the session config with its own level only when
+      // it differs, so an unchanged loop keeps the request byte-identical.
       const selectedRole = decision.model === 'FLASH' ? 'FLASH' : decision.model === 'LITE' ? 'LITE' : 'PRO';
-      const thinkingClass = isSubAgent ? 'subagent'
+      const isCodingTurn = loadedGroups.includes('code')
+        || (Array.isArray(decision?.toolGroups) && decision.toolGroups.includes('code'))
+        || groupsNamedIn(messageText).includes('code');
+      const thinkingClass = isSubAgent ? (isCodingTurn ? 'coding' : 'subagent')
         : message.source === 'scheduler' ? 'job'
           : isWatcherRun ? 'watcher'
-            : loadedGroups.includes('code') ? 'coding'
+            : isCodingTurn ? 'coding'
               : 'chat';
       const thinkingOpts = { source: message.source, model: selectedModel };
       const sessionThinking = this.configService.getThinkingConfig(selectedRole, thinkingClass, thinkingOpts);
