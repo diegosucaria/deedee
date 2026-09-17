@@ -275,6 +275,85 @@ describe('owner decision A: gate submit only', () => {
         expect(browserAction('browser_click', { target: 'e6', element: 'Continue' }, card)).toMatch(/web form/);
     });
 
+    test('a login next to footer or share buttons runs: the page is not the form', () => {
+        const page = freshPage(`- banner [ref=e1]:
+  - link "Home" [ref=e2]
+- main [ref=e3]:
+  - textbox "Email" [ref=e5]
+  - button "Continue" [ref=e6]
+- contentinfo [ref=e7]:
+  - textbox "Your email" [ref=e8]
+  - button "Subscribe" [ref=e9]
+  - button "Share" [ref=e10]`);
+        expect(browserAction('browser_click', { target: 'e6', element: 'Continue' }, page)).toBeNull();
+        expect(browserAction('browser_type', { target: 'e5', text: 'x', submit: true }, page)).toBeNull();
+        // The footer button itself still asks.
+        expect(browserAction('browser_click', { target: 'e9' }, page)).toMatch(/Subscribe/);
+
+        const wrapped = freshPage(`- generic [ref=e1]:
+  - textbox "Email" [ref=e2]
+  - textbox "Password" [ref=e3]
+  - button "Sign in" [ref=e4]
+  - button "Share" [ref=e5]`);
+        expect(browserAction('browser_type', { target: 'e3', text: 'x', submit: true }, wrapped)).toBeNull();
+        wrapped.observe('browser_type', { target: 'e3', text: 'x' }, { output: '### Page\n- Page URL: https://shop.example/checkout' });
+        expect(browserAction('browser_press_key', { key: 'Enter' }, wrapped)).toBeNull();
+
+        const nested = freshPage(`- generic [ref=e1]:
+  - generic [ref=e2]:
+    - textbox "Email" [ref=e3]
+    - textbox "Password" [ref=e4]
+    - button "Sign in" [ref=e5]
+    - button "Share" [ref=e6]
+  - button "Continue" [ref=e7]`);
+        expect(browserAction('browser_type', { target: 'e4', text: 'x', submit: true }, nested)).toBeNull();
+    });
+
+    test('a compose, contact or post form asks on a bare "Enviar", "Submit" or Enter', () => {
+        const compose = freshPage(`- generic [ref=e1]:
+  - dialog "Mensaje nuevo" [ref=e2]:
+    - combobox "Para" [ref=e3]
+    - textbox "Asunto" [ref=e4]
+    - textbox "Cuerpo del mensaje" [ref=e6]
+    - button "Enviar" [ref=e5]`);
+        expect(browserAction('browser_click', { target: 'e5' }, compose)).toMatch(/Enviar/);
+        compose.observe('browser_type', { target: 'e6', text: 'x' }, { output: '### Page\n- Page URL: https://shop.example/checkout' });
+        expect(browserAction('browser_press_key', { key: 'Enter' }, compose)).toMatch(/web form/);
+
+        const contact = freshPage(`- generic [ref=e1]:
+  - form "Contact us" [ref=e2]:
+    - textbox "Your message" [ref=e3]
+    - button "Submit" [ref=e4]`);
+        expect(browserAction('browser_click', { target: 'e4' }, contact)).toMatch(/Submit/);
+        expect(browserAction('browser_type', { target: 'e3', text: 'x', submit: true }, contact)).toMatch(/web form/);
+
+        const form = freshPage(`- generic [ref=e1]:
+  - form [ref=e2]:
+    - textbox "Nombre" [ref=e3]
+    - button "Enviar" [ref=e4]`);
+        expect(browserAction('browser_click', { target: 'e4' }, form)).toMatch(/Enviar/);
+
+        const social = freshPage(`- generic [ref=e1]:
+  - article [ref=e2]:
+    - button "Retweet" [ref=e3]
+    - button "Repost" [ref=e4]`);
+        expect(browserAction('browser_click', { target: 'e3' }, social)).toMatch(/Retweet/);
+        expect(browserAction('browser_click', { target: 'e4' }, social)).toMatch(/Repost/);
+
+        // A flat page with no form around the button still judges the page's fields.
+        const flat = freshPage(`- generic [ref=e1]:
+  - textbox "To" [ref=e2]
+  - textbox "Message" [ref=e3]
+  - button "Continue" [ref=e4]`);
+        expect(browserAction('browser_click', { target: 'e4' }, flat)).toMatch(/web form/);
+        // A search form's "Submit" runs.
+        const search = freshPage(`- generic [ref=e1]:
+  - form [ref=e2]:
+    - textbox "Search" [ref=e3]
+    - button "Submit" [ref=e4]`);
+        expect(browserAction('browser_click', { target: 'e4' }, search)).toBeNull();
+    });
+
     test('the real link shape: relative to the server cwd, resolved when the link is read', () => {
         const read = jest.fn(() => PAGE);
         let cwd = null;
