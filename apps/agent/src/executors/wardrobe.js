@@ -121,7 +121,10 @@ class WardrobeExecutor extends BaseExecutor {
                 calendarEventId: calendar_event_id || null
             });
             const rationale = trip.weather_snapshot?.pack_rationale || '';
-            return `Trip ${trip.id} planned. Capsule: ${(trip.planned_capsule || []).length} items.\n${rationale}`;
+            const noForecast = Array.isArray(trip.weather_snapshot?.days) && trip.weather_snapshot.days.length > 0
+                ? ''
+                : '\nNote: no weather forecast was available, so the capsule ignores the weather. Tell the owner.';
+            return `Trip ${trip.id} planned. Capsule: ${(trip.planned_capsule || []).length} items.\n${rationale}${noForecast}`;
         } catch (e) {
             return `Error planning trip: ${e.message}`;
         }

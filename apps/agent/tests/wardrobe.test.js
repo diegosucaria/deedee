@@ -2441,6 +2441,38 @@ describe('WardrobeService trips (P10a/P10b)', () => {
         expect(trip.weather_snapshot.pack_rationale).toMatch(/3-piece/);
     });
 
+    test('the weather sub-agent asks for FLASH: code parses its reply as JSON', async () => {
+        mockAgent.client.models.generateContent.mockResolvedValueOnce({
+            text: () => JSON.stringify({ capsule: ['g1'], daily: [], rationale: 'x' }),
+            candidates: [{ content: { parts: [{ text: '{}' }] } }]
+        });
+        mockAgent.db.getTrip.mockReturnValue({ id: 'trip_1', planned_capsule: ['g1'], weather_snapshot: { days: [] } });
+
+        await service.packForTrip({ destination: 'Porto', startDate: '2026-05-01', endDate: '2026-05-02' });
+
+        const spawnArgs = mockAgent.subAgentService.spawn.mock.calls[0][0];
+        expect(spawnArgs.model).toBe('FLASH');
+        expect(spawnArgs.lightweight).toBe(true);
+    });
+
+    test('a forecast wrapped in prose still parses, and no forecast warns the owner', async () => {
+        mockAgent.notifications = { create: jest.fn() };
+        mockAgent.subAgentService.spawn.mockResolvedValueOnce({
+            result: 'Here is the forecast:\n```json\n{"days": [{"date": "2026-05-01", "tempMin": 9, "tempMax": 17, "condition": "clear", "precipitationMm": 0}]}\n```\nHope that helps.'
+        });
+        const days = await service._getWeatherForecast({ destination: 'Porto', startDate: '2026-05-01', endDate: '2026-05-01' });
+        expect(days).toEqual([{ date: '2026-05-01', tempMin: 9, tempMax: 17, condition: 'clear', precipitationMm: 0 }]);
+        expect(mockAgent.notifications.create).not.toHaveBeenCalled();
+
+        mockAgent.subAgentService.spawn.mockResolvedValueOnce({ result: 'Sorry, wttr.in did not answer.' });
+        const none = await service._getWeatherForecast({ destination: 'Porto', startDate: '2026-05-01', endDate: '2026-05-01' });
+        expect(none).toBeNull();
+        expect(mockAgent.notifications.create).toHaveBeenCalledWith(expect.objectContaining({
+            type: 'wardrobe_forecast_missing'
+        }));
+        delete mockAgent.notifications;
+    });
+
     test('packForTrip filters hallucinated ids from capsule', async () => {
         mockAgent.client.models.generateContent.mockResolvedValueOnce({
             text: () => JSON.stringify({
