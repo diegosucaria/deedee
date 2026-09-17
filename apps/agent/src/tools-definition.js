@@ -21,14 +21,43 @@ const toolDefinitions = [
       {
         name: "rememberFact",
         category: "memory",
-        description: "Save a fact or preference to long-term memory",
+        description: "Save a fact to long-term memory. Only for things that still matter next month; a one-off belongs in the reply, not here.",
         parameters: {
           type: "OBJECT",
           properties: {
-            key: { type: "STRING", description: "Unique key (e.g., 'user_name')" },
-            value: { type: "STRING", description: "Value to store" }
+            key: { type: "STRING", description: "Unique key (e.g., 'user_home_city')" },
+            value: { type: "STRING", description: "Value to store" },
+            kind: { type: "STRING", description: "'profile' for a durable fact about the owner or his people, 'note' for something you learned about doing the job. Left out, it is read from the key." },
+            summary: { type: "STRING", description: "One line, at most 80 characters, for the list the prompt carries. Left out, the value is shortened." }
           },
           required: ["key", "value"]
+        }
+      },
+      {
+        name: "updateFact",
+        category: "memory",
+        description: "Correct a fact already in memory. The key may be exact or close: with one match it is updated, with several you get the candidates and nothing changes.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            key: { type: "STRING", description: "The key, or words from it" },
+            value: { type: "STRING", description: "The new value" },
+            summary: { type: "STRING", description: "One line for the list the prompt carries" }
+          },
+          required: ["key", "value"]
+        }
+      },
+      {
+        name: "forgetFact",
+        category: "memory",
+        description: "Drop a fact from memory. A pinned fact, or a durable fact about the owner, needs force: true and only when he asked for it himself.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            key: { type: "STRING", description: "The key, or words from it" },
+            force: { type: "BOOLEAN", description: "Required for a pinned fact or one about the owner" }
+          },
+          required: ["key"]
         }
       },
       {
@@ -57,7 +86,7 @@ const toolDefinitions = [
       {
         name: "getFact",
         category: "memory",
-        description: "Retrieve a fact from long-term memory",
+        description: "Read the full value of a fact. The prompt lists facts one line each; use this for the whole value, or when the key is not listed at all.",
         parameters: {
           type: "OBJECT",
           properties: { key: { type: "STRING" } },

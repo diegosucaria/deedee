@@ -518,6 +518,30 @@ class Agent {
     }
   }
 
+  /**
+   * The facts block the prompt carries. The index (one line per fact, inside a
+   * budget) replaces the old full dump; FACTS_INDEX=0 brings the dump back.
+   * The old renderer takes the turn's text to decide on the Node-RED block;
+   * the index ignores it on purpose, so the block stays byte-identical between
+   * turns and the cached prefix survives.
+   */
+  _factsBlock(contextQuery = '') {
+    if (String(process.env.FACTS_INDEX || '1') === '0') {
+      return typeof this.db.getFactsFormatted === 'function' ? this.db.getFactsFormatted(contextQuery) : '';
+    }
+    if (typeof this.db.getFactsIndex !== 'function') {
+      return typeof this.db.getFactsFormatted === 'function' ? this.db.getFactsFormatted(contextQuery) : '';
+    }
+    try {
+      const index = this.db.getFactsIndex();
+      console.log(`[Agent] [Context] Facts index: ${index.shown} of ${index.total} shown, ${index.chars} chars (${index.hidden} on request).`);
+      return index.text;
+    } catch (e) {
+      console.warn(`[Agent] Facts index failed (${e.message}); falling back to the full list.`);
+      return typeof this.db.getFactsFormatted === 'function' ? this.db.getFactsFormatted(contextQuery) : '';
+    }
+  }
+
   async _deliverReply(sendCallback, reply, message) {
     const result = await sendCallback(reply);
     if (result === false) {
@@ -1762,7 +1786,7 @@ class Agent {
 
         // --- PREPARE SYSTEM PROMPT FOR GROK ---
         const contextQuery = message.content || (message.parts ? message.parts.map(p => p.text).join(' ') : '');
-        const facts = this.db.getFactsFormatted(contextQuery);
+        const facts = this._factsBlock(contextQuery);
         const activeGoals = this._formatGoals(this.db.getPendingGoals(), turnTaint);
 
         let vaultContext = null;
@@ -2068,7 +2092,7 @@ class Agent {
 
       // Lightweight sub-agents skip expensive context loading (facts, goals, skills, vault)
       const contextQuery = message.content || (message.parts ? message.parts.map(p => p.text).join(' ') : '');
-      const facts = isLightweight ? '' : this.db.getFactsFormatted(contextQuery);
+      const facts = isLightweight ? '' : this._factsBlock(contextQuery);
       const activeGoals = isLightweight ? '' : this._formatGoals(this.db.getPendingGoals(), turnTaint);
       const skillsContext = isLightweight ? null : this.skillService.getContextualInstructions(contextQuery);
 
@@ -2419,7 +2443,7 @@ class Agent {
         // Gmail/calendar/people tools are exempt from Tier 1 because the normal workflow is
         // list → fetch each item by ID (e.g. list emails → get each email). Multi-account
         // setups (work_/personal_ prefixes) multiply the call count further.
-        const LOOP_EXEMPT_TOOLS = new Set(['spawnAgent', 'askUser', 'readChatHistory', 'searchMemory', 'getFact', 'getAgentResult', 'listAgentTasks']);
+        const LOOP_EXEMPT_TOOLS = new Set(['spawnAgent', 'askUser', 'readChatHistory', 'searchMemory', 'getFact', 'updateFact', 'forgetFact', 'getAgentResult', 'listAgentTasks']);
         function isLoopExemptTool(toolName) {
           if (!toolName) return false;
           if (LOOP_EXEMPT_TOOLS.has(toolName)) return true;
@@ -3084,12 +3108,51 @@ class Agent {
 
     // --- INTERNAL DB TOOLS ---
     if (executionName === 'rememberFact') {
-      this.db.setKey(args.key, args.value, { source: 'tool', confidence: 'user_explicit' });
+      this.db.setKey(args.key, args.value, {
+        source: 'tool', confidence: 'user_explicit',
+        kind: args.kind, summary: args.summary
+      });
       return { success: true };
     }
     if (executionName === 'getFact') {
       const val = this.db.getKey(args.key);
-      return val ? { value: val } : { info: 'Fact not found in database.' };
+      if (val !== null && val !== undefined) {
+        this.db.touchFacts?.(args.key);
+        return { value: val };
+      }
+      // The prompt lists one line per fact, so the model often has a near miss.
+      const near = this.db.findFacts?.(args.key, 5) || [];
+      if (near.length === 0) return { info: 'No fact with that key, and nothing close.' };
+      this.db.touchFacts?.(near.map(f => f.key));
+      if (near.length === 1) return { key: near[0].key, value: near[0].value, info: `No exact key '${args.key}'; this one is close.` };
+      return { info: `No exact key '${args.key}'. Closest keys: ${near.map(f => f.key).join(', ')}. Ask for one by name.` };
+    }
+    if (executionName === 'updateFact') {
+      const exact = this.db.getKey(args.key);
+      if (exact !== null && exact !== undefined) {
+        this.db.setKey(args.key, args.value, { source: 'tool', confidence: 'user_explicit', summary: args.summary });
+        return { success: true, key: args.key };
+      }
+      const near = this.db.findFacts?.(args.key, 5) || [];
+      if (near.length === 0) return { error: `No fact matches '${args.key}'. Use rememberFact to write a new one.` };
+      if (near.length > 1) return { info: 'Several facts match; nothing changed.', candidates: near.map(f => f.key) };
+      this.db.setKey(near[0].key, args.value, { source: 'tool', confidence: 'user_explicit', summary: args.summary });
+      return { success: true, key: near[0].key, info: `Matched '${near[0].key}'.` };
+    }
+    if (executionName === 'forgetFact') {
+      const matches = this.db.getKey(args.key) !== null && this.db.getKey(args.key) !== undefined
+        ? [{ key: args.key, pinned: 0, kind: null }]
+        : (this.db.findFacts?.(args.key, 5) || []);
+      if (matches.length === 0) return { error: `No fact matches '${args.key}'.` };
+      if (matches.length > 1) return { info: 'Several facts match; nothing deleted.', candidates: matches.map(f => f.key) };
+      const row = this.db.getFact?.(matches[0].key) || matches[0];
+      const kind = row.kind || matches[0].kind || 'profile';
+      const protectedFact = !!row.pinned || kind === 'profile';
+      if (protectedFact && args.force !== true) {
+        return { error: `'${matches[0].key}' is ${row.pinned ? 'pinned' : 'a durable fact about the owner'}. Ask him, then call again with force: true.` };
+      }
+      const gone = this.db.deleteFact?.(matches[0].key);
+      return gone ? { success: true, key: matches[0].key } : { error: `Could not delete '${matches[0].key}'.` };
     }
     if (executionName === 'saveJobState') {
       const jobName = message.metadata?.jobName;

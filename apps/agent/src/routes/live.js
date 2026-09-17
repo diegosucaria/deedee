@@ -30,7 +30,12 @@ function timeString() {
 function buildLiveConfig(agent) {
     let facts = '';
     try {
-        facts = typeof agent?.db?.getFactsFormatted === 'function' ? agent.db.getFactsFormatted('') : '';
+        // The same index the chat prompt carries, so there is one renderer.
+        if (typeof agent?.db?.getFactsIndex === 'function' && String(process.env.FACTS_INDEX || '1') !== '0') {
+            facts = agent.db.getFactsIndex().text;
+        } else if (typeof agent?.db?.getFactsFormatted === 'function') {
+            facts = agent.db.getFactsFormatted('');
+        }
     } catch (e) {
         console.warn('[Live] Could not load facts for the voice prompt:', e.message);
     }

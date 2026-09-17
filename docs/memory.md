@@ -51,12 +51,22 @@ DeeDee uses a multi-tiered memory architecture to maintain state, context, and l
 ### 2. Semantic Memory (KV Facts)
 - **Table**: `kv_store`
 - **Content**: Key-value pairs with metadata for long-term storage (preferences, relationships, settings)
-- **Schema**: `key TEXT PRIMARY KEY, value TEXT, category TEXT, confidence TEXT, source TEXT, created_at DATETIME, pinned INTEGER, updated_at DATETIME`
+- **Schema**: `key TEXT PRIMARY KEY, value TEXT, category TEXT, confidence TEXT, source TEXT, created_at DATETIME, pinned INTEGER, updated_at DATETIME, kind TEXT, summary TEXT, last_used_at DATETIME, use_count INTEGER`
+- **Kind**: `profile` (durable facts about the owner and his people), `note` (what the agent learned about doing its job), `state` (job bookkeeping, notification flags, Node-RED dumps). Stored when a tool or the consolidator says so; otherwise read from the key and the category (`factKind` in `db.js`), so it works for rows written before the column existed.
 - **Categories**: `preference`, `relationship`, `temporal`, `system`, `general`
 - **Confidence levels**: `user_explicit` (stated by user), `consolidated` (extracted by LLM), `inferred` (system-derived)
 - **Sources**: `manual` (dashboard), `tool` (rememberFact), `consolidation` (nightly), `system`
 - **Pinning**: Facts can be pinned (via dashboard or API) to protect from auto-pruning and consolidation overwrite
-- **Agent Access**: `rememberFact(key, value)`, `getFact(key)`
+- **Agent Access**: `rememberFact(key, value, kind?, summary?)`, `updateFact(key, value)`, `forgetFact(key, force?)`, `getFact(key)`, `searchMemory(query)`. `updateFact` and `forgetFact` take a near key: one match acts, several come back as candidates and nothing changes. `forgetFact` needs `force: true` for a pinned fact or one about the owner.
+
+### The facts index (what the prompt carries)
+Every turn used to carry every fact in full: on the device, 642 rows, about 53,000 characters, roughly 13,400 tokens of a 45,000-token chat turn. `db.getFactsIndex()` now renders one line per fact inside a character budget (4,000 for the owner's profile, 2,000 for the agent's notes), newest and most used first, pinned facts ahead of the rest. The block ends with a count of what is not listed.
+
+- **Stable between turns.** The index ignores the turn's text, so the block stays byte-identical while the facts do not change and the cached prefix survives. The old renderer varied with the turn (it hid Node-RED facts unless the turn mentioned them), which broke that.
+- **Left out**: `state` keys, dated keys older than five days, and anything past the budget. All of it stays in the table, and `getFact` or `searchMemory` still reach it. `searchMemory` searches facts as well as chats and documents.
+- **Use tracking**: `getFact` and a `searchMemory` hit bump `use_count` and `last_used_at`, so facts the owner actually asks about rise in the list.
+- **Escape hatch**: `FACTS_INDEX=0` brings the full dump back.
+- **The live voice prompt** uses the same renderer, so there is one format.
 - **RAG Sync**: Facts are synced to `data/MEMORY.md` and embedded into RAG (vault: `memory`)
 - **Pruning**: Nightly job uses Gemini to cull stale/obsolete facts, backed up to `data/pruned_memories.json`. Pinned facts are excluded from the pruning prompt and have a server-side safety net.
 - **Contradiction Detection**: During consolidation, if a new fact value conflicts with an existing one, the change is logged to the journal. Pinned facts block the overwrite entirely.

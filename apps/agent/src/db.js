@@ -83,6 +83,65 @@ const EFFECTIVE_TAG_SQL = `
   END`;
 
 /** The goal fields a tainted run wrote. A tainted row without the list counts as fully tainted. */
+// --- facts index (docs/memory.md) ---
+// Every turn used to carry every fact: 642 rows, about 13k tokens. The prompt
+// now carries one line each, newest and most used first, inside a character
+// budget; the full value comes back through getFact or searchMemory.
+const FACT_SUMMARY_CHARS = 80;
+const FACT_PROFILE_CHARS = 4000;
+const FACT_NOTES_CHARS = 2000;
+// Keys that hold state: a job's bookkeeping, a notification flag, a Node-RED
+// dump. They stay in the table and out of the prompt.
+const STATE_KEY_RE = /^(?:job:|notified_|config:|system_|ha_nodes|node_red)/i;
+// Keys that are durable facts about the owner and the people around him.
+const PROFILE_KEY_RE = /^(?:user_|relationship_|preference_|work_|family_|contact_|partner_|colleague_|project_|goal_|birthday)/i;
+// Keys that are the agent's own notes about doing its job.
+const NOTE_KEY_RE = /^(?:device_|agent_|skill_|lesson_|ha_|alias_)/i;
+const PROFILE_CATEGORIES = new Set(['relationship', 'preference', 'work', 'temporal']);
+// A fact written for one day stops being news after five.
+const DATED_KEY_RE = /_on_(\d{4}-\d{2}-\d{2})$/;
+const DATED_FACT_DAYS = 5;
+
+/**
+ * profile, note or state, from the stored kind when it has one, else from the
+ * key and the category. Read-time classification keeps the index working
+ * before (and without) the migration.
+ */
+function factKind(key, category, stored = null) {
+    const known = String(stored || '').toLowerCase();
+    if (known === 'profile' || known === 'note' || known === 'state') return known;
+    const k = String(key || '');
+    if (STATE_KEY_RE.test(k)) return 'state';
+    if (PROFILE_KEY_RE.test(k)) return 'profile';
+    if (NOTE_KEY_RE.test(k)) return 'note';
+    const c = String(category || '').toLowerCase();
+    if (PROFILE_CATEGORIES.has(c)) return 'profile';
+    if (c === 'system') return 'note';
+    return 'profile';
+}
+
+/** One line for the index: the stored summary, else the value, shortened. */
+function factSummary(row) {
+    const stored = typeof row.summary === 'string' ? row.summary.trim() : '';
+    if (stored) return stored.slice(0, FACT_SUMMARY_CHARS);
+    let text = row.value;
+    try {
+        const parsed = JSON.parse(row.value);
+        text = typeof parsed === 'string' ? parsed : JSON.stringify(parsed);
+    } catch { /* keep raw */ }
+    text = String(text ?? '').replace(/\s+/g, ' ').trim();
+    return text.length > FACT_SUMMARY_CHARS ? `${text.slice(0, FACT_SUMMARY_CHARS - 1)}…` : text;
+}
+
+/** A dated fact older than five days is history, not context. */
+function factIsStale(key, now = Date.now()) {
+    const m = DATED_KEY_RE.exec(String(key || ''));
+    if (!m) return false;
+    const when = new Date(`${m[1]}T00:00:00`).getTime();
+    if (Number.isNaN(when)) return false;
+    return (now - when) / 86400000 > DATED_FACT_DAYS;
+}
+
 function goalTaintedFields(meta) {
   if (!meta || meta.tainted !== true) return [];
   return Array.isArray(meta.taintedFields) ? meta.taintedFields.map(String) : ['description', 'progress'];
@@ -722,6 +781,19 @@ class AgentDB {
       this.db.exec("ALTER TABLE kv_store ADD COLUMN pinned INTEGER DEFAULT 0");
     } catch (err) { }
 
+    // Migration: facts index (docs/memory.md). `kind` splits durable facts
+    // about the owner from the agent's own notes and from plain state;
+    // `summary` is the one line the prompt shows; the two use columns say
+    // which facts still earn their place.
+    for (const sql of [
+      "ALTER TABLE kv_store ADD COLUMN kind TEXT",
+      "ALTER TABLE kv_store ADD COLUMN summary TEXT",
+      "ALTER TABLE kv_store ADD COLUMN last_used_at DATETIME",
+      "ALTER TABLE kv_store ADD COLUMN use_count INTEGER DEFAULT 0"
+    ]) {
+      try { this.db.exec(sql); } catch (err) { }
+    }
+
     // Migration: Add enrichment_status to dj_vinyls
     try {
       this.db.exec("ALTER TABLE dj_vinyls ADD COLUMN enrichment_status TEXT DEFAULT 'complete'");
@@ -835,8 +907,9 @@ class AgentDB {
   }
 
   // --- Extended CRUD ---
+  /** @returns {boolean} whether a row was there to delete */
   deleteFact(key) {
-    this.db.prepare('DELETE FROM kv_store WHERE key = ?').run(key);
+    return this.db.prepare('DELETE FROM kv_store WHERE key = ?').run(key).changes > 0;
   }
 
   deleteGoal(id) {
@@ -1410,17 +1483,58 @@ class AgentDB {
   // --- KV Store (Memory) ---
   setKey(key, value, options = {}) {
     const valStr = JSON.stringify(value);
-    const { category, confidence, source } = options;
+    const { category, confidence, source, kind, summary } = options;
     const stmt = this.db.prepare(`
-      INSERT INTO kv_store (key, value, category, confidence, source) VALUES (?, ?, COALESCE(?, 'general'), COALESCE(?, 'inferred'), COALESCE(?, 'system'))
+      INSERT INTO kv_store (key, value, category, confidence, source, kind, summary)
+      VALUES (?, ?, COALESCE(?, 'general'), COALESCE(?, 'inferred'), COALESCE(?, 'system'), ?, ?)
       ON CONFLICT(key) DO UPDATE SET
         value = excluded.value,
         updated_at = CURRENT_TIMESTAMP,
         category = COALESCE(excluded.category, kv_store.category),
         confidence = COALESCE(excluded.confidence, kv_store.confidence),
-        source = COALESCE(excluded.source, kv_store.source)
+        source = COALESCE(excluded.source, kv_store.source),
+        kind = COALESCE(excluded.kind, kv_store.kind),
+        summary = COALESCE(excluded.summary, kv_store.summary)
     `);
-    stmt.run(key, valStr, category || null, confidence || null, source || null);
+    stmt.run(key, valStr, category || null, confidence || null, source || null,
+      kind ? String(kind) : null, summary ? String(summary).slice(0, FACT_SUMMARY_CHARS) : null);
+  }
+
+  /**
+   * Facts the owner asked for by name, or that a search returned, have earned
+   * their place in the index. Never throws: this is bookkeeping.
+   */
+  touchFacts(keys) {
+    const list = (Array.isArray(keys) ? keys : [keys]).map(k => String(k || '')).filter(Boolean).slice(0, 20);
+    if (list.length === 0) return;
+    try {
+      const stmt = this.db.prepare('UPDATE kv_store SET use_count = COALESCE(use_count, 0) + 1, last_used_at = CURRENT_TIMESTAMP WHERE key = ?');
+      for (const key of list) stmt.run(key);
+    } catch (e) {
+      console.warn('[DB] Could not record fact use:', e.message);
+    }
+  }
+
+  /**
+   * Facts whose key, summary or value holds `term`, for a tool that has to
+   * find the fact the owner means. Exact key first.
+   * @returns {Array<{ key: string, value: any, kind: string, summary: string|null, pinned: number }>}
+   */
+  findFacts(term, limit = 5) {
+    const q = String(term || '').trim().toLowerCase();
+    if (!q) return [];
+    const like = `%${q}%`;
+    const rows = this.db.prepare(`
+      SELECT * FROM kv_store
+      WHERE LOWER(key) = ? OR LOWER(key) LIKE ? OR LOWER(COALESCE(summary,'')) LIKE ? OR LOWER(value) LIKE ?
+      ORDER BY (LOWER(key) = ?) DESC, (LOWER(key) LIKE ?) DESC, pinned DESC, updated_at DESC
+      LIMIT ?
+    `).all(q, like, like, like, q, like, Math.max(1, Math.min(20, Number(limit) || 5)));
+    return rows.map(row => {
+      let value = row.value;
+      try { value = JSON.parse(row.value); } catch { /* keep raw */ }
+      return { ...row, value, kind: row.kind || factKind(row.key, row.category) };
+    });
   }
 
   getKey(key) {
@@ -1432,8 +1546,10 @@ class AgentDB {
   getFact(key) {
     const row = this.db.prepare('SELECT * FROM kv_store WHERE key = ?').get(key);
     if (!row) return null;
-    try { return { ...row, value: JSON.parse(row.value) }; }
-    catch (e) { return row; }
+    // The kind a caller reads is the stored one, or the one the key implies.
+    const kind = factKind(row.key, row.category, row.kind);
+    try { return { ...row, kind, value: JSON.parse(row.value) }; }
+    catch (e) { return { ...row, kind }; }
   }
 
   toggleFactPin(key, pinned) {
@@ -1456,6 +1572,63 @@ class AgentDB {
         pinned: row.pinned || 0
       };
     });
+  }
+
+  /**
+   * The facts block the prompt carries: one line per fact, the owner's profile
+   * first, then the agent's own notes, each inside a character budget. Stable
+   * between turns (no query in the ordering), so the cached prefix survives.
+   * State keys, stale dated facts and Node-RED dumps stay out; getFact and
+   * searchMemory still reach them.
+   * @returns {{ text: string, shown: number, total: number, hidden: number, chars: number }}
+   */
+  getFactsIndex({ profileChars = FACT_PROFILE_CHARS, notesChars = FACT_NOTES_CHARS, now = Date.now() } = {}) {
+    let rows = [];
+    try {
+      rows = this.db.prepare('SELECT key, value, category, kind, summary, pinned, last_used_at, updated_at FROM kv_store').all();
+    } catch (e) {
+      console.warn('[Memory] Facts index read failed:', e.message);
+      return { text: '', shown: 0, total: 0, hidden: 0, chars: 0 };
+    }
+    const total = rows.length;
+    const usable = [];
+    for (const row of rows) {
+      const kind = factKind(row.key, row.category, row.kind);
+      if (kind === 'state') continue;
+      if (factIsStale(row.key, now)) continue;
+      usable.push({ key: row.key, kind, pinned: row.pinned ? 1 : 0, line: factSummary(row), used: row.last_used_at || '', updated: row.updated_at || '' });
+    }
+    usable.sort((a, b) => (b.pinned - a.pinned)
+      || (a.kind === b.kind ? 0 : a.kind === 'profile' ? -1 : 1)
+      || String(b.used).localeCompare(String(a.used))
+      || String(b.updated).localeCompare(String(a.updated))
+      || a.key.localeCompare(b.key));
+
+    const take = (kind, budget) => {
+      const lines = [];
+      let used = 0;
+      let left = 0;
+      for (const f of usable) {
+        if (f.kind !== kind) continue;
+        const line = `- ${f.key}: ${f.line}`;
+        if (used + line.length + 1 > budget) { left++; continue; }
+        lines.push(line);
+        used += line.length + 1;
+      }
+      return { lines, left };
+    };
+    const profile = take('profile', profileChars);
+    const notes = take('note', notesChars);
+
+    const parts = [];
+    if (profile.lines.length > 0) parts.push(`USER PROFILE (durable facts about the owner):\n${profile.lines.join('\n')}`);
+    if (notes.lines.length > 0) parts.push(`AGENT NOTES (what you learned about doing the job):\n${notes.lines.join('\n')}`);
+    const hidden = profile.left + notes.left + (total - usable.length);
+    if (parts.length > 0 && hidden > 0) {
+      parts.push(`(+${hidden} more facts, job state included, not listed here: getFact(key) for the full value, searchMemory(query) to find one.)`);
+    }
+    const text = parts.join('\n');
+    return { text, shown: profile.lines.length + notes.lines.length, total, hidden, chars: text.length };
   }
 
   getFactsFormatted(query = '') {

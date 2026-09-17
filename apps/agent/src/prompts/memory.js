@@ -65,7 +65,7 @@ Analyze the following chat logs from ${date}.
 
 Produce a JSON object with two fields:
 1. "summary": A concise bullet-point journal entry of what happened, tasks completed, and context.
-2. "facts": An array of { key, value, category } objects representing NEW **durable** facts learned about the user.
+2. "facts": An array of { key, value, category, summary } objects representing NEW **durable** facts learned about the user.
    - Keys should be snake_case (e.g. user_project_name, favorite_color).
    - **category**: One of "preference", "relationship", "temporal", "system", "general".
      - "preference" for user likes, dislikes, habits, settings.
@@ -74,7 +74,9 @@ Produce a JSON object with two fields:
      - "system" for technical configs, device settings.
      - "general" for anything else.
 
-   - **WHAT TO SAVE AS A FACT** (will be in every prompt — be selective):
+   - **summary**: one line, at most 80 characters, for the list the assistant carries in every prompt. The full value stays in memory and comes back on request.
+
+   - **WHAT TO SAVE AS A FACT** (the list in the prompt is capped, so the oldest and least used drop out of sight; be selective):
      - User preferences, habits, and settings (enduring)
      - Relationships, contacts, family info
      - Future plans, upcoming trips, deadlines (use date suffix: 'key_on_YYYY-MM-DD')

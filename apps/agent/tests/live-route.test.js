@@ -9,6 +9,7 @@ jest.mock('google-auth-library', () => {
 
 const { createLiveRouter, TOKEN_TTL_MS, NEW_SESSION_WINDOW_MS } = require('../src/routes/live');
 const { MAX_FACTS_CHARS, MAX_INSTRUCTION_CHARS } = require('../src/prompts/live');
+const { FACTS_HEADER } = require('../src/prompts/system');
 
 function makeAgent(overrides = {}) {
     return {
@@ -105,7 +106,7 @@ describe('GET /live/config', () => {
         expect(text).toContain('CONSTITUTION:');
         expect(text).toContain('**Privacy First**');
         expect(text).toContain('**Strict Matching**');
-        expect(text).toContain('USER FACTS & PREFERENCES (ALWAYS RESPECT THESE):');
+        expect(text).toContain(FACTS_HEADER);
         expect(text).toContain('- favorite_color: "blue"');
         expect(text).toContain('COMMUNICATION STYLE');
         expect(text).toContain('Dry and brief.');
@@ -130,7 +131,7 @@ describe('GET /live/config', () => {
 
         expect(text.length).toBeLessThanOrEqual(MAX_INSTRUCTION_CHARS);
         expect(text).toContain('more facts not shown');
-        const factsStart = text.indexOf('USER FACTS & PREFERENCES');
+        const factsStart = text.indexOf(FACTS_HEADER);
         const factsEnd = text.indexOf('COMMUNICATION STYLE');
         expect(factsEnd).toBeGreaterThan(factsStart);
         expect(factsEnd - factsStart).toBeLessThanOrEqual(MAX_FACTS_CHARS + 200);

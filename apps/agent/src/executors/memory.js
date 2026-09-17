@@ -33,9 +33,22 @@ class MemoryExecutor extends BaseExecutor {
                     }
                 }
 
+                // 3. Facts: the prompt carries one line each, so a search has to
+                // reach the ones it does not list.
+                let factResults = [];
+                try {
+                    factResults = (db.findFacts ? db.findFacts(query, 10) : []).map(f => ({
+                        key: f.key, value: f.value, kind: f.kind, summary: f.summary || null
+                    }));
+                    if (factResults.length > 0 && db.touchFacts) db.touchFacts(factResults.map(f => f.key));
+                } catch (e) {
+                    console.warn(`[searchMemory] Fact search failed: ${e.message}`);
+                }
+
                 return {
                     chat_history: chatResults,
-                    knowledge: ragResults
+                    knowledge: ragResults,
+                    facts: factResults
                 };
             }
 
@@ -233,7 +246,8 @@ class MemoryExecutor extends BaseExecutor {
                                     db.setKey(f.key, f.value, {
                                         category: f.category || 'general',
                                         confidence: 'consolidated',
-                                        source: 'consolidation'
+                                        source: 'consolidation',
+                                        summary: typeof f.summary === 'string' ? f.summary : undefined
                                     });
                                     factsAdded++;
                                 }
