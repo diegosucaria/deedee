@@ -6,7 +6,8 @@ const {
     buildLiveSetup,
     realtimeAudioMessage,
     messageSizeBytes,
-    sessionCountdown
+    sessionCountdown,
+    closeOutcome
 } = require('../src/app/live/live-session.js');
 
 describe('liveWebSocketUrl', () => {
@@ -112,5 +113,26 @@ describe('sessionCountdown', () => {
     test('without a cut-off the page shows no clock', () => {
         expect(sessionCountdown(null, now).known).toBe(false);
         expect(sessionCountdown('not a date', now).known).toBe(false);
+    });
+});
+
+describe('closeOutcome', () => {
+    test('a socket that opened and then closed ended the session', () => {
+        expect(closeOutcome({ code: 1000, reason: '' }, true)).toEqual({
+            status: 'ended',
+            message: 'Session ended (1000).'
+        });
+    });
+
+    test('a refused handshake stays an error and keeps the close code', () => {
+        expect(closeOutcome({ code: 1008, reason: 'Request contains an invalid argument.' }, false)).toEqual({
+            status: 'error',
+            message: 'Could not start the session (1008).'
+        });
+    });
+
+    test('a close without a code still reads as plain words', () => {
+        expect(closeOutcome({}, false).message).toBe('Could not start the session.');
+        expect(closeOutcome(undefined, true).message).toBe('Session ended.');
     });
 });

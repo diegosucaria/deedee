@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { getLiveToken, executeLiveTool, getLiveConfig, getAgentTools } from './actions';
-import { liveWebSocketUrl, buildLiveSetup, realtimeAudioMessage, messageSizeBytes, sessionCountdown } from './live-session';
+import { liveWebSocketUrl, buildLiveSetup, realtimeAudioMessage, messageSizeBytes, sessionCountdown, closeOutcome } from './live-session';
 import { Mic, MicOff, PhoneOff, Settings2, Terminal, X } from 'lucide-react';
 import AudioSettingsDialog from '@/components/AudioSettingsDialog';
 import clsx from 'clsx';
@@ -38,6 +38,9 @@ export default function GeminiLivePage() {
     const [selectedDeviceId, setSelectedDeviceId] = useState(null);
     const [showSettings, setShowSettings] = useState(false);
     const nextStartTimeRef = useRef(0);
+    // True once the socket opened. A close before that is a failed connect,
+    // not a session that ran its course.
+    const sessionOpenedRef = useRef(false);
 
 
     const log = (msg) => setLogs(p => [...p.slice(-4), msg]);
@@ -50,9 +53,9 @@ export default function GeminiLivePage() {
     // the server to drop it with a bare close code.
     useEffect(() => {
         if (!countdown.expired || !isConnected) return;
+        // Closing the socket runs ws.onclose, which writes the log line.
         disconnect();
         setStatus('ended');
-        log('Session ended.');
     }, [countdown.expired, isConnected]);
 
     // Tick once a second while a session is open.
@@ -71,6 +74,7 @@ export default function GeminiLivePage() {
         try {
             setStatus('connecting');
             setExpiresAt(null);
+            sessionOpenedRef.current = false;
             log('Getting Config & Token...');
 
             // Parallel fetch for speed
@@ -116,6 +120,7 @@ export default function GeminiLivePage() {
 
                 // 2. Start Audio
                 await startAudio();
+                sessionOpenedRef.current = true;
                 setIsConnected(true);
                 setStatus('active');
             };
@@ -163,11 +168,13 @@ export default function GeminiLivePage() {
             };
 
             ws.onclose = (event) => {
-                // The close code means nothing to the owner; say what happened.
                 console.log(`[Live] Socket closed: ${event.code} ${event.reason || ''}`.trim());
-                log('Session ended.');
+                // Say what happened in plain words, and keep the close code:
+                // on a phone the log overlay is the only diagnosis on screen.
+                const outcome = closeOutcome(event, sessionOpenedRef.current);
+                log(outcome.message);
                 setIsConnected(false);
-                setStatus('ended');
+                setStatus(outcome.status);
                 setExpiresAt(null);
                 stopAudio();
             };

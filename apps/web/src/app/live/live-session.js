@@ -122,3 +122,20 @@ export function sessionCountdown(expiresAt, now = Date.now()) {
         label: `${Math.floor(totalSeconds / 60)}:${twoDigits(totalSeconds % 60)}`
     };
 }
+
+/**
+ * What a socket close means. A session that never opened did not "end": the
+ * handshake failed, so keep the error state and keep the close code on
+ * screen. The log overlay is the only place a phone shows why.
+ * @param {{ code?: number, reason?: string }} event
+ * @param {boolean} opened true once the socket opened
+ * @returns {{ status: 'ended'|'error', message: string }}
+ */
+export function closeOutcome(event, opened) {
+    const code = event?.code;
+    const suffix = Number.isFinite(code) ? ` (${code})` : '';
+    if (opened) {
+        return { status: 'ended', message: `Session ended${suffix}.` };
+    }
+    return { status: 'error', message: `Could not start the session${suffix}.` };
+}
