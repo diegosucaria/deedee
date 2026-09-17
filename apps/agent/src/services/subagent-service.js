@@ -21,6 +21,8 @@ function envInt(name, fallback) {
 // subagents.result_full. 0 disables the cap.
 const DEFAULT_RESULT_CAP = 4000;
 const SUMMARY_TARGET = 3500;
+// The compression call sits outside the run's timeout race, so it gets its own.
+const SUMMARY_TIMEOUT_MS = 30000;
 
 class SubAgentService {
     constructor(agent) {
@@ -76,12 +78,22 @@ class SubAgentService {
 
         const note = (text) => `${text}\n\n[Result trimmed from ${full.length} chars. Call getAgentResult("${taskId}", full: true) for the whole text.]`;
         const modelName = this.agent.configService?.getModel?.('LITE') || this._config.getModel('LITE');
+        // This call runs after the run's own timeout race has settled, so it
+        // needs its own bound: a stalled connection would otherwise hold the
+        // waiting parent job open for as long as the socket lives.
+        const controller = new AbortController();
+        const timer = setTimeout(() => controller.abort(), SUMMARY_TIMEOUT_MS);
         try {
-            const response = await this.agent.client.models.generateContent({
-                model: modelName,
-                contents: [{ role: 'user', parts: [{ text: `Compress this report to under ${SUMMARY_TARGET} characters. Keep every identifier, date, amount, URL and the [SILENT] marker verbatim.\n\n${full}` }] }],
-                config: { thinkingConfig: { thinkingLevel: 'MINIMAL' } }
-            });
+            const response = await Promise.race([
+                this.agent.client.models.generateContent({
+                    model: modelName,
+                    contents: [{ role: 'user', parts: [{ text: `Compress this report to under ${SUMMARY_TARGET} characters. Keep every identifier, date, amount, URL and the [SILENT] marker verbatim.\n\n${full}` }] }],
+                    config: { thinkingConfig: { thinkingLevel: 'MINIMAL' }, abortSignal: controller.signal }
+                }),
+                new Promise((_, reject) => controller.signal.addEventListener('abort', () =>
+                    reject(new Error(`Summary timed out after ${SUMMARY_TIMEOUT_MS} ms`))
+                ))
+            ]);
             this._config.logUsageFromResponse(this.agent.db, modelName, response, `subagent-${taskId}`, 'subagent_summary');
             const text = (typeof response.text === 'string' ? response.text
                 : response.candidates?.[0]?.content?.parts?.map(p => p.text || '').join('') || '').trim();
@@ -91,6 +103,8 @@ class SubAgentService {
             }
         } catch (err) {
             console.warn(`[SubAgent] ${taskId} result summary failed, cutting at ${cap}:`, err.message);
+        } finally {
+            clearTimeout(timer);
         }
         return { result: note(full.slice(0, cap)), summarized: true };
     }

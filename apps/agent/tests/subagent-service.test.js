@@ -409,6 +409,21 @@ describe('SubAgentService', () => {
             expect(mockAgent.client.models.generateContent).not.toHaveBeenCalled();
         });
 
+        it('a stalled summarizer cannot hold the caller: cuts at the cap after 30s', async () => {
+            jest.useFakeTimers();
+            // Never settles on its own, and ignores the abort signal.
+            mockAgent.client.models.generateContent.mockImplementation(() => new Promise(() => {}));
+            const p = service.spawn({ task: 'x', parentChatId: 'c' });
+            await jest.advanceTimersByTimeAsync(31000);
+            const out = await p;
+            jest.useRealTimers();
+
+            expect(out.result.startsWith(longText.slice(0, 4000))).toBe(true);
+            expect(out.result).toContain('full: true');
+            const call = mockAgent.client.models.generateContent.mock.calls[0][0];
+            expect(call.config.abortSignal).toBeDefined();
+        });
+
         it('cuts at the cap when the summarizer fails', async () => {
             mockAgent.client.models.generateContent.mockRejectedValue(new Error('quota'));
             const out = await service.spawn({ task: 'x', parentChatId: 'c' });

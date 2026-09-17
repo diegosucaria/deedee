@@ -730,7 +730,11 @@ FORMAT (when you do notify):
 - Be concise. 3-5 bullets max. No essays.`,
                 silent: false,
                 defaultEnabled: false,
-                model: 'FLASH',
+                // PRO: unlike the wardrobe jobs there is no inner PRO call —
+                // PHASE 2 and PHASE 3 decide what reaches the owner, and they
+                // ARE this turn. The scan sub-agents below still run on FLASH,
+                // and the job fires under once a day (p=0.05 over 16 slots).
+                model: 'PRO',
                 allowedTools: ['spawnAgent', 'getAgentResult', 'scheduleJob', 'setReminder', 'sendMessage', 'searchMemory', 'getFact', 'saveJobState', 'getJobState', 'askUser']
             },
             {
@@ -1012,6 +1016,8 @@ NEVER contact anyone other than the owner.`,
                     source: 'scheduler',
                     metadata: {
                         chatId: `system_${sysJob.name}_${Date.now()}`,
+                        // saveJobState/getJobState refuse to run without it.
+                        jobName: sysJob.name,
                         ...(scope.model ? { forceModel: scope.model } : {}),
                         ...(scope.allowedTools ? { allowedTools: scope.allowedTools } : {})
                     }

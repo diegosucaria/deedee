@@ -615,7 +615,13 @@ describe('Scheduler & Smart Notifications', () => {
         });
     });
     describe('system job scoping (model + allowedTools)', () => {
-        const AGENT_TURN_JOBS = ['proactive_thought', 'wardrobe_pretrip_check', 'wardrobe_morning_outfit'];
+        // proactive_thought filters what reaches the owner in the turn itself,
+        // so it stays PRO; the wardrobe jobs orchestrate around inner PRO calls.
+        const AGENT_TURN_JOBS = {
+            proactive_thought: 'PRO',
+            wardrobe_pretrip_check: 'FLASH',
+            wardrobe_morning_outfit: 'FLASH'
+        };
         let savedEnv;
 
         beforeEach(() => {
@@ -665,12 +671,14 @@ describe('Scheduler & Smart Notifications', () => {
             const known = new Set(toolDefinitions.flatMap(g => g.functionDeclarations || []).map(d => d.name));
             scheduler.ensureSystemJobs();
 
-            for (const name of AGENT_TURN_JOBS) {
+            for (const [name, model] of Object.entries(AGENT_TURN_JOBS)) {
                 agent.processMessage.mockClear();
                 await runSystemJob(name);
                 const meta = passedMetadata();
                 expect(meta.chatId).toMatch(new RegExp(`^system_${name}_`));
-                expect(meta.forceModel).toBe('FLASH');
+                expect(meta.forceModel).toBe(model);
+                // saveJobState/getJobState refuse to run without jobName.
+                expect(meta.jobName).toBe(name);
                 expect(Array.isArray(meta.allowedTools)).toBe(true);
                 expect(meta.allowedTools.length).toBeGreaterThan(0);
                 for (const tool of meta.allowedTools) {
@@ -741,7 +749,7 @@ describe('Scheduler & Smart Notifications', () => {
             scheduler.ensureSystemJobs();
             await runSystemJob('wardrobe_morning_outfit');
             const meta = passedMetadata();
-            expect(Object.keys(meta)).toEqual(['chatId']);
+            expect(Object.keys(meta)).toEqual(['chatId', 'jobName']);
         });
 
         it('nightly_consolidation calls consolidateMemory directly, no agent turn', async () => {
