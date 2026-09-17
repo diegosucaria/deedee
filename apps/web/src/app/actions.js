@@ -3,6 +3,7 @@
 import { fetchAPI } from '@/lib/api';
 import { requireActionSession } from '@/lib/auth/guard';
 import { revalidatePath } from 'next/cache';
+import { historyQuery, statsQuery, dryRunPayload, normalizeFeedback, apiErrorMessage } from '@/lib/guardian';
 
 // --- Tasks ---
 export async function getTasks(includeSystem = false) {
@@ -2410,5 +2411,93 @@ export async function decideApproval(id, decision) {
         return { success: true, ...result };
     } catch (error) {
         return { success: false, error: error.message };
+    }
+}
+
+// --- Approval guardian (history, stats, policy, dry run, feedback) ---
+
+export async function getGuardianHistory(filters = {}) {
+    await requireActionSession();
+    try {
+        return await fetchAPI(`/v1/guardian/history?${historyQuery(filters)}`);
+    } catch (error) {
+        console.error('getGuardianHistory Error:', error);
+        return { rows: [], total: 0, limit: 50, offset: 0, error: apiErrorMessage(error) };
+    }
+}
+
+// One row with the exact structured input the guardian saw.
+export async function getGuardianDecision(id) {
+    await requireActionSession();
+    try {
+        return { success: true, row: await fetchAPI(`/v1/guardian/history/${encodeURIComponent(String(id || ''))}`) };
+    } catch (error) {
+        return { success: false, error: apiErrorMessage(error) };
+    }
+}
+
+export async function getGuardianStats(range = {}) {
+    await requireActionSession();
+    try {
+        const qs = statsQuery(range);
+        return await fetchAPI(`/v1/guardian/stats${qs ? `?${qs}` : ''}`);
+    } catch (error) {
+        console.error('getGuardianStats Error:', error);
+        return { error: apiErrorMessage(error) };
+    }
+}
+
+export async function getGuardianPolicy() {
+    await requireActionSession();
+    try {
+        return await fetchAPI('/v1/guardian/policy');
+    } catch (error) {
+        console.error('getGuardianPolicy Error:', error);
+        return { error: apiErrorMessage(error) };
+    }
+}
+
+// patch: { mode?, smart_policy?, always_ask? }. The floor is fixed on the agent side.
+export async function saveGuardianPolicy(patch = {}) {
+    await requireActionSession();
+    const body = {};
+    if (patch && typeof patch === 'object') {
+        if (typeof patch.mode === 'string') body.mode = patch.mode;
+        if (typeof patch.smart_policy === 'string') body.smart_policy = patch.smart_policy;
+        if (Array.isArray(patch.always_ask)) body.always_ask = patch.always_ask.map(String);
+    }
+    try {
+        const policy = await fetchAPI('/v1/guardian/policy', { method: 'PUT', body: JSON.stringify(body) });
+        revalidatePath('/guardian');
+        return { success: true, policy };
+    } catch (error) {
+        return { success: false, error: apiErrorMessage(error) };
+    }
+}
+
+// Sends a described call through the gate and the guardian. Nothing runs.
+export async function guardianDryRun(form = {}) {
+    await requireActionSession();
+    const parsed = dryRunPayload(form);
+    if (!parsed.ok) return { success: false, error: parsed.error };
+    try {
+        const result = await fetchAPI('/v1/guardian/dry-run', { method: 'POST', body: JSON.stringify(parsed.payload) });
+        return { success: true, result };
+    } catch (error) {
+        return { success: false, error: apiErrorMessage(error) };
+    }
+}
+
+// feedback: 'should_allow' | 'should_deny' | null (clears). Never changes the decision.
+export async function setGuardianFeedback(id, feedback) {
+    await requireActionSession();
+    try {
+        const res = await fetchAPI(`/v1/guardian/feedback/${encodeURIComponent(String(id || ''))}`, {
+            method: 'POST',
+            body: JSON.stringify({ feedback: normalizeFeedback(feedback) })
+        });
+        return { success: true, row: res?.row || null };
+    } catch (error) {
+        return { success: false, error: apiErrorMessage(error) };
     }
 }
