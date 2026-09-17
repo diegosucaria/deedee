@@ -188,7 +188,7 @@ const toolDefinitions = [
       {
         name: "rollbackLastChange",
         category: "filesystem",
-        description: "Undoes the last code change made to the system using git revert. Use this if a recent update broke something.",
+        description: "Opens a pull request that reverts the newest commit on master. Nothing is pushed to master: the owner merges the revert, and that merge is the rollback. Use this if a recent update broke something.",
         parameters: {
           type: "OBJECT",
           properties: {},
@@ -209,8 +209,8 @@ const toolDefinitions = [
         name: "commitAndPush",
         category: "filesystem",
         requiresConfirmation: true,
-        confirmationReason: "Pushing code to the repository changes what runs on the device.",
-        description: "Commits and pushes changes to the remote repository. Automatically runs 'npm test' first and fails if tests do not pass.",
+        confirmationReason: "Opens a pull request on the public repository with the changed files.",
+        description: "Opens a pull request with the changed files: pushes a branch named deedee/self/<time> and never touches master. Runs a secret scan and a syntax check only; CI runs the tests on the pull request, and the owner reviews and merges. The changes stay in the work tree until then; after the merge, call pullLatestChanges. Changes under .github/ are refused.",
         parameters: {
           type: "OBJECT",
           properties: {

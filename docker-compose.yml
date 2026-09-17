@@ -81,12 +81,21 @@ services:
       # SUPERVISOR_TOKEN required at runtime — the supervisor refuses every
       # request when it is unset. Inject via Balena/.env; agent and api send
       # it as X-Supervisor-Token.
+      # GIT_REMOTE_URL (https GitHub URL) and GITHUB_PAT: self-improvement
+      # pushes a deedee/self/<time> branch and opens a pull request; the token
+      # needs contents and pull requests write. It never pushes master.
+      # - SUPERVISOR_ROLLBACK_WINDOW_MINUTES=60
     volumes:
       - repo-data:/app/source
+      # Also holds the supervisor's own git dir (repo.git): hooks and config
+      # the agent cannot write.
       - supervisor-state:/app/state
-      - /var/run/docker.sock:/var/run/docker.sock
     labels:
-      io.balena.features.balena-socket: '1'
+      # Container logs come from the balena supervisor API (journal). No
+      # engine socket: the socket could start a privileged container, which
+      # is root on the device. For local Docker, mount
+      # /var/run/docker.sock in an override file to get logs.
+      io.balena.features.supervisor-api: '1'
     networks:
       - deedee-net
     restart: always

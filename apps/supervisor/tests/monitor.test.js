@@ -3,7 +3,6 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 
-const SELF = 'supervisor@deedee.bot';
 const OWNER = 'owner@example.test';
 
 describe('Monitor', () => {
@@ -12,6 +11,7 @@ describe('Monitor', () => {
     let mockFetch;
     let stateDir;
     let workDir;
+    let selfPrs;
 
     // What `git log -1 --pretty=format:%H%x09%ae%x09%s` prints for HEAD.
     function headLine(hash, email, subject = 'feat: test commit') {
@@ -19,7 +19,7 @@ describe('Monitor', () => {
     }
 
     function mockHead(hash, email, subject) {
-        mockGit.runSafe.mockResolvedValue(headLine(hash, email, subject));
+        mockGit.git.mockResolvedValue(headLine(hash, email, subject));
     }
 
     function writeBoot(hash) {
@@ -29,21 +29,6 @@ describe('Monitor', () => {
     function readBoot() {
         const file = path.join(stateDir, '.last_boot_commit');
         return fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : null;
-    }
-
-    function readAssessed() {
-        const file = path.join(stateDir, '.last_assessed_commit');
-        return fs.existsSync(file) ? fs.readFileSync(file, 'utf-8') : null;
-    }
-
-    /** A fresh Monitor on the same state dir, as after a Balena restart. */
-    async function restartSupervisor() {
-        const next = new Monitor(mockGit);
-        next.slackWebhookUrl = 'http://slack';
-        jest.spyOn(next, 'check').mockResolvedValue();
-        jest.spyOn(global, 'setInterval').mockReturnValue(1);
-        await next.start();
-        return next;
     }
 
     function slackTexts() {
@@ -58,10 +43,15 @@ describe('Monitor', () => {
         workDir = path.join(root, 'source');
         fs.mkdirSync(workDir);
 
+        selfPrs = [];
         mockGit = {
-            run: jest.fn(),
-            runSafe: jest.fn(),
-            rollback: jest.fn().mockResolvedValue({ success: true, revertCommit: 'rev0000' }),
+            git: jest.fn(),
+            rollback: jest.fn().mockResolvedValue({ success: true, revertCommit: 'rev0000', pullRequest: { number: 42 } }),
+            listSelfPullRequests: jest.fn(() => selfPrs),
+            updateSelfPullRequest: jest.fn((number, patch) => {
+                selfPrs = selfPrs.map(e => (e.number === number ? { ...e, ...patch } : e));
+            }),
+            getPullRequest: jest.fn(),
             workDir
         };
         mockFetch = jest.fn(() => Promise.resolve({ ok: true }));
@@ -80,17 +70,16 @@ describe('Monitor', () => {
 
     describe('readHead', () => {
         test('runs git log without a shell and splits on tabs', async () => {
-            mockHead('hash123', SELF, 'fix: a | b subject');
+            mockHead('hash123', OWNER, 'fix: a | b subject');
 
             const head = await monitor.readHead();
 
-            expect(mockGit.runSafe).toHaveBeenCalledWith('git', ['log', '-1', '--pretty=format:%H%x09%ae%x09%s']);
-            expect(mockGit.run).not.toHaveBeenCalled();
-            expect(head).toEqual({ hash: 'hash123', authorEmail: SELF, subject: 'fix: a | b subject' });
+            expect(mockGit.git).toHaveBeenCalledWith(['log', '-1', '--pretty=format:%H%x09%ae%x09%s']);
+            expect(head).toEqual({ hash: 'hash123', authorEmail: OWNER, subject: 'fix: a | b subject' });
         });
 
         test('returns null on empty output', async () => {
-            mockGit.runSafe.mockResolvedValue('');
+            mockGit.git.mockResolvedValue('');
             expect(await monitor.readHead()).toBeNull();
         });
     });
@@ -170,318 +159,113 @@ describe('Monitor', () => {
         });
     });
 
-    describe('state dir migration', () => {
-        test('copies the legacy .last_boot_commit from the work dir once', () => {
-            fs.writeFileSync(path.join(workDir, '.last_boot_commit'), 'legacy00');
-
-            expect(monitor._readLastBootCommit()).toBe('legacy00');
-            expect(readBoot()).toBe('legacy00');
-
-            // The new file wins from now on
-            fs.writeFileSync(path.join(workDir, '.last_boot_commit'), 'changed0');
-            expect(monitor._readLastBootCommit()).toBe('legacy00');
-        });
-
-        test('returns empty when neither file exists', () => {
-            expect(monitor._readLastBootCommit()).toBe('');
-            expect(fs.existsSync(stateDir)).toBe(false);
-        });
-
-        test('rollback hash lives next to the boot hash', () => {
-            monitor._writeLastRollbackCommit('rev0000');
-            expect(fs.readFileSync(path.join(stateDir, '.last_rollback_commit'), 'utf-8')).toBe('rev0000');
-            expect(monitor._readLastRollbackCommit()).toBe('rev0000');
-        });
-    });
-
-    describe('assessRollbackWindow', () => {
-        beforeEach(() => fs.mkdirSync(stateDir));
-
-        test('opens only for a new commit authored by the supervisor', async () => {
-            mockHead('abc1234', SELF);
-            writeBoot('old0000');
-
-            await monitor.assessRollbackWindow();
-
-            expect(monitor.lastUpdate).toBeGreaterThan(0);
-            expect(monitor.selfCommit).toBe('abc1234');
-            expect(monitor.lastAssessedHash).toBe('abc1234');
-        });
-
-        test('stays closed on a plain restart (same commit, self author)', async () => {
-            mockHead('abc1234', SELF);
-            writeBoot('abc1234');
-
-            await monitor.assessRollbackWindow();
-
-            expect(monitor.lastUpdate).toBe(0);
-            expect(monitor.selfCommit).toBeNull();
-        });
-
-        test('stays closed for a new commit by the owner', async () => {
-            mockHead('abc1234', OWNER);
-            writeBoot('old0000');
-
-            await monitor.assessRollbackWindow();
-
-            expect(monitor.lastUpdate).toBe(0);
-            expect(monitor.selfCommit).toBeNull();
-        });
-
-        test('stays closed for a self-authored revert commit', async () => {
-            mockHead('abc1234', SELF, 'Revert "feat: broken self-improvement"');
-            writeBoot('old0000');
-
-            await monitor.assessRollbackWindow();
-
-            expect(monitor.lastUpdate).toBe(0);
-            expect(monitor.selfCommit).toBeNull();
-        });
-
-        test('stays closed for the recorded rollback commit even with a plain subject', async () => {
-            mockHead('rev0000', SELF, 'feat: looks new');
-            writeBoot('old0000');
-            monitor._writeLastRollbackCommit('rev0000');
-
-            await monitor.assessRollbackWindow();
-
-            expect(monitor.lastUpdate).toBe(0);
-            expect(monitor.selfCommit).toBeNull();
-        });
-
-        test('stays closed when auto-rollback is disabled', async () => {
-            monitor.autoRollback = false;
-            mockHead('abc1234', SELF);
-            writeBoot('old0000');
-
-            await monitor.assessRollbackWindow();
-
-            expect(monitor.lastUpdate).toBe(0);
-            expect(mockGit.runSafe).not.toHaveBeenCalled();
-        });
-
-        test('stays closed when git throws', async () => {
-            mockGit.runSafe.mockRejectedValue(new Error('not a git repository'));
-            writeBoot('old0000');
-
-            await monitor.assessRollbackWindow();
-
-            expect(monitor.lastUpdate).toBe(0);
-            expect(monitor.selfCommit).toBeNull();
-        });
-
-        test('start() reads the boot file before notifyStartup rewrites it', async () => {
-            mockHead('abc1234', SELF);
-            writeBoot('old0000');
-            jest.spyOn(monitor, 'check').mockResolvedValue();
-            jest.spyOn(global, 'setInterval').mockReturnValue(1);
-
-            await monitor.start();
-
-            expect(monitor.selfCommit).toBe('abc1234');
-            expect(readBoot()).toBe('abc1234');
-        });
-    });
-
-    describe('per-tick reassessment', () => {
-        beforeEach(async () => {
-            fs.mkdirSync(stateDir);
-            // Boot on an owner commit: window closed, boot file written.
-            mockHead('own0000', OWNER, 'feat: owner change');
-            await monitor.assessRollbackWindow();
-            await monitor.notifyStartup();
-            mockFetch.mockClear();
-            expect(monitor.lastUpdate).toBe(0);
-        });
-
-        test('HEAD unchanged between ticks: nothing happens', async () => {
-            await monitor.check();
-
-            expect(monitor.lastUpdate).toBe(0);
-            expect(slackTexts()).toEqual([]);
-            expect(readBoot()).toBe('own0000');
-        });
-
-        test('HEAD moves to a self-authored commit: window opens, assessed file updated, boot file kept', async () => {
-            mockHead('self111', SELF, 'feat: self-improvement');
-
-            await monitor.check();
-
-            expect(monitor.lastUpdate).toBeGreaterThan(0);
-            expect(monitor.selfCommit).toBe('self111');
-            expect(monitor.lastAssessedHash).toBe('self111');
-            expect(readAssessed()).toBe('self111');
-            expect(readBoot()).toBe('own0000');
-            expect(slackTexts().some(t => t.includes('Deedee Updated') && t.includes('self111'))).toBe(true);
-        });
-
-        test('the Updated alert fires once per commit', async () => {
-            mockHead('self111', SELF, 'feat: self-improvement');
-            await monitor.check();
-            await monitor.check();
-
-            expect(slackTexts().filter(t => t.includes('Deedee Updated'))).toHaveLength(1);
-        });
-
-        test('HEAD moves to an owner commit: window stays closed, boot file kept', async () => {
-            mockHead('own2222', OWNER, 'feat: owner merge');
-
-            await monitor.check();
-
-            expect(monitor.lastUpdate).toBe(0);
-            expect(monitor.selfCommit).toBeNull();
-            expect(readAssessed()).toBe('own2222');
-            expect(readBoot()).toBe('own0000');
-        });
-
-        test('self-commit seen by a tick, then a supervisor restart: window opens again', async () => {
-            mockHead('self111', SELF, 'feat: self-improvement');
-            await monitor.check();
-            expect(readAssessed()).toBe('self111');
-            expect(readBoot()).toBe('own0000');
-
-            // Balena deploys the new image and restarts the supervisor on the same HEAD.
-            const next = await restartSupervisor();
-
-            expect(next.lastUpdate).toBeGreaterThan(0);
-            expect(next.selfCommit).toBe('self111');
-            expect(readBoot()).toBe('self111');
-            expect(slackTexts().some(t => t.includes('Deedee Rebooted') && t.includes('New Update'))).toBe(true);
-        });
-
-        test('owner commit seen by a tick, then a supervisor restart: window stays closed', async () => {
-            mockHead('own2222', OWNER, 'feat: owner merge');
-            await monitor.check();
-
-            const next = await restartSupervisor();
-
-            expect(next.lastUpdate).toBe(0);
-            expect(next.selfCommit).toBeNull();
-            expect(readBoot()).toBe('own2222');
-        });
-
-        test('a second restart on the same self-commit keeps the window closed', async () => {
-            mockHead('self111', SELF, 'feat: self-improvement');
-            await monitor.check();
-            await restartSupervisor();
-
-            const again = await restartSupervisor();
-
-            expect(again.lastUpdate).toBe(0);
-            expect(again.selfCommit).toBeNull();
-        });
-
-        test('an open window closes again when HEAD moves to an owner commit', async () => {
-            mockHead('self111', SELF, 'feat: self-improvement');
-            await monitor.check();
-            expect(monitor.selfCommit).toBe('self111');
-
-            mockHead('own2222', OWNER, 'fix: owner hotfix');
-            await monitor.check();
-
-            expect(monitor.lastUpdate).toBe(0);
-            expect(monitor.selfCommit).toBeNull();
-        });
-
-        test('HEAD moves to a self-authored revert: window stays closed', async () => {
-            mockHead('rev0000', SELF, 'Revert "feat: self-improvement"');
-
-            await monitor.check();
-
-            expect(monitor.lastUpdate).toBe(0);
-            expect(readAssessed()).toBe('rev0000');
-            expect(readBoot()).toBe('own0000');
-        });
-
-        test('a failing health check right after a self-commit sees the open window', async () => {
-            mockHead('self111', SELF, 'feat: self-improvement');
-            mockFetch.mockImplementation((url) => {
-                if (url === 'http://slack') return Promise.resolve({ ok: true });
-                return Promise.reject(new Error('ECONNREFUSED'));
-            });
-            monitor.failures = monitor.rollbackThreshold - 1;
-
-            await monitor.check();
-
-            expect(mockGit.rollback).toHaveBeenCalledWith({ expectedHead: 'self111' });
-        });
-
+    describe('checks', () => {
         test('health fetch carries a timeout signal', async () => {
             await monitor.check();
 
             const healthCall = mockFetch.mock.calls.find(([url]) => url.endsWith('/health'));
             expect(healthCall[1].signal).toBeInstanceOf(AbortSignal);
         });
+
+        test('start() never touches git beyond reading HEAD', async () => {
+            mockHead('hash123', OWNER);
+            jest.spyOn(monitor, 'check').mockResolvedValue();
+            jest.spyOn(global, 'setInterval').mockReturnValue(1);
+
+            await monitor.start();
+
+            expect(mockGit.git.mock.calls.map(c => c[0][0])).toEqual(['log']);
+            expect(mockGit.rollback).not.toHaveBeenCalled();
+        });
     });
 
-    describe('handleFailure rollback policy', () => {
+    describe('handleFailure: revert pull request after a self-improvement merge', () => {
+        const minutesAgo = (m) => new Date(Date.now() - m * 60000).toISOString();
+
         beforeEach(() => {
-            fs.mkdirSync(stateDir);
             monitor.failures = monitor.rollbackThreshold;
+            jest.spyOn(console, 'warn').mockImplementation(() => {});
+            jest.spyOn(console, 'log').mockImplementation(() => {});
         });
 
-        test('rolls back the recorded self-commit inside the window and records the revert', async () => {
-            monitor.lastUpdate = Date.now();
-            monitor.selfCommit = 'abc1234';
+        test('opens a revert pull request for a self PR merged inside the window', async () => {
+            selfPrs = [{ number: 7, branch: 'deedee/self/x', commit: 'c1' }];
+            mockGit.getPullRequest.mockResolvedValue({ state: 'closed', merged_at: minutesAgo(15), merge_commit_sha: 'abc1234' });
 
             await monitor.handleFailure();
 
-            expect(mockGit.rollback).toHaveBeenCalledWith({ expectedHead: 'abc1234' });
-            expect(monitor.lastUpdate).toBe(0);
-            expect(monitor.selfCommit).toBeNull();
-            expect(monitor._readLastRollbackCommit()).toBe('rev0000');
+            expect(mockGit.getPullRequest).toHaveBeenCalledWith(7);
+            expect(mockGit.rollback).toHaveBeenCalledWith(expect.objectContaining({ commit: 'abc1234' }));
+            expect(selfPrs[0]).toMatchObject({ mergeCommit: 'abc1234', revertPullRequest: 42 });
+            const texts = slackTexts();
+            expect(texts.some(t => t.includes('PR #7'))).toBe(true);
+            expect(texts.some(t => t.includes('#42') && t.includes('Merge it to roll back'))).toBe(true);
         });
 
-        test('refuses to roll back the supervisor\'s own revert commit', async () => {
-            monitor._writeLastRollbackCommit('rev0000');
-            monitor.lastUpdate = Date.now();
-            monitor.selfCommit = 'rev0000';
+        test('acts once per failure streak, not on every failing tick', async () => {
+            selfPrs = [{ number: 7, mergedAt: minutesAgo(5), mergeCommit: 'abc1234' }];
+
+            monitor.failures = monitor.rollbackThreshold + 1;
+            await monitor.handleFailure();
+            expect(mockGit.rollback).not.toHaveBeenCalled();
+        });
+
+        test('never reverts the same pull request twice', async () => {
+            selfPrs = [{ number: 7, mergedAt: minutesAgo(5), mergeCommit: 'abc1234', revertPullRequest: 42 }];
+            await monitor.handleFailure();
+            expect(mockGit.rollback).not.toHaveBeenCalled();
+        });
+
+        test('alert only when the merge is older than the window', async () => {
+            selfPrs = [{ number: 7, mergedAt: minutesAgo(61), mergeCommit: 'abc1234' }];
+            await monitor.handleFailure();
+            expect(mockGit.rollback).not.toHaveBeenCalled();
+        });
+
+        test('alert only when no self PR merged (open or closed unmerged)', async () => {
+            selfPrs = [{ number: 8 }, { number: 9 }];
+            mockGit.getPullRequest
+                .mockResolvedValueOnce({ state: 'open', merged_at: null })
+                .mockResolvedValueOnce({ state: 'closed', merged_at: null });
 
             await monitor.handleFailure();
 
             expect(mockGit.rollback).not.toHaveBeenCalled();
-            expect(monitor.lastUpdate).toBe(0);
-            expect(monitor.selfCommit).toBeNull();
+            expect(selfPrs[1]).toMatchObject({ closedUnmerged: true });
         });
 
-        test('never rolls back when the window is closed', async () => {
-            monitor.lastUpdate = 0;
-            monitor.selfCommit = null;
-
-            await monitor.handleFailure();
-
-            expect(mockGit.rollback).not.toHaveBeenCalled();
-        });
-
-        test('never rolls back when disabled, even inside the window', async () => {
+        test('never acts when auto-rollback is disabled', async () => {
             monitor.autoRollback = false;
-            monitor.lastUpdate = Date.now();
-            monitor.selfCommit = 'abc1234';
+            selfPrs = [{ number: 7, mergedAt: minutesAgo(5), mergeCommit: 'abc1234' }];
+            await monitor.handleFailure();
+            expect(mockGit.rollback).not.toHaveBeenCalled();
+            expect(mockGit.getPullRequest).not.toHaveBeenCalled();
+        });
+
+        test('reports a failed revert pull request', async () => {
+            selfPrs = [{ number: 7, mergedAt: minutesAgo(5), mergeCommit: 'abc1234' }];
+            mockGit.rollback.mockResolvedValue({ success: false, error: 'no clean revert' });
 
             await monitor.handleFailure();
 
+            expect(slackTexts().some(t => t.includes('Could not open a revert pull request: no clean revert'))).toBe(true);
+        });
+
+        test('a GitHub error keeps the monitor running', async () => {
+            selfPrs = [{ number: 7 }];
+            mockGit.getPullRequest.mockRejectedValue(new Error('GitHub API 500'));
+            jest.spyOn(console, 'error').mockImplementation(() => {});
+            await expect(monitor.handleFailure()).resolves.toBeUndefined();
             expect(mockGit.rollback).not.toHaveBeenCalled();
         });
 
-        test('never rolls back after the window expired', async () => {
-            monitor.lastUpdate = Date.now() - monitor.dangerWindow - 1;
-            monitor.selfCommit = 'abc1234';
-
-            await monitor.handleFailure();
-
-            expect(mockGit.rollback).not.toHaveBeenCalled();
-        });
-
-        test('reports a refused rollback when HEAD moved', async () => {
-            monitor.lastUpdate = Date.now();
-            monitor.selfCommit = 'abc1234';
-            mockGit.rollback.mockResolvedValue({ success: false, error: 'Rollback aborted: HEAD moved' });
-
-            await monitor.handleFailure();
-
-            expect(slackTexts().some(t => t.includes('Rollback failed: Rollback aborted'))).toBe(true);
-            expect(monitor.lastUpdate).toBe(0);
-            expect(monitor._readLastRollbackCommit()).toBe('');
+        test('the window length reads SUPERVISOR_ROLLBACK_WINDOW_MINUTES', () => {
+            process.env.SUPERVISOR_ROLLBACK_WINDOW_MINUTES = '90';
+            try {
+                expect(new Monitor(mockGit).rollbackWindow).toBe(90 * 60000);
+            } finally {
+                delete process.env.SUPERVISOR_ROLLBACK_WINDOW_MINUTES;
+            }
         });
     });
 });

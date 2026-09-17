@@ -1,16 +1,9 @@
 const fs = require('fs');
 const path = require('path');
 
-// Files in the supervisor-only state dir. The agent can write anywhere in
-// the shared /app/source volume, so the trust anchors must not live there.
-// Two anchors: BOOT_FILE is HEAD at the last supervisor start and only
-// start() rewrites it. ASSESSED_FILE is the last HEAD the window rules ran
-// on, from start or from a tick. Keeping them apart lets a supervisor restart
-// on a deployed self-commit still open the window: HEAD differs from the
-// boot anchor even when a tick already saw the commit.
+// HEAD at the last supervisor start, in the supervisor-only state dir. Only
+// the startup notice uses it.
 const BOOT_FILE = '.last_boot_commit';
-const ASSESSED_FILE = '.last_assessed_commit';
-const ROLLBACK_FILE = '.last_rollback_commit';
 
 class Monitor {
     constructor(gitOps) {
@@ -23,23 +16,23 @@ class Monitor {
         this.checkInterval = 60000; // 1 minute
         this.failThreshold = 3;     // Alert after 3 failures
         this.rollbackThreshold = 5; // Rollback after 5 failures
-        this.dangerWindow = 10 * 60 * 1000; // 10 minutes after update
         this.fetchTimeout = 10000;  // Every outbound fetch gives up after 10 s
 
-        // Rollback policy. The window only opens for a commit the supervisor
-        // itself authored (a self-improvement). Owner merges never roll back.
+        // Rollback policy. Self-improvement reaches master only through a
+        // pull request the owner merges. When the agent fails soon after such
+        // a merge, the supervisor alerts and opens a revert pull request. It
+        // never pushes master; owner commits never get a revert.
         this.autoRollback = (process.env.SUPERVISOR_AUTO_ROLLBACK || 'true') !== 'false';
-        this.supervisorEmail = process.env.GIT_USER_EMAIL || 'supervisor@deedee.bot';
-        this.selfCommit = null; // Hash of the self-commit the window protects
+        // How long after a merge a failure still counts against it. A Balena
+        // build and download can take well over ten minutes.
+        const windowMinutes = Number(process.env.SUPERVISOR_ROLLBACK_WINDOW_MINUTES) || 60;
+        this.rollbackWindow = windowMinutes * 60 * 1000;
 
-        // Supervisor-only state (boot hash, own rollback hash).
         this.stateDir = process.env.SUPERVISOR_STATE_DIR || '/app/state';
-        this.lastAssessedHash = null; // HEAD at the last window assessment
 
         // State
         this.failures = 0;
         this.intervalId = null;
-        this.lastUpdate = 0; // 0 = danger window closed. start() decides.
     }
 
     async start() {
@@ -47,9 +40,6 @@ class Monitor {
         console.log(`[Monitor] Agent URL: ${this.agentUrl}`);
         console.log(`[Monitor] State dir: ${this.stateDir}`);
         if (this.slackWebhookUrl) console.log('[Monitor] Slack alerting enabled.');
-
-        // Decide the rollback window before notifyStartup() rewrites .last_boot_commit
-        await this.assessRollbackWindow();
 
         // Startup Notification
         await this.notifyStartup();
@@ -71,7 +61,7 @@ class Monitor {
      * Runs without a shell. %x09 is a tab, so no pipe character is involved.
      */
     async readHead() {
-        const raw = await this.git.runSafe('git', ['log', '-1', '--pretty=format:%H%x09%ae%x09%s']);
+        const raw = await this.git.git(['log', '-1', '--pretty=format:%H%x09%ae%x09%s']);
         if (!raw) return null;
         const [hash, authorEmail = '', ...rest] = raw.split('\t');
         return {
@@ -87,26 +77,8 @@ class Monitor {
         return path.join(this.stateDir, name);
     }
 
-    _legacyBootFile() {
-        return path.join(this.git.workDir, BOOT_FILE);
-    }
-
-    /**
-     * Copy the boot file from the old place (the shared work dir) once, when
-     * the new one is missing. Older installs keep their "no changes" notice.
-     */
-    _migrateBootFile() {
-        const target = this._stateFile(BOOT_FILE);
-        const legacy = this._legacyBootFile();
-        if (fs.existsSync(target) || !fs.existsSync(legacy)) return;
-        fs.mkdirSync(this.stateDir, { recursive: true });
-        fs.copyFileSync(legacy, target);
-        console.log(`[Monitor] Moved ${BOOT_FILE} into ${this.stateDir}.`);
-    }
-
     _readState(name) {
         try {
-            if (name === BOOT_FILE) this._migrateBootFile();
             const file = this._stateFile(name);
             return fs.existsSync(file) ? fs.readFileSync(file, 'utf-8').trim() : '';
         } catch (err) {
@@ -122,85 +94,6 @@ class Monitor {
 
     _readLastBootCommit() { return this._readState(BOOT_FILE); }
     _writeLastBootCommit(hash) { this._writeState(BOOT_FILE, hash); }
-    _readLastAssessedCommit() { return this._readState(ASSESSED_FILE); }
-    _writeLastAssessedCommit(hash) { this._writeState(ASSESSED_FILE, hash); }
-    _readLastRollbackCommit() { return this._readState(ROLLBACK_FILE); }
-    _writeLastRollbackCommit(hash) { this._writeState(ROLLBACK_FILE, hash); }
-
-    // ----- Rollback window -----
-
-    /**
-     * Open the danger window only when HEAD is new since the last boot AND the
-     * supervisor wrote it AND it is not a revert. Any other start (reboot,
-     * deploy of an owner merge, own rollback) keeps the window closed: we
-     * still alert, we never roll back. Records HEAD in .last_assessed_commit.
-     */
-    async assessRollbackWindow(head = null) {
-        this.lastUpdate = 0;
-        this.selfCommit = null;
-
-        if (!this.autoRollback) {
-            console.log('[Monitor] Auto-rollback disabled (SUPERVISOR_AUTO_ROLLBACK=false). Window closed.');
-            return;
-        }
-
-        try {
-            const info = head || await this.readHead();
-            if (!info) {
-                console.warn('[Monitor] Could not read HEAD. Rollback window closed.');
-                return;
-            }
-            this.lastAssessedHash = info.hash;
-            this._writeLastAssessedCommit(info.hash);
-            const short = info.hash.substring(0, 7);
-
-            const reason = this._closedReason(info);
-            if (reason) {
-                console.log(`[Monitor] Rollback window closed: ${reason} (${short}).`);
-                return;
-            }
-
-            this.lastUpdate = Date.now();
-            this.selfCommit = info.hash;
-            console.log(`[Monitor] HEAD ${short} is a new self-commit. Rollback window open for ${this.dangerWindow / 60000} min.`);
-        } catch (err) {
-            console.error('[Monitor] Rollback window check failed, keeping it closed:', err.message);
-        }
-    }
-
-    /** Why the window must stay closed for this HEAD, or null to open it. */
-    _closedReason({ hash, authorEmail, subject }) {
-        if (hash === this._readLastBootCommit()) return 'HEAD unchanged since last boot';
-        if (authorEmail.toLowerCase() !== this.supervisorEmail.toLowerCase()) return 'HEAD not authored by the supervisor';
-        if (hash === this._readLastRollbackCommit()) return 'HEAD is the supervisor\'s own rollback';
-        if (subject.startsWith('Revert "')) return 'HEAD is a revert commit';
-        return null;
-    }
-
-    /**
-     * Balena restarts only the services whose image changed, so an agent-only
-     * self-improvement never restarts the supervisor. Re-run the window rules
-     * whenever HEAD moved since the last assessment. This path never touches
-     * .last_boot_commit: when Balena later restarts the supervisor on that
-     * same commit, start() must still see it as new and open the window.
-     */
-    async _reassessIfHeadMoved() {
-        if (!this.autoRollback) return;
-        try {
-            const head = await this.readHead();
-            if (!head || head.hash === this.lastAssessedHash) return;
-
-            const short = head.hash.substring(0, 7);
-            console.log(`[Monitor] HEAD moved to ${short} since the last check. Reassessing rollback window.`);
-            const isNew = head.hash !== this._readLastAssessedCommit();
-            await this.assessRollbackWindow(head);
-            if (!isNew) return;
-
-            await this.alertUser(`🔁 *Deedee Updated*\n*Commit:* ${head.subject}\n*Hash:* \`${short}\``);
-        } catch (err) {
-            console.warn('[Monitor] HEAD re-check failed:', err.message);
-        }
-    }
 
     async notifyStartup() {
         try {
@@ -233,7 +126,6 @@ class Monitor {
     // ----- Health checks -----
 
     async check() {
-        await this._reassessIfHeadMoved();
         try {
             // Use native fetch (Node 18+)
             const res = await fetch(`${this.agentUrl}/health`, { signal: AbortSignal.timeout(this.fetchTimeout) });
@@ -308,49 +200,77 @@ class Monitor {
             await this.alertUser(`⚠️ **Agent Alert**\nAgent is unresponsive (3 consecutive failures).`);
         }
 
-        // Tier 2: Auto-Rollback (self-commits only, inside the danger window)
-        if (this.failures < this.rollbackThreshold) return;
+        // Tier 2: revert pull request, once per failure streak.
+        if (this.failures !== this.rollbackThreshold) return;
         if (!this.autoRollback) {
             console.warn('[Monitor] Rollback threshold reached but auto-rollback is disabled. Alert only.');
             return;
         }
-        const timeSinceUpdate = Date.now() - this.lastUpdate;
-        if (!this.lastUpdate || !this.selfCommit || timeSinceUpdate >= this.dangerWindow) {
-            if (this.failures === this.rollbackThreshold) {
-                console.warn('[Monitor] Rollback threshold reached outside the danger window. Alert only, no rollback.');
-            }
+
+        let merged;
+        try {
+            merged = await this.findRecentSelfMerge();
+        } catch (err) {
+            console.error('[Monitor] Could not check self-improvement pull requests:', err.message);
+            return;
+        }
+        if (!merged) {
+            console.warn('[Monitor] Rollback threshold reached, but no self-improvement pull request merged recently. Alert only.');
             return;
         }
 
-        // Never revert our own revert: that would re-apply the bad commit.
-        const lastRollback = this._readLastRollbackCommit();
-        if (lastRollback && this.selfCommit === lastRollback) {
-            console.warn('[Monitor] HEAD is the supervisor\'s own rollback commit. Not reverting it again.');
-            this.lastUpdate = 0;
-            this.selfCommit = null;
-            return;
-        }
-
-        console.warn('[Monitor] Rollback threshold reached inside danger window. Initiating rollback...');
-        await this.alertUser(`🔄 **Auto-Rollback Triggered**\nAgent crashed repeatedly after a self-update. Rolling back changes...`);
+        console.warn(`[Monitor] Agent failing after self-improvement PR #${merged.number} merged. Opening a revert pull request.`);
+        await this.alertUser(`🔄 **Agent failing after a self-improvement**\nPR #${merged.number} merged ${this._minutesAgo(merged.mergedAt)} min ago. Opening a revert pull request; nothing is pushed to master.`);
 
         try {
-            // Only revert the self-commit recorded at start. GitOps re-checks HEAD.
-            const result = await this.git.rollback({ expectedHead: this.selfCommit });
+            const result = await this.git.rollback({
+                commit: merged.mergeCommit,
+                reason: `The supervisor's health check failed ${this.failures} times in a row after pull request #${merged.number} merged.`
+            });
             if (result.success) {
-                if (result.revertCommit) this._writeLastRollbackCommit(result.revertCommit);
-                await this.alertUser(`✅ Rollback successful. Waiting for restart...`);
-                // Reset failures to give it time to restart
-                this.failures = 0;
+                this.git.updateSelfPullRequest(merged.number, { revertPullRequest: result.pullRequest.number });
+                await this.alertUser(`↩️ Revert pull request #${result.pullRequest.number} is open. Merge it to roll back.`);
             } else {
-                await this.alertUser(`❌ Rollback failed: ${result.error}`);
+                await this.alertUser(`❌ Could not open a revert pull request: ${result.error}`);
             }
         } catch (err) {
             console.error('[Monitor] Rollback exception:', err);
         }
-        // Close the danger window for this run, whatever the outcome.
-        this.lastUpdate = 0;
-        this.selfCommit = null;
+    }
+
+    _minutesAgo(iso) {
+        return Math.max(0, Math.round((Date.now() - Date.parse(iso)) / 60000));
+    }
+
+    /**
+     * The newest self-improvement pull request that merged inside the
+     * rollback window and has no revert yet, or null. Asks GitHub only about
+     * recorded pull requests whose outcome is still unknown.
+     * @returns {Promise<{number, mergedAt, mergeCommit}|null>}
+     */
+    async findRecentSelfMerge() {
+        const recorded = this.git.listSelfPullRequests().slice(0, 10);
+        for (const entry of recorded) {
+            if (entry.revertPullRequest || entry.closedUnmerged) continue;
+            let { mergedAt, mergeCommit } = entry;
+            if (!mergedAt) {
+                const pr = await this.git.getPullRequest(entry.number);
+                if (pr.merged_at) {
+                    mergedAt = pr.merged_at;
+                    mergeCommit = pr.merge_commit_sha;
+                    this.git.updateSelfPullRequest(entry.number, { mergedAt, mergeCommit });
+                } else if (pr.state === 'closed') {
+                    this.git.updateSelfPullRequest(entry.number, { closedUnmerged: true });
+                    continue;
+                } else {
+                    continue;
+                }
+            }
+            if (mergeCommit && Date.now() - Date.parse(mergedAt) < this.rollbackWindow) {
+                return { number: entry.number, mergedAt, mergeCommit };
+            }
+        }
+        return null;
     }
 
     async alertUser(message) {

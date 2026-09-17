@@ -2,11 +2,6 @@ const child_process = require('child_process');
 
 // Mock git so no real repo is touched.
 jest.mock('child_process', () => ({
-    exec: jest.fn((cmd, opts, cb) => {
-        if (typeof opts === 'function') cb = opts;
-        cb(null, { stdout: '', stderr: '' });
-        return { unref: () => { } };
-    }),
     execFile: jest.fn((file, args, opts, cb) => {
         if (typeof args === 'function') cb = args;
         if (typeof opts === 'function') cb = opts;
@@ -15,16 +10,20 @@ jest.mock('child_process', () => ({
     })
 }));
 
-const { GitOps, splitRemoteCredentials } = require('../src/git-ops');
+const fs = require('fs');
+const os = require('os');
+const path = require('path');
+const { GitOps, splitRemoteCredentials, githubSlug } = require('../src/git-ops');
 
 const TOKEN = 'ghp_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA';
 const REMOTE = 'https://github.com/owner/repo.git';
 
+/** Git arguments after the safety flags and --git-dir/--work-tree. */
 function execFileCalls() {
-    return child_process.execFile.mock.calls.filter(c => c[0] === 'git').map(c => c[1]);
-}
-function execCommands() {
-    return child_process.exec.mock.calls.map(c => c[0]);
+    return child_process.execFile.mock.calls.filter(c => c[0] === 'git').map(c => {
+        const args = c[1];
+        return args.slice(args.findIndex(a => a.startsWith('--work-tree=')) + 1);
+    });
 }
 
 describe('splitRemoteCredentials', () => {
@@ -48,54 +47,60 @@ describe('splitRemoteCredentials', () => {
     });
 });
 
-describe('GitOps keeps the token out of .git/config', () => {
+describe('githubSlug', () => {
+    test('reads owner/repo from an https GitHub URL', () => {
+        expect(githubSlug(REMOTE)).toBe('owner/repo');
+        expect(githubSlug('https://github.com/owner/repo')).toBe('owner/repo');
+        expect(githubSlug('https://example.test/owner/repo.git')).toBeNull();
+        expect(githubSlug('git@github.com:owner/repo.git')).toBeNull();
+    });
+});
+
+describe('GitOps credentials', () => {
     let gitOps;
+    let stateDir;
 
     beforeEach(() => {
         jest.clearAllMocks();
         jest.spyOn(console, 'log').mockImplementation(() => {});
         jest.spyOn(console, 'warn').mockImplementation(() => {});
         jest.spyOn(console, 'error').mockImplementation(() => {});
-        gitOps = new GitOps('/tmp/test');
+        stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cred-state-'));
+        gitOps = new GitOps('/tmp/test', null, { stateDir });
     });
 
-    afterEach(() => jest.restoreAllMocks());
+    afterEach(() => {
+        jest.restoreAllMocks();
+        fs.rmSync(stateDir, { recursive: true, force: true });
+    });
 
-    test('configure stores the remote without credentials', async () => {
+    test('configure stores no remote and no token; the token only rides as a header', async () => {
         await gitOps.configure('Name', 'mail@example.test', REMOTE, TOKEN);
 
-        const setUrl = execFileCalls().find(args => args.includes('remote'));
-        expect(setUrl).toEqual(expect.arrayContaining(['remote', 'add', 'origin', REMOTE]));
-        expect(JSON.stringify(execFileCalls())).not.toContain(TOKEN);
-        expect(JSON.stringify(execCommands())).not.toContain(TOKEN);
-    });
-
-    test('a URL that carries a token is stored clean, and the token still works', async () => {
-        await gitOps.configure('Name', 'mail@example.test', `https://${TOKEN}@github.com/owner/repo.git`);
-
-        const setUrl = execFileCalls().find(args => args.includes('remote'));
-        expect(setUrl).toEqual(expect.arrayContaining(['remote', 'add', 'origin', REMOTE]));
-        expect(gitOps.token).toBe(TOKEN);
-    });
-
-    test('pull and push carry the credentials as a header bound to the remote URL', async () => {
-        gitOps.token = TOKEN;
-        gitOps.remoteUrl = REMOTE;
+        const calls = execFileCalls();
+        expect(calls.some(args => args.includes('remote'))).toBe(false);
         const basic = Buffer.from(`x-access-token:${TOKEN}`).toString('base64');
+        const fetch = calls.find(args => args.includes('fetch'));
+        expect(fetch).toEqual(expect.arrayContaining([REMOTE]));
+        const raw = child_process.execFile.mock.calls.find(c => c[1].includes('fetch'))[1];
+        expect(raw).toContain(`http.${REMOTE}.extraheader=Authorization: Basic ${basic}`);
+        // The token appears only inside that header, never as its own argument
+        expect(raw.filter(a => a.includes(TOKEN))).toEqual([]);
+    });
 
-        await gitOps._runAuthed(['push', gitOps._remoteTarget(), 'master']);
-
-        expect(execFileCalls()[0]).toEqual([
-            '-c', `http.${REMOTE}.extraheader=Authorization: Basic ${basic}`, 'push', REMOTE, 'master'
-        ]);
+    test('a URL that carries a token is used clean, and the token still works', async () => {
+        await gitOps.configure('Name', 'mail@example.test', `https://${TOKEN}@github.com/owner/repo.git`);
+        expect(gitOps.token).toBe(TOKEN);
+        expect(gitOps.remoteUrl).toBe(REMOTE);
+        expect(JSON.stringify(execFileCalls())).not.toContain(TOKEN);
     });
 
     test('remote commands name the configured URL, not the remote origin', async () => {
         await gitOps.configure('Name', 'mail@example.test', REMOTE, TOKEN);
         jest.clearAllMocks();
 
-        await gitOps.commitAndPush('msg', ['apps/agent/src/x.js']).catch(() => {});
         await gitOps.pull();
+        await gitOps.rollback();
 
         const remoteCalls = execFileCalls().filter(args => args.includes('push') || args.includes('fetch'));
         expect(remoteCalls.length).toBeGreaterThan(0);
@@ -105,7 +110,7 @@ describe('GitOps keeps the token out of .git/config', () => {
         }
     });
 
-    test('with a token but no configured URL, a remote command is refused', async () => {
+    test('with no configured URL, a remote command is refused', async () => {
         gitOps.token = TOKEN;
         gitOps.remoteUrl = null;
 
@@ -114,30 +119,28 @@ describe('GitOps keeps the token out of .git/config', () => {
         expect(execFileCalls().some(args => args.includes('push') || args.includes('fetch'))).toBe(false);
     });
 
-    test('a failed remote command never returns the token', async () => {
+    test('a failed git command never returns the token', async () => {
         gitOps.token = TOKEN;
+        gitOps.remoteUrl = REMOTE;
         const basic = Buffer.from(`x-access-token:${TOKEN}`).toString('base64');
         child_process.execFile.mockImplementationOnce((file, args, opts, cb) => {
             if (typeof opts === 'function') cb = opts;
-            cb(new Error(`Command failed: git -c http.extraheader=Authorization: Basic ${basic} push origin master\nfatal: ${TOKEN} rejected`));
+            cb(Object.assign(new Error(`Command failed: git -c http.extraheader=Authorization: Basic ${basic} push`), { stderr: `fatal: ${TOKEN} rejected` }));
             return { unref: () => { } };
         });
 
-        await expect(gitOps._runAuthed(['push', 'origin', 'master'])).rejects.toThrow(/\[REDACTED\]/);
-        await expect(gitOps._runAuthed(['push', 'origin', 'master'])).resolves.toBe('');
+        await expect(gitOps.git(['push', REMOTE, 'x:y'], { authed: true })).rejects.toThrow(/\[REDACTED\]/);
 
         const logged = console.error.mock.calls.flat().join(' ');
         expect(logged).not.toContain(TOKEN);
         expect(logged).not.toContain(basic);
     });
 
-    test('with no token the commands stay plain', async () => {
-        await gitOps._runAuthed(['fetch', 'origin']);
-        expect(execFileCalls()[0]).toEqual(['fetch', 'origin']);
-    });
-
-    test('configure stores the clean URL for later commands', async () => {
-        await gitOps.configure('Name', 'mail@example.test', `https://${TOKEN}@github.com/owner/repo.git`);
-        expect(gitOps.remoteUrl).toBe(REMOTE);
+    test('a GitHub API error never returns the token', async () => {
+        gitOps.token = TOKEN;
+        gitOps.remoteUrl = REMOTE;
+        gitOps.fetch = jest.fn(async () => ({ ok: false, status: 401, text: async () => `bad credentials ${TOKEN}` }));
+        await expect(gitOps._github('GET', '/repos/owner/repo/pulls/1')).rejects.toThrow(/401/);
+        await expect(gitOps._github('GET', '/repos/owner/repo/pulls/1')).rejects.not.toThrow(new RegExp(TOKEN));
     });
 });

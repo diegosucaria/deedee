@@ -40,3 +40,20 @@ describe('GitOps Security Scan', () => {
         await expect(gitOps._scanForSecrets([file])).resolves.not.toThrow();
     });
 });
+
+describe('GitOps secret scan does not follow links', () => {
+    test('a link to a file outside the tree is skipped, not read', async () => {
+        const os = require('os');
+        const root = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'scan-link-')));
+        try {
+            const work = path.join(root, 'work');
+            fs.mkdirSync(path.join(work, 'apps'), { recursive: true });
+            fs.writeFileSync(path.join(root, 'outside.txt'), 'sk-12345678901234567890');
+            fs.symlinkSync(path.join(root, 'outside.txt'), path.join(work, 'apps', 'x.js'));
+            const gitOps = new GitOps(work, null, { stateDir: path.join(root, 'state') });
+            await expect(gitOps._scanForSecrets(['apps/x.js'])).resolves.not.toThrow();
+        } finally {
+            fs.rmSync(root, { recursive: true, force: true });
+        }
+    });
+});

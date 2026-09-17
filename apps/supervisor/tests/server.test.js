@@ -23,10 +23,11 @@ describe('Supervisor API', () => {
             return { success: true, message: 'Mock Pushed' };
           }),
           workDir: '/tmp/mock-source',
-          run: jest.fn().mockResolvedValue('hash'),
-          runSafe: jest.fn().mockResolvedValue('hash\towner@example.test\tmock subject'),
+          git: jest.fn().mockResolvedValue('hash\towner@example.test\tmock subject'),
+          listSelfPullRequests: jest.fn(() => []),
           rollback: jest.fn().mockResolvedValue({ success: true }),
-          pull: jest.fn().mockResolvedValue({ success: true })
+          pull: jest.fn().mockResolvedValue({ success: true }),
+          isTracked: jest.fn(async (file) => file === 'apps/agent/src/a.js')
         }))
       };
     });
@@ -44,6 +45,15 @@ describe('Supervisor API', () => {
     const res = await request(app).get('/health');
     expect(res.statusCode).toBe(200);
     expect(res.body.status).toBe('ok');
+  });
+
+  test('GET /cmd/tracked answers from the supervisor and needs the token', async () => {
+    const yes = await request(app).get('/cmd/tracked').query({ path: 'apps/agent/src/a.js' }).set('x-supervisor-token', 'test-token');
+    expect(yes.body).toEqual({ tracked: true });
+    const no = await request(app).get('/cmd/tracked').query({ path: 'notes.env' }).set('x-supervisor-token', 'test-token');
+    expect(no.body).toEqual({ tracked: false });
+    const denied = await request(app).get('/cmd/tracked').query({ path: 'apps/agent/src/a.js' });
+    expect(denied.statusCode).toBe(403);
   });
 
   test('POST /cmd/commit success', async () => {
@@ -105,5 +115,49 @@ describe('Supervisor API', () => {
     expect(res.statusCode).toBe(200); // 200 OK because we return error in body
     expect(res.body.success).toBe(false);
     expect(res.body.error).toBe('Syntax Error');
+  });
+
+  test('GET /logs stops a balena stream that opens after the client left', async () => {
+    jest.resetModules();
+    const stop = jest.fn();
+    let opened;
+    const opening = new Promise((resolve) => { opened = resolve; });
+    let started;
+    const streamStarted = new Promise((resolve) => { started = resolve; });
+    jest.doMock('../src/balena-logs', () => ({
+      balenaApiAvailable: () => true,
+      BalenaLogs: jest.fn().mockImplementation(() => ({
+        stream: jest.fn(async () => { started(); await opening; return { stop }; })
+      }))
+    }));
+    const http = require('http');
+    const server = require('../src/server').app.listen(0);
+    try {
+      const port = server.address().port;
+      const req = http.get({ port, path: '/logs/agent', headers: { 'x-supervisor-token': 'test-token' } });
+      req.on('error', () => {});
+      await streamStarted;
+      req.destroy();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(stop).not.toHaveBeenCalled();
+      opened();
+      await new Promise((resolve) => setTimeout(resolve, 50));
+      expect(stop).toHaveBeenCalledTimes(1);
+    } finally {
+      await new Promise((resolve) => server.close(resolve));
+      jest.dontMock('../src/balena-logs');
+    }
+  });
+
+  test('GET /logs refuses a service outside the list when the balena API is in use', async () => {
+    process.env.BALENA_SUPERVISOR_ADDRESS = 'http://127.0.0.1:1';
+    process.env.BALENA_SUPERVISOR_API_KEY = 'key';
+    try {
+      const res = await request(app).get('/logs/balena_supervisor').set('x-supervisor-token', 'test-token');
+      expect(res.statusCode).toBe(404);
+    } finally {
+      delete process.env.BALENA_SUPERVISOR_ADDRESS;
+      delete process.env.BALENA_SUPERVISOR_API_KEY;
+    }
   });
 });
