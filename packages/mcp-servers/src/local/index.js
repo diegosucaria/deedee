@@ -296,11 +296,17 @@ function shellEnv(env = process.env) {
  * appears, and the value side of "NAME=value" / "NAME: value" lines whose name
  * looks secret (covers .env files and variables this process doesn't have).
  */
+// Variables whose names match SECRET_NAME but whose values are never
+// secrets. The shell exports PWD and OLDPWD as the current and previous
+// directory; redacting them turned every source line naming /app/apps/agent
+// into a marker the agent could not write back.
+const NON_SECRET_VALUE_NAMES = new Set(['PWD', 'OLDPWD']);
+
 function redactSecrets(text, env = process.env, { lineRules = true } = {}) {
   if (typeof text !== 'string' || text.length === 0) return text;
   let out = text;
   const values = Object.entries(env)
-    .filter(([name, value]) => isSecretName(name) && typeof value === 'string' && value.length >= 6)
+    .filter(([name, value]) => !NON_SECRET_VALUE_NAMES.has(name) && isSecretName(name) && typeof value === 'string' && value.length >= 6)
     .sort((a, b) => b[1].length - a[1].length);
   for (const [name, value] of values) {
     if (out.includes(value)) out = out.split(value).join(`[REDACTED:${name}]`);

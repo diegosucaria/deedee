@@ -177,6 +177,26 @@ describe('LocalTools redaction of reads', () => {
         }
     });
 
+    test('the working directory in PWD is not a secret', async () => {
+        const saved = { PWD: process.env.PWD, OLDPWD: process.env.OLDPWD };
+        process.env.PWD = '/app/apps/agent';
+        process.env.OLDPWD = '/app/apps';
+        try {
+            const line = '// If we are in /app/apps/agent, then ../../packages is /app/packages.\n';
+            fs.writeFileSync(path.join(root, 'src', 'paths.js'), line);
+            git(root, 'add', 'src/paths.js');
+            const text = await tools.readFile('src/paths.js');
+            expect(text).toBe(line);
+            await tools.writeFile('src/paths.js', `${text}// edited\n`);
+            expect(fs.readFileSync(path.join(root, 'src', 'paths.js'), 'utf8')).toBe(`${line}// edited\n`);
+        } finally {
+            for (const [name, value] of Object.entries(saved)) {
+                if (value === undefined) delete process.env[name];
+                else process.env[name] = value;
+            }
+        }
+    });
+
     test('with an isTracked answer, the tree index is not trusted', async () => {
         const asked = [];
         const guarded = new LocalTools(root, { isTracked: async (file) => { asked.push(file); return file === 'src/tracked.js'; } });
