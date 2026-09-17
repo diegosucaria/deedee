@@ -17,6 +17,7 @@
 const { toolDefinitions } = require('./tools-definition');
 const { BLOCKED_PATTERNS: SHELL_BLOCKED } = require('@deedee/mcp-servers/src/local/index');
 const { taintedAction, haEntityIds } = require('./utils/untrusted-content');
+const { isPreviewCall } = require('./utils/two-step-tools');
 
 /** The "Why" line of a taint approval: what the call does and what was read. */
 function taintReason(action, taint) {
@@ -336,6 +337,8 @@ class ConfirmationManager {
      */
     taintCheck(name, args, { taint = null, serverName = null } = {}) {
         if (!taint || !taint.tainted) return { requiresConfirmation: false };
+        // The preview step of a two-step tool changes nothing.
+        if (isPreviewCall(asString(name), args, serverName)) return { requiresConfirmation: false };
         let action;
         try {
             action = taintedAction(asString(name), args, { serverName, isOwnerTarget: (a) => this.isOwnerTarget(a), browser: taint.browser || null });
@@ -376,14 +379,19 @@ class ConfirmationManager {
 
     /**
      * Does the call need the owner's approval?
-     * @returns {{ requiresConfirmation: boolean, message?: string, rule?: string }}
+     * @param {string} name
+     * @param {object} args
+     * @param {{ serverName?: string|null }} [opts] - the MCP server that owns the tool
+     * @returns {{ requiresConfirmation: boolean, message?: string, rule?: string, preview?: boolean }}
+     *   preview: the call is the first step of a two-step tool, which only checks and describes
      */
-    check(name, args) {
+    check(name, args, { serverName = null } = {}) {
         const toolName = asString(name);
         if (!toolName) {
             return { requiresConfirmation: true, rule: 'malformed', message: 'The tool call has no name.' };
         }
         const safeArgs = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+        if (isPreviewCall(toolName, args, serverName)) return { requiresConfirmation: false, preview: true };
         const flag = this.toolFlags.get(toolName);
         if (flag) return { requiresConfirmation: true, rule: 'tool-flag', message: flag.message };
 

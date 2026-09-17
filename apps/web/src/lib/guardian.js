@@ -16,6 +16,7 @@ export const OUTCOMES = [
     { id: 'deny_list', label: 'Blocked by deny-list', tone: 'text-red-300 bg-red-400/10 border-red-400/20' },
     { id: 'breaker_stop', label: 'Breaker stop', tone: 'text-orange-300 bg-orange-400/10 border-orange-400/20' },
     { id: 'ran_unasked', label: 'Ran unasked (mode off)', tone: 'text-sky-300 bg-sky-400/10 border-sky-400/20' },
+    { id: 'owner_instructed', label: 'You asked for it', tone: 'text-teal-300 bg-teal-400/10 border-teal-400/20' },
 ];
 const OUTCOME_IDS = OUTCOMES.map(o => o.id);
 
@@ -46,7 +47,7 @@ export function outcomeTone(outcome) {
 }
 
 /**
- * The stacked chart folds ten outcomes into seven series. Colors are a
+ * The stacked chart folds eleven outcomes into eight series. Colors are a
  * categorical set checked for color-blind separation on the dark surface,
  * in a fixed order: a series keeps its color whatever the range shows.
  */
@@ -58,6 +59,7 @@ export const OUTCOME_GROUPS = [
     { key: 'Waiting, expired or unasked', color: '#d55181', outcomes: ['escalated', 'escalated_expired', 'escalated_failed'] },
     { key: 'Ran with mode off', color: '#008300', outcomes: ['ran_unasked'] },
     { key: 'Deny-list or breaker', color: '#9085e9', outcomes: ['deny_list', 'breaker_stop'] },
+    { key: 'You asked for it', color: '#a3a3a3', outcomes: ['owner_instructed'] },
 ];
 
 function addDays(day, n) {

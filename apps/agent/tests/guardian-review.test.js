@@ -344,8 +344,12 @@ describe('approval guardian review', () => {
         const glob = await svc.review({ message: webMsg('find Ana'), toolName: 'searchContacts', args: { query: 'Ana' }, run: ApprovalService.newRun() });
         expect(glob.status).toBe('paused');
 
+        // In the owner's own chat his additions ask him with no guardian call.
+        expect(gen).not.toHaveBeenCalled();
+
+        // In a job the guardian judges them, and may deny.
         gen.mockResolvedValue(verdictOf({ verdict: 'deny', reason: 'bad', risk: 'high' }));
-        const denied = await svc.review({ message: webMsg('find Ana'), toolName: 'searchContacts', args: { query: 'Ana' }, run: ApprovalService.newRun() });
+        const denied = await svc.review({ message: jobMsg('contacts'), toolName: 'searchContacts', args: { query: 'Ana' }, run: ApprovalService.newRun() });
         expect(db.getGuardianDecision(denied.decisionId).outcome).toBe('auto_denied');
     });
 

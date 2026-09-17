@@ -33,6 +33,7 @@ const { ConfirmationManager } = require('../confirmation-manager');
 const { DeliveryService, telegramOwnerIds, splitChannel } = require('./delivery-service');
 const { isLiveSource } = require('./ask-user');
 const { TurnTaint } = require('../utils/untrusted-content');
+const { isTwoStepTool, stepKey, parseToolOutput } = require('../utils/two-step-tools');
 const { GuardianService, DRY_RUN_USAGE_TAG } = require('./guardian-service');
 // Breaker state of live runs, by root run id (see acquireRun).
 const ACTIVE_RUNS = new Map();
@@ -58,10 +59,43 @@ const APPROVE_WORDS = new Set(['yes', 'y', 'si', 'sí', 'ok', 'okay', 'dale', 'a
 const DENY_WORDS = new Set(['no', 'n', 'cancel', 'cancelar', 'deny', 'denied', 'nope', 'reject', 'rechazar']);
 
 const SECRET_KEY_RE = /pass|secret|token|api[_-]?key|auth|cookie|credential|otp/i;
+// Rules that guard the system itself (credentials, remote code, damage), not
+// an action the owner asks for. His word in the chat never replaces them.
+const SAFETY_RULES = new Set(['malformed', 'shell-remote-exec', 'shell-system-damage', 'shell-credentials', 'shell-cdp', 'file-browser-profile']);
+// Rules for actions that reach other people or open the house. His word
+// covers them only while no third-party text sits in the history the model reads.
+const OUTWARD_RULES = new Set(['email-send', 'first-contact', 'ha-critical', 'ha-bulk']);
+
+/**
+ * Marks the run that resumes a chat after the owner approved a paused call
+ * in it. Code sets it on the message object; a symbol cannot come from
+ * JSON, so no client can forge it. Value: { approvalId, toolName, ownerConsent }.
+ */
+const APPROVAL_CONTINUATION = Symbol('approvalContinuation');
+
+function continuationOf(message) {
+    const value = message && typeof message === 'object' ? message[APPROVAL_CONTINUATION] : null;
+    return value && typeof value === 'object' ? value : null;
+}
+
+/**
+ * What the owner's word in his own chat does for a gated call:
+ * 'run' (no card), 'ask' (one card, no guardian call) or 'none' (the usual gate).
+ * @param {string} rule - the safety rule that paused the call
+ * @param {{ floorHit: boolean, historyUntrusted: boolean|null }} ctx
+ */
+function consentCover(rule, { floorHit, historyUntrusted }) {
+    if (SAFETY_RULES.has(String(rule || ''))) return 'none';
+    if (floorHit) return 'ask';
+    if (OUTWARD_RULES.has(String(rule || '')) && historyUntrusted !== false) return 'none';
+    return 'run';
+}
+
 const SUMMARY_VALUE_CHARS = 80;
 const SUMMARY_KEYS = 6;
 const SUMMARY_CHARS = 320;
 const RESULT_CHARS = 600;
+const RESULT_DETAIL_CHARS = 300;
 
 function randomId() {
     const bytes = crypto.randomBytes(ID_LENGTH);
@@ -146,6 +180,32 @@ function summarizeResult(result) {
     if (result.error) return `error: ${truncate(result.error, RESULT_CHARS)}`;
     if (result._images) return truncate(JSON.stringify({ ...result, _images: `${result._images.length} image(s)` }), RESULT_CHARS);
     try { return truncate(JSON.stringify(result), RESULT_CHARS); } catch { return truncate(String(result), RESULT_CHARS); }
+}
+
+/**
+ * One line for the owner about an approved call that ran: the tool's own
+ * summary or message when it has one, never raw JSON.
+ */
+function approvedResultText(toolName, result) {
+    const name = String(toolName || 'the action');
+    const data = parseToolOutput(result);
+    const pick = (obj) => {
+        if (!obj || typeof obj !== 'object') return '';
+        for (const key of ['summary', 'message', 'info', 'note']) {
+            if (typeof obj[key] === 'string' && obj[key].trim()) return truncate(obj[key].replace(/\s+/g, ' ').trim(), RESULT_DETAIL_CHARS);
+        }
+        return '';
+    };
+    if (typeof result === 'string') return `✅ Done: ${name}. ${truncate(result.replace(/\s+/g, ' ').trim(), RESULT_DETAIL_CHARS)}`;
+    const error = (result && typeof result === 'object' && result.error) || (data && data.error);
+    if (error) return `⚠️ ${name} did not work: ${truncate(typeof error === 'string' ? error : JSON.stringify(error), RESULT_DETAIL_CHARS)}`;
+    const status = data && typeof data.status === 'string' ? data.status : '';
+    if (/^(?:failed|failure|rejected|error)$/i.test(status) || (data && data.success === false)) {
+        const detail = pick(data);
+        return `⚠️ ${name} did not work${detail ? `: ${detail}` : '.'}`;
+    }
+    const detail = pick(data);
+    return `✅ Done: ${name}${detail ? `. ${detail}` : '.'}`;
 }
 
 function humanDuration(ms) {
@@ -303,7 +363,9 @@ class ApprovalService {
                 message: `Blocked by the owner's deny-list (pattern "${deny.pattern}"). The action did not run. Do not retry it or work around it; tell the user it is blocked.`
             };
         }
-        const ruled = this.rules.check(toolName, args);
+        const ruled = this.rules.check(toolName, args, { serverName });
+        // A preview step changes nothing: no rule and no taint pause it.
+        if (ruled.preview) return ruled;
         if (!taint || !taint.tainted || typeof this.rules.taintCheck !== 'function') return ruled;
         const tainted = this.rules.taintCheck(toolName, args, { taint, serverName });
         if (!tainted.requiresConfirmation) return ruled;
@@ -317,7 +379,27 @@ class ApprovalService {
 
     /** A fresh per-run state for review(): denials count toward the breaker. */
     static newRun(id = null) {
-        return { id, denials: 0, stopped: false, notifiedDenial: false };
+        // previews: stepKey -> the summary a two-step tool's preview returned in this run
+        return { id, denials: 0, stopped: false, notifiedDenial: false, previews: new Map() };
+    }
+
+    /**
+     * Did the owner ask for this run himself, in his own chat, with nothing a
+     * third party wrote read in it? A run resumed after his approval keeps
+     * the answer the paused run had.
+     */
+    async _ownerConsent(message, taint) {
+        if (taint && taint.tainted) return false;
+        if (sourceKind(message) !== 'chat') return false;
+        const meta = message?.metadata || {};
+        if (Array.isArray(meta.untrustedTaint) && meta.untrustedTaint.length > 0) return false;
+        const cont = continuationOf(message);
+        if (cont) {
+            if (cont.ownerConsent !== true) return false;
+        } else if (String(message?.role || 'user') !== 'user') {
+            return false;
+        }
+        try { return !!(await this._isOwnerChat(message)); } catch { return false; }
     }
 
     /**
@@ -373,7 +455,8 @@ class ApprovalService {
         if (kind !== 'chat') return { kind, jobName: null, ownerMessage: null, earlierOwnerMessages: [], ownerChat: false };
         let owner = false;
         try { owner = await this._isOwnerChat(message); } catch { owner = false; }
-        const text = typeof message?.content === 'string' ? message.content : '';
+        // A resumed run's text is ours, not his: only his stored messages count.
+        const text = continuationOf(message) ? '' : (typeof message?.content === 'string' ? message.content : '');
         const earlier = owner ? this._earlierOwnerMessages(message, text) : [];
         return { kind, jobName: null, ownerMessage: owner && text ? text : null, earlierOwnerMessages: earlier, ownerChat: owner };
     }
@@ -421,11 +504,19 @@ class ApprovalService {
      * The full gate for one tool call in a run: deny-list, safety rules,
      * taint, always-ask list, then the mode (manual, smart, off). Every gated
      * call leaves one guardian_decisions row.
+     * The owner's word comes before the mode: in his own chat, in a run
+     * nothing untrusted touched, a gated call runs unasked ('owner_instructed')
+     * unless a floor category or his always-ask list holds it, and then he
+     * gets one card with no guardian call. Rules that guard the system itself
+     * still take the usual path, and so do messages, email and the house
+     * while third-party text sits in the history the model reads.
      * @param {{ message: object, toolName: string, args: object, taint?: TurnTaint|null, serverName?: string|null,
-     *   run?: object|null, sendCallback?: Function|null }} p
+     *   run?: object|null, sendCallback?: Function|null, historyUntrusted?: boolean|null }} p
+     *   historyUntrusted: the history the model reads this turn holds an untrusted envelope
+     *   (null when unknown, which counts as yes)
      * @returns {Promise<{ run: true, decisionId?: string } | { run: false, status: 'error'|'paused', result: object, decisionId?: string }>}
      */
-    async review({ message, toolName, args, taint = null, serverName = null, run = null, sendCallback = null }) {
+    async review({ message, toolName, args, taint = null, serverName = null, run = null, sendCallback = null, historyUntrusted = null }) {
         const settings = this.settings();
         const meta = message?.metadata || {};
         const kind = sourceKind(message);
@@ -443,6 +534,7 @@ class ApprovalService {
             const row = this._record({ ...base, outcome: 'deny_list', decidedBy: 'deny_list', reason: `Deny pattern "${guard.pattern}"` });
             return { run: false, status: 'error', result: { error: guard.message }, decisionId: row?.id };
         }
+        if (guard.preview) return { run: true };
 
         let hits = { floor: [], additions: [] };
         try {
@@ -461,6 +553,14 @@ class ApprovalService {
         const floorHit = hits.floor.length > 0 || hits.additions.length > 0;
         const withHits = { ...base, floor: hits.floor, alwaysAsk: hits.additions };
 
+        const ownerAsked = await this._ownerConsent(message, taint);
+        const cover = ownerAsked ? consentCover(guard.rule, { floorHit, historyUntrusted }) : 'none';
+        if (cover === 'run') {
+            const row = this._record({ ...withHits, outcome: 'owner_instructed', decidedBy: 'owner', reason: 'The owner asked for it in his own chat.' });
+            console.log(`[Approvals] ${toolName} runs without a card: the owner asked for it in his chat.`);
+            return { run: true, decisionId: row?.id };
+        }
+
         if (settings.mode === 'off' && !floorHit) {
             const row = this._record({ ...withHits, outcome: 'ran_unasked', decidedBy: 'none', reason: 'Approvals are off.' });
             return { run: true, decisionId: row?.id };
@@ -468,7 +568,7 @@ class ApprovalService {
 
         let verdict = null;
         let intent = null;
-        if (settings.mode === 'smart' && this.guardian) {
+        if (settings.mode === 'smart' && this.guardian && cover !== 'ask') {
             intent = await this._intent(message);
             verdict = await this.guardian.judge({
                 toolName, args, sourceKind: kind, ownerMessage: intent.ownerMessage, jobName: intent.jobName,
@@ -518,9 +618,10 @@ class ApprovalService {
             ...withHits, ...guardianFields, verdict: verdict ? 'escalate' : null,
             outcome: 'escalated', decidedBy: 'owner'
         });
+        const preview = isTwoStepTool(toolName, serverName) ? (run?.previews?.get?.(stepKey(toolName, args)) || null) : null;
         const paused = await this.request({
             message, toolName, args, reason, sendCallback, taintSources: guard.tainted ? taintSources : null,
-            modelReason: why || null, guardianDecisionId: row?.id || null
+            modelReason: why || null, guardianDecisionId: row?.id || null, ownerConsent: ownerAsked, preview
         });
         if (row?.id && !paused.paused && typeof this.db.updateGuardianDecision === 'function') {
             try { this.db.updateGuardianDecision(row.id, { outcome: 'escalated_failed', decidedBy: 'nobody' }); } catch (e) {
@@ -586,10 +687,21 @@ class ApprovalService {
 
         const guard = this.check(name, safeArgs, { taint, serverName });
         if (guard.denied) return { outcome: 'deny_list', gated: true, pattern: guard.pattern, message: guard.message, mode: settings.mode, executed: false };
-        const hits = matchAlwaysAsk(name, safeArgs, { alwaysAsk: settings.always_ask, reason: guard.message || '', rule: guard.rule || '', serverName });
+        const hits = guard.preview ? { floor: [], additions: [] }
+            : matchAlwaysAsk(name, safeArgs, { alwaysAsk: settings.always_ask, reason: guard.message || '', rule: guard.rule || '', serverName });
         const gated = !!guard.requiresConfirmation || hits.additions.length > 0;
         const floorHit = hits.floor.length > 0 || hits.additions.length > 0;
-        const verdict = this.guardian ? await this.guardian.judge({
+        // An owner message in a chat with no untrusted input reads as the owner
+        // typing in his own chat, with a clean history.
+        const ownerAsked = runKind === 'chat' && !!ownerMessage && sources.length === 0;
+        const cover = gated && ownerAsked ? consentCover(guard.rule, { floorHit, historyUntrusted: false }) : 'none';
+        const base = {
+            gated, mode: settings.mode, rule: guard.rule || null, ruleReason: guard.message || null,
+            floor: hits.floor, alwaysAsk: hits.additions, ownerAsked, preview: !!guard.preview
+        };
+        if (cover === 'run') return { outcome: 'owner_instructed', ...base, guardian: null, executed: false };
+        if (cover === 'ask') return { outcome: 'escalated', ...base, guardian: null, executed: false };
+        const verdict = this.guardian && !guard.preview ? await this.guardian.judge({
             toolName: name, args: safeArgs, sourceKind: runKind, ownerMessage: ownerMessage ? String(ownerMessage) : null,
             jobName: jobName ? String(jobName) : null, ruleReason: guard.message || null, taintSources: sources,
             excerpt: taint ? taint.excerpt : (excerpt ? String(excerpt) : null), floor: hits.floor, alwaysAsk: hits.additions,
@@ -605,8 +717,7 @@ class ApprovalService {
         else outcome = 'escalated';
 
         return {
-            outcome, gated, mode: settings.mode, rule: guard.rule || null, ruleReason: guard.message || null,
-            floor: hits.floor, alwaysAsk: hits.additions,
+            outcome, ...base,
             guardian: verdict ? {
                 verdict: verdict.verdict, modelVerdict: verdict.modelVerdict, reason: verdict.reason, risk: verdict.risk,
                 latencyMs: verdict.latencyMs, failed: verdict.failed, input: verdict.input
@@ -716,7 +827,7 @@ class ApprovalService {
      * Pause a tool call until the owner answers.
      * @returns {Promise<{ paused: boolean, id?: string, delivered?: boolean, result: object }>}
      */
-    async request({ message, toolName, args, reason, sendCallback = null, taintSources = null, modelReason = null, guardianDecisionId = null }) {
+    async request({ message, toolName, args, reason, sendCallback = null, taintSources = null, modelReason = null, guardianDecisionId = null, ownerConsent = false, preview = null }) {
         const why = reason || 'This action needs the owner\'s approval.';
         // The model reads only our own rule text, never the guardian's words.
         const whyForModel = modelReason || why;
@@ -747,6 +858,11 @@ class ApprovalService {
         // What tainted the run: shown on the card, and kept so an approved
         // call runs with the same taint.
         if (Array.isArray(taintSources) && taintSources.length > 0) originMeta.untrustedTaint = taintSources.slice(0, 20).map(String);
+        // The run that paused was the owner's own request: the run that
+        // resumes after his approval keeps that (see _ownerConsent).
+        if (ownerConsent === true) originMeta.ownerConsent = true;
+        // What the preview step said this call will do, for the card.
+        if (typeof preview === 'string' && preview.trim()) originMeta.preview = truncate(preview.trim(), SUMMARY_CHARS);
         const row = this.db.createPendingConfirmation({
             id: this._newId(),
             originChatId: meta.chatId ? String(meta.chatId) : null,
@@ -814,10 +930,10 @@ class ApprovalService {
             id: row.id,
             delivered,
             result: {
-                info: `Action PAUSED: '${toolName}' needs the owner's approval (id ${row.id}). ${whyForModel} ` +
-                    `The owner was asked ${where}${delivered ? '' : ' (delivery is being retried)'}. ` +
-                    `The call runs on its own once he approves, so do not retry it, do not look for another way to do it, ` +
-                    `and mention the pending approval in your reply.`
+                info: `Action PAUSED: '${toolName}' waits for the owner's approval. ${whyForModel} ` +
+                    `He sees a card with the details ${where}${delivered ? '' : ' (delivery is being retried)'}, and the call runs on its own once he approves. ` +
+                    `Do not call it again, do not look for another way to do it, and do not ask him about it in text. ` +
+                    `Do not mention the approval or its id. If nothing else needs saying, end your turn with no text.`
             }
         };
     }
@@ -847,18 +963,22 @@ class ApprovalService {
 
     /** The text the owner reads. Short: what, key args, why, how to answer. */
     buildCard(row, { others = [], origin = '', ttlMs = null, mirrorOf = null } = {}) {
-        const lines = [
-            `🛑 Approval needed (id ${row.id})`,
+        const lines = [`🛑 Approval needed (id ${row.id})`];
+        const preview = typeof row.origin_meta?.preview === 'string' ? row.origin_meta.preview : '';
+        if (preview) lines.push(`What: ${preview}`);
+        lines.push(
             `Tool: ${row.tool_name}`,
             `Args: ${row.summary || summarizeArgs(row.args)}`,
             `Why: ${row.reason || 'the safety rules paused it'}`
-        ];
+        );
         const taintSources = Array.isArray(row.origin_meta?.untrustedTaint) ? row.origin_meta.untrustedTaint : [];
         if (taintSources.length > 0) {
             const shown = taintSources.slice(0, 3).join('; ');
             lines.push(`Untrusted input: ${shown}${taintSources.length > 3 ? ` (+${taintSources.length - 3} more)` : ''}`);
         }
-        if (origin) lines.push(`From: ${origin}`);
+        // A card in the chat the request came from needs no "From".
+        const sameChat = row.mode === 'interactive' && row.origin_chat_id && row.origin_chat_id === row.reply_chat_id && !mirrorOf;
+        if (origin && !sameChat) lines.push(`From: ${origin}`);
         if (mirrorOf) {
             lines.push(`Asked on your ${splitChannel(mirrorOf).channel} too. Answer there with yes or no, or here with /confirm ${row.id} · /cancel ${row.id}.`);
         } else if (others.length > 0) {
@@ -1094,8 +1214,7 @@ class ApprovalService {
         }
         if (result === undefined || result === null) result = { info: 'No output from tool execution.' };
         try { this.db.setConfirmationResult(row.id, result); } catch (e) { console.warn('[Approvals] result store failed:', e.message); }
-        const ok = !(result && typeof result === 'object' && result.error);
-        const text = `${ok ? '✅ Approved and done' : '⚠️ Approved, but it failed'}: ${row.tool_name} (id ${row.id}).\nResult: ${summarizeResult(result)}`;
+        const text = approvedResultText(row.tool_name, result);
         const reply = await this._deliverTo(target, text, row);
         return { result, reply };
     }
@@ -1201,5 +1320,6 @@ class ApprovalService {
 module.exports = {
     ApprovalService, normalizeApprovalSettings, decisionWord, normalizeWord, summarizeArgs, summarizeResult,
     splitPatterns, envDenyPatterns, isUnattendedRun, DEFAULTS, APPROVE_WORDS, DENY_WORDS, SWEEP_MS,
-    sourceKind, describeTarget, redactTarget, BREAKER_DENIALS
+    sourceKind, describeTarget, redactTarget, BREAKER_DENIALS,
+    APPROVAL_CONTINUATION, continuationOf, consentCover, approvedResultText, SAFETY_RULES, OUTWARD_RULES
 };

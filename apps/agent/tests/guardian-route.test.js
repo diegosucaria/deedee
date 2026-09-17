@@ -87,7 +87,8 @@ describe('Guardian router', () => {
         await request(app).put('/internal/guardian/policy').send({ mode: 'smart', always_ask: [] });
         const out = await agent.approvals.review({ message: { role: 'user', content: 'push it', source: 'web', metadata: { chatId: 'w1' } }, toolName: 'commitAndPush', args: {} });
         expect(out.status).toBe('paused');
-        expect(db.listGuardianDecisions().rows[0]).toMatchObject({ outcome: 'escalated', model_verdict: 'allow' });
+        // The owner typing in his own chat gets the card straight away, with no guardian call.
+        expect(db.listGuardianDecisions().rows[0]).toMatchObject({ outcome: 'escalated', model_verdict: null, floor: ['publish'] });
 
         expect((await request(app).put('/internal/guardian/policy').send({ mode: 'yolo' })).status).toBe(400);
         expect((await request(app).put('/internal/guardian/policy').send({ smart_policy: 5 })).status).toBe(400);

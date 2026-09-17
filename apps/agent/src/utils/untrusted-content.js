@@ -567,6 +567,40 @@ function taintedAction(toolName, args, { serverName = null, isOwnerTarget = () =
     return UNKNOWN_MCP_WRITE.test(name) ? `run ${name}` : null;
 }
 
+// A tool result the approval gate wrote (a pause, a refusal, a block): our
+// own text, not a third party's.
+const GATE_TEXT_RE = /^(?:Action PAUSED|Refused by the approval guardian|Blocked by the owner's deny-list|Stopped: the approval guardian)|needs the owner's approval/;
+
+/**
+ * Does the history the model reads this turn hold text a third party wrote?
+ * An untrusted envelope says so; rows stored before envelopes existed are
+ * judged by the tool name. Results the approval gate wrote are skipped.
+ * Anything unreadable counts as yes.
+ * @param {Array<{parts?: Array}>} history - model contents
+ * @param {(name: string) => string|null} [serverOf] - MCP server of a tool name
+ */
+function historyHasUntrusted(history, serverOf = () => null) {
+    for (const msg of Array.isArray(history) ? history : []) {
+        for (const part of Array.isArray(msg?.parts) ? msg.parts : []) {
+            const fr = part && part.functionResponse;
+            if (!fr) continue;
+            const response = fr.response;
+            if (isUntrustedEnvelope(response)) return true;
+            // The gate's own results hold one key, info or error, and nothing else.
+            const keys = response && typeof response === 'object' && !Array.isArray(response) ? Object.keys(response) : [];
+            const gateText = keys.length === 1 && (keys[0] === 'info' || keys[0] === 'error') ? String(response[keys[0]] || '') : '';
+            if (gateText && GATE_TEXT_RE.test(gateText)) continue;
+            try {
+                const name = String(fr.name || '');
+                if (classifyToolResult(name, { serverName: serverOf(name), args: {}, result: response }).untrusted) return true;
+            } catch {
+                return true;
+            }
+        }
+    }
+    return false;
+}
+
 // --- taint carried by jobs and watchers ---
 
 const MAX_CARRIED_SOURCES = 10;
@@ -607,6 +641,7 @@ module.exports = {
     classifyToolResult,
     wrapUntrusted,
     isUntrustedEnvelope,
+    historyHasUntrusted,
     taintedAction,
     haEntityIds,
     isPlainFetch,

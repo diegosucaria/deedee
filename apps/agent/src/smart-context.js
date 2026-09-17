@@ -38,11 +38,13 @@ class SmartContextManager {
         const recentHistory = SmartContextManager.normalizeHistoryForModel(this.db.getHistoryForChat(chatId, limit));
 
         // INJECT TIMESTAMPS
-        // The model receives raw text history. To give it temporal awareness, 
-        // we explicitly prepend the timestamp to the message content.
+        // The model receives raw text history. To give it temporal awareness,
+        // we prepend the timestamp to the owner's messages. The model's own
+        // rows stay bare: stamped replies taught it to start new replies
+        // with a stamp, and the owner saw "[01/02 10:00]" in his chat.
         // The row id is for bookkeeping only; keep it out of the model history.
         const timestampedHistory = recentHistory.map(({ id, ...msg }) => {
-            if (msg.timestamp) {
+            if (msg.timestamp && msg.role === 'user') {
                 const date = new Date(msg.timestamp);
                 // Format: [02/04 10:00]
                 const month = (date.getMonth() + 1).toString().padStart(2, '0');
