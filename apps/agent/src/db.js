@@ -1955,6 +1955,17 @@ class AgentDB {
     return this._mapHistoryRows(rows);
   }
 
+  /** The newest role-user rows of one chat, newest first: { id, content }. */
+  getRecentUserMessages(chatId, limit = 5) {
+    if (!chatId) return [];
+    return this.db.prepare(`
+      SELECT id, content FROM messages
+      WHERE chat_id = ? AND role = 'user'
+      ORDER BY timestamp DESC, rowid DESC
+      LIMIT ?
+    `).all(chatId, Math.max(1, Math.min(20, Number(limit) || 5)));
+  }
+
   /**
    * Same window as getHistoryForChat, but for token estimates and summaries.
    * Rows whose parts exceed `maxPartsLength` bytes (media blobs) come back

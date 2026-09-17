@@ -41,6 +41,7 @@ const {
 const DEFAULTS = Object.freeze({ ttlInteractiveMin: 30, ttlDeferredHours: 6, deny: [], mode: DEFAULT_MODE, smart_policy: '', always_ask: [] });
 // Guardian denials in one run that stop the run.
 const BREAKER_DENIALS = 3;
+const EARLIER_OWNER_MESSAGES = 3;
 const MAX_TTL_INTERACTIVE_MIN = 24 * 60;
 const MAX_TTL_DEFERRED_HOURS = 24 * 7;
 const MAX_DENY_PATTERNS = 200;
@@ -328,17 +329,64 @@ class ApprovalService {
 
     /**
      * The trusted part of a run for the guardian: the owner's own message
-     * when he is typing in this chat, else the job name.
+     * when he is typing in this chat, with his few messages before it, else
+     * the job name. A job that carries taint was created by a run that read
+     * third-party content, so the assistant may have written its name from
+     * that content: the name is then not owner intent and is left out.
      */
     async _intent(message) {
         const kind = sourceKind(message);
         const meta = message?.metadata || {};
-        if (kind === 'job') return { kind, jobName: meta.jobName || 'a system job', ownerMessage: null };
-        if (kind !== 'chat') return { kind, jobName: null, ownerMessage: null };
+        if (kind === 'job') {
+            const carried = Array.isArray(meta.untrustedTaint) && meta.untrustedTaint.length > 0;
+            if (carried) return { kind, jobName: null, jobUntrusted: true, ownerMessage: null, earlierOwnerMessages: [], ownerChat: false };
+            return { kind, jobName: meta.jobName || 'a system job', ownerMessage: null, earlierOwnerMessages: [], ownerChat: false };
+        }
+        if (kind !== 'chat') return { kind, jobName: null, ownerMessage: null, earlierOwnerMessages: [], ownerChat: false };
         let owner = false;
         try { owner = await this._isOwnerChat(message); } catch { owner = false; }
         const text = typeof message?.content === 'string' ? message.content : '';
-        return { kind, jobName: null, ownerMessage: owner && text ? text : null };
+        const earlier = owner ? this._earlierOwnerMessages(message, text) : [];
+        return { kind, jobName: null, ownerMessage: owner && text ? text : null, earlierOwnerMessages: earlier, ownerChat: owner };
+    }
+
+    /**
+     * The owner's last few messages in this chat before the current one,
+     * oldest first. A bare "yes, send it" needs the request it answers.
+     * Only rows he wrote (role user, not system text); never throws.
+     */
+    _earlierOwnerMessages(message, currentText) {
+        const db = this.db;
+        const chatId = message?.metadata?.chatId;
+        if (!chatId || typeof db?.getRecentUserMessages !== 'function') return [];
+        try {
+            const rows = db.getRecentUserMessages(String(chatId), EARLIER_OWNER_MESSAGES + 2);
+            const out = [];
+            let skippedCurrent = false;
+            for (const row of rows) { // newest first
+                const content = typeof row.content === 'string' ? row.content.trim() : '';
+                if (!content || /^\[?SYSTEM|^Scheduled Task:/i.test(content)) continue;
+                if (!skippedCurrent && ((message.id && row.id === message.id) || content === String(currentText || '').trim())) {
+                    skippedCurrent = true;
+                    continue;
+                }
+                out.push(content);
+                if (out.length >= EARLIER_OWNER_MESSAGES) break;
+            }
+            return out.reverse();
+        } catch (e) {
+            console.warn('[Guardian] owner history read failed:', e.message);
+            return [];
+        }
+    }
+
+    /** The result for a call in a run the breaker already stopped. */
+    _breakerStop(base, extra = {}) {
+        const row = this._record({ ...base, ...extra, outcome: 'breaker_stop', decidedBy: 'breaker', reason: 'The run was already stopped by the guardian breaker.' });
+        return {
+            run: false, status: 'error', decisionId: row?.id,
+            result: { error: `Stopped: the approval guardian refused ${BREAKER_DENIALS} actions in this run, so the run ends here. The owner was notified. Do not retry.` }
+        };
     }
 
     /**
@@ -360,13 +408,7 @@ class ApprovalService {
             taintSources, mode: settings.mode
         };
 
-        if (run?.stopped) {
-            const row = this._record({ ...base, outcome: 'breaker_stop', decidedBy: 'breaker', reason: 'The run was already stopped by the guardian breaker.' });
-            return {
-                run: false, status: 'error', decisionId: row?.id,
-                result: { error: `Stopped: the approval guardian refused ${BREAKER_DENIALS} actions in this run, so the run ends here. The owner was notified. Do not retry.` }
-            };
-        }
+        if (run?.stopped) return this._breakerStop(base);
 
         const guard = this.check(toolName, args, { taint, serverName });
         if (guard.denied) {
@@ -397,13 +439,27 @@ class ApprovalService {
         }
 
         let verdict = null;
+        let intent = null;
         if (settings.mode === 'smart' && this.guardian) {
-            const intent = await this._intent(message);
+            intent = await this._intent(message);
             verdict = await this.guardian.judge({
                 toolName, args, sourceKind: kind, ownerMessage: intent.ownerMessage, jobName: intent.jobName,
+                jobUntrusted: !!intent.jobUntrusted, earlierOwnerMessages: intent.earlierOwnerMessages,
                 ruleReason: why, taintMeta: taint?.meta || [], taintSources, excerpt: taint?.tainted ? taint.excerpt : null,
                 floor: hits.floor, alwaysAsk: hits.additions, smartPolicy: settings.smart_policy, chatId: base.chatId
             });
+        }
+        // Calls in one model turn are judged in parallel: a sibling's denial
+        // may have tripped the breaker while this one waited on the guardian.
+        if (run?.stopped && !(verdict && verdict.verdict === 'deny')) {
+            return this._breakerStop({ ...base, floor: hits.floor, alwaysAsk: hits.additions },
+                verdict ? { verdict: verdict.verdict, modelVerdict: verdict.modelVerdict, risk: verdict.risk, latencyMs: verdict.latencyMs,
+                    tokens: verdict.tokens, cost: verdict.cost, guardianInput: verdict.input } : {});
+        }
+        // The owner is typing in this chat and the guardian sees only a few of
+        // his messages: unless it calls the harm high, a refusal asks him instead.
+        if (verdict && verdict.verdict === 'deny' && intent?.ownerChat && verdict.risk !== 'high') {
+            verdict = { ...verdict, verdict: 'escalate', reason: truncate(`${verdict.reason} (the owner is in this chat, so he decides)`, 300) };
         }
         const guardianFields = verdict ? {
             verdict: verdict.verdict, modelVerdict: verdict.modelVerdict, reason: verdict.reason, risk: verdict.risk,
@@ -436,13 +492,12 @@ class ApprovalService {
         });
         const paused = await this.request({
             message, toolName, args, reason, sendCallback, taintSources: guard.tainted ? taintSources : null,
-            modelReason: why || null
+            modelReason: why || null, guardianDecisionId: row?.id || null
         });
-        if (row?.id && typeof this.db.updateGuardianDecision === 'function') {
-            try {
-                if (paused.paused) this.db.updateGuardianDecision(row.id, { approvalId: paused.id });
-                else this.db.updateGuardianDecision(row.id, { outcome: 'escalated_failed', decidedBy: 'nobody' });
-            } catch (e) { console.warn('[Guardian] decision update failed:', e.message); }
+        if (row?.id && !paused.paused && typeof this.db.updateGuardianDecision === 'function') {
+            try { this.db.updateGuardianDecision(row.id, { outcome: 'escalated_failed', decidedBy: 'nobody' }); } catch (e) {
+                console.warn('[Guardian] decision update failed:', e.message);
+            }
         }
         return { run: false, status: paused.paused ? 'paused' : 'error', result: paused.result, decisionId: row?.id };
     }
@@ -633,7 +688,7 @@ class ApprovalService {
      * Pause a tool call until the owner answers.
      * @returns {Promise<{ paused: boolean, id?: string, delivered?: boolean, result: object }>}
      */
-    async request({ message, toolName, args, reason, sendCallback = null, taintSources = null, modelReason = null }) {
+    async request({ message, toolName, args, reason, sendCallback = null, taintSources = null, modelReason = null, guardianDecisionId = null }) {
         const why = reason || 'This action needs the owner\'s approval.';
         // The model reads only our own rule text, never the guardian's words.
         const whyForModel = modelReason || why;
@@ -678,6 +733,13 @@ class ApprovalService {
             reason: why,
             expiresAt: new Date(Date.now() + ttlMs).toISOString()
         });
+        // Linked before any await: the owner may answer while the card is
+        // still being delivered, and his answer settles the history row.
+        if (guardianDecisionId && typeof this.db.updateGuardianDecision === 'function') {
+            try { this.db.updateGuardianDecision(guardianDecisionId, { approvalId: row.id }); } catch (e) {
+                console.warn('[Guardian] decision update failed:', e.message);
+            }
+        }
 
         const others = this.db.listPendingConfirmations({ replyChatId: route.replyChatId }).filter(r => r.id !== row.id);
         const outgoing = createAssistantMessage(this.buildCard(row, { others, origin: describeOrigin(message), ttlMs }));
