@@ -18,6 +18,7 @@ export const OUTCOMES = [
     { id: 'ran_unasked', label: 'Ran unasked (mode off)', tone: 'text-sky-300 bg-sky-400/10 border-sky-400/20' },
     { id: 'owner_instructed', label: 'You asked for it', tone: 'text-teal-300 bg-teal-400/10 border-teal-400/20' },
     { id: 'escalated_duplicate', label: 'Already waiting', tone: 'text-zinc-400 bg-zinc-700/40 border-zinc-600/40' },
+    { id: 'escalated_superseded', label: 'Already done', tone: 'text-zinc-400 bg-zinc-700/40 border-zinc-600/40' },
 ];
 const OUTCOME_IDS = OUTCOMES.map(o => o.id);
 
@@ -48,7 +49,7 @@ export function outcomeTone(outcome) {
 }
 
 /**
- * The stacked chart folds twelve outcomes into eight series. Colors are a
+ * The stacked chart folds thirteen outcomes into eight series. Colors are a
  * categorical set checked for color-blind separation on the dark surface,
  * in a fixed order: a series keeps its color whatever the range shows.
  */
@@ -57,7 +58,7 @@ export const OUTCOME_GROUPS = [
     { key: 'Auto-denied', color: '#d95926', outcomes: ['auto_denied'] },
     { key: 'You approved', color: '#199e70', outcomes: ['escalated_approved'] },
     { key: 'You denied', color: '#c98500', outcomes: ['escalated_denied'] },
-    { key: 'Waiting, expired or unasked', color: '#d55181', outcomes: ['escalated', 'escalated_expired', 'escalated_failed', 'escalated_duplicate'] },
+    { key: 'Waiting, expired or unasked', color: '#d55181', outcomes: ['escalated', 'escalated_expired', 'escalated_failed', 'escalated_duplicate', 'escalated_superseded'] },
     { key: 'Ran with mode off', color: '#008300', outcomes: ['ran_unasked'] },
     { key: 'Deny-list or breaker', color: '#9085e9', outcomes: ['deny_list', 'breaker_stop'] },
     { key: 'You asked for it', color: '#a3a3a3', outcomes: ['owner_instructed'] },

@@ -198,6 +198,11 @@ two-step tool the target argument, for anything else every argument).
   (`escalated_duplicate`), so the owner's answer still settles one row per card.
   The model reads our own rule text there, never the stored card reason: that
   one can carry the guardian's words, which quote what a third party wrote.
+- A card the action outran is answered in its own chat with one line ("No
+  longer needed"), and the history stores `escalated_superseded`, so the two
+  places say the same thing.
+- A turn whose only news is a card sends no text, and never reports an action
+  that is still waiting: a check step and its real call share a tool name.
 - The Guardian page counts `owner_instructed` and `escalated_duplicate` rows
   apart from the calls the guardian judged, so the auto-decision rate stays
   honest. A card the action outran reads "already done", not "expired".
@@ -292,7 +297,10 @@ deny-list, the safety rules, the floor and the guardian never saw those calls.
 It now runs the same `review()`. A live session is not a chat the owner can
 answer in, so a paused call sends its card to his notification channel, and
 the caller reads the same "Action PAUSED" text the model reads in a chat.
-Without the approval service the route refuses rather than runs. The nightly
+Without the approval service the route refuses rather than runs. Each call
+arrives on its own request, so there is no run to carry taint: the route keeps
+what the session read for 15 minutes and passes it to the gate, so the
+untrusted-content rule fires there as it does in a chat. The nightly
 `consolidateMemory` call in the scheduler is the one other direct call: a
 fixed internal tool with no arguments.
 

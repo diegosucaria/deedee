@@ -3497,7 +3497,7 @@ class AgentDB {
           SET status = ?, decided_at = ?, decided_via = ?
           WHERE id = ? AND status = 'pending' AND expires_at > ?
         `).run(status, nowIso, via, id, nowIso);
-    if (res.changes > 0) this._settleGuardianDecision([id], status);
+    if (res.changes > 0) this._settleGuardianDecision([id], status, { via });
     return res.changes > 0 ? this.getPendingConfirmation(id) : null;
   }
 
@@ -3557,11 +3557,14 @@ class AgentDB {
   // escalated_failed (nobody could be asked), deny_list, breaker_stop,
   // ran_unasked (mode off), owner_instructed (the owner asked for it in his
   // own chat, so no card), escalated_duplicate (a card for that action was
-  // already waiting). An escalated row follows its approval row.
+  // already waiting), escalated_superseded (the action ran another way before
+  // he answered). An escalated row follows its approval row.
 
   /** An escalated decision takes the owner's answer (or the expiry). */
-  _settleGuardianDecision(approvalIds, status) {
-    const outcome = { approved: 'escalated_approved', denied: 'escalated_denied', expired: 'escalated_expired' }[status];
+  _settleGuardianDecision(approvalIds, status, { via = null } = {}) {
+    // A card the action outran is not one he let expire.
+    const outcome = via === 'superseded' ? 'escalated_superseded'
+      : { approved: 'escalated_approved', denied: 'escalated_denied', expired: 'escalated_expired' }[status];
     if (!outcome || !approvalIds || approvalIds.length === 0) return;
     try {
       const stmt = this.db.prepare(`

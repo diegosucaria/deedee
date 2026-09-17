@@ -113,6 +113,8 @@ describe('approvedResultText', () => {
         expect(approvedResultText('book_appointment', { output: JSON.stringify({ status: 'failed', summary: 'Slot taken.' }) })).toBe('⚠️ book_appointment did not work: Slot taken.');
         expect(approvedResultText('x', { success: false })).toBe('⚠️ x did not work.');
         expect(approvedResultText('x', 'plain text')).toBe('✅ Done: x. plain text');
+        // A tool that answers in a sentence can be answering with a failure.
+        expect(approvedResultText('commitAndPush', 'Error calling supervisor: connect ECONNREFUSED')).toBe('⚠️ commitAndPush did not work: Error calling supervisor: connect ECONNREFUSED');
         expect(approvedResultText('x', { output: 'plain MCP text' })).toBe('✅ Done: x. plain MCP text');
         // A status is a failure only when it says so; an empty error is not one.
         expect(approvedResultText('x', { output: JSON.stringify({ status: 'no_errors' }) })).toBe('Finished: x (no_errors).');
@@ -204,7 +206,7 @@ describe('historyHasUntrusted', () => {
 });
 
 describe('history time stamps', () => {
-    test('every row carries a stamp, so the model knows when it spoke', async () => {
+    test('only the owner\'s rows carry a stamp, so the model does not learn to write one', async () => {
         const db = {
             getHistoryForSummary: () => [],
             getLatestSummary: () => null,
@@ -216,7 +218,7 @@ describe('history time stamps', () => {
         const ctx = new SmartContextManager(db, null);
         const out = await ctx.getContext('c1', 'FLASH');
         expect(out[0].parts[0].text).toMatch(/^\[\d{2}\/\d{2} \d{2}:\d{2}\] book it$/);
-        expect(out[1].parts[0].text).toMatch(/^\[\d{2}\/\d{2} \d{2}:\d{2}\] Booked\.$/);
+        expect(out[1].parts[0].text).toBe('Booked.');
     });
 });
 
@@ -450,8 +452,13 @@ describe('ApprovalService.review with the owner\'s word', () => {
         // A check step books nothing, so it retires nothing.
         svc.noteRan(BOOK.toolName, BOOK_PREVIEW.args, { serverName: 'allende' });
         expect(db.getPendingConfirmation(asked.id).status).toBe('pending');
+        agent.interface.send.mockClear();
         svc.noteRan(BOOK.toolName, { ...BOOK.args, observaciones: 'x' }, { serverName: 'allende' });
         expect(db.getPendingConfirmation(asked.id)).toMatchObject({ status: 'expired', decided_via: 'superseded' });
+        // The card in his chat says it is settled, and the history agrees.
+        await new Promise(r => setImmediate(r));
+        const note = agent.interface.send.mock.calls.map(c => c[0].content).find(t => /No longer needed/.test(t));
+        expect(note).toBe('No longer needed: book_appointment already ran.');
         // His later plain "ok" in that chat has nothing to approve.
         expect(await svc.intercept({ ...ownerWa('ok'), id: 'm-ok' }, jest.fn())).toBeNull();
     });

@@ -297,7 +297,9 @@ function approvedResultText(toolName, result, { untrusted = false } = {}) {
     if (result === undefined || result === null) return `✅ Done: ${name}.`;
     if (typeof result === 'string') {
         const text = result.trim();
-        return text ? `✅ Done: ${name}. ${oneLine(text)}` : `✅ Done: ${name}.`;
+        if (!text) return `✅ Done: ${name}.`;
+        // Some tools answer in a sentence, a failure included.
+        return callFailed(result) ? `⚠️ ${name} did not work: ${oneLine(text)}` : `✅ Done: ${name}. ${oneLine(text)}`;
     }
     const data = parseToolOutput(result);
     const rawOutput = !data && typeof result.output === 'string' ? result.output.trim() : '';
@@ -584,6 +586,11 @@ class ApprovalService {
                 if (!done) continue;
                 console.log(`[Approvals] ${r.id} (${r.tool_name}) superseded: ${why}.`);
                 this._broadcast({ id: r.id, status: 'expired', chatId: r.reply_chat_id, toolName: r.tool_name });
+                // The card sits in a chat he reads: say it is settled, or it keeps
+                // asking for an answer that would do nothing.
+                const target = { channel: done.reply_channel || 'whatsapp', chatId: done.reply_chat_id };
+                this._deliverTo(target, `No longer needed: ${done.tool_name} already ran.`, done)
+                    .catch(e => console.warn(`[Approvals] could not close the card ${r.id}: ${e.message}`));
             } catch (e) {
                 console.warn(`[Approvals] could not supersede ${r.id}: ${e.message}`);
             }

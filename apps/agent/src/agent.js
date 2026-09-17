@@ -2298,11 +2298,14 @@ class Agent {
       // Why the tool loop ended early, if it did. The model never saw the last
       // results then, so its silence is not a finished task.
       let stoppedEarly = null;
-      // The last call of the last batch: did it really run? And the last call
-      // of the whole run that did, so a turn where one call paused still tells
-      // the owner about the ones that went through.
+      // The last call of the last batch: did it really run, and if not, why?
+      // And the last call of the whole run that did, so a turn where one call
+      // paused still tells the owner about the ones that went through. The
+      // names of the calls that paused: an action still waiting must never be
+      // reported as done, and a two-step tool's check step carries the same name.
       let lastCallOutcome = null;
       let lastCallThatRan = null;
+      const pausedNames = new Set();
       let hasBrowserSession = false; // Escalate limit when browser tools are used
       const toolCallTracker = {}; // toolName -> count (per-tool-name, non-browser only)
       const identicalCallTracker = {}; // full signature -> count (any tool)
@@ -2674,8 +2677,15 @@ class Agent {
           executionSummary.toolOutputs.push({ name: executionName, result });
           // A call the gate held or denied did not happen, and neither did one
           // that failed: the silent-success line below must not claim it did.
-          lastCallOutcome = { name: executionName, ran: executed !== false && !(result && typeof result === 'object' && result.error) };
-          if (lastCallOutcome.ran) lastCallThatRan = { name: executionName, result };
+          const failed = !!(result && typeof result === 'object' && result.error);
+          const paused = executed === false && !failed;
+          lastCallOutcome = { name: executionName, ran: executed !== false && !failed, paused };
+          if (paused) pausedNames.add(executionName);
+          // A check step of a two-step tool books nothing, so it is nothing to report.
+          const serverOfCall = this.mcp?.toolMap?.get?.(executionName)?.name || null;
+          if (lastCallOutcome.ran && !isPreviewCall(executionName, call.args, serverOfCall)) {
+            lastCallThatRan = { name: executionName, result };
+          }
 
           // Sanitize for DB AND Model to prevent Context Pollution
           let dbToolResult = result;
@@ -2911,10 +2921,11 @@ class Agent {
         if (stoppedEarly) {
           // The run was stopped and the owner already read why; nothing ran to report.
           console.log(`[Agent] No text response: the run was stopped by ${stoppedEarly}.`);
-        } else if (!lastCallThatRan) {
-          // Every call was held, denied or failed. Their own results say so, and
-          // a card, if one went out, already asks him.
-          console.log(`[Agent] No text response and nothing ran${lastCallOutcome ? ` (${lastCallOutcome.name} did not)` : ''}; no confirmation sent.`);
+        } else if (!lastCallThatRan || !(lastCallOutcome && (lastCallOutcome.ran || lastCallOutcome.paused)) || pausedNames.has(lastCallThatRan.name)) {
+          // Nothing ran, or the last call failed, or the only thing that ran
+          // shares its name with an action still waiting for him. Their own
+          // results say so, and a card, if one went out, already asks him.
+          console.log(`[Agent] No text response and nothing to report${lastCallOutcome ? ` (last call: ${lastCallOutcome.name})` : ''}.`);
         } else if (executionSummary.toolOutputs.length > 0) {
           // A call that paused leaves its card; this line is for the ones that ran.
           console.log('[Agent] No text response after tool execution. Assuming implicit success.');

@@ -3,6 +3,39 @@ const crypto = require('crypto');
 
 const { toolDefinitions } = require('../tools-definition');
 const { ApprovalService } = require('../services/approval-service');
+const { classifyToolResult, TurnTaint } = require('../utils/untrusted-content');
+
+// What the live session has read lately. Each call arrives on its own request,
+// so there is no run to carry taint: this stands in for one. It ages out, since
+// a session that read an email an hour ago is not the session talking now.
+const LIVE_TAINT_MS = 15 * 60 * 1000;
+let liveTaint = null;
+let liveTaintAt = 0;
+
+function currentLiveTaint(now = Date.now()) {
+    if (!liveTaint || now - liveTaintAt > LIVE_TAINT_MS) return null;
+    return liveTaint.tainted ? liveTaint : null;
+}
+
+function noteLiveResult(toolName, args, result, serverName, now = Date.now()) {
+    let verdict;
+    try {
+        verdict = classifyToolResult(toolName, { serverName, args, result });
+    } catch {
+        verdict = { untrusted: true, kind: 'an unknown tool' };
+    }
+    if (!verdict.untrusted) return;
+    if (!currentLiveTaint(now)) liveTaint = new TurnTaint([]);
+    liveTaint.add(`${verdict.kind} (${toolName})`);
+    try { liveTaint.observe(toolName, verdict.kind, args, result); } catch { /* metadata only */ }
+    liveTaintAt = now;
+}
+
+/** Tests and a restart start the live session clean. */
+function resetLiveTaint() {
+    liveTaint = null;
+    liveTaintAt = 0;
+}
 
 function createToolRouter(agent) {
     const router = express.Router();
@@ -58,7 +91,8 @@ function createToolRouter(agent) {
                 // Nothing here tracks a run's reading, so the checks a chat run
                 // answers with its history count as unknown, which asks.
                 const review = await agent.approvals.review({
-                    message, toolName: name, args, serverName, run, historyUntrusted: null, foreignText: null
+                    message, toolName: name, args, serverName, run, taint: currentLiveTaint(),
+                    historyUntrusted: null, foreignText: null
                 });
                 if (!review.run) {
                     console.log(`[Agent] Live tool ${name} held by the approval gate (${review.status}).`);
@@ -70,6 +104,8 @@ function createToolRouter(agent) {
             }
 
             const result = await agent.toolExecutor.execute(name, args, context);
+            // What this session has read now counts for the calls that follow.
+            noteLiveResult(name, args, result, agent.mcp?.toolMap?.get?.(name)?.name || null);
             res.json({ result });
         } catch (error) {
             console.error('[Agent] Live Tool Execution Failed:', error);
@@ -80,4 +116,4 @@ function createToolRouter(agent) {
     return router;
 }
 
-module.exports = { createToolRouter };
+module.exports = { createToolRouter, resetLiveTaint, LIVE_TAINT_MS };
