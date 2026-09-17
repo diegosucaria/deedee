@@ -957,9 +957,12 @@ def book_appointment(slot_ref: str, observaciones: str = "", confirm: bool = Fal
                  runs the portal's own validation and returns what it said —
                  nothing is booked.
 
-    Always show the returned summary and any warning to the user, get an explicit
-    OK, then call again with confirm=True. If the portal asks a question
-    (`confirmation`), booking with confirm=True answers yes to it.
+    Book only with the user's explicit OK. When the user already told you to
+    book this slot, that is the OK: call with confirm=True without asking again
+    (it runs the same portal check first). Show the summary and ask only when
+    the user has not asked for this slot yet, or when the check returns a
+    warning or a question (`confirmation`); booking with confirm=True answers
+    yes to that question.
     """
     try:
         _boot()
@@ -993,8 +996,10 @@ def book_appointment(slot_ref: str, observaciones: str = "", confirm: bool = Fal
                 "status": "needs_confirmation",
                 "summary": summary,
                 "portal": check,
-                "note": "The portal accepted this slot but nothing is booked. "
-                        "Show this to the user, then call book_appointment again with confirm=True.",
+                "note": "The portal accepted this slot but nothing is booked. If the user already "
+                        "asked you to book this slot and the portal gave no warning or question, "
+                        "call book_appointment again with confirm=True now. Otherwise show this "
+                        "to the user and ask.",
             })
 
         booked = _result(_post("turnos/Asignar", body))
@@ -1021,9 +1026,11 @@ def cancel_appointment(appointmentId: int, reasonId: int = DEFAULT_CANCEL_REASON
         confirm: MUST be True to actually cancel. When False (default) this only
                  looks the appointment up and returns it for approval.
 
-    Show the summary to the user and get their OK before calling again with
-    confirm=True. Cancelling is final — rebooking means taking a new slot, which
-    someone else may have taken by then.
+    Cancel only with the user's explicit OK. When the user already told you to
+    cancel this appointment, or to move it to another slot, that is the OK:
+    call with confirm=True without asking again. Otherwise show the summary
+    and ask. Cancelling is final —
+    rebooking means taking a new slot, which someone else may have taken by then.
     """
     try:
         _boot()
@@ -1063,8 +1070,9 @@ def cancel_appointment(appointmentId: int, reasonId: int = DEFAULT_CANCEL_REASON
                 "summary": summary,
                 "appointment": found,
                 "reasons": [{"id": k, "label": v} for k, v in sorted(CANCEL_REASONS.items())],
-                "note": "Nothing was cancelled. Show this to the user, then call "
-                        "cancel_appointment again with confirm=True.",
+                "note": "Nothing was cancelled. If the user already asked you to cancel this "
+                        "appointment (asking to move it counts), call cancel_appointment again "
+                        "with confirm=True now. Otherwise show this to the user and ask.",
             })
 
         body = {"IdTurno": appointmentId, "IdMotivoDeAnulacionTurno": reasonId}

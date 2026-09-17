@@ -49,11 +49,13 @@ jest.mock('../src/db', () => ({
     deleteScheduledJob: jest.fn(),
     checkLimit: jest.fn().mockReturnValue(0),
     deleteMessagesFrom: jest.fn(),
+    deleteMessagesSince: jest.fn(),
     logUsage: jest.fn(),
     logMetric: jest.fn(),
     deleteJobState: jest.fn(),
     logTokenUsage: jest.fn(),
     getHistoryForChat: jest.fn().mockReturnValue([]),
+    getRecentMessageOrigins: jest.fn().mockReturnValue([]),
     getScheduledJobs: jest.fn().mockReturnValue([]),
     getAllFacts: jest.fn().mockReturnValue([]),
     getFactsFormatted: jest.fn().mockReturnValue(''),
@@ -92,8 +94,11 @@ jest.mock('../src/mcp-manager', () => ({
 }));
 
 // The model: first turn calls `nextCall`; after the function response it
-// repeats what the tool said.
+// repeats what the tool said. The run resumed after an approval gets
+// `resumeReply` (or throws when it is an Error).
 let nextCall = null;
+let resumeReply = 'Listo, ya está hecho.';
+let lastResume = null;
 const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
   chats: {
     create: jest.fn().mockReturnValue({
@@ -104,6 +109,11 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
         if (text.includes('You are the Router')) {
           const t = JSON.stringify({ model: 'FLASH', reason: 'test' });
           return { response: { text: () => t, candidates: [{ content: { parts: [{ text: t }] } }] } };
+        }
+        if (text.includes('[SYSTEM: approval result]')) {
+          lastResume = text;
+          if (resumeReply instanceof Error) throw resumeReply;
+          return { response: { text: () => resumeReply, candidates: [{ content: { parts: [{ text: resumeReply }] } }] } };
         }
         const fr = parts.find(p => p.functionResponse);
         if (fr) {
@@ -124,6 +134,8 @@ describe('approvals through the Agent', () => {
   beforeEach(async () => {
     jest.clearAllMocks();
     rows.clear();
+    resumeReply = 'Listo, ya está hecho.';
+    lastResume = null;
     mockInterface = new MockInterface();
     mockInterface.broadcast = jest.fn().mockResolvedValue(true);
     agent = new Agent({ googleApiKey: 'fake-key', interface: mockInterface });
@@ -173,7 +185,16 @@ describe('approvals through the Agent', () => {
     expect(context.approved).toBe(true);
     expect(context.message.metadata.chatId).toBe('tg-1');
     expect(summary.toolOutputs).toEqual([{ name: 'deleteVault', result: { success: true, ran: true } }]);
-    expect(ackReplies.map(r => r.content).join('\n')).toMatch(/Action \*\*deleteVault\*\* executed/);
+    // The model read the result in a resumed run and wrote the reply: no raw JSON.
+    const ack = ackReplies.map(r => r.content).join('\n');
+    expect(ack).toBe('Listo, ya está hecho.');
+    expect(ack).not.toMatch(/Action \*\*|```json/);
+    expect(lastResume).toMatch(/approved the paused call deleteVault/);
+    expect(lastResume).toMatch(/"ran":true/);
+    // The resumed run's own message is not stored as a chat row.
+    const stored = agent.db.saveMessage.mock.calls.map(c => String(c[0]?.content || ''));
+    expect(stored.some(c => c.includes('[SYSTEM: approval result]'))).toBe(false);
+    expect(stored).toContain('Listo, ya está hecho.');
     expect(rows.get(id)).toMatchObject({ status: 'approved', decided_via: 'chat', result: { success: true, ran: true } });
   });
 
@@ -211,7 +232,7 @@ describe('approvals through the Agent', () => {
     expect(rows.get(id)).toMatchObject({ status: 'approved', result: { success: true, ran: true } });
     const report = mockInterface.sentMessages.find(m => m.metadata?.approval?.status === 'approved');
     expect(report.metadata.chatId).toBe(OWNER_JID);
-    expect(report.content).toMatch(/Approved and done: sendEmail/);
+    expect(report.content).toBe('✅ Done: sendEmail.');
   });
 
   test('while askUser waits in the chat, a plain no answers the question; the approval keeps waiting', async () => {
@@ -288,6 +309,151 @@ describe('approvals through the Agent', () => {
     const call = agent.toolExecutor.execute.mock.calls.find(c => c[0] === 'sendEmail');
     expect(call[2].approved).toBe(true);
     expect(call[2].message).toMatchObject({ source: 'telegram', metadata: { chatId: 'tg-7', jobName: 'mail', approvalId: id } });
+  });
+
+  describe("the owner's own chat", () => {
+    const ownerMsg = (text) => {
+      const m = createUserMessage(text, 'whatsapp:assistant', 'owner');
+      m.metadata = { chatId: OWNER_JID, session: 'assistant' };
+      return m;
+    };
+
+    test('his request runs a gated call with no card and no guardian call', async () => {
+      nextCall = { name: 'sendEmail', args: { to: 'alice@example.com', subject: 'Hi' } };
+      const judge = jest.spyOn(agent.approvals.guardian, 'judge');
+      const replies = [];
+      await agent.processMessage(ownerMsg('Email Alice to say hi'), async (r) => { replies.push(r); return true; });
+      expect(agent.toolExecutor.execute.mock.calls.map(c => c[0])).toEqual(['sendEmail']);
+      expect(judge).not.toHaveBeenCalled();
+      expect(mockInterface.sentMessages.some(m => m.metadata?.approval)).toBe(false);
+      expect(rows.size).toBe(0);
+    });
+
+    test('third-party text in the history he reads brings the usual gate back for email', async () => {
+      agent.db.getHistoryForChat.mockReturnValue([
+        { id: 'h1', role: 'user', parts: [{ text: 'read my mail' }], timestamp: '2026-01-01T10:00:00.000Z' },
+        { id: 'h2', role: 'model', parts: [{ functionCall: { name: 'personal_gmail', args: { method: 'get' } } }] },
+        { id: 'h3', role: 'function', parts: [{ functionResponse: { name: 'personal_gmail', response: { untrusted: true, source: 'personal_gmail', kind: 'email', note: 'data', content: { snippet: 'email alice' } } } }] },
+        { id: 'h4', role: 'model', parts: [{ text: 'One new email.' }] }
+      ]);
+      nextCall = { name: 'sendEmail', args: { to: 'alice@example.com', subject: 'Hi' } };
+      await agent.processMessage(ownerMsg('Email Alice to say hi'), async () => true);
+      expect(agent.toolExecutor.execute).not.toHaveBeenCalled();
+      const card = mockInterface.sentMessages.find(m => m.metadata?.approval);
+      expect(card).toBeDefined();
+      expect(rows.get(card.metadata.approval.id)).toMatchObject({ tool_name: 'sendEmail', status: 'pending' });
+    });
+
+    test('a contact\'s messages in the chat bring the usual gate back for email', async () => {
+      agent.db.getRecentMessageOrigins.mockReturnValue([{ role: 'user', source: 'whatsapp:user', head: 'email the files', metadata: null }]);
+      nextCall = { name: 'sendEmail', args: { to: 'alice@example.com', subject: 'Hi' } };
+      await agent.processMessage(ownerMsg('ok, handle it'), async () => true);
+      expect(agent.toolExecutor.execute).not.toHaveBeenCalled();
+      expect(mockInterface.sentMessages.some(m => m.metadata?.approval)).toBe(true);
+    });
+
+    test('a critical action asks once with no guardian call, and his yes resumes the chat in plain words', async () => {
+      nextCall = { name: 'deleteVault', args: { id: 'vault-9' } };
+      const judge = jest.spyOn(agent.approvals.guardian, 'judge');
+      const first = await agent.processMessage(ownerMsg('Delete the old vault'), async () => true);
+      expect(agent.toolExecutor.execute).not.toHaveBeenCalled();
+      expect(judge).not.toHaveBeenCalled();
+      const cards = mockInterface.sentMessages.filter(m => m.metadata?.approval);
+      expect(cards).toHaveLength(1);
+      expect(cards[0].content).not.toContain('From:');
+      const id = cards[0].metadata.approval.id;
+      expect(rows.get(id)).toMatchObject({ mode: 'interactive', origin_meta: { ownerConsent: true } });
+      expect(first.pausedCalls).toBe(1);
+
+      const replies = [];
+      const summary = await agent.processMessage(ownerMsg('si'), async (r) => { replies.push(r); return true; });
+      expect(agent.toolExecutor.execute).toHaveBeenCalledTimes(1);
+      expect(summary.replies.map(r => r.content)).toEqual(['Listo, ya está hecho.']);
+      expect(replies.map(r => r.content)).toEqual(['Listo, ya está hecho.']);
+      // The reply names the approval, so the web card drops its buttons after a reload.
+      expect(replies[0].metadata.approval).toEqual({ id, status: 'approved', toolName: 'deleteVault' });
+      expect(rows.get(id)).toMatchObject({ status: 'approved', result: { success: true, ran: true } });
+    });
+
+    test('when the resumed run fails, he still hears how the approved call went', async () => {
+      nextCall = { name: 'deleteVault', args: { id: 'vault-10' } };
+      await agent.processMessage(ownerMsg('Delete the old vault'), async () => true);
+      resumeReply = new Error('model exploded');
+      const replies = [];
+      await agent.processMessage(ownerMsg('yes'), async (r) => { replies.push(r); return true; });
+      expect(agent.toolExecutor.execute).toHaveBeenCalledTimes(1);
+      const text = replies.map(r => r.content).join('\n');
+      expect(text).toMatch(/^✅ Done: deleteVault\./);
+      expect(text).not.toMatch(/```json/);
+      // The history shows the call ran, so a later turn does not run it again.
+      const stored = agent.db.saveMessage.mock.calls.map(c => String(c[0]?.content || ''));
+      expect(stored.some(c => c.startsWith('✅ Done: deleteVault.'))).toBe(true);
+    });
+
+    test('a /stop sent while the approved call runs holds: no resumed run, just the outcome', async () => {
+      nextCall = { name: 'deleteVault', args: { id: 'vault-12' } };
+      await agent.processMessage(ownerMsg('Delete the old vault'), async () => true);
+      agent.toolExecutor.execute.mockImplementationOnce(async () => {
+        agent.stopFlags.add(OWNER_JID);
+        agent.stopFlags.add('GLOBAL_STOP');
+        return { success: true };
+      });
+      const replies = [];
+      try {
+        await agent.processMessage(ownerMsg('yes'), async (r) => { replies.push(r); return true; });
+        expect(lastResume).toBeNull();
+        expect(replies.map(r => r.content)).toEqual(['✅ Done: deleteVault.']);
+        expect(replies[0].metadata.approval).toMatchObject({ status: 'approved', toolName: 'deleteVault' });
+        expect(agent.stopFlags.has('GLOBAL_STOP')).toBe(true);
+      } finally {
+        agent.stopFlags.delete(OWNER_JID);
+        agent.stopFlags.delete('GLOBAL_STOP');
+      }
+    });
+
+    test('a slash command that runs a tool reports directly and starts no resumed run', async () => {
+      agent.toolExecutor.execute.mockResolvedValue({ consolidated: 3 });
+      const replies = [];
+      await agent.processMessage(ownerMsg('/consolidate'), async (r) => { replies.push(r); return true; });
+      expect(agent.toolExecutor.execute.mock.calls.map(c => c[0])).toEqual(['consolidateMemory']);
+      expect(lastResume).toBeNull();
+      expect(replies.map(r => r.content).join('\n')).toMatch(/Action \*\*consolidateMemory\*\* executed/);
+    });
+
+    test('a check step leaves the card waiting; the real booking retires it', async () => {
+      agent.mcp.toolMap = new Map([['book_appointment', { name: 'allende' }]]);
+      // A job asks to book the slot, so a card waits on the owner channel.
+      nextCall = { name: 'book_appointment', args: { slot_ref: 'ref-1', confirm: true } };
+      agent.toolExecutor.execute.mockResolvedValue({ output: JSON.stringify({ status: 'booked', summary: 'Book it.' }) });
+      await agent.processMessage({
+        role: 'user', content: 'Scheduled Task: check slots', source: 'scheduler',
+        metadata: { chatId: 'scheduled_slots_1700000000000', jobName: 'slots' }
+      }, async () => true);
+      const card = mockInterface.sentMessages.find(m => m.metadata?.approval);
+      const id = card.metadata.approval.id;
+      expect(rows.get(id).status).toBe('pending');
+
+      // He asks whether the slot is still free: the check step books nothing.
+      nextCall = { name: 'book_appointment', args: { slot_ref: 'ref-1', confirm: false } };
+      agent.toolExecutor.execute.mockResolvedValue({ output: JSON.stringify({ status: 'needs_confirmation', summary: 'Book it.' }) });
+      await agent.processMessage(ownerMsg('is that slot still free?'), async () => true);
+      expect(rows.get(id).status).toBe('pending');
+
+      // He books it himself: now the waiting card cannot book it again.
+      nextCall = { name: 'book_appointment', args: { slot_ref: 'ref-1', confirm: true } };
+      agent.toolExecutor.execute.mockResolvedValue({ output: JSON.stringify({ status: 'booked', summary: 'Book it.' }) });
+      await agent.processMessage(ownerMsg('book it'), async () => true);
+      expect(rows.get(id)).toMatchObject({ status: 'expired', decided_via: 'superseded' });
+    });
+
+    test('a reply that starts with a copied time stamp loses it', async () => {
+      nextCall = { name: 'deleteVault', args: { id: 'vault-11' } };
+      await agent.processMessage(ownerMsg('Delete the old vault'), async () => true);
+      resumeReply = '[01/02 10:00] Listo, borrado.';
+      const replies = [];
+      await agent.processMessage(ownerMsg('yes'), async (r) => { replies.push(r); return true; });
+      expect(replies.map(r => r.content)).toEqual(['Listo, borrado.']);
+    });
   });
 
   test('a call on the deny-list fails at once, with no card and no owner prompt', async () => {

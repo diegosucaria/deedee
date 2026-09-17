@@ -13,7 +13,8 @@ const { MCPManager } = require('./mcp-manager');
 const { CommandHandler } = require('./command-handler');
 const { RateLimiter } = require('./rate-limiter');
 const { ConfirmationManager } = require('./confirmation-manager');
-const { ApprovalService } = require('./services/approval-service');
+const { ApprovalService, APPROVAL_CONTINUATION, continuationOf, approvedResultText, callFailed } = require('./services/approval-service');
+const { isPreviewCall, previewSummary, stepKey } = require('./utils/two-step-tools');
 const { ImpersonationService } = require('./services/impersonation');
 const { ToolExecutor } = require('./tool-executor');
 const path = require('path');
@@ -43,7 +44,7 @@ const { AskUserService } = require('./services/ask-user');
 const { BrowserLive } = require('./services/browser-live');
 const { ToolScoper } = require('./services/tool-scoper');
 const { sanitizeToolResult, sanitizeToolArgs } = require('./utils/tool-result-sanitizer');
-const { classifyToolResult, wrapUntrusted, TurnTaint, taintFromPayload, taintPayloadFields } = require('./utils/untrusted-content');
+const { classifyToolResult, wrapUntrusted, historyHasUntrusted, originsHaveForeignText, TurnTaint, taintFromPayload, taintPayloadFields } = require('./utils/untrusted-content');
 const { BrowserPageState } = require('./utils/browser-gate');
 
 /** The taint stored on a watcher row (taint_sources JSON), as { tainted, taintSources }. */
@@ -58,6 +59,24 @@ function watcherTaint(watcher) {
   }
 }
 const { buildFunctionResponseParts, stripInlineParts, imagesAsUserContent, isPartsRejection, splitImages } = require('./utils/function-response');
+
+// "[01/02 10:00] " at the start of a reply: the model copying the time
+// stamps history carries on the owner's messages.
+const LEADING_STAMP_RE = /^(?:\s*\[\d{2}\/\d{2} \d{2}:\d{2}\]\s*)+/;
+/** Marks a reply as the outcome of an approval, so the chat page drops that card's buttons. */
+function approvedMeta(continuation) {
+  if (!continuation || !continuation.approvalId) return {};
+  return { approval: { id: continuation.approvalId, status: 'approved', toolName: continuation.toolName || null } };
+}
+
+function stripLeadingStamp(text) {
+  return typeof text === 'string' ? text.replace(LEADING_STAMP_RE, '') : text;
+}
+
+// The approved call's result as the resumed run's model reads it.
+const RESUME_RESULT_CHARS = 6000;
+// Metadata the resumed run keeps from the owner's answer.
+const RESUME_META_KEYS = ['session', 'phoneNumber', 'isGroup', 'groupName', 'thinking', 'turnId', 'model', 'location'];
 const browserSecrets = require('./utils/browser-secrets');
 const { sanitizeFunctionDeclarations } = require('./utils/gemini-schema-sanitizer');
 const { filterCalendarResult } = require('./utils/calendar-filter');
@@ -416,6 +435,89 @@ class Agent {
    * Send a final reply through the interface callback and record a
    * notification when the interface reports failure (returns false).
    */
+  /**
+   * After the owner approves a paused call in its own chat and it runs, the
+   * model reads the result in a run of its own: it tells him the outcome in
+   * plain words and does what is left of his request. That run keeps the
+   * paused run's consent (row.origin_meta.ownerConsent) and taint, and the
+   * result's own taint when a third party wrote it. Its message is not
+   * stored; the model's reply is. If the model fails or says nothing, the
+   * owner still gets one line with the outcome.
+   * @returns {Promise<{ replies: object[], toolOutputs: object[] }>}
+   */
+  async _resumeAfterApproval({ message, action, result, row = null, approvedTaint = null, sendCallback, onProgress }) {
+    const chatId = message?.metadata?.chatId;
+    const serverName = this.mcp?.toolMap?.get?.(action.name)?.name || null;
+    let verdict;
+    try {
+      verdict = classifyToolResult(action.name, { serverName, args: action.args, result });
+    } catch {
+      verdict = { untrusted: true, kind: 'an unknown tool' };
+    }
+    const fallbackText = approvedResultText(action.name, result, { untrusted: !!verdict.untrusted });
+    const sendOutcome = async () => {
+      const reply = createAssistantMessage(fallbackText);
+      reply.metadata = { chatId, ...approvedMeta({ approvalId: action.approvalId, toolName: action.name }) };
+      reply.source = message?.source;
+      try { this.db.saveMessage(reply); } catch { /* history is best effort */ }
+      try { await this._deliverReply(sendCallback, reply, message); } catch (err) {
+        console.error('[Agent] Could not deliver the approved outcome:', err.message);
+      }
+      return { replies: [reply], toolOutputs: [] };
+    };
+    // The owner sent /stop while the approved call ran: tell him how it went, start nothing.
+    if (this.stopFlags.has(chatId) || this.stopFlags.has('GLOBAL_STOP')) {
+      console.log(`[Agent] Stop requested during approved ${action.name}; not resuming the chat.`);
+      return sendOutcome();
+    }
+    const taintSources = approvedTaint?.tainted ? [...approvedTaint.sources] : [];
+
+    let shown = result;
+    try {
+      shown = sanitizeToolResult(action.name, filterCalendarResult(action.name, result, this.settings, this.mcp?.toolMap));
+    } catch (e) {
+      console.warn(`[Agent] Approved result not sanitized (${action.name}): ${e.message}`);
+    }
+    if (verdict.untrusted) {
+      shown = wrapUntrusted(action.name, shown, verdict.kind);
+      taintSources.push(`${verdict.kind} (${action.name})`);
+    }
+    let json;
+    try { json = JSON.stringify(shown); } catch { json = String(shown); }
+    if (typeof json !== 'string') json = String(json);
+    if (json.length > RESUME_RESULT_CHARS) json = `${json.slice(0, RESUME_RESULT_CHARS)}… [cut]`;
+
+    const meta = { chatId };
+    for (const key of RESUME_META_KEYS) {
+      if (message?.metadata?.[key] !== undefined) meta[key] = message.metadata[key];
+    }
+    if (taintSources.length > 0) meta.untrustedTaint = [...new Set(taintSources)].slice(0, 20);
+    const resume = {
+      role: 'user',
+      source: message?.source,
+      timestamp: new Date().toISOString(),
+      content: `[SYSTEM: approval result] The owner approved the paused call ${action.name} and it ran. ` +
+        'Tell him how it went in one or two short sentences, in the language of this chat, with no JSON and no approval id. ' +
+        'If what he asked for before has steps left, do them now without asking him again for what he already asked.\n' +
+        `Result: ${json}`,
+      metadata: meta
+    };
+    resume[APPROVAL_CONTINUATION] = {
+      approvalId: action.approvalId || null,
+      toolName: action.name,
+      ownerConsent: row?.origin_meta?.ownerConsent === true,
+      fallbackText
+    };
+
+    try {
+      const summary = await this.processMessage(resume, sendCallback, onProgress);
+      return { replies: summary?.replies || [], toolOutputs: summary?.toolOutputs || [] };
+    } catch (e) {
+      console.error(`[Agent] Resumed run after approval failed: ${e.message}`);
+      return sendOutcome();
+    }
+  }
+
   async _deliverReply(sendCallback, reply, message) {
     const result = await sendCallback(reply);
     if (result === false) {
@@ -1100,6 +1202,9 @@ class Agent {
 
     const runId = crypto.randomUUID();
     const e2eStart = Date.now();
+    // Set when this run resumes a chat after the owner approved a paused call
+    // (see _resumeAfterApproval): no interception, no stored user row.
+    const continuation = continuationOf(message);
     // Untrusted sources this run has read (email, web, a contact's chat).
     // Once set, side effects need the owner's approval. A sub-agent starts
     // with its parent's sources.
@@ -1176,7 +1281,7 @@ class Agent {
         // Auto-Title Trigger (Background)
         const hasContent = message.content || (message.parts && message.parts.length > 0);
 
-        if (msgCount === 0 && hasContent && message.role === 'user' && !isPassiveMode && !isSubAgent && message.source !== 'scheduler') {
+        if (msgCount === 0 && hasContent && message.role === 'user' && !isPassiveMode && !isSubAgent && !continuation && message.source !== 'scheduler') {
           console.log(`${logPrefix} Triggering Auto-Title for ${chatId}. MsgCount: ${msgCount}`);
 
           let titleContext = message.content;
@@ -1232,7 +1337,7 @@ class Agent {
       // it (approved interactive calls resume below as EXECUTE_PENDING), and
       // askUser then handles late replies. Anything else reaches the model.
       let commandResult = false;
-      if (chatId && !isMultiModal && !isSubAgent) {
+      if (chatId && !isMultiModal && !isSubAgent && !continuation) {
         const questionOpen = await this.askUser.isWaiting(chatId, message.source);
         if (questionOpen) {
           const answered = await this.askUser.intercept(message, activeSendCallback);
@@ -1259,22 +1364,25 @@ class Agent {
       }
 
       // Clear stop flag for this chat on new message (unless it's the stop command itself, handled by command handler)
-      if (message.content !== '/stop') {
+      // A resumed run is not new input: a /stop sent while the approved call
+      // ran must still hold.
+      if (message.content !== '/stop' && !continuation) {
         this.stopFlags.delete(chatId);
         this.stopFlags.delete('GLOBAL_STOP');
       }
 
       // 1. Slash Commands (only for text messages)
-      if (!commandResult) commandResult = !isMultiModal ? await this.commandHandler.handle(message) : false;
+      if (!commandResult && !continuation) commandResult = !isMultiModal ? await this.commandHandler.handle(message) : false;
 
       if (typeof commandResult === 'object' && commandResult.type === 'EXECUTE_PENDING') {
         // ... (existing slash command logic) ...
         const action = commandResult.action;
         // An approved call from a tainted run keeps that run's taint (a job it creates stays tainted).
         let approvedTaint = null;
+        let approvedRow = null;
         try {
-          const row = action.approvalId && typeof this.db.getPendingConfirmation === 'function' ? this.db.getPendingConfirmation(action.approvalId) : null;
-          const sources = row?.origin_meta?.untrustedTaint;
+          approvedRow = action.approvalId && typeof this.db.getPendingConfirmation === 'function' ? this.db.getPendingConfirmation(action.approvalId) : null;
+          const sources = approvedRow?.origin_meta?.untrustedTaint;
           if (Array.isArray(sources) && sources.length > 0) approvedTaint = new TurnTaint(sources);
         } catch { approvedTaint = null; }
         console.log(`${logPrefix} User confirmed action: ${action.name}${action.approvalId ? ` (approval ${action.approvalId})` : ''}`);
@@ -1288,11 +1396,25 @@ class Agent {
         }, { approved: !!action.approvalId, taint: approvedTaint }));
         if (action.approvalId) {
           try { this.db.setConfirmationResult(action.approvalId, result); } catch (e) { console.warn('[Approvals] result store failed:', e.message); }
+          if (!callFailed(result)) {
+            try { this.approvals.noteRan(action.name, action.args, { exceptId: action.approvalId }); } catch (e) { console.warn('[Approvals] could not retire waiting cards:', e.message); }
+          }
         }
 
         executionSummary.toolOutputs.push({ name: action.name, result });
 
-        // Notify user of result
+        if (action.approvalId) {
+          // The model gets the result in a run of its own: it tells the owner
+          // the outcome in plain words and finishes what he asked for.
+          const resumed = await this._resumeAfterApproval({
+            message, action, result, row: approvedRow, approvedTaint, sendCallback: activeSendCallback, onProgress
+          });
+          executionSummary.toolOutputs.push(...(resumed?.toolOutputs || []));
+          executionSummary.replies.push(...(resumed?.replies || []));
+          return executionSummary;
+        }
+
+        // A slash command that runs a tool (/consolidate, a skill command): report it directly.
         const reply = createAssistantMessage(`Action **${action.name}** executed.\nResult: \`\`\`json\n${JSON.stringify(result, null, 2).substring(0, 500)}\n\`\`\``);
         reply.metadata = { chatId };
         reply.source = message.source;
@@ -1307,7 +1429,7 @@ class Agent {
       // --- WATCHER LOGIC (Enhanced WhatsApp/Slack Intelligence) ---
       // Security: whatsapp:user and slack are PASSIVE (ignored) unless a watcher triggers.
       // Sub-agents skip watcher logic entirely.
-      if (!isSubAgent && (message.source?.startsWith('whatsapp') || message.source === 'slack')) {
+      if (!isSubAgent && !continuation && (message.source?.startsWith('whatsapp') || message.source === 'slack')) {
         const isUserSession = message.source === 'whatsapp:user' || message.source === 'slack';
         const isFromMe = !!message.metadata?.fromMe;
         const contactString = message.metadata?.phoneNumber || message.metadata?.slackUserName || message.metadata?.chatId;
@@ -1540,7 +1662,8 @@ class Agent {
 
       // 2. Rate Limiting (human sources only; internal runs neither count nor get a reply)
       const isWatcherRun = String(message.content || '').startsWith('SYSTEM_WATCHER_ALERT');
-      const skipRateLimit = isSubAgent || isWatcherRun || ['scheduler', 'subagent', 'system'].includes(message.source);
+      // A resumed run follows one approval the owner already sent: it is not a new message.
+      const skipRateLimit = isSubAgent || isWatcherRun || !!continuation || ['scheduler', 'subagent', 'system'].includes(message.source);
       if (!skipRateLimit && !(await this.rateLimiter.check(message, this.interface))) {
         const chatId = message.metadata?.chatId;
         this.notifications.create({
@@ -1564,7 +1687,9 @@ class Agent {
       // If (b) or (a), we need to save it.
       // saveMessage uses INSERT with generated UUID — safe to call without deduplication concern
 
-      if (!message.source?.startsWith('whatsapp:user') && message.source !== 'slack') {
+      // A resumed run's message is ours: the model reads it this turn, the
+      // chat keeps only the model's reply.
+      if (!continuation && !message.source?.startsWith('whatsapp:user') && message.source !== 'slack') {
         this.db.saveMessage(message);
       }
 
@@ -1768,6 +1893,30 @@ class Agent {
 
       // --- HYDRATION (Smart Context) ---
       const history = await this.smartContext.getContext(chatId, decision.model);
+      // Third-party text the model reads in this history: the owner's word in
+      // his chat then no longer covers messages, email or the house on its
+      // own (ApprovalService.review). Unreadable history counts as untrusted.
+      // Two checks, both on the window the model reads. An untrusted envelope
+      // (a tool result a third party wrote) holds back messages, email and the
+      // house; rows other people wrote (a contact's messages in a chat opened
+      // or forked on the web, Slack, a forwarded message, a watcher alert)
+      // hold back the owner's word altogether. Unreadable counts as present.
+      let historyUntrusted = true;
+      let foreignText = true;
+      try {
+        historyUntrusted = historyHasUntrusted(history, (name) => this.mcp?.toolMap?.get?.(name)?.name || null);
+      } catch (e) {
+        console.warn(`${logPrefix} History trust check failed: ${e.message}`);
+        historyUntrusted = true;
+      }
+      try {
+        foreignText = typeof this.db.getRecentMessageOrigins === 'function'
+          ? originsHaveForeignText(this.db.getRecentMessageOrigins(chatId, decision.model === 'FLASH' ? 20 : 50))
+          : true;
+      } catch (e) {
+        console.warn(`${logPrefix} Chat origin check failed: ${e.message}`);
+        foreignText = true;
+      }
 
       const historyChars = JSON.stringify(history).length;
       console.log(`${logPrefix} [Context] History loaded: ${history.length} messages.Size: ~${historyChars} chars(~${Math.round(historyChars / 4)} tokens).`);
@@ -2404,12 +2553,13 @@ class Agent {
             const serverName = this.mcp?.toolMap?.get?.(executionName)?.name || null;
             const review = await this.approvals.review({
               message, toolName: executionName, args: call.args, taint: turnTaint, serverName,
-              run: approvalRun, sendCallback: activeSendCallback
+              run: approvalRun, sendCallback: activeSendCallback, historyUntrusted, foreignText
             });
             if (!review.run) {
               console.log(`${logPrefix} Action ${executionName} held by the approval gate (${review.status}).`);
               toolResult = review.result;
               toolStatus = review.status;
+              if (review.status === 'paused') executionSummary.pausedCalls = (executionSummary.pausedCalls || 0) + 1;
             } else {
               // Execute normally
               executed = true;
@@ -2427,6 +2577,17 @@ class Agent {
               }, { taint: turnTaint, approvalRun });
               if (toolResult && typeof toolResult === 'object' && toolResult.error) {
                 toolStatus = 'error';
+              }
+              // The action really happened: a card waiting for it can no longer
+              // run it again. A check step does nothing, so it retires nothing,
+              // and neither does a call the tool itself reports as failed.
+              if (!callFailed(toolResult) && !isPreviewCall(executionName, call.args, serverName)) {
+                try { this.approvals.noteRan(executionName, call.args, { serverName }); } catch (e) { console.warn(`${logPrefix} Could not retire waiting cards: ${e.message}`); }
+              }
+              // A preview step's summary goes on the card if the real call pauses.
+              if (isPreviewCall(executionName, call.args, serverName) && approvalRun?.previews) {
+                const summary = previewSummary(toolResult);
+                if (summary) approvalRun.previews.set(stepKey(executionName, call.args), summary);
               }
               // Browser calls run one at a time: the next call's gate sees this page state.
               if (serverName === 'browser' || (!serverName && String(executionName).startsWith('browser_'))) {
@@ -2689,6 +2850,7 @@ class Agent {
           .map(p => p.text)
           .join(' ');
       }
+      text = stripLeadingStamp(text);
 
       if (text) {
         if (message.source === 'http') {
@@ -2700,7 +2862,8 @@ class Agent {
           reply.metadata = {
             chatId: message.metadata?.chatId,
             model: decision.model,
-            thinking: sessionThinking?.thinkingLevel || null
+            thinking: sessionThinking?.thinkingLevel || null,
+            ...approvedMeta(continuation)
           };
           reply.source = message.source; // Ensure reply source matches incoming message source
           reply.cost = e2eCost;
@@ -2722,6 +2885,18 @@ class Agent {
 
           executionSummary.replies.push(reply);
         }
+      } else if (continuation) {
+        // The model said nothing after an approved call: the owner still hears how it went.
+        console.log('[Agent] No text after an approved call. Sending its outcome.');
+        const reply = createAssistantMessage(continuation.fallbackText || 'Done.');
+        reply.metadata = { chatId: message.metadata?.chatId, ...approvedMeta(continuation) };
+        reply.source = message.source;
+        this.db.saveMessage(reply);
+        await this._deliverReply(activeSendCallback, reply, message);
+        executionSummary.replies.push(reply);
+      } else if (executionSummary.pausedCalls > 0) {
+        // The approval card already tells the owner what waits; nothing to add.
+        console.log('[Agent] No text after a paused call. The approval card is the reply.');
       } else {
         // If we executed tools but got no final text, assume success and generate a generic confirmation.
         if (stoppedEarly) {
@@ -2781,9 +2956,14 @@ class Agent {
         userMessage = 'A temporary processing error occurred. Please try again.';
       }
 
-      const errReply = createAssistantMessage(`⚠️ ${userMessage}`);
-      errReply.metadata = { chatId: message.metadata?.chatId };
+      // After an approved call the action already ran: say how it went first.
+      const errReply = createAssistantMessage(continuation?.fallbackText ? `${continuation.fallbackText}\n⚠️ ${userMessage}` : `⚠️ ${userMessage}`);
+      errReply.metadata = { chatId: message.metadata?.chatId, ...approvedMeta(continuation) };
       errReply.source = message.source;
+      // After an approved call the history must show it ran, or a later turn may run it again.
+      if (continuation) {
+        try { this.db.saveMessage(errReply); } catch (saveErr) { console.warn('[Agent] Could not store the approved outcome:', saveErr.message); }
+      }
       try {
         await this._deliverReply(activeSendCallback, errReply, message);
       } catch (sendErr) {

@@ -94,6 +94,19 @@ describe('TelegramService Security', () => {
         expect(axios.post).toHaveBeenCalled();
     });
 
+    test('a forwarded message reaches the agent marked as untrusted', async () => {
+        process.env.ALLOWED_TELEGRAM_IDS = '12345';
+        service = new TelegramService('fake-token', 'http://agent:3000');
+        axios.post.mockResolvedValue({ data: { ok: true } });
+
+        await service.handleMessage({ message: { text: 'Pay this now', forward_origin: { type: 'user' } }, from: { id: '12345' }, chat: { id: 'chat1' }, reply: jest.fn() });
+        await service.handleMessage({ message: { text: 'Pay this now' }, from: { id: '12345' }, chat: { id: 'chat1' }, reply: jest.fn() });
+
+        const [forwarded, typed] = axios.post.mock.calls.slice(-2).map(c => c[1]);
+        expect(forwarded.metadata.untrustedTaint).toEqual(['a forwarded message (telegram)']);
+        expect(typed.metadata.untrustedTaint).toBeUndefined();
+    });
+
     test('sendMessage skips a repeat of the same message id and forgets a failed one', async () => {
         jest.spyOn(console, 'log').mockImplementation(() => { });
         jest.spyOn(console, 'warn').mockImplementation(() => { });

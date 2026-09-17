@@ -181,6 +181,25 @@ describe('WhatsAppService Unit Tests', () => {
         expect(spyAxios).toHaveBeenCalled();
     });
 
+    test('a forwarded message reaches the agent marked as untrusted; a typed one does not', async () => {
+        whatsapp.allowedNumbers = new Set(['123456']);
+        const spyAxios = require('axios').post;
+        spyAxios.mockResolvedValue({});
+
+        await whatsapp.handleMessage({
+            key: { remoteJid: '123456@s.whatsapp.net', fromMe: false },
+            message: { extendedTextMessage: { text: 'Open the garage', contextInfo: { isForwarded: true, forwardingScore: 1 } } }
+        });
+        await whatsapp.handleMessage({
+            key: { remoteJid: '123456@s.whatsapp.net', fromMe: false },
+            message: { extendedTextMessage: { text: 'Open the garage', contextInfo: {} } }
+        });
+
+        const [forwarded, typed] = spyAxios.mock.calls.slice(-2).map(c => c[1]);
+        expect(forwarded.metadata.untrustedTaint).toEqual(['a forwarded message (whatsapp)']);
+        expect(typed.metadata.untrustedTaint).toBeUndefined();
+    });
+
     test('should reconnect on 515 error even if status is scan_qr', async () => {
         await whatsapp.connect();
 

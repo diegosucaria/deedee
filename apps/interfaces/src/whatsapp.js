@@ -1093,6 +1093,13 @@ class WhatsAppService {
                 return;
             }
 
+            // A forwarded message holds someone else's words, even in the owner's
+            // own chat: the agent treats it as untrusted content.
+            const inner = messageContent.extendedTextMessage || messageContent.imageMessage || messageContent.audioMessage
+                || messageContent.videoMessage || messageContent.documentMessage || null;
+            const contextInfo = inner && inner.contextInfo;
+            const forwarded = !!(contextInfo && (contextInfo.isForwarded || Number(contextInfo.forwardingScore) > 0));
+
             // Distinguish Source like 'whatsapp:user' vs 'whatsapp:assistant'
             const source = `whatsapp:${this.sessionId}`;
             const userMessage = createUserMessage(text, source, phoneNumber);
@@ -1107,6 +1114,7 @@ class WhatsAppService {
                 fromMe: !!msg.key.fromMe,
                 groupName: isGroup ? 'Unknown Group' : undefined // We could fetch subject if needed
             };
+            if (forwarded) userMessage.metadata.untrustedTaint = ['a forwarded message (whatsapp)'];
 
             // Inline Data for Agent
             if (buffer) {

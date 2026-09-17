@@ -136,13 +136,66 @@ unasked, and jobs stay quiet unless they truly need him.
 - every email send (`sendEmail`, Gmail `messages.send` / `drafts.send`);
 - the first `sendMessage` to a contact the owner never messaged through Deedee (the old `force: true` retry is gone; an approved call opens the contact);
 - Home Assistant `lock` (lock and unlock), `alarm_control_panel` (arm and disarm), opening a cover whose id reads as a garage or gate (`garage`, `gate`, `portón`, `cochera`, `driveway`), the `homeassistant`/`hassio` domains, automations off, and `entity_id: all` on any domain except lights/switches/media off and lights on. `ha_bulk_control` pauses only when one of its operations touches those. Climate, blinds, closing the garage and bulk light control run unasked;
-- appointment tools named `*book_appointment` / `*cancel_appointment` (Allende) and `*book_turn` / `*cancel_turn` (Pilotfy);
+- appointment tools named `*book_appointment` / `*cancel_appointment` (Allende) and `*book_turn` / `*cancel_turn` (Pilotfy). Their first step never pauses: on the `allende` and `pilotfy` servers a call with `confirm` false or left out only checks the slot and describes the action (`apps/agent/src/utils/two-step-tools.js`). A string or a number in `confirm`, or the same tool name on another server, is gated as usual;
 - `commitAndPush` (code that will run on the device);
 - data-destroying deletes: `deletePerson`, `deleteVault`, `delete_garment`, `deleteDeviceAlias` (per-tool flags), Plex deletes and edits, and `ha_config_remove_*` / `ha_remove_device|entity|zone|area_or_floor|helpers_integrations`. Everyday removals run unasked: `ha_remove_todo_item`, Plex `playlist_remove_from` / `collection_remove_from`, `remove_from_wardrobe_trip_capsule`, `cancelJob`;
 - shell commands that pipe remote content into an interpreter, damage the system, touch the databases, the WhatsApp credentials volume, the browser profile, `/proc`, a closed folder of the data volume or the CDP port. The rule reads the same list the local MCP server refuses (`BLOCKED_PATTERNS` in `packages/mcp-servers/src/local/index.js`), so the two layers cannot drift apart.
 
 A rule that throws on odd arguments counts as a hit. A malformed call is
 held, never let through.
+
+**The owner's word** (`ApprovalService.review`, before the guardian and the
+mode). When the owner asks for something in his own chat, that request is
+his approval. It counts when all of these hold:
+- the run is a chat run, not a job, watcher, system run or sub-agent;
+- the chat is his: any web chat, a Telegram id in `ALLOWED_TELEGRAM_IDS`,
+  or his own WhatsApp chat;
+- the run has read no untrusted content and carries no taint from the run
+  that created it. A forwarded WhatsApp or Telegram message arrives tainted
+  (`a forwarded message`), since it holds someone else's words;
+- the window the model reads holds no rows other people wrote: a contact's
+  messages, a watcher alert, a row stored with taint. That covers a WhatsApp
+  or Slack chat opened on the web and a chat forked from one
+  (`originsHaveForeignText` over `AgentDB.getRecentMessageOrigins`, same
+  window as the model: 20 rows on Flash, 50 otherwise). A web message in a
+  chat whose id holds `@` never counts either.
+
+Then a call the rules above pause runs with no card and no guardian call,
+and the history stores `owner_instructed`. Three limits stay:
+- the floor (money, deleting his data, cancelling a booking, publishing,
+  reading sessions or credentials) and his own always-ask list still ask,
+  once, with the card sent at once and no guardian call;
+- the rules that guard the system itself (`shell-remote-exec`,
+  `shell-system-damage`, `shell-credentials`, `shell-cdp`,
+  `file-browser-profile`, a malformed call) take the usual path;
+- email, a first message to a contact and the house rules (`email-send`,
+  `first-contact`, `ha-critical`, `ha-bulk`) run on his word only while the
+  history the model reads this turn holds no untrusted envelope, that is no
+  tool result a third party wrote. Rows stored before envelopes existed are
+  judged by the tool name (`historyHasUntrusted`). Otherwise they take the
+  usual path.
+
+**One card per action.** Two calls are the same action when the tool and the
+target match (`stepKey` in `apps/agent/src/utils/two-step-tools.js`: for a
+two-step tool the target argument, for anything else every argument).
+- The very same call, argument for argument, pausing again where its card
+  already sits and in the same kind of card, waits on that card: no second
+  card, no second guardian call. A changed argument is a different action: it
+  gets its own card, and the older one goes.
+- Once the call has run (the tool loop, an approval, a guardian allow), cards
+  waiting for that same action are marked `expired`
+  (`decided_via: superseded`), so a later "ok" cannot run it a second time. A
+  call that failed leaves them alone (`callFailed` reads `error`,
+  `success: false` and a failure status inside the tool's own output), and so
+  does a check step and a call nobody could be asked about (a sub-agent, no
+  owner channel): the waiting card stays. A call that times out after the
+  action happened also leaves its card, so a later "ok" could repeat it: the
+  gate cannot tell that case from a call that never ran.
+- A call that waits on an existing card leaves its own history row
+  (`escalated_duplicate`), so the owner's answer still settles one row per card.
+
+Before this, an explicit "book it" in his chat still raised a card for the
+check step and another for the booking.
 
 **Where the prompt goes** (`apps/agent/src/services/approval-service.js`):
 - web, Telegram and the owner's own WhatsApp chat: the same chat (`interactive`);
@@ -159,13 +212,23 @@ contact.
 
 **The card** names the tool, the key arguments (values under keys such as
 `password`, `token`, `secret` show as `<redacted>`), the reason, where the
-run came from, and how to answer. Web chats also get Approve / Deny
+run came from (left out when the card sits in the chat the request came
+from), and how to answer. When the same run already ran the check step of a
+two-step tool, the card starts with that step's summary (`What:`). The
+model's tool result says a card exists but carries no id, and the prompt
+tells the model not to mention the approval; after a paused call with
+nothing else to say, the turn sends no text. Web chats also get Approve / Deny
 buttons; the dashboard bell gets a notification.
 
 **Answers**: `/confirm <id>`, `/approve <id>`, `/cancel <id>`, `/deny <id>`
 work from any of the owner's chats (web, his Telegram, his WhatsApp);
-`/approvals` lists every pending row. A plain reply (`yes`, `si`, `sí`,
-`ok`, `dale`, `approve`, `confirm`; `no`, `cancel`, `cancelar`, `deny`)
+`/approvals` lists every pending row. A plain reply of at most five words
+counts when every word is on a short list and one says yes (`yes`, `si`,
+`ok`, `dale`, `confirmo`, `👍`, with fillers such as `por favor` or
+`reservalo`) or no (`no`, `nope`, `cancel`, `cancelar`, with fillers such as
+`gracias` or `dejalo`). "ok gracias" or "yes, send it tomorrow" go to the
+model. On a card that cancels something, a bare `cancel` or `cancelar` could
+mean either answer, so the owner is asked to reply yes or no. A reply
 counts only when all three hold: the card was delivered to this very chat
 (for a job, that is the owner channel), it is the only approval pending
 there, and no `askUser` question is open there. In every other case the
@@ -177,11 +240,23 @@ several, the reply lists the ids and an id (or a unique prefix of at least
 3 characters) is required. Only the first answer counts. The owner's
 WhatsApp LID and his phone JID are the same chat.
 
-**What runs after yes**: an interactive call resumes in its chat as before
-(`EXECUTE_PENDING`). A deferred call runs from the service with the stored
-arguments in the original run's context (source, chat id, job name), and
-the result summary goes back to the chat the answer came from. The
-executor receives `context.approved = true`.
+**What runs after yes**: an interactive call answered in its own chat runs
+there (`EXECUTE_PENDING`), and then the model reads the result in a run of
+its own (`Agent._resumeAfterApproval`). It tells the owner how it went in
+plain words and finishes what he asked for. That run's message is built by
+our code and marked with a symbol no JSON input can carry; it is not stored
+as a chat row, is not read as the owner's message, and keeps the paused
+run's consent (`origin_meta.ownerConsent`) and taint. A result a third party
+wrote reaches the model in an untrusted envelope and taints that run. If the
+model fails or says nothing, the owner gets one line built from the tool's
+own summary, and that line is stored so a later turn knows the call ran. A
+/stop sent while the approved call runs holds: no resumed run starts. When a
+third party wrote the result (by `classifyToolResult`), the line says only
+whether it worked, so none of that text lands in history as our own words.
+The resumed reply names the approval, so the web card drops its buttons. A deferred call, or one decided from the settings card or
+another chat, runs from the service with the stored arguments in the
+original run's context (source, chat id, job name); the owner gets that one
+line, never raw JSON. The executor receives `context.approved = true`.
 
 **Expiry**: a sweeper runs every minute. Chat approvals expire after 30
 minutes, job and watcher approvals after 6 hours. Both live in the
@@ -223,6 +298,7 @@ recommended.
 **Order** (`ApprovalService.review` in `apps/agent/src/services/approval-service.js`):
 1. The deny-list blocks first, in every mode. The guardian never runs.
 2. The safety rules and the taint rule decide whether the call is gated.
+   The check step of a two-step tool is never gated.
 3. The always-ask list (`apps/agent/src/services/guardian-policy.js`). The
    floor is fixed in code and cannot be removed: pay, buy, order or transfer
    money; delete user data; cancel a booking; commit or publish; read the
@@ -237,6 +313,9 @@ recommended.
    `approvals.always_ask`. An owner addition also gates a call no rule
    would pause. A floor or addition hit goes to the owner in every mode,
    `off` included. The guardian may deny such a call, never allow it.
+   Before the mode, the owner's word applies (see Approvals): in his own
+   chat a covered call runs as `owner_instructed`, and a floor or addition
+   hit goes to him with no guardian call.
 4. In `smart` mode the guardian judges the call. Error, timeout (8 s,
    `GUARDIAN_TIMEOUT_MS`), an answer that does not fit the schema, or an
    `allow` it marks high risk all mean `escalate`. So does an `allow` on
@@ -273,7 +352,7 @@ only on a denial, quoted and marked as not an instruction.
 **History** (table `guardian_decisions`): one row per gated call with the
 outcome (`auto_allowed`, `auto_denied`, `escalated`, `escalated_approved`,
 `escalated_denied`, `escalated_expired`, `escalated_failed`, `deny_list`,
-`breaker_stop`, `ran_unasked`), who decided, verdict, reason, risk, latency,
+`breaker_stop`, `ran_unasked`, `owner_instructed`), who decided, verdict, reason, risk, latency,
 cost, the exact guardian input, the approval id and the owner's feedback.
 An escalated row follows its approval row when the owner answers or it
 expires. The nightly job keeps 180 days of rows, then folds them into
@@ -292,7 +371,10 @@ outcome, tool, run kind and risk).
   comes back read-only and is never stored;
 - `POST /dry-run { toolName, args, ownerMessage?, jobName?, sourceKind?, taintSources?, excerpt? }`:
   runs the gate and the guardian on a described call; nothing runs, nothing
-  is stored but the token usage, under its own tag `guardian_dry_run`;
+  is stored but the token usage, under its own tag `guardian_dry_run`. A
+  chat call with an owner message and no taint sources reads as the owner
+  in his own chat with a clean history, so it can come back
+  `owner_instructed` with no guardian call;
 - `POST /feedback/:id { feedback: should_allow | should_deny | null, note? }`:
   never changes the decision.
 
@@ -510,7 +592,11 @@ approvals go to the owner channel, as in [Approvals](#approvals).
 **Known gaps**: taint lasts one run (plus the jobs and watchers it creates).
 A later owner message in the same chat starts clean, and the envelope in
 history plus the prompt rule are the only guard for content read in an
-earlier turn. `rememberFact`, `saveJobState`, vault writes
+earlier turn. The owner's word (see Approvals) checks those envelopes only
+for email, first messages and the house; a booking, a Plex edit or a floor
+card in his chat does not look at older turns. The model's own replies and
+the context summary can repeat third-party text without an envelope, and
+the check does not see that. `rememberFact`, `saveJobState`, vault writes
 (`writeVaultPage`, `saveNoteToVault`) and `updatePerson` notes do not pause
 and carry no taint mark, so a fact, a vault page, a contact note or job
 state can carry text into later prompts and tool results that count as

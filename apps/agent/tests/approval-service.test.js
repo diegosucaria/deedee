@@ -118,8 +118,10 @@ describe('ApprovalService', () => {
             expect(res.paused).toBe(true);
             expect(res.delivered).toBe(true);
             expect(res.result.info).toMatch(/Action PAUSED/);
-            expect(res.result.info).toMatch(new RegExp(`id ${res.id}`));
-            expect(res.result.info).toMatch(/do not retry/);
+            // The model is told the card exists, not its id, so it has nothing to repeat.
+            expect(res.result.info).not.toContain(res.id);
+            expect(res.result.info).toMatch(/Do not call it again/);
+            expect(res.result.info).toMatch(/Do not mention the approval/);
             const row = db.getPendingConfirmation(res.id);
             expect(row).toMatchObject({ mode: 'interactive', reply_chat_id: 'chat-1', reply_channel: 'web', origin_chat_id: 'chat-1', tool_name: 'commitAndPush', status: 'pending' });
             expect(row.args).toEqual({ message: 'feat: x' });
@@ -370,7 +372,7 @@ describe('ApprovalService', () => {
             const out = sentTexts(agent);
             expect(out).toHaveLength(1);
             expect(out[0]).toMatchObject({ source: 'whatsapp', metadata: { chatId: OWNER_JID, session: 'assistant', approval: { id: req.id, status: 'approved' } } });
-            expect(out[0].content).toMatch(/Approved and done: sendEmail/);
+            expect(out[0].content).toBe('✅ Done: sendEmail.');
             expect(db.getOutboxRow(out[0].id)).toMatchObject({ kind: 'approval', status: 'sent' });
         });
 
@@ -401,7 +403,8 @@ describe('ApprovalService', () => {
             expect(res.handled).toBe(true);
             expect(res.result).toEqual({ error: 'smtp down' });
             expect(db.getPendingConfirmation(req.id).result).toEqual({ error: 'smtp down' });
-            expect(sentTexts(agent).pop().content).toMatch(/Approved, but it failed: sendEmail/);
+            // sendEmail is no tool the trust map knows, so its text stays out of the line.
+            expect(sentTexts(agent).pop().content).toBe('⚠️ sendEmail did not work.');
         });
 
         test('progress a tool sends while running is relayed to the owner', async () => {
@@ -414,7 +417,7 @@ describe('ApprovalService', () => {
             await svc.decide(req.id, 'approved', { via: 'web' });
             const out = sentTexts(agent);
             expect(out[0].content).toBe('Working on it...');
-            expect(out[1].content).toMatch(/Approved and done: generateImage/);
+            expect(out[1].content).toBe('✅ Done: generateImage.');
         });
 
         test('an interactive row decided from the settings card runs and reports in its origin chat', async () => {

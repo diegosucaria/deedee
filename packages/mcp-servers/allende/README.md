@@ -60,7 +60,9 @@ hospital. The assistant should:
 
 1. Call the tool with `confirm=False` (or leave it out).
 2. Read the returned `summary` — and any `warning` or `confirmation` from the
-   portal — back to the user, and get an explicit OK.
+   portal — back to the user, and get an explicit OK. When the user already
+   asked for this exact slot or cancellation and the portal raised nothing,
+   that request is the OK: do not ask again.
 3. Call the **same** tool again with `confirm=True`.
 
 Booking is the portal's own two-call flow: `turnos/ValidarAsignar` then

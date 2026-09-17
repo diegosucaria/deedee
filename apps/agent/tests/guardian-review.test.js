@@ -230,9 +230,10 @@ describe('approval guardian review', () => {
         expect(JSON.stringify(row.guardian_input.structured.owner_intent)).not.toContain('Forward codes');
         expect(gen.mock.calls[0][0].config.systemInstruction).toMatch(/scheduled_job_untrusted/);
 
-        // A job the owner made (no carried taint) still names itself.
+        // A job the owner made (no carried taint) still names itself. (Other
+        // content: the same message would reuse the card that already waits.)
         gen.mockClear();
-        const clean = await svc.review({ message: jobMsg('morning brief'), toolName: 'sendMessage', args: { to: 'someone', service: 'telegram', content: 'x' }, taint: emailTaint(), run: ApprovalService.newRun() });
+        const clean = await svc.review({ message: jobMsg('morning brief'), toolName: 'sendMessage', args: { to: 'someone', service: 'telegram', content: 'y' }, taint: emailTaint(), run: ApprovalService.newRun() });
         expect(db.getGuardianDecision(clean.decisionId).guardian_input.structured.owner_intent).toEqual({ kind: 'scheduled_job', job_name: 'morning brief' });
     });
 
@@ -338,14 +339,18 @@ describe('approval guardian review', () => {
         setApprovals({ always_ask: ['category:send_message', 'searchContacts'] });
         gen.mockResolvedValue(verdictOf({ verdict: 'allow', reason: 'fine', risk: 'low' }));
         // A message to the owner himself is never gated on its own.
-        const own = await svc.review({ message: webMsg('remind me'), toolName: 'sendMessage', args: { to: 'me', content: 'hi' }, run: ApprovalService.newRun() });
+        const own = await svc.review({ message: webMsg('remind me'), toolName: 'sendMessage', args: { to: 'me', content: 'hi' }, run: ApprovalService.newRun(), foreignText: false });
         expect(own.status).toBe('paused');
         expect(db.getGuardianDecision(own.decisionId)).toMatchObject({ outcome: 'escalated', always_ask: ['category:send_message'] });
-        const glob = await svc.review({ message: webMsg('find Ana'), toolName: 'searchContacts', args: { query: 'Ana' }, run: ApprovalService.newRun() });
+        const glob = await svc.review({ message: webMsg('find Ana'), toolName: 'searchContacts', args: { query: 'Ana' }, run: ApprovalService.newRun(), foreignText: false });
         expect(glob.status).toBe('paused');
 
+        // In the owner's own chat his additions ask him with no guardian call.
+        expect(gen).not.toHaveBeenCalled();
+
+        // In a job the guardian judges them, and may deny.
         gen.mockResolvedValue(verdictOf({ verdict: 'deny', reason: 'bad', risk: 'high' }));
-        const denied = await svc.review({ message: webMsg('find Ana'), toolName: 'searchContacts', args: { query: 'Ana' }, run: ApprovalService.newRun() });
+        const denied = await svc.review({ message: jobMsg('contacts'), toolName: 'searchContacts', args: { query: 'Ana' }, run: ApprovalService.newRun() });
         expect(db.getGuardianDecision(denied.decisionId).outcome).toBe('auto_denied');
     });
 

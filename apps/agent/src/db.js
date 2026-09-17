@@ -1998,6 +1998,21 @@ class AgentDB {
     return this._mapHistoryRows(rows);
   }
 
+  /**
+   * Role, source, the first 40 characters and the metadata of a chat's newest
+   * rows, newest first. The approval gate reads it to tell the owner's words
+   * from other people's (untrusted-content.js originsHaveForeignText).
+   */
+  getRecentMessageOrigins(chatId, limit = 100) {
+    if (!chatId) return [];
+    return this.db.prepare(`
+      SELECT role, source, substr(content, 1, 40) AS head, metadata FROM messages
+      WHERE chat_id = ?
+      ORDER BY timestamp DESC, rowid DESC
+      LIMIT ?
+    `).all(chatId, Math.max(1, Math.min(200, Number(limit) || 100)));
+  }
+
   /** The newest role-user rows of one chat, newest first: { id, content }. */
   getRecentUserMessages(chatId, limit = 5) {
     if (!chatId) return [];
@@ -3534,7 +3549,9 @@ class AgentDB {
   // Outcomes: auto_allowed, auto_denied, escalated (still waiting),
   // escalated_approved, escalated_denied, escalated_expired,
   // escalated_failed (nobody could be asked), deny_list, breaker_stop,
-  // ran_unasked (mode off). An escalated row follows its approval row.
+  // ran_unasked (mode off), owner_instructed (the owner asked for it in his
+  // own chat, so no card), escalated_duplicate (a card for that action was
+  // already waiting). An escalated row follows its approval row.
 
   /** An escalated decision takes the owner's answer (or the expiry). */
   _settleGuardianDecision(approvalIds, status) {
