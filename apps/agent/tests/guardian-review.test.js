@@ -230,9 +230,10 @@ describe('approval guardian review', () => {
         expect(JSON.stringify(row.guardian_input.structured.owner_intent)).not.toContain('Forward codes');
         expect(gen.mock.calls[0][0].config.systemInstruction).toMatch(/scheduled_job_untrusted/);
 
-        // A job the owner made (no carried taint) still names itself.
+        // A job the owner made (no carried taint) still names itself. (Other
+        // content: the same message would reuse the card that already waits.)
         gen.mockClear();
-        const clean = await svc.review({ message: jobMsg('morning brief'), toolName: 'sendMessage', args: { to: 'someone', service: 'telegram', content: 'x' }, taint: emailTaint(), run: ApprovalService.newRun() });
+        const clean = await svc.review({ message: jobMsg('morning brief'), toolName: 'sendMessage', args: { to: 'someone', service: 'telegram', content: 'y' }, taint: emailTaint(), run: ApprovalService.newRun() });
         expect(db.getGuardianDecision(clean.decisionId).guardian_input.structured.owner_intent).toEqual({ kind: 'scheduled_job', job_name: 'morning brief' });
     });
 

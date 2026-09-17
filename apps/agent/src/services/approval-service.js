@@ -32,7 +32,7 @@ const { createAssistantMessage } = require('@deedee/shared/src/types');
 const { ConfirmationManager } = require('../confirmation-manager');
 const { DeliveryService, telegramOwnerIds, splitChannel } = require('./delivery-service');
 const { isLiveSource } = require('./ask-user');
-const { TurnTaint } = require('../utils/untrusted-content');
+const { TurnTaint, classifyToolResult } = require('../utils/untrusted-content');
 const { isTwoStepTool, stepKey, parseToolOutput } = require('../utils/two-step-tools');
 const { GuardianService, DRY_RUN_USAGE_TAG } = require('./guardian-service');
 // Breaker state of live runs, by root run id (see acquireRun).
@@ -113,12 +113,41 @@ function normalizeWord(text) {
         .trim();
 }
 
-/** 'approved' | 'denied' | null for a plain reply. */
-function decisionWord(text) {
+// A short reply decides a card when every word is on these lists and one
+// word says yes (or no). "ok gracias" or "yes, send it tomorrow" go to the model.
+const APPROVE_CORE = new Set(['yes', 'y', 'si', 'sí', 'ok', 'okay', 'dale', 'approve', 'approved', 'confirm', 'confirmed', 'confirmo',
+    'confirmado', 'proceed', 'adelante', 'hacelo', 'hazlo', 'yep', 'yeah', 'sure', 'claro', '👍', '👌', '✅']);
+const APPROVE_FILLER = new Set(['please', 'pls', 'por', 'favor', 'porfa', 'go', 'ahead', 'do', 'it', 'just', 'nomas', 'nomás',
+    'reservalo', 'resérvalo', 'reservala', 'resérvala', 'reserva', 'reservá', 'bookealo', 'agendalo', 'agéndalo',
+    'mandalo', 'mándalo', 'envialo', 'envíalo', 'borralo', 'bórralo', 'pagalo', 'págalo']);
+const DENY_CORE = new Set(['no', 'n', 'nope', 'not', 'deny', 'denied', 'reject', 'rechazar', 'rechazo', 'cancel', 'cancelar', '👎', '❌']);
+const DENY_FILLER = new Set(['please', 'por', 'favor', 'gracias', 'thanks', 'dejalo', 'déjalo', 'mejor', 'todavia', 'todavía',
+    'not', 'yet', 'aun', 'aún', 'ahora']);
+// On a card that cancels something, these mean "cancel it", not "deny".
+const CANCEL_VERBS = new Set(['cancel', 'cancelar', 'cancelalo', 'cancélalo', 'cancelala', 'cancélala', 'cancelá', 'cancela']);
+const MAX_DECISION_WORDS = 5;
+
+/**
+ * 'approved' | 'denied' | 'ambiguous' | null for a plain reply.
+ * @param {string} text
+ * @param {{ toolName?: string }} [opts] - the waiting card's tool: on a cancel
+ *   card, a bare "cancel" could mean either answer, so it is 'ambiguous'.
+ */
+function decisionWord(text, { toolName = '' } = {}) {
     const word = normalizeWord(text);
     if (!word) return null;
+    const cancelCard = /cancel/i.test(String(toolName || ''));
+    const words = word.split(/[\s,;.!?¡¿:]+/).filter(Boolean);
+    if (words.length === 0 || words.length > MAX_DECISION_WORDS) return null;
+    if (cancelCard && words.every(w => CANCEL_VERBS.has(w) || APPROVE_FILLER.has(w)) && words.some(w => CANCEL_VERBS.has(w))) {
+        return 'ambiguous';
+    }
     if (APPROVE_WORDS.has(word)) return 'approved';
-    if (DENY_WORDS.has(word)) return 'denied';
+    if (DENY_WORDS.has(word) && !(cancelCard && CANCEL_VERBS.has(word))) return 'denied';
+    const approveOk = (w) => APPROVE_CORE.has(w) || APPROVE_FILLER.has(w) || (cancelCard && CANCEL_VERBS.has(w));
+    if (words.some(w => APPROVE_CORE.has(w)) && words.every(approveOk)) return 'approved';
+    const denyOk = (w) => (DENY_CORE.has(w) && !(cancelCard && CANCEL_VERBS.has(w))) || DENY_FILLER.has(w);
+    if (words.some(w => DENY_CORE.has(w) && !(cancelCard && CANCEL_VERBS.has(w))) && words.every(denyOk)) return 'denied';
     return null;
 }
 
@@ -182,30 +211,101 @@ function summarizeResult(result) {
     try { return truncate(JSON.stringify(result), RESULT_CHARS); } catch { return truncate(String(result), RESULT_CHARS); }
 }
 
-/**
- * One line for the owner about an approved call that ran: the tool's own
- * summary or message when it has one, never raw JSON.
- */
-function approvedResultText(toolName, result) {
-    const name = String(toolName || 'the action');
-    const data = parseToolOutput(result);
-    const pick = (obj) => {
-        if (!obj || typeof obj !== 'object') return '';
-        for (const key of ['summary', 'message', 'info', 'note']) {
-            if (typeof obj[key] === 'string' && obj[key].trim()) return truncate(obj[key].replace(/\s+/g, ' ').trim(), RESULT_DETAIL_CHARS);
-        }
-        return '';
-    };
-    if (typeof result === 'string') return `✅ Done: ${name}. ${truncate(result.replace(/\s+/g, ' ').trim(), RESULT_DETAIL_CHARS)}`;
-    const error = (result && typeof result === 'object' && result.error) || (data && data.error);
-    if (error) return `⚠️ ${name} did not work: ${truncate(typeof error === 'string' ? error : JSON.stringify(error), RESULT_DETAIL_CHARS)}`;
-    const status = data && typeof data.status === 'string' ? data.status : '';
-    if (/^(?:failed|failure|rejected|error)$/i.test(status) || (data && data.success === false)) {
-        const detail = pick(data);
-        return `⚠️ ${name} did not work${detail ? `: ${detail}` : '.'}`;
+// Statuses a tool returns when the action happened, and ones that mean it did not.
+const DONE_STATUS_RE = /^(?:ok|success|succeeded|done|booked|cancelled|canceled|sent|created|updated|deleted|removed|completed|scheduled|approved|saved)$/i;
+const FAILED_STATUS_RE = /fail|error|reject|invalid|denied|refused|not_?found|unavailable|timeout|timed_?out/i;
+// Keys that only restate the outcome; left out of the fallback detail.
+const OUTCOME_KEYS = new Set(['ok', 'success', 'status', 'error']);
+
+function oneLine(text) {
+    return truncate(String(text).replace(/\s+/g, ' ').trim(), RESULT_DETAIL_CHARS);
+}
+
+/** The first readable text a result carries: message, summary, info, note, then a problems list. */
+function resultDetail(data) {
+    if (!data || typeof data !== 'object') return '';
+    for (const key of ['message', 'summary', 'info', 'note']) {
+        if (typeof data[key] === 'string' && data[key].trim()) return oneLine(data[key]);
     }
-    const detail = pick(data);
-    return `✅ Done: ${name}${detail ? `. ${detail}` : '.'}`;
+    for (const key of ['problems', 'warnings', 'errors']) {
+        const list = Array.isArray(data[key]) ? data[key].filter(v => typeof v === 'string' && v.trim()) : [];
+        if (list.length > 0) return oneLine(list.join('; '));
+    }
+    return '';
+}
+
+/** A few top-level fields as "key: value", when a result has no text of its own. */
+function compactFields(data) {
+    if (!data || typeof data !== 'object' || Array.isArray(data)) return '';
+    const rest = {};
+    for (const [key, value] of Object.entries(data)) {
+        if (!OUTCOME_KEYS.has(key)) rest[key] = value;
+    }
+    return Object.keys(rest).length > 0 ? oneLine(summarizeArgs(rest)) : '';
+}
+
+/**
+ * One line for the owner about an approved call that ran: whether it worked
+ * and the tool's own words for what happened, never raw JSON. A status it
+ * does not know is reported as finished, with the status.
+ */
+function approvedResultText(toolName, result, { untrusted = false } = {}) {
+    const name = String(toolName || 'the action');
+    if (untrusted) {
+        // Third-party text stays out of the line: it would land in the chat
+        // history as our own words, with no untrusted marker.
+        const data = parseToolOutput(result);
+        const failed = (result && typeof result === 'object' && result.error) || (data && (data.error || data.success === false || data.ok === false
+            || FAILED_STATUS_RE.test(typeof data.status === 'string' ? data.status : '')));
+        return failed ? `⚠️ ${name} did not work.` : `✅ Done: ${name}.`;
+    }
+    if (result === undefined || result === null) return `✅ Done: ${name}.`;
+    if (typeof result === 'string') {
+        const text = result.trim();
+        return text ? `✅ Done: ${name}. ${oneLine(text)}` : `✅ Done: ${name}.`;
+    }
+    const data = parseToolOutput(result);
+    const rawOutput = !data && typeof result.output === 'string' ? result.output.trim() : '';
+
+    const error = result.error !== undefined && result.error !== null && result.error !== false ? result.error
+        : (data && data.error !== undefined && data.error !== null && data.error !== false ? data.error : null);
+    if (error !== null) {
+        const src = data && data.error === error ? data : result;
+        let text;
+        if (typeof error === 'string') text = error;
+        else if (error === true) text = src.stderr || src.message || src.output || '';
+        else if (typeof error === 'object' && typeof error.message === 'string') text = error.message;
+        else { try { text = JSON.stringify(error); } catch { text = String(error); } }
+        text = typeof text === 'string' ? text : '';
+        return `⚠️ ${name} did not work${text.trim() ? `: ${oneLine(text)}` : '.'}`;
+    }
+
+    const status = data && typeof data.status === 'string' ? data.status.trim() : '';
+    const detail = resultDetail(data);
+    if (FAILED_STATUS_RE.test(status) || (data && (data.success === false || data.ok === false))) {
+        // Why it failed: listed problems, then the service's own message, before the tool's summary.
+        const nested = data && [data.portal, data.result, data.response].find(o => o && typeof o === 'object' && !Array.isArray(o));
+        const problems = data && ['problems', 'errors'].map(k => (Array.isArray(data[k]) ? data[k].filter(v => typeof v === 'string' && v.trim()) : []))
+            .find(list => list.length > 0);
+        const nestedText = nested && ['warning', 'message', 'confirmation', 'error'].map(k => nested[k]).find(v => typeof v === 'string' && v.trim());
+        const why = problems ? oneLine(problems.join('; '))
+            : nestedText ? oneLine(nestedText)
+                : (data && typeof data.message === 'string' && data.message.trim()) ? oneLine(data.message) : detail;
+        return `⚠️ ${name} did not work${why ? `: ${why}` : status ? ` (${status}).` : '.'}`;
+    }
+    if (status && !DONE_STATUS_RE.test(status)) {
+        return `Finished: ${name} (${status})${detail ? `. ${detail}` : '.'}`;
+    }
+    const extra = detail || (rawOutput ? oneLine(rawOutput) : compactFields(data));
+    return `✅ Done: ${name}${extra ? `. ${extra}` : '.'}`;
+}
+
+/** What the model reads when a call waits for the owner. No id: nothing for it to repeat. */
+function pausedInfo(toolName, why, where, delivered) {
+    return `Action PAUSED: '${toolName}' waits for the owner's approval. ${why || ''} ` +
+        `He sees a card with the details ${where}${delivered ? '' : ' (delivery is being retried)'}, and the call runs on its own once he approves. ` +
+        `Do not call it again, do not look for another way to do it, and do not ask him about it in text. ` +
+        `Do not mention the approval or its id. If nothing else needs saying, end this turn with no text.`;
 }
 
 function humanDuration(ms) {
@@ -393,6 +493,8 @@ class ApprovalService {
         if (sourceKind(message) !== 'chat') return false;
         const meta = message?.metadata || {};
         if (Array.isArray(meta.untrustedTaint) && meta.untrustedTaint.length > 0) return false;
+        // A WhatsApp or Slack chat opened on the web holds a contact's words, not his.
+        if (splitChannel(message?.source).channel === 'web' && /@|%40/.test(String(meta.chatId || ''))) return false;
         const cont = continuationOf(message);
         if (cont) {
             if (cont.ownerConsent !== true) return false;
@@ -418,6 +520,41 @@ class ApprovalService {
         const state = ApprovalService.newRun(runId);
         ACTIVE_RUNS.set(runId, { state, refs: 1 });
         return state;
+    }
+
+    /** Pending cards for the same action: same tool, same target (stepKey). */
+    _pendingSameAction(toolName, args) {
+        if (!this.hasStore()) return [];
+        try {
+            const key = stepKey(toolName, args);
+            return this.db.listPendingConfirmations().filter(r => r.tool_name === toolName && stepKey(r.tool_name, r.args) === key);
+        } catch (e) {
+            console.warn('[Approvals] pending lookup failed:', e.message);
+            return [];
+        }
+    }
+
+    /**
+     * The action is running, or a newer card asks for it: an older waiting
+     * card must not run it a second time on a later "ok". It is marked expired.
+     */
+    _supersede(rows, why) {
+        for (const r of rows || []) {
+            try {
+                const done = this.db.decidePendingConfirmation(r.id, 'expired', { via: 'superseded' });
+                if (!done) continue;
+                console.log(`[Approvals] ${r.id} (${r.tool_name}) superseded: ${why}.`);
+                this._broadcast({ id: r.id, status: 'expired', chatId: r.reply_chat_id, toolName: r.tool_name });
+            } catch (e) {
+                console.warn(`[Approvals] could not supersede ${r.id}: ${e.message}`);
+            }
+        }
+    }
+
+    /** A call runs now: its waiting duplicates go. Returns the review result. */
+    _running(toolName, args, result) {
+        this._supersede(this._pendingSameAction(toolName, args), 'the same action ran');
+        return result;
     }
 
     /** Drop one hold on a run's breaker state; it goes once no run uses it. */
@@ -548,7 +685,7 @@ class ApprovalService {
             gated = true;
             why = `The owner asked to approve these himself (always-ask: ${hits.additions.join(', ')}).`;
         }
-        if (!gated) return { run: true };
+        if (!gated) return this._running(toolName, args, { run: true });
 
         const floorHit = hits.floor.length > 0 || hits.additions.length > 0;
         const withHits = { ...base, floor: hits.floor, alwaysAsk: hits.additions };
@@ -558,12 +695,26 @@ class ApprovalService {
         if (cover === 'run') {
             const row = this._record({ ...withHits, outcome: 'owner_instructed', decidedBy: 'owner', reason: 'The owner asked for it in his own chat.' });
             console.log(`[Approvals] ${toolName} runs without a card: the owner asked for it in his chat.`);
-            return { run: true, decisionId: row?.id };
+            return this._running(toolName, args, { run: true, decisionId: row?.id });
         }
 
         if (settings.mode === 'off' && !floorHit) {
             const row = this._record({ ...withHits, outcome: 'ran_unasked', decidedBy: 'none', reason: 'Approvals are off.' });
-            return { run: true, decisionId: row?.id };
+            return this._running(toolName, args, { run: true, decisionId: row?.id });
+        }
+
+        // A card for this very action already waits where this run would ask:
+        // the owner answers that one. No second card, no guardian call.
+        const same = this._pendingSameAction(toolName, args);
+        if (same.length > 0) {
+            let route = null;
+            try { route = await this.route(message); } catch { route = null; }
+            const existing = route && route.replyChatId ? same.find(r => r.reply_chat_id === route.replyChatId) : null;
+            if (existing) {
+                console.log(`[Approvals] ${toolName} already waits for approval (${existing.id}); no second card.`);
+                const where = existing.mode === 'interactive' ? 'in this chat' : 'on his notification channel';
+                return { run: false, status: 'paused', result: { info: pausedInfo(toolName, existing.reason || why, where, true) } };
+            }
         }
 
         let verdict = null;
@@ -597,7 +748,7 @@ class ApprovalService {
         if (verdict && verdict.verdict === 'allow' && !floorHit) {
             const row = this._record({ ...withHits, ...guardianFields, outcome: 'auto_allowed', decidedBy: 'guardian' });
             console.log(`[Guardian] ${toolName} allowed (${verdict.risk}): ${verdict.reason}`);
-            return { run: true, decisionId: row?.id };
+            return this._running(toolName, args, { run: true, decisionId: row?.id });
         }
 
         if (verdict && verdict.verdict === 'deny') {
@@ -618,6 +769,8 @@ class ApprovalService {
             ...withHits, ...guardianFields, verdict: verdict ? 'escalate' : null,
             outcome: 'escalated', decidedBy: 'owner'
         });
+        // The new card replaces waiting cards for the same action in other chats.
+        this._supersede(same, 'a newer card asks for the same action');
         const preview = isTwoStepTool(toolName, serverName) ? (run?.previews?.get?.(stepKey(toolName, args)) || null) : null;
         const paused = await this.request({
             message, toolName, args, reason, sendCallback, taintSources: guard.tainted ? taintSources : null,
@@ -929,12 +1082,7 @@ class ApprovalService {
             paused: true,
             id: row.id,
             delivered,
-            result: {
-                info: `Action PAUSED: '${toolName}' waits for the owner's approval. ${whyForModel} ` +
-                    `He sees a card with the details ${where}${delivered ? '' : ' (delivery is being retried)'}, and the call runs on its own once he approves. ` +
-                    `Do not call it again, do not look for another way to do it, and do not ask him about it in text. ` +
-                    `Do not mention the approval or its id. If nothing else needs saying, end your turn with no text.`
-            }
+            result: { info: pausedInfo(toolName, whyForModel, where, delivered) }
         };
     }
 
@@ -965,12 +1113,10 @@ class ApprovalService {
     buildCard(row, { others = [], origin = '', ttlMs = null, mirrorOf = null } = {}) {
         const lines = [`🛑 Approval needed (id ${row.id})`];
         const preview = typeof row.origin_meta?.preview === 'string' ? row.origin_meta.preview : '';
+        // The check step's own summary says what will happen better than the raw arguments.
         if (preview) lines.push(`What: ${preview}`);
-        lines.push(
-            `Tool: ${row.tool_name}`,
-            `Args: ${row.summary || summarizeArgs(row.args)}`,
-            `Why: ${row.reason || 'the safety rules paused it'}`
-        );
+        else lines.push(`Tool: ${row.tool_name}`, `Args: ${row.summary || summarizeArgs(row.args)}`);
+        lines.push(`Why: ${row.reason || 'the safety rules paused it'}`);
         const taintSources = Array.isArray(row.origin_meta?.untrustedTaint) ? row.origin_meta.untrustedTaint : [];
         if (taintSources.length > 0) {
             const shown = taintSources.slice(0, 3).join('; ');
@@ -1089,14 +1235,19 @@ class ApprovalService {
         const chatId = message?.metadata?.chatId;
         if (!chatId || message.metadata?.isSubAgent) return null;
         const text = typeof message.content === 'string' ? message.content.trim() : '';
-        if (!text || text.startsWith('/')) return null;
-        const decision = decisionWord(text);
-        if (!decision) return null;
+        if (!text || text.startsWith('/') || text.length > 80) return null;
+        // Cheap test first: no card can take a reply that is not a yes or no word.
+        if (!decisionWord(text) && !decisionWord(text, { toolName: 'cancel' })) return null;
 
         const pending = await this.pendingHere(message);
         if (pending.length !== 1) return null;
+        const decision = decisionWord(text, { toolName: pending[0].tool_name });
+        if (!decision) return null;
         if (await this._questionOpen(message)) return null;
         try { this.db.saveMessage(message); } catch { /* history is best effort */ }
+        if (decision === 'ambiguous') {
+            return { handled: true, reply: await this._reply(message, 'Reply yes to cancel it, or no to keep it.', sendCallback) };
+        }
         return this.decide(pending[0].id, decision, { via: 'chat', message, sendCallback });
     }
 
@@ -1179,6 +1330,9 @@ class ApprovalService {
             return { handled: true, row, reply };
         }
 
+        // Other waiting cards for the same action must not run it again.
+        this._supersede(this._pendingSameAction(row.tool_name, row.args).filter(r => r.id !== row.id), 'the same action was approved');
+
         if (message && row.mode === 'interactive' && row.reply_chat_id === String(message.metadata?.chatId)) {
             return { handled: false, row, execute: { name: row.tool_name, args: row.args, approvalId: row.id } };
         }
@@ -1214,7 +1368,12 @@ class ApprovalService {
         }
         if (result === undefined || result === null) result = { info: 'No output from tool execution.' };
         try { this.db.setConfirmationResult(row.id, result); } catch (e) { console.warn('[Approvals] result store failed:', e.message); }
-        const text = approvedResultText(row.tool_name, result);
+        let untrusted = true;
+        try {
+            const serverName = this.agent.mcp?.toolMap?.get?.(row.tool_name)?.name || null;
+            untrusted = !!classifyToolResult(row.tool_name, { serverName, args: row.args, result }).untrusted;
+        } catch { untrusted = true; }
+        const text = approvedResultText(row.tool_name, result, { untrusted });
         const reply = await this._deliverTo(target, text, row);
         return { result, reply };
     }

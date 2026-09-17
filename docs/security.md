@@ -143,7 +143,10 @@ his approval. It counts when all of these hold:
 - the chat is his: any web chat, a Telegram id in `ALLOWED_TELEGRAM_IDS`,
   or his own WhatsApp chat;
 - the run has read no untrusted content and carries no taint from the run
-  that created it.
+  that created it. A forwarded WhatsApp or Telegram message arrives tainted
+  (`a forwarded message`), since it holds someone else's words;
+- a web message counts only in a web chat, not in a WhatsApp or Slack chat
+  opened on the web (an id with `@`).
 
 Then a call the rules above pause runs with no card and no guardian call,
 and the history stores `owner_instructed`. Three limits stay:
@@ -155,9 +158,20 @@ and the history stores `owner_instructed`. Three limits stay:
   `file-browser-profile`, a malformed call) take the usual path;
 - email, a first message to a contact and the house rules (`email-send`,
   `first-contact`, `ha-critical`, `ha-bulk`) run on his word only while the
-  history the model reads this turn holds no untrusted envelope. Rows
-  stored before envelopes existed are judged by the tool name
-  (`historyHasUntrusted`). Otherwise they take the usual path.
+  history the model reads this turn holds no third-party text: no untrusted
+  envelope (rows stored before envelopes existed are judged by the tool
+  name, `historyHasUntrusted`), and no row other people wrote in the same
+  window, such as a contact's message, a watcher alert or a tainted row, a
+  forked chat included (`originsHaveForeignText`). Otherwise they take the
+  usual path.
+
+**One card per action.** A card waits for an action (same tool, same target:
+`stepKey` in `apps/agent/src/utils/two-step-tools.js`). If the same call comes
+again where that card sits, the call pauses on it with no new card and no
+guardian call. If the action runs another way (his own request, a guardian
+allow, a call no rule gates) or he approves one of two copies, the other
+waiting cards are marked `expired` (`decided_via: superseded`), so a later
+"ok" cannot run it a second time.
 
 Before this, an explicit "book it" in his chat still raised a card for the
 check step and another for the booking.
@@ -187,8 +201,13 @@ buttons; the dashboard bell gets a notification.
 
 **Answers**: `/confirm <id>`, `/approve <id>`, `/cancel <id>`, `/deny <id>`
 work from any of the owner's chats (web, his Telegram, his WhatsApp);
-`/approvals` lists every pending row. A plain reply (`yes`, `si`, `sí`,
-`ok`, `dale`, `approve`, `confirm`; `no`, `cancel`, `cancelar`, `deny`)
+`/approvals` lists every pending row. A plain reply of at most five words
+counts when every word is on a short list and one says yes (`yes`, `si`,
+`ok`, `dale`, `confirmo`, `👍`, with fillers such as `por favor` or
+`reservalo`) or no (`no`, `nope`, `cancel`, `cancelar`, with fillers such as
+`gracias` or `dejalo`). "ok gracias" or "yes, send it tomorrow" go to the
+model. On a card that cancels something, a bare `cancel` or `cancelar` could
+mean either answer, so the owner is asked to reply yes or no. A reply
 counts only when all three hold: the card was delivered to this very chat
 (for a job, that is the owner channel), it is the only approval pending
 there, and no `askUser` question is open there. In every other case the
@@ -209,7 +228,11 @@ as a chat row, is not read as the owner's message, and keeps the paused
 run's consent (`origin_meta.ownerConsent`) and taint. A result a third party
 wrote reaches the model in an untrusted envelope and taints that run. If the
 model fails or says nothing, the owner gets one line built from the tool's
-own summary. A deferred call, or one decided from the settings card or
+own summary, and that line is stored so a later turn knows the call ran. A
+/stop sent while the approved call runs holds: no resumed run starts. When a
+third party wrote the result (by `classifyToolResult`), the line says only
+whether it worked, so none of that text lands in history as our own words.
+The resumed reply names the approval, so the web card drops its buttons. A deferred call, or one decided from the settings card or
 another chat, runs from the service with the stored arguments in the
 original run's context (source, chat id, job name); the owner gets that one
 line, never raw JSON. The executor receives `context.approved = true`.

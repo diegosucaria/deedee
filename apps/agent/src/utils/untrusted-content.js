@@ -601,6 +601,30 @@ function historyHasUntrusted(history, serverOf = () => null) {
     return false;
 }
 
+// Row sources that hold other people's words: a contact's WhatsApp messages, Slack.
+const FOREIGN_SOURCE_RE = /^(?:whatsapp:user|slack)\b/;
+
+/**
+ * Do a chat's newest rows hold text someone other than the owner or the
+ * agent wrote, outside a tool result? A contact's message, a watcher alert,
+ * or a message stored with taint (a forwarded message, a tainted job's
+ * prompt). Rows come from AgentDB.getRecentMessageOrigins.
+ * @param {Array<{ role: string, source?: string, head?: string, metadata?: string|object }>} rows
+ */
+function originsHaveForeignText(rows) {
+    for (const r of Array.isArray(rows) ? rows : []) {
+        if (!r || r.role !== 'user') continue;
+        if (FOREIGN_SOURCE_RE.test(String(r.source || ''))) return true;
+        if (String(r.head || '').startsWith('SYSTEM_WATCHER_ALERT')) return true;
+        let meta = r.metadata;
+        if (typeof meta === 'string') {
+            try { meta = JSON.parse(meta); } catch { meta = null; }
+        }
+        if (meta && Array.isArray(meta.untrustedTaint) && meta.untrustedTaint.length > 0) return true;
+    }
+    return false;
+}
+
 // --- taint carried by jobs and watchers ---
 
 const MAX_CARRIED_SOURCES = 10;
@@ -642,6 +666,7 @@ module.exports = {
     wrapUntrusted,
     isUntrustedEnvelope,
     historyHasUntrusted,
+    originsHaveForeignText,
     taintedAction,
     haEntityIds,
     isPlainFetch,

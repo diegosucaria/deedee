@@ -44,7 +44,7 @@ const { AskUserService } = require('./services/ask-user');
 const { BrowserLive } = require('./services/browser-live');
 const { ToolScoper } = require('./services/tool-scoper');
 const { sanitizeToolResult, sanitizeToolArgs } = require('./utils/tool-result-sanitizer');
-const { classifyToolResult, wrapUntrusted, historyHasUntrusted, TurnTaint, taintFromPayload, taintPayloadFields } = require('./utils/untrusted-content');
+const { classifyToolResult, wrapUntrusted, historyHasUntrusted, originsHaveForeignText, TurnTaint, taintFromPayload, taintPayloadFields } = require('./utils/untrusted-content');
 const { BrowserPageState } = require('./utils/browser-gate');
 
 /** The taint stored on a watcher row (taint_sources JSON), as { tainted, taintSources }. */
@@ -63,6 +63,12 @@ const { buildFunctionResponseParts, stripInlineParts, imagesAsUserContent, isPar
 // "[01/02 10:00] " at the start of a reply: the model copying the time
 // stamps history carries on the owner's messages.
 const LEADING_STAMP_RE = /^(?:\s*\[\d{2}\/\d{2} \d{2}:\d{2}\]\s*)+/;
+/** Marks a reply as the outcome of an approval, so the chat page drops that card's buttons. */
+function approvedMeta(continuation) {
+  if (!continuation || !continuation.approvalId) return {};
+  return { approval: { id: continuation.approvalId, status: 'approved', toolName: continuation.toolName || null } };
+}
+
 function stripLeadingStamp(text) {
   return typeof text === 'string' ? text.replace(LEADING_STAMP_RE, '') : text;
 }
@@ -70,7 +76,7 @@ function stripLeadingStamp(text) {
 // The approved call's result as the resumed run's model reads it.
 const RESUME_RESULT_CHARS = 6000;
 // Metadata the resumed run keeps from the owner's answer.
-const RESUME_META_KEYS = ['session', 'phoneNumber', 'isGroup', 'groupName', 'thinking', 'turnId'];
+const RESUME_META_KEYS = ['session', 'phoneNumber', 'isGroup', 'groupName', 'thinking', 'turnId', 'model', 'location'];
 const browserSecrets = require('./utils/browser-secrets');
 const { sanitizeFunctionDeclarations } = require('./utils/gemini-schema-sanitizer');
 const { filterCalendarResult } = require('./utils/calendar-filter');
@@ -428,8 +434,29 @@ class Agent {
    */
   async _resumeAfterApproval({ message, action, result, row = null, approvedTaint = null, sendCallback, onProgress }) {
     const chatId = message?.metadata?.chatId;
-    const fallbackText = approvedResultText(action.name, result);
     const serverName = this.mcp?.toolMap?.get?.(action.name)?.name || null;
+    let verdict;
+    try {
+      verdict = classifyToolResult(action.name, { serverName, args: action.args, result });
+    } catch {
+      verdict = { untrusted: true, kind: 'an unknown tool' };
+    }
+    const fallbackText = approvedResultText(action.name, result, { untrusted: !!verdict.untrusted });
+    const sendOutcome = async () => {
+      const reply = createAssistantMessage(fallbackText);
+      reply.metadata = { chatId, ...approvedMeta({ approvalId: action.approvalId, toolName: action.name }) };
+      reply.source = message?.source;
+      try { this.db.saveMessage(reply); } catch { /* history is best effort */ }
+      try { await this._deliverReply(sendCallback, reply, message); } catch (err) {
+        console.error('[Agent] Could not deliver the approved outcome:', err.message);
+      }
+      return { replies: [reply], toolOutputs: [] };
+    };
+    // The owner sent /stop while the approved call ran: tell him how it went, start nothing.
+    if (this.stopFlags.has(chatId) || this.stopFlags.has('GLOBAL_STOP')) {
+      console.log(`[Agent] Stop requested during approved ${action.name}; not resuming the chat.`);
+      return sendOutcome();
+    }
     const taintSources = approvedTaint?.tainted ? [...approvedTaint.sources] : [];
 
     let shown = result;
@@ -437,12 +464,6 @@ class Agent {
       shown = sanitizeToolResult(action.name, filterCalendarResult(action.name, result, this.settings, this.mcp?.toolMap));
     } catch (e) {
       console.warn(`[Agent] Approved result not sanitized (${action.name}): ${e.message}`);
-    }
-    let verdict;
-    try {
-      verdict = classifyToolResult(action.name, { serverName, args: action.args, result });
-    } catch {
-      verdict = { untrusted: true, kind: 'an unknown tool' };
     }
     if (verdict.untrusted) {
       shown = wrapUntrusted(action.name, shown, verdict.kind);
@@ -480,14 +501,7 @@ class Agent {
       return { replies: summary?.replies || [], toolOutputs: summary?.toolOutputs || [] };
     } catch (e) {
       console.error(`[Agent] Resumed run after approval failed: ${e.message}`);
-      const reply = createAssistantMessage(fallbackText);
-      reply.metadata = { chatId };
-      reply.source = message?.source;
-      try { this.db.saveMessage(reply); } catch { /* history is best effort */ }
-      try { await this._deliverReply(sendCallback, reply, message); } catch (err) {
-        console.error('[Agent] Could not deliver the approved outcome:', err.message);
-      }
-      return { replies: [reply], toolOutputs: [] };
+      return sendOutcome();
     }
   }
 
@@ -1337,7 +1351,9 @@ class Agent {
       }
 
       // Clear stop flag for this chat on new message (unless it's the stop command itself, handled by command handler)
-      if (message.content !== '/stop') {
+      // A resumed run is not new input: a /stop sent while the approved call
+      // ran must still hold.
+      if (message.content !== '/stop' && !continuation) {
         this.stopFlags.delete(chatId);
         this.stopFlags.delete('GLOBAL_STOP');
       }
@@ -1371,13 +1387,23 @@ class Agent {
 
         executionSummary.toolOutputs.push({ name: action.name, result });
 
-        // The model gets the result in a run of its own: it tells the owner
-        // the outcome in plain words and finishes what he asked for.
-        const resumed = await this._resumeAfterApproval({
-          message, action, result, row: approvedRow, approvedTaint, sendCallback: activeSendCallback, onProgress
-        });
-        executionSummary.toolOutputs.push(...(resumed?.toolOutputs || []));
-        executionSummary.replies.push(...(resumed?.replies || []));
+        if (action.approvalId) {
+          // The model gets the result in a run of its own: it tells the owner
+          // the outcome in plain words and finishes what he asked for.
+          const resumed = await this._resumeAfterApproval({
+            message, action, result, row: approvedRow, approvedTaint, sendCallback: activeSendCallback, onProgress
+          });
+          executionSummary.toolOutputs.push(...(resumed?.toolOutputs || []));
+          executionSummary.replies.push(...(resumed?.replies || []));
+          return executionSummary;
+        }
+
+        // A slash command that runs a tool (/consolidate, a skill command): report it directly.
+        const reply = createAssistantMessage(`Action **${action.name}** executed.\nResult: \`\`\`json\n${JSON.stringify(result, null, 2).substring(0, 500)}\n\`\`\``);
+        reply.metadata = { chatId };
+        reply.source = message.source;
+        await this._deliverReply(activeSendCallback, reply, message);
+        executionSummary.replies.push(reply);
         return executionSummary;
       } else if (commandResult === true) {
         // Handled by command handler (e.g. /clear, /cancel)
@@ -1854,11 +1880,17 @@ class Agent {
       // Third-party text the model reads in this history: the owner's word in
       // his chat then no longer covers messages, email or the house on its
       // own (ApprovalService.review). Unreadable history counts as untrusted.
+      // Rows other people wrote count too: a contact's messages in a chat
+      // opened (or forked) on the web, Slack, forwarded messages.
       let historyUntrusted = true;
       try {
-        historyUntrusted = historyHasUntrusted(history, (name) => this.mcp?.toolMap?.get?.(name)?.name || null);
+        historyUntrusted = historyHasUntrusted(history, (name) => this.mcp?.toolMap?.get?.(name)?.name || null)
+          || (typeof this.db.getRecentMessageOrigins === 'function'
+            ? originsHaveForeignText(this.db.getRecentMessageOrigins(chatId, decision.model === 'FLASH' ? 20 : 50))
+            : true);
       } catch (e) {
         console.warn(`${logPrefix} History trust check failed: ${e.message}`);
+        historyUntrusted = true;
       }
 
       const historyChars = JSON.stringify(history).length;
@@ -2786,7 +2818,8 @@ class Agent {
           reply.metadata = {
             chatId: message.metadata?.chatId,
             model: decision.model,
-            thinking: sessionThinking?.thinkingLevel || null
+            thinking: sessionThinking?.thinkingLevel || null,
+            ...approvedMeta(continuation)
           };
           reply.source = message.source; // Ensure reply source matches incoming message source
           reply.cost = e2eCost;
@@ -2812,7 +2845,7 @@ class Agent {
         // The model said nothing after an approved call: the owner still hears how it went.
         console.log('[Agent] No text after an approved call. Sending its outcome.');
         const reply = createAssistantMessage(continuation.fallbackText || 'Done.');
-        reply.metadata = { chatId: message.metadata?.chatId };
+        reply.metadata = { chatId: message.metadata?.chatId, ...approvedMeta(continuation) };
         reply.source = message.source;
         this.db.saveMessage(reply);
         await this._deliverReply(activeSendCallback, reply, message);
@@ -2875,8 +2908,12 @@ class Agent {
 
       // After an approved call the action already ran: say how it went first.
       const errReply = createAssistantMessage(continuation?.fallbackText ? `${continuation.fallbackText}\n⚠️ ${userMessage}` : `⚠️ ${userMessage}`);
-      errReply.metadata = { chatId: message.metadata?.chatId };
+      errReply.metadata = { chatId: message.metadata?.chatId, ...approvedMeta(continuation) };
       errReply.source = message.source;
+      // After an approved call the history must show it ran, or a later turn may run it again.
+      if (continuation) {
+        try { this.db.saveMessage(errReply); } catch (saveErr) { console.warn('[Agent] Could not store the approved outcome:', saveErr.message); }
+      }
       try {
         await this._deliverReply(activeSendCallback, errReply, message);
       } catch (sendErr) {

@@ -1998,6 +1998,21 @@ class AgentDB {
     return this._mapHistoryRows(rows);
   }
 
+  /**
+   * Role, source, the first 40 characters and the metadata of a chat's newest
+   * rows, newest first. The approval gate reads it to tell the owner's words
+   * from other people's (untrusted-content.js originsHaveForeignText).
+   */
+  getRecentMessageOrigins(chatId, limit = 100) {
+    if (!chatId) return [];
+    return this.db.prepare(`
+      SELECT role, source, substr(content, 1, 40) AS head, metadata FROM messages
+      WHERE chat_id = ?
+      ORDER BY timestamp DESC, rowid DESC
+      LIMIT ?
+    `).all(chatId, Math.max(1, Math.min(200, Number(limit) || 100)));
+  }
+
   /** The newest role-user rows of one chat, newest first: { id, content }. */
   getRecentUserMessages(chatId, limit = 5) {
     if (!chatId) return [];

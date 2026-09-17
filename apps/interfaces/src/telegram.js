@@ -89,6 +89,11 @@ class TelegramService {
       const message = createUserMessage(text, 'telegram', userId);
       // Attach chatId to metadata so we know where to reply
       message.metadata = { chatId };
+      // A forwarded message holds someone else's words: the agent treats it as untrusted content.
+      const m = ctx.message || {};
+      if (m.forward_origin || m.forward_from || m.forward_from_chat || m.forward_sender_name || m.forward_date) {
+        message.metadata.untrustedTaint = ['a forwarded message (telegram)'];
+      }
 
       // Forward to Agent
       await axios.post(`${this.agentUrl}/webhook`, message);

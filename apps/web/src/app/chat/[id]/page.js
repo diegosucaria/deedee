@@ -922,12 +922,27 @@ export default function ChatSessionPage({ params }) {
     };
 
     // Approve / Deny buttons on an approval card send the slash command for
-    // that id; the agent answers with the result in this chat.
+    // that id. An approval runs the call and then a model turn that reports
+    // it, so it is a turn of its own: a fresh turn id, the waiting state, and
+    // the queue when another turn is still running.
     const [decidedApprovals, setDecidedApprovals] = useState(() => new Set());
     const answerApproval = (id, approve) => {
         if (!socketRef.current || !id) return;
         setDecidedApprovals(prev => new Set(prev).add(id));
-        sendOption(`${approve ? '/confirm' : '/cancel'} ${id}`);
+        const text = `${approve ? '/confirm' : '/cancel'} ${id}`;
+        const timestamp = new Date().toISOString();
+        const turnId = (typeof crypto !== 'undefined' && crypto.randomUUID)
+            ? crypto.randomUUID()
+            : `turn-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+        const entry = {
+            socketPayload: { content: text, files: [], chatId, metadata: { turnId } },
+            optimisticBubbles: [{ role: 'user', content: text, type: 'text', timestamp }]
+        };
+        if (inFlightRef.current) {
+            updateQueue([...outgoingQueueRef.current, { queueId: turnId, ...entry, summaryText: text, queuedAt: timestamp, attachmentCount: 0 }]);
+        } else {
+            dispatchTurn(entry);
+        }
     };
     // Ids whose decision already shows later in the thread (the result message
     // carries metadata.approval with the final status).

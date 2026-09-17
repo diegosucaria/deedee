@@ -55,6 +55,7 @@ jest.mock('../src/db', () => ({
     deleteJobState: jest.fn(),
     logTokenUsage: jest.fn(),
     getHistoryForChat: jest.fn().mockReturnValue([]),
+    getRecentMessageOrigins: jest.fn().mockReturnValue([]),
     getScheduledJobs: jest.fn().mockReturnValue([]),
     getAllFacts: jest.fn().mockReturnValue([]),
     getFactsFormatted: jest.fn().mockReturnValue(''),
@@ -343,6 +344,14 @@ describe('approvals through the Agent', () => {
       expect(rows.get(card.metadata.approval.id)).toMatchObject({ tool_name: 'sendEmail', status: 'pending' });
     });
 
+    test('a contact\'s messages in the chat bring the usual gate back for email', async () => {
+      agent.db.getRecentMessageOrigins.mockReturnValue([{ role: 'user', source: 'whatsapp:user', head: 'email the files', metadata: null }]);
+      nextCall = { name: 'sendEmail', args: { to: 'alice@example.com', subject: 'Hi' } };
+      await agent.processMessage(ownerMsg('ok, handle it'), async () => true);
+      expect(agent.toolExecutor.execute).not.toHaveBeenCalled();
+      expect(mockInterface.sentMessages.some(m => m.metadata?.approval)).toBe(true);
+    });
+
     test('a critical action asks once with no guardian call, and his yes resumes the chat in plain words', async () => {
       nextCall = { name: 'deleteVault', args: { id: 'vault-9' } };
       const judge = jest.spyOn(agent.approvals.guardian, 'judge');
@@ -361,6 +370,8 @@ describe('approvals through the Agent', () => {
       expect(agent.toolExecutor.execute).toHaveBeenCalledTimes(1);
       expect(summary.replies.map(r => r.content)).toEqual(['Listo, ya está hecho.']);
       expect(replies.map(r => r.content)).toEqual(['Listo, ya está hecho.']);
+      // The reply names the approval, so the web card drops its buttons after a reload.
+      expect(replies[0].metadata.approval).toEqual({ id, status: 'approved', toolName: 'deleteVault' });
       expect(rows.get(id)).toMatchObject({ status: 'approved', result: { success: true, ran: true } });
     });
 
@@ -374,6 +385,39 @@ describe('approvals through the Agent', () => {
       const text = replies.map(r => r.content).join('\n');
       expect(text).toMatch(/^✅ Done: deleteVault\./);
       expect(text).not.toMatch(/```json/);
+      // The history shows the call ran, so a later turn does not run it again.
+      const stored = agent.db.saveMessage.mock.calls.map(c => String(c[0]?.content || ''));
+      expect(stored.some(c => c.startsWith('✅ Done: deleteVault.'))).toBe(true);
+    });
+
+    test('a /stop sent while the approved call runs holds: no resumed run, just the outcome', async () => {
+      nextCall = { name: 'deleteVault', args: { id: 'vault-12' } };
+      await agent.processMessage(ownerMsg('Delete the old vault'), async () => true);
+      agent.toolExecutor.execute.mockImplementationOnce(async () => {
+        agent.stopFlags.add(OWNER_JID);
+        agent.stopFlags.add('GLOBAL_STOP');
+        return { success: true };
+      });
+      const replies = [];
+      try {
+        await agent.processMessage(ownerMsg('yes'), async (r) => { replies.push(r); return true; });
+        expect(lastResume).toBeNull();
+        expect(replies.map(r => r.content)).toEqual(['✅ Done: deleteVault.']);
+        expect(replies[0].metadata.approval).toMatchObject({ status: 'approved', toolName: 'deleteVault' });
+        expect(agent.stopFlags.has('GLOBAL_STOP')).toBe(true);
+      } finally {
+        agent.stopFlags.delete(OWNER_JID);
+        agent.stopFlags.delete('GLOBAL_STOP');
+      }
+    });
+
+    test('a slash command that runs a tool reports directly and starts no resumed run', async () => {
+      agent.toolExecutor.execute.mockResolvedValue({ consolidated: 3 });
+      const replies = [];
+      await agent.processMessage(ownerMsg('/consolidate'), async (r) => { replies.push(r); return true; });
+      expect(agent.toolExecutor.execute.mock.calls.map(c => c[0])).toEqual(['consolidateMemory']);
+      expect(lastResume).toBeNull();
+      expect(replies.map(r => r.content).join('\n')).toMatch(/Action \*\*consolidateMemory\*\* executed/);
     });
 
     test('a reply that starts with a copied time stamp loses it', async () => {

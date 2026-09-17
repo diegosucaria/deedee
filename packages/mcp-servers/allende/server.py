@@ -1027,8 +1027,9 @@ def cancel_appointment(appointmentId: int, reasonId: int = DEFAULT_CANCEL_REASON
                  looks the appointment up and returns it for approval.
 
     Cancel only with the user's explicit OK. When the user already told you to
-    cancel this appointment, that is the OK: call with confirm=True without
-    asking again. Otherwise show the summary and ask. Cancelling is final —
+    cancel this appointment, or to move it to another slot, that is the OK:
+    call with confirm=True without asking again. Otherwise show the summary
+    and ask. Cancelling is final —
     rebooking means taking a new slot, which someone else may have taken by then.
     """
     try:
@@ -1070,8 +1071,8 @@ def cancel_appointment(appointmentId: int, reasonId: int = DEFAULT_CANCEL_REASON
                 "appointment": found,
                 "reasons": [{"id": k, "label": v} for k, v in sorted(CANCEL_REASONS.items())],
                 "note": "Nothing was cancelled. If the user already asked you to cancel this "
-                        "appointment, call cancel_appointment again with confirm=True now. "
-                        "Otherwise show this to the user and ask.",
+                        "appointment (asking to move it counts), call cancel_appointment again "
+                        "with confirm=True now. Otherwise show this to the user and ask.",
             })
 
         body = {"IdTurno": appointmentId, "IdMotivoDeAnulacionTurno": reasonId}

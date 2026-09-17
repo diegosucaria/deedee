@@ -37,16 +37,42 @@ function isTwoStepTool(toolName, serverName) {
     return !!(tools && tools.has(String(toolName || '')));
 }
 
-/** The arguments without `confirm`, as a stable key: the preview and the real call share it. */
+// The arguments that name what a two-step call acts on. The real call may
+// add others (a reason, a note) that the check step left out.
+const KEY_ARGS = Object.freeze({
+    book_appointment: ['slot_ref'],
+    cancel_appointment: ['appointmentId'],
+    book_turn: ['planeId', 'date', 'timeFrom', 'timeTo'],
+    cancel_turn: ['turnId'],
+});
+
+function stableJson(value) {
+    if (value === undefined) return 'null';
+    if (value === null || typeof value !== 'object') return JSON.stringify(value);
+    if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`;
+    return `{${Object.keys(value).sort().map(k => `${JSON.stringify(k)}:${stableJson(value[k])}`).join(',')}}`;
+}
+
+/**
+ * A key for "the same action": the check step and the real call of a
+ * two-step tool share it (only the arguments that name the target count),
+ * and so do two identical calls of any other tool (all arguments).
+ */
 function stepKey(toolName, args) {
-    const rest = {};
+    const name = String(toolName || '');
     const src = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
-    for (const key of Object.keys(src).sort()) {
-        if (key !== 'confirm') rest[key] = src[key];
+    const keys = KEY_ARGS[name];
+    let picked = src;
+    if (keys && keys.every(k => src[k] !== undefined && src[k] !== null && src[k] !== '')) {
+        picked = {};
+        for (const k of keys) picked[k] = String(src[k]);
+    } else if (keys) {
+        picked = {};
+        for (const k of Object.keys(src)) if (k !== 'confirm') picked[k] = src[k];
     }
     let json;
-    try { json = JSON.stringify(rest); } catch { json = '{}'; }
-    return `${String(toolName || '')}:${json}`;
+    try { json = stableJson(picked); } catch { json = '{}'; }
+    return `${name}:${json}`;
 }
 
 /**
@@ -75,4 +101,4 @@ function previewSummary(result) {
     return text.length > SUMMARY_CHARS ? `${text.slice(0, SUMMARY_CHARS - 1)}…` : text;
 }
 
-module.exports = { TWO_STEP, isPreviewCall, isTwoStepTool, stepKey, parseToolOutput, previewSummary };
+module.exports = { TWO_STEP, KEY_ARGS, isPreviewCall, isTwoStepTool, stepKey, parseToolOutput, previewSummary };

@@ -403,7 +403,8 @@ describe('ApprovalService', () => {
             expect(res.handled).toBe(true);
             expect(res.result).toEqual({ error: 'smtp down' });
             expect(db.getPendingConfirmation(req.id).result).toEqual({ error: 'smtp down' });
-            expect(sentTexts(agent).pop().content).toBe('⚠️ sendEmail did not work: smtp down');
+            // sendEmail is no tool the trust map knows, so its text stays out of the line.
+            expect(sentTexts(agent).pop().content).toBe('⚠️ sendEmail did not work.');
         });
 
         test('progress a tool sends while running is relayed to the owner', async () => {

@@ -748,8 +748,8 @@ def cancel_turn(turnId: int, confirm: bool = False) -> str:
                  summary of the turn for the user to approve — nothing is sent.
 
     Cancel only with the user's explicit OK. When the user already told you to
-    cancel this turn, that is the OK: call with confirm=True without asking
-    again. Otherwise show the summary and ask.
+    cancel this turn, or to move it, that is the OK: call with confirm=True
+    without asking again. Otherwise show the summary and ask.
     """
     try:
         _boot()
@@ -778,9 +778,9 @@ def cancel_turn(turnId: int, confirm: bool = False) -> str:
             return _json({
                 "status": "needs_confirmation",
                 "summary": summary,
-                "note": "Nothing was cancelled. If the user already asked you to cancel this turn, "
-                        "re-call cancel_turn with confirm=True now. Otherwise show this to the user "
-                        "and ask.",
+                "note": "Nothing was cancelled. If the user already asked you to cancel this turn "
+                        "(asking to move it counts), re-call cancel_turn with confirm=True now. "
+                        "Otherwise show this to the user and ask.",
             })
 
         resp = _api("PUT", f"/api/v3/school/id/{_S.school_id}/turns/status",
