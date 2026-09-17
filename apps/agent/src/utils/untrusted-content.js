@@ -99,7 +99,10 @@ const MCP_SERVERS = Object.freeze({
     homeassistant: (tool, { args, result } = {}) => {
         if (/calendar/i.test(tool)) return 'calendar events';
         if (/todo/i.test(tool)) return 'todo items';
-        return haTextEntityKind(args) || haTextEntityKind(result);
+        // A call that targets such an entity reads its text. A result that
+        // only lists the entity id (a search) carries none; one that also
+        // holds event or item fields does.
+        return haTextEntityKind(args) || (HA_TEXT_FIELD_RE.test(textOf(result)) ? haTextEntityKind(result) : null);
     },
     // The owner's own flows.
     'node-red': () => null,
@@ -113,16 +116,21 @@ const MCP_SERVERS = Object.freeze({
 
 // A Home Assistant entity id whose attributes carry other people's text.
 const HA_TEXT_ENTITY_RE = /(?:^|[^a-z0-9_])(calendar|todo)\.[a-z0-9_]+/i;
+// Fields that hold that text: a calendar event's message, description or
+// location, a todo list's items and their summary.
+const HA_TEXT_FIELD_RE = /["']?\b(?:message|description|summary|location|items|attendees|organizer)\b["']?\s*:/i;
+
+function textOf(value) {
+    if (value == null) return '';
+    try {
+        return typeof value === 'string' ? value : String(JSON.stringify(value) || '');
+    } catch {
+        return '';
+    }
+}
 
 function haTextEntityKind(value) {
-    if (value == null) return null;
-    let text;
-    try {
-        text = typeof value === 'string' ? value : JSON.stringify(value);
-    } catch {
-        return null;
-    }
-    const m = HA_TEXT_ENTITY_RE.exec(String(text || ''));
+    const m = HA_TEXT_ENTITY_RE.exec(textOf(value));
     if (!m) return null;
     return m[1].toLowerCase() === 'calendar' ? 'calendar events' : 'todo items';
 }
@@ -352,26 +360,64 @@ function isOwnCalendarEvent(toolName, args, method) {
     return !hasAttendees(args);
 }
 
-function haDomains(args) {
+/**
+ * Every entity id a Home Assistant call names: `entity_id`, `entity_ids`
+ * and `entities` (a list, a string, or the `{ entity: state }` map of
+ * scene.apply and scene.create), `snapshot_entities`, and the same keys
+ * inside `target`, `data`, `service_data` (objects or JSON strings) and
+ * bulk `operations`.
+ */
+function haEntityIds(args) {
     const out = [];
+    const seen = new Set();
     const push = (id) => {
-        const s = String(id ?? '');
-        if (s === 'all') out.push('all');
-        const dot = s.indexOf('.');
-        if (dot > 0) out.push(s.slice(0, dot));
+        if (id == null || typeof id === 'object') return;
+        const s = String(id).trim();
+        if (s) out.push(s);
     };
-    const collect = (obj) => {
-        if (!obj || typeof obj !== 'object') return;
-        if (obj.domain) out.push(String(obj.domain));
-        for (const key of ['entity_id', 'entity_ids', 'entities']) {
+    const collect = (value, depth = 0) => {
+        const obj = asObject(value);
+        if (!obj || depth > 4 || seen.has(obj)) return;
+        seen.add(obj);
+        if (Array.isArray(obj)) { obj.forEach(o => collect(o, depth + 1)); return; }
+        for (const key of ['entity_id', 'entity_ids', 'entities', 'snapshot_entities']) {
             const v = obj[key];
-            if (Array.isArray(v)) v.forEach(push); else if (v !== undefined) push(v);
+            if (Array.isArray(v)) v.forEach(push);
+            else if (v && typeof v === 'object') Object.keys(v).forEach(push);
+            else if (v !== undefined) push(v);
         }
+        for (const key of ['target', 'data', 'service_data']) {
+            if (obj[key] != null) collect(obj[key], depth + 1);
+        }
+        if (Array.isArray(obj.operations)) obj.operations.forEach(o => collect(o, depth + 1));
     };
     collect(args);
-    if (args && typeof args.data === 'object') collect(args.data);
-    if (args && typeof args.service_data === 'object') collect(args.service_data);
-    if (Array.isArray(args?.operations)) args.operations.forEach(collect);
+    return out;
+}
+
+/** The domains a Home Assistant call touches: the service domains and the entities' domains. */
+function haDomains(args) {
+    const out = [];
+    const ids = haEntityIds(args);
+    for (const s of ids) {
+        if (s === 'all') { out.push('all'); continue; }
+        const dot = s.indexOf('.');
+        if (dot > 0) out.push(s.slice(0, dot));
+    }
+    const serviceDomains = [];
+    const addDomain = (obj) => {
+        const o = asObject(obj);
+        if (o && !Array.isArray(o) && o.domain) serviceDomains.push(String(o.domain));
+    };
+    addDomain(args);
+    if (Array.isArray(args?.operations)) args.operations.forEach(addDomain);
+    for (const d of serviceDomains) {
+        // homeassistant.turn_on/turn_off/toggle act through each entity's own
+        // domain: judge those. Without entities (restart, stop) the domain
+        // itself counts and asks.
+        if (d === 'homeassistant' && ids.length > 0) continue;
+        out.push(d);
+    }
     return out;
 }
 
@@ -390,6 +436,11 @@ function taintedAction(toolName, args, { serverName = null, isOwnerTarget = () =
             // A message to the owner himself is how jobs and watchers report.
             return isOwnerTarget(a) ? null : 'send a message';
         case 'sendSlackMessage': return 'send a Slack message';
+        // A changed number redirects later messages "to" this contact.
+        case 'updatePerson': {
+            const u = asObject(a.updates) || {};
+            return u.phone !== undefined ? "change a contact's phone number" : null;
+        }
         // A plain GET (curl/wget, no pipe, redirect, upload or output file)
         // only reads, and its result comes back wrapped as untrusted.
         case 'runShellCommand': return isPlainFetch(a.command) ? null : 'run a shell command';
@@ -473,6 +524,7 @@ module.exports = {
     wrapUntrusted,
     isUntrustedEnvelope,
     taintedAction,
+    haEntityIds,
     isPlainFetch,
     isOwnCalendarEvent,
     TurnTaint,

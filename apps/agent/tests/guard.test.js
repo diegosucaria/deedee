@@ -108,6 +108,14 @@ describe('ConfirmationManager', () => {
         expect(check('ha_call_service', { domain: 'automation', service: 'turn_off' }).requiresConfirmation).toBe(true);
         expect(check('ha_call_service', { domain: 'switch', service: 'turn_on', entity_id: 'all' }).requiresConfirmation).toBe(true);
         expect(check('ha_get_state', { entity_id: 'lock.front' }).requiresConfirmation).toBe(false);
+        // A scene applied or a generic call naming a lock or a garage asks, in any argument shape.
+        expect(check('ha_call_service', { domain: 'scene', service: 'apply', data: { entities: { 'lock.front_door': 'unlocked' } } }).requiresConfirmation).toBe(true);
+        expect(check('ha_call_service', { domain: 'scene', service: 'apply', data: { entities: { 'cover.garage_door': 'open' } } }).requiresConfirmation).toBe(true);
+        expect(check('ha_call_service', { domain: 'homeassistant', service: 'turn_on', entity_id: 'lock.front' }).requiresConfirmation).toBe(true);
+        expect(check('ha_call_service', { domain: 'homeassistant', service: 'turn_on', target: { entity_id: 'cover.garage_door' } }).requiresConfirmation).toBe(true);
+        expect(check('ha_call_service', { domain: 'homeassistant', service: 'turn_off', entity_id: 'automation.morning' }).requiresConfirmation).toBe(true);
+        expect(check('ha_call_service', { domain: 'homeassistant', service: 'turn_off', entity_id: 'all' }).requiresConfirmation).toBe(true);
+        expect(check('ha_call_service', { domain: 'cover', service: 'open_cover', target: { entity_id: ['cover.garage_door'] } }).requiresConfirmation).toBe(true);
     });
 
     test('everyday Home Assistant control runs unasked: lights, climate, blinds, closing the garage', () => {
@@ -117,6 +125,8 @@ describe('ConfirmationManager', () => {
         expect(check('ha_call_service', { domain: 'climate', service: 'turn_on', entity_id: 'climate.living' }).requiresConfirmation).toBe(false);
         expect(check('ha_call_service', { domain: 'cover', service: 'open_cover', entity_id: 'cover.living_blinds' }).requiresConfirmation).toBe(false);
         expect(check('ha_call_service', { domain: 'cover', service: 'close_cover', entity_id: 'cover.garage_door' }).requiresConfirmation).toBe(false);
+        expect(check('ha_call_service', { domain: 'homeassistant', service: 'toggle', entity_id: 'light.kitchen' }).requiresConfirmation).toBe(false);
+        expect(check('ha_call_service', { domain: 'scene', service: 'turn_on', entity_id: 'scene.movie' }).requiresConfirmation).toBe(false);
         expect(check('ha_remove_todo_item', { entity_id: 'todo.shopping_list', item: 'milk' }).requiresConfirmation).toBe(false);
         expect(check('ha_set_todo_item', { entity_id: 'todo.shopping_list', item: 'milk' }).requiresConfirmation).toBe(false);
     });
