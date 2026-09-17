@@ -27,6 +27,8 @@ function SettingsContent() {
     const [voice, setVoice] = useState('Kore');
     const [saving, setSaving] = useState(false);
     const [error, setError] = useState(null);
+    // The server never sends the key back: it answers { __secret: true, set }.
+    // xaiKey holds a replacement the owner types, nothing else.
     const [xaiKey, setXaiKey] = useState('');
     const [showKey, setShowKey] = useState(false);
     const [newModel, setNewModel] = useState('');
@@ -41,9 +43,6 @@ function SettingsContent() {
             getVoiceSettings()
         ]).then(([configData, envData, backupsData, voiceData]) => {
             setConfig(configData);
-            if (configData['provider:xai']?.apiKey) {
-                setXaiKey(configData['provider:xai'].apiKey);
-            }
             setEnv(envData);
             setBackups(backupsData);
             setVoice(voiceData);
@@ -108,6 +107,24 @@ function SettingsContent() {
             // Revert (simplified: re-fetch)
             getAgentConfig().then(setConfig);
         }
+    };
+
+    // Marker that tells the agent to keep the stored key. Sent whenever the
+    // owner edits the model list without typing a new key.
+    const KEEP_SECRET = { __secret: true };
+    const xaiKeyPayload = () => (xaiKey ? xaiKey : KEEP_SECRET);
+    const xaiKeyIsSet = config?.['provider:xai']?.apiKey?.set === true;
+
+    // After a save the page re-reads the settings, so the "key is saved" flag
+    // comes from the server rather than from the payload just sent.
+    const saveXai = async (patch = {}) => {
+        await handleSave('provider:xai', {
+            apiKey: xaiKeyPayload(),
+            models: config?.['provider:xai']?.models || [],
+            ...patch
+        });
+        setXaiKey('');
+        getAgentConfig().then(setConfig);
     };
 
     const currentMode = config?.search_strategy?.mode || 'HYBRID';
@@ -302,17 +319,19 @@ function SettingsContent() {
                             </div>
 
                             <div className="space-y-4">
-                                <label className="block text-sm font-medium text-zinc-300">API Key</label>
+                                <div className="flex items-center gap-2">
+                                    <label className="block text-sm font-medium text-zinc-300">API Key</label>
+                                    <span className={`text-xs ${xaiKeyIsSet ? 'text-green-400' : 'text-zinc-500'}`}>
+                                        {xaiKeyIsSet ? 'A key is saved' : 'No key saved'}
+                                    </span>
+                                </div>
                                 <div className="relative">
                                     <input
                                         type={showKey ? "text" : "password"}
                                         value={xaiKey}
                                         onChange={(e) => setXaiKey(e.target.value)}
-                                        onBlur={(e) => handleSave('provider:xai', {
-                                            apiKey: e.target.value,
-                                            models: config?.['provider:xai']?.models || []
-                                        })}
-                                        placeholder="xai-..."
+                                        onBlur={(e) => { if (e.target.value) saveXai({ apiKey: e.target.value }); }}
+                                        placeholder={xaiKeyIsSet ? 'Enter a new key to replace the saved one' : 'xai-...'}
                                         className="w-full bg-zinc-950 border border-zinc-700 rounded-lg px-4 py-2 text-white focus:ring-2 focus:ring-white focus:border-transparent outline-none transition-all"
                                     />
                                     <button
@@ -323,9 +342,20 @@ function SettingsContent() {
                                         {showKey ? <EyeOff size={16} /> : <Eye size={16} />}
                                     </button>
                                 </div>
-                                <p className="text-xs text-zinc-500">
-                                    Get your API key from <a href="https://console.x.ai/" target="_blank" className="text-indigo-400 hover:underline">console.x.ai</a>
-                                </p>
+                                <div className="flex items-center justify-between">
+                                    <p className="text-xs text-zinc-500">
+                                        Get your API key from <a href="https://console.x.ai/" target="_blank" className="text-indigo-400 hover:underline">console.x.ai</a>. The server never sends a saved key back to this page.
+                                    </p>
+                                    {xaiKeyIsSet && (
+                                        <button
+                                            type="button"
+                                            onClick={() => { setXaiKey(''); saveXai({ apiKey: '' }); }}
+                                            className="text-xs text-zinc-400 hover:text-red-400 transition-colors"
+                                        >
+                                            Clear key
+                                        </button>
+                                    )}
+                                </div>
                             </div>
 
                             <div className="space-y-4 pt-4 border-t border-zinc-800">
@@ -337,11 +367,7 @@ function SettingsContent() {
                                             <button
                                                 onClick={() => {
                                                     const currentModels = config?.['provider:xai']?.models || [];
-                                                    const newModels = currentModels.filter(m => m !== model);
-                                                    handleSave('provider:xai', {
-                                                        apiKey: xaiKey,
-                                                        models: newModels
-                                                    });
+                                                    saveXai({ models: currentModels.filter(m => m !== model) });
                                                 }}
                                                 className="hover:text-red-400 transition-colors"
                                             >
@@ -362,10 +388,7 @@ function SettingsContent() {
                                                 if (!newModel.trim()) return;
                                                 const currentModels = config?.['provider:xai']?.models || [];
                                                 if (!currentModels.includes(newModel.trim())) {
-                                                    handleSave('provider:xai', {
-                                                        apiKey: xaiKey,
-                                                        models: [...currentModels, newModel.trim()]
-                                                    });
+                                                    saveXai({ models: [...currentModels, newModel.trim()] });
                                                 }
                                                 setNewModel('');
                                             }
@@ -378,10 +401,7 @@ function SettingsContent() {
                                             if (!newModel.trim()) return;
                                             const currentModels = config?.['provider:xai']?.models || [];
                                             if (!currentModels.includes(newModel.trim())) {
-                                                handleSave('provider:xai', {
-                                                    apiKey: xaiKey,
-                                                    models: [...currentModels, newModel.trim()]
-                                                });
+                                                saveXai({ models: [...currentModels, newModel.trim()] });
                                             }
                                             setNewModel('');
                                         }}

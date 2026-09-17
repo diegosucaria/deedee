@@ -77,4 +77,4 @@ The image ships default entries (Home Assistant, Plex, Node-RED, browser, Pilotf
 - `cwd`: relative to the config file, with a fallback to the agent working dir.
 
 ## Browser server
-The `browser` entry runs `@playwright/mcp` on the system Chromium. See `docs/agentic-browsing.md` for the profile path, secrets by name, the launcher stub, the live view and the smoke test. `POST /internal/browser-secrets` saves secrets and restarts only that server.
+The `browser` entry runs `@playwright/mcp` on the system Chromium. See `docs/agentic-browsing.md` for the profile path, secrets by name, the launcher stub, the live view and the smoke test. `PUT /internal/browser-secrets/<NAME>` saves one secret and restarts only that server.

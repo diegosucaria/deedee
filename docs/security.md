@@ -97,6 +97,17 @@ The agent process holds every provider key. Child processes do not.
   `github_pat_`) and any URL carrying a user or password are replaced before
   tool output reaches the model, the logs or the database.
 
+## Secrets the API never serves
+
+- **Settings**: `GET /internal/settings` (proxied as `/v1/settings`) replaces
+  every secret-looking value with `{ __secret: true, set: boolean }`. A save
+  that sends the marker back keeps the stored value; `""` clears it. Saves
+  broadcast the setting name only, because a socket reaches every client.
+- **Browser secrets**: `GET /v1/browser-secrets` returns names.
+  `PUT`/`DELETE /v1/browser-secrets/<NAME>` set or remove one. The Settings
+  page can show that a secret is set, replace it and remove it, without ever
+  receiving a value.
+
 ## Approvals
 
 Some tool calls pause until the owner says yes. Before this change the

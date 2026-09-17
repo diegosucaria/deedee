@@ -1,6 +1,7 @@
 const express = require('express');
 const { ConfigService } = require('../services/config-service');
 const { GWS_MCP_SERVICES } = require('../mcp-manager');
+const { maskSettings, maskSecrets, unmaskSecrets, hasSecretMarker } = require('../utils/secret-mask');
 
 /**
  * Find the MCP calendar tool name for a GWS account label.
@@ -49,9 +50,24 @@ const EGRESS_IP_TTL_MS = 60 * 1000;
 function createSettingsRouter(agent) {
     const router = express.Router();
 
+    /** The stored value of one setting, parsed. undefined when there is no row. */
+    function readStored(key) {
+        try {
+            const stmt = agent.db.db.prepare('SELECT value FROM agent_settings WHERE key = ?');
+            const row = typeof stmt?.get === 'function' ? stmt.get(key) : undefined;
+            if (!row) return undefined;
+            try { return JSON.parse(row.value); } catch (e) { return row.value; }
+        } catch (e) {
+            return undefined;
+        }
+    }
+
     // GET /internal/settings
     // Returns { key: value, key2: value2 }. Rows in the 'system' category are
     // internal bookkeeping (migration flags) and stay out of the UI.
+    // Secret-looking values (provider keys, OAuth tokens, passwords) come back
+    // as { __secret: true, set: boolean }: the name and whether it is set,
+    // never the value. The api proxies this route to any bearer holder.
     router.get('/', (req, res) => {
         try {
             const stmt = agent.db.db.prepare("SELECT key, value FROM agent_settings WHERE COALESCE(category, 'general') != 'system'");
@@ -66,7 +82,7 @@ function createSettingsRouter(agent) {
                 return acc;
             }, {});
 
-            res.json(settings);
+            res.json(maskSettings(settings));
         } catch (error) {
             console.error('[Settings] GET Failed:', error);
             res.status(500).json({ error: error.message });
@@ -94,10 +110,15 @@ function createSettingsRouter(agent) {
                 return res.status(400).json({ error: 'Missing key or value' });
             }
 
-            let storedValue = value;
+            // Fields the caller sent back as markers keep the stored value, so
+            // the UI can edit a setting it was never shown the secrets of.
+            let storedValue = hasSecretMarker(value) ? unmaskSecrets(value, readStored(key)) : value;
+            if (storedValue === undefined) {
+                return res.status(400).json({ error: 'Missing key or value' });
+            }
             // Proactive loop run probability: must be a number in [0, 1].
             if (key === 'proactive_run_probability') {
-                const n = Number(value);
+                const n = Number(storedValue);
                 if (!Number.isFinite(n) || n < 0 || n > 1) {
                     return res.status(400).json({ error: 'proactive_run_probability must be a number between 0 and 1' });
                 }
@@ -107,22 +128,22 @@ function createSettingsRouter(agent) {
             // dryRun limits the greeting jobs to drafting and reporting to the
             // owner, without touching the global communication_dry_run switch.
             if (key === 'partner_greeting') {
-                const contact = typeof value?.contact === 'string' ? value.contact.trim() : '';
+                const contact = typeof storedValue?.contact === 'string' ? storedValue.contact.trim() : '';
                 if (contact.replace(/[^0-9]/g, '').length < 5) {
                     return res.status(400).json({ error: 'partner_greeting needs { contact: phone number or WhatsApp JID, name?: string, dryRun?: boolean }' });
                 }
-                const name = typeof value.name === 'string' ? value.name.trim() : '';
-                storedValue = { contact, ...(name ? { name } : {}), dryRun: value.dryRun === true };
+                const name = typeof storedValue.name === 'string' ? storedValue.name.trim() : '';
+                storedValue = { contact, ...(name ? { name } : {}), dryRun: storedValue.dryRun === true };
             }
 
             // Approvals: { ttlInteractiveMin, ttlDeferredHours, deny: string[] | string }.
             // TTLs are clamped; the deny list is one glob per line (see docs/security.md).
             if (key === 'approvals') {
-                if (!value || typeof value !== 'object' || Array.isArray(value)) {
+                if (!storedValue || typeof storedValue !== 'object' || Array.isArray(storedValue)) {
                     return res.status(400).json({ error: 'approvals needs { ttlInteractiveMin?: minutes, ttlDeferredHours?: hours, deny?: patterns }' });
                 }
                 const { normalizeApprovalSettings } = require('../services/approval-service');
-                storedValue = normalizeApprovalSettings(value);
+                storedValue = normalizeApprovalSettings(storedValue);
             }
 
             const jsonValue = JSON.stringify(storedValue);
@@ -145,13 +166,15 @@ function createSettingsRouter(agent) {
                 agent.settings[key] = storedValue;
             }
 
-            // Notify via Socket (Broadcast via Interfaces service)
+            // Notify via Socket (Broadcast via Interfaces service).
+            // The name only: a socket reaches every connected client, and some
+            // settings hold provider keys.
             if (agent.interface) {
                 // fire and forget
-                agent.interface.broadcast('entity:update', { type: 'setting', key, value: storedValue }).catch(console.error);
+                agent.interface.broadcast('entity:update', { type: 'setting', key }).catch(console.error);
             }
 
-            res.json({ success: true, key, value });
+            res.json({ success: true, key, value: maskSecrets(storedValue, key) });
         } catch (error) {
             console.error('[Settings] POST Failed:', error);
             res.status(500).json({ error: error.message });
