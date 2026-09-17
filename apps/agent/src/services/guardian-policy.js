@@ -27,12 +27,16 @@ const MAX_ENTRY_CHARS = 300;
 // in a message is not a purchase.
 const LABEL_KEYS = new Set(['element', 'label', 'button', 'action', 'service', 'method', 'resource', 'selector', 'name', 'toolname', 'tool', 'domain', 'ref', 'key']);
 
-const MONEY_RE = /\b(?:pay|pays|paying|payment|payments|purchase|buy|buying|checkout|check out|place order|order now|orders?|transfer|transfers|wire|withdraw|donate|subscribe|pagar|pago|pagos|comprar|compra|transferir|transferencia|suscrib\w*|abonar)\b/i;
+// Whole words, accents included: `\b` does not see "á" as a letter, so
+// "pagá" needs the Unicode lookarounds.
+const MONEY_RE = /(?<![\p{L}\p{N}_])(?:pay|pays|paying|payment|payments|purchase|buy|buying|checkout|check out|place order|order now|orders?|transfer|transfers|wire|withdraw|donate|subscribe|pagar|pag[aá]|pago|pagos|pague|comprar|compr[aá]|compras|transferir|transferencia|transfer[ií]|suscrib\p{L}*|abon[aá]r?|pedido|pedidos)(?![\p{L}\p{N}_])/iu;
 const DELETE_RE = /(?:^|[^a-z])(?:delete|remove|trash|purge|wipe|erase|destroy|drop|batchdelete|emptytrash|eliminar|borrar)/i;
 const CANCEL_BOOKING_RE = /cancel\w*[\s_.:-]*(?:\w+[\s_.:-]+)?(?:appointment|turn|turno|booking|reservation|reserva|flight|vuelo|ticket)|(?:appointment|turn|turno|booking|reservation|reserva)\w*[\s_.:-]*cancel/i;
 const PUBLISH_RE = /\b(?:publish|publicar|deploy|release)\b|(?:^|_)publish|commitAndPush/i;
-const SHELL_PUBLISH_RE = /\bgit\s+(?:commit|push)\b|\bnpm\s+publish\b|\bgh\s+(?:pr\s+(?:create|merge)|release\s+create)\b/i;
-const SHELL_DELETE_RE = /\brm\s+-|\bshred\b|\bsqlite3?\b.*\b(?:delete|drop)\b/i;
+// git may carry global options before the verb: "git -C /app push", "git -c k=v commit".
+const SHELL_PUBLISH_RE = /\bgit\b(?:\s+(?:-C|-c|--git-dir|--work-tree|--namespace)\s+\S+|\s+-{1,2}[\w-]+(?:=\S+)?)*\s+(?:commit|push)\b|\bnpm\s+publish\b|\bgh\s+(?:pr\s+(?:create|merge)|release\s+create)\b|\bgh\s+api\b.*\/merges?\b/i;
+// Any rm (with or without flags), rmdir, unlink, find -delete, truncate, shred, SQL deletes.
+const SHELL_DELETE_RE = /(?:^|[\s;&|(`$])(?:sudo\s+)?(?:rm|rmdir|unlink|shred|truncate)(?:\s|$)|\s-delete\b|\bsqlite3?\b.*\b(?:delete|drop)\b/i;
 
 // Everyday removals the safety rules also let run (docs/security.md).
 const EVERYDAY_REMOVALS = new Set(['ha_remove_todo_item', 'remove_from_wardrobe_trip_capsule', 'dismiss_shopping_item', 'cancelJob', 'playlist_remove_from', 'collection_remove_from']);
