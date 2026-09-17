@@ -160,6 +160,21 @@ describe('ConfigService pricing', () => {
         }));
     });
 
+    test('logUsageFromResponse passes prompt estimates through and leaves them out otherwise', () => {
+        const db = { logTokenUsage: jest.fn() };
+        const result = { usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 2, totalTokenCount: 12 } };
+        c.logUsageFromResponse(db, 'gemini-3.6-flash', result, 'chat-1', 'chat', { sysTokensEst: 400, toolsTokensEst: 90, historyTokensEst: 12, declCount: 7, prefixHash: 'abc' });
+        expect(db.logTokenUsage).toHaveBeenLastCalledWith(expect.objectContaining({
+            tag: 'chat', sysTokensEst: 400, toolsTokensEst: 90, historyTokensEst: 12, declCount: 7
+        }));
+        expect(db.logTokenUsage.mock.calls[0][0]).not.toHaveProperty('prefixHash');
+
+        c.logUsageFromResponse(db, 'gemini-3.6-flash', result, 'chat-1', 'title');
+        const plain = db.logTokenUsage.mock.calls[1][0];
+        expect(plain.tag).toBe('title');
+        for (const k of ['sysTokensEst', 'toolsTokensEst', 'historyTokensEst', 'declCount']) expect(plain).not.toHaveProperty(k);
+    });
+
     test('logUsageFromResponse without db or usage is a no-op', () => {
         expect(c.logUsageFromResponse(null, 'gemini-3.6-flash', { usageMetadata: {} })).toEqual({ cost: 0, tokens: 0 });
         expect(c.logUsageFromResponse({ logTokenUsage: jest.fn() }, 'gemini-3.6-flash', {})).toEqual({ cost: 0, tokens: 0 });

@@ -160,12 +160,33 @@ models reject MINIMAL.
 
 ## Watch after a change
 
-For a week, run this against `data/agent.db`:
+For a week, run the usage report inside the agent container:
 
-```sql
-SELECT model, tag, COUNT(*), SUM(thoughts_tokens) * 1.0 / SUM(candidate_tokens), SUM(estimated_cost)
-FROM token_usage WHERE timestamp > date('now', '-7 day') GROUP BY 1, 2;
+```bash
+node scripts/usage-report.js            # last 7 days, by day, model and tag
+node scripts/usage-report.js --days 30  # baseline before a change
+node scripts/usage-report.js --json
 ```
+
+It reads `data/agent.db` read-only (`--db` for another path) and prints:
+
+- cost, average prompt, cached ratio and average thoughts by day, model and
+  tag, most expensive first;
+- the prompt composition estimates (`sys_tokens_est`, `tools_tokens_est`,
+  `history_tokens_est`, `decl_count`) by tag and model. They are JSON length
+  divided by 4 of the system instruction, the function declarations and the
+  history sent; the API's `prompt_tokens` stays the billed number;
+- the `prefix_hash` metric: one row per turn, value 1 when the system
+  instruction or the declared tool names differ from the chat's previous
+  turn. After a session's first turn it should stay at 0; a run of 1s means
+  the implicit cache prefix moves every turn.
+
+Tags on the main chat path: `chat`, `job` (scheduler), `subagent`, `watcher`,
+each with a `_tool_loop` suffix on the calls that follow tool results. Other
+tags name their call site (`router`, `title`, `tts`, `wardrobe_*`, ...).
+Rows with a NULL tag predate the attribution change. The stats page cost
+breakdown (`/v1/stats/cost-by-tag`) treats main-path tags like NULL: it sorts
+those rows into WhatsApp, Web Chat, Jobs or Sub-agents by `chat_id`.
 
 Expect only the new ids, daily cost within about 25% of the prior week, and no
 `model_failure` or `rag_reindex_failed` notifications.

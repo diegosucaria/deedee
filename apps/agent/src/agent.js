@@ -25,6 +25,7 @@ const axios = require('axios');
 const { getSystemInstruction, getTurnContext } = require('./prompts/system');
 const { filterToolsByGroups, ToolGroupMemory, groupsNamedIn } = require('./services/tool-groups');
 const { getFunctionCalls, getThinkingMessage } = require('./utils/helpers');
+const { usageTag, promptComposition, usageColumns } = require('./services/usage-attribution');
 const { geminiToOpenAIHistory, openAIToGeminiChunk } = require('./utils/mapper');
 const { PeopleService } = require('./services/people-service');
 const { AnalysisService } = require('./services/analysis-service');
@@ -136,6 +137,7 @@ class Agent {
     this._abortedChats = new Set();
     this.cancellationFlags = new Set(); // For stopping chat generation
     this.activeTopics = new Map(); // Store active vault topics per chatId
+    this._prefixHashes = new Map(); // chatId -> last cacheable-prefix hash (system instruction + declaration names)
     // Per-watcher in-flight lock. Coalesces rapid-fire matching messages so a
     // single trailing rerun (with the latest message) covers the burst, instead
     // of N concurrent runs racing to schedule N duplicate events.
@@ -701,6 +703,34 @@ class Agent {
       // Hand the result back so _deliverReply sees a false from the interface.
       return this.interface.send(reply);
     });
+  }
+
+  /**
+   * Record the cacheable-prefix hash of a turn (system instruction + sorted
+   * declaration names) as a `prefix_hash` metric: value 1 when it differs
+   * from the chat's previous turn, else 0. The first turn of a chat since
+   * boot has nothing to compare and counts as 0. Logs one line per change.
+   * @param {string} chatId
+   * @param {{ prefixHash: string, declCount: number }} composition
+   * @param {{ model?: string, logPrefix?: string }} [opts]
+   * @returns {boolean} whether the hash changed
+   */
+  _trackPrefixHash(chatId, composition, opts = {}) {
+    const hash = composition?.prefixHash;
+    if (!chatId || !hash) return false;
+    const prev = this._prefixHashes.get(chatId) || null;
+    const changed = !!prev && prev !== hash;
+    if (this._prefixHashes.size >= 500 && !this._prefixHashes.has(chatId)) {
+      this._prefixHashes.delete(this._prefixHashes.keys().next().value);
+    }
+    this._prefixHashes.set(chatId, hash);
+    if (changed) {
+      console.log(`${opts.logPrefix || '[Agent]'} [Context] Prefix hash changed for ${chatId}: ${prev.slice(0, 12)} -> ${hash.slice(0, 12)} (${composition.declCount} declarations)`);
+    }
+    try {
+      this.db.logMetric('prefix_hash', changed ? 1 : 0, { chatId, hash, prev, model: opts.model || null, declCount: composition.declCount });
+    } catch (e) { /* metrics are best effort */ }
+    return changed;
   }
 
   /**
@@ -1885,6 +1915,14 @@ class Agent {
         }
       }
 
+      // Usage attribution: call class for the token_usage rows of this turn
+      // and a cheap estimate of what the prompt is made of. The loop rows
+      // keep the turn's estimates; only the history grows between them.
+      const usageTagBase = usageTag(message, { watcher: isWatcherRun });
+      const composition = promptComposition({ systemInstruction, tools: geminiTools, history });
+      console.log(`${logPrefix} [Context] Prompt composition: sys ~${composition.sysTokensEst} tok | tools ~${composition.toolsTokensEst} tok (${composition.declCount} decl) | history ~${composition.historyTokensEst} tok | prefix ${composition.prefixHash.slice(0, 12)} | tag ${usageTagBase}`);
+      this._trackPrefixHash(chatId, composition, { model: selectedModel, logPrefix });
+
       // 2. Send Message to Gemini (with Retry Logic)
       const MAX_EMPTY_RETRIES = 2;
       let retryCount = 0;
@@ -1970,8 +2008,10 @@ class Agent {
           totalTokens: totalTokenCount,
           chatId,
           estimatedCost: cost,
+          tag: usageTagBase,
           cachedTokens: cachedContentTokenCount || 0,
-          thoughtsTokens: thoughtsTokenCount || 0
+          thoughtsTokens: thoughtsTokenCount || 0,
+          ...usageColumns(composition)
         });
       }
 
@@ -2460,8 +2500,10 @@ class Agent {
             totalTokens: totalTokenCount,
             chatId,
             estimatedCost: cost,
+            tag: `${usageTagBase}_tool_loop`,
             cachedTokens: cachedContentTokenCount || 0,
-            thoughtsTokens: thoughtsTokenCount || 0
+            thoughtsTokens: thoughtsTokenCount || 0,
+            ...usageColumns(composition)
           });
         }
 
