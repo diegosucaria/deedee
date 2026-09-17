@@ -1097,6 +1097,8 @@ class Agent {
       replies: [],     // List of text/audio replies
       untrustedSources: turnTaint.sources // live list, read by the sub-agent service
     };
+    // Approval guardian state for this run: denials count toward the breaker.
+    const approvalRun = ApprovalService.newRun(runId);
 
     // Watcher in-flight lock state (set inside the watcher block; cleaned up in finally).
     let watcherLockKey = null;
@@ -2134,6 +2136,13 @@ class Agent {
           break;
         }
 
+        // CHECK GUARDIAN BREAKER: too many refused actions mean the run is being steered.
+        if (approvalRun.stopped) {
+          console.warn(`${logPrefix} Approval guardian breaker tripped. Breaking loop.`);
+          await activeSendCallback(createAssistantMessage('Stopped: the approval guardian refused several actions in this run. The owner was notified.'));
+          break;
+        }
+
         // CHECK STOP FLAG
         if (this.stopFlags.has(chatId) || this.stopFlags.has('GLOBAL_STOP')) {
           console.log(`${logPrefix} Stop flag detected for chat ${chatId}. Breaking loop.`);
@@ -2366,20 +2375,17 @@ class Agent {
             // answer (this chat, or his notification channel for jobs and
             // watchers). It resumes once he approves; the model must not retry.
             // A run that already read untrusted content asks before side effects.
+            // In smart mode the approval guardian decides the gated calls:
+            // allow runs, deny fails with a reason, escalate asks the owner.
             const serverName = this.mcp?.toolMap?.get?.(executionName)?.name || null;
-            const guard = this.approvals.check(executionName, call.args, { taint: turnTaint, serverName });
-            if (guard.denied) {
-              console.warn(`${logPrefix} Action ${executionName} denied by the owner's deny-list (${guard.pattern}).`);
-              toolResult = { error: guard.message };
-              toolStatus = 'error';
-            } else if (guard.requiresConfirmation) {
-              console.log(`${logPrefix} Action ${executionName} requires confirmation (${guard.rule || 'rule'}).`);
-              const paused = await this.approvals.request({
-                message, toolName: executionName, args: call.args, reason: guard.message, sendCallback: activeSendCallback,
-                taintSources: guard.tainted ? [...turnTaint.sources] : null
-              });
-              toolResult = paused.result;
-              toolStatus = paused.paused ? 'paused' : 'error';
+            const review = await this.approvals.review({
+              message, toolName: executionName, args: call.args, taint: turnTaint, serverName,
+              run: approvalRun, sendCallback: activeSendCallback
+            });
+            if (!review.run) {
+              console.log(`${logPrefix} Action ${executionName} held by the approval gate (${review.status}).`);
+              toolResult = review.result;
+              toolStatus = review.status;
             } else {
               // Execute normally
               executed = true;
@@ -2540,6 +2546,8 @@ class Agent {
             if (verdict.untrusted) {
               apiResponse = wrapUntrusted(executionName, apiResponse, verdict.kind);
               newlyTainted.push(`${verdict.kind} (${executionName})`);
+              // Sender, domain and a short excerpt for the approval guardian.
+              turnTaint.observe(executionName, verdict.kind, call.args, dbToolResult);
             }
           }
 

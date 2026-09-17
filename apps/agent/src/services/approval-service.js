@@ -33,8 +33,14 @@ const { ConfirmationManager } = require('../confirmation-manager');
 const { DeliveryService, telegramOwnerIds, splitChannel } = require('./delivery-service');
 const { isLiveSource } = require('./ask-user');
 const { TurnTaint } = require('../utils/untrusted-content');
+const { GuardianService } = require('./guardian-service');
+const {
+    DEFAULT_MODE, normalizeMode, normalizePolicyText, normalizeAlwaysAsk, matchAlwaysAsk, floorView, categoryView
+} = require('./guardian-policy');
 
-const DEFAULTS = Object.freeze({ ttlInteractiveMin: 30, ttlDeferredHours: 6, deny: [] });
+const DEFAULTS = Object.freeze({ ttlInteractiveMin: 30, ttlDeferredHours: 6, deny: [], mode: DEFAULT_MODE, smart_policy: '', always_ask: [] });
+// Guardian denials in one run that stop the run.
+const BREAKER_DENIALS = 3;
 const MAX_TTL_INTERACTIVE_MIN = 24 * 60;
 const MAX_TTL_DEFERRED_HOURS = 24 * 7;
 const MAX_DENY_PATTERNS = 200;
@@ -91,7 +97,9 @@ function envDenyPatterns() {
 
 /**
  * The `approvals` setting as stored: TTLs clamped, deny list as an array of
- * non-empty patterns. Shared with the settings route.
+ * non-empty patterns, the guardian mode, the owner's policy text and his
+ * always-ask additions (the fixed floor is never stored). Shared with the
+ * settings route.
  */
 function normalizeApprovalSettings(raw) {
     const src = raw && typeof raw === 'object' && !Array.isArray(raw) ? raw : {};
@@ -101,7 +109,10 @@ function normalizeApprovalSettings(raw) {
     return {
         ttlInteractiveMin: Number.isFinite(ttlI) && ttlI >= 1 ? Math.min(Math.round(ttlI), MAX_TTL_INTERACTIVE_MIN) : DEFAULTS.ttlInteractiveMin,
         ttlDeferredHours: Number.isFinite(ttlD) && ttlD > 0 ? Math.min(Math.round(ttlD * 100) / 100, MAX_TTL_DEFERRED_HOURS) : DEFAULTS.ttlDeferredHours,
-        deny
+        deny,
+        mode: normalizeMode(src.mode),
+        smart_policy: normalizePolicyText(src.smart_policy),
+        always_ask: normalizeAlwaysAsk(src.always_ask)
     };
 }
 
@@ -173,6 +184,51 @@ function describeOrigin(message) {
     return 'an internal run';
 }
 
+/** chat | job | watcher | subagent | system: the kind of run, for the guardian history. */
+function sourceKind(message) {
+    const meta = message?.metadata || {};
+    const source = String(message?.source || '');
+    if (meta.isSubAgent || source === 'subagent') return 'subagent';
+    if (String(message?.content || '').startsWith('SYSTEM_WATCHER_ALERT')) return 'watcher';
+    if (meta.jobName || source === 'scheduler') return 'job';
+    if (source === 'system' || isSyntheticChatId(meta.chatId)) return 'system';
+    return 'chat';
+}
+
+/** "a•••@example.com", "•••••1234": enough to recognise, not enough to leak. */
+function redactTarget(value) {
+    const text = String(value ?? '').trim();
+    if (!text) return '';
+    const email = /^([^@\s]{1,64})@([A-Za-z0-9.-]+\.[A-Za-z]{2,24})$/.exec(text);
+    if (email) return `${email[1][0]}•••@${email[2]}`;
+    const digits = text.replace(/@.*$/, '').replace(/\D/g, '');
+    if (digits.length >= 7) return `•••${digits.slice(-4)}${text.includes('@') ? text.slice(text.indexOf('@')) : ''}`;
+    return truncate(text, 80);
+}
+
+/** What the call acts on: recipient, URL host, entity, calendar, path or command. */
+function describeTarget(toolName, args) {
+    const a = args && typeof args === 'object' ? args : {};
+    for (const key of ['to', 'recipient', 'recipients', 'email', 'channel', 'phone']) {
+        if (a[key] !== undefined && a[key] !== null && a[key] !== '') {
+            const v = Array.isArray(a[key]) ? a[key].map(redactTarget).join(', ') : redactTarget(a[key]);
+            return truncate(v, 120);
+        }
+    }
+    if (typeof a.url === 'string') {
+        try { return new URL(a.url).hostname; } catch { /* not a url */ }
+    }
+    for (const key of ['entity_id', 'entity_ids', 'entities']) {
+        if (a[key] !== undefined) return truncate(Array.isArray(a[key]) ? a[key].join(', ') : String(a[key]), 120);
+    }
+    if (a.domain && a.service) return truncate(`${a.domain}.${a.service}`, 120);
+    if (typeof a.element === 'string') return truncate(a.element, 80);
+    if (a.resource || a.method) return truncate(`${a.resource || ''}${a.resource && a.method ? '.' : ''}${a.method || ''}`, 120);
+    if (typeof a.path === 'string') return truncate(a.path, 120);
+    if (typeof a.command === 'string') return truncate(a.command.trim().split(/\s+/)[0], 40);
+    return null;
+}
+
 class ApprovalService {
     /**
      * @param {object} agent - needs db, interface, delivery, notifications, _executeTool
@@ -181,6 +237,7 @@ class ApprovalService {
     constructor(agent, opts = {}) {
         this.agent = agent;
         this.rules = opts.rules || new ConfirmationManager(agent.db, { isOwnerChat: (channel, target) => this._delivery().isOwnerTarget(channel, target) });
+        this.guardian = opts.guardian || new GuardianService(agent);
         this.sweepMs = opts.sweepMs ?? SWEEP_MS;
         this.timer = null;
         this._warnedNoStore = false;
@@ -251,6 +308,262 @@ class ApprovalService {
             return { ...ruled, tainted: true, message: `${ruled.message} ${tainted.message}` };
         }
         return { ...tainted, tainted: true };
+    }
+
+    // --- guardian ---
+
+    /** A fresh per-run state for review(): denials count toward the breaker. */
+    static newRun(id = null) {
+        return { id, denials: 0, stopped: false, notifiedDenial: false };
+    }
+
+    _record(entry) {
+        const db = this.db;
+        if (!db || typeof db.recordGuardianDecision !== 'function') return null;
+        try { return db.recordGuardianDecision(entry); } catch (e) {
+            console.warn('[Guardian] decision store failed:', e.message);
+            return null;
+        }
+    }
+
+    /**
+     * The trusted part of a run for the guardian: the owner's own message
+     * when he is typing in this chat, else the job name.
+     */
+    async _intent(message) {
+        const kind = sourceKind(message);
+        const meta = message?.metadata || {};
+        if (kind === 'job') return { kind, jobName: meta.jobName || 'a system job', ownerMessage: null };
+        if (kind !== 'chat') return { kind, jobName: null, ownerMessage: null };
+        let owner = false;
+        try { owner = await this._isOwnerChat(message); } catch { owner = false; }
+        const text = typeof message?.content === 'string' ? message.content : '';
+        return { kind, jobName: null, ownerMessage: owner && text ? text : null };
+    }
+
+    /**
+     * The full gate for one tool call in a run: deny-list, safety rules,
+     * taint, always-ask list, then the mode (manual, smart, off). Every gated
+     * call leaves one guardian_decisions row.
+     * @param {{ message: object, toolName: string, args: object, taint?: TurnTaint|null, serverName?: string|null,
+     *   run?: object|null, sendCallback?: Function|null }} p
+     * @returns {Promise<{ run: true, decisionId?: string } | { run: false, status: 'error'|'paused', result: object, decisionId?: string }>}
+     */
+    async review({ message, toolName, args, taint = null, serverName = null, run = null, sendCallback = null }) {
+        const settings = this.settings();
+        const meta = message?.metadata || {};
+        const kind = sourceKind(message);
+        const taintSources = taint?.tainted ? [...taint.sources] : [];
+        const base = {
+            runId: run?.id || null, chatId: meta.chatId ? String(meta.chatId) : null, source: message?.source || null,
+            sourceKind: kind, jobName: meta.jobName || null, toolName, target: describeTarget(toolName, args),
+            taintSources, mode: settings.mode
+        };
+
+        if (run?.stopped) {
+            const row = this._record({ ...base, outcome: 'breaker_stop', decidedBy: 'breaker', reason: 'The run was already stopped by the guardian breaker.' });
+            return {
+                run: false, status: 'error', decisionId: row?.id,
+                result: { error: `Stopped: the approval guardian refused ${BREAKER_DENIALS} actions in this run, so the run ends here. The owner was notified. Do not retry.` }
+            };
+        }
+
+        const guard = this.check(toolName, args, { taint, serverName });
+        if (guard.denied) {
+            const row = this._record({ ...base, outcome: 'deny_list', decidedBy: 'deny_list', reason: `Deny pattern "${guard.pattern}"` });
+            return { run: false, status: 'error', result: { error: guard.message }, decisionId: row?.id };
+        }
+
+        let hits = { floor: [], additions: [] };
+        try {
+            hits = matchAlwaysAsk(toolName, args, { alwaysAsk: settings.always_ask, reason: guard.message || '', rule: guard.rule || '', serverName });
+        } catch (e) {
+            console.warn('[Guardian] always-ask match failed:', e.message);
+        }
+        let gated = !!guard.requiresConfirmation;
+        let why = guard.message || '';
+        if (!gated && hits.additions.length > 0) {
+            gated = true;
+            why = `The owner asked to approve these himself (always-ask: ${hits.additions.join(', ')}).`;
+        }
+        if (!gated) return { run: true };
+
+        const floorHit = hits.floor.length > 0 || hits.additions.length > 0;
+        const withHits = { ...base, floor: hits.floor, alwaysAsk: hits.additions };
+
+        if (settings.mode === 'off' && !floorHit) {
+            const row = this._record({ ...withHits, outcome: 'ran_unasked', decidedBy: 'none', reason: 'Approvals are off.' });
+            return { run: true, decisionId: row?.id };
+        }
+
+        let verdict = null;
+        if (settings.mode === 'smart' && this.guardian) {
+            const intent = await this._intent(message);
+            verdict = await this.guardian.judge({
+                toolName, args, sourceKind: kind, ownerMessage: intent.ownerMessage, jobName: intent.jobName,
+                ruleReason: why, taintMeta: taint?.meta || [], taintSources, excerpt: taint?.tainted ? taint.excerpt : null,
+                floor: hits.floor, alwaysAsk: hits.additions, smartPolicy: settings.smart_policy, chatId: base.chatId
+            });
+        }
+        const guardianFields = verdict ? {
+            verdict: verdict.verdict, modelVerdict: verdict.modelVerdict, reason: verdict.reason, risk: verdict.risk,
+            latencyMs: verdict.latencyMs, tokens: verdict.tokens, cost: verdict.cost, guardianInput: verdict.input
+        } : {};
+
+        if (verdict && verdict.verdict === 'allow' && !floorHit) {
+            const row = this._record({ ...withHits, ...guardianFields, outcome: 'auto_allowed', decidedBy: 'guardian' });
+            console.log(`[Guardian] ${toolName} allowed (${verdict.risk}): ${verdict.reason}`);
+            return { run: true, decisionId: row?.id };
+        }
+
+        if (verdict && verdict.verdict === 'deny') {
+            return this._deny({ message, toolName, run, row: { ...withHits, ...guardianFields }, verdict });
+        }
+
+        // Escalate: manual mode, a floor hit, an escalate verdict or a failure.
+        let reason = why || 'This action needs the owner\'s approval.';
+        if (verdict) {
+            const note = verdict.verdict === 'allow' && floorHit
+                ? `The approval guardian saw no harm, but ${hits.floor.length ? 'money and irreversible actions' : 'this kind of action'} always go to the owner.`
+                : `Approval guardian: ${verdict.reason}`;
+            reason = `${reason} ${note}`;
+        } else if (floorHit && settings.mode === 'off') {
+            reason = `${reason} Approvals are off, but money and irreversible actions always go to the owner.`;
+        }
+        const row = this._record({
+            ...withHits, ...guardianFields, verdict: verdict ? 'escalate' : null,
+            outcome: 'escalated', decidedBy: 'owner'
+        });
+        const paused = await this.request({ message, toolName, args, reason, sendCallback, taintSources: guard.tainted ? taintSources : null });
+        if (row?.id && typeof this.db.updateGuardianDecision === 'function') {
+            try {
+                if (paused.paused) this.db.updateGuardianDecision(row.id, { approvalId: paused.id });
+                else this.db.updateGuardianDecision(row.id, { outcome: 'escalated_failed', decidedBy: 'nobody' });
+            } catch (e) { console.warn('[Guardian] decision update failed:', e.message); }
+        }
+        return { run: false, status: paused.paused ? 'paused' : 'error', result: paused.result, decisionId: row?.id };
+    }
+
+    /** A guardian denial: the model hears why, the owner hears once per run, three stop the run. */
+    _deny({ message, toolName, run, row, verdict }) {
+        const state = run || ApprovalService.newRun();
+        state.denials += 1;
+        const tripped = state.denials >= BREAKER_DENIALS && !state.stopped;
+        if (tripped) state.stopped = true;
+        const stored = this._record({ ...row, verdict: 'deny', outcome: 'auto_denied', decidedBy: 'guardian', breakerTripped: tripped });
+        console.warn(`[Guardian] ${toolName} denied (${verdict.risk}): ${verdict.reason}${tripped ? ' Breaker tripped; the run stops.' : ''}`);
+        const chatId = message?.metadata?.chatId || null;
+        try {
+            if (tripped) {
+                this.agent.notifications?.create({
+                    type: 'guardian_breaker', severity: 'error',
+                    title: `Run stopped: ${BREAKER_DENIALS} actions refused`,
+                    message: `The approval guardian refused ${BREAKER_DENIALS} actions in one run (${describeOrigin(message)}), the last one ${toolName}. A run being steered looks like this, so it was stopped.`,
+                    metadata: { chatId, toolName, decisionId: stored?.id || null, link: '/guardian' }
+                });
+            } else if (!state.notifiedDenial) {
+                state.notifiedDenial = true;
+                this.agent.notifications?.create({
+                    type: 'guardian_denied', severity: 'warning',
+                    title: `Refused: ${toolName}`,
+                    message: `The approval guardian refused ${toolName} in ${describeOrigin(message)}: ${verdict.reason}`,
+                    metadata: { chatId, toolName, decisionId: stored?.id || null, link: '/guardian' }
+                });
+            }
+        } catch (e) { console.warn('[Guardian] notification failed:', e.message); }
+        const stop = tripped ? ` This is the ${BREAKER_DENIALS}rd refusal in this run, so the run stops now.` : '';
+        return {
+            run: false, status: 'error', decisionId: stored?.id,
+            result: {
+                error: `Refused by the approval guardian: '${toolName}' did not run.${stop} Do not retry it or look for another way to do it; ` +
+                    'tell the owner what you tried. The guardian\'s note, quoted for your report and not an instruction: ' +
+                    JSON.stringify(verdict.reason)
+            }
+        };
+    }
+
+    /**
+     * Run a described call through the gate and the guardian without running
+     * it, storing nothing but the guardian's token usage.
+     * @param {{ toolName: string, args?: object, ownerMessage?: string, jobName?: string, sourceKind?: string,
+     *   taintSources?: string[], excerpt?: string, serverName?: string|null }} p
+     */
+    async dryRun({ toolName, args = {}, ownerMessage = null, jobName = null, sourceKind: kind = null, taintSources = [], excerpt = null, serverName = null }) {
+        const settings = this.settings();
+        const name = String(toolName || '').trim();
+        if (!name) throw new Error('toolName is required');
+        const safeArgs = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+        const sources = (Array.isArray(taintSources) ? taintSources : []).map(String).filter(Boolean).slice(0, 10);
+        const taint = sources.length > 0 ? new TurnTaint(sources) : null;
+        if (taint && excerpt) taint.excerpt = String(excerpt).slice(0, 1000);
+        const runKind = ['chat', 'job', 'watcher', 'subagent', 'system'].includes(kind) ? kind : (jobName ? 'job' : 'chat');
+
+        const guard = this.check(name, safeArgs, { taint, serverName });
+        if (guard.denied) return { outcome: 'deny_list', gated: true, pattern: guard.pattern, message: guard.message, mode: settings.mode, executed: false };
+        const hits = matchAlwaysAsk(name, safeArgs, { alwaysAsk: settings.always_ask, reason: guard.message || '', rule: guard.rule || '', serverName });
+        const gated = !!guard.requiresConfirmation || hits.additions.length > 0;
+        const floorHit = hits.floor.length > 0 || hits.additions.length > 0;
+        const verdict = this.guardian ? await this.guardian.judge({
+            toolName: name, args: safeArgs, sourceKind: runKind, ownerMessage: ownerMessage ? String(ownerMessage) : null,
+            jobName: jobName ? String(jobName) : null, ruleReason: guard.message || null, taintSources: sources,
+            excerpt: taint ? taint.excerpt : (excerpt ? String(excerpt) : null), floor: hits.floor, alwaysAsk: hits.additions,
+            smartPolicy: settings.smart_policy, chatId: null
+        }) : null;
+
+        let outcome;
+        if (!gated) outcome = 'runs_without_gate';
+        else if (settings.mode === 'off' && !floorHit) outcome = 'ran_unasked';
+        else if (settings.mode !== 'smart' || !verdict) outcome = 'escalated';
+        else if (verdict.verdict === 'deny') outcome = 'auto_denied';
+        else if (verdict.verdict === 'allow' && !floorHit) outcome = 'auto_allowed';
+        else outcome = 'escalated';
+
+        return {
+            outcome, gated, mode: settings.mode, rule: guard.rule || null, ruleReason: guard.message || null,
+            floor: hits.floor, alwaysAsk: hits.additions,
+            guardian: verdict ? {
+                verdict: verdict.verdict, modelVerdict: verdict.modelVerdict, reason: verdict.reason, risk: verdict.risk,
+                latencyMs: verdict.latencyMs, failed: verdict.failed, input: verdict.input
+            } : null,
+            executed: false
+        };
+    }
+
+    /** The Guardian page's policy block. The floor is read-only. */
+    policyView() {
+        const s = this.settings();
+        let feedback = [];
+        try {
+            if (typeof this.db?.listGuardianDecisions === 'function') feedback = this.db.listGuardianDecisions({ feedback: 'any', limit: 20 }).rows;
+        } catch (e) { console.warn('[Guardian] feedback list failed:', e.message); }
+        return {
+            mode: s.mode, smart_policy: s.smart_policy, always_ask: s.always_ask,
+            floor: floorView(), categories: categoryView(), feedbackCandidates: feedback
+        };
+    }
+
+    /**
+     * Change mode, smart_policy or always_ask. TTLs and the deny-list stay.
+     * Anything naming the floor is ignored: the floor is not stored.
+     */
+    updatePolicy(patch = {}) {
+        if (!this.db || typeof this.db.getAgentSetting !== 'function') throw new Error('settings store unavailable');
+        const row = this.db.getAgentSetting('approvals');
+        const current = row && row.value && typeof row.value === 'object' ? row.value : (this.agent.settings?.approvals || {});
+        const next = { ...current };
+        if (patch.mode !== undefined) {
+            const m = String(patch.mode).trim().toLowerCase();
+            if (!['manual', 'smart', 'off'].includes(m)) throw Object.assign(new Error('mode must be manual, smart or off'), { status: 400 });
+            next.mode = m;
+        }
+        if (patch.smart_policy !== undefined) next.smart_policy = patch.smart_policy;
+        if (patch.always_ask !== undefined) next.always_ask = patch.always_ask;
+        const stored = normalizeApprovalSettings(next);
+        // Stored without the env deny patterns settings() appends.
+        if (typeof this.db.setAgentSetting === 'function') this.db.setAgentSetting('approvals', stored, 'general');
+        else throw new Error('settings store unavailable');
+        if (this.agent.settings) this.agent.settings.approvals = stored;
+        return this.policyView();
     }
 
     // --- routing ---
@@ -792,5 +1105,6 @@ class ApprovalService {
 
 module.exports = {
     ApprovalService, normalizeApprovalSettings, decisionWord, normalizeWord, summarizeArgs, summarizeResult,
-    splitPatterns, envDenyPatterns, isUnattendedRun, DEFAULTS, APPROVE_WORDS, DENY_WORDS, SWEEP_MS
+    splitPatterns, envDenyPatterns, isUnattendedRun, DEFAULTS, APPROVE_WORDS, DENY_WORDS, SWEEP_MS,
+    sourceKind, describeTarget, redactTarget, BREAKER_DENIALS
 };

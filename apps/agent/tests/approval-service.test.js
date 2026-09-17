@@ -492,7 +492,7 @@ describe('ApprovalService', () => {
 
     describe('settings normalization', () => {
         test('defaults, clamps and deny parsing', () => {
-            expect(normalizeApprovalSettings(undefined)).toEqual({ ttlInteractiveMin: 30, ttlDeferredHours: 6, deny: [] });
+            expect(normalizeApprovalSettings(undefined)).toEqual({ ttlInteractiveMin: 30, ttlDeferredHours: 6, deny: [], mode: 'smart', smart_policy: '', always_ask: [] });
             expect(normalizeApprovalSettings({ ttlInteractiveMin: 0, ttlDeferredHours: -1 })).toMatchObject({ ttlInteractiveMin: 30, ttlDeferredHours: 6 });
             expect(normalizeApprovalSettings({ ttlInteractiveMin: 99999, ttlDeferredHours: 999 })).toMatchObject({ ttlInteractiveMin: 1440, ttlDeferredHours: 168 });
             expect(normalizeApprovalSettings({ ttlInteractiveMin: '15', ttlDeferredHours: '0.5', deny: ' a \n# note\n\nb;c ' }).deny).toEqual(['a', 'b', 'c']);

@@ -177,7 +177,20 @@ describe('Settings API approvals', () => {
             .post('/internal/settings')
             .send({ key: 'approvals', value: { ttlInteractiveMin: '45', ttlDeferredHours: 500, deny: 'commitAndPush\n# comment\nrunShellCommand:*rm -rf*' } });
         expect(res.statusCode).toBe(200);
-        expect(run).toHaveBeenCalledWith('approvals', JSON.stringify({ ttlInteractiveMin: 45, ttlDeferredHours: 168, deny: ['commitAndPush', 'runShellCommand:*rm -rf*'] }), 'general');
+        expect(run).toHaveBeenCalledWith('approvals', JSON.stringify({ ttlInteractiveMin: 45, ttlDeferredHours: 168, deny: ['commitAndPush', 'runShellCommand:*rm -rf*'], mode: 'smart', smart_policy: '', always_ask: [] }), 'general');
+    });
+
+    test('a save without the guardian keys keeps the stored mode, policy and always-ask list', async () => {
+        const mockDb = {
+            db: { prepare: jest.fn().mockReturnValue({ run }) },
+            getAgentSetting: jest.fn().mockReturnValue({ key: 'approvals', value: { mode: 'manual', smart_policy: 'be strict', always_ask: ['category:shell'] } })
+        };
+        const keep = express();
+        keep.use(express.json());
+        keep.use('/internal/settings', createSettingsRouter({ db: mockDb, settings: {} }));
+        const res = await request(keep).post('/internal/settings').send({ key: 'approvals', value: { ttlInteractiveMin: 30, ttlDeferredHours: 6, deny: [] } });
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(run.mock.calls[0][1])).toMatchObject({ mode: 'manual', smart_policy: 'be strict', always_ask: ['category:shell'] });
     });
 
     test('rejects a non-object value', async () => {

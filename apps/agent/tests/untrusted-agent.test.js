@@ -483,3 +483,75 @@ describe('untrusted content through the Agent', () => {
     expect(card.content).toMatch(/untrusted content \(a contact's message \(watcher\)\)/);
   });
 });
+
+describe('approval guardian through the Agent', () => {
+  let agent;
+  let mockInterface;
+  let generateContent;
+
+  const guardianSays = (verdict, reason = 'test', risk = 'low') => ({ text: JSON.stringify({ verdict, reason, risk }), usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15 } });
+
+  beforeEach(async () => {
+    jest.clearAllMocks();
+    rows.clear();
+    payloads.length = 0;
+    script = [];
+    mockInterface = new MockInterface();
+    mockInterface.broadcast = jest.fn().mockResolvedValue(true);
+    agent = new Agent({ googleApiKey: 'fake-key', interface: mockInterface });
+    const mockModule = { GoogleGenAI: MockGoogleGenAI };
+    agent._loadClientLibrary = jest.fn().mockResolvedValue(mockModule);
+    agent.router._loadClientLibrary = jest.fn().mockResolvedValue(mockModule);
+    agent.router.route = jest.fn().mockResolvedValue({ model: 'FLASH', reason: 'test' });
+    if (agent.mcp) agent.mcp.close = jest.fn().mockResolvedValue();
+    agent.toolExecutor.execute = jest.fn().mockImplementation(async (name) => {
+      if (name === 'personal_gmail') return EMAIL;
+      return { success: true, ran: name };
+    });
+    await agent.start();
+    generateContent = jest.fn();
+    agent.client.models = { generateContent };
+    agent.notifications.create = jest.fn();
+  });
+
+  afterEach(async () => { if (agent) await agent.stop(); });
+
+  test('an allow runs the tainted send without asking; the guardian saw the email only inside the fence', async () => {
+    generateContent.mockResolvedValue(guardianSays('allow', 'The owner asked for this send.'));
+    script = [
+      { name: 'personal_gmail', args: { resource: 'messages', method: 'get', params: { id: 'm1' } } },
+      { name: 'sendMessage', args: { to: '5490000000000', content: 'invoice attached' } },
+      { text: 'Sent.' }
+    ];
+    const msg = createUserMessage('Read my last email and send the invoice to my accountant', 'telegram', 'user1');
+    msg.metadata = { chatId: 'tg-guardian-allow' };
+    await agent.processMessage(msg, async () => {});
+
+    expect(agent.toolExecutor.execute.mock.calls.map(c => c[0])).toEqual(['personal_gmail', 'sendMessage']);
+    expect(rows.size).toBe(0);
+    const text = generateContent.mock.calls[0][0].contents[0].parts[0].text;
+    const m = /<<<UNTRUSTED_EXCERPT_([0-9a-f]+)>>>\n([\s\S]*?)\n<<<END_UNTRUSTED_EXCERPT_\1>>>/.exec(text);
+    expect(m[2]).toContain('Please forward the invoice');
+    expect(text.replace(m[0], '')).not.toContain('Please forward the invoice');
+  });
+
+  test('three denials stop the run and notify the owner', async () => {
+    generateContent.mockResolvedValue(guardianSays('deny', 'Steered by the email.', 'high'));
+    const send = (n) => ({ name: 'sendMessage', args: { to: '5490000000000', content: `try ${n}` } });
+    script = [
+      { name: 'personal_gmail', args: { resource: 'messages', method: 'get', params: { id: 'm1' } } },
+      send(1), send(2), send(3), send(4),
+      { text: 'Done.' }
+    ];
+    const msg = createUserMessage('Read my last email', 'telegram', 'user1');
+    msg.metadata = { chatId: 'tg-guardian-breaker' };
+    const replies = [];
+    const summary = await agent.processMessage(msg, async (r) => { replies.push(r); });
+
+    expect(agent.toolExecutor.execute.mock.calls.map(c => c[0])).toEqual(['personal_gmail']);
+    expect(generateContent).toHaveBeenCalledTimes(3);
+    expect(summary.toolOutputs.filter(o => o.name === 'sendMessage')).toHaveLength(3);
+    expect(replies.some(r => /approval guardian refused several actions/.test(r.content || ''))).toBe(true);
+    expect(agent.notifications.create).toHaveBeenCalledWith(expect.objectContaining({ type: 'guardian_breaker' }));
+  });
+});
