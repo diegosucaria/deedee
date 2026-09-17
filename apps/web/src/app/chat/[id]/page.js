@@ -509,8 +509,10 @@ export default function ChatSessionPage({ params }) {
                     return;
                 }
 
-                setIsWaiting(false);
+                // A question keeps the run open: the tool waits for the answer,
+                // so the waiting state stays on until the run really ends.
                 if (data.metadata?.question) pendingQuestionRef.current = data.metadata.question;
+                else setIsWaiting(false);
 
                 // Extract content
                 let msgContent = data.content;
@@ -559,6 +561,30 @@ export default function ChatSessionPage({ params }) {
                         console.error('Audio decode error', e);
                     }
                 }
+            });
+
+            // askUser: the agent asks and the run stays open until the answer
+            // lands. Fired even when the question went to another channel, so
+            // the web chat stops looking finished.
+            newSocket.on('agent:question', (data) => {
+                if (!isMounted) return;
+                if (data.chatId && data.chatId !== chatId) return;
+                setIsWaiting(true);
+                setThinkingStatus('Waiting for your answer...');
+                pendingQuestionRef.current = { id: data.id, options: data.options || [] };
+                setMessages((prev) => {
+                    // The mirrored message carries the same question id; only
+                    // add a bubble when it is not in the thread yet.
+                    if (prev.some(m => m?.metadata?.question?.id === data.id)) return prev;
+                    return [...prev, {
+                        role: 'assistant',
+                        content: data.question || '',
+                        type: 'text',
+                        timestamp: new Date().toISOString(),
+                        isFinal: true,
+                        metadata: { question: { id: data.id, options: data.options || [] } }
+                    }];
+                });
             });
 
             // Approvals change on every channel. Once one is decided or has
