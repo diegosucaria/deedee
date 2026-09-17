@@ -7,6 +7,7 @@ import { getNotifications, markNotificationRead, markAllNotificationsRead } from
 import Link from 'next/link';
 import { AnimatePresence, motion } from 'framer-motion';
 import { clsx } from 'clsx';
+import { notificationTypeLabel, notificationTypeStyle } from '@/lib/notifications';
 
 const SEVERITY_CONFIG = {
     info: { icon: Info, color: 'text-blue-400', bg: 'bg-blue-400/10' },
@@ -54,6 +55,12 @@ export default function NotificationBell() {
     useEffect(() => {
         if (!socket) return;
         const handler = (notification) => {
+            // A row without an id cannot be keyed, read or opened; ask the
+            // server for the real list instead of showing a blank line.
+            if (!notification?.id) {
+                fetchNotifications();
+                return;
+            }
             setNotifications(prev => [notification, ...prev].slice(0, 10));
             setUnreadCount(prev => prev + 1);
             setPulse(true);
@@ -61,7 +68,7 @@ export default function NotificationBell() {
         };
         socket.on('notification:new', handler);
         return () => socket.off('notification:new', handler);
-    }, [socket]);
+    }, [socket, fetchNotifications]);
 
     // Click outside to close
     useEffect(() => {
@@ -201,6 +208,11 @@ export default function NotificationBell() {
                                                     {notification.message}
                                                 </p>
                                                 <div className="flex items-center gap-2 mt-1">
+                                                    {notification.type && (
+                                                        <span className={clsx("text-[10px] px-1.5 py-0.5 rounded-full border", notificationTypeStyle(notification.type))}>
+                                                            {notificationTypeLabel(notification.type)}
+                                                        </span>
+                                                    )}
                                                     <span className="text-[10px] text-zinc-600">{timeAgo(notification.created_at)}</span>
                                                     {link && (
                                                         <ExternalLink className="w-3 h-3 text-zinc-600" />

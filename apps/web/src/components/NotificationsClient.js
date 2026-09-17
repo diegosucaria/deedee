@@ -13,6 +13,7 @@ import {
 } from '@/app/actions';
 import Link from 'next/link';
 import { clsx } from 'clsx';
+import { filterNotifications, notificationTypeLabel, notificationTypeOptions, notificationTypeStyle } from '@/lib/notifications';
 
 const SEVERITY_CONFIG = {
     info: { icon: Info, color: 'text-blue-400', bg: 'bg-blue-400/10', border: 'border-blue-400/20' },
@@ -45,24 +46,30 @@ export default function NotificationsClient({ initialNotifications, initialUnrea
     const [unreadCount, setUnreadCount] = useState(initialUnreadCount);
     const [severityFilter, setSeverityFilter] = useState('all');
     const [statusFilter, setStatusFilter] = useState('active');
+    const [typeFilter, setTypeFilter] = useState('all');
     const { socket } = useSocket();
-
-    // Real-time updates
-    useEffect(() => {
-        if (!socket) return;
-        const handler = (notification) => {
-            setNotifications(prev => [notification, ...prev]);
-            setUnreadCount(prev => prev + 1);
-        };
-        socket.on('notification:new', handler);
-        return () => socket.off('notification:new', handler);
-    }, [socket]);
 
     const refresh = useCallback(async () => {
         const data = await getNotifications(100, true, true);
         setNotifications(data.notifications || []);
         setUnreadCount(data.unreadCount || 0);
     }, []);
+
+    // Real-time updates
+    useEffect(() => {
+        if (!socket) return;
+        const handler = (notification) => {
+            // Without an id the row cannot be keyed or acted on; reload.
+            if (!notification?.id) {
+                refresh();
+                return;
+            }
+            setNotifications(prev => [notification, ...prev]);
+            setUnreadCount(prev => prev + 1);
+        };
+        socket.on('notification:new', handler);
+        return () => socket.off('notification:new', handler);
+    }, [socket, refresh]);
 
     const handleMarkRead = async (id) => {
         await markNotificationRead(id);
@@ -91,13 +98,11 @@ export default function NotificationsClient({ initialNotifications, initialUnrea
         setNotifications(prev => prev.filter(n => n.id !== id));
     };
 
-    // Filter notifications
-    const filtered = notifications.filter(n => {
-        if (severityFilter !== 'all' && n.severity !== severityFilter) return false;
-        if (statusFilter === 'active' && n.is_dismissed) return false;
-        if (statusFilter === 'unread' && (n.is_read || n.is_dismissed)) return false;
-        if (statusFilter === 'dismissed' && !n.is_dismissed) return false;
-        return true;
+    const typeOptions = notificationTypeOptions(notifications);
+    const filtered = filterNotifications(notifications, {
+        severity: severityFilter,
+        type: typeOptions.includes(typeFilter) ? typeFilter : 'all',
+        status: statusFilter,
     });
 
     return (
@@ -141,6 +146,26 @@ export default function NotificationsClient({ initialNotifications, initialUnrea
                             </button>
                         ))}
                     </div>
+
+                    {/* Type Filter — built from the types actually present */}
+                    {typeOptions.length > 1 && (
+                        <div className="flex flex-wrap bg-zinc-900/50 p-1 rounded-lg border border-zinc-800">
+                            {typeOptions.map(opt => (
+                                <button
+                                    key={opt}
+                                    onClick={() => setTypeFilter(opt)}
+                                    className={clsx(
+                                        "px-3 py-1 rounded-md text-xs font-medium transition-all",
+                                        typeFilter === opt
+                                            ? "bg-zinc-800 text-white shadow-sm"
+                                            : "text-zinc-400 hover:text-white hover:bg-zinc-800/50"
+                                    )}
+                                >
+                                    {opt === 'all' ? 'All types' : notificationTypeLabel(opt)}
+                                </button>
+                            ))}
+                        </div>
+                    )}
                 </div>
 
                 {/* Bulk Actions */}
@@ -170,7 +195,7 @@ export default function NotificationsClient({ initialNotifications, initialUnrea
                     <Bell className="w-12 h-12 mb-3 opacity-30" />
                     <span className="text-sm">No notifications match your filters</span>
                     <button
-                        onClick={() => { setSeverityFilter('all'); setStatusFilter('active'); }}
+                        onClick={() => { setSeverityFilter('all'); setStatusFilter('active'); setTypeFilter('all'); }}
                         className="mt-2 text-xs text-indigo-400 hover:text-indigo-300"
                     >
                         Reset filters
@@ -214,6 +239,11 @@ export default function NotificationsClient({ initialNotifications, initialUnrea
                                             </h3>
                                             {!notification.is_read && !notification.is_dismissed && (
                                                 <span className="w-2 h-2 rounded-full bg-indigo-400 shrink-0" />
+                                            )}
+                                            {notification.type && (
+                                                <span className={clsx("text-[10px] px-2 py-0.5 rounded-full border shrink-0", notificationTypeStyle(notification.type))}>
+                                                    {notificationTypeLabel(notification.type)}
+                                                </span>
                                             )}
                                         </div>
                                         <span className="text-[10px] text-zinc-600 whitespace-nowrap shrink-0">
