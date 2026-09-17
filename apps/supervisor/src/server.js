@@ -4,7 +4,7 @@ const { Verifier } = require('./verifier');
 const { Monitor } = require('./monitor');
 const { HealthMonitor } = require('./health-monitor');
 const { Writable } = require('stream');
-const Docker = require('dockerode');
+const { BalenaLogs, balenaApiAvailable } = require('./balena-logs');
 const crypto = require('crypto');
 
 class PrefixWriter extends Writable {
@@ -107,6 +107,8 @@ app.post('/cmd/commit', async (req, res) => {
   }
 });
 
+// Opens a pull request that reverts the newest commit on master. Nothing is
+// pushed to master; the owner merges the revert.
 app.post('/cmd/rollback', async (req, res) => {
   try {
     console.log('[Supervisor] Received Rollback Request');
@@ -128,12 +130,48 @@ app.post('/cmd/pull', async (req, res) => {
 });
 
 
+// Services whose logs the UI may read, by exact name.
+const LOG_SERVICES = ['agent', 'api', 'web', 'supervisor', 'interfaces'];
+
 app.get('/logs/:container', async (req, res) => {
   const name = req.params.container;
   const tail = req.query.tail; // 10m, 1h, or number like 100
   const since = req.query.since;
   const until = req.query.until;
 
+  // On the device: the balena supervisor API (no engine socket mounted).
+  if (balenaApiAvailable()) {
+    if (name !== 'all' && !LOG_SERVICES.includes(name)) {
+      return res.status(404).json({ error: `Container '${name}' not found` });
+    }
+    let handle;
+    try {
+      res.setHeader('Content-Type', 'text/plain; charset=utf-8');
+      res.setHeader('X-Accel-Buffering', 'no');
+      res.setTimeout(0);
+      handle = await new BalenaLogs().stream({
+        services: name === 'all' ? LOG_SERVICES : [name],
+        tail: tail || (name === 'all' ? 50 : 200),
+        since,
+        until,
+        out: res
+      });
+      req.on('close', () => handle.stop());
+    } catch (err) {
+      console.error(`[Supervisor] Log Error (${name}):`, err.message);
+      if (!res.headersSent) res.status(err.status || 500).json({ error: err.message });
+      else if (!res.writableEnded) res.end(`[SYSTEM] ${err.message}\n`);
+    }
+    return;
+  }
+
+  // Local development: an engine socket, when one is mounted by an override.
+  let Docker;
+  try {
+    Docker = require('dockerode');
+  } catch {
+    return res.status(503).json({ error: 'No log source: neither the balena supervisor API nor dockerode is available.' });
+  }
   const docker = new Docker();
 
   // Helper to parse 'since' (duration string -> timestamp)

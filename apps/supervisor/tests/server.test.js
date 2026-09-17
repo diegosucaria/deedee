@@ -23,8 +23,8 @@ describe('Supervisor API', () => {
             return { success: true, message: 'Mock Pushed' };
           }),
           workDir: '/tmp/mock-source',
-          run: jest.fn().mockResolvedValue('hash'),
-          runSafe: jest.fn().mockResolvedValue('hash\towner@example.test\tmock subject'),
+          git: jest.fn().mockResolvedValue('hash\towner@example.test\tmock subject'),
+          listSelfPullRequests: jest.fn(() => []),
           rollback: jest.fn().mockResolvedValue({ success: true }),
           pull: jest.fn().mockResolvedValue({ success: true })
         }))
@@ -105,5 +105,17 @@ describe('Supervisor API', () => {
     expect(res.statusCode).toBe(200); // 200 OK because we return error in body
     expect(res.body.success).toBe(false);
     expect(res.body.error).toBe('Syntax Error');
+  });
+
+  test('GET /logs refuses a service outside the list when the balena API is in use', async () => {
+    process.env.BALENA_SUPERVISOR_ADDRESS = 'http://127.0.0.1:1';
+    process.env.BALENA_SUPERVISOR_API_KEY = 'key';
+    try {
+      const res = await request(app).get('/logs/balena_supervisor').set('x-supervisor-token', 'test-token');
+      expect(res.statusCode).toBe(404);
+    } finally {
+      delete process.env.BALENA_SUPERVISOR_ADDRESS;
+      delete process.env.BALENA_SUPERVISOR_API_KEY;
+    }
   });
 });
