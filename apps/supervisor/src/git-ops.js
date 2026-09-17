@@ -225,12 +225,72 @@ class GitOps {
       // the old in-tree .git had checked out; start the index there so local
       // edits stay edits, then move forward like a pull.
       const base = await this._legacyBase();
-      await this.git(['reset', '-q', '--mixed', base || 'refs/remotes/origin/master']);
+      if (base) {
+        await this.git(['reset', '-q', '--mixed', base]);
+      } else {
+        // No commit to start from: a new device or a wiped volume. Check the
+        // files out. `--mixed` would set only the index, and every tracked
+        // file would read as deleted in the next self-improvement.
+        console.log('[GitOps] No previous commit in the work tree. Checking out origin/master.');
+        await this.git(['reset', '-q', '--hard', 'refs/remotes/origin/master']);
+      }
+    }
+    if (await this._dirtyMatchesUpstream()) {
+      // A merged self-improvement: its edits are still uncommitted in the
+      // work tree and equal origin/master, so a fast-forward would refuse.
+      console.log('[GitOps] Local edits already match origin/master. Moving to it.');
+      await this.git(['reset', '-q', '--hard', 'refs/remotes/origin/master']);
+      return;
     }
     try {
       await this.git(['merge', '--ff-only', '-q', 'refs/remotes/origin/master']);
     } catch (error) {
       console.warn(`[GitOps] Could not fast-forward the work tree to origin/master: ${error.message}`);
+    }
+  }
+
+  /**
+   * True when the work tree differs from HEAD and every differing path
+   * (tracked edits and deletions, plus untracked files at paths
+   * origin/master adds) holds exactly what origin/master holds. Then a hard
+   * reset to origin/master loses nothing.
+   */
+  async _dirtyMatchesUpstream() {
+    try {
+      const upstream = 'refs/remotes/origin/master';
+      const split = (text) => text.split('\0').filter(Boolean);
+      const dirty = split(await this.git(['diff', '--name-only', '-z', '--no-renames', 'HEAD', '--'], { raw: true }));
+      const incoming = new Set(split(await this.git(['diff', '--name-only', '-z', '--no-renames', 'HEAD', upstream, '--'], { raw: true })));
+      const untracked = split(await this.git(['ls-files', '--others', '--exclude-standard', '-z'], { raw: true }))
+        .filter(file => incoming.has(file));
+      const paths = [...new Set([...dirty, ...untracked])];
+      if (paths.length === 0 || paths.length > 1000) return false;
+      for (const file of paths) {
+        const upstreamBlob = await this._revParseObject(`${upstream}:${file}`);
+        const fullPath = regularFileInside(this.workDir, file);
+        let exists = true;
+        try { fs.lstatSync(path.join(this.workDir, file)); } catch { exists = false; }
+        if (!exists) {
+          if (upstreamBlob) return false;
+          continue;
+        }
+        if (!fullPath || !upstreamBlob) return false;
+        const local = await this.git(['hash-object', '--no-filters', '--', file]);
+        if (local !== upstreamBlob) return false;
+      }
+      return true;
+    } catch (error) {
+      console.warn(`[GitOps] Could not compare local edits with origin/master: ${error.message}`);
+      return false;
+    }
+  }
+
+  /** The object a revision names, or null. */
+  async _revParseObject(rev) {
+    try {
+      return await this.git(['rev-parse', '--verify', '--quiet', rev]);
+    } catch {
+      return null;
     }
   }
 

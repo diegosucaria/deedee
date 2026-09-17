@@ -224,6 +224,43 @@ describe('GitOps pull request flow against real git', () => {
         expect(status).toBe('M apps/agent/src/a.js');
     });
 
+    test('a first start on an empty volume checks the files out', async () => {
+        const empty = path.join(root, 'empty-source');
+        const emptyState = path.join(root, 'empty-state');
+        fs.mkdirSync(empty);
+        const fresh = new GitOps(empty, SELF, { stateDir: emptyState, fetch: fakeFetch(), repoSlug: 'owner/repo' });
+        await fresh.configure(SELF.name, SELF.email, remote, TOKEN);
+
+        expect(fs.readFileSync(path.join(empty, 'apps/agent/src/a.js'), 'utf8')).toBe('module.exports = 1;\n');
+        expect(await fresh.git(['status', '--porcelain'])).toBe('');
+    });
+
+    test('a restart after a self-improvement merged moves to origin/master', async () => {
+        // The agent's uncommitted edit and new file became a pull request,
+        // and the owner merged the same content.
+        fs.writeFileSync(path.join(work, 'apps/agent/src/a.js'), 'module.exports = 2;\n');
+        fs.writeFileSync(path.join(work, 'apps/agent/src/n.js'), 'n();\n');
+        ownerCommit('apps/agent/src/a.js', 'module.exports = 2;\n', 'feat: merged a');
+        const merged = ownerCommit('apps/agent/src/n.js', 'n();\n', 'feat: merged n');
+
+        const restarted = new GitOps(work, SELF, { stateDir, fetch: fakeFetch(), repoSlug: 'owner/repo' });
+        await restarted.configure(SELF.name, SELF.email, remote, TOKEN);
+
+        expect(await restarted.git(['rev-parse', 'HEAD'])).toBe(merged);
+        expect(await restarted.git(['status', '--porcelain'])).toBe('');
+    });
+
+    test('a restart keeps local edits that differ from origin/master', async () => {
+        fs.writeFileSync(path.join(work, 'apps/agent/src/a.js'), 'module.exports = 7;\n');
+        ownerCommit('apps/agent/src/c.js', 'c();\n', 'feat: c upstream');
+
+        const restarted = new GitOps(work, SELF, { stateDir, fetch: fakeFetch(), repoSlug: 'owner/repo' });
+        await restarted.configure(SELF.name, SELF.email, remote, TOKEN);
+
+        expect(fs.readFileSync(path.join(work, 'apps/agent/src/a.js'), 'utf8')).toBe('module.exports = 7;\n');
+        expect(fs.readFileSync(path.join(work, 'apps/agent/src/c.js'), 'utf8')).toBe('c();\n');
+    });
+
     test('the token never reaches the stored config', async () => {
         expect(fs.readFileSync(path.join(stateDir, 'repo.git', 'config'), 'utf8')).not.toContain(TOKEN);
     });
