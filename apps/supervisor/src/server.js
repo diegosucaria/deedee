@@ -72,19 +72,14 @@ app.use((req, res, next) => {
 
 const gitName = process.env.GIT_USER_NAME || 'Deedee Supervisor';
 const gitEmail = process.env.GIT_USER_EMAIL || 'supervisor@deedee.bot';
-let gitRemote = process.env.GIT_REMOTE_URL;
+const gitRemote = process.env.GIT_REMOTE_URL;
+// The PAT stays out of the stored remote URL. `.git/config` lives on the
+// /app/source volume, which the agent reads and writes, so a token there is
+// a token the agent can send anywhere. GitOps passes it per command instead.
 const githubPat = process.env.GITHUB_PAT;
+console.log(`[Supervisor] Configured remote: ${gitRemote || '(none)'}${githubPat ? ' with a token' : ''}`);
 
-// Inject PAT into URL if available and URL is HTTPS
-if (gitRemote && githubPat && gitRemote.startsWith('https://')) {
-  // Insert PAT: https://PAT@github.com/...
-  gitRemote = gitRemote.replace('https://', `https://${githubPat}@`);
-  console.log(`[Supervisor] Configured authenticated remote: ${gitRemote.replace(githubPat, '***')}`);
-} else {
-  console.log(`[Supervisor] Configured remote: ${gitRemote}`);
-}
-
-git.configure(gitName, gitEmail, gitRemote).then(() => {
+git.configure(gitName, gitEmail, gitRemote, githubPat).then(() => {
   console.log('[Supervisor] Git configured. Starting monitor...');
   return monitor.start();
 }).catch(console.error);

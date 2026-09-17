@@ -30,10 +30,28 @@ function cleanGitEnv() {
   return env;
 }
 
+/**
+ * Splits credentials off a remote URL: `https://token@host/x` becomes
+ * `https://host/x` plus the token. Returns { url, token }.
+ */
+function splitRemoteCredentials(remoteUrl) {
+  if (typeof remoteUrl !== 'string' || !remoteUrl) return { url: remoteUrl, token: null };
+  const match = remoteUrl.match(/^([a-z][a-z0-9+.-]*:\/\/)([^/\s@]+)@(.*)$/i);
+  if (!match) return { url: remoteUrl, token: null };
+  const [, scheme, credentials, rest] = match;
+  // Either "token" or "user:token"; the token is what git sends as the password.
+  const token = credentials.includes(':') ? credentials.split(':').slice(1).join(':') : credentials;
+  return { url: `${scheme}${rest}`, token: token || null };
+}
+
 class GitOps {
   constructor(workDir = '/app/source', identity = null) {
     this.workDir = workDir;
     this.verifier = new Verifier(workDir);
+    // The GitHub token never enters the stored remote URL: `.git/config` sits
+    // on a volume the agent can read, and `git remote -v` would print it.
+    // Network commands carry it as a per-command header instead.
+    this.token = null;
     // The author identity travels with every commit and revert as `-c`
     // flags. The agent can rewrite .git/config in the shared volume; the
     // env values it cannot touch.
@@ -46,6 +64,44 @@ class GitOps {
   /** `-c user.name=… -c user.email=…` for commit-like commands. */
   _identityArgs() {
     return ['-c', `user.name=${this.identity.name}`, '-c', `user.email=${this.identity.email}`];
+  }
+
+  /** `-c http.extraheader=…` for commands that talk to the remote. */
+  _authArgs() {
+    if (!this.token) return [];
+    const basic = Buffer.from(`x-access-token:${this.token}`).toString('base64');
+    return ['-c', `http.extraheader=Authorization: Basic ${basic}`];
+  }
+
+  /** Replaces the token and its base64 form wherever they appear. */
+  _scrub(text) {
+    let out = String(text ?? '');
+    if (this.token) {
+      const basic = Buffer.from(`x-access-token:${this.token}`).toString('base64');
+      out = out.split(this.token).join('[REDACTED]').split(basic).join('[REDACTED]');
+    }
+    return out.replace(/(Authorization: [A-Za-z]+ )\S+/g, '$1[REDACTED]');
+  }
+
+  /**
+   * Runs a git command that talks to the remote. Credentials ride along as a
+   * per-command header, and never reach the logs or a thrown message: git
+   * repeats its argv in the failure text, and commitAndPush hands that text
+   * back to the agent.
+   */
+  async _runAuthed(args) {
+    try {
+      const { stdout, stderr } = await execFileAsync('git', [...this._authArgs(), ...args], {
+        cwd: this.workDir,
+        env: cleanGitEnv()
+      });
+      if (stderr) console.warn(`Git Warning (Remote): ${this._scrub(stderr)}`);
+      return stdout.trim();
+    } catch (error) {
+      const message = this._scrub(error.message);
+      console.error(`Git Error (Remote): ${message}`);
+      throw new Error(message);
+    }
   }
 
   async run(command) {
@@ -85,7 +141,7 @@ class GitOps {
     }
   }
 
-  async configure(name, email, remoteUrl) {
+  async configure(name, email, remoteUrl, token = null) {
     // Initialize (idempotent) to ensure repo exists without causing 'not a git repository' errors
     await this.run('git init');
     await this.run('git checkout -B master');
@@ -96,20 +152,25 @@ class GitOps {
     await this.runSafe('git', ['config', 'user.name', name]);
     await this.runSafe('git', ['config', 'user.email', email]);
 
-    if (remoteUrl) {
-      // Mask Sensitive Auth Info in Logs (Robust)
-      const maskedUrl = remoteUrl.replace(/:\/\/[^@]+@/, '://***@');
-      console.log(`[GitOps] Configuring remote: ${maskedUrl}`);
-      // Check existing remotes to avoid 'No such remote' or 'Remote already exists' errors
+    // A URL that already carries credentials (an older GIT_REMOTE_URL) gives
+    // up its token here; only the clean URL is stored.
+    const split = splitRemoteCredentials(remoteUrl);
+    this.token = token || split.token || null;
+    const cleanUrl = split.url;
+
+    if (cleanUrl) {
+      console.log(`[GitOps] Configuring remote: ${cleanUrl}${this.token ? ' (credentials passed per command)' : ''}`);
+      // Check existing remotes to avoid 'No such remote' or 'Remote already exists' errors.
+      // set-url also scrubs a token an earlier release stored in .git/config.
       const remotes = await this.run('git remote');
       if (remotes.includes('origin')) {
-        await this.run(`git remote set-url origin ${remoteUrl}`);
+        await this.runSafe('git', ['remote', 'set-url', 'origin', cleanUrl]);
       } else {
-        await this.run(`git remote add origin ${remoteUrl}`);
+        await this.runSafe('git', ['remote', 'add', 'origin', cleanUrl]);
       }
       // Pull after setting up the remote to ensure content is retrieved
       console.log('[GitOps] Pulling from origin/master...');
-      await this.run('git pull origin master');
+      await this._runAuthed(['pull', 'origin', 'master']);
     } else {
       console.log('[GitOps] No remote URL configured. Skipping pull.');
     }
@@ -260,8 +321,8 @@ class GitOps {
       // Pass message as a separate argument to avoid shell interpretation
       await this.runSafe('git', [...this._identityArgs(), 'commit', '-m', message]);
 
-      // 4. Git Push (origin master is hardcoded safe string, but consistent to use runSafe or run)
-      await this.runSafe('git', ['push', 'origin', 'master']);
+      // 4. Git Push. Credentials travel with the command, not in .git/config.
+      await this._runAuthed(['push', 'origin', 'master']);
 
       return { success: true, message: 'Pushed to origin/master', skipped };
 
@@ -295,7 +356,7 @@ class GitOps {
       const revertCommit = await this.run('git rev-parse HEAD');
 
       // Push the new revert commit
-      await this.runSafe('git', ['push', 'origin', 'master']);
+      await this._runAuthed(['push', 'origin', 'master']);
 
       return { success: true, message: 'Rolled back last change successfully.', revertCommit };
     } catch (error) {
@@ -307,7 +368,7 @@ class GitOps {
   async pull() {
     try {
       console.log('[GitOps] Pulling latest changes...');
-      await this.run('git fetch origin');
+      await this._runAuthed(['fetch', 'origin']);
       await this.run('git reset --hard origin/master'); // Force sync to origin
       return { success: true, message: 'Pulled latest changes.' };
     } catch (error) {
@@ -317,4 +378,4 @@ class GitOps {
   }
 }
 
-module.exports = { GitOps, cleanGitEnv };
+module.exports = { GitOps, cleanGitEnv, splitRemoteCredentials };
