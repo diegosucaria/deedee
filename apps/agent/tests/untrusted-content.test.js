@@ -120,7 +120,8 @@ describe('envelope', () => {
 
     test('a browser_* tool whose server is restarting still counts as a web page', () => {
         expect(classifyToolResult('browser_snapshot')).toEqual({ untrusted: true, kind: 'a web page' });
-        expect(taintedAction('browser_type', { ref: 'e1', text: 'x' })).toBe('type or submit on a web page');
+        expect(taintedAction('browser_type', { target: 'e1', text: 'x' })).toBeNull();
+        expect(taintedAction('browser_evaluate', { function: '() => 1' })).toBe('run code on a web page');
     });
 
     test('the model part and the stored part carry the same envelope, images stay on the model part', () => {
@@ -167,9 +168,13 @@ describe('taintedAction', () => {
         expect(taintedAction('runShellCommand', { command: 'ls' })).toBe('run a shell command');
         expect(taintedAction('writeFile', { path: 'x' })).toBe('write a file');
         expect(taintedAction('commitAndPush', {})).toBe('change the code');
-        expect(taintedAction('scheduleJob', {})).toBe('schedule instructions to run later');
-        expect(taintedAction('scheduleTask', {})).toBe('schedule instructions to run later');
-        expect(taintedAction('addWatcher', {})).toBe('schedule instructions to run later');
+    });
+
+    test('owner decision B: scheduling, reminders and facts land on the owner and run', () => {
+        // Their later runs carry the taint instead (taintPayloadFields / taintFromPayload).
+        for (const name of ['scheduleJob', 'scheduleTask', 'addWatcher', 'setReminder', 'rememberFact', 'cancelJob']) {
+            expect(taintedAction(name, { task: 'x' })).toBeNull();
+        }
     });
 
     test('read-only and everyday internal tools stay free', () => {
@@ -184,6 +189,15 @@ describe('taintedAction', () => {
         expect(taintedAction('personal_gmail', { resource: 'messages', method: 'get' }, gws)).toBeNull();
         expect(taintedAction('personal_gmail', { resource: 'messages', method: 'send' }, gws)).toBe('change email (messages.send)');
         expect(taintedAction('personal_calendar', { resource: 'events', method: 'insert' }, gws)).toBe('change calendar events (events.insert)');
+        // Owner decision B: an event on his own calendar that invites nobody runs.
+        expect(taintedAction('personal_calendar', { resource: 'events', method: 'insert', params: { calendarId: 'primary' }, body: { summary: 'Dentist' } }, gws)).toBeNull();
+        expect(taintedAction('personal_calendar', { resource: 'events', method: 'insert', params: { calendarId: 'primary' }, json: '{"summary":"Dentist","attendees":[]}' }, gws)).toBeNull();
+        // Invites, other calendars and changes to existing events ask.
+        expect(taintedAction('personal_calendar', { resource: 'events', method: 'insert', params: { calendarId: 'primary' }, body: { summary: 'Sync', attendees: [{ email: 'someone@example.com' }] } }, gws)).toMatch(/events\.insert/);
+        expect(taintedAction('personal_calendar', { resource: 'events', method: 'insert', params: { calendarId: 'primary' }, json: '{"attendees":[{"email":"someone@example.com"}]}' }, gws)).toMatch(/events\.insert/);
+        expect(taintedAction('personal_calendar', { resource: 'events', method: 'insert', params: { calendarId: 'team@example.com' }, body: { summary: 'x' } }, gws)).toMatch(/events\.insert/);
+        expect(taintedAction('personal_calendar', { resource: 'events', method: 'patch', params: { calendarId: 'primary', eventId: 'e1' }, body: { summary: 'x' } }, gws)).toMatch(/events\.patch/);
+        expect(taintedAction('personal_calendar', { resource: 'events', method: 'quickAdd', params: { calendarId: 'primary', text: 'x' } }, gws)).toMatch(/quickAdd/);
         expect(taintedAction('personal_calendar', { resource: 'events', method: 'delete' }, gws)).toMatch(/events\.delete/);
         expect(taintedAction('personal_drive', { resource: 'permissions', method: 'create' }, gws)).toMatch(/permissions\.create/);
     });
@@ -233,19 +247,23 @@ describe('taintedAction', () => {
         expect(taintedAction('ha_get_state', {}, ha)).toBeNull();
     });
 
-    test('browser: typing and submitting ask; reading and plain clicks do not', () => {
+    test('browser: reading, typing and plain clicks run; code, uploads and page actions ask', () => {
         const br = { serverName: 'browser' };
-        expect(taintedAction('browser_type', { ref: 'e1', text: 'x' }, br)).toBe('type or submit on a web page');
-        expect(taintedAction('browser_fill_form', {}, br)).toBe('type or submit on a web page');
-        expect(taintedAction('browser_press_key', { key: 'Enter' }, br)).toBe('submit on a web page');
+        expect(taintedAction('browser_type', { target: 'e1', text: 'x' }, br)).toBeNull();
+        expect(taintedAction('browser_fill_form', { fields: [] }, br)).toBeNull();
+        expect(taintedAction('browser_select_option', { target: 'e2', values: ['AR'] }, br)).toBeNull();
         expect(taintedAction('browser_press_key', { key: 'ArrowDown' }, br)).toBeNull();
-        expect(taintedAction('browser_click', { element: 'Submit order button' }, br)).toBe('submit on a web page');
-        expect(taintedAction('browser_click', { element: 'Next page link' }, br)).toBeNull();
+        expect(taintedAction('browser_click', { target: 'e9', element: 'Next page link' }, br)).toBeNull();
+        expect(taintedAction('browser_click', { target: 'e9', element: 'Submit order button' }, br)).toMatch(/Submit order/);
         expect(taintedAction('browser_snapshot', {}, br)).toBeNull();
         expect(taintedAction('browser_webmcp_list', {}, br)).toBeNull();
-        expect(taintedAction('browser_webmcp_call', { name: 'placeOrder' }, br)).toBe('type or submit on a web page');
-        expect(taintedAction('browser_some_future_tool', {}, br)).toBe('type or submit on a web page');
+        expect(taintedAction('browser_webmcp_call', { name: 'placeOrder' }, br)).toBe('call an action the web page registered');
+        expect(taintedAction('browser_file_upload', { paths: ['/tmp/x'] }, br)).toBe('upload a local file to a web page');
+        expect(taintedAction('browser_run_code_unsafe', { code: 'x' }, br)).toBe('run code on a web page');
+        expect(taintedAction('browser_some_future_tool', {}, br)).toBe('run browser_some_future_tool on a web page');
         expect(taintedAction('browser_navigate', { url: 'https://example.com' }, br)).toBeNull();
+        // No page seen and no field focused: Enter asks.
+        expect(taintedAction('browser_press_key', { key: 'Enter' }, br)).toMatch(/not seen/);
     });
 
     test('booking servers and unknown servers', () => {
@@ -283,6 +301,7 @@ describe('guard with taint', () => {
         expect(rules.isOwnerTarget({ to: '10000000000@s.whatsapp.net' })).toBe(true);
         expect(rules.isOwnerTarget({ to: '5490000000000' })).toBe(false);
         expect(rules.isOwnerTarget({ to: 'Alice' })).toBe(false);
+        expect(rules.isOwnerTarget({ to: 'chat-1', service: 'web' })).toBe(true);
         process.env.ALLOWED_TELEGRAM_IDS = '777';
         try {
             expect(rules.isOwnerTarget({ to: '777', service: 'telegram' })).toBe(true);
@@ -290,6 +309,13 @@ describe('guard with taint', () => {
         } finally {
             delete process.env.ALLOWED_TELEGRAM_IDS;
         }
+    });
+
+    test('isOwnerTarget knows the owner by his WhatsApp LID, through the delivery service', () => {
+        const withIds = new ConfirmationManager(db, { isOwnerChat: (channel, target) => channel === 'whatsapp' && target === '222222222222@lid' });
+        expect(withIds.isOwnerTarget({ to: '222222222222@lid' })).toBe(true);
+        expect(withIds.isOwnerTarget({ to: '333333333333@lid' })).toBe(false);
+        expect(rules.isOwnerTarget({ to: '222222222222@lid' })).toBe(false);
     });
 
     test('no taint: the plain rules decide', () => {
@@ -386,5 +412,29 @@ describe('sub-agent reports', () => {
 
         await executor.execute('spawnAgent', { task: 'count files' }, { message: { metadata: { chatId: 'c' } }, untrustedTaint: [] });
         expect(agent.processMessage.mock.calls[1][0].metadata.untrustedTaint).toBeUndefined();
+    });
+});
+
+describe('carried taint (jobs and watchers)', () => {
+    const { taintPayloadFields, taintFromPayload } = require('../src/utils/untrusted-content');
+
+    test('a clean run stores nothing; a tainted run stores its sources', () => {
+        expect(taintPayloadFields([])).toEqual({});
+        expect(taintPayloadFields(undefined)).toEqual({});
+        expect(taintPayloadFields(['email (personal_gmail)', 'email (personal_gmail)'])).toEqual({ tainted: true, taintSources: ['email (personal_gmail)'] });
+    });
+
+    test('later runs start with the sources, marked as carried, and never mark twice', () => {
+        expect(taintFromPayload({ task: 'x' }, 'job "a"')).toEqual([]);
+        expect(taintFromPayload({ tainted: true, taintSources: ['email (personal_gmail)'] }, 'job "a"')).toEqual(['email (personal_gmail) [carried by job "a"]']);
+        expect(taintFromPayload({ tainted: true }, 'watcher 3')).toEqual(['untrusted content [carried by watcher 3]']);
+        expect(taintFromPayload({ tainted: true, taintSources: ['email (x) [carried by job "a"]'] }, 'job "b"')).toEqual(['email (x) [carried by job "a"]']);
+    });
+
+    test('the reason says the run was created by a tainted run', () => {
+        const rules = new ConfirmationManager({ getAgentSetting: () => null, isVerifiedContact: () => true, searchPeople: () => [] });
+        const taint = new TurnTaint(taintFromPayload({ tainted: true, taintSources: ['email (personal_gmail)'] }, 'job "digest"'));
+        const guard = rules.taintCheck('sendMessage', { to: '5490000000000', content: 'x' }, { taint });
+        expect(guard.message).toMatch(/^This run read untrusted content, or was created by a run that did \(email \(personal_gmail\) \[carried by job "digest"\]\)/);
     });
 });

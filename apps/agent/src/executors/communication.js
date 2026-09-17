@@ -2,6 +2,7 @@ const { BaseExecutor } = require('./base');
 const axios = require('axios');
 const fs = require('fs');
 const path = require('path');
+const { taintPayloadFields } = require('../utils/untrusted-content');
 
 class CommunicationExecutor extends BaseExecutor {
     async execute(name, args, context, callServices) {
@@ -230,12 +231,14 @@ class CommunicationExecutor extends BaseExecutor {
             case 'addWatcher': {
                 const { contactString, condition, instruction } = args;
                 console.log(`[CommunicationExecutor] Adding watcher for '${contactString}'`);
-                // Use AgentDB directly
+                // A tainted run's watcher keeps the taint: its runs ask before outward actions.
+                const { taintSources } = taintPayloadFields(context?.untrustedTaint);
                 const result = services.db.createWatcher({
                     contactString,
                     condition,
                     instruction,
-                    status: 'active'
+                    status: 'active',
+                    ...(taintSources ? { taintSources } : {})
                 });
                 return { success: true, info: `Watcher added. ID: ${result.lastInsertRowid}` };
             }

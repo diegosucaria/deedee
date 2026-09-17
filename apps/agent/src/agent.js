@@ -43,7 +43,20 @@ const { AskUserService } = require('./services/ask-user');
 const { BrowserLive } = require('./services/browser-live');
 const { ToolScoper } = require('./services/tool-scoper');
 const { sanitizeToolResult, sanitizeToolArgs } = require('./utils/tool-result-sanitizer');
-const { classifyToolResult, wrapUntrusted, TurnTaint } = require('./utils/untrusted-content');
+const { classifyToolResult, wrapUntrusted, TurnTaint, taintFromPayload } = require('./utils/untrusted-content');
+const { BrowserPageState } = require('./utils/browser-gate');
+
+/** The taint stored on a watcher row (taint_sources JSON), as { tainted, taintSources }. */
+function watcherTaint(watcher) {
+  const raw = watcher?.taint_sources;
+  if (!raw) return null;
+  try {
+    const list = typeof raw === 'string' ? JSON.parse(raw) : raw;
+    return Array.isArray(list) ? { tainted: true, taintSources: list } : { tainted: true };
+  } catch {
+    return { tainted: true };
+  }
+}
 const { buildFunctionResponseParts, stripInlineParts, imagesAsUserContent, isPartsRejection, splitImages } = require('./utils/function-response');
 const browserSecrets = require('./utils/browser-secrets');
 const { sanitizeFunctionDeclarations } = require('./utils/gemini-schema-sanitizer');
@@ -238,6 +251,13 @@ class Agent {
   // resolve is retried on the next send — bounded by _ownerLidRetryAfterMs
   // so a permanently-down resolve endpoint doesn't generate one HTTP call
   // per send.
+  /** The browser MCP server's working directory: snapshot file links are relative to it. */
+  _browserServerDir() {
+    try {
+      return this.mcp?.configPath ? path.dirname(this.mcp.configPath) : null;
+    } catch { return null; }
+  }
+
   async _getOwnerWaIds() {
     const now = Date.now();
     const haveCache = !!this._ownerWaIds;
@@ -1056,7 +1076,8 @@ class Agent {
     // Untrusted sources this run has read (email, web, a contact's chat).
     // Once set, side effects need the owner's approval. A sub-agent starts
     // with its parent's sources.
-    const turnTaint = new TurnTaint(message.metadata?.untrustedTaint);
+    // A job or watcher created by a tainted run carries that taint here too.
+    const turnTaint = new TurnTaint(message.metadata?.untrustedTaint, { browser: new BrowserPageState({ baseDir: this._browserServerDir() }) });
     const executionSummary = {
       toolOutputs: [], // List of { name, result }
       replies: [],     // List of text/audio replies
@@ -1219,6 +1240,13 @@ class Agent {
       if (typeof commandResult === 'object' && commandResult.type === 'EXECUTE_PENDING') {
         // ... (existing slash command logic) ...
         const action = commandResult.action;
+        // An approved call from a tainted run keeps that run's taint (a job it creates stays tainted).
+        let approvedTaint = null;
+        try {
+          const row = action.approvalId && typeof this.db.getPendingConfirmation === 'function' ? this.db.getPendingConfirmation(action.approvalId) : null;
+          const sources = row?.origin_meta?.untrustedTaint;
+          if (Array.isArray(sources) && sources.length > 0) approvedTaint = new TurnTaint(sources);
+        } catch { approvedTaint = null; }
         console.log(`${logPrefix} User confirmed action: ${action.name}${action.approvalId ? ` (approval ${action.approvalId})` : ''}`);
         const { result } = splitImages(await this._executeTool(action.name, action.args, message, activeSendCallback, (model, pTokens, cTokens, cached = 0, thoughts = 0) => {
           const cost = calculateCost(model, pTokens, cTokens, cached, thoughts);
@@ -1227,7 +1255,7 @@ class Agent {
             totalTokens: pTokens + cTokens, chatId, estimatedCost: cost,
             cachedTokens: cached, thoughtsTokens: thoughts
           });
-        }, { approved: !!action.approvalId }));
+        }, { approved: !!action.approvalId, taint: approvedTaint }));
         if (action.approvalId) {
           try { this.db.setConfirmationResult(action.approvalId, result); } catch (e) { console.warn('[Approvals] result store failed:', e.message); }
         }
@@ -1474,6 +1502,8 @@ class Agent {
           message.role = 'user'; // Treat as a command from me
           // The prompt quotes the contact's text: the run starts tainted.
           turnTaint.add('a contact\'s message (watcher)');
+          // A watcher a tainted run created carries that run's sources.
+          for (const s of taintFromPayload(watcherTaint(triggeredWatcher), `watcher ${triggeredWatcher.id}`)) turnTaint.add(s);
           // Proceed to normal flow...
         }
       }
@@ -2335,7 +2365,8 @@ class Agent {
             } else if (guard.requiresConfirmation) {
               console.log(`${logPrefix} Action ${executionName} requires confirmation (${guard.rule || 'rule'}).`);
               const paused = await this.approvals.request({
-                message, toolName: executionName, args: call.args, reason: guard.message, sendCallback: activeSendCallback
+                message, toolName: executionName, args: call.args, reason: guard.message, sendCallback: activeSendCallback,
+                taintSources: guard.tainted ? [...turnTaint.sources] : null
               });
               toolResult = paused.result;
               toolStatus = paused.paused ? 'paused' : 'error';
@@ -2356,6 +2387,10 @@ class Agent {
               }, { taint: turnTaint });
               if (toolResult && typeof toolResult === 'object' && toolResult.error) {
                 toolStatus = 'error';
+              }
+              // Browser calls run one at a time: the next call's gate sees this page state.
+              if (serverName === 'browser' || (!serverName && String(executionName).startsWith('browser_'))) {
+                try { turnTaint.browser.observe(executionName, call.args, toolResult); } catch (e) { console.warn(`${logPrefix} Browser page state not updated: ${e.message}`); }
               }
             }
           } catch (toolErr) {

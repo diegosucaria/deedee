@@ -20,7 +20,9 @@ const { taintedAction } = require('./utils/untrusted-content');
 
 /** The "Why" line of a taint approval: what the call does and what was read. */
 function taintReason(action, taint) {
-    return `This run read untrusted content (${taint.describe()}) and now wants to ${action}. ` +
+    const carried = taint.sources.some(s => s.includes(' [carried by '));
+    const what = carried ? 'read untrusted content, or was created by a run that did' : 'read untrusted content';
+    return `This run ${what} (${taint.describe()}) and now wants to ${action}. ` +
         'The content may have asked for it, so the owner decides.';
 }
 
@@ -149,11 +151,13 @@ function buildToolFlags(definitions = toolDefinitions) {
 class ConfirmationManager {
     /**
      * @param {object} db - AgentDB (isVerifiedContact, searchPeople, getAgentSetting); a stub is fine in tests
-     * @param {{ toolFlags?: Map<string, {message: string}> }} [opts]
+     * @param {{ toolFlags?: Map<string, {message: string}>, isOwnerChat?: (channel: string, target: string) => boolean }} [opts]
+     *   isOwnerChat: the delivery service's owner check (phone JID, LID, Telegram id).
      */
     constructor(db, opts = {}) {
         this.db = db || {};
         this.toolFlags = opts.toolFlags || buildToolFlags();
+        this.isOwnerChat = typeof opts.isOwnerChat === 'function' ? opts.isOwnerChat : null;
 
         this.rules = [
             {
@@ -281,7 +285,8 @@ class ConfirmationManager {
 
     /**
      * Is `sendMessage` addressed to the owner himself (an alias, his phone,
-     * or one of his Telegram ids)? Anything unclear counts as someone else.
+     * his WhatsApp LID, or one of his Telegram ids)? The same ids the
+     * approval service routes by. Anything unclear counts as someone else.
      */
     isOwnerTarget(args) {
         const a = args && typeof args === 'object' ? args : {};
@@ -295,9 +300,20 @@ class ConfirmationManager {
             const ids = String(process.env.ALLOWED_TELEGRAM_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
             return ids.includes(raw);
         }
-        if (/[a-zA-Z]/.test(raw.replace(/@(?:s\.whatsapp\.net|c\.us)$/i, ''))) return false;
+        // Every web chat is the owner's.
+        if (service === 'web') return true;
+        if (service !== 'whatsapp') return false;
+        const lid = /^\+?[0-9]+@lid$/i.test(raw);
+        if (!lid && /[a-zA-Z]/.test(raw.replace(/@(?:s\.whatsapp\.net|c\.us)$/i, ''))) return false;
         const digits = raw.replace(/@.*$/, '').replace(/[^0-9]/g, '');
-        return !!ownerDigits && digits === ownerDigits;
+        if (!digits) return false;
+        if (!lid && ownerDigits && digits === ownerDigits) return true;
+        if (this.isOwnerChat) {
+            try {
+                return !!this.isOwnerChat('whatsapp', lid ? `${digits}@lid` : `${digits}@s.whatsapp.net`);
+            } catch { return false; }
+        }
+        return false;
     }
 
     /**
@@ -308,7 +324,7 @@ class ConfirmationManager {
         if (!taint || !taint.tainted) return { requiresConfirmation: false };
         let action;
         try {
-            action = taintedAction(asString(name), args, { serverName, isOwnerTarget: (a) => this.isOwnerTarget(a) });
+            action = taintedAction(asString(name), args, { serverName, isOwnerTarget: (a) => this.isOwnerTarget(a), browser: taint.browser || null });
         } catch (e) {
             action = `run ${asString(name)}`;
         }

@@ -271,7 +271,8 @@ class AgentDB {
         instruction TEXT NOT NULL,
         status TEXT DEFAULT 'active', -- active, triggered, paused
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-        last_triggered_at DATETIME
+        last_triggered_at DATETIME,
+        taint_sources TEXT -- JSON array: set when a run that read untrusted content created it
       );
 
       CREATE TABLE IF NOT EXISTS dj_vinyls (
@@ -504,6 +505,13 @@ class AgentDB {
       this.migrateSessions();
     } catch (err) {
       console.warn('[DB] Session migration failed (non-fatal):', err.message);
+    }
+
+    // Migration: a watcher created by a tainted run stores that taint.
+    try {
+      this.db.exec("ALTER TABLE watchers ADD COLUMN taint_sources TEXT");
+    } catch (e) {
+      // Ignore if column exists
     }
 
     try {
@@ -1490,16 +1498,20 @@ class AgentDB {
   // --- Watchers ---
   createWatcher(watcher) {
     const stmt = this.db.prepare(`
-        INSERT INTO watchers (name, contact_string, person_id, condition, instruction, status)
-        VALUES (?, ?, ?, ?, ?, ?)
+        INSERT INTO watchers (name, contact_string, person_id, condition, instruction, status, taint_sources)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
     `);
+    const taint = Array.isArray(watcher.taintSources) && watcher.taintSources.length > 0
+      ? JSON.stringify(watcher.taintSources.map(String))
+      : null;
     return stmt.run(
       watcher.name || 'New Watcher',
       watcher.contactString,
       watcher.personId || null,
       watcher.condition,
       watcher.instruction,
-      watcher.status || 'active'
+      watcher.status || 'active',
+      taint
     );
   }
 
