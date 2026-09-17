@@ -2325,7 +2325,10 @@ class AgentDB {
       sql += `timestamp >= datetime('now', '-' || ? || ' days', 'localtime')`;
       params.push(days);
     }
-    sql += ` GROUP BY tag ORDER BY cost DESC`;
+    // Group on the expression, not the name: SQLite reads a bare `tag` in the
+    // GROUP BY as the token_usage column, so every untagged row would land in
+    // one bucket with a label taken from an arbitrary row.
+    sql += ` GROUP BY COALESCE(tag, ${EFFECTIVE_TAG_SQL}) ORDER BY cost DESC`;
     return this.db.prepare(sql).all(...params);
   }
 

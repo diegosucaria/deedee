@@ -78,6 +78,21 @@ describe('prompt composition, raw tags and prefix churn', () => {
         expect(rows[0].tag).toBe('chat_tool_loop');
     });
 
+    test('untagged rows keep their chat_id classes apart', () => {
+        log({ tag: null, chatId: '000@s.us', estimatedCost: 1 });
+        log({ tag: null, chatId: 'web-1', estimatedCost: 2 });
+        log({ tag: null, chatId: 'system_nightly_dream_1', estimatedCost: 4 });
+        log({ tag: null, chatId: 'subagent-7', estimatedCost: 8 });
+
+        const rows = db.getCostByRawTag(null, null, 1);
+        const byTag = Object.fromEntries(rows.map(r => [r.tag, r]));
+        expect(rows).toHaveLength(4);
+        expect(byTag.whatsapp).toMatchObject({ cost: 1, calls: 1 });
+        expect(byTag.web_chat).toMatchObject({ cost: 2, calls: 1 });
+        expect(byTag.system_job).toMatchObject({ cost: 4, calls: 1 });
+        expect(byTag.subagent).toMatchObject({ cost: 8, calls: 1 });
+    });
+
     test('getPrefixChurn counts turns and changes per day', () => {
         db.logMetric('prefix_hash', 0, { chatId: 'web-1' });
         db.logMetric('prefix_hash', 1, { chatId: 'web-1' });
