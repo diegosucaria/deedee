@@ -1098,7 +1098,8 @@ class Agent {
       untrustedSources: turnTaint.sources // live list, read by the sub-agent service
     };
     // Approval guardian state for this run: denials count toward the breaker.
-    const approvalRun = ApprovalService.newRun(runId);
+    // A sub-agent shares its parent's state, so its denials count there too.
+    const approvalRun = ApprovalService.acquireRun(runId, message.metadata?.approvalRunId || null);
 
     // Watcher in-flight lock state (set inside the watcher block; cleaned up in finally).
     let watcherLockKey = null;
@@ -2400,7 +2401,7 @@ class Agent {
                   totalTokens: pTokens + cTokens, chatId, estimatedCost: cost,
                   tag, cachedTokens: cached, thoughtsTokens: thoughts
                 });
-              }, { taint: turnTaint });
+              }, { taint: turnTaint, approvalRun });
               if (toolResult && typeof toolResult === 'object' && toolResult.error) {
                 toolStatus = 'error';
               }
@@ -2758,6 +2759,7 @@ class Agent {
       }
       executionSummary.replies.push(errReply);
     } finally {
+      ApprovalService.releaseRun(approvalRun);
       // The abort flag applies to this run only.
       if (message.metadata?.chatId) this._abortedChats.delete(message.metadata.chatId);
 
@@ -3021,6 +3023,8 @@ class Agent {
         approved: options.approved === true,
         // Sources of untrusted content this run has read; a spawned sub-agent inherits them.
         untrustedTaint: options.taint?.tainted ? [...options.taint.sources] : [],
+        // The breaker state a spawned sub-agent shares.
+        approvalRunId: options.approvalRun?.id || null,
         processMessage: this.processMessage.bind(this),
         callServices: { client: this.client, interface: this.interface }
       });

@@ -33,7 +33,9 @@ const { ConfirmationManager } = require('../confirmation-manager');
 const { DeliveryService, telegramOwnerIds, splitChannel } = require('./delivery-service');
 const { isLiveSource } = require('./ask-user');
 const { TurnTaint } = require('../utils/untrusted-content');
-const { GuardianService } = require('./guardian-service');
+const { GuardianService, DRY_RUN_USAGE_TAG } = require('./guardian-service');
+// Breaker state of live runs, by root run id (see acquireRun).
+const ACTIVE_RUNS = new Map();
 const {
     DEFAULT_MODE, normalizeMode, normalizePolicyText, normalizeAlwaysAsk, matchAlwaysAsk, floorView, categoryView
 } = require('./guardian-policy');
@@ -318,6 +320,32 @@ class ApprovalService {
         return { id, denials: 0, stopped: false, notifiedDenial: false };
     }
 
+    /**
+     * The breaker state for a run. A sub-agent passes its parent's run id and
+     * shares the parent's state, so starting sub-agents cannot reset the
+     * denial count. Pair every call with releaseRun().
+     * @param {string} runId - this run's own id
+     * @param {string|null} [parentRunId] - the run that spawned this one
+     */
+    static acquireRun(runId, parentRunId = null) {
+        const shared = parentRunId ? ACTIVE_RUNS.get(parentRunId) : null;
+        if (shared) {
+            shared.refs += 1;
+            return shared.state;
+        }
+        const state = ApprovalService.newRun(runId);
+        ACTIVE_RUNS.set(runId, { state, refs: 1 });
+        return state;
+    }
+
+    /** Drop one hold on a run's breaker state; it goes once no run uses it. */
+    static releaseRun(state) {
+        const entry = state?.id ? ACTIVE_RUNS.get(state.id) : null;
+        if (!entry || entry.state !== state) return;
+        entry.refs -= 1;
+        if (entry.refs <= 0) ACTIVE_RUNS.delete(state.id);
+    }
+
     _record(entry) {
         const db = this.db;
         if (!db || typeof db.recordGuardianDecision !== 'function') return null;
@@ -565,7 +593,7 @@ class ApprovalService {
             toolName: name, args: safeArgs, sourceKind: runKind, ownerMessage: ownerMessage ? String(ownerMessage) : null,
             jobName: jobName ? String(jobName) : null, ruleReason: guard.message || null, taintSources: sources,
             excerpt: taint ? taint.excerpt : (excerpt ? String(excerpt) : null), floor: hits.floor, alwaysAsk: hits.additions,
-            smartPolicy: settings.smart_policy, chatId: null
+            smartPolicy: settings.smart_policy, chatId: null, usageTag: DRY_RUN_USAGE_TAG
         }) : null;
 
         let outcome;

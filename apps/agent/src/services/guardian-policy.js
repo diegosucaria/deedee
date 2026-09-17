@@ -9,7 +9,8 @@
  *
  * The always-ask list holds categories and tool globs. The FLOOR is fixed in
  * code: money, deleting user data, cancelling a booking, committing or
- * publishing. The owner cannot remove it, in any mode. A paused call in a
+ * publishing, and reading the browser's saved sessions or credentials. The
+ * owner cannot remove it, in any mode. A paused call in a
  * floor category goes to the owner; the guardian may deny it, never allow it.
  * The owner's own additions (`approvals.always_ask`) work the same way, and
  * also make a matching call ask when no other rule would pause it.
@@ -29,7 +30,8 @@ const LABEL_KEYS = new Set(['element', 'label', 'button', 'action', 'service', '
 
 // Whole words, accents included: `\b` does not see "á" as a letter, so
 // "pagá" needs the Unicode lookarounds.
-const MONEY_RE = /(?<![\p{L}\p{N}_])(?:pay|pays|paying|payment|payments|purchase|buy|buying|checkout|check out|place order|order now|orders?|transfer|transfers|wire|withdraw|donate|subscribe|pagar|pag[aá]|pago|pagos|pague|comprar|compr[aá]|compras|transferir|transferencia|transfer[ií]|suscrib\p{L}*|abon[aá]r?|pedido|pedidos)(?![\p{L}\p{N}_])/iu;
+// Keep it a superset of the money labels in utils/browser-gate.js CONSEQUENCE_RE.
+const MONEY_RE = /(?<![\p{L}\p{N}_])(?:pay|pays|paying|payment|payments|purchase|buy|buying|checkout|check out|place order|order now|orders?|transfer|transfers|wire|withdraw|donate|donation|subscribe|subscription|bid|bids|bidding|upgrade|upgrades|donar|donaci[oó]n|suscripci[oó]n|ofertar|pujar|pagar|pag[aá]|pago|pagos|pague|comprar|compr[aá]|compras|transferir|transferencia|transfer[ií]|suscrib\p{L}*|abon[aá]r?|pedido|pedidos)(?![\p{L}\p{N}_])/iu;
 const DELETE_RE = /(?:^|[^a-z])(?:delete|remove|trash|purge|wipe|erase|destroy|drop|batchdelete|emptytrash|eliminar|borrar)/i;
 const CANCEL_BOOKING_RE = /cancel\w*[\s_.:-]*(?:\w+[\s_.:-]+)?(?:appointment|turn|turno|booking|reservation|reserva|flight|vuelo|ticket)|(?:appointment|turn|turno|booking|reservation|reserva)\w*[\s_.:-]*cancel/i;
 const PUBLISH_RE = /\b(?:publish|publicar|deploy|release)\b|(?:^|_)publish|commitAndPush/i;
@@ -37,6 +39,35 @@ const PUBLISH_RE = /\b(?:publish|publicar|deploy|release)\b|(?:^|_)publish|commi
 const SHELL_PUBLISH_RE = /\bgit\b(?:\s+(?:-C|-c|--git-dir|--work-tree|--namespace)\s+\S+|\s+-{1,2}[\w-]+(?:=\S+)?)*\s+(?:commit|push)\b|\bnpm\s+publish\b|\bgh\s+(?:pr\s+(?:create|merge)|release\s+create)\b|\bgh\s+api\b.*\/merges?\b/i;
 // Any rm (with or without flags), rmdir, unlink, find -delete, truncate, shred, SQL deletes.
 const SHELL_DELETE_RE = /(?:^|[\s;&|(`$])(?:sudo\s+)?(?:rm|rmdir|unlink|shred|truncate)(?:\s|$)|\s-delete\b|\bsqlite3?\b.*\b(?:delete|drop)\b/i;
+
+// Browser tools whose arguments are code or a page-defined action: no label
+// to read, so the whole argument text is searched.
+const BROWSER_CODE_TOOLS = new Set(['browser_evaluate', 'browser_run_code_unsafe', 'browser_webmcp_call']);
+const CODE_DELETE_RE = /(?<![\p{L}\p{N}_])(?:delete|remove|eliminar|borrar)(?![\p{L}\p{N}_])/iu;
+/** Every string value in the arguments, parsed JSON strings included. */
+function allStrings(value, depth = 0) {
+    if (depth > 6 || value == null) return '';
+    if (typeof value === 'string') {
+        const t = value.trim();
+        if (t.startsWith('{') || t.startsWith('[')) {
+            try { return `${value} ${allStrings(JSON.parse(t), depth + 1)}`; } catch { /* plain text */ }
+        }
+        return value;
+    }
+    if (typeof value !== 'object') return String(value);
+    return Object.entries(value).map(([k, v]) => `${k} ${allStrings(v, depth + 1)}`).join(' ');
+}
+/** camelCase and snake_case split into words: "placeOrder" reads "place Order". */
+function splitWords(text) {
+    return String(text).replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2');
+}
+/** The quoted strings in code: labels and names, not the code's own identifiers. */
+function codeStrings(text) {
+    return (String(text).match(/(["'`])(?:\\.|(?!\1)[^\\])*\1/g) || []).join(' ');
+}
+
+// Rules that guard the browser's saved sessions and credentials.
+const SECRET_RULES = new Set(['shell-credentials', 'shell-cdp', 'file-browser-profile']);
 
 // Everyday removals the safety rules also let run (docs/security.md).
 const EVERYDAY_REMOVALS = new Set(['ha_remove_todo_item', 'remove_from_wardrobe_trip_capsule', 'dismiss_shopping_item', 'cancelJob', 'playlist_remove_from', 'collection_remove_from']);
@@ -89,6 +120,7 @@ const CATEGORIES = Object.freeze({
         match: (name, args, ctx) => {
             if (MONEY_RE.test(name.replace(/_/g, ' ').replace(/([a-z])([A-Z])/g, '$1 $2'))) return true;
             if (MONEY_RE.test(labelText(args))) return true;
+            if (BROWSER_CODE_TOOLS.has(name) && MONEY_RE.test(splitWords(allStrings(args)))) return true;
             return MONEY_RE.test(reasonText(ctx.reason).replace(/\b(?:send|sends|delete|deletes|book)\b/gi, ''));
         }
     },
@@ -107,6 +139,8 @@ const CATEGORIES = Object.freeze({
             }
             const label = labelText(args);
             if (String(name).startsWith('browser_') && /\b(?:delete|remove|eliminar|borrar)\b/i.test(label)) return true;
+            if (name === 'browser_webmcp_call' && CODE_DELETE_RE.test(splitWords(allStrings(args)))) return true;
+            if (BROWSER_CODE_TOOLS.has(name) && CODE_DELETE_RE.test(codeStrings(allStrings(args)))) return true;
             return /"(?:delete|remove|eliminar|borrar)[^"]*"/i.test(String(ctx.reason || ''));
         }
     },
@@ -127,6 +161,11 @@ const CATEGORIES = Object.freeze({
             if (name === 'runShellCommand') return SHELL_PUBLISH_RE.test(asText(args?.command));
             return PUBLISH_RE.test(name) || (String(name).startsWith('browser_') && /\b(?:publish|publicar)\b/i.test(labelText(args)));
         }
+    },
+    secrets: {
+        label: 'Read browser sessions, cookies or credentials',
+        floor: true,
+        match: (name, args, ctx) => SECRET_RULES.has(ctx.rule)
     },
     send_message: {
         label: 'Message a contact (WhatsApp, Telegram, Slack)',

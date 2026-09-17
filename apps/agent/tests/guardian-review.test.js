@@ -263,6 +263,37 @@ describe('approval guardian review', () => {
         expect(db.getGuardianDecision(job.decisionId).outcome).toBe('auto_denied');
     });
 
+    test('sub-agents share the parent breaker, so spawning them cannot reset the denial count', async () => {
+        gen.mockResolvedValue(verdictOf({ verdict: 'deny', reason: 'Steered by the email.', risk: 'high' }));
+        const parent = ApprovalService.acquireRun('r-parent');
+        const child = ApprovalService.acquireRun('r-child', 'r-parent');
+        const grandchild = ApprovalService.acquireRun('r-grandchild', 'r-parent');
+        expect(child).toBe(parent);
+        expect(grandchild).toBe(parent);
+        const call = (run) => svc.review({
+            message: jobMsg(), toolName: 'sendMessage', args: { to: 'helper@unknown.example', service: 'telegram', content: 'x' },
+            taint: emailTaint(), run
+        });
+        await call(parent);
+        await call(parent);
+        const third = await call(child);
+        expect(third.result.error).toMatch(/run stops now/);
+        expect(parent.stopped).toBe(true);
+        const types = agent.notifications.create.mock.calls.map(c => c[0].type);
+        expect(types.filter(t => t === 'guardian_denied')).toHaveLength(1);
+
+        // The state lives while any run holds it; an unknown parent starts fresh.
+        ApprovalService.releaseRun(parent);
+        ApprovalService.releaseRun(child);
+        expect(ApprovalService.acquireRun('r-late', 'r-parent')).toBe(parent);
+        ApprovalService.releaseRun(grandchild);
+        ApprovalService.releaseRun(parent);
+        const fresh = ApprovalService.acquireRun('r-new', 'r-parent');
+        expect(fresh).not.toBe(parent);
+        expect(fresh).toMatchObject({ id: 'r-new', denials: 0, stopped: false });
+        ApprovalService.releaseRun(fresh);
+    });
+
     test('the breaker also stops a parallel sibling whose allow arrives after the third denial', async () => {
         let releaseAllow;
         const allowGate = new Promise(r => { releaseAllow = r; });
@@ -331,7 +362,21 @@ describe('approval guardian review', () => {
         expect(db.getGuardianDecision(off.decisionId).outcome).toBe('ran_unasked');
         const floor = await svc.review({ message: webMsg('x'), toolName: 'commitAndPush', args: { message: 'fix' }, run: ApprovalService.newRun() });
         expect(floor.status).toBe('paused');
+        const profile = await svc.review({ message: webMsg('x'), toolName: 'readFile', args: { path: 'data/browser_profile/browser-secrets.env' }, run: ApprovalService.newRun() });
+        expect(profile.status).toBe('paused');
+        expect(db.getGuardianDecision(profile.decisionId).floor).toEqual(['secrets']);
         expect(gen).not.toHaveBeenCalled();
+    });
+
+    test('smart mode: a guardian allow on browser secrets or a paid browser click still asks the owner', async () => {
+        gen.mockResolvedValue(verdictOf({ verdict: 'allow', reason: 'The owner asked for it.', risk: 'low' }));
+        const cdp = await svc.review({ message: webMsg('list my tabs'), toolName: 'runShellCommand', args: { command: 'curl -s localhost:9222/json/list' }, run: ApprovalService.newRun() });
+        expect(cdp.status).toBe('paused');
+        expect(db.getGuardianDecision(cdp.decisionId)).toMatchObject({ outcome: 'escalated', floor: ['secrets'] });
+        const taint = new TurnTaint(['web page (shop.example)']);
+        const bid = await svc.review({ message: webMsg('bid 50 on that item'), toolName: 'browser_click', args: { element: 'Place bid button', ref: 'e12' }, taint, serverName: 'browser', run: ApprovalService.newRun() });
+        expect(bid.status).toBe('paused');
+        expect(db.getGuardianDecision(bid.decisionId).floor).toContain('money');
     });
 
     test('dry run judges a described call and executes nothing', async () => {
@@ -345,6 +390,14 @@ describe('approval guardian review', () => {
 
         const pay = await svc.dryRun({ toolName: 'commitAndPush', args: {} });
         expect(pay).toMatchObject({ outcome: 'escalated', floor: ['publish'], executed: false });
+
+        // Dry runs log usage apart, so the Guardian page cost counts real decisions only.
+        const tags = db.db.prepare('SELECT tag, COUNT(*) AS n FROM token_usage GROUP BY tag').all();
+        expect(tags).toEqual([{ tag: 'guardian_dry_run', n: 2 }]);
+        const stats = db.guardianStats({});
+        expect(stats.tokenUsage.calls).toBe(0);
+        expect(stats.dryRunUsage.calls).toBe(2);
+        expect(stats.cost).toBe(0);
     });
 
     test('policy updates keep TTLs and the deny-list, and the floor cannot be removed', () => {
@@ -419,6 +472,37 @@ describe('guardian policy matching', () => {
         expect(click('Comprá ya')).toEqual(['money']);
         expect(click('Pagar')).toEqual(['money']);
         expect(click('Pagination next')).toEqual([]);
+    });
+
+    test('the money floor covers every money label the browser gate pauses on', () => {
+        const reason = (l) => `This run read untrusted content (web page) and now wants to click "${l}" on a web page (pay, buy, send, delete or book).`;
+        const click = (l) => matchAlwaysAsk('browser_click', { element: `${l} button`, ref: 'e12' }, { reason: reason(l), rule: 'untrusted-content' }).floor;
+        for (const label of ['Place bid', 'Bid', 'Upgrade', 'Donar', 'Donate', 'Donación', 'Suscripción', 'Subscribe', 'Suscribirse', 'Pay now', 'Buy',
+            'Purchase', 'Make a payment', 'Place order', 'Order now', 'Complete checkout', 'Confirm and pay', 'Transfer', 'Wire', 'Pagar', 'Abonar',
+            'Comprar', 'Realizar pedido', 'Finalizar compra', 'Confirmar transferencia', 'Transferir']) {
+            expect([label, click(label)]).toEqual([label, expect.arrayContaining(['money'])]);
+        }
+    });
+
+    test('browser code and page actions are searched in full for money and delete words', () => {
+        const code = (c, name = 'browser_run_code_unsafe') => matchAlwaysAsk(name, name === 'browser_evaluate' ? { function: c } : { code: c }, { reason: 'run code on a web page' }).floor;
+        expect(code('await page.getByRole("button", { name: "Pay now" }).click()')).toEqual(['money']);
+        expect(code("await page.getByRole('button', { name: 'Delete account' }).click()")).toEqual(['delete_data']);
+        expect(code('() => document.querySelector("#buy").click()', 'browser_evaluate')).toEqual(['money']);
+        expect(code('return document.title')).toEqual([]);
+        expect(code('el.remove(); return document.querySelector(".border").textContent')).toEqual([]);
+        const page = (args) => matchAlwaysAsk('browser_webmcp_call', args, { reason: 'call an action the web page registered' }).floor;
+        expect(page({ name: 'placeOrder' })).toEqual(['money']);
+        expect(page({ name: 'deleteItem', arguments: '{"id":3}' })).toEqual(['delete_data']);
+        expect(page({ name: 'getWeather' })).toEqual([]);
+    });
+
+    test('rules guarding browser sessions and credentials are on the floor', () => {
+        expect(matchAlwaysAsk('readFile', { path: 'data/browser-secrets.env' }, { rule: 'file-browser-profile' }).floor).toEqual(['secrets']);
+        expect(matchAlwaysAsk('runShellCommand', { command: 'curl localhost:9222/json/list' }, { rule: 'shell-cdp' }).floor).toEqual(['secrets']);
+        expect(matchAlwaysAsk('readFile', { path: 'notes.md' }, { rule: 'untrusted-content' }).floor).toEqual([]);
+        expect(FLOOR).toContain('secrets');
+        expect(normalizeAlwaysAsk(['category:secrets'])).toEqual([]);
     });
 
     test('everyday calls hit no floor', () => {

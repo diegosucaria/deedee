@@ -217,7 +217,13 @@ recommended.
 2. The safety rules and the taint rule decide whether the call is gated.
 3. The always-ask list (`apps/agent/src/services/guardian-policy.js`). The
    floor is fixed in code and cannot be removed: pay, buy, order or transfer
-   money; delete user data; cancel a booking; commit or publish. The owner
+   money; delete user data; cancel a booking; commit or publish; read the
+   browser's saved sessions, cookies or credentials (rules `shell-credentials`,
+   `shell-cdp`, `file-browser-profile`). Money words match the button labels,
+   dialog text and gate reason, and are a superset of the browser gate's
+   money labels (bid, upgrade, donate, subscribe included). For
+   `browser_evaluate`, `browser_run_code_unsafe` and `browser_webmcp_call`
+   the whole code or action text is searched too. The owner
    can add categories (`send_message`, `send_email`, `book`,
    `home_security`, `shell`, `browser_submit`, `files`) or tool globs in
    `approvals.always_ask`. An owner addition also gates a call no rule
@@ -225,13 +231,17 @@ recommended.
    `off` included. The guardian may deny such a call, never allow it.
 4. In `smart` mode the guardian judges the call. Error, timeout (8 s,
    `GUARDIAN_TIMEOUT_MS`), an answer that does not fit the schema, or an
-   `allow` it marks high risk all mean `escalate`. In the owner's own chat
+   `allow` it marks high risk all mean `escalate`. So does an `allow` on
+   arguments it saw only in part (a string over 1200 characters, over 30
+   keys, or nesting past 4 levels), since the full call is what would run. In the owner's own chat
    a denial short of high risk becomes `escalate`, so he can still approve
    what he just asked for.
 5. Breaker: 3 guardian denials in one run stop the run and notify the
    owner. The first denial in a run also raises one notification. Calls in
    the same model turn run in parallel, so each checks the breaker again
-   after its verdict.
+   after its verdict. A sub-agent shares its parent's breaker state
+   (`ApprovalService.acquireRun`), so starting sub-agents does not reset
+   the count.
 
 **What the guardian sees** (`apps/agent/src/services/guardian-service.js`):
 - the policy only in its system instruction, plus the owner's
@@ -266,12 +276,15 @@ outcome, tool, run kind and risk).
 - `GET /history?outcome=&tool=&risk=&sourceKind=&from=&to=&limit=&offset=`, `GET /history/:id`;
 - `GET /stats?from=&to=`: outcomes per day, auto-decision rate, escalations
   and the share the owner approved, feedback counts, top tools and taint
-  sources, cost, median latency, breaker trips;
+  sources, cost, median latency, breaker trips. `cost` comes from the
+  decision rows and covers the whole range; `tokenUsage` and `dryRunUsage`
+  read `token_usage`, which keeps 30 days. System > Stats shows both tags
+  as "Guardian";
 - `GET /policy`, `PUT /policy { mode, smart_policy, always_ask }`: the floor
   comes back read-only and is never stored;
 - `POST /dry-run { toolName, args, ownerMessage?, jobName?, sourceKind?, taintSources?, excerpt? }`:
   runs the gate and the guardian on a described call; nothing runs, nothing
-  is stored but the token usage;
+  is stored but the token usage, under its own tag `guardian_dry_run`;
 - `POST /feedback/:id { feedback: should_allow | should_deny | null, note? }`:
   never changes the decision.
 

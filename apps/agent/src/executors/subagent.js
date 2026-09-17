@@ -44,6 +44,7 @@ class SubAgentExecutor extends BaseExecutor {
                         parentDepth: currentDepth,
                         lightweight,
                         untrustedTaint: Array.isArray(context?.untrustedTaint) ? context.untrustedTaint : [],
+                        approvalRunId: context?.approvalRunId || null,
                     });
                     return { success: true, ...result };
                 } catch (err) {

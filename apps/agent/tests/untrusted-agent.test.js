@@ -343,6 +343,9 @@ describe('untrusted content through the Agent', () => {
     expect(names).toEqual(['browser_snapshot', 'spawnAgent']);
     const spawnCtx = agent.toolExecutor.execute.mock.calls[1][2];
     expect(spawnCtx.untrustedTaint).toEqual(['a web page (browser_snapshot)']);
+    // The sub-agent shares this run's guardian breaker.
+    expect(typeof spawnCtx.approvalRunId).toBe('string');
+    expect(spawnCtx.approvalRunId.length).toBeGreaterThan(0);
     const card = mockInterface.sentMessages.find(m => m.metadata?.approval);
     expect(card.content).toMatch(/click "Pay now" on a web page/);
     expect(card.content).toContain('Untrusted input: a web page (browser_snapshot)');
