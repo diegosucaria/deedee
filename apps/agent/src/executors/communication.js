@@ -19,7 +19,9 @@ class CommunicationExecutor extends BaseExecutor {
                 const svc = service || 'whatsapp';
 
                 // ALIAS RESOLUTION
-                let target = to;
+                // Trim as the approval guard does (ConfirmationManager.isOwnerTarget):
+                // "me " must resolve to the owner, not search the people table.
+                let target = typeof to === 'string' ? to.trim() : to;
 
                 // Fetch owner phone from DB or Env
                 let ownerPhone = process.env.MY_PHONE;
