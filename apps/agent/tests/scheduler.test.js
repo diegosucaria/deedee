@@ -614,4 +614,167 @@ describe('Scheduler & Smart Notifications', () => {
             expect(typeof executionResult.text).toBe('string');
         });
     });
+    describe('system job scoping (model + allowedTools)', () => {
+        // proactive_thought filters what reaches the owner in the turn itself,
+        // so it stays PRO; the wardrobe jobs orchestrate around inner PRO calls.
+        const AGENT_TURN_JOBS = {
+            proactive_thought: 'PRO',
+            wardrobe_pretrip_check: 'FLASH',
+            wardrobe_morning_outfit: 'FLASH'
+        };
+        let savedEnv;
+
+        beforeEach(() => {
+            savedEnv = process.env.SYSTEM_JOBS_SCOPED;
+            delete process.env.SYSTEM_JOBS_SCOPED;
+            agent.db.logJobExecution = jest.fn();
+            agent.interface.broadcast = jest.fn();
+            agent.db.cleanupJobLogs = jest.fn();
+            agent.db.cleanupMetrics = jest.fn();
+            agent.db.cleanupTokenUsage = jest.fn();
+            agent.processMessage = jest.fn().mockImplementation(async (msg, cb) => {
+                await cb({ content: '[SILENT]' });
+            });
+            jest.spyOn(scheduler, '_processSmartNotification').mockResolvedValue({});
+        });
+
+        afterEach(() => {
+            if (savedEnv === undefined) delete process.env.SYSTEM_JOBS_SCOPED;
+            else process.env.SYSTEM_JOBS_SCOPED = savedEnv;
+            jest.useRealTimers();
+        });
+
+        // Runs the scheduled wrapper of a system job. proactive_thought rolls
+        // the dice and sleeps 1-30 min first, so pin the RNG and skip the wait.
+        async function runSystemJob(name) {
+            const job = scheduler.jobs[name];
+            expect(job).toBeDefined();
+            if (name === 'proactive_thought') {
+                jest.spyOn(Math, 'random').mockReturnValue(0);
+                jest.useFakeTimers();
+                const p = job.job();
+                await jest.advanceTimersByTimeAsync(60 * 1000);
+                await p;
+                jest.useRealTimers();
+                return;
+            }
+            await job.job();
+        }
+
+        function passedMetadata() {
+            expect(agent.processMessage).toHaveBeenCalledTimes(1);
+            return agent.processMessage.mock.calls[0][0].metadata;
+        }
+
+        it('every agent-turn system job passes forceModel and allowedTools', async () => {
+            const { toolDefinitions } = require('../src/tools-definition');
+            const known = new Set(toolDefinitions.flatMap(g => g.functionDeclarations || []).map(d => d.name));
+            scheduler.ensureSystemJobs();
+
+            for (const [name, model] of Object.entries(AGENT_TURN_JOBS)) {
+                agent.processMessage.mockClear();
+                await runSystemJob(name);
+                const meta = passedMetadata();
+                expect(meta.chatId).toMatch(new RegExp(`^system_${name}_`));
+                expect(meta.forceModel).toBe(model);
+                // saveJobState/getJobState refuse to run without jobName.
+                expect(meta.jobName).toBe(name);
+                expect(Array.isArray(meta.allowedTools)).toBe(true);
+                expect(meta.allowedTools.length).toBeGreaterThan(0);
+                for (const tool of meta.allowedTools) {
+                    expect(known.has(tool)).toBe(true);
+                }
+                expect(meta.allowedTools).toContain('sendMessage');
+                // askUser has no category; user jobs keep it via the scoper,
+                // system jobs must list it by name.
+                expect(meta.allowedTools).toContain('askUser');
+            }
+        });
+
+        it('persists the defaults under scope, not as an override', () => {
+            scheduler.ensureSystemJobs();
+            const saved = agent.db.saveScheduledJob.mock.calls.find(([j]) => j.name === 'wardrobe_morning_outfit')[0];
+            expect(saved.payload.isSystem).toBe(true);
+            expect(saved.payload.scope.model).toBe('FLASH');
+            expect(saved.payload.scope.allowedTools).toContain('recommend_outfit');
+            expect(saved.payload.model).toBeUndefined();
+            expect(saved.payload.allowedTools).toBeUndefined();
+        });
+
+        it('a persisted override wins and survives the boot rewrite', async () => {
+            agent.db.getScheduledJobs.mockReturnValue([{
+                name: 'wardrobe_morning_outfit',
+                cronExpression: '15 7 * * *',
+                taskType: 'agent_instruction',
+                payload: { task: 'old', isSystem: true, model: 'pro', allowedTools: ['sendMessage', 'recommend_outfit'] },
+                enabled: true
+            }]);
+            scheduler.ensureSystemJobs();
+
+            await runSystemJob('wardrobe_morning_outfit');
+            const meta = passedMetadata();
+            expect(meta.forceModel).toBe('PRO');
+            expect(meta.allowedTools).toEqual(['sendMessage', 'recommend_outfit']);
+
+            const saved = agent.db.saveScheduledJob.mock.calls.find(([j]) => j.name === 'wardrobe_morning_outfit')[0];
+            expect(saved.payload.model).toBe('PRO');
+            expect(saved.payload.allowedTools).toEqual(['sendMessage', 'recommend_outfit']);
+            expect(saved.payload.scope.model).toBe('FLASH');
+        });
+
+        it('a persisted model alone keeps the default tool list', async () => {
+            agent.db.getScheduledJobs.mockReturnValue([{
+                name: 'wardrobe_pretrip_check',
+                cronExpression: '45 6 * * *',
+                taskType: 'agent_instruction',
+                payload: { task: 'old', isSystem: true, model: 'PRO', allowedTools: [] },
+                enabled: true
+            }]);
+            scheduler.ensureSystemJobs();
+            await runSystemJob('wardrobe_pretrip_check');
+            const meta = passedMetadata();
+            expect(meta.forceModel).toBe('PRO');
+            expect(meta.allowedTools).toContain('wardrobe_pack_for_trip');
+        });
+
+        it('SYSTEM_JOBS_SCOPED=0 restores the old path: chatId only', async () => {
+            process.env.SYSTEM_JOBS_SCOPED = '0';
+            agent.db.getScheduledJobs.mockReturnValue([{
+                name: 'wardrobe_morning_outfit',
+                cronExpression: '15 7 * * *',
+                taskType: 'agent_instruction',
+                payload: { task: 'old', isSystem: true, model: 'PRO' },
+                enabled: true
+            }]);
+            scheduler.ensureSystemJobs();
+            await runSystemJob('wardrobe_morning_outfit');
+            const meta = passedMetadata();
+            expect(Object.keys(meta)).toEqual(['chatId', 'jobName']);
+        });
+
+        it('nightly_consolidation calls consolidateMemory directly, no agent turn', async () => {
+            agent.toolExecutor = { execute: jest.fn().mockResolvedValue({ success: true, entries: 3 }) };
+            agent.peopleService = null;
+            scheduler.ensureSystemJobs();
+            await scheduler.jobs['nightly_consolidation'].job();
+
+            expect(agent.processMessage).not.toHaveBeenCalled();
+            expect(agent.toolExecutor.execute).toHaveBeenCalledTimes(1);
+            const [name, args, context] = agent.toolExecutor.execute.mock.calls[0];
+            expect(name).toBe('consolidateMemory');
+            expect(args).toEqual({});
+            expect(context.message.source).toBe('scheduler');
+            expect(context.message.metadata.chatId).toMatch(/^system_nightly_consolidation_/);
+            expect(agent.db.cleanupJobLogs).toHaveBeenCalledWith(30);
+            expect(agent.db.logJobExecution).toHaveBeenCalledWith('nightly_consolidation', 'success', expect.stringContaining('entries'), expect.any(Number));
+        });
+
+        it('nightly_consolidation logs a failure when the tool throws', async () => {
+            agent.toolExecutor = { execute: jest.fn().mockRejectedValue(new Error('db locked')) };
+            agent.peopleService = null;
+            scheduler.ensureSystemJobs();
+            await scheduler.jobs['nightly_consolidation'].job();
+            expect(agent.db.logJobExecution).toHaveBeenCalledWith('nightly_consolidation', 'failure', 'db locked', expect.any(Number));
+        });
+    });
 });

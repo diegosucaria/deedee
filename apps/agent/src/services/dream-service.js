@@ -95,8 +95,9 @@ class DreamService {
 
         // 2. Generate Dream Content
         const prompt = getDreamPrompt(recentLogs, randomFacts, plexContext);
-        const modelName = this.agent.configService.getModel('PRO');
-        const thinking = this.agent.configService.getThinkingConfig('PRO', 'dream', { model: modelName });
+        // FLASH: creative text with low stakes; the TTS call follows.
+        const modelName = this.agent.configService.getModel('FLASH');
+        const thinking = this.agent.configService.getThinkingConfig('FLASH', 'dream', { model: modelName });
 
         let dreamContent = null;
         try {

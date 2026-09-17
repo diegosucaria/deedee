@@ -55,13 +55,13 @@ class SubAgentExecutor extends BaseExecutor {
                     return { success: false, error: 'Sub-agent service not available.' };
                 }
 
-                const { taskId } = args;
+                const { taskId, full } = args;
                 if (!taskId) {
                     return { success: false, error: 'Missing required parameter: taskId' };
                 }
 
                 try {
-                    const result = await subAgentService.getResult(taskId);
+                    const result = await subAgentService.getResult(taskId, { full: full === true });
                     return { success: true, ...result };
                 } catch (err) {
                     return { success: false, error: err.message };

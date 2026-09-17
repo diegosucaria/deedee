@@ -1,3 +1,5 @@
+const { usageColumns } = require('./usage-attribution');
+
 
 // Env var that overrides each model role. Balena device/fleet variables win over
 // docker-compose.yml, so this is also the rollback path (see docs/models.md).
@@ -44,6 +46,8 @@ const THINKING_DEFAULTS = {
         '*': 'MINIMAL',
         chat: 'LOW', tool_loop: 'LOW', job: 'LOW', subagent: 'LOW', watcher: 'LOW', coding: 'LOW',
         wardrobe: 'LOW', impersonation: 'LOW',
+        // Moved off PRO by the job-scoping work; they keep the level they had there.
+        dream: 'LOW', pruning: 'LOW',
         summarization: 'MINIMAL', title: 'MINIMAL', scoper: 'MINIMAL', people_enrich: 'MINIMAL', cron_helper: 'MINIMAL',
     },
     PRO: {
@@ -266,9 +270,12 @@ class ConfigService {
      * @param {object} result - Raw response from generateContent
      * @param {string} [chatId] - Chat ID for attribution
      * @param {string} [tag] - Optional tag (e.g. 'title', 'tts', 'dream')
+     * @param {object} [composition] - Optional prompt estimates from
+     *   usage-attribution.promptComposition (sysTokensEst, toolsTokensEst,
+     *   historyTokensEst, declCount); stored as NULL when absent.
      * @returns {{ cost: number, tokens: number }} cost and total tokens
      */
-    logUsageFromResponse(db, model, result, chatId, tag) {
+    logUsageFromResponse(db, model, result, chatId, tag, composition) {
         const meta = result?.usageMetadata;
         if (!meta || !db) return { cost: 0, tokens: 0 };
 
@@ -289,7 +296,8 @@ class ConfigService {
             estimatedCost: cost,
             tag: tag || null,
             cachedTokens,
-            thoughtsTokens
+            thoughtsTokens,
+            ...usageColumns(composition)
         });
 
         return { cost, tokens: totalTokens };

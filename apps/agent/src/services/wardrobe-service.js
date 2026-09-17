@@ -323,12 +323,22 @@ Respond with JSON only.`;
     }
 
     _safeParseJson(text) {
+        const cleaned = String(text ?? '').replace(/```json/g, '').replace(/```/g, '').trim();
         try {
-            const cleaned = String(text).replace(/```json/g, '').replace(/```/g, '').trim();
             return JSON.parse(cleaned);
-        } catch (e) {
-            return null;
+        } catch (e) { /* fall through to the block extractor */ }
+
+        // Models sometimes wrap the JSON in a sentence. Take the first {...}
+        // or [...] block instead of losing the whole reply.
+        for (const [open, close] of [['{', '}'], ['[', ']']]) {
+            const start = cleaned.indexOf(open);
+            const end = cleaned.lastIndexOf(close);
+            if (start === -1 || end <= start) continue;
+            try {
+                return JSON.parse(cleaned.slice(start, end + 1));
+            } catch (e) { /* try the next shape */ }
         }
+        return null;
     }
 
     /**
@@ -2665,16 +2675,36 @@ Use the weather skill (wttr.in or Open-Meteo). Respond with JSON only:
                 task,
                 tools: ['runShellCommand'],
                 waitForResult: true,
+                // Code parses this reply as strict JSON, so it needs FLASH —
+                // not the LITE default for lightweight runs.
+                model: 'FLASH',
                 lightweight: true
             });
             // Try common result shapes
             const text = result?.result || result?.output || result?.response || '';
             const data = this._safeParseJson(text);
-            return Array.isArray(data?.days) ? data.days : null;
+            if (Array.isArray(data?.days)) return data.days;
+            this._warnNoForecast(destination, 'the sub-agent reply held no usable JSON forecast');
+            return null;
         } catch (e) {
             console.warn('[WardrobeService] Weather subagent failed:', e.message);
+            this._warnNoForecast(destination, e.message);
             return null;
         }
+    }
+
+    /** A missing forecast used to be silent; the owner should see it. */
+    _warnNoForecast(destination, reason) {
+        console.warn(`[WardrobeService] No forecast for ${destination}: ${reason}`);
+        try {
+            this.agent?.notifications?.create?.({
+                type: 'wardrobe_forecast_missing',
+                severity: 'warning',
+                title: `No weather forecast for ${destination}`,
+                message: `The packing plan for ${destination} was built without a forecast (${reason}). Check the capsule before you pack.`,
+                metadata: { destination, reason, link: '/wardrobe' }
+            });
+        } catch (e) { /* notification is best effort */ }
     }
 
     /**

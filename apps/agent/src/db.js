@@ -58,12 +58,20 @@ const SERVICE_CATEGORIES = {
   grok: 'Grok',
 };
 
+// Tags written on the main agent chat path (see services/usage-attribution.js).
+// They say which class of turn a call belongs to, not which product surface it
+// came from, so the cost breakdown classifies them by chat_id like untagged rows.
+const MAIN_PATH_TAGS = ['chat', 'job', 'subagent', 'watcher']
+  .flatMap(t => [t, `${t}_tool_loop`]);
+const MAIN_PATH_TAGS_SQL = MAIN_PATH_TAGS.map(t => `'${t}'`).join(', ');
+
 // SQL CASE expression that resolves an effective_tag from tag + chat_id.
-// When tag is NOT NULL, use it directly. When tag IS NULL (main agent chat),
-// classify by chat_id pattern: WhatsApp JIDs, scheduled jobs, sub-agents, etc.
+// When tag names a call site (tts, dream, ...), use it directly. When tag IS
+// NULL or is a main-path tag, classify by chat_id pattern: WhatsApp JIDs,
+// scheduled jobs, sub-agents, etc.
 const EFFECTIVE_TAG_SQL = `
   CASE
-    WHEN tag IS NOT NULL THEN tag
+    WHEN tag IS NOT NULL AND tag NOT IN (${MAIN_PATH_TAGS_SQL}) THEN tag
     WHEN chat_id LIKE '%@s.us' OR chat_id LIKE '%@g.us' THEN 'whatsapp'
     WHEN chat_id LIKE 'scheduled\\_%' ESCAPE '\\' THEN 'scheduled_job'
     WHEN chat_id LIKE 'system\\_%' ESCAPE '\\' THEN 'system_job'
@@ -527,6 +535,11 @@ class AgentDB {
       this.db.exec("ALTER TABLE token_usage ADD COLUMN estimated_cost REAL");
     } catch (err) { }
 
+    // Migration: full sub-agent result when the returned one was compressed
+    try {
+      this.db.exec("ALTER TABLE subagents ADD COLUMN result_full TEXT");
+    } catch (err) { }
+
     // Migration: Add token counts to summaries
     try {
       this.db.exec("ALTER TABLE summaries ADD COLUMN summary_tokens INTEGER");
@@ -581,6 +594,16 @@ class AgentDB {
     try {
       this.db.exec("ALTER TABLE token_usage ADD COLUMN thoughts_tokens INTEGER DEFAULT 0");
     } catch (err) { }
+
+    // Migration: prompt composition estimates on token_usage (JSON length / 4
+    // of the system instruction, the declarations and the history sent, plus
+    // the declaration count). NULL on rows written before this migration and
+    // on calls that do not go through the main chat path.
+    for (const col of ['sys_tokens_est INTEGER', 'tools_tokens_est INTEGER', 'history_tokens_est INTEGER', 'decl_count INTEGER']) {
+      try {
+        this.db.exec(`ALTER TABLE token_usage ADD COLUMN ${col}`);
+      } catch (err) { }
+    }
 
     // Migration: Add context_content to autopilot_drafts
     try {
@@ -1527,12 +1550,16 @@ class AgentDB {
     return stmt.get(hours).count;
   }
 
-  logTokenUsage({ model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost, tag, cachedTokens, thoughtsTokens }) {
+  logTokenUsage({ model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost, tag, cachedTokens, thoughtsTokens,
+    sysTokensEst, toolsTokensEst, historyTokensEst, declCount }) {
     const stmt = this.db.prepare(`
-      INSERT INTO token_usage(model, prompt_tokens, candidate_tokens, total_tokens, chat_id, estimated_cost, tag, cached_tokens, thoughts_tokens)
-      VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?)
+      INSERT INTO token_usage(model, prompt_tokens, candidate_tokens, total_tokens, chat_id, estimated_cost, tag, cached_tokens, thoughts_tokens,
+        sys_tokens_est, tools_tokens_est, history_tokens_est, decl_count)
+      VALUES(?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `);
-    stmt.run(model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost, tag || null, cachedTokens || 0, thoughtsTokens || 0);
+    const est = (v) => (Number.isFinite(v) ? Math.round(v) : null);
+    stmt.run(model, promptTokens, candidateTokens, totalTokens, chatId, estimatedCost, tag || null, cachedTokens || 0, thoughtsTokens || 0,
+      est(sysTokensEst), est(toolsTokensEst), est(historyTokensEst), est(declCount));
   }
 
   // --- DJ Vinyls ---
@@ -2829,12 +2856,13 @@ class AgentDB {
     `).run(id, parentChatId, task, model || 'FLASH', createdAt || new Date().toISOString());
   }
 
-  updateSubAgent(id, { status, result, error, completedAt }) {
+  updateSubAgent(id, { status, result, resultFull, error, completedAt }) {
     const updates = ['completed_at = ?'];
     const args = [completedAt || new Date().toISOString()];
 
     if (status) { updates.push('status = ?'); args.push(status); }
     if (result !== undefined) { updates.push('result = ?'); args.push(typeof result === 'string' ? result : JSON.stringify(result)); }
+    if (resultFull !== undefined) { updates.push('result_full = ?'); args.push(typeof resultFull === 'string' ? resultFull : JSON.stringify(resultFull)); }
     if (error !== undefined) { updates.push('error = ?'); args.push(error); }
 
     args.push(id);
@@ -2846,9 +2874,11 @@ class AgentDB {
   }
 
   listSubAgents(parentChatId, { page = 1, limit = 50, search = null, status = null } = {}) {
+    // Lists leave out result_full; getSubAgent returns it.
+    const SUBAGENT_LIST_COLUMNS = 'id, parent_chat_id, task, status, model, result, error, created_at, completed_at';
     const offset = (page - 1) * limit;
     if (parentChatId) {
-      const tasks = this.db.prepare('SELECT * FROM subagents WHERE parent_chat_id = ? ORDER BY created_at DESC').all(parentChatId);
+      const tasks = this.db.prepare(`SELECT ${SUBAGENT_LIST_COLUMNS} FROM subagents WHERE parent_chat_id = ? ORDER BY created_at DESC`).all(parentChatId);
       return { tasks, total: tasks.length, page: 1, limit: tasks.length };
     }
 
@@ -2867,7 +2897,7 @@ class AgentDB {
     const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
 
     const total = this.db.prepare(`SELECT COUNT(*) as count FROM subagents${where}`).get(...params).count;
-    const tasks = this.db.prepare(`SELECT * FROM subagents${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
+    const tasks = this.db.prepare(`SELECT ${SUBAGENT_LIST_COLUMNS} FROM subagents${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
     return { tasks, total, page, limit };
   }
 
@@ -3719,4 +3749,4 @@ class AgentDB {
   }
 }
 
-module.exports = { AgentDB, SERVICE_CATEGORIES };
+module.exports = { AgentDB, SERVICE_CATEGORIES, MAIN_PATH_TAGS };

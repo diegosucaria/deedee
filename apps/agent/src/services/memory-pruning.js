@@ -1,10 +1,46 @@
 const { getMemoryPruningPrompt } = require('../prompts/memory');
 const { ConfigService } = require('./config-service');
 
+// Guard rails for the LLM verdict. The judge runs on FLASH, so the code — not
+// the prompt — decides what a single run may remove.
+const DEFAULT_MAX_LLM_DELETES = 10;
+const RECENT_DAYS = 7;
+
 class MemoryPruningService {
     constructor(agent) {
         this.agent = agent;
         this._config = new ConfigService();
+    }
+
+    /** How many facts one LLM verdict may delete. MEMORY_PRUNE_MAX_DELETES overrides. */
+    maxLlmDeletes() {
+        const raw = process.env.MEMORY_PRUNE_MAX_DELETES;
+        if (raw === undefined || raw === '') return DEFAULT_MAX_LLM_DELETES;
+        const n = parseInt(raw, 10);
+        return Number.isFinite(n) && n >= 0 ? n : DEFAULT_MAX_LLM_DELETES;
+    }
+
+    /**
+     * Facts the LLM may never delete, whatever it returns. Pinned facts, facts
+     * the owner stated himself, preferences, and anything touched in the last
+     * 7 days. Returns a reason string, or null when the fact may go.
+     */
+    _protectedReason(fact) {
+        if (!fact) return null;
+        if (fact.pinned) return 'pinned';
+        if (String(fact.confidence || '').toLowerCase() === 'user_explicit') return 'confidence=user_explicit';
+        const category = String(fact.category || '').toLowerCase();
+        // The consolidation prompt writes 'preference'; older rows say 'preferences'.
+        if (category === 'preference' || category === 'preferences') return `category=${category}`;
+        if (category === 'relationship' || category === 'relationships') return `category=${category}`;
+
+        const cutoff = Date.now() - RECENT_DAYS * 24 * 60 * 60 * 1000;
+        for (const stamp of [fact.updated_at, fact.created_at]) {
+            if (!stamp) continue;
+            const t = new Date(stamp).getTime();
+            if (Number.isFinite(t) && t >= cutoff) return `touched in the last ${RECENT_DAYS} days`;
+        }
+        return null;
     }
 
     /**
@@ -71,6 +107,24 @@ class MemoryPruningService {
         return pruned;
     }
 
+    /** Tell the owner which keys the LLM verdict removed and where to find them. */
+    _notifyPruned(keys, backupFile) {
+        if (!keys.length || !this.agent?.notifications?.create) return;
+        const shown = keys.slice(0, 10).join(', ');
+        const rest = keys.length > 10 ? ` (+${keys.length - 10} more)` : '';
+        try {
+            this.agent.notifications.create({
+                type: 'memory_pruned',
+                severity: 'info',
+                title: `Memory pruning removed ${keys.length} fact${keys.length === 1 ? '' : 's'}`,
+                message: `Removed: ${shown}${rest}. Values are kept in ${backupFile} if you need them back.`,
+                metadata: { keys, backupFile, link: '/system' }
+            });
+        } catch (e) {
+            console.warn('[MemoryPruning] Failed to create prune notification:', e.message);
+        }
+    }
+
     async prune() {
         console.log('[MemoryPruning] Starting nightly prune...');
 
@@ -92,9 +146,11 @@ class MemoryPruningService {
         const currentDate = new Date().toISOString().split('T')[0];
         const prompt = getMemoryPruningPrompt(facts, currentDate);
 
-        // 3. Call LLM 
-        const modelName = this.agent.configService.getModel('PRO');
-        const thinking = this.agent.configService.getThinkingConfig('PRO', 'pruning', { model: modelName });
+        // 3. Call LLM
+        // FLASH: the verdict is bounded in code — the cap, the protected-fact
+        // filter and the backup file all cover a wrong answer.
+        const modelName = this.agent.configService.getModel('FLASH');
+        const thinking = this.agent.configService.getThinkingConfig('FLASH', 'pruning', { model: modelName });
 
         try {
             const response = await this.agent.client.models.generateContent({
@@ -127,12 +183,19 @@ class MemoryPruningService {
                 const backupData = [];
                 const timestamp = new Date().toISOString();
 
-                for (const key of data.delete_keys) {
+                const cap = this.maxLlmDeletes();
+                const candidates = cap > 0 ? data.delete_keys.slice(0, cap) : [];
+                if (data.delete_keys.length > candidates.length) {
+                    console.warn(`[MemoryPruning] Verdict capped at ${candidates.length} of ${data.delete_keys.length} keys (MEMORY_PRUNE_MAX_DELETES).`);
+                }
+
+                for (const key of candidates) {
                     const exists = facts.find(f => f.key === key);
                     if (exists) {
-                        // Safety: Never delete pinned facts even if LLM suggests them
-                        if (exists.pinned) {
-                            console.warn(`[MemoryPruning] LLM tried to delete pinned fact: ${key}. Skipping.`);
+                        // Safety: the code, not the prompt, decides what survives.
+                        const protectedReason = this._protectedReason(exists);
+                        if (protectedReason) {
+                            console.warn(`[MemoryPruning] LLM tried to delete a protected fact: ${key} (${protectedReason}). Skipping.`);
                             continue;
                         }
 
@@ -169,6 +232,10 @@ class MemoryPruningService {
                     currentBackup.push(...backupData);
                     fs.writeFileSync(backupFile, JSON.stringify(currentBackup, null, 2));
                     console.log(`[MemoryPruning] Backed up ${backupData.length} items to ${backupFile}`);
+
+                    // The job is silent, so without this the owner never learns
+                    // a fact went. Keys only — values stay in the backup file.
+                    this._notifyPruned(backupData.map(b => b.key), backupFile);
                 }
             }
 
