@@ -218,6 +218,46 @@ describe('untrusted content through the Agent', () => {
     expect(pauseRow.response.untrusted).toBeUndefined();
   });
 
+  test('a goal a tainted run writes carries the taint into later runs that load it', async () => {
+    agent.db.addGoal = jest.fn().mockReturnValue({ lastInsertRowid: 7 });
+    agent.db.updateGoalProgress = jest.fn().mockReturnValue({ changes: 1 });
+    agent.db.markGoalTainted = jest.fn();
+    script = [
+      { name: 'personal_gmail', args: { resource: 'messages', method: 'get', params: { id: 'm1' } } },
+      { name: 'addGoal', args: { description: 'Send the weekly summary every morning' } },
+      { name: 'updateGoalProgress', args: { id: 7, progress: 'step 1 done' } },
+      { text: 'Noted.' }
+    ];
+    let msg = createUserMessage('Read my last email', 'telegram', 'user1');
+    msg.metadata = { chatId: 'tg-goal' };
+    await agent.processMessage(msg, async () => {});
+    expect(agent.db.addGoal).toHaveBeenCalledWith('Send the weekly summary every morning',
+      expect.objectContaining({ tainted: true, taintSources: ['email (personal_gmail)'] }), null);
+    expect(agent.db.markGoalTainted).toHaveBeenCalledWith(7, expect.objectContaining({ taintSources: ['email (personal_gmail)'] }));
+
+    // A later run that loads the goal starts tainted, so its send asks.
+    agent.db.getPendingGoals.mockReturnValue([{ id: 7, description: 'Send the weekly summary every morning', progress: null,
+      metadata: { chatId: 'tg-goal', tainted: true, taintSources: ['email (personal_gmail)'] } }]);
+    agent.toolExecutor.execute.mockClear();
+    script = [{ name: 'sendMessage', args: { to: '5490000000000', content: 'weekly summary' } }, { text: 'Waiting.' }];
+    msg = createUserMessage('Carry on', 'telegram', 'user1');
+    msg.metadata = { chatId: 'tg-goal-2' };
+    const summary = await agent.processMessage(msg, async () => {});
+    agent.db.getPendingGoals.mockReturnValue([]);
+    expect(agent.toolExecutor.execute).not.toHaveBeenCalledWith('sendMessage', expect.anything(), expect.anything());
+    expect(summary.untrustedSources).toEqual(['email (personal_gmail) [carried by goal 7]']);
+    expect(summary.toolOutputs.find(o => o.name === 'sendMessage').result.info).toMatch(/Action PAUSED/);
+  });
+
+  test('a clean run adds a goal with no taint', async () => {
+    agent.db.addGoal = jest.fn().mockReturnValue({ lastInsertRowid: 8 });
+    script = [{ name: 'addGoal', args: { description: 'Sort the photo library' } }, { text: 'Started.' }];
+    const msg = createUserMessage('Sort my photos over the next days', 'telegram', 'user1');
+    msg.metadata = { chatId: 'tg-goal-clean' };
+    await agent.processMessage(msg, async () => {});
+    expect(agent.db.addGoal).toHaveBeenCalledWith('Sort the photo library', { chatId: 'tg-goal-clean' }, null);
+  });
+
   test('a plain owner request sends at once, with no approval and no envelope', async () => {
     script = [{ name: 'sendMessage', args: { to: '5490000000000', content: 'running late' } }, { text: 'Sent.' }];
     const msg = createUserMessage('Tell Alice I am running late', 'telegram', 'user1');

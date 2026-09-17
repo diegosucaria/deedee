@@ -253,7 +253,8 @@ describe('taintedAction', () => {
         expect(taintedAction('browser_fill_form', { fields: [] }, br)).toBeNull();
         expect(taintedAction('browser_select_option', { target: 'e2', values: ['AR'] }, br)).toBeNull();
         expect(taintedAction('browser_press_key', { key: 'ArrowDown' }, br)).toBeNull();
-        expect(taintedAction('browser_click', { target: 'e9', element: 'Next page link' }, br)).toBeNull();
+        // No page seen: the model's description alone cannot clear a click.
+        expect(taintedAction('browser_click', { target: 'e9', element: 'Next page link' }, br)).toMatch(/not seen/);
         expect(taintedAction('browser_click', { target: 'e9', element: 'Submit order button' }, br)).toMatch(/Submit order/);
         expect(taintedAction('browser_snapshot', {}, br)).toBeNull();
         expect(taintedAction('browser_webmcp_list', {}, br)).toBeNull();

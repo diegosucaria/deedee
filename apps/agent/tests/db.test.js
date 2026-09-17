@@ -79,6 +79,15 @@ describe('AgentDB', () => {
     expect(after[0].metadata).toEqual({ chatId: 'c1' });
   });
 
+  test('markGoalTainted merges taint sources into the goal metadata', () => {
+    const id = db.addGoal('Watch prices', { chatId: 'c1' }).lastInsertRowid;
+    db.markGoalTainted(id, { taintSources: ['email (gmail)'] });
+    db.markGoalTainted(id, { taintSources: ['email (gmail)', 'a web page (browser_snapshot)'] });
+    const goal = db.getPendingGoals().find(g => g.id === id);
+    expect(goal.metadata).toEqual({ chatId: 'c1', tainted: true, taintSources: ['email (gmail)', 'a web page (browser_snapshot)'] });
+    expect(db.markGoalTainted(9999, { taintSources: ['x'] }).changes).toBe(0);
+  });
+
   test('updateGoalProgress returns no changes for missing id', () => {
     const res = db.updateGoalProgress(9999, 'x');
     expect(res.changes).toBe(0);

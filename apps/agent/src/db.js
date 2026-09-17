@@ -1481,6 +1481,21 @@ class AgentDB {
     }));
   }
 
+  /**
+   * Mark a goal as written by a run that read untrusted content. Merges
+   * { tainted, taintSources } into its metadata; later runs that load the
+   * goal into their prompt start tainted.
+   */
+  markGoalTainted(id, { taintSources = [] } = {}) {
+    const row = this.db.prepare('SELECT metadata FROM goals WHERE id = ?').get(id);
+    if (!row) return { changes: 0 };
+    let meta = {};
+    try { meta = row.metadata ? JSON.parse(row.metadata) : {}; } catch { meta = {}; }
+    const sources = [...new Set([...(Array.isArray(meta.taintSources) ? meta.taintSources : []), ...taintSources])].slice(0, 10);
+    meta = { ...meta, tainted: true, taintSources: sources };
+    return this.db.prepare('UPDATE goals SET metadata = ? WHERE id = ?').run(JSON.stringify(meta), id);
+  }
+
   updateGoalProgress(id, progress) {
     const stmt = this.db.prepare(
       "UPDATE goals SET progress = ?, last_activity_at = CURRENT_TIMESTAMP WHERE id = ?"

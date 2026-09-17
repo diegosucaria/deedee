@@ -292,28 +292,39 @@ A call another rule already pauses keeps that rule and gets the same note.
 A run that reads nothing untrusted behaves as before.
 
 **Browser: gate submit only** (`apps/agent/src/utils/browser-gate.js`).
-A click asks when its label reads as pay, buy, purchase, place or confirm an
-order, send, post, publish, share, reply, transfer, donate, delete, book,
-reserve or cancel a booking (English and Spanish). "Send code" and similar
-login steps do not count. A generic label (`Continue`, `Submit`, `OK`,
-`Confirm`, `Next`, ...) asks only inside a form that pays, orders, sends or
-deletes: the form holds such a button, a payment field (card number, CVV,
-expiry, billing, IBAN, CBU, amount, recipient) or has such a name.
+A click asks when its label reads as pay, buy, purchase, make or submit a
+payment, place or confirm an order, send, post, publish, share, reply,
+comment, invite, forward, subscribe, upgrade, bid, transfer, donate, delete,
+book, reserve or cancel a booking (English and Spanish). "Send code" and
+similar login steps do not count. A generic label (`Continue`, `Submit`,
+`OK`, `Confirm`, `Next`, a bare `Enviar`, ...) asks only inside a form that
+pays, orders, sends or deletes: the form holds such a button, a payment
+field (card number, CVV, expiry, billing, IBAN, CBU, amount, recipient) or
+has such a name. Any other button inside a form with a payment field asks
+too, whatever its label says, except plain ones such as `Back`, `Cancel` or
+`Apply`. A card or account number next to a password field is a bank login
+id, not a payment field, unless a CVV, expiry or amount field sits there
+too.
 Accepting a dialog asks when its message reads the same way, or when the
 gate never saw the message.
 
 Pressing Enter is judged like clicking the submit button of the form that
-holds focus, and so is `browser_type` with `submit: true`. Space on a
+holds focus, and so is `browser_type` with `submit: true`, or with
+`slowly: true` and a newline in the text (typed key by key, a newline
+presses Enter). The keys `"\n"` and `"\r"` are Enter too. Space on a
 button is a click on it. `Ctrl+Enter` and `Cmd+Enter` always ask (send
 shortcuts in mail and chat apps).
 
 *What the gate sees*: the tool arguments; the page URL, the ARIA snapshot
 and an open dialog's message from the browser results of this run
 (`browser_snapshot` returns the snapshot inline; actions link a
-`page-*.yml` file, which the gate reads from the browser server's working
-directory); and the element it last clicked or typed into. The label comes
-from the snapshot by ref, so the model cannot hide a "Pay" button by
-describing it as "Continue". The form is the nearest `form`, `search` or
+`page-*.yml` file, which the gate reads relative to the directory the MCP
+manager spawned the browser server in); and the element it last clicked or
+typed into. The label comes from the snapshot by ref, so the model cannot
+hide a "Pay" button by describing it as "Continue". A target that is not a
+snapshot ref (a CSS or text selector) is not matched to the page: the gate
+checks the selector text, then asks whenever the page holds anything that
+pays, orders, sends or deletes, or when it has seen no page. The form is the nearest `form`, `search` or
 `dialog` around the field; without one, the nearest group that holds a
 button; without one, the whole page.
 
@@ -322,9 +333,8 @@ button; without one, the whole page.
   page holds anything that pays, orders, sends or deletes, and runs
   otherwise;
 - a page it has no snapshot for (the snapshot file could not be read, or
-  the page came from an earlier turn). A click then goes by the model's own
-  description; Enter asks unless that description reads as a login or
-  search field; Space runs;
+  the page came from an earlier turn). A click then asks; Enter asks unless
+  the model's description reads as a login or search field; Space runs;
 - a snapshot that went stale: a script can change the page between the
   snapshot and the click, and refs of a page that changed without a URL
   change keep their old names;
@@ -351,6 +361,12 @@ tainted run creates from a contact's chat reports to the owner channel,
 never to that chat. A call the owner approves runs with the taint of the
 run that asked.
 
+**Goals carry taint too**: `addGoal` and `updateGoalProgress` run unasked,
+but in a tainted run they store `tainted` and `taintSources` in the goal's
+metadata. Every later run that loads pending goals into its prompt starts
+tainted with those sources marked `[carried by goal 3]`, until the goal is
+completed.
+
 **Where taint starts**: a watcher run starts tainted, because its prompt
 quotes the contact's message. A sub-agent spawned by a tainted run starts
 with the parent's sources (`metadata.untrustedTaint`); it cannot ask, so its
@@ -362,7 +378,8 @@ approvals go to the owner channel, as in [Approvals](#approvals).
 A later owner message in the same chat starts clean, and the envelope in
 history plus the prompt rule are the only guard for content read in an
 earlier turn. `rememberFact` and vault writes do not pause, so a fact can
-carry text into later prompts. A reminder's text can quote untrusted text
+carry text into later prompts. `learnDevice` aliases do the same for device
+names; misuse stays within home control, which runs unasked anyway. A reminder's text can quote untrusted text
 back to the owner. The autopilot reply service does not use this tool loop.
 
 ## Personal data guard

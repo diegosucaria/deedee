@@ -45,10 +45,10 @@ describe('snapshot parsing', () => {
     });
 
     test('label words', () => {
-        for (const l of ['Pay $20', 'Buy now', 'Place order', 'Send', 'Post', 'Transfer', 'Delete', 'Cancel booking', 'Pagar', 'Enviar', 'Confirmar compra', 'Book now']) {
+        for (const l of ['Pay $20', 'Buy now', 'Place order', 'Send', 'Post', 'Transfer', 'Delete', 'Cancel booking', 'Pagar', 'Enviar mensaje', 'Confirmar compra', 'Book now', 'Submit payment', 'Make payment', 'Confirm deletion', 'Subscribe', 'Comment', 'Invite', 'Confirm cancellation']) {
             expect(consequenceHit(l)).toBe(true);
         }
-        for (const l of ['Sign in', 'Next', 'Continue', 'Search', 'Send code', 'Resend verification link', 'Enviar código', 'Payment methods', 'Facebook', 'Posts', 'Cancel']) {
+        for (const l of ['Sign in', 'Next', 'Continue', 'Search', 'Send code', 'Resend verification link', 'Enviar código', 'Payment methods', 'Facebook', 'Posts', 'Cancel', 'Enviar', 'Reenviar código', 'Comments']) {
             expect(consequenceHit(l)).toBe(false);
         }
     });
@@ -148,7 +148,7 @@ describe('owner decision A: gate submit only', () => {
         const state = new BrowserPageState();
         expect(browserAction('browser_type', { target: 'e7', element: 'Password field', text: 'x', submit: true }, state)).toBeNull();
         expect(browserAction('browser_type', { target: 'e7', element: 'Card number', text: 'x', submit: true }, state)).toMatch(/Card number/);
-        expect(browserAction('browser_type', { target: 'e7', element: 'Comment box', text: 'x', submit: true }, state)).toMatch(/not seen/);
+        expect(browserAction('browser_type', { target: 'e7', element: 'Notes box', text: 'x', submit: true }, state)).toMatch(/not seen/);
     });
 
     test('a navigation clears the old refs, so a stale ref is not trusted', () => {
@@ -178,5 +178,117 @@ describe('owner decision A: gate submit only', () => {
         // Only page-*.yml links are read.
         state.observe('browser_snapshot', {}, { output: '### Snapshot\n- [Snapshot](../../etc/other.yml)' });
         expect(read).toHaveBeenCalledTimes(1);
+    });
+
+    test('"\n" and "\r" are Enter to Playwright, alone and with a modifier', () => {
+        const state = freshPage();
+        state.observe('browser_type', { target: 'e9', text: '4111' }, actionResult());
+        for (const key of ['\n', '\r', 'Shift+\n', 'Shift+\r']) {
+            expect(browserAction('browser_press_key', { key }, state)).toMatch(/web form that pays/);
+        }
+        expect(browserAction('browser_press_key', { key: 'Control+\n' }, state)).toMatch(/send shortcut/);
+        expect(browserAction('browser_press_key', { key: '\n' }, new BrowserPageState())).toMatch(/not seen/);
+        // In a login field the same keys run.
+        state.observe('browser_type', { target: 'e5', text: 'x' }, actionResult());
+        expect(browserAction('browser_press_key', { key: '\n' }, state)).toBeNull();
+    });
+
+    test('typing slowly presses Enter for each newline in the text', () => {
+        const state = freshPage();
+        expect(browserAction('browser_type', { target: 'e9', element: 'Card number', text: '4111\n', slowly: true }, state)).toMatch(/web form that pays/);
+        expect(browserAction('browser_type', { target: 'e9', element: 'Card number', text: '4111\r', slowly: true }, state)).toMatch(/web form that pays/);
+        expect(browserAction('browser_type', { target: 'e9', element: 'Card number', text: '4111', slowly: true }, state)).toBeNull();
+        // Filled at once, a newline is just text.
+        expect(browserAction('browser_type', { target: 'e9', element: 'Card number', text: '4111\n' }, state)).toBeNull();
+        expect(browserAction('browser_type', { target: 'e5', element: 'Password', text: 'x\n', slowly: true }, state)).toBeNull();
+    });
+
+    test('a button inside a form with payment fields asks whatever its label says', () => {
+        const state = freshPage(`- generic [ref=e1]:
+  - form "Checkout" [ref=e2]:
+    - textbox "Card number" [ref=e3]
+    - textbox "CVV" [ref=e4]
+    - button "Submit payment" [ref=e5]
+    - button "Make payment" [ref=e6]
+    - button "Finish it" [ref=e10]
+    - button "Back" [ref=e11]
+  - button "Confirm deletion" [ref=e7]
+  - button "Comment" [ref=e8]
+  - button "Subscribe" [ref=e9]
+  - link "Home" [ref=e12]`);
+        for (const target of ['e5', 'e6', 'e7', 'e8', 'e9', 'e10']) {
+            expect(browserAction('browser_click', { target }, state)).not.toBeNull();
+        }
+        expect(browserAction('browser_click', { target: 'e11' }, state)).toBeNull();
+        expect(browserAction('browser_click', { target: 'e12' }, state)).toBeNull();
+    });
+
+    test('a selector target is not matched to the snapshot, so the model cannot call Pay "Continue"', () => {
+        const state = freshPage(`- generic [ref=e1]:
+  - form "Checkout" [ref=e2]:
+    - button "Pay $500" [ref=e9]`);
+        expect(browserAction('browser_click', { target: 'e9', element: 'Continue' }, state)).toMatch(/Pay/);
+        expect(browserAction('browser_click', { target: '#btn-1' }, state)).toMatch(/cannot match/);
+        expect(browserAction('browser_click', { target: '#pay' }, state)).toMatch(/#pay/);
+        expect(browserAction('browser_click', { target: 'button:has-text("Pay")', element: 'Continue' }, state)).toMatch(/Pay/);
+        expect(browserAction('browser_click', { target: '#go' }, new BrowserPageState())).toMatch(/not seen/);
+        // Enter after a selector click on that page asks too.
+        state.observe('browser_click', { target: '#card' }, actionResult());
+        expect(browserAction('browser_press_key', { key: 'Enter' }, state)).not.toBeNull();
+        // On a page with nothing to pay, a selector click runs.
+        const plain = freshPage(`- generic [ref=e1]:
+  - link "Next page" [ref=e2]`);
+        expect(browserAction('browser_click', { target: 'a.next' }, plain)).toBeNull();
+    });
+
+    test('a Spanish login whose submit says "Enviar" runs; "Enviar mensaje" asks', () => {
+        const state = freshPage(`- generic [ref=e1]:
+  - generic [ref=e3]:
+    - textbox "Usuario" [ref=e4]
+    - textbox "Contraseña" [ref=e5]
+    - button "Enviar" [ref=e6]`);
+        expect(browserAction('browser_click', { target: 'e6', element: 'Enviar' }, state)).toBeNull();
+        expect(browserAction('browser_type', { target: 'e5', text: 'x', submit: true }, state)).toBeNull();
+        const msg = freshPage(`- generic [ref=e1]:
+  - generic [ref=e3]:
+    - textbox "Mensaje" [ref=e4]
+    - button "Enviar mensaje" [ref=e6]`);
+        expect(browserAction('browser_click', { target: 'e6' }, msg)).toMatch(/Enviar mensaje/);
+        expect(browserAction('browser_type', { target: 'e4', text: 'x', submit: true }, msg)).toMatch(/web form/);
+    });
+
+    test('a bank login with an account or card number is not a payment form', () => {
+        const state = freshPage(`- generic [ref=e1]:
+  - generic [ref=e3]:
+    - textbox "Account number" [ref=e4]
+    - textbox "Password" [ref=e5]
+    - button "Continue" [ref=e6]`);
+        expect(browserAction('browser_type', { target: 'e5', text: 'x', submit: true }, state)).toBeNull();
+        expect(browserAction('browser_click', { target: 'e6', element: 'Continue' }, state)).toBeNull();
+        // A card form with a CVV still asks, password field or not.
+        const card = freshPage(`- generic [ref=e1]:
+  - generic [ref=e3]:
+    - textbox "Card number" [ref=e4]
+    - textbox "CVV" [ref=e5]
+    - textbox "PIN" [ref=e7]
+    - button "Continue" [ref=e6]`);
+        expect(browserAction('browser_click', { target: 'e6', element: 'Continue' }, card)).toMatch(/web form/);
+    });
+
+    test('the real link shape: relative to the server cwd, resolved when the link is read', () => {
+        const read = jest.fn(() => PAGE);
+        let cwd = null;
+        const state = new BrowserPageState({ baseDir: () => cwd, readFile: read });
+        cwd = '/app/apps/agent';
+        state.observe('browser_navigate', { url: 'https://shop.example/' }, { output: '### Page\n- Page URL: https://shop.example/\n### Snapshot\n- [Snapshot](../../data/browser_profile/output/page-1.yml)' });
+        expect(read).toHaveBeenCalledWith('/app/data/browser_profile/output/page-1.yml');
+        expect(state.hasPage).toBe(true);
+    });
+
+    test('the agent resolves links against the cwd the manager spawned the browser in', () => {
+        const { Agent } = require('../src/agent');
+        const self = { mcp: { configPath: '/app/data/mcp_config.json', serverCwds: { browser: '/app/apps/agent' } } };
+        expect(Agent.prototype._browserServerDir.call(self)).toBe('/app/apps/agent');
+        expect(Agent.prototype._browserServerDir.call({ mcp: { serverCwds: {} } })).toBeNull();
     });
 });
