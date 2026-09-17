@@ -274,4 +274,169 @@ describe('SubAgentService', () => {
             expect(result).toEqual({ cleaned: 5 });
         });
     });
+    describe('model class', () => {
+        let savedEnv;
+        beforeEach(() => {
+            savedEnv = process.env.SUBAGENT_LIGHTWEIGHT_MODEL;
+            delete process.env.SUBAGENT_LIGHTWEIGHT_MODEL;
+            mockAgent.processMessage.mockImplementation(async (msg, cb) => { await cb({ content: 'ok' }); return {}; });
+        });
+        afterEach(() => {
+            if (savedEnv === undefined) delete process.env.SUBAGENT_LIGHTWEIGHT_MODEL;
+            else process.env.SUBAGENT_LIGHTWEIGHT_MODEL = savedEnv;
+        });
+
+        it('lightweight with no model runs on LITE', async () => {
+            await service.spawn({ task: 'scan', parentChatId: 'c', lightweight: true });
+            const msg = mockAgent.processMessage.mock.calls[0][0];
+            expect(msg.metadata.forceModel).toBe('LITE');
+            expect(msg.metadata.lightweight).toBe(true);
+            expect(mockAgent.db.createSubAgent).toHaveBeenCalledWith(expect.objectContaining({ model: 'LITE' }));
+        });
+
+        it('an explicit model beats the lightweight default', async () => {
+            await service.spawn({ task: 'scan', parentChatId: 'c', lightweight: true, model: 'flash' });
+            expect(mockAgent.processMessage.mock.calls[0][0].metadata.forceModel).toBe('FLASH');
+        });
+
+        it('SUBAGENT_LIGHTWEIGHT_MODEL=FLASH rolls the lightweight default back', async () => {
+            process.env.SUBAGENT_LIGHTWEIGHT_MODEL = 'FLASH';
+            await service.spawn({ task: 'scan', parentChatId: 'c', lightweight: true });
+            expect(mockAgent.processMessage.mock.calls[0][0].metadata.forceModel).toBe('FLASH');
+        });
+
+        it('defaults to FLASH otherwise, PRO only on request, unknown names fall back', async () => {
+            expect(service.resolveModel(undefined, false)).toBe('FLASH');
+            expect(service.resolveModel('PRO', true)).toBe('PRO');
+            expect(service.resolveModel('gpt-9', false)).toBe('FLASH');
+            expect(service.resolveModel('gpt-9', true)).toBe('LITE');
+        });
+    });
+
+    describe('tool loop cap', () => {
+        let savedLoops, savedBrowser;
+        beforeEach(() => {
+            savedLoops = process.env.SUBAGENT_MAX_TOOL_LOOPS;
+            savedBrowser = process.env.SUBAGENT_MAX_TOOL_LOOPS_BROWSER;
+            delete process.env.SUBAGENT_MAX_TOOL_LOOPS;
+            delete process.env.SUBAGENT_MAX_TOOL_LOOPS_BROWSER;
+            mockAgent.processMessage.mockImplementation(async (msg, cb) => { await cb({ content: 'ok' }); return {}; });
+        });
+        afterEach(() => {
+            if (savedLoops === undefined) delete process.env.SUBAGENT_MAX_TOOL_LOOPS; else process.env.SUBAGENT_MAX_TOOL_LOOPS = savedLoops;
+            if (savedBrowser === undefined) delete process.env.SUBAGENT_MAX_TOOL_LOOPS_BROWSER; else process.env.SUBAGENT_MAX_TOOL_LOOPS_BROWSER = savedBrowser;
+        });
+
+        it('passes maxToolLoops 20 by default', async () => {
+            await service.spawn({ task: 'x', parentChatId: 'c', tools: ['searchMemory'] });
+            expect(mockAgent.processMessage.mock.calls[0][0].metadata.maxToolLoops).toBe(20);
+        });
+
+        it('passes 50 when browser tools are allowed', async () => {
+            await service.spawn({ task: 'x', parentChatId: 'c', tools: ['browser_navigate', 'browser_click'] });
+            expect(mockAgent.processMessage.mock.calls[0][0].metadata.maxToolLoops).toBe(50);
+            expect(service.resolveMaxToolLoops(['server:browser'])).toBe(50);
+            expect(service.resolveMaxToolLoops(null)).toBe(20);
+        });
+
+        it('a PRO run gets the higher cap even without browser tools', async () => {
+            await service.spawn({ task: 'refactor', parentChatId: 'c', model: 'PRO', tools: ['readFile', 'writeFile', 'runShellCommand'] });
+            expect(mockAgent.processMessage.mock.calls[0][0].metadata.maxToolLoops).toBe(50);
+            expect(service.resolveMaxToolLoops(['readFile'], 'FLASH')).toBe(20);
+        });
+
+        it('SUBAGENT_MAX_TOOL_LOOPS and _BROWSER override the defaults; bad values fall back', () => {
+            process.env.SUBAGENT_MAX_TOOL_LOOPS = '40';
+            process.env.SUBAGENT_MAX_TOOL_LOOPS_BROWSER = '80';
+            expect(service.resolveMaxToolLoops(['searchMemory'])).toBe(40);
+            expect(service.resolveMaxToolLoops(['browser_click'])).toBe(80);
+            expect(service.resolveMaxToolLoops(null, 'PRO')).toBe(80);
+            process.env.SUBAGENT_MAX_TOOL_LOOPS = '0';
+            process.env.SUBAGENT_MAX_TOOL_LOOPS_BROWSER = 'many';
+            expect(service.resolveMaxToolLoops(['searchMemory'])).toBe(20);
+            expect(service.resolveMaxToolLoops(['browser_click'])).toBe(50);
+        });
+    });
+
+    describe('result cap', () => {
+        let savedEnv;
+        const longText = ('ID-7781 due 2026-10-01 amount 42.50 https://example.test/x ' + 'lorem '.repeat(1500)).trim();
+
+        beforeEach(() => {
+            savedEnv = process.env.SUBAGENT_RESULT_CAP;
+            delete process.env.SUBAGENT_RESULT_CAP;
+            mockAgent.client = { models: { generateContent: jest.fn().mockResolvedValue({
+                text: 'ID-7781 due 2026-10-01 amount 42.50 https://example.test/x short',
+                usageMetadata: { promptTokenCount: 10, candidatesTokenCount: 5, totalTokenCount: 15 }
+            }) } };
+            mockAgent.db.logTokenUsage = jest.fn();
+            mockAgent.processMessage.mockImplementation(async (msg, cb) => { await cb({ content: longText }); return {}; });
+        });
+        afterEach(() => {
+            if (savedEnv === undefined) delete process.env.SUBAGENT_RESULT_CAP;
+            else process.env.SUBAGENT_RESULT_CAP = savedEnv;
+        });
+
+        it('compresses a long result with LITE and stores the full text', async () => {
+            const out = await service.spawn({ task: 'x', parentChatId: 'c' });
+            expect(out.result).toContain('ID-7781 due 2026-10-01 amount 42.50 https://example.test/x short');
+            expect(out.result).toContain('getAgentResult');
+            expect(out.result.length).toBeLessThan(longText.length);
+
+            const call = mockAgent.client.models.generateContent.mock.calls[0][0];
+            expect(call.model).toMatch(/lite/);
+            expect(call.config.thinkingConfig.thinkingLevel).toBe('MINIMAL');
+            expect(call.contents[0].parts[0].text).toContain('[SILENT]');
+            expect(mockAgent.db.logTokenUsage).toHaveBeenCalledWith(expect.objectContaining({ tag: 'subagent_summary' }));
+            expect(mockAgent.db.updateSubAgent).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({
+                status: 'completed', resultFull: longText
+            }));
+        });
+
+        it('leaves a short result alone', async () => {
+            mockAgent.processMessage.mockImplementation(async (msg, cb) => { await cb({ content: 'short' }); return {}; });
+            const out = await service.spawn({ task: 'x', parentChatId: 'c' });
+            expect(out.result).toBe('short');
+            expect(mockAgent.client.models.generateContent).not.toHaveBeenCalled();
+            const update = mockAgent.db.updateSubAgent.mock.calls[0][1];
+            expect(update.resultFull).toBeUndefined();
+        });
+
+        it('SUBAGENT_RESULT_CAP=0 disables the cap', async () => {
+            process.env.SUBAGENT_RESULT_CAP = '0';
+            const out = await service.spawn({ task: 'x', parentChatId: 'c' });
+            expect(out.result).toBe(longText);
+            expect(mockAgent.client.models.generateContent).not.toHaveBeenCalled();
+        });
+
+        it('a stalled summarizer cannot hold the caller: cuts at the cap after 30s', async () => {
+            jest.useFakeTimers();
+            // Never settles on its own, and ignores the abort signal.
+            mockAgent.client.models.generateContent.mockImplementation(() => new Promise(() => {}));
+            const p = service.spawn({ task: 'x', parentChatId: 'c' });
+            await jest.advanceTimersByTimeAsync(31000);
+            const out = await p;
+            jest.useRealTimers();
+
+            expect(out.result.startsWith(longText.slice(0, 4000))).toBe(true);
+            expect(out.result).toContain('full: true');
+            const call = mockAgent.client.models.generateContent.mock.calls[0][0];
+            expect(call.config.abortSignal).toBeDefined();
+        });
+
+        it('cuts at the cap when the summarizer fails', async () => {
+            mockAgent.client.models.generateContent.mockRejectedValue(new Error('quota'));
+            const out = await service.spawn({ task: 'x', parentChatId: 'c' });
+            expect(out.result.startsWith(longText.slice(0, 4000))).toBe(true);
+            expect(out.result).toContain('full: true');
+            expect(mockAgent.db.updateSubAgent).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ resultFull: longText }));
+        });
+
+        it('getResult returns the full text on request', async () => {
+            mockAgent.db.getSubAgent.mockReturnValue({ id: 't', status: 'completed', result: 'short', result_full: 'the whole thing' });
+            expect((await service.getResult('t')).result).toBe('short');
+            expect((await service.getResult('t')).hasFullResult).toBe(true);
+            expect((await service.getResult('t', { full: true })).result).toBe('the whole thing');
+        });
+    });
 });

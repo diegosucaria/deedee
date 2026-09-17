@@ -151,7 +151,7 @@ function createInternalRouter(agent) {
                     enabled: j.metadata?.enabled !== false,
                     expiresAt: j.metadata?.expiresAt || null,
                     nextInvocation: j.nextInvocation(),
-                    model: j.metadata?.payload?.model || 'auto',
+                    model: j.metadata?.payload?.model || j.metadata?.payload?.scope?.model || 'auto',
                     weekdaysOnly: j.metadata?.payload?.weekdaysOnly || false,
                     daytimeOnly: j.metadata?.payload?.daytimeOnly || false
                 }));

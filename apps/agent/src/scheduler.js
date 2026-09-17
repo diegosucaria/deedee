@@ -625,6 +625,12 @@ class Scheduler {
      * Ensures critical system jobs exist.
      */
     ensureSystemJobs() {
+        // Jobs that run an agent turn carry `model` and `allowedTools`. They go
+        // into processMessage as forceModel/allowedTools, the same shape the
+        // Tasks UI gives user jobs. Without them the router picks PRO for the
+        // long prompts and every tool declaration goes out (100k+ prompts).
+        // A persisted row with its own model/allowedTools wins over these
+        // defaults; SYSTEM_JOBS_SCOPED=0 sends neither (the old path).
         const SYSTEM_JOBS = [
             {
                 name: 'nightly_consolidation',
@@ -723,7 +729,13 @@ FORMAT (when you do notify):
 - If you took action: append "→ Set reminder" or "→ Added to calendar"
 - Be concise. 3-5 bullets max. No essays.`,
                 silent: false,
-                defaultEnabled: false
+                defaultEnabled: false,
+                // PRO: unlike the wardrobe jobs there is no inner PRO call —
+                // PHASE 2 and PHASE 3 decide what reaches the owner, and they
+                // ARE this turn. The scan sub-agents below still run on FLASH,
+                // and the job fires under once a day (p=0.05 over 16 slots).
+                model: 'PRO',
+                allowedTools: ['spawnAgent', 'getAgentResult', 'scheduleJob', 'setReminder', 'sendMessage', 'searchMemory', 'getFact', 'saveJobState', 'getJobState', 'askUser']
             },
             {
                 name: 'wardrobe_pretrip_check',
@@ -754,7 +766,10 @@ FORMAT (when you do notify):
 
 NEVER contact anyone other than the owner.`,
                 silent: false,
-                defaultEnabled: false
+                defaultEnabled: false,
+                // wardrobe_pack_for_trip runs its own PRO call inside.
+                model: 'FLASH',
+                allowedTools: ['list_wardrobe_trips', 'start_wardrobe_trip', 'wardrobe_pack_for_trip', 'spawnAgent', 'getAgentResult', 'sendMessage', 'askUser']
             },
             {
                 name: 'wardrobe_morning_outfit',
@@ -784,7 +799,11 @@ STEP 6 — After sendMessage succeeds, respond with the single token [SILENT] so
 
 NEVER contact anyone other than the owner.`,
                 silent: false,
-                defaultEnabled: false
+                defaultEnabled: false,
+                // Quality lives in recommend_outfit's own PRO call; the turn
+                // around it only orchestrates.
+                model: 'FLASH',
+                allowedTools: ['spawnAgent', 'getAgentResult', 'recommend_outfit', 'sendMessage', 'getFact', 'searchMemory', 'askUser']
             },
             {
                 // Sends from the owner's own WhatsApp account, as the owner.
@@ -828,6 +847,12 @@ NEVER contact anyone other than the owner.`,
             if (!existing && !defaultEnabled) {
                 console.log(`[Scheduler] System job '${sysJob.name}' starts disabled by default. Enable it from the Tasks UI when you're ready.`);
             }
+
+            // Owner overrides live on the persisted row as `model` and
+            // `allowedTools`; the defaults sit under `scope` so a code change
+            // still reaches jobs the owner never touched.
+            const overrides = this._systemJobOverrides(existing);
+            const scope = this._systemJobScope(sysJob, overrides);
 
             // Use the standard scheduleJob logic which handles the callback wrapper
             // We manually construct the instruction wrapper to match 'agent_instruction' type
@@ -941,6 +966,23 @@ NEVER contact anyone other than the owner.`,
                             console.warn('[Scheduler] WhatsApp ID linking failed:', e.message);
                         }
                     }
+                    // Call the tool directly. An agent turn here loaded every
+                    // declaration and all facts to make one tool call; the PRO
+                    // extraction inside executors/memory.js stays.
+                    if (!this.agent.toolExecutor) {
+                        return { error: 'ToolExecutor not available' };
+                    }
+                    try {
+                        const result = await this.agent.toolExecutor.execute('consolidateMemory', {}, {
+                            message: { role: 'user', source: 'scheduler', metadata: { chatId: `system_${sysJob.name}_${Date.now()}` } },
+                            callServices: { client: this.agent.client, interface: this.agent.interface }
+                        });
+                        console.log('[Scheduler] Nightly consolidation result:', typeof result === 'string' ? result.slice(0, 200) : JSON.stringify(result || {}).slice(0, 200));
+                        return result;
+                    } catch (e) {
+                        console.error('[Scheduler] Nightly consolidation failed:', e);
+                        throw e;
+                    }
                 }
 
                 // Proactive Thought (Probabilistic execution).
@@ -972,7 +1014,13 @@ NEVER contact anyone other than the owner.`,
                     role: 'user',
                     content: `System Maintenance: ${sysJob.task} `,
                     source: 'scheduler',
-                    metadata: { chatId: `system_${sysJob.name}_${Date.now()}` }
+                    metadata: {
+                        chatId: `system_${sysJob.name}_${Date.now()}`,
+                        // saveJobState/getJobState refuse to run without it.
+                        jobName: sysJob.name,
+                        ...(scope.model ? { forceModel: scope.model } : {}),
+                        ...(scope.allowedTools ? { allowedTools: scope.allowedTools } : {})
+                    }
                 }, async (reply) => {
                     // Capture reply for smart notification.
                     // createAssistantMessage uses 'content', not 'text'.
@@ -999,10 +1047,46 @@ NEVER contact anyone other than the owner.`,
                 persist: true, // Persist so they show up in DB listing if needed, though mostly for consistent ID
                 enabled: isEnabled,
                 taskType: 'agent_instruction',
-                payload: { task: sysJob.task, isSystem: true }
+                payload: {
+                    task: sysJob.task,
+                    isSystem: true,
+                    ...(sysJob.model || sysJob.allowedTools ? { scope: { model: sysJob.model || null, allowedTools: sysJob.allowedTools || null } } : {}),
+                    ...overrides
+                }
             });
         }
 
+    }
+
+    /** SYSTEM_JOBS_SCOPED=0 sends system jobs with no model and no tool list, as before. */
+    _systemJobsScoped() {
+        return (process.env.SYSTEM_JOBS_SCOPED ?? '1') !== '0';
+    }
+
+    /**
+     * Owner overrides carried on a persisted system-job row: `model` and
+     * `allowedTools`. Boot rewrites the row, so they must be read first and
+     * written back or the next restart drops them.
+     */
+    _systemJobOverrides(existing) {
+        const payload = existing?.payload || {};
+        const out = {};
+        if (typeof payload.model === 'string' && payload.model.trim()) out.model = payload.model.trim().toUpperCase();
+        if (Array.isArray(payload.allowedTools) && payload.allowedTools.length > 0) out.allowedTools = payload.allowedTools;
+        return out;
+    }
+
+    /**
+     * The model and tool list a system job runs with: the persisted override
+     * when there is one, else the SYSTEM_JOBS default. Both empty when the
+     * flag is off.
+     */
+    _systemJobScope(sysJob, overrides = {}) {
+        if (!this._systemJobsScoped()) return { model: null, allowedTools: null };
+        return {
+            model: overrides.model || sysJob.model || null,
+            allowedTools: overrides.allowedTools || sysJob.allowedTools || null
+        };
     }
 
     /**

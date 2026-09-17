@@ -132,4 +132,19 @@ describe('SubAgentExecutor', () => {
             expect(result3.success).toBe(false);
         });
     });
+    describe('model class and full results', () => {
+        it('accepts LITE', async () => {
+            mockSubAgentService.spawn.mockResolvedValue({ taskId: 'sub-1', status: 'completed', result: 'ok' });
+            const result = await executor.execute('spawnAgent', { task: 'scan', model: 'LITE', lightweight: true }, { message: { metadata: { chatId: 'c' } } });
+            expect(result.success).toBe(true);
+            expect(mockSubAgentService.spawn).toHaveBeenCalledWith(expect.objectContaining({ model: 'LITE', lightweight: true }));
+        });
+
+        it('getAgentResult passes full: true through', async () => {
+            mockSubAgentService.getResult.mockResolvedValue({ taskId: 'sub-1', status: 'completed', result: 'whole' });
+            const result = await executor.execute('getAgentResult', { taskId: 'sub-1', full: true }, {});
+            expect(result.result).toBe('whole');
+            expect(mockSubAgentService.getResult).toHaveBeenCalledWith('sub-1', { full: true });
+        });
+    });
 });

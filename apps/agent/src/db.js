@@ -535,6 +535,11 @@ class AgentDB {
       this.db.exec("ALTER TABLE token_usage ADD COLUMN estimated_cost REAL");
     } catch (err) { }
 
+    // Migration: full sub-agent result when the returned one was compressed
+    try {
+      this.db.exec("ALTER TABLE subagents ADD COLUMN result_full TEXT");
+    } catch (err) { }
+
     // Migration: Add token counts to summaries
     try {
       this.db.exec("ALTER TABLE summaries ADD COLUMN summary_tokens INTEGER");
@@ -2851,12 +2856,13 @@ class AgentDB {
     `).run(id, parentChatId, task, model || 'FLASH', createdAt || new Date().toISOString());
   }
 
-  updateSubAgent(id, { status, result, error, completedAt }) {
+  updateSubAgent(id, { status, result, resultFull, error, completedAt }) {
     const updates = ['completed_at = ?'];
     const args = [completedAt || new Date().toISOString()];
 
     if (status) { updates.push('status = ?'); args.push(status); }
     if (result !== undefined) { updates.push('result = ?'); args.push(typeof result === 'string' ? result : JSON.stringify(result)); }
+    if (resultFull !== undefined) { updates.push('result_full = ?'); args.push(typeof resultFull === 'string' ? resultFull : JSON.stringify(resultFull)); }
     if (error !== undefined) { updates.push('error = ?'); args.push(error); }
 
     args.push(id);
@@ -2868,9 +2874,11 @@ class AgentDB {
   }
 
   listSubAgents(parentChatId, { page = 1, limit = 50, search = null, status = null } = {}) {
+    // Lists leave out result_full; getSubAgent returns it.
+    const SUBAGENT_LIST_COLUMNS = 'id, parent_chat_id, task, status, model, result, error, created_at, completed_at';
     const offset = (page - 1) * limit;
     if (parentChatId) {
-      const tasks = this.db.prepare('SELECT * FROM subagents WHERE parent_chat_id = ? ORDER BY created_at DESC').all(parentChatId);
+      const tasks = this.db.prepare(`SELECT ${SUBAGENT_LIST_COLUMNS} FROM subagents WHERE parent_chat_id = ? ORDER BY created_at DESC`).all(parentChatId);
       return { tasks, total: tasks.length, page: 1, limit: tasks.length };
     }
 
@@ -2889,7 +2897,7 @@ class AgentDB {
     const where = conditions.length > 0 ? ` WHERE ${conditions.join(' AND ')}` : '';
 
     const total = this.db.prepare(`SELECT COUNT(*) as count FROM subagents${where}`).get(...params).count;
-    const tasks = this.db.prepare(`SELECT * FROM subagents${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
+    const tasks = this.db.prepare(`SELECT ${SUBAGENT_LIST_COLUMNS} FROM subagents${where} ORDER BY created_at DESC LIMIT ? OFFSET ?`).all(...params, limit, offset);
     return { tasks, total, page, limit };
   }
 

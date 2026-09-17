@@ -1,7 +1,7 @@
 
 /**
  * Prompt for Memory Pruning (Deleting stale facts)
- * @param {Array} facts - List of { key, value, category, confidence, source, pinned } objects
+ * @param {Array} facts - List of { key, value, category, confidence, source, pinned, updated_at, created_at } objects
  * @param {string} currentDate - YYYY-MM-DD
  */
 function getMemoryPruningPrompt(facts, currentDate) {
@@ -10,7 +10,11 @@ function getMemoryPruningPrompt(facts, currentDate) {
   const pinnedCount = facts.length - prunableFacts.length;
 
   const factsList = prunableFacts.map(f => {
-    const meta = [f.category || 'general', f.confidence || 'inferred', f.source || 'system'].join(', ');
+    const stamp = f.updated_at || f.created_at;
+    const day = stamp ? String(stamp).split('T')[0] : null;
+    const meta = [f.category || 'general', f.confidence || 'inferred', f.source || 'system']
+      .concat(day ? [`updated ${day}`] : [])
+      .join(', ');
     return `- ${f.key}: ${JSON.stringify(f.value)} [${meta}]`;
   }).join('\n');
 
@@ -34,7 +38,7 @@ ${pinnedCount > 0 ? `\nNOTE: ${pinnedCount} facts are pinned by the user and hav
 - **Birthdays/Anniversaries**: (e.g. 'user_birthday')
 - **Long-term Goals**: (e.g. 'goal_learn_rust')
 - **System Settings**: (e.g. 'admin_chat_id', 'voice_settings')
-- **Recent Facts**: Anything created/updated in the last 7 days (unless explicitly dated in the past).
+- **Recent Facts**: Anything whose 'updated' date (shown on each line) is within the last 7 days, unless the key itself carries an older date.
 - **Facts with confidence "user_explicit"**: These were directly stated by the user and should be preserved.
 
 ### Input Facts (Eligible for Pruning)
