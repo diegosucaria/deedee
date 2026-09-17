@@ -238,9 +238,12 @@ function present(value) {
  * or inside its own output (`{"status": "failed"}`), and the approval paths
  * and the tool loop must read all three the same way.
  */
+// A plain-text result that opens with a failure word: some tools answer that way.
+const TEXT_FAILURE_RE = /^\s*(?:error\b|errors?:|failed\b|failure\b|cannot\b|could not\b|unable to\b|refused\b|denied\b|not allowed\b)/i;
+
 function callFailed(result) {
     if (result === undefined || result === null) return false;
-    if (typeof result === 'string') return false;
+    if (typeof result === 'string') return TEXT_FAILURE_RE.test(result);
     if (present(result.error)) return true;
     if (result.success === false || result.ok === false) return true;
     const data = parseToolOutput(result);
@@ -289,13 +292,14 @@ function approvedResultText(toolName, result, { untrusted = false } = {}) {
     if (untrusted) {
         // Third-party text stays out of the line: it would land in the chat
         // history as our own words, with no untrusted marker.
-        const data = parseToolOutput(result);
         return callFailed(result) ? `⚠️ ${name} did not work.` : `✅ Done: ${name}.`;
     }
     if (result === undefined || result === null) return `✅ Done: ${name}.`;
     if (typeof result === 'string') {
         const text = result.trim();
-        return text ? `✅ Done: ${name}. ${oneLine(text)}` : `✅ Done: ${name}.`;
+        if (!text) return `✅ Done: ${name}.`;
+        // Some tools answer in a sentence, a failure included.
+        return callFailed(result) ? `⚠️ ${name} did not work: ${oneLine(text)}` : `✅ Done: ${name}. ${oneLine(text)}`;
     }
     const data = parseToolOutput(result);
     const rawOutput = !data && typeof result.output === 'string' ? result.output.trim() : '';
@@ -582,6 +586,11 @@ class ApprovalService {
                 if (!done) continue;
                 console.log(`[Approvals] ${r.id} (${r.tool_name}) superseded: ${why}.`);
                 this._broadcast({ id: r.id, status: 'expired', chatId: r.reply_chat_id, toolName: r.tool_name });
+                // The card sits in a chat he reads: say it is settled, or it keeps
+                // asking for an answer that would do nothing.
+                const target = { channel: done.reply_channel || 'whatsapp', chatId: done.reply_chat_id };
+                this._deliverTo(target, `No longer needed: ${done.tool_name} already ran.`, done)
+                    .catch(e => console.warn(`[Approvals] could not close the card ${r.id}: ${e.message}`));
             } catch (e) {
                 console.warn(`[Approvals] could not supersede ${r.id}: ${e.message}`);
             }
@@ -768,7 +777,9 @@ class ApprovalService {
                     ...withHits, outcome: 'escalated_duplicate', decidedBy: 'owner', approvalId: existing.id,
                     reason: 'A card for this action already waits for him.'
                 });
-                return { run: false, status: 'paused', decisionId: row?.id, result: { info: pausedInfo(toolName, existing.reason || why, where, true) } };
+                // Our own rule text, never the stored card reason: that one can
+                // carry the guardian's words, which quote what a third party wrote.
+                return { run: false, status: 'paused', decisionId: row?.id, result: { info: pausedInfo(toolName, why || 'This action needs the owner\'s approval.', where, true) } };
             }
         }
 

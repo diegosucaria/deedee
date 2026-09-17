@@ -405,6 +405,20 @@ describe('approval guardian review', () => {
         expect(stats.cost).toBe(0);
     });
 
+    test('the auto-decision rate counts only the calls the guardian judged', () => {
+        const row = (outcome) => db.recordGuardianDecision({ toolName: 'sendEmail', outcome, decidedBy: 'x', mode: 'smart', sourceKind: 'chat' });
+        row('auto_allowed'); row('auto_denied'); row('escalated_approved'); row('escalated_denied');
+        // Calls he asked for himself, and repeats of a card already open, were never the guardian's to judge.
+        for (let i = 0; i < 16; i++) row('owner_instructed');
+        row('escalated_duplicate');
+        const stats = db.guardianStats({});
+        expect(stats.total).toBe(21);
+        expect(stats.judged).toBe(4);
+        expect(stats.ownerInstructed).toBe(16);
+        expect(stats.duplicates).toBe(1);
+        expect(stats.autoRate).toBeCloseTo(0.5, 5);
+    });
+
     test('policy updates keep TTLs and the deny-list, and the floor cannot be removed', () => {
         setApprovals({ ttlInteractiveMin: 12, deny: ['x'] });
         const view = svc.updatePolicy({ mode: 'manual', smart_policy: 'be kind', always_ask: ['category:money', 'money', 'category:shell', 'category:nope', 'mcp_*'] });

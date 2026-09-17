@@ -122,9 +122,10 @@ export default function GuardianStats() {
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-                <StatCard title="Gated calls" value={(s.total || 0).toLocaleString()} sub={`${s.autoDecisions || 0} decided by the guardian`}
+                <StatCard title="Gated calls" value={(s.total || 0).toLocaleString()}
+                    sub={`${s.autoDecisions || 0} decided by the guardian${(s.ownerInstructed || 0) > 0 ? ` · ${s.ownerInstructed} you asked for` : ''}`}
                     icon={BarChart3} color="text-blue-400" bg="bg-blue-400/10 border-blue-400/20" />
-                <StatCard title="Auto-decision rate" value={formatPercent(s.autoRate)} sub="allowed or denied without you"
+                <StatCard title="Auto-decision rate" value={formatPercent(s.autoRate)} sub="of the calls the guardian judged"
                     icon={Bot} color="text-indigo-400" bg="bg-indigo-400/10 border-indigo-400/20" />
                 <StatCard title="Escalations" value={(s.escalations || 0).toLocaleString()}
                     sub={share == null ? 'none decided yet' : `you approved ${formatPercent(share)} (${s.escalationsApproved || 0})`}

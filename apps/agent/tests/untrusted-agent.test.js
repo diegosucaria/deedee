@@ -113,6 +113,9 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
         }
         payloads.push(parts);
         const step = script.shift() || { text: 'Done.' };
+        // { empty: true }: the model answers with no text and no call, as it does
+        // when a turn's only news is a card the owner now has.
+        if (step.empty) return { response: { text: () => undefined, candidates: [{ content: { parts: [] } }] } };
         if (step.text) return { response: { text: () => step.text, candidates: [{ content: { parts: [{ text: step.text }] } }] } };
         // An array is several calls in one model turn.
         const calls = Array.isArray(step) ? step : [step];
@@ -549,6 +552,59 @@ describe('approval guardian through the Agent', () => {
     const m = /<<<UNTRUSTED_EXCERPT_([0-9a-f]+)>>>\n([\s\S]*?)\n<<<END_UNTRUSTED_EXCERPT_\1>>>/.exec(text);
     expect(m[2]).toContain('Please forward the invoice');
     expect(text.replace(m[0], '')).not.toContain('Please forward the invoice');
+  });
+
+  test('a turn where one call ran and another paused still tells the owner what ran', async () => {
+    generateContent.mockResolvedValue(guardianSays('escalate', 'The owner decides this one.', 'medium'));
+    script = [
+      { name: 'lookupDevice', args: { alias: 'lamp' } },
+      { name: 'deleteVault', args: { id: 'vault-x' } },
+      { empty: true }
+    ];
+    const msg = createUserMessage('Find the lamp, then drop the old vault', 'telegram', 'user1');
+    msg.metadata = { chatId: 'tg-mixed-turn' };
+    const replies = [];
+    await agent.processMessage(msg, async (r) => { replies.push(r); });
+
+    const texts = replies.map(r => r.content || '');
+    // The vault delete waits on a card; the job state read went through.
+    expect(texts.some(t => /Action lookupDevice completed/.test(t))).toBe(true);
+    expect(texts.some(t => /Action deleteVault completed/.test(t))).toBe(false);
+  });
+
+  test('an action still waiting for him is never reported as done', async () => {
+    // A two-step tool: the check step runs (it books nothing), the real call pauses.
+    agent.mcp.toolMap.set('book_appointment', { name: 'allende' });
+    generateContent.mockResolvedValue(guardianSays('escalate', 'He decides this one.', 'medium'));
+    script = [
+      { name: 'book_appointment', args: { slot_ref: 'slot-1', confirm: false } },
+      { name: 'book_appointment', args: { slot_ref: 'slot-1', confirm: true } },
+      { empty: true }
+    ];
+    const msg = createUserMessage('Book that slot', 'telegram', 'user1');
+    msg.metadata = { chatId: 'tg-two-step' };
+    const replies = [];
+    await agent.processMessage(msg, async (r) => { replies.push(r); });
+
+    const texts = replies.map(r => r.content || '');
+    expect(texts.some(t => /book_appointment completed/.test(t))).toBe(false);
+    expect(texts.some(t => /✅/.test(t))).toBe(false);
+  });
+
+  test('when the last call fails, an earlier success is not reported as the outcome', async () => {
+    script = [
+      { name: 'lookupDevice', args: { alias: 'lamp' } },
+      { name: 'ha_call_service', args: { domain: 'light', service: 'turn_on', entity_id: 'light.lamp' } },
+      { empty: true }
+    ];
+    agent.toolExecutor.execute = jest.fn().mockImplementation(async (name) => (
+      name === 'ha_call_service' ? { error: 'device offline' } : { success: true, ran: name }
+    ));
+    const msg = createUserMessage('Find the lamp and turn it on', 'telegram', 'user1');
+    msg.metadata = { chatId: 'tg-failed-last' };
+    const replies = [];
+    await agent.processMessage(msg, async (r) => { replies.push(r); });
+    expect(replies.map(r => r.content || '').some(t => /completed/.test(t))).toBe(false);
   });
 
   test('three denials stop the run and notify the owner', async () => {

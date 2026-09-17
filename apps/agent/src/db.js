@@ -143,6 +143,12 @@ class AgentDB {
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
+      -- Every turn reads a chat's newest rows (history and the trust check).
+      -- Without this the reads scan the whole table and sort it: on the
+      -- device, 41k rows and about 60 ms of blocked time per read.
+      CREATE INDEX IF NOT EXISTS idx_messages_chat_time
+        ON messages(chat_id, timestamp DESC);
+
       CREATE TABLE IF NOT EXISTS kv_store (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
@@ -3491,7 +3497,7 @@ class AgentDB {
           SET status = ?, decided_at = ?, decided_via = ?
           WHERE id = ? AND status = 'pending' AND expires_at > ?
         `).run(status, nowIso, via, id, nowIso);
-    if (res.changes > 0) this._settleGuardianDecision([id], status);
+    if (res.changes > 0) this._settleGuardianDecision([id], status, { via });
     return res.changes > 0 ? this.getPendingConfirmation(id) : null;
   }
 
@@ -3551,11 +3557,14 @@ class AgentDB {
   // escalated_failed (nobody could be asked), deny_list, breaker_stop,
   // ran_unasked (mode off), owner_instructed (the owner asked for it in his
   // own chat, so no card), escalated_duplicate (a card for that action was
-  // already waiting). An escalated row follows its approval row.
+  // already waiting), escalated_superseded (the action ran another way before
+  // he answered). An escalated row follows its approval row.
 
   /** An escalated decision takes the owner's answer (or the expiry). */
-  _settleGuardianDecision(approvalIds, status) {
-    const outcome = { approved: 'escalated_approved', denied: 'escalated_denied', expired: 'escalated_expired' }[status];
+  _settleGuardianDecision(approvalIds, status, { via = null } = {}) {
+    // A card the action outran is not one he let expire.
+    const outcome = via === 'superseded' ? 'escalated_superseded'
+      : { approved: 'escalated_approved', denied: 'escalated_denied', expired: 'escalated_expired' }[status];
     if (!outcome || !approvalIds || approvalIds.length === 0) return;
     try {
       const stmt = this.db.prepare(`
@@ -3689,6 +3698,11 @@ class AgentDB {
     const outcomes = {};
     for (const d of perDay) for (const [k, v] of Object.entries(d)) if (k !== 'day') outcomes[k] = (outcomes[k] || 0) + v;
     const total = Object.values(outcomes).reduce((a, b) => a + b, 0);
+    // Calls the gate had to decide. A call the owner asked for himself, and a
+    // call that waited on a card already open, were never the guardian's to judge.
+    const ownerInstructed = outcomes.owner_instructed || 0;
+    const duplicates = outcomes.escalated_duplicate || 0;
+    const judged = total - ownerInstructed - duplicates;
     const auto = (outcomes.auto_allowed || 0) + (outcomes.auto_denied || 0);
     const escalatedDecided = (outcomes.escalated_approved || 0) + (outcomes.escalated_denied || 0);
     const escalations = escalatedDecided + (outcomes.escalated || 0) + (outcomes.escalated_expired || 0) + (outcomes.escalated_failed || 0);
@@ -3749,7 +3763,10 @@ class AgentDB {
       outcomes,
       perDay,
       autoDecisions: auto,
-      autoRate: total > 0 ? auto / total : null,
+      autoRate: judged > 0 ? auto / judged : null,
+      judged,
+      ownerInstructed,
+      duplicates,
       escalations,
       escalationsApproved: outcomes.escalated_approved || 0,
       escalationApprovalShare: escalatedDecided > 0 ? (outcomes.escalated_approved || 0) / escalatedDecided : null,

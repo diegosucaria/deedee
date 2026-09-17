@@ -107,6 +107,27 @@ describe('TelegramService Security', () => {
         expect(typed.metadata.untrustedTaint).toBeUndefined();
     });
 
+    test('a forwarded voice note or photo is marked untrusted too', async () => {
+        process.env.ALLOWED_TELEGRAM_IDS = '12345';
+        service = new TelegramService('fake-token', 'http://agent:3000');
+        axios.post.mockResolvedValue({ data: { ok: true } });
+        axios.get = jest.fn().mockResolvedValue({ data: Buffer.from('x') });
+
+        const base = {
+            from: { id: '12345' }, chat: { id: 'chat1' }, reply: jest.fn(), replyWithChatAction: jest.fn(),
+            telegram: { getFileLink: jest.fn().mockResolvedValue({ href: 'https://example.test/file' }) }
+        };
+        await service.handleVoice({ ...base, message: { voice: { file_id: 'v1', mime_type: 'audio/ogg' }, forward_origin: { type: 'user' } } });
+        await service.handlePhoto({ ...base, message: { photo: [{ file_id: 'p1' }], caption: 'look', forward_date: 1700000000 } });
+        await service.handlePhoto({ ...base, message: { photo: [{ file_id: 'p2' }], caption: 'mine' } });
+
+        const sent = axios.post.mock.calls.filter(c => String(c[0]).endsWith('/webhook')).map(c => c[1]);
+        expect(sent).toHaveLength(3);
+        expect(sent[0].metadata.untrustedTaint).toEqual(['a forwarded message (telegram)']);
+        expect(sent[1].metadata.untrustedTaint).toEqual(['a forwarded message (telegram)']);
+        expect(sent[2].metadata.untrustedTaint).toBeUndefined();
+    });
+
     test('sendMessage skips a repeat of the same message id and forgets a failed one', async () => {
         jest.spyOn(console, 'log').mockImplementation(() => { });
         jest.spyOn(console, 'warn').mockImplementation(() => { });

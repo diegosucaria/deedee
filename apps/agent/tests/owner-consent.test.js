@@ -14,7 +14,7 @@ const {
 } = require('../src/services/approval-service');
 const { GuardianService } = require('../src/services/guardian-service');
 const { ConfirmationManager } = require('../src/confirmation-manager');
-const { TurnTaint, historyHasUntrusted, originsHaveForeignText, wrapUntrusted } = require('../src/utils/untrusted-content');
+const { TurnTaint, historyHasUntrusted, originsHaveForeignText, originsHaveTaintedRows, wrapUntrusted } = require('../src/utils/untrusted-content');
 const { isPreviewCall, stepKey, previewSummary, parseToolOutput } = require('../src/utils/two-step-tools');
 const { SmartContextManager } = require('../src/smart-context');
 
@@ -113,6 +113,8 @@ describe('approvedResultText', () => {
         expect(approvedResultText('book_appointment', { output: JSON.stringify({ status: 'failed', summary: 'Slot taken.' }) })).toBe('⚠️ book_appointment did not work: Slot taken.');
         expect(approvedResultText('x', { success: false })).toBe('⚠️ x did not work.');
         expect(approvedResultText('x', 'plain text')).toBe('✅ Done: x. plain text');
+        // A tool that answers in a sentence can be answering with a failure.
+        expect(approvedResultText('commitAndPush', 'Error calling supervisor: connect ECONNREFUSED')).toBe('⚠️ commitAndPush did not work: Error calling supervisor: connect ECONNREFUSED');
         expect(approvedResultText('x', { output: 'plain MCP text' })).toBe('✅ Done: x. plain MCP text');
         // A status is a failure only when it says so; an empty error is not one.
         expect(approvedResultText('x', { output: JSON.stringify({ status: 'no_errors' }) })).toBe('Finished: x (no_errors).');
@@ -159,14 +161,27 @@ describe('replies that decide a card', () => {
     });
 });
 
-describe('originsHaveForeignText', () => {
-    test('a contact\'s rows, a watcher alert or a tainted row count; the owner\'s own rows do not', () => {
+describe('what the chat\'s own rows say', () => {
+    const forwarded = [{ role: 'user', source: 'whatsapp:assistant', head: 'x', metadata: JSON.stringify({ untrustedTaint: ['a forwarded message (whatsapp)'] }) }];
+
+    test('messages other people wrote count as foreign; the owner\'s own rows do not', () => {
         expect(originsHaveForeignText([])).toBe(false);
         expect(originsHaveForeignText([{ role: 'user', source: 'whatsapp:assistant', head: 'book it', metadata: '{}' }, { role: 'assistant', source: 'whatsapp:user', head: 'x' }])).toBe(false);
         expect(originsHaveForeignText([{ role: 'user', source: 'whatsapp:user', head: 'hi' }])).toBe(true);
         expect(originsHaveForeignText([{ role: 'user', source: 'slack', head: 'hi' }])).toBe(true);
         expect(originsHaveForeignText([{ role: 'user', source: 'web', head: 'SYSTEM_WATCHER_ALERT: x' }])).toBe(true);
-        expect(originsHaveForeignText([{ role: 'user', source: 'whatsapp:assistant', head: 'x', metadata: JSON.stringify({ untrustedTaint: ['a forwarded message (whatsapp)'] }) }])).toBe(true);
+        // A message he forwarded is still his own message: it holds back
+        // messages, email and the house, not everything.
+        expect(originsHaveForeignText(forwarded)).toBe(false);
+    });
+
+    test('a forwarded message, or a tainted job prompt, marks the chat as carrying someone else\'s words', () => {
+        expect(originsHaveTaintedRows([])).toBe(false);
+        expect(originsHaveTaintedRows([{ role: 'user', source: 'whatsapp:assistant', head: 'book it', metadata: '{}' }])).toBe(false);
+        expect(originsHaveTaintedRows(forwarded)).toBe(true);
+        expect(originsHaveTaintedRows([{ role: 'user', source: 'telegram', head: 'x', metadata: { untrustedTaint: ['a forwarded message (telegram)'] } }])).toBe(true);
+        // Only what he sent counts; our own replies are not his words.
+        expect(originsHaveTaintedRows([{ role: 'assistant', source: 'web', head: 'x', metadata: JSON.stringify({ untrustedTaint: ['x'] }) }])).toBe(false);
     });
 });
 
@@ -191,7 +206,7 @@ describe('historyHasUntrusted', () => {
 });
 
 describe('history time stamps', () => {
-    test('only the owner\'s rows carry a stamp', async () => {
+    test('only the owner\'s rows carry a stamp, so the model does not learn to write one', async () => {
         const db = {
             getHistoryForSummary: () => [],
             getLatestSummary: () => null,
@@ -244,6 +259,13 @@ describe('ApprovalService.review with the owner\'s word', () => {
         const out = await review(web(), BOOK, { historyUntrusted: true });
         expect(out.run).toBe(true);
         expect(gen).not.toHaveBeenCalled();
+    });
+
+    test('a message he forwarded holds back email, not a booking he asks for', async () => {
+        // A forwarded message reads like a tool result a third party wrote.
+        expect((await review(ownerWa('book that slot'), BOOK, { historyUntrusted: true })).run).toBe(true);
+        const mail = await review(ownerWa('email alice'), EMAIL, { historyUntrusted: true });
+        expect(mail.run).toBe(false);
     });
 
     test('rows other people wrote in the chat hold back his word for everything', async () => {
@@ -377,6 +399,20 @@ describe('ApprovalService.review with the owner\'s word', () => {
         expect(outcomes.filter(o => o === 'escalated_approved')).toHaveLength(1);
     });
 
+    test('a call waiting on an open card reads our rule text, never the guardian\'s words', async () => {
+        db.setAgentSetting('approvals', { mode: 'smart' }, 'general');
+        gen.mockResolvedValue(verdictOf({ verdict: 'escalate', reason: 'The note says SOMEONE ELSE WROTE THIS; ask him.', risk: 'medium' }));
+        const first = await svc.review({ message: job(), ...CANCEL, run: ApprovalService.newRun('r9') });
+        expect(first.status).toBe('paused');
+        const [card] = db.listPendingConfirmations();
+        expect(card.reason).toContain('SOMEONE ELSE WROTE THIS');
+        const again = await svc.review({ message: job(), ...CANCEL, run: ApprovalService.newRun('r9') });
+        expect(again.status).toBe('paused');
+        expect(again.result.info).not.toContain('SOMEONE ELSE WROTE THIS');
+        expect(again.result.info).not.toContain('Approval guardian');
+        expect(again.result.info).toContain('This books or cancels a real appointment');
+    });
+
     test('changed arguments are a different action: a fresh card, and the old one goes', async () => {
         const first = await review(ownerWa('cancel it'), CANCEL);
         const changed = await review(ownerWa('with another reason'), { ...CANCEL, args: { ...CANCEL.args, reasonId: 5 } });
@@ -416,8 +452,13 @@ describe('ApprovalService.review with the owner\'s word', () => {
         // A check step books nothing, so it retires nothing.
         svc.noteRan(BOOK.toolName, BOOK_PREVIEW.args, { serverName: 'allende' });
         expect(db.getPendingConfirmation(asked.id).status).toBe('pending');
+        agent.interface.send.mockClear();
         svc.noteRan(BOOK.toolName, { ...BOOK.args, observaciones: 'x' }, { serverName: 'allende' });
         expect(db.getPendingConfirmation(asked.id)).toMatchObject({ status: 'expired', decided_via: 'superseded' });
+        // The card in his chat says it is settled, and the history agrees.
+        await new Promise(r => setImmediate(r));
+        const note = agent.interface.send.mock.calls.map(c => c[0].content).find(t => /No longer needed/.test(t));
+        expect(note).toBe('No longer needed: book_appointment already ran.');
         // His later plain "ok" in that chat has nothing to approve.
         expect(await svc.intercept({ ...ownerWa('ok'), id: 'm-ok' }, jest.fn())).toBeNull();
     });

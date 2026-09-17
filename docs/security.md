@@ -153,12 +153,14 @@ his approval. It counts when all of these hold:
 - the run has read no untrusted content and carries no taint from the run
   that created it. A forwarded WhatsApp or Telegram message arrives tainted
   (`a forwarded message`), since it holds someone else's words;
-- the window the model reads holds no rows other people wrote: a contact's
-  messages, a watcher alert, a row stored with taint. That covers a WhatsApp
-  or Slack chat opened on the web and a chat forked from one
+- the window the model reads holds no messages other people wrote: a
+  contact's own messages, or a watcher alert quoting one. That covers a
+  WhatsApp or Slack chat opened on the web and a chat forked from one
   (`originsHaveForeignText` over `AgentDB.getRecentMessageOrigins`, same
   window as the model: 20 rows on Flash, 50 otherwise). A web message in a
-  chat whose id holds `@` never counts either.
+  chat whose id holds `@` never counts either. A message he forwarded is
+  still his own message: it reads like a tool result a third party wrote
+  (`originsHaveTaintedRows`), so it holds back only the rules below.
 
 Then a call the rules above pause runs with no card and no guardian call,
 and the history stores `owner_instructed`. Three limits stay:
@@ -173,7 +175,8 @@ and the history stores `owner_instructed`. Three limits stay:
   history the model reads this turn holds no untrusted envelope, that is no
   tool result a third party wrote. Rows stored before envelopes existed are
   judged by the tool name (`historyHasUntrusted`). Otherwise they take the
-  usual path.
+  usual path. A forwarded message, or a prompt written by a run that had read
+  third-party content, counts the same way.
 
 **One card per action.** Two calls are the same action when the tool and the
 target match (`stepKey` in `apps/agent/src/utils/two-step-tools.js`: for a
@@ -193,6 +196,16 @@ two-step tool the target argument, for anything else every argument).
   gate cannot tell that case from a call that never ran.
 - A call that waits on an existing card leaves its own history row
   (`escalated_duplicate`), so the owner's answer still settles one row per card.
+  The model reads our own rule text there, never the stored card reason: that
+  one can carry the guardian's words, which quote what a third party wrote.
+- A card the action outran is answered in its own chat with one line ("No
+  longer needed"), and the history stores `escalated_superseded`, so the two
+  places say the same thing.
+- A turn whose only news is a card sends no text, and never reports an action
+  that is still waiting: a check step and its real call share a tool name.
+- The Guardian page counts `owner_instructed` and `escalated_duplicate` rows
+  apart from the calls the guardian judged, so the auto-decision rate stays
+  honest. A card the action outran reads "already done", not "expired".
 
 Before this, an explicit "book it" in his chat still raised a card for the
 check step and another for the booking.
@@ -276,6 +289,20 @@ separated by `;` or newlines. Example: `runShellCommand:*rm -rf*;commitAndPush`.
 TTLs, deny-list editor); `GET /v1/approvals`, `POST /v1/approvals/:id/approve|deny`
 (agent: `/internal/approvals`, behind `DEEDEE_INTERNAL_TOKEN`); table
 `pending_confirmations` in `agent.db`; logs with the `[Approvals]` prefix.
+
+**Every path that runs a tool goes through the gate.** The chat loop always
+did. The live voice session runs tools through `POST /tools/execute`
+(`apps/agent/src/routes/tools.js`), which called the executor straight, so the
+deny-list, the safety rules, the floor and the guardian never saw those calls.
+It now runs the same `review()`. A live session is not a chat the owner can
+answer in, so a paused call sends its card to his notification channel, and
+the caller reads the same "Action PAUSED" text the model reads in a chat.
+Without the approval service the route refuses rather than runs. Each call
+arrives on its own request, so there is no run to carry taint: the route keeps
+what the session read for 15 minutes and passes it to the gate, so the
+untrusted-content rule fires there as it does in a chat. The nightly
+`consolidateMemory` call in the scheduler is the one other direct call: a
+fixed internal tool with no arguments.
 
 Still open (Batch 6): an exact allowlist for `runShellCommand` and network
 tools instead of pattern checks, and a separate unprivileged uid for the shell
