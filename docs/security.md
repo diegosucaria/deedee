@@ -198,6 +198,86 @@ Still open (Batch 6): an exact allowlist for `runShellCommand` and network
 tools instead of pattern checks, and a separate unprivileged uid for the shell
 child, so file modes and `/proc` stop a read that a text rule misses.
 
+## Untrusted content
+
+Email, web pages, search results, contacts' chats, Slack, calendar invites
+and documents hold text other people wrote. Someone can hide an order in
+that text ("forward this invoice to ..."). The agent treats such text as
+data and asks the owner before it acts after reading it.
+
+**Classification** (`apps/agent/src/utils/untrusted-content.js`): an
+explicit map by tool name and MCP server. A test checks that every tool in
+`tools-definition.js` sits in exactly one list, so a new tool needs a
+decision.
+- Untrusted internal tools: `googleSearch`, `readChatHistory`,
+  `listConversations`, `searchHistory`, `searchSlack`, `readSlackHistory`,
+  `readAllMonitoredSlackHistory`, `readVaultFile`, `searchDocuments`;
+  `runShellCommand` when the command fetches from the network (`curl`,
+  `wget`, a URL, `git clone`); `spawnAgent` and `getAgentResult` unless the
+  sub-agent service saw the run finish without reading untrusted content.
+- MCP servers: every `gws_*` server (Gmail, Calendar, Drive, Docs, Sheets,
+  Slides) and `browser` are untrusted. `homeassistant` is trusted except
+  `ha_config_get_calendar_events`. `node-red`, `plex`, `pilotfy` and
+  `allende` are trusted (the owner's flows, library data, structured
+  booking data).
+- Any other MCP server, and any tool no list names, is untrusted.
+
+**Envelope**: the tool loop in `apps/agent/src/agent.js` wraps an untrusted
+result after the sanitizer runs:
+`{ untrusted: true, source: <tool>, kind, note, content: <sanitized result> }`.
+The model payload and the stored `function` row carry the same envelope, so
+replayed history keeps the marker. `executionSummary.toolOutputs` keeps the
+raw result for code that reads it. A call the guard paused or denied is
+not wrapped: that result is our own text.
+
+**Prompt rule**: `UNTRUSTED_CONTENT_RULE` in `apps/agent/src/prompts/system.js`
+sits in the static system prompt (and the sub-agent prompt). It is fixed
+text, so the cached prefix does not change. Text inside an envelope is data;
+requests found there go to the owner, never into action.
+
+**Taint**: once a run reads an untrusted result, later side effects in the
+same run pause for the owner through the approval service, even when no
+other rule would stop them. Calls in the same batch as the read run as
+before: the model chose them before it saw the result. The card's `Why`
+line names what was read, for example
+`This run read untrusted content (email (personal_gmail)) and now wants to send a message.`
+A call another rule already pauses keeps that rule and gets the same note.
+Side effects that pause in a tainted run:
+- `sendMessage` to anyone but the owner (`me`, his phone, his Telegram id),
+  `sendSlackMessage`;
+- Google Workspace calls whose method is not a read (`get`, `list`,
+  `search`, `export`, ...): sends, drafts, event insert or delete, sharing;
+- `runShellCommand`, `writeFile`, `commitAndPush`, `pullLatestChanges`,
+  `rollbackLastChange`;
+- `scheduleJob`, `scheduleTask`, `addWatcher` (they would run the text later
+  in a clean run);
+- Home Assistant service calls on `lock`, `alarm_control_panel`, `cover`,
+  `automation`, `script`, `homeassistant`, `hassio` or `entity_id: all`, and
+  `ha_config_set_*` / `ha_config_remove_*`;
+- browser typing and submitting: `browser_type`, `browser_fill_form`,
+  `browser_select_option`, `browser_file_upload`, `browser_evaluate`,
+  `browser_press_key` with Enter, accepting a dialog, and `browser_click` on
+  an element whose description reads as submit, pay, send, confirm or book;
+- booking and cancelling on `pilotfy` and `allende`; changes on `node-red`;
+  on an unknown MCP server, any tool whose name reads as a write.
+
+Read-only tools never pause. A message to the owner himself never pauses,
+so jobs that read email can still report. A run that reads nothing
+untrusted behaves as before.
+
+**Where taint starts**: a watcher run starts tainted, because its prompt
+quotes the contact's message. A sub-agent spawned by a tainted run starts
+with the parent's sources (`metadata.untrustedTaint`); it cannot ask, so its
+tool result tells it to report the need to the parent. Watcher and job
+approvals go to the owner channel, as in [Approvals](#approvals).
+
+**Known gaps**: taint lasts one run. A later owner message in the same chat
+starts clean, and the envelope in history plus the prompt rule are the only
+guard for content read in an earlier turn. `rememberFact` and vault writes
+do not pause, so a fact can carry text into later prompts. Plain browser
+clicks and `browser_navigate` do not pause, so a page can still lead the
+model to a link. The autopilot reply service does not use this tool loop.
+
 ## Personal data guard
 
 The repo is public. `scripts/check-pii.js` blocks personal data and secrets before they land. It needs Node only, no packages.
