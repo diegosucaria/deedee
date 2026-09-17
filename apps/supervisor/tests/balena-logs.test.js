@@ -67,6 +67,34 @@ describe('balena logs', () => {
         expect(body).toMatchObject({ follow: true, format: 'json', count: 200 });
     });
 
+    test('a followed stream sends a heartbeat until it stops', async () => {
+        jest.useFakeTimers();
+        try {
+            const fetchImpl = jest.fn(async (url) => {
+                if (url.endsWith('/v2/containerId')) {
+                    return { ok: true, json: async () => ({ services: { agent: 'id-agent' } }) };
+                }
+                return { ok: true, body: new ReadableStream({ start() {} }) };
+            });
+            const out = new PassThrough();
+            let text = '';
+            out.on('data', (c) => { text += c.toString(); });
+            const logs = new BalenaLogs({ env: ENV, fetchImpl });
+            const handle = await logs.stream({ services: ['agent'], out });
+
+            jest.advanceTimersByTime(31000);
+            await Promise.resolve();
+            expect(text).toBe('[SYSTEM] HEARTBEAT\n[SYSTEM] HEARTBEAT\n');
+
+            handle.stop();
+            jest.advanceTimersByTime(60000);
+            await Promise.resolve();
+            expect(text).toBe('[SYSTEM] HEARTBEAT\n[SYSTEM] HEARTBEAT\n');
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     test('an unknown service is a 404', async () => {
         const fetchImpl = jest.fn(async () => ({ ok: true, json: async () => ({ services: { agent: 'id' } }) }));
         const logs = new BalenaLogs({ env: ENV, fetchImpl });

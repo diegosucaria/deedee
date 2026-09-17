@@ -1,5 +1,7 @@
 const { Readable } = require('stream');
 
+const HEARTBEAT_MS = 15000;
+
 // Container logs through the balena supervisor API instead of the engine
 // socket. The engine socket can start a privileged container, which is root
 // on the host; this API can read the journal and restart services, but it
@@ -111,11 +113,23 @@ class BalenaLogs {
         out.write(prefix ? `[${name}] ${text}\n` : `${text}\n`);
       }
     });
-    stream.on('error', () => {});
-    stream.on('end', () => { if (typeof out.end === 'function') out.end(); });
+    // A line every 15 s keeps the proxies between here and the browser from
+    // timing out when no service writes for minutes. The dockerode path sends
+    // the same line.
+    const heartbeat = follow
+      ? setInterval(() => { if (!out.writableEnded) out.write('[SYSTEM] HEARTBEAT\n'); }, HEARTBEAT_MS)
+      : null;
+    if (heartbeat && typeof heartbeat.unref === 'function') heartbeat.unref();
+    const stopHeartbeat = () => { if (heartbeat) clearInterval(heartbeat); };
+    stream.on('error', stopHeartbeat);
+    stream.on('end', () => {
+      stopHeartbeat();
+      if (typeof out.end === 'function') out.end();
+    });
 
     return {
       stop: () => {
+        stopHeartbeat();
         controller.abort();
         stream.destroy();
       }
