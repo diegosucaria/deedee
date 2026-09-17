@@ -1,7 +1,7 @@
 'use client';
 
 import { useState, useEffect, Fragment, useMemo, useRef, useCallback } from 'react';
-import { getSubAgentTasks, cleanupSubAgentTasks } from '@/app/actions';
+import { getSubAgentTasks, cleanupSubAgentTasks, getSubAgentTask } from '@/app/actions';
 import { RefreshCw, Bot, Trash2, ChevronDown, ChevronUp, ChevronRight, ChevronLeft } from 'lucide-react';
 import { useSocket } from '@/hooks/useSocket';
 
@@ -169,6 +169,8 @@ export default function SubAgentsTable() {
     const [tasks, setTasks] = useState([]);
     const [loading, setLoading] = useState(true);
     const [expandedId, setExpandedId] = useState(null);
+    // The list query leaves out result_full, so an expanded row fetches it.
+    const [fullResults, setFullResults] = useState({});
     const [expandedGroups, setExpandedGroups] = useState(new Set());
     const [cleaning, setCleaning] = useState(false);
     const [page, setPage] = useState(1);
@@ -195,6 +197,18 @@ export default function SubAgentsTable() {
             setLoading(false);
         }
     }, [page, pageSize, searchQuery, statusFilter]);
+
+    // Read the whole result of one task when its row opens.
+    useEffect(() => {
+        if (!expandedId || fullResults[expandedId] !== undefined) return;
+        let alive = true;
+        (async () => {
+            const row = await getSubAgentTask(expandedId);
+            if (!alive) return;
+            setFullResults(prev => ({ ...prev, [expandedId]: row?.result_full ?? null }));
+        })();
+        return () => { alive = false; };
+    }, [expandedId, fullResults]);
 
     const debounceRef = useRef(null);
     useEffect(() => {
@@ -442,14 +456,26 @@ export default function SubAgentsTable() {
                                                                         {task.task}
                                                                     </pre>
                                                                 </div>
-                                                                {task.result && (
-                                                                    <div>
-                                                                        <span className="text-[10px] uppercase text-zinc-500 font-bold">Result</span>
-                                                                        <pre className="mt-1 text-xs text-zinc-300 whitespace-pre-wrap bg-zinc-900 p-3 rounded-lg border border-zinc-800 max-h-48 overflow-y-auto">
-                                                                            {task.result}
-                                                                        </pre>
-                                                                    </div>
-                                                                )}
+                                                                {(task.result || fullResults[task.id]) && (() => {
+                                                                    const full = fullResults[task.id];
+                                                                    const trimmed = !!full && !!task.result && full.length > task.result.length;
+                                                                    return (
+                                                                        <div>
+                                                                            <span className="text-[10px] uppercase text-zinc-500 font-bold">Result</span>
+                                                                            {trimmed && (
+                                                                                <span className="ml-2 text-[10px] text-amber-400">
+                                                                                    the list showed the first {task.result.length.toLocaleString()} of {full.length.toLocaleString()} characters
+                                                                                </span>
+                                                                            )}
+                                                                            {full === undefined && (
+                                                                                <span className="ml-2 text-[10px] text-zinc-500">reading the full text...</span>
+                                                                            )}
+                                                                            <pre className="mt-1 text-xs text-zinc-300 whitespace-pre-wrap bg-zinc-900 p-3 rounded-lg border border-zinc-800 max-h-48 overflow-y-auto">
+                                                                                {full || task.result}
+                                                                            </pre>
+                                                                        </div>
+                                                                    );
+                                                                })()}
                                                                 {task.error && (
                                                                     <div>
                                                                         <span className="text-[10px] uppercase text-red-500 font-bold">Error</span>
