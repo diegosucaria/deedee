@@ -569,5 +569,12 @@ describe('approval guardian through the Agent', () => {
     expect(summary.toolOutputs.filter(o => o.name === 'sendMessage')).toHaveLength(3);
     expect(replies.some(r => /approval guardian refused several actions/.test(r.content || ''))).toBe(true);
     expect(agent.notifications.create).toHaveBeenCalledWith(expect.objectContaining({ type: 'guardian_breaker' }));
+    // A stopped run reports nothing as done: the refused call never ran.
+    const texts = replies.map(r => r.content || '');
+    expect(texts.some(t => /Action sendMessage completed/.test(t))).toBe(false);
+    expect(texts.some(t => /✅/.test(t))).toBe(false);
+    const stored = agent.db.saveMessage.mock.calls.map(c => String(c[0]?.content || ''));
+    expect(stored.some(t => /Action sendMessage completed/.test(t))).toBe(false);
   });
+
 });
