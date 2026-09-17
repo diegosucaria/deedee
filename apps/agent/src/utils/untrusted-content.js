@@ -205,6 +205,64 @@ function wrapUntrusted(toolName, response, kind) {
     };
 }
 
+const MAX_META = 10;
+const EXCERPT_KEEP = 1000;
+const EMAIL_RE = /[A-Za-z0-9._%+-]{1,64}@[A-Za-z0-9-]{1,63}(?:\.[A-Za-z0-9-]{1,63})*\.[A-Za-z]{2,24}/;
+const HOST_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?(?:\.[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?)+$/i;
+
+/** A sender address from a From header or a from/sender field, validated. */
+function findSender(value, depth = 0) {
+    if (depth > 6 || value == null || typeof value !== 'object') return null;
+    if (Array.isArray(value)) {
+        for (const v of value.slice(0, 50)) { const hit = findSender(v, depth + 1); if (hit) return hit; }
+        return null;
+    }
+    if (typeof value.name === 'string' && /^(?:from|sender)$/i.test(value.name) && typeof value.value === 'string') {
+        const m = EMAIL_RE.exec(value.value);
+        if (m) return m[0].toLowerCase();
+    }
+    for (const [k, v] of Object.entries(value)) {
+        if (/^(?:from|sender|author|organizer)$/i.test(k)) {
+            const text = typeof v === 'string' ? v : (v && typeof v === 'object' ? (v.email || v.address || '') : '');
+            const m = EMAIL_RE.exec(String(text));
+            if (m) return m[0].toLowerCase();
+        }
+    }
+    for (const v of Object.values(value)) {
+        if (v && typeof v === 'object') { const hit = findSender(v, depth + 1); if (hit) return hit; }
+    }
+    return null;
+}
+
+/** The host of a url argument or a page url in a result, validated. */
+function findDomain(value) {
+    if (value == null) return null;
+    let text = '';
+    if (typeof value === 'object' && !Array.isArray(value)) text = value.url || value.pageUrl || value.page_url || '';
+    if (!text && typeof value === 'string') {
+        const m = /Page URL:\s*(\S+)/i.exec(value);
+        text = m ? m[1] : '';
+    }
+    if (!text || typeof text !== 'string') return null;
+    try {
+        const host = new URL(text).hostname.toLowerCase();
+        return HOST_RE.test(host) ? host : null;
+    } catch {
+        return null;
+    }
+}
+
+/** The first characters of a result, whitespace collapsed. */
+function excerptOf(result) {
+    let text;
+    if (typeof result === 'string') text = result;
+    else {
+        try { text = JSON.stringify(result); } catch { text = ''; }
+    }
+    text = String(text || '').replace(/\s+/g, ' ').trim();
+    return text ? text.slice(0, EXCERPT_KEEP) : null;
+}
+
 /**
  * The untrusted sources one run has read. Seeded from the message (a watcher
  * run carries a contact's text; a sub-agent inherits its parent's taint).
@@ -219,6 +277,32 @@ class TurnTaint {
         for (const s of Array.isArray(initial) ? initial : []) this.add(s);
         // What the browser tools showed in this run, for the submit gate.
         this.browser = browser || new BrowserPageState();
+        // For the approval guardian: metadata per untrusted read (tool,
+        // kind, sender address or domain, time) and a short excerpt of the
+        // latest one. Kept in memory for this run only.
+        this.meta = [];
+        this.excerpt = null;
+    }
+
+    /**
+     * Note one untrusted result for the approval guardian.
+     * @param {string} toolName
+     * @param {string} kind
+     * @param {object} args
+     * @param {any} result
+     */
+    observe(toolName, kind, args, result) {
+        try {
+            const entry = { tool: String(toolName || ''), kind: String(kind || ''), at: new Date().toISOString() };
+            const sender = findSender(result);
+            if (sender) entry.sender = sender;
+            const domain = findDomain(args) || findDomain(result);
+            if (domain) entry.domain = domain;
+            this.meta.push(entry);
+            if (this.meta.length > MAX_META) this.meta.shift();
+            const text = excerptOf(result);
+            if (text) this.excerpt = text;
+        } catch { /* best effort */ }
     }
 
     add(source) {

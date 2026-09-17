@@ -143,7 +143,15 @@ function createSettingsRouter(agent) {
                     return res.status(400).json({ error: 'approvals needs { ttlInteractiveMin?: minutes, ttlDeferredHours?: hours, deny?: patterns }' });
                 }
                 const { normalizeApprovalSettings } = require('../services/approval-service');
-                storedValue = normalizeApprovalSettings(storedValue);
+                // The guardian keys (mode, smart_policy, always_ask) belong to the
+                // Guardian page; a save that leaves them out keeps the stored ones.
+                let previous = {};
+                try { previous = agent.db.getAgentSetting?.('approvals')?.value || {}; } catch { previous = {}; }
+                const merged = { ...storedValue };
+                for (const k of ['mode', 'smart_policy', 'always_ask']) {
+                    if (merged[k] === undefined && previous && previous[k] !== undefined) merged[k] = previous[k];
+                }
+                storedValue = normalizeApprovalSettings(merged);
             }
 
             const jsonValue = JSON.stringify(storedValue);

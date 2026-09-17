@@ -1015,6 +1015,8 @@ NEVER contact anyone other than the owner.`,
                         this.agent.db.cleanupJobLogs(30);
                         this.agent.db.cleanupMetrics(30);
                         this.agent.db.cleanupTokenUsage(30);
+                        // Guardian history: 180 days of rows, daily aggregates after.
+                        if (typeof this.agent.db.cleanupGuardianDecisions === 'function') this.agent.db.cleanupGuardianDecisions(180);
                     }
                 } catch (e) {
                     console.error('[Scheduler] Log cleanup failed:', e);

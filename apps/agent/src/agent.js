@@ -1110,6 +1110,9 @@ class Agent {
       replies: [],     // List of text/audio replies
       untrustedSources: turnTaint.sources // live list, read by the sub-agent service
     };
+    // Approval guardian state for this run: denials count toward the breaker.
+    // A sub-agent shares its parent's state, so its denials count there too.
+    const approvalRun = ApprovalService.acquireRun(runId, message.metadata?.approvalRunId || null);
 
     // Watcher in-flight lock state (set inside the watcher block; cleaned up in finally).
     let watcherLockKey = null;
@@ -2135,6 +2138,11 @@ class Agent {
         resolveSlackUser: 12, // fans out per user in a Slack scan (6–10 normal); cheap now that the workspace roster is cached interface-side
       };
       let loopCount = 0;
+      // Why the tool loop ended early, if it did. The model never saw the last
+      // results then, so its silence is not a finished task.
+      let stoppedEarly = null;
+      // The last call of the last batch: did it really run?
+      let lastCallOutcome = null;
       let hasBrowserSession = false; // Escalate limit when browser tools are used
       const toolCallTracker = {}; // toolName -> count (per-tool-name, non-browser only)
       const identicalCallTracker = {}; // full signature -> count (any tool)
@@ -2144,6 +2152,15 @@ class Agent {
         if (this._abortedChats.has(chatId)) {
           console.log(`${logPrefix} Abort flag detected for chat ${chatId}. Breaking loop.`);
           await activeSendCallback(createAssistantMessage('Stopped: the task was cancelled before it finished.'));
+          stoppedEarly = 'cancelled';
+          break;
+        }
+
+        // CHECK GUARDIAN BREAKER: too many refused actions mean the run is being steered.
+        if (approvalRun.stopped) {
+          console.warn(`${logPrefix} Approval guardian breaker tripped. Breaking loop.`);
+          await activeSendCallback(createAssistantMessage('Stopped: the approval guardian refused several actions in this run. The owner was notified.'));
+          stoppedEarly = 'the approval guardian breaker';
           break;
         }
 
@@ -2156,6 +2173,7 @@ class Agent {
           this.stopFlags.delete(chatId);
           // Do NOT delete GLOBAL_STOP here, so it hits other concurrent loops.
           // It will be cleared on next user input.
+          stoppedEarly = 'the owner';
           break;
         }
 
@@ -2172,6 +2190,7 @@ class Agent {
             metadata: { loopCount, maxLoops, chatId, source: message.source, link: chatId ? `/system/history?chatId=${encodeURIComponent(chatId)}` : '/system/history' }
           });
           await activeSendCallback(createAssistantMessage('I am stuck in a loop. Stopping now.'));
+          stoppedEarly = 'the loop limit';
           break;
         }
 
@@ -2329,6 +2348,7 @@ class Agent {
 
         if (functionCalls.length === 0 && loopWarnings.length > 0) {
           await activeSendCallback(createAssistantMessage(`Stopped: ${loopWarnings.join('; ')}. Try a different approach.`));
+          stoppedEarly = 'a repeated call';
           break;
         }
         if (functionCalls.length === 0) break;
@@ -2379,20 +2399,17 @@ class Agent {
             // answer (this chat, or his notification channel for jobs and
             // watchers). It resumes once he approves; the model must not retry.
             // A run that already read untrusted content asks before side effects.
+            // In smart mode the approval guardian decides the gated calls:
+            // allow runs, deny fails with a reason, escalate asks the owner.
             const serverName = this.mcp?.toolMap?.get?.(executionName)?.name || null;
-            const guard = this.approvals.check(executionName, call.args, { taint: turnTaint, serverName });
-            if (guard.denied) {
-              console.warn(`${logPrefix} Action ${executionName} denied by the owner's deny-list (${guard.pattern}).`);
-              toolResult = { error: guard.message };
-              toolStatus = 'error';
-            } else if (guard.requiresConfirmation) {
-              console.log(`${logPrefix} Action ${executionName} requires confirmation (${guard.rule || 'rule'}).`);
-              const paused = await this.approvals.request({
-                message, toolName: executionName, args: call.args, reason: guard.message, sendCallback: activeSendCallback,
-                taintSources: guard.tainted ? [...turnTaint.sources] : null
-              });
-              toolResult = paused.result;
-              toolStatus = paused.paused ? 'paused' : 'error';
+            const review = await this.approvals.review({
+              message, toolName: executionName, args: call.args, taint: turnTaint, serverName,
+              run: approvalRun, sendCallback: activeSendCallback
+            });
+            if (!review.run) {
+              console.log(`${logPrefix} Action ${executionName} held by the approval gate (${review.status}).`);
+              toolResult = review.result;
+              toolStatus = review.status;
             } else {
               // Execute normally
               executed = true;
@@ -2407,7 +2424,7 @@ class Agent {
                   totalTokens: pTokens + cTokens, chatId, estimatedCost: cost,
                   tag, cachedTokens: cached, thoughtsTokens: thoughts
                 });
-              }, { taint: turnTaint });
+              }, { taint: turnTaint, approvalRun });
               if (toolResult && typeof toolResult === 'object' && toolResult.error) {
                 toolStatus = 'error';
               }
@@ -2483,6 +2500,9 @@ class Agent {
         for (const { call, executionName, result, images = [], executed = true } of results) {
           // Capture to Summary
           executionSummary.toolOutputs.push({ name: executionName, result });
+          // A call the gate held or denied did not happen, and neither did one
+          // that failed: the silent-success line below must not claim it did.
+          lastCallOutcome = { name: executionName, ran: executed !== false && !(result && typeof result === 'object' && result.error) };
 
           // Sanitize for DB AND Model to prevent Context Pollution
           let dbToolResult = result;
@@ -2553,6 +2573,8 @@ class Agent {
             if (verdict.untrusted) {
               apiResponse = wrapUntrusted(executionName, apiResponse, verdict.kind);
               newlyTainted.push(`${verdict.kind} (${executionName})`);
+              // Sender, domain and a short excerpt for the approval guardian.
+              turnTaint.observe(executionName, verdict.kind, call.args, dbToolResult);
             }
           }
 
@@ -2702,7 +2724,13 @@ class Agent {
         }
       } else {
         // If we executed tools but got no final text, assume success and generate a generic confirmation.
-        if (executionSummary.toolOutputs.length > 0) {
+        if (stoppedEarly) {
+          // The run was stopped and the owner already read why; nothing ran to report.
+          console.log(`[Agent] No text response: the run was stopped by ${stoppedEarly}.`);
+        } else if (lastCallOutcome && !lastCallOutcome.ran) {
+          // The last call was held, denied or failed. Its own result says so.
+          console.log(`[Agent] No text response and ${lastCallOutcome.name} did not run; no confirmation sent.`);
+        } else if (executionSummary.toolOutputs.length > 0) {
           console.log('[Agent] No text response after tool execution. Assuming implicit success.');
           const lastTool = executionSummary.toolOutputs[executionSummary.toolOutputs.length - 1];
           // Suppress confirmation for audio responses
@@ -2763,6 +2791,7 @@ class Agent {
       }
       executionSummary.replies.push(errReply);
     } finally {
+      ApprovalService.releaseRun(approvalRun);
       // The abort flag applies to this run only.
       if (message.metadata?.chatId) this._abortedChats.delete(message.metadata.chatId);
 
@@ -3026,6 +3055,8 @@ class Agent {
         approved: options.approved === true,
         // Sources of untrusted content this run has read; a spawned sub-agent inherits them.
         untrustedTaint: options.taint?.tainted ? [...options.taint.sources] : [],
+        // The breaker state a spawned sub-agent shares.
+        approvalRunId: options.approvalRun?.id || null,
         processMessage: this.processMessage.bind(this),
         callServices: { client: this.client, interface: this.interface }
       });

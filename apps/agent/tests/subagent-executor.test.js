@@ -39,6 +39,12 @@ describe('SubAgentExecutor', () => {
             }));
         });
 
+        it('passes the parent run id so the sub-agent shares its guardian breaker', async () => {
+            mockSubAgentService.spawn.mockResolvedValue({ taskId: 'sub-1', status: 'running' });
+            await executor.execute('spawnAgent', { task: 'x' }, { message: { metadata: { chatId: 'chat-1' } }, approvalRunId: 'run-parent' });
+            expect(mockSubAgentService.spawn).toHaveBeenCalledWith(expect.objectContaining({ approvalRunId: 'run-parent' }));
+        });
+
         it('should reject if task param is missing', async () => {
             const result = await executor.execute('spawnAgent', {}, {
                 message: { metadata: { chatId: 'chat-1' } },

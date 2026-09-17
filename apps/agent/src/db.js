@@ -56,6 +56,9 @@ const SERVICE_CATEGORIES = {
   people_enrich: 'People',
   // Grok
   grok: 'Grok',
+  // Approval guardian (real decisions and owner dry runs)
+  guardian: 'Guardian',
+  guardian_dry_run: 'Guardian',
 };
 
 // Tags written on the main agent chat path (see services/usage-attribution.js).
@@ -488,6 +491,60 @@ class AgentDB {
 
       CREATE INDEX IF NOT EXISTS idx_pending_confirmations_reply
         ON pending_confirmations(reply_chat_id, status);
+
+      -- One row per gated tool call: what the approval guardian (or the
+      -- owner, the deny-list, the breaker) decided. Kept 180 days, then
+      -- folded into guardian_daily.
+      CREATE TABLE IF NOT EXISTS guardian_decisions (
+        id TEXT PRIMARY KEY,
+        created_at TEXT NOT NULL,
+        updated_at TEXT,
+        run_id TEXT,
+        chat_id TEXT,
+        source TEXT,
+        source_kind TEXT,
+        job_name TEXT,
+        tool_name TEXT NOT NULL,
+        target TEXT,
+        taint_sources TEXT,
+        mode TEXT,
+        floor TEXT,
+        always_ask TEXT,
+        outcome TEXT NOT NULL,
+        decided_by TEXT,
+        verdict TEXT,
+        model_verdict TEXT,
+        reason TEXT,
+        risk TEXT,
+        latency_ms INTEGER,
+        tokens INTEGER,
+        cost REAL,
+        guardian_input TEXT,
+        approval_id TEXT,
+        breaker_tripped INTEGER DEFAULT 0,
+        feedback TEXT,
+        feedback_note TEXT,
+        feedback_at TEXT
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_guardian_decisions_created ON guardian_decisions(created_at);
+      CREATE INDEX IF NOT EXISTS idx_guardian_decisions_approval ON guardian_decisions(approval_id);
+
+      CREATE TABLE IF NOT EXISTS guardian_daily (
+        day TEXT NOT NULL,
+        outcome TEXT NOT NULL,
+        tool_name TEXT NOT NULL,
+        source_kind TEXT NOT NULL,
+        risk TEXT NOT NULL,
+        count INTEGER NOT NULL DEFAULT 0,
+        cost REAL NOT NULL DEFAULT 0,
+        latency_sum INTEGER NOT NULL DEFAULT 0,
+        latency_n INTEGER NOT NULL DEFAULT 0,
+        feedback_allow INTEGER NOT NULL DEFAULT 0,
+        feedback_deny INTEGER NOT NULL DEFAULT 0,
+        breaker_trips INTEGER NOT NULL DEFAULT 0,
+        PRIMARY KEY (day, outcome, tool_name, source_kind, risk)
+      );
     `);
 
     // Seed wr_user_profile singleton (id=1) with preferred brands if missing
@@ -1939,6 +1996,17 @@ class AgentDB {
 
     const rows = stmt.all(chatId, limit).reverse(); // Reverse to get chronological order
     return this._mapHistoryRows(rows);
+  }
+
+  /** The newest role-user rows of one chat, newest first: { id, content }. */
+  getRecentUserMessages(chatId, limit = 5) {
+    if (!chatId) return [];
+    return this.db.prepare(`
+      SELECT id, content FROM messages
+      WHERE chat_id = ? AND role = 'user'
+      ORDER BY timestamp DESC, rowid DESC
+      LIMIT ?
+    `).all(chatId, Math.max(1, Math.min(20, Number(limit) || 5)));
   }
 
   /**
@@ -3408,6 +3476,7 @@ class AgentDB {
           SET status = ?, decided_at = ?, decided_via = ?
           WHERE id = ? AND status = 'pending' AND expires_at > ?
         `).run(status, nowIso, via, id, nowIso);
+    if (res.changes > 0) this._settleGuardianDecision([id], status);
     return res.changes > 0 ? this.getPendingConfirmation(id) : null;
   }
 
@@ -3431,6 +3500,7 @@ class AgentDB {
         SET status = 'expired', decided_at = ?, decided_via = 'sweeper'
         WHERE status = 'pending' AND expires_at <= ?
       `).run(nowIso, nowIso);
+      this._settleGuardianDecision(rows.map(r => r.id), 'expired');
     }
     return rows;
   }
@@ -3456,6 +3526,265 @@ class AgentDB {
     return this.db.prepare(`
       DELETE FROM pending_confirmations WHERE status != 'pending' AND created_at < ?
     `).run(cutoff).changes;
+  }
+
+  // --- Approval guardian: decisions ---
+  //
+  // One row per gated tool call (services/approval-service.js review()).
+  // Outcomes: auto_allowed, auto_denied, escalated (still waiting),
+  // escalated_approved, escalated_denied, escalated_expired,
+  // escalated_failed (nobody could be asked), deny_list, breaker_stop,
+  // ran_unasked (mode off). An escalated row follows its approval row.
+
+  /** An escalated decision takes the owner's answer (or the expiry). */
+  _settleGuardianDecision(approvalIds, status) {
+    const outcome = { approved: 'escalated_approved', denied: 'escalated_denied', expired: 'escalated_expired' }[status];
+    if (!outcome || !approvalIds || approvalIds.length === 0) return;
+    try {
+      const stmt = this.db.prepare(`
+        UPDATE guardian_decisions SET outcome = ?, updated_at = ?,
+          decided_by = CASE WHEN ? = 'escalated_expired' THEN 'nobody' ELSE 'owner' END
+        WHERE approval_id = ? AND outcome = 'escalated'
+      `);
+      const now = new Date().toISOString();
+      for (const id of approvalIds) stmt.run(outcome, now, outcome, id);
+    } catch (e) {
+      console.warn('[DB] guardian decision settle failed:', e.message);
+    }
+  }
+
+  _mapGuardianRow(row, { withInput = true } = {}) {
+    if (!row) return null;
+    const parse = (text, fallback) => { try { return text ? JSON.parse(text) : fallback; } catch { return fallback; } };
+    const out = {
+      ...row,
+      taint_sources: parse(row.taint_sources, []),
+      floor: parse(row.floor, []),
+      always_ask: parse(row.always_ask, []),
+      breaker_tripped: !!row.breaker_tripped,
+    };
+    if (withInput) out.guardian_input = parse(row.guardian_input, null);
+    else delete out.guardian_input;
+    return out;
+  }
+
+  recordGuardianDecision(d) {
+    const id = d.id || crypto.randomUUID();
+    const now = d.createdAt || new Date().toISOString();
+    const json = (v) => (v === undefined || v === null ? null : JSON.stringify(v));
+    this.db.prepare(`
+      INSERT INTO guardian_decisions
+        (id, created_at, updated_at, run_id, chat_id, source, source_kind, job_name, tool_name, target, taint_sources,
+         mode, floor, always_ask, outcome, decided_by, verdict, model_verdict, reason, risk, latency_ms, tokens, cost,
+         guardian_input, approval_id, breaker_tripped)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(id, now, now, d.runId || null, d.chatId || null, d.source || null, d.sourceKind || null, d.jobName || null,
+      String(d.toolName || ''), d.target || null, json(d.taintSources || []), d.mode || null, json(d.floor || []),
+      json(d.alwaysAsk || []), d.outcome, d.decidedBy || null, d.verdict || null, d.modelVerdict || null,
+      d.reason || null, d.risk || null, Number.isFinite(d.latencyMs) ? Math.round(d.latencyMs) : null,
+      Number.isFinite(d.tokens) ? Math.round(d.tokens) : null, Number.isFinite(d.cost) ? d.cost : null,
+      json(d.guardianInput), d.approvalId || null, d.breakerTripped ? 1 : 0);
+    return this.getGuardianDecision(id);
+  }
+
+  getGuardianDecision(id) {
+    return this._mapGuardianRow(this.db.prepare('SELECT * FROM guardian_decisions WHERE id = ?').get(String(id || '')));
+  }
+
+  updateGuardianDecision(id, fields = {}) {
+    const allowed = { outcome: 'outcome', approvalId: 'approval_id', decidedBy: 'decided_by', reason: 'reason' };
+    const sets = [];
+    const vals = [];
+    for (const [k, col] of Object.entries(allowed)) {
+      if (fields[k] !== undefined) { sets.push(`${col} = ?`); vals.push(fields[k]); }
+    }
+    if (sets.length === 0) return this.getGuardianDecision(id);
+    sets.push('updated_at = ?');
+    vals.push(new Date().toISOString(), id);
+    this.db.prepare(`UPDATE guardian_decisions SET ${sets.join(', ')} WHERE id = ?`).run(...vals);
+    return this.getGuardianDecision(id);
+  }
+
+  /** WHERE clause for the history and stats filters. */
+  _guardianWhere({ outcome, tool, risk, sourceKind, from, to, feedback } = {}) {
+    const where = [];
+    const vals = [];
+    const list = (v) => String(v).split(',').map(x => x.trim()).filter(Boolean);
+    if (outcome) { const l = list(outcome); where.push(`outcome IN (${l.map(() => '?').join(',')})`); vals.push(...l); }
+    if (tool) { where.push('tool_name LIKE ?'); vals.push(String(tool).replace(/\*/g, '%')); }
+    if (risk) { const l = list(risk); where.push(`risk IN (${l.map(() => '?').join(',')})`); vals.push(...l); }
+    if (sourceKind) { const l = list(sourceKind); where.push(`source_kind IN (${l.map(() => '?').join(',')})`); vals.push(...l); }
+    if (from) { where.push('created_at >= ?'); vals.push(String(from)); }
+    if (to) { where.push('created_at <= ?'); vals.push(/^\d{4}-\d{2}-\d{2}$/.test(String(to)) ? `${to}T23:59:59.999Z` : String(to)); }
+    if (feedback === true || feedback === 'any') where.push('feedback IS NOT NULL');
+    return { sql: where.length ? `WHERE ${where.join(' AND ')}` : '', vals };
+  }
+
+  /** History, newest first. Rows carry the guardian input only with `withInput`. */
+  listGuardianDecisions({ limit = 50, offset = 0, withInput = false, ...filters } = {}) {
+    const safeLimit = Math.min(Math.max(1, parseInt(limit) || 50), 500);
+    const safeOffset = Math.max(0, parseInt(offset) || 0);
+    const { sql, vals } = this._guardianWhere(filters);
+    const total = this.db.prepare(`SELECT COUNT(*) AS n FROM guardian_decisions ${sql}`).get(...vals).n;
+    const rows = this.db.prepare(`SELECT * FROM guardian_decisions ${sql} ORDER BY created_at DESC LIMIT ? OFFSET ?`)
+      .all(...vals, safeLimit, safeOffset).map(r => this._mapGuardianRow(r, { withInput }));
+    return { rows, total, limit: safeLimit, offset: safeOffset };
+  }
+
+  /**
+   * Owner feedback on a decided row: 'should_allow' | 'should_deny' | null
+   * (clears it). Never changes the decision.
+   */
+  setGuardianFeedback(id, feedback, note = null) {
+    if (feedback !== null && !['should_allow', 'should_deny'].includes(feedback)) throw new Error(`bad feedback '${feedback}'`);
+    const res = this.db.prepare(`
+      UPDATE guardian_decisions SET feedback = ?, feedback_note = ?, feedback_at = ?, updated_at = ? WHERE id = ?
+    `).run(feedback, feedback ? (note ? String(note).slice(0, 500) : null) : null, feedback ? new Date().toISOString() : null,
+      new Date().toISOString(), String(id || ''));
+    return res.changes > 0 ? this.getGuardianDecision(id) : null;
+  }
+
+  /**
+   * Stats for a date range (ISO days, inclusive). Detailed rows and the
+   * daily aggregates are added together; taint sources and the median
+   * latency come from detailed rows only (the last 180 days).
+   */
+  guardianStats({ from = null, to = null } = {}) {
+    const fromDay = from ? String(from).slice(0, 10) : null;
+    const toDay = to ? String(to).slice(0, 10) : null;
+    const { sql, vals } = this._guardianWhere({ from: fromDay, to: toDay });
+    const dailyWhere = [];
+    const dailyVals = [];
+    if (fromDay) { dailyWhere.push('day >= ?'); dailyVals.push(fromDay); }
+    if (toDay) { dailyWhere.push('day <= ?'); dailyVals.push(toDay); }
+    const dsql = dailyWhere.length ? `WHERE ${dailyWhere.join(' AND ')}` : '';
+
+    const perDayMap = new Map();
+    const addDay = (day, outcome, n) => {
+      if (!perDayMap.has(day)) perDayMap.set(day, { day });
+      const d = perDayMap.get(day);
+      d[outcome] = (d[outcome] || 0) + n;
+    };
+    for (const r of this.db.prepare(`SELECT substr(created_at, 1, 10) AS day, outcome, COUNT(*) AS n FROM guardian_decisions ${sql} GROUP BY day, outcome`).all(...vals)) addDay(r.day, r.outcome, r.n);
+    for (const r of this.db.prepare(`SELECT day, outcome, SUM(count) AS n FROM guardian_daily ${dsql} GROUP BY day, outcome`).all(...dailyVals)) addDay(r.day, r.outcome, r.n);
+    const perDay = [...perDayMap.values()].sort((a, b) => a.day.localeCompare(b.day));
+
+    const outcomes = {};
+    for (const d of perDay) for (const [k, v] of Object.entries(d)) if (k !== 'day') outcomes[k] = (outcomes[k] || 0) + v;
+    const total = Object.values(outcomes).reduce((a, b) => a + b, 0);
+    const auto = (outcomes.auto_allowed || 0) + (outcomes.auto_denied || 0);
+    const escalatedDecided = (outcomes.escalated_approved || 0) + (outcomes.escalated_denied || 0);
+    const escalations = escalatedDecided + (outcomes.escalated || 0) + (outcomes.escalated_expired || 0) + (outcomes.escalated_failed || 0);
+
+    const fb = this.db.prepare(`
+      SELECT
+        SUM(CASE WHEN feedback = 'should_allow' THEN 1 ELSE 0 END) AS should_allow,
+        SUM(CASE WHEN feedback = 'should_deny' THEN 1 ELSE 0 END) AS should_deny,
+        SUM(CASE WHEN feedback = 'should_allow' AND outcome IN ('auto_denied', 'breaker_stop') THEN 1 ELSE 0 END) AS denied_but_should_allow,
+        SUM(CASE WHEN feedback = 'should_deny' AND outcome = 'auto_allowed' THEN 1 ELSE 0 END) AS allowed_but_should_deny,
+        SUM(CASE WHEN breaker_tripped = 1 THEN 1 ELSE 0 END) AS breaker_trips,
+        SUM(COALESCE(cost, 0)) AS cost,
+        SUM(COALESCE(tokens, 0)) AS tokens
+      FROM guardian_decisions ${sql}
+    `).get(...vals);
+    const agg = this.db.prepare(`
+      SELECT SUM(feedback_allow) AS should_allow, SUM(feedback_deny) AS should_deny, SUM(breaker_trips) AS breaker_trips,
+        SUM(cost) AS cost, SUM(latency_sum) AS latency_sum, SUM(latency_n) AS latency_n
+      FROM guardian_daily ${dsql}
+    `).get(...dailyVals);
+
+    const latencies = this.db.prepare(`SELECT latency_ms FROM guardian_decisions ${sql ? `${sql} AND` : 'WHERE'} latency_ms IS NOT NULL ORDER BY latency_ms`).all(...vals).map(r => r.latency_ms);
+    const median = latencies.length === 0 ? null
+      : (latencies.length % 2 ? latencies[(latencies.length - 1) / 2] : Math.round((latencies[latencies.length / 2 - 1] + latencies[latencies.length / 2]) / 2));
+
+    const topTools = new Map();
+    for (const r of this.db.prepare(`SELECT tool_name, COUNT(*) AS n FROM guardian_decisions ${sql} GROUP BY tool_name`).all(...vals)) topTools.set(r.tool_name, (topTools.get(r.tool_name) || 0) + r.n);
+    for (const r of this.db.prepare(`SELECT tool_name, SUM(count) AS n FROM guardian_daily ${dsql} GROUP BY tool_name`).all(...dailyVals)) topTools.set(r.tool_name, (topTools.get(r.tool_name) || 0) + r.n);
+
+    const sourceCounts = new Map();
+    for (const r of this.db.prepare(`SELECT taint_sources FROM guardian_decisions ${sql}`).all(...vals)) {
+      let list = [];
+      try { list = JSON.parse(r.taint_sources || '[]'); } catch { list = []; }
+      for (const s of new Set((Array.isArray(list) ? list : []).map(x => String(x).replace(/ \[carried by .*\]$/, '')))) {
+        sourceCounts.set(s, (sourceCounts.get(s) || 0) + 1);
+      }
+    }
+    const top = (map) => [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([name, count]) => ({ name, count }));
+
+    // token_usage keeps only 30 days (cleanupTokenUsage), so these two are
+    // side figures. The full-range cost is `cost`, from the decision rows.
+    const usageFor = (tag) => {
+      try {
+        const u = [];
+        const uv = [tag];
+        if (fromDay) { u.push('timestamp >= ?'); uv.push(`${fromDay} 00:00:00`); }
+        if (toDay) { u.push('timestamp <= ?'); uv.push(`${toDay} 23:59:59`); }
+        const row = this.db.prepare(`SELECT SUM(estimated_cost) AS cost, COUNT(*) AS calls FROM token_usage WHERE tag = ? ${u.length ? `AND ${u.join(' AND ')}` : ''}`).get(...uv);
+        return { cost: row.cost || 0, calls: row.calls || 0 };
+      } catch { return { cost: 0, calls: 0 }; } // older schema
+    };
+    const usage = usageFor('guardian');
+    const dryRunUsage = usageFor('guardian_dry_run');
+
+    return {
+      range: { from: fromDay, to: toDay },
+      total,
+      outcomes,
+      perDay,
+      autoDecisions: auto,
+      autoRate: total > 0 ? auto / total : null,
+      escalations,
+      escalationsApproved: outcomes.escalated_approved || 0,
+      escalationApprovalShare: escalatedDecided > 0 ? (outcomes.escalated_approved || 0) / escalatedDecided : null,
+      feedback: {
+        shouldAllow: (fb.should_allow || 0) + (agg.should_allow || 0),
+        shouldDeny: (fb.should_deny || 0) + (agg.should_deny || 0),
+        deniedButShouldAllow: fb.denied_but_should_allow || 0,
+        allowedButShouldDeny: fb.allowed_but_should_deny || 0,
+      },
+      topTools: top(topTools),
+      topTaintSources: top(sourceCounts),
+      cost: (fb.cost || 0) + (agg.cost || 0),
+      tokens: fb.tokens || 0,
+      tokenUsage: usage,
+      dryRunUsage,
+      medianLatencyMs: median,
+      breakerTrips: (fb.breaker_trips || 0) + (agg.breaker_trips || 0),
+    };
+  }
+
+  /**
+   * Retention: detailed rows older than `days` are folded into
+   * guardian_daily (counts, cost, latency, feedback, breaker trips per day,
+   * outcome, tool, source kind and risk), then deleted. Returns the number
+   * of rows folded.
+   */
+  cleanupGuardianDecisions(days = 180) {
+    const cutoff = new Date(Date.now() - days * 24 * 60 * 60 * 1000).toISOString();
+    const fold = this.db.transaction(() => {
+      const groups = this.db.prepare(`
+        SELECT substr(created_at, 1, 10) AS day, outcome, tool_name, COALESCE(source_kind, '') AS source_kind, COALESCE(risk, '') AS risk,
+          COUNT(*) AS n, SUM(COALESCE(cost, 0)) AS cost,
+          SUM(COALESCE(latency_ms, 0)) AS latency_sum, SUM(CASE WHEN latency_ms IS NULL THEN 0 ELSE 1 END) AS latency_n,
+          SUM(CASE WHEN feedback = 'should_allow' THEN 1 ELSE 0 END) AS fa,
+          SUM(CASE WHEN feedback = 'should_deny' THEN 1 ELSE 0 END) AS fd,
+          SUM(breaker_tripped) AS bt
+        FROM guardian_decisions WHERE created_at < ?
+        GROUP BY day, outcome, tool_name, source_kind, risk
+      `).all(cutoff);
+      const upsert = this.db.prepare(`
+        INSERT INTO guardian_daily (day, outcome, tool_name, source_kind, risk, count, cost, latency_sum, latency_n, feedback_allow, feedback_deny, breaker_trips)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        ON CONFLICT(day, outcome, tool_name, source_kind, risk) DO UPDATE SET
+          count = count + excluded.count, cost = cost + excluded.cost,
+          latency_sum = latency_sum + excluded.latency_sum, latency_n = latency_n + excluded.latency_n,
+          feedback_allow = feedback_allow + excluded.feedback_allow, feedback_deny = feedback_deny + excluded.feedback_deny,
+          breaker_trips = breaker_trips + excluded.breaker_trips
+      `);
+      for (const g of groups) upsert.run(g.day, g.outcome, g.tool_name, g.source_kind, g.risk, g.n, g.cost, g.latency_sum, g.latency_n, g.fa, g.fd, g.bt);
+      return this.db.prepare(`DELETE FROM guardian_decisions WHERE created_at < ?`).run(cutoff).changes;
+    });
+    return fold();
   }
 
   // --- Wardrobe: Garments ---

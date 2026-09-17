@@ -20,7 +20,7 @@ function formatDuration(ms) {
     return remainMins > 0 ? `${hrs}h ${remainMins}m` : `${hrs}h`;
 }
 
-export default function JobLogsTable() {
+export default function JobLogsTable({ initialSearch = '' } = {}) {
     const [logs, setLogs] = useState([]);
     const [loading, setLoading] = useState(true);
     const [page, setPage] = useState(1);
@@ -29,7 +29,7 @@ export default function JobLogsTable() {
 
     // Filters & Sorting
     const [selectedIds, setSelectedIds] = useState(new Set());
-    const [filterName, setFilterName] = useState('');
+    const [filterName, setFilterName] = useState(initialSearch);
     const [filterStatus, setFilterStatus] = useState('all'); // all, success, failure
     const [sortConfig, setSortConfig] = useState({ key: 'timestamp', direction: 'desc' });
 

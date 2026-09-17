@@ -59,6 +59,14 @@ describe('SubAgentService', () => {
             );
         });
 
+        it("carries the parent's approval run id into the sub-agent message", async () => {
+            await service.spawn({ task: 'x', parentChatId: 'chat-1', waitForResult: true, approvalRunId: 'run-parent' });
+            expect(mockAgent.processMessage.mock.calls[0][0].metadata.approvalRunId).toBe('run-parent');
+            mockAgent.processMessage.mockClear();
+            await service.spawn({ task: 'y', parentChatId: 'chat-1', waitForResult: true });
+            expect(mockAgent.processMessage.mock.calls[0][0].metadata.approvalRunId).toBeUndefined();
+        });
+
         it('should return taskId in async mode (waitForResult=false)', async () => {
             mockAgent.processMessage.mockImplementation(async (msg, callback) => {
                 await callback({ content: 'Done' });
