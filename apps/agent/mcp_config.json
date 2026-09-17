@@ -43,7 +43,10 @@
         "cwd": "../../packages/plex-mcp-server",
         "env": {
             "PLEX_URL": "${PLEX_URL}",
-            "PLEX_TOKEN": "${PLEX_TOKEN}"
+            "PLEX_TOKEN": "${PLEX_TOKEN}",
+            "PLEX_USERNAME": "${PLEX_USERNAME}",
+            "PLEX_PASSWORD": "${PLEX_PASSWORD}",
+            "PLEX_SERVER_NAME": "${PLEX_SERVER_NAME}"
         },
         "disabled": false
     },
@@ -104,7 +107,13 @@
         "env": {
             "PILOTFY_EMAIL": "${PILOTFY_EMAIL}",
             "PILOTFY_PASSWORD": "${PILOTFY_PASSWORD}",
-            "PILOTFY_TOKEN": "${PILOTFY_TOKEN}"
+            "PILOTFY_TOKEN": "${PILOTFY_TOKEN}",
+            "PILOTFY_BASE": "${PILOTFY_BASE}",
+            "PILOTFY_SCHOOL_ID": "${PILOTFY_SCHOOL_ID}",
+            "PILOTFY_TZ_OFFSET": "${PILOTFY_TZ_OFFSET}",
+            "PILOTFY_AERODROME_LAT": "${PILOTFY_AERODROME_LAT}",
+            "PILOTFY_AERODROME_LON": "${PILOTFY_AERODROME_LON}",
+            "PILOTFY_AERODROME_NAME": "${PILOTFY_AERODROME_NAME}"
         },
         "disabled": false
     },
@@ -119,7 +128,13 @@
         "env": {
             "ALLENDE_USERNAME": "${ALLENDE_USERNAME}",
             "ALLENDE_PASSWORD": "${ALLENDE_PASSWORD}",
-            "ALLENDE_TOKEN": "${ALLENDE_TOKEN}"
+            "ALLENDE_TOKEN": "${ALLENDE_TOKEN}",
+            "ALLENDE_BASE": "${ALLENDE_BASE}",
+            "ALLENDE_ID_PACIENTE": "${ALLENDE_ID_PACIENTE}",
+            "ALLENDE_ID_FINANCIADOR": "${ALLENDE_ID_FINANCIADOR}",
+            "ALLENDE_ID_PLAN": "${ALLENDE_ID_PLAN}",
+            "ALLENDE_ID_TIPO_DOCUMENTO": "${ALLENDE_ID_TIPO_DOCUMENTO}",
+            "ALLENDE_ENV_FILE": "${ALLENDE_ENV_FILE}"
         },
         "disabled": false
     }

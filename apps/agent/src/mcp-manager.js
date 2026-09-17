@@ -203,7 +203,13 @@ class MCPManager {
         }
         if (serverConfig.env) {
             for (const [k, v] of Object.entries(serverConfig.env)) {
-                env[k] = this._resolveVars(v);
+                const resolved = this._resolveVars(v);
+                // A ${VAR} that is unset resolves to ''. Setting the variable
+                // to '' would override the server's own default (python's
+                // os.environ.get(name, default) returns the empty string), so
+                // leave it out instead.
+                if (resolved === '' && typeof v === 'string' && v.includes('${')) continue;
+                env[k] = resolved;
             }
         }
 
@@ -496,6 +502,9 @@ class MCPManager {
      * - Tool filters (includeTools/excludeTools) live in the image's default
      *   config; carry them to saved entries that don't set their own, since
      *   the merge above only adds whole servers that are missing.
+     * - Env names the default config gained since the entry was saved are
+     *   added the same way; a child only gets the variables its own block
+     *   names.
      * - GWS entries saved with "-s all" move to GWS_MCP_SERVICES.
      * - The old 'browser-use' entry goes away. A saved 'browser' entry whose
      *   args do not name the launcher stub is the old Deedee server; it is
@@ -527,6 +536,19 @@ class MCPManager {
                 if (def[field] && !saved[field]) {
                     saved[field] = def[field];
                     changed = true;
+                }
+            }
+            // Env names the image's config adds later (a server's optional
+            // variables, for one). A child only gets what its own block
+            // names, so a saved entry that misses them would lose them.
+            // Values the owner edited are left alone.
+            if (def.env) {
+                saved.env = saved.env || {};
+                for (const [name, value] of Object.entries(def.env)) {
+                    if (!(name in saved.env)) {
+                        saved.env[name] = value;
+                        changed = true;
+                    }
                 }
             }
         }

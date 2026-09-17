@@ -469,3 +469,67 @@ describe('MCPManager._childEnv', () => {
         expect(env.EXTRA_THREE).toBeUndefined();
     });
 });
+
+describe('MCPManager optional server variables', () => {
+    const originalEnv = { ...process.env };
+    let manager;
+
+    beforeEach(() => {
+        manager = new MCPManager();
+        jest.spyOn(console, 'log').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        process.env = { ...originalEnv };
+        jest.restoreAllMocks();
+    });
+
+    test('an unset ${VAR} is left out, so the server keeps its own default', () => {
+        delete process.env.PILOTFY_BASE;
+        process.env.PILOTFY_TOKEN = 'pilotfy-token';
+
+        const env = manager._childEnv('pilotfy', {
+            env: { PILOTFY_TOKEN: '${PILOTFY_TOKEN}', PILOTFY_BASE: '${PILOTFY_BASE}' }
+        });
+
+        expect(env.PILOTFY_TOKEN).toBe('pilotfy-token');
+        expect('PILOTFY_BASE' in env).toBe(false);
+    });
+
+    test('a set optional variable does reach the child', () => {
+        process.env.PILOTFY_BASE = 'https://api.example.test';
+        const env = manager._childEnv('pilotfy', { env: { PILOTFY_BASE: '${PILOTFY_BASE}' } });
+        expect(env.PILOTFY_BASE).toBe('https://api.example.test');
+    });
+
+    test('the shipped config names every optional variable its servers read', () => {
+        const config = require('../mcp_config.json');
+        expect(Object.keys(config.pilotfy.env)).toEqual(expect.arrayContaining([
+            'PILOTFY_BASE', 'PILOTFY_SCHOOL_ID', 'PILOTFY_TZ_OFFSET',
+            'PILOTFY_AERODROME_LAT', 'PILOTFY_AERODROME_LON', 'PILOTFY_AERODROME_NAME'
+        ]));
+        expect(Object.keys(config.allende.env)).toEqual(expect.arrayContaining([
+            'ALLENDE_BASE', 'ALLENDE_ID_PACIENTE', 'ALLENDE_ID_FINANCIADOR',
+            'ALLENDE_ID_PLAN', 'ALLENDE_ID_TIPO_DOCUMENTO', 'ALLENDE_ENV_FILE'
+        ]));
+        expect(Object.keys(config.plex.env)).toEqual(expect.arrayContaining([
+            'PLEX_USERNAME', 'PLEX_PASSWORD', 'PLEX_SERVER_NAME'
+        ]));
+    });
+
+    test('a saved entry picks up env names the image added later', () => {
+        const saved = { pilotfy: { command: 'python3', env: { PILOTFY_TOKEN: '${PILOTFY_TOKEN}' } } };
+        const defaults = { pilotfy: { command: 'python3', env: { PILOTFY_TOKEN: '${PILOTFY_TOKEN}', PILOTFY_BASE: '${PILOTFY_BASE}' } } };
+
+        expect(manager._migrateConfig(saved, defaults)).toBe(true);
+        expect(saved.pilotfy.env).toEqual({ PILOTFY_TOKEN: '${PILOTFY_TOKEN}', PILOTFY_BASE: '${PILOTFY_BASE}' });
+    });
+
+    test('a value the owner edited is left alone', () => {
+        const saved = { plex: { env: { PLEX_URL: 'http://plex.local:32400' } } };
+        const defaults = { plex: { env: { PLEX_URL: '${PLEX_URL}' } } };
+
+        expect(manager._migrateConfig(saved, defaults)).toBe(false);
+        expect(saved.plex.env.PLEX_URL).toBe('http://plex.local:32400');
+    });
+});

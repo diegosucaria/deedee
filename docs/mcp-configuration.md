@@ -69,7 +69,10 @@ You can still manually edit `mcp_config.json` if you have shell access, but the 
 The image ships default entries (Home Assistant, Plex, Node-RED, browser, Pilotfy, Allende). On startup the agent adds any default the saved config lacks. It also upgrades old saved entries: a saved `browser-use` entry is removed, and a saved `browser` entry that does not run `scripts/browser-mcp.js` is replaced by the default.
 
 ### Placeholders and defaults
-`${VAR}` in `env`, `args` and `url` is replaced from the environment. `DATA_DIR` and `BROWSER_EXECUTABLE_PATH` may stay unset: `DATA_DIR` falls back to the agent data dir, `BROWSER_EXECUTABLE_PATH` to empty (Playwright then picks a browser). Any other unresolved placeholder disables the server until it is set.
+`${VAR}` in `env`, `args` and `url` is replaced from the environment. `DATA_DIR` and `BROWSER_EXECUTABLE_PATH` may stay unset: `DATA_DIR` falls back to the agent data dir, `BROWSER_EXECUTABLE_PATH` to empty (Playwright then picks a browser). Any other unresolved placeholder disables the server until it is set. An unset `${VAR}` inside `env` is left out of the child environment rather than set to an empty string, so the server keeps its own default.
+
+### What a server sees
+A stdio server starts with a fixed base (`MCP_BASE_ENV_VARS` in `apps/agent/src/mcp-manager.js`: shell, locale, TLS trust store, python and Chromium paths) plus the variables its own `env` block names. The agent's other credentials stay in the agent process. So every variable a server reads — optional ones included — must appear in its `env` block; `MCP_ENV_PASSTHROUGH` adds names for every server. Names the image's config gains later are merged into the saved config on the next reload, values the owner edited are left alone.
 
 ### Per-server options
 - `includeTools` / `excludeTools`: tool names or `*` globs.
