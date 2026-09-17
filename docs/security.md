@@ -20,7 +20,7 @@ DeeDee operates on a **"YOLO but Safe"** model. This means we prioritize **Perso
 - **Confirmation Manager**:
     - **Held for approval**: `| bash`, `| sh`, `| python`, `| node`, `bash <(...)`, `sh -c "$(...)"`, `rm -rf /`, writes under `/etc`, `mkfs`, `dd` to a disk. See **Approvals** below.
     - **Allowed**: `curl`, `wget`, `ls`, `grep` (Standard tools are fine).
-- **Untrusted Sources**: (Future) Inputs from Email/Calendar will be tagged as "Untrusted" and prevented from triggering specific tools.
+- **Untrusted Sources**: email, web pages, contacts' chats and other third-party text reach the model in a data envelope, and a run that read them asks before actions that reach other people. See [Untrusted content](#untrusted-content).
 
 ### 3. Logic Failure
 **Risk**: The agent pushes an update that runs (no crash) but is logically broken (e.g. infinite loop, or always returns empty text).
@@ -240,23 +240,30 @@ text, so the cached prefix does not change. Text inside an envelope is data;
 requests found there go to the owner, never into action.
 
 **Taint**: once a run reads an untrusted result, later side effects in the
-same run pause for the owner through the approval service, even when no
+same run may pause for the owner through the approval service, even when no
 other rule would stop them. Calls in the same batch as the read run as
-before: the model chose them before it saw the result. The card's `Why`
-line names what was read, for example
+before: the model chose them before it saw the result. The owner set the
+rule: **actions that reach other people or the outside ask; actions whose
+only effect lands on the owner run, with no card and no notification.**
+
+The card's `Why` line names what was read, and an `Untrusted input:` line
+lists the sources, for example
 `This run read untrusted content (email (personal_gmail)) and now wants to send a message.`
 A call another rule already pauses keeps that rule and gets the same note.
-Side effects that pause in a tainted run:
-- `sendMessage` to anyone but the owner (`me`, his phone, his Telegram id),
-  `sendSlackMessage`;
+
+*Still asks in a tainted run:*
+- `sendMessage` to anyone but the owner, and `sendSlackMessage`. The owner is
+  `me`/`myself`/`owner`/his name, his phone (JID), his WhatsApp LID (the same
+  ids the approval service routes by), his Telegram ids, or a web chat;
 - Google Workspace calls whose method is not a read (`get`, `list`,
-  `search`, `export`, ...): sends, drafts, event insert or delete, sharing;
+  `search`, `export`, ...): mail sends and drafts, calendar event updates,
+  patches, moves, deletes and quick-add, events that invite attendees,
+  events on a calendar other than `primary`, sharing. Every email send also
+  asks under the base rule, whoever receives it;
 - `runShellCommand`, except one plain `curl` or `wget` GET that prints to
   the output (no pipe, redirect, upload, header, output file or second
   command), `writeFile`, `commitAndPush`, `pullLatestChanges`,
   `rollbackLastChange`;
-- `scheduleJob`, `scheduleTask`, `addWatcher` (they would run the text later
-  in a clean run);
 - Home Assistant service calls, unless every domain they touch is plain
   home control (`light`, `switch`, `fan`, `climate`, `media_player`,
   `vacuum`, `scene`, `remote`, `humidifier`, `water_heater`, `input_*`,
@@ -264,18 +271,85 @@ Side effects that pause in a tainted run:
   `shell_command`, `tts`, `lock`, `cover`, `script`, `automation` and
   `entity_id: all` ask. `ha_config_set_*`, `ha_config_remove_*` and
   `ha_remove_*` ask too;
-- browser tools, except those that read, move or wait (`browser_snapshot`,
-  `browser_take_screenshot`, `browser_navigate`, `browser_tabs`,
-  `browser_webmcp_list`, ...). `browser_click` asks when the element reads as
-  submit, pay, send, confirm or book; `browser_press_key` asks on Enter;
-  accepting a dialog asks. Typing, forms, uploads, `browser_evaluate`,
-  `browser_webmcp_call` and any browser tool a package update adds ask;
+- browser actions with a consequence on money or other people (see below),
+  `browser_evaluate`, `browser_run_code_unsafe`, `browser_file_upload`,
+  `browser_drop` with local files, `browser_webmcp_call` (a page's own
+  actions are opaque) and any browser tool a package update adds;
 - booking and cancelling on `pilotfy` and `allende`; changes on `node-red`;
   on an unknown MCP server, any tool whose name reads as a write.
 
-Read-only tools never pause. A message to the owner himself never pauses,
-so jobs that read email can still report. A run that reads nothing
-untrusted behaves as before.
+*Runs unasked in a tainted run:*
+- `setReminder`, `scheduleJob`, `scheduleTask`, `addWatcher` (they carry the
+  taint, see below), `rememberFact`, `cancelJob`;
+- a message to the owner himself, so jobs that read email can still report;
+- a Calendar `events.insert` on `primary` with no attendees;
+- plain home control, read-only tools, the plain fetch above;
+- in the browser: reading, navigating, typing, `browser_fill_form`,
+  `browser_select_option`, dragging, ordinary keys, and clicks on login,
+  sign-in, next, continue, search, pagination and navigation. A multi-step
+  login completes in one turn with no approval.
+
+A run that reads nothing untrusted behaves as before.
+
+**Browser: gate submit only** (`apps/agent/src/utils/browser-gate.js`).
+A click asks when its label reads as pay, buy, purchase, place or confirm an
+order, send, post, publish, share, reply, transfer, donate, delete, book,
+reserve or cancel a booking (English and Spanish). "Send code" and similar
+login steps do not count. A generic label (`Continue`, `Submit`, `OK`,
+`Confirm`, `Next`, ...) asks only inside a form that pays, orders, sends or
+deletes: the form holds such a button, a payment field (card number, CVV,
+expiry, billing, IBAN, CBU, amount, recipient) or has such a name.
+Accepting a dialog asks when its message reads the same way, or when the
+gate never saw the message.
+
+Pressing Enter is judged like clicking the submit button of the form that
+holds focus, and so is `browser_type` with `submit: true`. Space on a
+button is a click on it. `Ctrl+Enter` and `Cmd+Enter` always ask (send
+shortcuts in mail and chat apps).
+
+*What the gate sees*: the tool arguments; the page URL, the ARIA snapshot
+and an open dialog's message from the browser results of this run
+(`browser_snapshot` returns the snapshot inline; actions link a
+`page-*.yml` file, which the gate reads from the browser server's working
+directory); and the element it last clicked or typed into. The label comes
+from the snapshot by ref, so the model cannot hide a "Pay" button by
+describing it as "Continue". The form is the nearest `form`, `search` or
+`dialog` around the field; without one, the nearest group that holds a
+button; without one, the whole page.
+
+*What it cannot see, honestly*:
+- focus after `Tab` or arrow keys. Enter or Space then asks whenever the
+  page holds anything that pays, orders, sends or deletes, and runs
+  otherwise;
+- a page it has no snapshot for (the snapshot file could not be read, or
+  the page came from an earlier turn). A click then goes by the model's own
+  description; Enter asks unless that description reads as a login or
+  search field; Space runs;
+- a snapshot that went stale: a script can change the page between the
+  snapshot and the click, and refs of a page that changed without a URL
+  change keep their old names;
+- labels in other languages, icons with no accessible name, and buttons
+  whose words do not say what they do ("Go", "✓");
+- key handlers: a page can submit on any key, on blur, or on a plain
+  "Next" that charges a card with no payment field in the snapshot;
+- navigation itself: `browser_navigate` to a URL can carry data out in its
+  query string, and a GET link can trigger an action on a badly built site.
+
+**No taint laundering**: a tainted run that creates a job or watcher could
+plant an order that runs later in a clean run. So `scheduleJob`,
+`scheduleTask` and `setReminder` store `payload.tainted = true` and
+`payload.taintSources` (the creating run's sources), and `addWatcher`
+stores `watchers.taint_sources`. Every later run of that job, task or
+watcher starts tainted with those sources marked
+`[carried by job "name"]` or `[carried by watcher 3]`, after a restart and
+on retries too. Its outward actions ask; its reports to the owner and
+reminders stay silent. The card then reads "This run read untrusted
+content, or was created by a run that did". Re-saving such a job from the
+dashboard keeps the taint while the task text is unchanged; rewriting the
+task is the owner's own instruction and clears it. A job or reminder that a
+tainted run creates from a contact's chat reports to the owner channel,
+never to that chat. A call the owner approves runs with the taint of the
+run that asked.
 
 **Where taint starts**: a watcher run starts tainted, because its prompt
 quotes the contact's message. A sub-agent spawned by a tainted run starts
@@ -284,12 +358,12 @@ tool result tells it to report the need to the parent. A plain `curl` GET
 still runs there, so a job's weather sub-agent works after a calendar read. Watcher and job
 approvals go to the owner channel, as in [Approvals](#approvals).
 
-**Known gaps**: taint lasts one run. A later owner message in the same chat
-starts clean, and the envelope in history plus the prompt rule are the only
-guard for content read in an earlier turn. `rememberFact` and vault writes
-do not pause, so a fact can carry text into later prompts. Plain browser
-clicks and `browser_navigate` do not pause, so a page can still lead the
-model to a link. The autopilot reply service does not use this tool loop.
+**Known gaps**: taint lasts one run (plus the jobs and watchers it creates).
+A later owner message in the same chat starts clean, and the envelope in
+history plus the prompt rule are the only guard for content read in an
+earlier turn. `rememberFact` and vault writes do not pause, so a fact can
+carry text into later prompts. A reminder's text can quote untrusted text
+back to the owner. The autopilot reply service does not use this tool loop.
 
 ## Personal data guard
 
