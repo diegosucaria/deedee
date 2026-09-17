@@ -225,10 +225,14 @@ class ApprovalService {
     // --- guard ---
 
     /**
-     * Deny-list first (every mode, no prompt), then the safety rules.
-     * @returns {{ denied?: boolean, pattern?: string, requiresConfirmation?: boolean, message?: string, rule?: string }}
+     * Deny-list first (every mode, no prompt), then the safety rules, then
+     * the taint rule: once the run has read untrusted content (email, web,
+     * a contact's chat), side effects ask the owner even when no other rule
+     * would. A call a rule already pauses gets the taint noted in its reason.
+     * @param {{ taint?: import('../utils/untrusted-content').TurnTaint|null, serverName?: string|null }} [opts]
+     * @returns {{ denied?: boolean, pattern?: string, requiresConfirmation?: boolean, message?: string, rule?: string, tainted?: boolean }}
      */
-    check(toolName, args) {
+    check(toolName, args, { taint = null, serverName = null } = {}) {
         const deny = this.rules.denyCheck(toolName, args, this.settings().deny);
         if (deny.denied) {
             console.warn(`[Approvals] ${toolName} blocked by deny pattern "${deny.pattern}".`);
@@ -238,7 +242,14 @@ class ApprovalService {
                 message: `Blocked by the owner's deny-list (pattern "${deny.pattern}"). The action did not run. Do not retry it or work around it; tell the user it is blocked.`
             };
         }
-        return this.rules.check(toolName, args);
+        const ruled = this.rules.check(toolName, args);
+        if (!taint || !taint.tainted || typeof this.rules.taintCheck !== 'function') return ruled;
+        const tainted = this.rules.taintCheck(toolName, args, { taint, serverName });
+        if (!tainted.requiresConfirmation) return ruled;
+        if (ruled.requiresConfirmation) {
+            return { ...ruled, tainted: true, message: `${ruled.message} ${tainted.message}` };
+        }
+        return { ...tainted, tainted: true };
     }
 
     // --- routing ---

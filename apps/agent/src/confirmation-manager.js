@@ -16,6 +16,13 @@
  */
 const { toolDefinitions } = require('./tools-definition');
 const { BLOCKED_PATTERNS: SHELL_BLOCKED } = require('@deedee/mcp-servers/src/local/index');
+const { taintedAction } = require('./utils/untrusted-content');
+
+/** The "Why" line of a taint approval: what the call does and what was read. */
+function taintReason(action, taint) {
+    return `This run read untrusted content (${taint.describe()}) and now wants to ${action}. ` +
+        'The content may have asked for it, so the owner decides.';
+}
 
 const HA_CALL_TOOLS = new Set(['ha_call_service', 'call_service']);
 // Domains where any service call changes physical security. Climate,
@@ -259,6 +266,56 @@ class ConfirmationManager {
         ];
     }
 
+    /** Owner phone digits and lower-cased name from settings, env as fallback. */
+    _ownerIdentity() {
+        let ownerPhone = process.env.MY_PHONE || '';
+        let ownerName = 'owner';
+        try {
+            if (typeof this.db.getAgentSetting === 'function') {
+                ownerPhone = this.db.getAgentSetting('owner_phone')?.value || ownerPhone;
+                ownerName = String(this.db.getAgentSetting('owner_name')?.value || ownerName).toLowerCase();
+            }
+        } catch { /* settings unavailable: nobody counts as the owner */ }
+        return { ownerDigits: String(ownerPhone).replace(/[^0-9]/g, ''), ownerName };
+    }
+
+    /**
+     * Is `sendMessage` addressed to the owner himself (an alias, his phone,
+     * or one of his Telegram ids)? Anything unclear counts as someone else.
+     */
+    isOwnerTarget(args) {
+        const a = args && typeof args === 'object' ? args : {};
+        const service = asString(a.service) || 'whatsapp';
+        const raw = asString(a.to).trim();
+        if (!raw) return false;
+        const { ownerDigits, ownerName } = this._ownerIdentity();
+        const lower = raw.toLowerCase();
+        if (['me', 'myself', 'owner', ownerName].includes(lower)) return true;
+        if (service === 'telegram') {
+            const ids = String(process.env.ALLOWED_TELEGRAM_IDS || '').split(',').map(s => s.trim()).filter(Boolean);
+            return ids.includes(raw);
+        }
+        if (/[a-zA-Z]/.test(raw.replace(/@(?:s\.whatsapp\.net|c\.us)$/i, ''))) return false;
+        const digits = raw.replace(/@.*$/, '').replace(/[^0-9]/g, '');
+        return !!ownerDigits && digits === ownerDigits;
+    }
+
+    /**
+     * A run that read untrusted content must ask before this call?
+     * @returns {{ requiresConfirmation: boolean, message?: string, rule?: string }}
+     */
+    taintCheck(name, args, { taint = null, serverName = null } = {}) {
+        if (!taint || !taint.tainted) return { requiresConfirmation: false };
+        let action;
+        try {
+            action = taintedAction(asString(name), args, { serverName, isOwnerTarget: (a) => this.isOwnerTarget(a) });
+        } catch (e) {
+            action = `run ${asString(name)}`;
+        }
+        if (!action) return { requiresConfirmation: false };
+        return { requiresConfirmation: true, rule: 'untrusted-content', message: taintReason(action, taint) };
+    }
+
     /**
      * Does `sendMessage` reach someone the owner never messaged through Deedee?
      * Mirrors the executor's target resolution: aliases for the owner, names
@@ -271,14 +328,7 @@ class ConfirmationManager {
         const raw = asString(args.to).trim();
         if (!raw) return false;
         let target = raw;
-        let ownerPhone = process.env.MY_PHONE || '';
-        let ownerName = 'owner';
-        try {
-            if (typeof this.db.getAgentSetting === 'function') {
-                ownerPhone = this.db.getAgentSetting('owner_phone')?.value || ownerPhone;
-                ownerName = String(this.db.getAgentSetting('owner_name')?.value || ownerName).toLowerCase();
-            }
-        } catch { /* settings unavailable: treat the target as a stranger */ }
+        const { ownerDigits, ownerName } = this._ownerIdentity();
         const lower = target.toLowerCase();
         if (['me', 'myself', 'owner', ownerName].includes(lower)) return false;
         if (/[a-zA-Z]/.test(target) && !target.includes('@')) {
@@ -289,7 +339,6 @@ class ConfirmationManager {
         }
         const digits = target.replace(/[^0-9]/g, '');
         if (!digits || digits.length < 5) return false;
-        const ownerDigits = String(ownerPhone).replace(/[^0-9]/g, '');
         if (ownerDigits && digits === ownerDigits) return false;
         if (typeof this.db.isVerifiedContact !== 'function') return true;
         return !this.db.isVerifiedContact(service, digits);
@@ -350,4 +399,4 @@ class ConfirmationManager {
     }
 }
 
-module.exports = { ConfirmationManager, buildToolFlags, denyKey, globToRegExp, stableJson, HA_GUARDED_DOMAINS, bulkOperationGuarded, isGarageOpen };
+module.exports = { ConfirmationManager, taintReason, buildToolFlags, denyKey, globToRegExp, stableJson, HA_GUARDED_DOMAINS, bulkOperationGuarded, isGarageOpen };
