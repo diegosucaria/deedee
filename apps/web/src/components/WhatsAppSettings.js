@@ -89,6 +89,9 @@ function SessionCard({ sessionKey, title, description, data, refresh, onShowCont
 
     const isConnected = data.status === 'connected';
     const isScanning = data.status === 'scan_qr' || data.status === 'connecting';
+    // The session stopped reconnecting after repeated stream errors. Only the
+    // repair button helps here, so this state gets its own branch.
+    const needsRepair = data.status === 'needs_repair';
 
     const handleConnect = async () => {
         setBusy(true);
@@ -109,7 +112,7 @@ function SessionCard({ sessionKey, title, description, data, refresh, onShowCont
     };
 
     const handleRepair = async () => {
-        if (!confirm(`Run Surgical Repair on ${title}? This will delete recent session data and force a re-sync. Use only if stuck.`)) return;
+        if (!confirm(`Reset the session data for ${title} and re-sync? The login stays; the phone sends the recent history again.`)) return;
         setBusy(true);
         const res = await repairWhatsAppSession(sessionKey);
         if (!res.success) setCardError(res.error || 'Repair failed');
@@ -184,12 +187,45 @@ function SessionCard({ sessionKey, title, description, data, refresh, onShowCont
                                 onClick={handleRepair}
                                 disabled={busy}
                                 className="w-full py-1.5 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-500/80 hover:text-yellow-500 rounded text-xs font-medium transition-colors flex items-center justify-center gap-2"
-                                title="Use this if connection is stuck or not receiving messages (Level 2 Fix)"
+                                title="Use this when the session is stuck or stops receiving messages. The login stays."
                             >
                                 <Wrench className="w-3 h-3" />
-                                Repair Session (Surgical)
+                                Reset session data and re-sync
                             </button>
                         </div>
+                    </div>
+                ) : needsRepair ? (
+                    <div className="space-y-4">
+                        <div className="flex items-start gap-3 bg-red-500/10 border border-red-500/20 p-3 rounded-lg">
+                            <AlertCircle className="w-4 h-4 text-red-400 shrink-0 mt-0.5" />
+                            <p className="text-xs text-red-300/90">
+                                WhatsApp dropped this session too many times in a row, so Deedee stopped
+                                trying to reconnect. Messages are not arriving. Reset the session data
+                                and re-sync: the login stays and the phone sends the recent history again.
+                            </p>
+                        </div>
+                        <button
+                            onClick={handleRepair}
+                            disabled={busy}
+                            className="w-full py-2 bg-yellow-500/10 hover:bg-yellow-500/20 text-yellow-500/90 hover:text-yellow-400 rounded-lg text-sm font-medium transition-colors flex items-center justify-center gap-2"
+                        >
+                            {busy ? <Loader2 className="w-4 h-4 animate-spin" /> : <Wrench className="w-4 h-4" />}
+                            Reset session data and re-sync
+                        </button>
+                        <button
+                            onClick={handleConnect}
+                            disabled={busy}
+                            className="w-full py-2 bg-zinc-800 hover:bg-zinc-700 text-zinc-300 rounded-lg text-xs font-medium transition-colors"
+                        >
+                            Try to start the session again
+                        </button>
+                        <button
+                            onClick={handleDisconnect}
+                            disabled={busy}
+                            className="w-full py-2 bg-zinc-800 hover:bg-zinc-700 text-red-400 rounded-lg text-xs font-medium transition-colors"
+                        >
+                            Force Reset (log out and scan a new QR)
+                        </button>
                     </div>
                 ) : isScanning ? (
                     <div className="text-center">

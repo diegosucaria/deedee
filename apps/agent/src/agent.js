@@ -477,7 +477,8 @@ class Agent {
         severity: 'error',
         title: delivered ? 'System alert' : 'System alert not delivered',
         message: queued ? `${text}\n\nThe owner channel refused it; the delivery ledger keeps retrying.` : text,
-        metadata: { alertKey: key, delivered, queued, link: '/settings/interfaces' }
+        // /settings is a tabbed page; /settings/interfaces is a 404.
+        metadata: { alertKey: key, delivered, queued, link: '/settings?tab=interfaces' }
       });
       return !!n;
     } catch (e) {
