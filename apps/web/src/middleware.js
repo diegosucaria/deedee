@@ -34,9 +34,15 @@ function secret() {
     return cachedKey;
 }
 
+// Mirrors parseTtl in @/lib/auth/session: "2592000", "30d", "12h", "45m",
+// nothing else, and never under five minutes.
+const MIN_TTL_SECONDS = 300;
+const TTL_UNITS = { s: 1, m: 60, h: 3600, d: 86400 };
 function envSeconds(name) {
-    const v = parseInt(process.env[name] || '', 10);
-    return Number.isFinite(v) && v > 60 ? v : null;
+    const m = /^\s*(\d+)\s*([smhd])?\s*$/i.exec(String(process.env[name] ?? ''));
+    if (!m) return null;
+    const seconds = parseInt(m[1], 10) * TTL_UNITS[(m[2] || 's').toLowerCase()];
+    return Number.isFinite(seconds) && seconds >= MIN_TTL_SECONDS ? seconds : null;
 }
 
 function ttlSeconds(method = null) {
@@ -88,6 +94,9 @@ async function reissue(payload) {
     const carry = {};
     if (payload.method) carry.method = payload.method;
     if (payload.credentialId) carry.credentialId = payload.credentialId;
+    // The session id travels unchanged, so signing out ends every token in
+    // the chain. Without it a refreshed cookie would outlive the sign-out.
+    if (payload.sid) carry.sid = payload.sid;
     const token = await new SignJWT(carry)
         .setProtectedHeader({ alg: ALG })
         .setIssuedAt(now)
@@ -182,7 +191,9 @@ export async function middleware(request) {
     }
 
     const res = NextResponse.next({ request: { headers: requestHeaders } });
-    if (shouldRefresh(payload)) {
+    // Never on the way out: a refresh here would hand the browser a live
+    // token while the handler revokes the one it was sent.
+    if (pathname !== '/api/auth/logout' && shouldRefresh(payload)) {
         const refreshed = await reissue(payload);
         if (refreshed) {
             res.cookies.set({

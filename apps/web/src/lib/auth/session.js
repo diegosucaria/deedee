@@ -53,9 +53,19 @@ function loadSecret() {
     return cachedSecret;
 }
 
+// "2592000", "30d", "12h", "45m". A value that is not one of those, or is
+// under five minutes, is ignored: "90d" must not become 90 seconds.
+const MIN_TTL_SECONDS = 300;
+const UNITS = { s: 1, m: 60, h: 3600, d: 86400 };
+export function parseTtl(value) {
+    const m = /^\s*(\d+)\s*([smhd])?\s*$/i.exec(String(value ?? ''));
+    if (!m) return null;
+    const seconds = parseInt(m[1], 10) * (UNITS[(m[2] || 's').toLowerCase()]);
+    return Number.isFinite(seconds) && seconds >= MIN_TTL_SECONDS ? seconds : null;
+}
+
 function envSeconds(name) {
-    const v = parseInt(process.env[name] || '', 10);
-    return Number.isFinite(v) && v > 60 ? v : null;
+    return parseTtl(process.env[name]);
 }
 
 /**
@@ -90,15 +100,18 @@ export async function issueSession({ extra = {} } = {}) {
     const secret = loadSecret();
     const ttl = ttlSeconds(extra.method);
     const jti = randomBytes(16).toString('base64url');
+    // The session id outlives every refresh, so signing out ends the whole
+    // chain. The jti changes on each slide and cannot carry revocation.
+    const sid = extra.sid || randomBytes(16).toString('base64url');
     const now = Math.floor(Date.now() / 1000);
-    const token = await new SignJWT({ ...extra })
+    const token = await new SignJWT({ ...extra, sid })
         .setProtectedHeader({ alg: ALG })
         .setIssuedAt(now)
         .setExpirationTime(now + ttl)
         .setJti(jti)
         .setSubject('owner')
         .sign(secret);
-    return { token, ttl, jti };
+    return { token, ttl, jti, sid };
 }
 
 export async function verifySession(token) {
@@ -107,8 +120,11 @@ export async function verifySession(token) {
         const secret = loadSecret();
         const { payload } = await jwtVerify(token, secret, { algorithms: [ALG] });
         const store = readStore();
-        const revoked = (store.revokedJtis || []).some((r) => r.jti === payload.jti);
-        if (revoked) return null;
+        if ((store.revokedJtis || []).some((r) => r.jti === payload.jti)) return null;
+        // A signed-out session: every token in its chain is dead, however new.
+        if (payload.sid && (store.revokedSids || []).some((r) => r.sid === payload.sid)) return null;
+        // A passkey the owner deleted cannot hold a session open either.
+        if (payload.credentialId && (store.revokedCredentials || []).some((r) => r.credentialId === payload.credentialId)) return null;
         return payload;
     } catch {
         return null;
@@ -127,12 +143,48 @@ export function shouldRefresh(payload) {
     return elapsed > Math.min(REFRESH_AFTER_SECONDS, total / 2);
 }
 
+function expiresAt(exp) {
+    return (exp || Math.floor(Date.now() / 1000) + 30 * 86400) * 1000;
+}
+
 export function revokeJti(jti, exp) {
     if (!jti) return;
     updateStore((s) => {
         s.revokedJtis = s.revokedJtis || [];
         if (!s.revokedJtis.some((r) => r.jti === jti)) {
-            s.revokedJtis.push({ jti, expires: (exp || Math.floor(Date.now() / 1000) + 30 * 86400) * 1000 });
+            s.revokedJtis.push({ jti, expires: expiresAt(exp) });
+        }
+        return s;
+    });
+}
+
+/**
+ * End a session for good: the id, not the token. A refresh mints a new token
+ * id but carries the session id, so this kills the chain the edge keeps
+ * sliding. The token id goes on the list too, for a session issued before
+ * session ids existed.
+ */
+export function revokeSession(payload) {
+    if (!payload) return;
+    const exp = payload.exp;
+    if (payload.jti) revokeJti(payload.jti, exp);
+    if (!payload.sid) return;
+    updateStore((s) => {
+        s.revokedSids = s.revokedSids || [];
+        if (!s.revokedSids.some((r) => r.sid === payload.sid)) {
+            s.revokedSids.push({ sid: payload.sid, expires: expiresAt(exp) });
+        }
+        return s;
+    });
+}
+
+/** A deleted passkey takes its sessions with it. */
+export function revokeCredential(credentialId, { days = 60 } = {}) {
+    if (!credentialId) return;
+    updateStore((s) => {
+        s.revokedCredentials = s.revokedCredentials || [];
+        if (!s.revokedCredentials.some((r) => r.credentialId === credentialId)) {
+            s.revokedCredentials.push({ credentialId, expires: Date.now() + days * 86400 * 1000 });
         }
         return s;
     });

@@ -23,6 +23,8 @@ function emptyStore() {
         passkeys: [],              // [{ id, publicKey, counter, transports, deviceType, name, created, lastUsed }]
         webauthnChallenges: {},    // { challenge: { kind, expires, userId? } }
         revokedJtis: [],           // [{ jti, expires }]
+        revokedSids: [],           // [{ sid, expires }] — signed-out sessions, whatever token they hold
+        revokedCredentials: [],    // [{ credentialId, expires }] — sessions a deleted passkey issued
         sessionSecret: null,       // optional persisted secret (env wins if set)
     };
 }
@@ -70,6 +72,8 @@ export function gcStore() {
             if (!v?.expires || v.expires < now) delete store.webauthnChallenges[k];
         }
         store.revokedJtis = (store.revokedJtis || []).filter((r) => r.expires > now);
+        store.revokedSids = (store.revokedSids || []).filter((r) => r.expires > now);
+        store.revokedCredentials = (store.revokedCredentials || []).filter((r) => r.expires > now);
         return store;
     });
 }

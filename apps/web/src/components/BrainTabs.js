@@ -10,6 +10,7 @@ import MCPServerList from '@/components/MCPServerList';
 import SecretsEditor from '@/components/SecretsEditor';
 import JournalTab from '@/components/JournalTab';
 import SkillsTab from '@/components/SkillsTab';
+import Link from 'next/link';
 import ScrollableTabs from '@/components/ScrollableTabs';
 import ApprovalsSettings from '@/components/ApprovalsSettings';
 import GuardianClient from '@/components/guardian/GuardianClient';
@@ -50,10 +51,14 @@ export default function BrainTabs({ goals, facts, aliases, tools, servers }) {
                         <div className="mb-4">
                             <h2 className="text-xl font-semibold text-white">Approvals</h2>
                             <p className="text-zinc-400 text-sm">
-                                Tool calls waiting for your yes or no. A decision made on any channel shows up here at once. Expiry times and the deny-list live in Settings &gt; Approvals.
+                                Tool calls waiting for your yes or no. A decision made on any channel shows up here at once.
                             </p>
                         </div>
                         <ApprovalsSettings />
+                        <p className="mt-4 text-xs text-zinc-500">
+                            Expiry times and the deny-list live in{' '}
+                            <Link href="/settings?tab=approvals" className="text-indigo-400 hover:text-indigo-300">Settings &gt; Approvals</Link>.
+                        </p>
                     </div>
                 )}
                 {activeTab === 'guardian' && (

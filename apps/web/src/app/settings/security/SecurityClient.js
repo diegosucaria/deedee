@@ -11,6 +11,9 @@ export default function SecurityClient({ passkeysEnabled }) {
     const [secureContext, setSecureContext] = useState(true);
     const [renamingId, setRenamingId] = useState(null);
     const [renameValue, setRenameValue] = useState('');
+    // How this session was signed in and how long it has left, so an early
+    // sign-out can be told from a browser that dropped the cookie.
+    const [session, setSession] = useState(null);
 
     const [pwCurrent, setPwCurrent] = useState('');
     const [pwNew, setPwNew] = useState('');
@@ -22,6 +25,12 @@ export default function SecurityClient({ passkeysEnabled }) {
     useEffect(() => {
         if (typeof window !== 'undefined') setSecureContext(!!window.isSecureContext);
         refresh();
+        let cancelled = false;
+        fetch('/api/auth/me', { cache: 'no-store' })
+            .then((r) => (r.ok ? r.json() : null))
+            .then((d) => { if (!cancelled && d?.authenticated) setSession(d); })
+            .catch(() => { });
+        return () => { cancelled = true; };
     }, []);
 
     async function refresh() {
@@ -160,10 +169,24 @@ export default function SecurityClient({ passkeysEnabled }) {
 
     const passkeyAvailable = passkeysEnabled && secureContext;
 
+    const sessionLine = (() => {
+        if (!session?.expiresAt) return null;
+        const left = session.expiresAt - Date.now();
+        const days = Math.floor(left / 86400000);
+        const hours = Math.max(0, Math.floor(left / 3600000));
+        const how = session.method === 'passkey' ? 'a passkey' : session.method === 'google' ? 'Google' : 'a password';
+        const when = left <= 0 ? 'now' : days >= 1 ? `in ${days} day${days === 1 ? '' : 's'}` : `in ${hours} hour${hours === 1 ? '' : 's'}`;
+        return `Signed in with ${how}. This session ends ${when}, and each visit puts it back to full.`;
+    })();
+
     return (
         <div className="space-y-8">
             {error && (
                 <div className="rounded-lg border border-red-800/60 bg-red-950/40 px-3 py-2 text-sm text-red-200">{error}</div>
+            )}
+
+            {sessionLine && (
+                <p className="text-sm text-zinc-400">{sessionLine}</p>
             )}
 
             <section className="rounded-xl border border-zinc-800 bg-zinc-950/40 p-5">

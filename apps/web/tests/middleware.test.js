@@ -2,7 +2,7 @@
 // must never bypass it — server action invocations and Next.js internal
 // sub-request markers.
 const { NextRequest } = require('next/server');
-const { SignJWT } = require('jose');
+const { SignJWT, decodeJwt } = require('jose');
 
 const SECRET = 'test-session-secret-that-is-at-least-32-chars';
 
@@ -134,5 +134,58 @@ describe('web middleware', () => {
             const res = await middleware(makeRequest('/login', { headers: { 'x-middleware-subrequest': 'middleware' } }));
             expect(res.status).toBe(401);
         });
+    });
+});
+
+
+// The refresh rule that actually runs in production lives in the middleware,
+// not in the session library: it slides the cookie and must carry the session
+// id, keep the lifetime the sign-in earned, and never fire on the way out.
+describe('sliding the session at the edge', () => {
+    const DAY = 24 * 60 * 60;
+    let middleware;
+
+    beforeAll(() => {
+        process.env.SESSION_SECRET = SECRET;
+        ({ middleware } = require('../src/middleware.js'));
+    });
+
+    afterAll(() => { delete process.env.SESSION_SECRET; });
+
+    async function tokenAged(days, extra = {}) {
+        const now = Math.floor(Date.now() / 1000);
+        return new SignJWT({ method: 'passkey', sid: 'session-1', credentialId: 'cred-1', ...extra })
+            .setProtectedHeader({ alg: 'HS256' })
+            .setIssuedAt(now - days * DAY)
+            .setExpirationTime(now + (30 - days) * DAY)
+            .setJti('old-jti')
+            .setSubject('owner')
+            .sign(new TextEncoder().encode(SECRET));
+    }
+
+    const setCookie = (res) => res.headers.getSetCookie?.().find(c => c.startsWith('deedee_session=')) || res.headers.get('set-cookie');
+
+    test('a session older than a day is re-issued, with the same session id and a full month', async () => {
+        const res = await middleware(makeRequest('/tasks', { cookie: await tokenAged(2) }));
+        const cookie = setCookie(res);
+        expect(cookie).toBeTruthy();
+        const value = cookie.split(';')[0].replace('deedee_session=', '');
+        const payload = decodeJwt(value);
+        expect(payload.sid).toBe('session-1');
+        expect(payload.method).toBe('passkey');
+        expect(payload.credentialId).toBe('cred-1');
+        expect(payload.jti).not.toBe('old-jti');
+        expect(payload.exp - payload.iat).toBe(30 * DAY);
+        expect(cookie).toMatch(/Max-Age=2592000/);
+    });
+
+    test('a session younger than a day is left alone', async () => {
+        const res = await middleware(makeRequest('/tasks', { cookie: await tokenAged(0) }));
+        expect(setCookie(res)).toBeFalsy();
+    });
+
+    test('signing out is never a refresh', async () => {
+        const res = await middleware(makeRequest('/api/auth/logout', { method: 'POST', cookie: await tokenAged(2) }));
+        expect(setCookie(res)).toBeFalsy();
     });
 });
