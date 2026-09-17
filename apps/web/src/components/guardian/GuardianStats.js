@@ -109,7 +109,9 @@ export default function GuardianStats() {
 
     const s = stats || {};
     const fb = s.feedback || {};
-    const guardianCost = s.tokenUsage?.calls > 0 ? s.tokenUsage.cost : s.cost;
+    // Decision rows hold the cost for the whole range; token_usage keeps 30 days only.
+    const guardianCost = s.cost || 0;
+    const dryRunCost = s.dryRunUsage?.cost || 0;
     const share = s.escalationApprovalShare;
 
     return (
@@ -127,7 +129,7 @@ export default function GuardianStats() {
                 <StatCard title="Escalations" value={(s.escalations || 0).toLocaleString()}
                     sub={share == null ? 'none decided yet' : `you approved ${formatPercent(share)} (${s.escalationsApproved || 0})`}
                     icon={Gauge} color="text-amber-400" bg="bg-amber-400/10 border-amber-400/20" />
-                <StatCard title="Guardian cost" value={formatCost(guardianCost)} sub={`${s.tokenUsage?.calls || 0} model calls (tag guardian)`}
+                <StatCard title="Guardian cost" value={formatCost(guardianCost)} sub={dryRunCost > 0 ? `gated calls only; dry runs ${formatCost(dryRunCost)} more (last 30 days)` : 'gated calls only'}
                     icon={DollarSign} color="text-red-400" bg="bg-red-400/10 border-red-400/20" />
                 <StatCard title="Median latency" value={formatMs(s.medianLatencyMs)} sub="per guardian call"
                     icon={Zap} color="text-yellow-400" bg="bg-yellow-400/10 border-yellow-400/20" />

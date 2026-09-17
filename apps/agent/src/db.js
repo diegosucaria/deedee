@@ -56,6 +56,9 @@ const SERVICE_CATEGORIES = {
   people_enrich: 'People',
   // Grok
   grok: 'Grok',
+  // Approval guardian (real decisions and owner dry runs)
+  guardian: 'Guardian',
+  guardian_dry_run: 'Guardian',
 };
 
 // Tags written on the main agent chat path (see services/usage-attribution.js).
@@ -3708,15 +3711,20 @@ class AgentDB {
     }
     const top = (map) => [...map.entries()].sort((a, b) => b[1] - a[1]).slice(0, 10).map(([name, count]) => ({ name, count }));
 
-    let usage = { cost: 0, calls: 0 };
-    try {
-      const u = [];
-      const uv = [];
-      if (fromDay) { u.push('timestamp >= ?'); uv.push(`${fromDay} 00:00:00`); }
-      if (toDay) { u.push('timestamp <= ?'); uv.push(`${toDay} 23:59:59`); }
-      const row = this.db.prepare(`SELECT SUM(estimated_cost) AS cost, COUNT(*) AS calls FROM token_usage WHERE tag = 'guardian' ${u.length ? `AND ${u.join(' AND ')}` : ''}`).get(...uv);
-      usage = { cost: row.cost || 0, calls: row.calls || 0 };
-    } catch { /* older schema */ }
+    // token_usage keeps only 30 days (cleanupTokenUsage), so these two are
+    // side figures. The full-range cost is `cost`, from the decision rows.
+    const usageFor = (tag) => {
+      try {
+        const u = [];
+        const uv = [tag];
+        if (fromDay) { u.push('timestamp >= ?'); uv.push(`${fromDay} 00:00:00`); }
+        if (toDay) { u.push('timestamp <= ?'); uv.push(`${toDay} 23:59:59`); }
+        const row = this.db.prepare(`SELECT SUM(estimated_cost) AS cost, COUNT(*) AS calls FROM token_usage WHERE tag = ? ${u.length ? `AND ${u.join(' AND ')}` : ''}`).get(...uv);
+        return { cost: row.cost || 0, calls: row.calls || 0 };
+      } catch { return { cost: 0, calls: 0 }; } // older schema
+    };
+    const usage = usageFor('guardian');
+    const dryRunUsage = usageFor('guardian_dry_run');
 
     return {
       range: { from: fromDay, to: toDay },
@@ -3739,6 +3747,7 @@ class AgentDB {
       cost: (fb.cost || 0) + (agg.cost || 0),
       tokens: fb.tokens || 0,
       tokenUsage: usage,
+      dryRunUsage,
       medianLatencyMs: median,
       breakerTrips: (fb.breaker_trips || 0) + (agg.breaker_trips || 0),
     };

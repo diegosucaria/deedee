@@ -67,4 +67,33 @@ describe('cost breakdown with main-path tags', () => {
     expect(day.Other).toBe(7);
     expect(day['Web Chat']).toBeUndefined();
   });
+
+  test('approval guardian usage, real and dry run, shows as Guardian in both breakdowns', () => {
+    log('guardian', 'web-abc', 2);
+    log('guardian_dry_run', null, 1);
+
+    const { categories } = db.getCostByTag(null, null, 1);
+    expect(categories.Guardian).toEqual({ cost: 3, tokens: 22, calls: 2 });
+    expect(categories.Other).toBeUndefined();
+
+    const [day] = db.getDailyCostByCategory(null, null, 90);
+    expect(day.Guardian).toBe(3);
+    expect(day.Other).toBeUndefined();
+  });
+
+  test('guardian stats keep the full-range cost from decision rows after token_usage is pruned', () => {
+    const old = new Date(Date.now() - 60 * 86400000).toISOString();
+    db.recordGuardianDecision({ toolName: 'sendMessage', outcome: 'auto_allowed', decidedBy: 'guardian', cost: 0.5 });
+    db.db.prepare('UPDATE guardian_decisions SET created_at = ?').run(old);
+    log('guardian', 'web-abc', 0.5);
+    db.db.prepare("UPDATE token_usage SET timestamp = datetime('now', '-60 days')").run();
+    log('guardian_dry_run', null, 0.01);
+    db.cleanupTokenUsage(30);
+
+    const from = new Date(Date.now() - 89 * 86400000).toISOString().slice(0, 10);
+    const stats = db.guardianStats({ from });
+    expect(stats.cost).toBeCloseTo(0.5);
+    expect(stats.tokenUsage).toEqual({ cost: 0, calls: 0 });
+    expect(stats.dryRunUsage).toEqual({ cost: 0.01, calls: 1 });
+  });
 });

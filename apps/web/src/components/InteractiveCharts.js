@@ -392,6 +392,7 @@ const CATEGORY_COLORS = {
     Analysis: '#60a5fa',   // blue
     People: '#a78bfa',     // violet
     Grok: '#f87171',       // red
+    Guardian: '#2dd4bf',   // teal
     Other: '#71717a',      // zinc
 };
 
