@@ -4,6 +4,8 @@ import { useState, useEffect, useCallback } from 'react';
 import { ShieldCheck, RefreshCw, Check, X, Loader2, Save } from 'lucide-react';
 import { clsx } from 'clsx';
 import { getApprovals, decideApproval } from '../app/actions';
+import { useSocket } from '@/hooks/useSocket';
+import { approvalEventKind, applySettledApproval } from '@/lib/approvals';
 
 const STATUS_STYLE = {
     pending: 'text-amber-300 bg-amber-400/10 border-amber-400/20',
@@ -30,6 +32,9 @@ function originOf(row) {
 /**
  * Approvals card: tool calls that wait for the owner, the two expiry times
  * and the deny-list. Saved as the `approvals` agent setting.
+ *
+ * Without `onSave` the card shows only the queue, so the /approvals page can
+ * reuse it and leave the rules on the settings tab.
  */
 export default function ApprovalsSettings({ value, onSave }) {
     const saved = value && typeof value === 'object' ? value : DEFAULTS;
@@ -41,6 +46,7 @@ export default function ApprovalsSettings({ value, onSave }) {
     const [ttlDeferred, setTtlDeferred] = useState(String(saved.ttlDeferredHours ?? DEFAULTS.ttlDeferredHours));
     const [deny, setDeny] = useState(Array.isArray(saved.deny) ? saved.deny.join('\n') : String(saved.deny || ''));
     const [saving, setSaving] = useState(false);
+    const { socket } = useSocket();
 
     useEffect(() => {
         setTtlInteractive(String(saved.ttlInteractiveMin ?? DEFAULTS.ttlInteractiveMin));
@@ -60,6 +66,21 @@ export default function ApprovalsSettings({ value, onSave }) {
     }, []);
 
     useEffect(() => { refresh(); }, [refresh]);
+
+    // The agent broadcasts every approval change, wherever it happened. A row
+    // the owner answered on WhatsApp leaves this list at once; a new request
+    // pulls the full row from the server.
+    useEffect(() => {
+        if (!socket) return;
+        const handler = (event) => {
+            const kind = approvalEventKind(event);
+            if (kind === 'ignore') return;
+            if (kind === 'settled') setView(prev => applySettledApproval(prev, event));
+            refresh();
+        };
+        socket.on('agent:approval', handler);
+        return () => socket.off('agent:approval', handler);
+    }, [socket, refresh]);
 
     const decide = async (id, decision) => {
         setBusy(id);
@@ -180,6 +201,7 @@ export default function ApprovalsSettings({ value, onSave }) {
                 </div>
             </div>
 
+            {onSave && (
             <div className="p-6 space-y-4">
                 <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
                     <label className="block">
@@ -225,6 +247,7 @@ export default function ApprovalsSettings({ value, onSave }) {
                     </button>
                 </div>
             </div>
+            )}
         </div>
     );
 }

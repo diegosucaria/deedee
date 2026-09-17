@@ -8,6 +8,7 @@ import { Send, Play, Wifi, WifiOff, Mic, Image as ImageIcon, X, Loader2, StopCir
 import clsx from 'clsx';
 import { getSession, getUserLocation, getVaults, updateSession, uploadChatFile, getAgentConfig, rewindChat, forkChat, stopChat } from '../../actions';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
+import { approvalEventKind, isApprovalOpen } from '@/lib/approvals';
 
 
 import { useRouter } from 'next/navigation';
@@ -560,6 +561,16 @@ export default function ChatSessionPage({ params }) {
                 }
             });
 
+            // Approvals change on every channel. Once one is decided or has
+            // expired, its card here drops the buttons: /confirm would only
+            // earn a refusal.
+            newSocket.on('agent:approval', (data) => {
+                if (!isMounted) return;
+                if (data.chatId && data.chatId !== chatId) return;
+                if (approvalEventKind(data) !== 'settled') return;
+                setDecidedApprovals(prev => new Set(prev).add(data.id));
+            });
+
             newSocket.on('agent:thinking', (data) => {
                 if (!isMounted) return;
                 if (data.metadata?.chatId && data.metadata.chatId !== chatId) return;
@@ -886,12 +897,9 @@ export default function ChatSessionPage({ params }) {
         }
         return done;
     }, [messages]);
-    const approvalOpen = (approval) => {
-        if (!approval?.id || approval.status !== 'pending') return false;
-        if (decidedApprovals.has(approval.id) || approvalsDecidedInThread.has(approval.id)) return false;
-        if (approval.expiresAt && Date.now() > new Date(approval.expiresAt).getTime()) return false;
-        return true;
-    };
+    const approvalOpen = (approval) => isApprovalOpen(approval, {
+        decidedIds: new Set([...decidedApprovals, ...approvalsDecidedInThread])
+    });
 
     const sendOption = (text) => {
         if (!socketRef.current || !text) return;
