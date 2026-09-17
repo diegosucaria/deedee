@@ -300,16 +300,24 @@ export default function ActiveJobsTable({ onViewHistory, systemOnly = false }) {
                                         </div>
                                     </td>
                                     <td className="px-4 py-4 whitespace-nowrap">
-                                        <span className={`font-mono text-xs ${job.model && job.model !== 'auto' ? 'text-sky-400' : 'text-zinc-500'}`}>
-                                            {job.model || 'auto'}
-                                        </span>
-                                        {job.scopeOverride?.model && (
-                                            <span className="ml-2 text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400">
-                                                yours
+                                        {job.scopable === false ? (
+                                            <span className="font-mono text-xs text-zinc-500" title="This job does its work directly, with no model call.">
+                                                no model call
                                             </span>
-                                        )}
-                                        {job.allowedTools?.length > 0 && (
-                                            <div className="text-[10px] text-zinc-500 mt-0.5">{job.allowedTools.length} tools</div>
+                                        ) : (
+                                            <>
+                                                <span className={`font-mono text-xs ${job.model && job.model !== 'auto' ? 'text-sky-400' : 'text-zinc-500'}`}>
+                                                    {job.model || 'auto'}
+                                                </span>
+                                                {job.scopeOverride?.model && (
+                                                    <span className="ml-2 text-[10px] uppercase font-bold px-1.5 py-0.5 rounded bg-amber-500/10 text-amber-400">
+                                                        yours
+                                                    </span>
+                                                )}
+                                                {job.allowedTools?.length > 0 && (
+                                                    <div className="text-[10px] text-zinc-500 mt-0.5">{job.allowedTools.length} tools</div>
+                                                )}
+                                            </>
                                         )}
                                     </td>
                                     <td className="px-4 py-4 whitespace-nowrap text-xs text-zinc-400">
@@ -369,7 +377,7 @@ export default function ActiveJobsTable({ onViewHistory, systemOnly = false }) {
                                             >
                                                 <Play className="w-4 h-4" />
                                             </button>
-                                            {systemOnly && (
+                                            {systemOnly && job.scopable !== false && (
                                                 <button
                                                     onClick={() => setScopeJob(job)}
                                                     className="p-1.5 hover:bg-zinc-700/50 rounded text-indigo-400 transition-colors"
