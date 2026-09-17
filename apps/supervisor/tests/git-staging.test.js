@@ -25,11 +25,18 @@ function gitArgs(call) {
     return args.slice(start);
 }
 
-function addCalls() {
+/** Paths written into the commit index, in order. */
+function stagedPaths() {
     return child_process.execFile.mock.calls
         .filter(call => call[0] === 'git')
         .map(gitArgs)
-        .filter(args => args.includes('add'));
+        .filter(args => args[0] === 'update-index')
+        .map(args => (args.includes('--cacheinfo') ? args.at(-1).split(',').slice(2).join(',') : args.at(-1)));
+}
+
+/** Every file reads as a small regular file; nothing touches a disk. */
+function fakeSnapshot(files) {
+    return new Map(files.map(file => [file, { type: 'file', data: Buffer.from('x = 1;\n'), executable: false }]));
 }
 
 function fakeFetch() {
@@ -48,6 +55,7 @@ describe('GitOps staging rules', () => {
             { stateDir: require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'staging-state-')), fetch: fakeFetch() });
         gitOps.remoteUrl = 'https://github.com/owner/repo.git';
         gitOps.token = 'tok';
+        gitOps._snapshotFiles = jest.fn(fakeSnapshot);
         gitOps._scanForSecrets = jest.fn().mockResolvedValue();
         gitOps.verifier = { verify: jest.fn().mockResolvedValue() };
     });
@@ -62,15 +70,19 @@ describe('GitOps staging rules', () => {
         mockStatusOutput = entries.map(e => `${e}\0`).join('');
     }
 
-    test('never runs git add . ; uses add -u with literal pathspecs for tracked changes', async () => {
+    test('never runs git add; stages the bytes it read for each changed path', async () => {
         mockStatus([' M apps/agent/src/agent.js']);
 
         const result = await gitOps.commitAndPush('fix: thing');
 
         expect(result.success).toBe(true);
-        const adds = addCalls();
-        expect(adds).toEqual([['--literal-pathspecs', 'add', '-u', '--', 'apps/agent/src/agent.js']]);
-        expect(adds.some(args => args.includes('.'))).toBe(false);
+        expect(stagedPaths()).toEqual(['apps/agent/src/agent.js']);
+        const calls = child_process.execFile.mock.calls.filter(call => call[0] === 'git').map(gitArgs);
+        expect(calls.some(args => args.includes('add'))).toBe(false);
+        const hash = calls.find(args => args[0] === 'hash-object');
+        expect(hash.slice(0, 4)).toEqual(['hash-object', '-w', '--no-filters', '--']);
+        expect(hash[4].startsWith(gitOps.gitDir)).toBe(true);
+        expect(gitOps._snapshotFiles).toHaveBeenCalledWith(['apps/agent/src/agent.js']);
         const status = child_process.execFile.mock.calls.map(gitArgs).find(args => args.includes('status'));
         expect(status).toEqual(['status', '--porcelain', '-z', '--untracked-files=all']);
     });
@@ -89,7 +101,7 @@ describe('GitOps staging rules', () => {
         });
     });
 
-    test('a file name with a shell metacharacter never reaches the verifier or git add', async () => {
+    test('a file name with a shell metacharacter never reaches the verifier or the index', async () => {
         mockStatus([
             ' M apps/agent/src/agent.js',
             '?? apps/agent/src/x; rm -rf y.js',
@@ -101,7 +113,7 @@ describe('GitOps staging rules', () => {
         expect(result.success).toBe(false);
         expect(result.skipped).toEqual(['apps/agent/src/x; rm -rf y.js', 'apps/agent/src/$(id).js']);
         expect(gitOps.verifier.verify).not.toHaveBeenCalled();
-        expect(addCalls()).toEqual([]);
+        expect(stagedPaths()).toEqual([]);
     });
 
     test('a tracked file with an unsafe name is skipped and fails the commit', async () => {
@@ -111,7 +123,7 @@ describe('GitOps staging rules', () => {
 
         expect(result.success).toBe(false);
         expect(result.skipped).toEqual(['apps/agent/src/a;b.js']);
-        expect(addCalls()).toEqual([]);
+        expect(stagedPaths()).toEqual([]);
     });
 
     test('the commit is built with commit-tree, carries the identity, and goes to a self branch', async () => {
@@ -131,7 +143,7 @@ describe('GitOps staging rules', () => {
         expect(push.at(-1)).toMatch(/^c0ffee:refs\/heads\/deedee\/self\/\d{8}-\d{6}$/);
         expect(calls.some(args => args.some(a => /master/.test(a)) && args.includes('push'))).toBe(false);
         // Staging uses a throwaway index, never the main one
-        const addOpts = child_process.execFile.mock.calls.find(call => gitArgs(call).includes('add'))[2];
+        const addOpts = child_process.execFile.mock.calls.find(call => gitArgs(call)[0] === 'update-index')[2];
         expect(addOpts.env.GIT_INDEX_FILE).toMatch(/index\.tmp-/);
     });
 
@@ -156,7 +168,7 @@ describe('GitOps staging rules', () => {
         mockStatus(['?? apps/agent/.git/hooks/x.sh']);
         result = await gitOps.commitAndPush('feat: x');
         expect(result.success).toBe(false);
-        expect(addCalls()).toEqual([]);
+        expect(stagedPaths()).toEqual([]);
     });
 
     test('without a GitHub remote and token nothing runs', async () => {
@@ -180,14 +192,11 @@ describe('GitOps staging rules', () => {
 
         expect(result.success).toBe(true);
         expect(result.skipped).toEqual(['notes-for-owner.txt', 'data/people.db']);
-        const adds = addCalls();
-        expect(adds).toEqual([
-            ['--literal-pathspecs', 'add', '-u', '--', 'apps/agent/src/agent.js'],
-            ['--literal-pathspecs', 'add', '--', 'apps/agent/src/new-tool.js']
-        ]);
-        // Scan and verifier still run, on the staged set only
-        expect(gitOps._scanForSecrets).toHaveBeenCalledWith(['apps/agent/src/agent.js', 'apps/agent/src/new-tool.js']);
-        expect(gitOps.verifier.verify).toHaveBeenCalledWith(['apps/agent/src/agent.js', 'apps/agent/src/new-tool.js']);
+        expect(stagedPaths()).toEqual(['apps/agent/src/agent.js', 'apps/agent/src/new-tool.js']);
+        // Scan and verifier still run, on the staged set and the same snapshot
+        const staged = ['apps/agent/src/agent.js', 'apps/agent/src/new-tool.js'];
+        expect(gitOps._scanForSecrets).toHaveBeenCalledWith(staged, expect.any(Map));
+        expect(gitOps.verifier.verify).toHaveBeenCalledWith(staged, gitOps._scanForSecrets.mock.calls[0][1]);
     });
 
     test('a skipped file under an allowed folder fails the commit and lists the drop', async () => {
@@ -208,7 +217,7 @@ describe('GitOps staging rules', () => {
         expect(result.error).toContain('apps/agent/.env');
         expect(result.error).not.toContain('notes-for-owner.txt');
         expect(gitOps.verifier.verify).not.toHaveBeenCalled();
-        expect(addCalls()).toEqual([]);
+        expect(stagedPaths()).toEqual([]);
     });
 
     test('refuses paths outside the allowed folders when files are listed', async () => {
@@ -216,7 +225,7 @@ describe('GitOps staging rules', () => {
 
         expect(result.success).toBe(true);
         expect(result.skipped).toEqual(['package.json', '../etc/passwd.md']);
-        expect(addCalls()).toEqual([['--literal-pathspecs', 'add', '--', 'docs/notes.md']]);
+        expect(stagedPaths()).toEqual(['docs/notes.md']);
     });
 
     test('a listed file under an allowed folder with a bad extension fails the commit', async () => {
@@ -224,7 +233,7 @@ describe('GitOps staging rules', () => {
 
         expect(result.success).toBe(false);
         expect(result.skipped).toEqual(['apps/agent/people.db']);
-        expect(addCalls()).toEqual([]);
+        expect(stagedPaths()).toEqual([]);
     });
 
     test('fails when every listed file is outside the allowed folders', async () => {
@@ -233,7 +242,7 @@ describe('GitOps staging rules', () => {
         expect(result.success).toBe(false);
         expect(result.error).toMatch(/No file in the allowed folders/);
         expect(result.skipped).toEqual(['secrets.json', 'data/x.db']);
-        expect(addCalls()).toEqual([]);
+        expect(stagedPaths()).toEqual([]);
     });
 
     test('git runs with GIT_DIR and friends removed from the environment', async () => {
@@ -254,6 +263,52 @@ describe('GitOps staging rules', () => {
         expect(opts.env.GIT_WORK_TREE).toBeUndefined();
         expect(opts.env.GIT_INDEX_FILE).toBeUndefined();
         expect(opts.env.PATH).toBe(process.env.PATH);
+    });
+
+    test('git runs without the supervisor credentials in its environment', async () => {
+        const saved = {};
+        const vars = { GITHUB_PAT: 'pat-value', BALENA_SUPERVISOR_API_KEY: 'key-value', SUPERVISOR_TOKEN: 'token-value' };
+        for (const [name, value] of Object.entries(vars)) {
+            saved[name] = process.env[name];
+            process.env[name] = value;
+        }
+        try {
+            await gitOps.git(['status']);
+        } finally {
+            for (const [name, value] of Object.entries(saved)) {
+                if (value === undefined) delete process.env[name];
+                else process.env[name] = value;
+            }
+        }
+        const opts = child_process.execFile.mock.calls.at(-1)[2];
+        for (const name of Object.keys(vars)) expect(opts.env[name]).toBeUndefined();
+        expect(JSON.stringify(opts.env)).not.toMatch(/pat-value|key-value|token-value/);
+    });
+
+    test('an error handed back to the agent carries no supervisor credential', async () => {
+        const previous = process.env.SUPERVISOR_TOKEN;
+        process.env.SUPERVISOR_TOKEN = 'supervisor-token-value';
+        try {
+            mockStatus([' M apps/agent/src/agent.js']);
+            gitOps.verifier.verify = jest.fn().mockRejectedValue(new Error('Syntax Error in apps/agent/src/agent.js: SUPERVISOR_TOKEN=supervisor-token-value'));
+            const result = await gitOps.commitAndPush('fix: thing');
+            expect(result.success).toBe(false);
+            expect(result.error).not.toContain('supervisor-token-value');
+        } finally {
+            if (previous === undefined) delete process.env.SUPERVISOR_TOKEN;
+            else process.env.SUPERVISOR_TOKEN = previous;
+        }
+    });
+
+    test('a path that is not a file or a link fails the commit before any check', async () => {
+        mockStatus([' M apps/agent/src/agent.js']);
+        gitOps._snapshotFiles = jest.fn(files => new Map(files.map(f => [f, { type: 'other' }])));
+        const result = await gitOps.commitAndPush('fix: thing');
+        expect(result.success).toBe(false);
+        expect(result.error).toMatch(/not a regular file or a symlink/);
+        expect(gitOps._scanForSecrets).not.toHaveBeenCalled();
+        expect(gitOps.verifier.verify).not.toHaveBeenCalled();
+        expect(stagedPaths()).toEqual([]);
     });
 
     test('isAllowedPath rules', () => {

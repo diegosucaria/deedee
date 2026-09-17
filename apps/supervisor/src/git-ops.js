@@ -2,7 +2,7 @@ const { execFile } = require('child_process');
 const fs = require('fs');
 const path = require('path');
 const util = require('util');
-const { Verifier, isSafePath, regularFileInside } = require('./verifier');
+const { Verifier, isSafePath, regularFileInside, snapshotFiles, scrubProcessSecrets } = require('./verifier');
 const execFileAsync = util.promisify(execFile);
 
 // Untracked files may only enter a commit from these folders, with these
@@ -45,10 +45,19 @@ const SELF_PR_FILE = 'self-pull-requests.json';
 const MAX_RECORDED_PRS = 50;
 const GITHUB_API = 'https://api.github.com';
 
+// Credential-named variables of the supervisor (GITHUB_PAT, the balena API
+// key, SUPERVISOR_TOKEN). Git never needs them: the token travels as a
+// per-command header. A git child without them has nothing to give away
+// through its own /proc entry.
+const CREDENTIAL_VAR = /TOKEN|SECRET|PASS|KEY|CREDENTIAL|AUTH|COOKIE|PRIVATE|(?:^|_)PAT(?:_|$)/i;
+
 /** process.env without the variables that redirect git away from cwd. */
 function cleanGitEnv() {
   const env = { ...process.env };
   for (const key of REDIRECTING_GIT_VARS) delete env[key];
+  for (const key of Object.keys(env)) {
+    if (CREDENTIAL_VAR.test(key)) delete env[key];
+  }
   return env;
 }
 
@@ -377,7 +386,16 @@ class GitOps {
     }
   }
 
-  async _scanForSecrets(files) {
+  /** Reads each path of the shared tree once; see readPinned. */
+  _snapshotFiles(files) {
+    return snapshotFiles(this.workDir, files);
+  }
+
+  /**
+   * @param {string[]} files
+   * @param {Map} [snapshot] - bytes read once by _snapshotFiles(); read here when absent
+   */
+  async _scanForSecrets(files, snapshot = null) {
     const patterns = [
       { name: 'OpenAI API Key', regex: /sk-[a-zA-Z0-9]{20,}/ },
       { name: 'GitHub Token', regex: /(ghp|gho|ghu|ghs|ghr)_[a-zA-Z0-9]{36}/ },
@@ -389,14 +407,14 @@ class GitOps {
     for (const file of files) {
       if (file === '.') continue;
 
-      // Only a regular file reached without a symlink. A link is committed
-      // as a link; following it would read whatever it points at, which
-      // could be a file of this container.
-      const fullPath = regularFileInside(this.workDir, file);
-      if (!fullPath) continue;
-      if (fs.statSync(fullPath).size > 5 * 1024 * 1024) continue;
+      // Only a regular file, read once without following any link. A link
+      // is committed as a link; following it would read whatever it points
+      // at, which could be a file of this container.
+      const entry = snapshot && snapshot.has(file) ? snapshot.get(file) : this._snapshotFiles([file]).get(file);
+      if (!entry || entry.type !== 'file') continue;
+      if (entry.data.length > 5 * 1024 * 1024) continue;
 
-      const content = fs.readFileSync(fullPath, 'utf-8');
+      const content = entry.data.toString('utf-8');
 
       for (const p of patterns) {
         if (p.regex.test(content)) {
@@ -505,6 +523,36 @@ class GitOps {
     }
   }
 
+  /**
+   * Writes snapshot entries into the index named by `env`: a file or a link
+   * becomes a blob hashed from the bytes already read, a missing path leaves
+   * the index. Blobs come from a private copy, never from the shared tree.
+   */
+  async _stageSnapshot(files, snapshot, env) {
+    fs.mkdirSync(this.gitDir, { recursive: true });
+    const tmp = fs.mkdtempSync(path.join(this.gitDir, 'stage.tmp-'));
+    try {
+      let n = 0;
+      for (const file of files) {
+        const entry = snapshot.get(file);
+        if (!entry || entry.type === 'missing') {
+          await this.git(['update-index', '--force-remove', '--', file], { env });
+          continue;
+        }
+        if (entry.type !== 'file' && entry.type !== 'symlink') {
+          throw new Error(`${file} is not a regular file or a symlink.`);
+        }
+        const blobFile = path.join(tmp, String(n++));
+        fs.writeFileSync(blobFile, entry.type === 'file' ? entry.data : entry.target, { mode: 0o600 });
+        const blob = await this.git(['hash-object', '-w', '--no-filters', '--', blobFile], { env });
+        const mode = entry.type === 'symlink' ? '120000' : (entry.executable ? '100755' : '100644');
+        await this.git(['update-index', '--add', '--cacheinfo', `${mode},${blob},${file}`], { env });
+      }
+    } finally {
+      fs.rmSync(tmp, { recursive: true, force: true });
+    }
+  }
+
   /** Pushes a commit to a new branch and opens a pull request against master. */
   async _pushAndOpenPullRequest(slug, commit, branch, title, body) {
     await this.git(['push', '-q', this._remoteTarget(), `${commit}:refs/heads/${branch}`], { authed: true });
@@ -610,23 +658,30 @@ class GitOps {
       const filesToScan = [...trackedToStage, ...untrackedToStage];
       if (filesToScan.length === 0) throw new Error('Nothing to commit.');
 
-      // 1. Secret scan and syntax check. Both only read files.
-      await this._scanForSecrets(filesToScan);
-      await this.verifier.verify(filesToScan);
+      // 1. Read every file once. The scan, the syntax check and the commit
+      // all use these bytes; nothing opens the agent's paths by name again.
+      const snapshot = this._snapshotFiles(filesToScan);
+      const odd = filesToScan.filter(file => snapshot.get(file).type === 'other');
+      if (odd.length > 0) {
+        throw new Error(`Refusing the change: ${odd.join(', ')} ${odd.length === 1 ? 'is' : 'are'} not a regular file or a symlink (a folder, a path through a link, or a file that changed while it was read). Fix and retry.`);
+      }
+      const untrackedMissing = untrackedToStage.filter(file => snapshot.get(file).type === 'missing');
+      if (untrackedMissing.length > 0 && !files.includes('.')) {
+        throw new Error(`No such file: ${untrackedMissing.join(', ')}`);
+      }
 
-      // 2. Build the commit in a throwaway index on top of HEAD.
-      // --literal-pathspecs: `[id]` in a Next.js route folder is a glob to git.
+      // 2. Secret scan and syntax check. Both only read the snapshot.
+      await this._scanForSecrets(filesToScan, snapshot);
+      await this.verifier.verify(filesToScan, snapshot);
+
+      // 3. Build the commit in a throwaway index on top of HEAD, from the
+      // snapshot. `git add` would open each path by name again.
       const commit = await this._commitFromTempIndex('HEAD', message, async (env) => {
-        if (trackedToStage.length > 0) {
-          await this.git(['--literal-pathspecs', 'add', '-u', '--', ...trackedToStage], { env });
-        }
-        if (untrackedToStage.length > 0) {
-          await this.git(['--literal-pathspecs', 'add', '--', ...untrackedToStage], { env });
-        }
+        await this._stageSnapshot(filesToScan, snapshot, env);
       });
       if (!commit) throw new Error('Nothing to commit: the staged files match HEAD.');
 
-      // 3. Push a branch and open the pull request.
+      // 4. Push a branch and open the pull request.
       const branch = `deedee/self/${stamp()}`;
       const title = String(message).split('\n')[0].slice(0, 250);
       const body = [
@@ -655,8 +710,9 @@ class GitOps {
         skipped
       };
     } catch (error) {
-      console.error('[GitOps] Validation or Git Error:', error.message);
-      return { success: false, error: error.message, skipped };
+      const messageText = scrubProcessSecrets(this._scrub(error.message));
+      console.error('[GitOps] Validation or Git Error:', messageText);
+      return { success: false, error: messageText, skipped };
     }
   }
 
@@ -720,8 +776,9 @@ class GitOps {
         pullRequest
       };
     } catch (error) {
-      console.error('[GitOps] Rollback Error:', error.message);
-      return { success: false, error: error.message };
+      const messageText = scrubProcessSecrets(this._scrub(error.message));
+      console.error('[GitOps] Rollback Error:', messageText);
+      return { success: false, error: messageText };
     }
   }
 

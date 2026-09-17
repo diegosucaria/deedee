@@ -197,6 +197,48 @@ describe('GitOps pull request flow against real git', () => {
         expect(files).not.toContain('apps/agent/src/bad.js');
     });
 
+    test('a link is committed as a link and its target is never read', async () => {
+        const secret = path.join(root, 'supervisor-only.txt');
+        fs.writeFileSync(secret, 'not for the repository\n');
+        fs.symlinkSync(secret, path.join(work, 'apps/agent/src/link.js'));
+        fs.writeFileSync(path.join(work, 'apps/agent/src/run.sh'), 'echo hi\n', { mode: 0o755 });
+
+        const result = await gitOps.commitAndPush('feat: link');
+
+        expect(result.success).toBe(true);
+        expect(git(['cat-file', '-p', `${result.commit}:apps/agent/src/link.js`], remote)).toBe(secret);
+        const tree = git(['ls-tree', result.commit, 'apps/agent/src/'], remote);
+        expect(tree).toMatch(/^120000 blob \S+\tapps\/agent\/src\/link\.js$/m);
+        expect(tree).toMatch(/^100755 blob \S+\tapps\/agent\/src\/run\.sh$/m);
+    });
+
+    test('the commit holds the bytes that were scanned, even if the path changes afterwards', async () => {
+        fs.writeFileSync(path.join(work, 'apps/agent/src/a.js'), 'module.exports = 5;\n');
+        const secret = path.join(root, 'supervisor-only.txt');
+        fs.writeFileSync(secret, 'not for the repository\n');
+        const realVerify = gitOps.verifier.verify.bind(gitOps.verifier);
+        gitOps.verifier.verify = async (files, snapshot) => {
+            // The agent swaps the file for a link between the read and the commit.
+            fs.rmSync(path.join(work, 'apps/agent/src/a.js'));
+            fs.symlinkSync(secret, path.join(work, 'apps/agent/src/a.js'));
+            return realVerify(files, snapshot);
+        };
+
+        const result = await gitOps.commitAndPush('feat: five');
+
+        expect(result.success).toBe(true);
+        expect(git(['cat-file', '-p', `${result.commit}:apps/agent/src/a.js`], remote)).toBe('module.exports = 5;');
+    });
+
+    test('a deleted tracked file leaves the commit', async () => {
+        ownerCommit('apps/agent/src/old.js', 'old();\n', 'feat: old');
+        await gitOps.pull();
+        fs.rmSync(path.join(work, 'apps/agent/src/old.js'));
+        const result = await gitOps.commitAndPush('chore: drop old');
+        expect(result.success).toBe(true);
+        expect(git(['ls-tree', '--name-only', '-r', result.commit], remote)).not.toContain('apps/agent/src/old.js');
+    });
+
     test('rollback refuses a commit that is not on master', async () => {
         const result = await gitOps.rollback({ commit: 'deadbeef' });
         expect(result.success).toBe(false);

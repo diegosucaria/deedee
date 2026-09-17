@@ -35,6 +35,7 @@ describe('GitOps Shell Injection Prevention', () => {
         gitOps.remoteUrl = 'https://github.com/owner/repo.git';
         gitOps.token = 'tok';
         // Mock internal methods
+        gitOps._snapshotFiles = jest.fn(files => new Map(files.map(f => [f, { type: 'file', data: Buffer.from('x'), executable: false }])));
         gitOps._scanForSecrets = jest.fn().mockResolvedValue();
         gitOps.verifier = { verify: jest.fn().mockResolvedValue() };
     });
@@ -59,6 +60,6 @@ describe('GitOps Shell Injection Prevention', () => {
         expect(result.success).toBe(false);
         expect(result.skipped).toEqual([maliciousFile]);
         expect(gitOps.verifier.verify).not.toHaveBeenCalled();
-        expect(mockExecFile.mock.calls.some(call => call[1].includes('add'))).toBe(false);
+        expect(mockExecFile.mock.calls.some(call => call[1].includes('update-index'))).toBe(false);
     });
 });
