@@ -434,7 +434,10 @@ class ApprovalService {
             ...withHits, ...guardianFields, verdict: verdict ? 'escalate' : null,
             outcome: 'escalated', decidedBy: 'owner'
         });
-        const paused = await this.request({ message, toolName, args, reason, sendCallback, taintSources: guard.tainted ? taintSources : null });
+        const paused = await this.request({
+            message, toolName, args, reason, sendCallback, taintSources: guard.tainted ? taintSources : null,
+            modelReason: why || null
+        });
         if (row?.id && typeof this.db.updateGuardianDecision === 'function') {
             try {
                 if (paused.paused) this.db.updateGuardianDecision(row.id, { approvalId: paused.id });
@@ -630,8 +633,10 @@ class ApprovalService {
      * Pause a tool call until the owner answers.
      * @returns {Promise<{ paused: boolean, id?: string, delivered?: boolean, result: object }>}
      */
-    async request({ message, toolName, args, reason, sendCallback = null, taintSources = null }) {
+    async request({ message, toolName, args, reason, sendCallback = null, taintSources = null, modelReason = null }) {
         const why = reason || 'This action needs the owner\'s approval.';
+        // The model reads only our own rule text, never the guardian's words.
+        const whyForModel = modelReason || why;
         if (!this.hasStore()) {
             return { paused: false, result: { error: `'${toolName}' needs the owner's approval and the approval store is unavailable. The action did not run.` } };
         }
@@ -719,7 +724,7 @@ class ApprovalService {
             id: row.id,
             delivered,
             result: {
-                info: `Action PAUSED: '${toolName}' needs the owner's approval (id ${row.id}). ${why} ` +
+                info: `Action PAUSED: '${toolName}' needs the owner's approval (id ${row.id}). ${whyForModel} ` +
                     `The owner was asked ${where}${delivered ? '' : ' (delivery is being retried)'}. ` +
                     `The call runs on its own once he approves, so do not retry it, do not look for another way to do it, ` +
                     `and mention the pending approval in your reply.`

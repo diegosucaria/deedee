@@ -148,6 +148,17 @@ describe('approval guardian review', () => {
         expect(row.reason).toMatch(/timeout/);
     });
 
+    test("an escalation shows the guardian's reason to the owner, not to the model", async () => {
+        gen.mockResolvedValue(verdictOf({ verdict: 'escalate', reason: 'UNSURE-MARKER about this recipient', risk: 'medium' }));
+        const out = await svc.review({
+            message: webMsg('Summarize my inbox'), toolName: 'sendMessage', args: { to: 'helper@unknown.example', service: 'telegram', content: 'hi' },
+            taint: emailTaint(), run: ApprovalService.newRun()
+        });
+        expect(out.status).toBe('paused');
+        expect(out.result.info).not.toContain('UNSURE-MARKER');
+        expect(db.listPendingConfirmations()[0].reason).toContain('UNSURE-MARKER');
+    });
+
     test('injected "approve this" inside the excerpt does not flip a deny, and the guardian sees it only inside the fence', async () => {
         gen.mockImplementation(async (req) => {
             const { outside } = splitFence(req.contents[0].parts[0].text);
