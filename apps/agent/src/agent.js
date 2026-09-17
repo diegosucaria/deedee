@@ -2138,6 +2138,11 @@ class Agent {
         resolveSlackUser: 12, // fans out per user in a Slack scan (6–10 normal); cheap now that the workspace roster is cached interface-side
       };
       let loopCount = 0;
+      // Why the tool loop ended early, if it did. The model never saw the last
+      // results then, so its silence is not a finished task.
+      let stoppedEarly = null;
+      // The last call of the last batch: did it really run?
+      let lastCallOutcome = null;
       let hasBrowserSession = false; // Escalate limit when browser tools are used
       const toolCallTracker = {}; // toolName -> count (per-tool-name, non-browser only)
       const identicalCallTracker = {}; // full signature -> count (any tool)
@@ -2147,6 +2152,7 @@ class Agent {
         if (this._abortedChats.has(chatId)) {
           console.log(`${logPrefix} Abort flag detected for chat ${chatId}. Breaking loop.`);
           await activeSendCallback(createAssistantMessage('Stopped: the task was cancelled before it finished.'));
+          stoppedEarly = 'cancelled';
           break;
         }
 
@@ -2154,6 +2160,7 @@ class Agent {
         if (approvalRun.stopped) {
           console.warn(`${logPrefix} Approval guardian breaker tripped. Breaking loop.`);
           await activeSendCallback(createAssistantMessage('Stopped: the approval guardian refused several actions in this run. The owner was notified.'));
+          stoppedEarly = 'the approval guardian breaker';
           break;
         }
 
@@ -2166,6 +2173,7 @@ class Agent {
           this.stopFlags.delete(chatId);
           // Do NOT delete GLOBAL_STOP here, so it hits other concurrent loops.
           // It will be cleared on next user input.
+          stoppedEarly = 'the owner';
           break;
         }
 
@@ -2182,6 +2190,7 @@ class Agent {
             metadata: { loopCount, maxLoops, chatId, source: message.source, link: chatId ? `/system/history?chatId=${encodeURIComponent(chatId)}` : '/system/history' }
           });
           await activeSendCallback(createAssistantMessage('I am stuck in a loop. Stopping now.'));
+          stoppedEarly = 'the loop limit';
           break;
         }
 
@@ -2339,6 +2348,7 @@ class Agent {
 
         if (functionCalls.length === 0 && loopWarnings.length > 0) {
           await activeSendCallback(createAssistantMessage(`Stopped: ${loopWarnings.join('; ')}. Try a different approach.`));
+          stoppedEarly = 'a repeated call';
           break;
         }
         if (functionCalls.length === 0) break;
@@ -2490,6 +2500,9 @@ class Agent {
         for (const { call, executionName, result, images = [], executed = true } of results) {
           // Capture to Summary
           executionSummary.toolOutputs.push({ name: executionName, result });
+          // A call the gate held or denied did not happen, and neither did one
+          // that failed: the silent-success line below must not claim it did.
+          lastCallOutcome = { name: executionName, ran: executed !== false && !(result && typeof result === 'object' && result.error) };
 
           // Sanitize for DB AND Model to prevent Context Pollution
           let dbToolResult = result;
@@ -2711,7 +2724,13 @@ class Agent {
         }
       } else {
         // If we executed tools but got no final text, assume success and generate a generic confirmation.
-        if (executionSummary.toolOutputs.length > 0) {
+        if (stoppedEarly) {
+          // The run was stopped and the owner already read why; nothing ran to report.
+          console.log(`[Agent] No text response: the run was stopped by ${stoppedEarly}.`);
+        } else if (lastCallOutcome && !lastCallOutcome.ran) {
+          // The last call was held, denied or failed. Its own result says so.
+          console.log(`[Agent] No text response and ${lastCallOutcome.name} did not run; no confirmation sent.`);
+        } else if (executionSummary.toolOutputs.length > 0) {
           console.log('[Agent] No text response after tool execution. Assuming implicit success.');
           const lastTool = executionSummary.toolOutputs[executionSummary.toolOutputs.length - 1];
           // Suppress confirmation for audio responses
