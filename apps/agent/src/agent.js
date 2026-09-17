@@ -2872,7 +2872,8 @@ class Agent {
     if (executionName === 'addGoal') {
       // A goal a tainted run writes carries the taint into every run that loads it.
       const taint = taintPayloadFields(options.taint?.tainted ? options.taint.sources : []);
-      const metadata = { chatId: message.metadata?.chatId, ...taint };
+      const fields = taint.tainted ? { taintedFields: args.progress ? ['description', 'progress'] : ['description'] } : {};
+      const metadata = { chatId: message.metadata?.chatId, ...taint, ...fields };
       const info = this.db.addGoal(args.description, metadata, args.progress || null);
       return { success: true, id: info.lastInsertRowid };
     }
@@ -2880,7 +2881,10 @@ class Agent {
       const res = this.db.updateGoalProgress(args.id, args.progress);
       if (!res.changes) return { success: false, error: `Goal ${args.id} not found` };
       const taint = taintPayloadFields(options.taint?.tainted ? options.taint.sources : []);
-      if (taint.tainted) this.db.markGoalTainted(args.id, taint);
+      // The run replaced the checkpoint text: the taint follows that text.
+      // A clean update removes the taint an earlier checkpoint left.
+      if (taint.tainted) this.db.markGoalTainted(args.id, taint, 'progress');
+      else this.db.clearGoalTaint(args.id, 'progress');
       return { success: true };
     }
     if (executionName === 'completeGoal') {
