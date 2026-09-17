@@ -55,7 +55,10 @@ describe('classification map', () => {
     test('Home Assistant: calendar and todo entities are untrusted from any tool', () => {
         const ha = { serverName: 'homeassistant' };
         expect(classifyToolResult('ha_get_state', { ...ha, args: { entity_id: 'calendar.personal' } })).toEqual({ untrusted: true, kind: 'calendar events' });
-        expect(classifyToolResult('ha_search', { ...ha, args: { query: 'shopping' }, result: { results: [{ entity_id: 'todo.shopping' }] } })).toEqual({ untrusted: true, kind: 'todo items' });
+        // A listing that only names the entity carries no item text; one with items does.
+        expect(classifyToolResult('ha_search', { ...ha, args: { query: 'shopping' }, result: { results: [{ entity_id: 'todo.shopping' }] } })).toEqual({ untrusted: false });
+        expect(classifyToolResult('ha_search', { ...ha, result: { output: '[{"entity_id":"todo.shopping_list"}]' } })).toEqual({ untrusted: false });
+        expect(classifyToolResult('ha_search', { ...ha, args: { query: 'shopping' }, result: { results: [{ entity_id: 'todo.shopping', items: [{ summary: 'x' }] }] } })).toEqual({ untrusted: true, kind: 'todo items' });
         expect(classifyToolResult('ha_get_overview', { ...ha, result: '{"calendar.work": {"message": "x"}}' })).toEqual({ untrusted: true, kind: 'calendar events' });
         expect(classifyToolResult('ha_eval_template', { ...ha, args: { template: "{{ state_attr('calendar.work', 'description') }}" } }).untrusted).toBe(true);
         expect(classifyToolResult('ha_get_todo', ha)).toEqual({ untrusted: true, kind: 'todo items' });
@@ -177,6 +180,23 @@ describe('taintedAction', () => {
         }
     });
 
+    test('updatePerson: notes run; a new phone number asks', () => {
+        expect(taintedAction('updatePerson', { id: 'p1', updates: { notes: 'likes tea' } })).toBeNull();
+        expect(taintedAction('updatePerson', { id: 'p1', updates: { phone: '+10000000000' } })).toMatch(/phone/);
+    });
+
+    test('updatePerson passes only the listed fields: autopilot never changes through a tool', async () => {
+        const { PeopleExecutor } = require('../src/executors/people');
+        const db = { updatePerson: jest.fn() };
+        const ex = new PeopleExecutor({ db });
+        ex.getServices = () => ({ db });
+        await ex.execute('updatePerson', { id: 'p1', updates: { notes: 'x', autopilot_status: 'full', autopilot_expires_at: null, identifiers: { whatsapp: 'y' } } }, {});
+        expect(db.updatePerson).toHaveBeenCalledWith('p1', { notes: 'x' });
+        const res = await ex.execute('updatePerson', { id: 'p1', updates: { autopilot_status: 'full' } }, {});
+        expect(res.error).toMatch(/No fields/);
+        expect(db.updatePerson).toHaveBeenCalledTimes(1);
+    });
+
     test('read-only and everyday internal tools stay free', () => {
         for (const name of ['searchMemory', 'consolidateMemory', 'readFile', 'listJobs', 'setReminder', 'rememberFact', 'getFact', 'askUser', 'readChatHistory', 'googleSearch', 'list_garments']) {
             expect(taintedAction(name, {})).toBeNull();
@@ -243,6 +263,16 @@ describe('taintedAction', () => {
         expect(taintedAction('ha_call_service', { domain: 'light', service: 'turn_on', entity_id: 'light.kitchen' }, ha)).toBeNull();
         expect(taintedAction('ha_bulk_control', { operations: [{ entity_id: 'alarm_control_panel.home', action: 'disarm' }] }, ha)).not.toBeNull();
         expect(taintedAction('ha_bulk_control', { operations: [{ entity_id: 'light.a', action: 'turn_off' }] }, ha)).toBeNull();
+        // homeassistant.* on/off is judged by the entities' own domains; without entities it asks.
+        expect(taintedAction('ha_call_service', { domain: 'homeassistant', service: 'turn_off', entity_id: 'light.kitchen' }, ha)).toBeNull();
+        expect(taintedAction('ha_call_service', { domain: 'homeassistant', service: 'toggle', target: { entity_id: ['switch.fan'] } }, ha)).toBeNull();
+        expect(taintedAction('ha_call_service', { domain: 'homeassistant', service: 'turn_on', entity_id: 'lock.front' }, ha)).not.toBeNull();
+        expect(taintedAction('ha_call_service', { domain: 'homeassistant', service: 'restart' }, ha)).not.toBeNull();
+        // A scene applied with a lock or cover state opens the house: the map form and target count.
+        expect(taintedAction('ha_call_service', { domain: 'scene', service: 'apply', data: { entities: { 'lock.front_door': 'unlocked' } } }, ha)).not.toBeNull();
+        expect(taintedAction('ha_call_service', { domain: 'scene', service: 'apply', service_data: JSON.stringify({ entities: { 'cover.garage': 'open' } }) }, ha)).not.toBeNull();
+        expect(taintedAction('ha_call_service', { domain: 'light', service: 'turn_on', target: { entity_id: 'lock.front' } }, ha)).not.toBeNull();
+        expect(taintedAction('ha_call_service', { domain: 'scene', service: 'turn_on', entity_id: 'scene.movie' }, ha)).toBeNull();
         expect(taintedAction('ha_config_set_calendar_event', {}, ha)).toBe('change the Home Assistant setup');
         expect(taintedAction('ha_get_state', {}, ha)).toBeNull();
     });

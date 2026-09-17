@@ -16,7 +16,7 @@
  */
 const { toolDefinitions } = require('./tools-definition');
 const { BLOCKED_PATTERNS: SHELL_BLOCKED } = require('@deedee/mcp-servers/src/local/index');
-const { taintedAction } = require('./utils/untrusted-content');
+const { taintedAction, haEntityIds } = require('./utils/untrusted-content');
 
 /** The "Why" line of a taint approval: what the call does and what was read. */
 function taintReason(action, taint) {
@@ -31,6 +31,8 @@ const HA_CALL_TOOLS = new Set(['ha_call_service', 'call_service']);
 // covers (except opening a garage) and bulk light/switch control are
 // everyday actions and run unasked.
 const HA_GUARDED_DOMAINS = new Set(['lock', 'alarm_control_panel']);
+// homeassistant.* services that switch named entities through their own domain.
+const HA_GENERIC_TOGGLE = new Set(['turn_on', 'turn_off', 'toggle']);
 // A cover whose id reads as a garage or gate: opening it lets people in.
 const GARAGE_COVER_RE = /garage|gate|port[oó]n|cochera|driveway/i;
 const COVER_OPEN_SERVICES = new Set(['open_cover', 'open_cover_tilt', 'set_cover_position', 'set_cover_tilt_position', 'toggle', 'toggle_cover_tilt']);
@@ -166,11 +168,23 @@ class ConfirmationManager {
                     if (!HA_CALL_TOOLS.has(name)) return false;
                     const domain = asString(args.domain);
                     const service = asString(args.service);
-                    if (domain === 'homeassistant' || domain === 'hassio') return true;
+                    // Entities named anywhere in the call: target, data, and the
+                    // { entity: state } map scene.apply and scene.create take.
+                    const ids = haEntityIds(args);
+                    if (ids.some(id => HA_GUARDED_DOMAINS.has(entityDomain(id)))) return true;
+                    if (domain === 'hassio') return true;
+                    if (domain === 'homeassistant') {
+                        // Generic on/off acts through each entity's own domain; with
+                        // named, unguarded entities it is plain home control.
+                        if (!HA_GENERIC_TOGGLE.has(service) || ids.length === 0) return true;
+                        return ids.some(id => id === 'all' || !entityDomain(id) || GARAGE_COVER_RE.test(id)
+                            || (entityDomain(id) === 'automation' && service !== 'turn_on'));
+                    }
+                    if (domain === 'scene' && ids.some(id => entityDomain(id) === 'cover' && GARAGE_COVER_RE.test(id))) return true;
                     if (HA_GUARDED_DOMAINS.has(domain)) return true;
                     if (domain === 'automation' && service === 'turn_off') return true;
                     if (domain === 'script' && service.includes('delete')) return true;
-                    if (domain === 'cover' && isGarageOpen(args.entity_id, service)) return true;
+                    if (domain === 'cover' && ids.some(id => isGarageOpen(id, service))) return true;
                     if (asString(args.entity_id) === 'all') {
                         if (['light', 'switch', 'media_player'].includes(domain) && service === 'turn_off') return false;
                         if (domain === 'light' && service === 'turn_on') return false;

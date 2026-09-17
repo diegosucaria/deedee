@@ -1,5 +1,8 @@
 const { BaseExecutor } = require('./base');
 
+// The updatePerson fields tools-definition.js lists.
+const PERSON_TOOL_FIELDS = Object.freeze(['name', 'phone', 'relationship', 'notes', 'metadata']);
+
 class PeopleExecutor extends BaseExecutor {
     async execute(name, args, context, callServices) {
         const services = this.getServices(callServices);
@@ -30,7 +33,18 @@ class PeopleExecutor extends BaseExecutor {
 
             case 'updatePerson':
                 try {
-                    db.updatePerson(args.id, args.updates);
+                    // Only the fields the tool lists. Autopilot status and linked
+                    // identifiers change through the dashboard, never through a
+                    // model call: autopilot 'full' replies to a contact as the owner.
+                    const updates = {};
+                    const given = args.updates && typeof args.updates === 'object' ? args.updates : {};
+                    for (const key of PERSON_TOOL_FIELDS) {
+                        if (given[key] !== undefined) updates[key] = given[key];
+                    }
+                    if (Object.keys(updates).length === 0) {
+                        return { error: `No fields to update. Allowed: ${PERSON_TOOL_FIELDS.join(', ')}.` };
+                    }
+                    db.updatePerson(args.id, updates);
                     return { success: true, message: `Updated person ${args.id}` };
                 } catch (e) {
                     return { error: `Update failed: ${e.message}` };
@@ -45,4 +59,4 @@ class PeopleExecutor extends BaseExecutor {
     }
 }
 
-module.exports = { PeopleExecutor };
+module.exports = { PeopleExecutor, PERSON_TOOL_FIELDS };

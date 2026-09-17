@@ -710,8 +710,8 @@ function createInternalRouter(agent) {
     router.put('/goals/:id', (req, res) => {
         if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
         try {
-            const { status, description } = req.body;
-            agent.db.updateGoal(req.params.id, { status, description });
+            const { status, description, clearTaint } = req.body;
+            agent.db.updateGoal(req.params.id, { status, description, clearTaint: clearTaint === true });
             res.json({ success: true });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });

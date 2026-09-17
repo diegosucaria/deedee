@@ -309,9 +309,11 @@ decision.
   sub-agent service saw the run finish without reading untrusted content.
 - MCP servers: every `gws_*` server (Gmail, Calendar, Drive, Docs, Sheets,
   Slides) and `browser` are untrusted. `homeassistant` is trusted, except
-  a calendar or todo tool, and any tool whose args or result name a
-  `calendar.` or `todo.` entity: their attributes hold text other people
-  wrote. `node-red`, `plex`, `pilotfy` and
+  a calendar or todo tool, a tool whose args name a `calendar.` or
+  `todo.` entity, and a result that names one and also holds event or item
+  fields (`message`, `description`, `summary`, `items`, ...): those hold
+  text other people wrote. A search result that only lists the entity id
+  stays trusted. `node-red`, `plex`, `pilotfy` and
   `allende` are trusted (the owner's flows, library data, structured
   booking data).
 - Any other MCP server, and any tool no list names, is untrusted.
@@ -352,14 +354,19 @@ A call another rule already pauses keeps that rule and gets the same note.
   asks under the base rule, whoever receives it;
 - `runShellCommand`, except one plain `curl` or `wget` GET that prints to
   the output (no pipe, redirect, upload, header, output file or second
-  command), `writeFile`, `commitAndPush`, `pullLatestChanges`,
+  command), `writeFile`, `updatePerson` when it changes a phone number, `commitAndPush`, `pullLatestChanges`,
   `rollbackLastChange`;
 - Home Assistant service calls, unless every domain they touch is plain
   home control (`light`, `switch`, `fan`, `climate`, `media_player`,
   `vacuum`, `scene`, `remote`, `humidifier`, `water_heater`, `input_*`,
-  `counter`, `timer`, `number`, `select`). So `notify`, `rest_command`,
-  `shell_command`, `tts`, `lock`, `cover`, `script`, `automation` and
-  `entity_id: all` ask. `ha_config_set_*`, `ha_config_remove_*` and
+  `counter`, `timer`, `number`, `select`). The gate reads entity ids from
+  `entity_id`, `entity_ids`, `entities` (a list or the `{ entity: state }`
+  map of `scene.apply` and `scene.create`), `snapshot_entities`, `target`,
+  `data` and `service_data`. So `notify`, `rest_command`,
+  `shell_command`, `tts`, `lock`, `cover`, `script`, `automation`, a scene
+  applied with a lock or cover state, and `entity_id: all` ask.
+  `homeassistant.turn_on`, `turn_off` and `toggle` are judged by the
+  domains of the entities they name; without entities (`restart`) they ask. `ha_config_set_*`, `ha_config_remove_*` and
   `ha_remove_*` ask too;
 - browser actions with a consequence on money or other people (see below),
   `browser_evaluate`, `browser_run_code_unsafe`, `browser_file_upload`,
@@ -370,7 +377,9 @@ A call another rule already pauses keeps that rule and gets the same note.
 
 *Runs unasked in a tainted run:*
 - `setReminder`, `scheduleJob`, `scheduleTask`, `addWatcher` (they carry the
-  taint, see below), `rememberFact`, `cancelJob`;
+  taint, see below), `rememberFact`, `cancelJob`, `updatePerson` on name,
+  relationship, notes or metadata. The tool never changes autopilot status
+  or linked ids: the executor drops every field the tool does not list;
 - a message to the owner himself, so jobs that read email can still report;
 - a Calendar `events.insert` on `primary` with no attendees;
 - plain home control, read-only tools, the plain fetch above;
@@ -385,12 +394,17 @@ A run that reads nothing untrusted behaves as before.
 A click asks when its label reads as pay, buy, purchase, make or submit a
 payment, place or confirm an order, send, post, publish, share, reply,
 comment, invite, forward, subscribe, upgrade, bid, transfer, donate, delete,
-book, reserve or cancel a booking (English and Spanish). "Send code" and
-similar login steps do not count. A generic label (`Continue`, `Submit`,
-`OK`, `Confirm`, `Next`, a bare `Enviar`, ...) asks only inside a form that
-pays, orders, sends or deletes: the form holds such a button, a payment
-field (card number, CVV, expiry, billing, IBAN, CBU, amount, recipient) or
-has such a name. Any other button inside a form with a payment field asks
+book, reserve or cancel a booking, retweet or repost (English and
+Spanish). "Send code" and similar login steps do not count. A generic label
+(`Continue`, `OK`, `Confirm`, `Next`, ...) asks only inside a form that
+pays, orders, sends or deletes: the form has such a name, holds a payment
+field (card number, CVV, expiry, billing, IBAN, CBU, amount, recipient),
+holds a send field (`To`, `Para`, `Subject`, `Asunto`, a message, comment
+or reply box), or holds such a button. A bare `Submit` or `Enviar` asks in
+any form that does not only log in or search. A form only logs in or
+searches when all its fields read as email, user, password, code, phone or
+search, or its name reads as log in or sign in; then only a payment field
+or a paying form name makes a generic label ask. Any other button inside a form with a payment field asks
 too, whatever its label says, except plain ones such as `Back`, `Cancel` or
 `Apply`. A card or account number next to a password field is a bank login
 id, not a payment field, unless a CVV, expiry or amount field sits there
@@ -415,8 +429,10 @@ hide a "Pay" button by describing it as "Continue". A target that is not a
 snapshot ref (a CSS or text selector) is not matched to the page: the gate
 checks the selector text, then asks whenever the page holds anything that
 pays, orders, sends or deletes, or when it has seen no page. The form is the nearest `form`, `search` or
-`dialog` around the field; without one, the nearest group that holds a
-button; without one, the whole page.
+`dialog` around the field; without one, the nearest group that holds
+another field or button, short of the page itself. With no such group, the
+gate judges the page's fields and form names, never its buttons: a footer
+"Subscribe" or a "Share" button does not make a login "Continue" ask.
 
 *What it cannot see, honestly*:
 - focus after `Tab` or arrow keys. Enter or Space then asks whenever the
@@ -432,8 +448,9 @@ button; without one, the whole page.
   whose words do not say what they do ("Go", "✓");
 - key handlers: a page can submit on any key, on blur, or on a plain
   "Next" that charges a card with no payment field in the snapshot;
-- navigation itself: `browser_navigate` to a URL can carry data out in its
-  query string, and a GET link can trigger an action on a badly built site.
+- navigation itself: `browser_navigate` to a URL, like the plain `curl` or
+  `wget` GET, can carry data out in its query string, and a GET can
+  trigger an action on a badly built site or a webhook.
 
 **No taint laundering**: a tainted run that creates a job or watcher could
 plant an order that runs later in a clean run. So `scheduleJob`,
@@ -453,9 +470,14 @@ run that asked.
 
 **Goals carry taint too**: `addGoal` and `updateGoalProgress` run unasked,
 but in a tainted run they store `tainted` and `taintSources` in the goal's
-metadata. Every later run that loads pending goals into its prompt starts
-tainted with those sources marked `[carried by goal 3]`, until the goal is
-completed.
+metadata, with the fields that run wrote (`taintedFields`: `description`,
+`progress`). Every later run that loads pending goals into its prompt starts
+tainted with those sources marked `[carried by goal 3]`. The taint follows
+the text: a clean run's new checkpoint clears the `progress` mark, and the
+owner's new description (`PUT /v1/goals/:id`) clears the `description`
+mark. The goal stops carrying taint once no mark is left, or when it is
+completed. The dashboard shows the mark on a goal, with a **Trust** button
+(`clearTaint: true`) that clears it.
 
 **Where taint starts**: a watcher run starts tainted, because its prompt
 quotes the contact's message. A sub-agent spawned by a tainted run starts
@@ -467,8 +489,11 @@ approvals go to the owner channel, as in [Approvals](#approvals).
 **Known gaps**: taint lasts one run (plus the jobs and watchers it creates).
 A later owner message in the same chat starts clean, and the envelope in
 history plus the prompt rule are the only guard for content read in an
-earlier turn. `rememberFact` and vault writes do not pause, so a fact can
-carry text into later prompts. `learnDevice` aliases do the same for device
+earlier turn. `rememberFact`, `saveJobState`, vault writes
+(`writeVaultPage`, `saveNoteToVault`) and `updatePerson` notes do not pause
+and carry no taint mark, so a fact, a vault page, a contact note or job
+state can carry text into later prompts and tool results that count as
+trusted. `learnDevice` aliases do the same for device
 names; misuse stays within home control, which runs unasked anyway. A reminder's text can quote untrusted text
 back to the owner. The autopilot reply service does not use this tool loop.
 

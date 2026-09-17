@@ -84,8 +84,35 @@ describe('AgentDB', () => {
     db.markGoalTainted(id, { taintSources: ['email (gmail)'] });
     db.markGoalTainted(id, { taintSources: ['email (gmail)', 'a web page (browser_snapshot)'] });
     const goal = db.getPendingGoals().find(g => g.id === id);
-    expect(goal.metadata).toEqual({ chatId: 'c1', tainted: true, taintSources: ['email (gmail)', 'a web page (browser_snapshot)'] });
+    expect(goal.metadata).toEqual({ chatId: 'c1', tainted: true, taintSources: ['email (gmail)', 'a web page (browser_snapshot)'], taintedFields: ['progress'] });
     expect(db.markGoalTainted(9999, { taintSources: ['x'] }).changes).toBe(0);
+  });
+
+  test('goal taint ends when the tainted text is replaced by clean text or the owner trusts it', () => {
+    const meta = (id) => db.getPendingGoals().find(g => g.id === id).metadata;
+    // A tainted checkpoint on a clean goal: a clean checkpoint clears it.
+    const a = db.addGoal('Watch prices', { chatId: 'c1' }).lastInsertRowid;
+    db.markGoalTainted(a, { taintSources: ['email (gmail)'] }, 'progress');
+    db.clearGoalTaint(a, 'progress');
+    expect(meta(a)).toEqual({ chatId: 'c1' });
+
+    // A tainted description stays through a clean checkpoint; the owner's new description clears it.
+    const b = db.addGoal('Watch prices', { chatId: 'c1', tainted: true, taintSources: ['x'], taintedFields: ['description'] }).lastInsertRowid;
+    db.markGoalTainted(b, { taintSources: ['y'] }, 'progress');
+    db.clearGoalTaint(b, 'progress');
+    expect(meta(b)).toMatchObject({ tainted: true, taintedFields: ['description'] });
+    db.updateGoal(b, { status: 'pending' });
+    expect(meta(b).tainted).toBe(true);
+    db.updateGoal(b, { description: 'Watch the price of flights' });
+    expect(meta(b)).toEqual({ chatId: 'c1' });
+
+    // A row without the field list counts as fully tainted; clearTaint drops it all.
+    const c = db.addGoal('Old', { tainted: true, taintSources: ['x'] }).lastInsertRowid;
+    db.clearGoalTaint(c, 'progress');
+    expect(meta(c)).toMatchObject({ tainted: true, taintedFields: ['description'] });
+    db.updateGoal(c, { clearTaint: true });
+    expect(meta(c)).toEqual({});
+    expect(db.clearGoalTaint(9999).changes).toBe(0);
   });
 
   test('updateGoalProgress returns no changes for missing id', () => {

@@ -30,7 +30,7 @@ const CONSEQUENCE_RE = new RegExp([
     String.raw`\bplace (?:my |your |the )?order\b`, String.raw`\border now\b`, String.raw`\bsubmit (?:my |the )?order\b`,
     String.raw`\bcomplete (?:my |the )?(?:order|purchase|checkout|payment)\b`,
     String.raw`\bconfirm (?:and pay|(?:the |my )?(?:order|purchase|payment|booking|reservation|transfer))\b`,
-    String.raw`\bsend\b`, String.raw`\bpost\b`, String.raw`\bpublish\b`, String.raw`\btweet\b`, String.raw`\bshare\b`, String.raw`\breply\b`,
+    String.raw`\bsend\b`, String.raw`\bpost\b`, String.raw`\bpublish\b`, String.raw`\btweet\b`, String.raw`\bretweet\b`, String.raw`\brepost\b`, String.raw`\bquote post\b`, String.raw`\bshare\b`, String.raw`\breply\b`,
     String.raw`\btransfer\b`, String.raw`\bwire\b`, String.raw`\bdonate\b`, String.raw`\bdelete\b`,
     String.raw`\bbook(?: now| it)?\b`, String.raw`\breserve\b`,
     String.raw`\bcancel (?:my |the )?(?:booking|reservation|appointment|order|subscription|flight|trip)\b`,
@@ -39,7 +39,7 @@ const CONSEQUENCE_RE = new RegExp([
     String.raw`\bconfirmar (?:la |el )?(?:compra|pago|pedido|reserva|turno|transferencia)\b`,
     // A bare "Enviar" is also the plain submit label of many Spanish forms: see NEUTRAL_SUBMIT_RE.
     String.raw`\benviar (?:(?:el |la |un |una |mi )?(?:mensaje|dinero|transferencia|pago|pedido|solicitud|comentario|correo|mail|email|invitaci[oó]n|respuesta))\b`,
-    String.raw`\bpublicar\b`, String.raw`\bsuscribirse\b`, String.raw`\bsuscribir(?:me)?\b`, String.raw`\bcomentar\b`, String.raw`\binvitar\b`, String.raw`\breenviar\b`, String.raw`\bcompartir\b`, String.raw`\bresponder\b`,
+    String.raw`\bpublicar\b`, String.raw`\bretuitear\b`, String.raw`\brepostear\b`, String.raw`\bsuscribirse\b`, String.raw`\bsuscribir(?:me)?\b`, String.raw`\bcomentar\b`, String.raw`\binvitar\b`, String.raw`\breenviar\b`, String.raw`\bcompartir\b`, String.raw`\bresponder\b`,
     String.raw`\btransferir\b`, String.raw`\bdonar\b`, String.raw`\beliminar\b`, String.raw`\bborrar\b`, String.raw`\breservar\b`,
     String.raw`\bcancelar (?:la |el |mi )?(?:reserva|turno|cita|pedido|suscripci[oó]n|vuelo)\b`,
 ].join('|'), 'i');
@@ -49,6 +49,9 @@ const AUTH_SEND_RE = /\b(?:re)?(?:send|enviar|reenviar)\b.*\b(?:code|otp|sms|lin
 
 // A generic submit label: harmless on a login form, a commit on a payment form.
 const NEUTRAL_SUBMIT_RE = /^(?:submit|continue|next|ok|okay|done|confirm|accept|proceed|finish|complete|go|aceptar|confirmar|continuar|siguiente|listo|finalizar|enviar)$/i;
+// Of those, the labels that hand the form over ("Submit", "Enviar"): a
+// commit unless the form only logs in or searches.
+const COMMIT_SUBMIT_RE = /^(?:submit|enviar)$/i;
 
 // Buttons that commit nothing even inside a payment form.
 const HARMLESS_BUTTON_RE = /^(?:back|cancel|close|edit|show|hide|apply|apply coupon|remove|clear|help|volver|atr[aá]s|cancelar|cerrar|editar|mostrar|ocultar|aplicar|quitar|borrar campos|ayuda)$/i;
@@ -61,6 +64,13 @@ const LOGIN_ID_FIELD_RE = /^(?:(?:your |the )?(?:credit |debit )?card ?number|(?
 const PASSWORD_FIELD_RE = /password|passcode|contrase[nñ]a|clave|\bpin\b/i;
 // A container name that marks the same.
 const PAYMENT_SCOPE_RE = /payment|checkout|\bpago\b|transfer/i;
+// Fields that mark a form as one that sends text to other people: mail
+// compose, chat, comment, contact and post boxes.
+const SEND_FIELD_RE = /^(?:to|para|cc|bcc|cco|subject|asunto|body|cuerpo)$|\bmessage\b|\bmensaje\b|\bcomment\b|\bcomentario\b|message body|cuerpo del|\breply\b|\brespuesta\b|what'?s happening|what'?s on your mind|qu[eé] est[aá]s pensando|\bwrite (?:a |your )|\bescrib[ei]/i;
+// Fields a login, sign-up step or verification form holds.
+const AUTH_FIELD_RE = /password|passcode|contrase[nñ]a|\bclave\b|\bpin\b|\botp\b|one[- ]time|verification|\bcode\b|c[oó]digo|user ?name|\buser\b|usuario|e-?mail|correo|\bphone\b|tel[eé]fono|\bdni\b|documento|\blogin\b/i;
+// A container name that marks a login form.
+const AUTH_SCOPE_RE = /\b(?:log ?in|sign ?in|sign ?up|iniciar sesi[oó]n|ingres(?:ar|o)|acceso|verif)/i;
 
 const ENTRY_ROLES = new Set(['textbox', 'searchbox', 'combobox', 'spinbutton']);
 const SCOPE_ROLES = new Set(['form', 'search', 'dialog', 'alertdialog']);
@@ -241,42 +251,84 @@ class BrowserPageState {
         return out;
     }
 
-    /**
-     * The nodes that share a form with `ref`: the nearest form or dialog
-     * around it; else the nearest ancestor that holds a button; else the
-     * whole page. Null when the ref is not in the last full snapshot.
-     */
-    scopeOf(ref) {
-        const idx = this.nodes.findIndex(n => n.ref === String(ref));
-        if (idx < 0) return null;
-        const subtree = (i) => this._subtree(i);
-        const ancestors = this._ancestors(idx);
-        const formIdx = ancestors.find(i => SCOPE_ROLES.has(this.nodes[i].role));
-        if (formIdx !== undefined) return subtree(formIdx);
-        for (const i of ancestors) {
-            const nodes = subtree(i);
-            if (nodes.some(n => n !== this.nodes[idx] && n.role === 'button')) return nodes;
-        }
-        return this.nodes;
+    /** True when the ancestor at `i` holds the whole page. */
+    _isPage(i) {
+        return this._subtree(i).length === this.nodes.length;
     }
 
     /**
      * The form around `ref`: the nearest form or dialog, else the nearest
-     * ancestor that holds an entry field, unless that is the outermost node
-     * (the page itself). Null when there is none.
+     * ancestor that holds an entry field or a button besides `ref`, unless
+     * that ancestor is the page itself. Null when there is none: a submit
+     * is never judged against buttons elsewhere on the page (a footer
+     * "Subscribe" says nothing about a login "Continue").
+     */
+    groupOf(ref) {
+        const idx = this.nodes.findIndex(n => n.ref === String(ref));
+        if (idx < 0) return null;
+        const self = this.nodes[idx];
+        const ancestors = this._ancestors(idx);
+        const formIdx = ancestors.find(i => SCOPE_ROLES.has(this.nodes[i].role));
+        if (formIdx !== undefined) return this._subtree(formIdx);
+        for (const i of ancestors) {
+            if (this._isPage(i)) break;
+            const nodes = this._subtree(i);
+            if (nodes.some(n => n !== self && (ENTRY_ROLES.has(n.role) || n.role === 'button'))) return nodes;
+        }
+        return null;
+    }
+
+    /**
+     * The form around `ref`: the nearest form or dialog, else the nearest
+     * ancestor that holds an entry field, unless that is the page itself.
+     * Null when there is none.
      */
     formOf(ref) {
         const idx = this.nodes.findIndex(n => n.ref === String(ref));
         if (idx < 0) return null;
-        const subtree = (i) => this._subtree(i);
         const ancestors = this._ancestors(idx);
         const formIdx = ancestors.find(i => SCOPE_ROLES.has(this.nodes[i].role));
-        if (formIdx !== undefined) return subtree(formIdx);
-        for (const i of ancestors.slice(0, -1)) {
-            const nodes = subtree(i);
+        if (formIdx !== undefined) return this._subtree(formIdx);
+        for (const i of ancestors) {
+            if (this._isPage(i)) break;
+            const nodes = this._subtree(i);
             if (nodes.some(n => ENTRY_ROLES.has(n.role))) return nodes;
         }
         return null;
+    }
+
+    /**
+     * Does a generic submit ("Continue", "Enviar", Enter in a field) commit
+     * something in this form? `group` is the form from groupOf(), or null
+     * for a page with no form around the target; then only the page's
+     * payment fields and form names count, and its send fields and
+     * "Submit" buttons unless the page only logs in or searches.
+     * @param {Array|null} group
+     * @param {{ label?: string }} [opts] - the clicked label, when a click
+     */
+    submitCommits(group, { label = '' } = {}) {
+        const nodes = group || this.nodes;
+        if (nodes.some(n => SCOPE_ROLES.has(n.role) && (consequenceHit(n.name) || PAYMENT_SCOPE_RE.test(n.name)))) return true;
+        if (BrowserPageState.hasPaymentFields(nodes)) return true;
+        if (BrowserPageState.isAuthOrSearch(nodes)) return false;
+        if (group && nodes.some(n => n.role === 'button' && consequenceHit(n.name))) return true;
+        if (nodes.some(n => ENTRY_ROLES.has(n.role) && n.role !== 'searchbox' && SEND_FIELD_RE.test(n.name))) return true;
+        if (COMMIT_SUBMIT_RE.test(String(label).trim())) return true;
+        // Enter hands the form to its "Submit" button.
+        if (!label && nodes.some(n => n.role === 'button' && COMMIT_SUBMIT_RE.test(String(n.name).trim()))) return true;
+        return false;
+    }
+
+    /** Does this form only log in, verify or search? */
+    static isAuthOrSearch(nodes) {
+        const list = nodes || [];
+        if (list.some(n => SCOPE_ROLES.has(n.role) && AUTH_SCOPE_RE.test(n.name))) return true;
+        const fields = list.filter(n => ENTRY_ROLES.has(n.role));
+        if (fields.length === 0) return false;
+        const password = fields.some(n => PASSWORD_FIELD_RE.test(n.name));
+        return fields.every(n => n.role === 'searchbox' || SEARCH_FIELD_RE.test(n.name)
+            || AUTH_FIELD_RE.test(n.name)
+            || (password && LOGIN_ID_FIELD_RE.test(String(n.name || '').trim())));
     }
 
     /** Does this group of nodes read as a payment, order, transfer or send form? */
@@ -330,10 +382,8 @@ function judgeActivate(state, ref, element, verb) {
         return null;
     }
     const label = String(node.name || '').trim();
-    const scope = state.scopeOf(ref);
-    if (!scope) return null;
     if (NEUTRAL_SUBMIT_RE.test(label)) {
-        if (BrowserPageState.consequential(scope)) {
+        if (state.submitCommits(state.groupOf(ref), { label })) {
             return `${verb} "${label}" in a web form that pays, orders, sends or deletes`;
         }
         return null;
@@ -366,8 +416,7 @@ function judgeSubmitKey(state, focus, key) {
     if (node) {
         // Enter in a search box runs a search.
         if (node.role === 'searchbox' || SEARCH_FIELD_RE.test(node.name)) return null;
-        const scope = state.scopeOf(focus.ref);
-        if (scope && BrowserPageState.consequential(scope)) {
+        if (state.submitCommits(state.groupOf(focus.ref))) {
             return `press ${key} in a web form that pays, orders, sends or deletes`;
         }
         return null;

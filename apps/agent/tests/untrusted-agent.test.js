@@ -233,7 +233,8 @@ describe('untrusted content through the Agent', () => {
     await agent.processMessage(msg, async () => {});
     expect(agent.db.addGoal).toHaveBeenCalledWith('Send the weekly summary every morning',
       expect.objectContaining({ tainted: true, taintSources: ['email (personal_gmail)'] }), null);
-    expect(agent.db.markGoalTainted).toHaveBeenCalledWith(7, expect.objectContaining({ taintSources: ['email (personal_gmail)'] }));
+    expect(agent.db.addGoal.mock.calls[0][1].taintedFields).toEqual(['description']);
+    expect(agent.db.markGoalTainted).toHaveBeenCalledWith(7, expect.objectContaining({ taintSources: ['email (personal_gmail)'] }), 'progress');
 
     // A later run that loads the goal starts tainted, so its send asks.
     agent.db.getPendingGoals.mockReturnValue([{ id: 7, description: 'Send the weekly summary every morning', progress: null,
@@ -247,6 +248,18 @@ describe('untrusted content through the Agent', () => {
     expect(agent.toolExecutor.execute).not.toHaveBeenCalledWith('sendMessage', expect.anything(), expect.anything());
     expect(summary.untrustedSources).toEqual(['email (personal_gmail) [carried by goal 7]']);
     expect(summary.toolOutputs.find(o => o.name === 'sendMessage').result.info).toMatch(/Action PAUSED/);
+  });
+
+  test('a clean checkpoint clears the taint an earlier checkpoint left', async () => {
+    agent.db.updateGoalProgress = jest.fn().mockReturnValue({ changes: 1 });
+    agent.db.markGoalTainted = jest.fn();
+    agent.db.clearGoalTaint = jest.fn();
+    script = [{ name: 'updateGoalProgress', args: { id: 9, progress: 'step 2 done' } }, { text: 'Saved.' }];
+    const msg = createUserMessage('Save the checkpoint', 'telegram', 'user1');
+    msg.metadata = { chatId: 'tg-goal-progress' };
+    await agent.processMessage(msg, async () => {});
+    expect(agent.db.markGoalTainted).not.toHaveBeenCalled();
+    expect(agent.db.clearGoalTaint).toHaveBeenCalledWith(9, 'progress');
   });
 
   test('a clean run adds a goal with no taint', async () => {
