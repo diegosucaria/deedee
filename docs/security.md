@@ -285,6 +285,17 @@ TTLs, deny-list editor); `GET /v1/approvals`, `POST /v1/approvals/:id/approve|de
 (agent: `/internal/approvals`, behind `DEEDEE_INTERNAL_TOKEN`); table
 `pending_confirmations` in `agent.db`; logs with the `[Approvals]` prefix.
 
+**Every path that runs a tool goes through the gate.** The chat loop always
+did. The live voice session runs tools through `POST /tools/execute`
+(`apps/agent/src/routes/tools.js`), which called the executor straight, so the
+deny-list, the safety rules, the floor and the guardian never saw those calls.
+It now runs the same `review()`. A live session is not a chat the owner can
+answer in, so a paused call sends its card to his notification channel, and
+the caller reads the same "Action PAUSED" text the model reads in a chat.
+Without the approval service the route refuses rather than runs. The nightly
+`consolidateMemory` call in the scheduler is the one other direct call: a
+fixed internal tool with no arguments.
+
 Still open (Batch 6): an exact allowlist for `runShellCommand` and network
 tools instead of pattern checks, and a separate unprivileged uid for the shell
 child, so file modes and `/proc` stop a read that a text rule misses.

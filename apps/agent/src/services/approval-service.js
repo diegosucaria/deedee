@@ -238,9 +238,12 @@ function present(value) {
  * or inside its own output (`{"status": "failed"}`), and the approval paths
  * and the tool loop must read all three the same way.
  */
+// A plain-text result that opens with a failure word: some tools answer that way.
+const TEXT_FAILURE_RE = /^\s*(?:error\b|errors?:|failed\b|failure\b|cannot\b|could not\b|unable to\b|refused\b|denied\b|not allowed\b)/i;
+
 function callFailed(result) {
     if (result === undefined || result === null) return false;
-    if (typeof result === 'string') return false;
+    if (typeof result === 'string') return TEXT_FAILURE_RE.test(result);
     if (present(result.error)) return true;
     if (result.success === false || result.ok === false) return true;
     const data = parseToolOutput(result);

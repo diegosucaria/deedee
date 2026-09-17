@@ -3,6 +3,18 @@ const axios = require('axios');
 const { createUserMessage } = require('@deedee/shared/src/types');
 const { SentIds } = require('./sent-ids');
 
+/**
+ * A forwarded message holds someone else's words, whatever it carries: text,
+ * a photo caption or a voice note. The agent then treats the turn as
+ * untrusted content, so outward actions ask the owner first.
+ * @returns {{ untrustedTaint?: string[] }} metadata to merge into the message
+ */
+function forwardTaint(ctx) {
+    const m = (ctx && ctx.message) || {};
+    const forwarded = m.forward_origin || m.forward_from || m.forward_from_chat || m.forward_sender_name || m.forward_date;
+    return forwarded ? { untrustedTaint: ['a forwarded message (telegram)'] } : {};
+}
+
 class TelegramService {
   constructor(token, agentUrl) {
     this.bot = new Telegraf(token);
@@ -88,12 +100,7 @@ class TelegramService {
 
       const message = createUserMessage(text, 'telegram', userId);
       // Attach chatId to metadata so we know where to reply
-      message.metadata = { chatId };
-      // A forwarded message holds someone else's words: the agent treats it as untrusted content.
-      const m = ctx.message || {};
-      if (m.forward_origin || m.forward_from || m.forward_from_chat || m.forward_sender_name || m.forward_date) {
-        message.metadata.untrustedTaint = ['a forwarded message (telegram)'];
-      }
+      message.metadata = { chatId, ...forwardTaint(ctx) };
 
       // Forward to Agent
       await axios.post(`${this.agentUrl}/webhook`, message);
@@ -136,7 +143,7 @@ class TelegramService {
           }
         }
       ];
-      message.metadata = { chatId };
+      message.metadata = { chatId, ...forwardTaint(ctx) };
 
       // Forward to Agent
       await axios.post(`${this.agentUrl}/webhook`, message);
@@ -175,7 +182,7 @@ class TelegramService {
         { text: caption },
         { inlineData: { mimeType: 'image/jpeg', data: base64Image } }
       ];
-      message.metadata = { chatId };
+      message.metadata = { chatId, ...forwardTaint(ctx) };
 
       await axios.post(`${this.agentUrl}/webhook`, message);
     } catch (error) {

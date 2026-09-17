@@ -143,6 +143,12 @@ class AgentDB {
         timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
       );
 
+      -- Every turn reads a chat's newest rows (history and the trust check).
+      -- Without this the reads scan the whole table and sort it: on the
+      -- device, 41k rows and about 60 ms of blocked time per read.
+      CREATE INDEX IF NOT EXISTS idx_messages_chat_time
+        ON messages(chat_id, timestamp DESC);
+
       CREATE TABLE IF NOT EXISTS kv_store (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL,
