@@ -20,7 +20,41 @@ const BLOCKED_PATTERNS = [
 ];
 
 // Environment variable names that hold credentials.
-const SECRET_NAME = /(PASS|PWD|TOKEN|SECRET|KEY|CREDENTIAL|COOKIE|AUTH|PRIVATE)/i;
+const SECRET_NAME = /(PASS|PWD|TOKEN|SECRET|KEY|CREDENTIAL|COOKIE|AUTH|PRIVATE|PAT|WEBHOOK)/i;
+
+// Credential shapes that no environment variable of this process holds, so
+// value matching cannot find them: GitHub tokens (fine-grained and classic)
+// and any URL that carries a user or password.
+const SECRET_PATTERNS = [
+  // A URL that carries a user or a password: https://<token>@github.com/...
+  { regex: /([a-z][a-z0-9+.-]*:\/\/)[^/\s:@]+(?::[^/\s@]*)?@/gi, replacement: '$1[REDACTED]@' },
+  { regex: /github_pat_[A-Za-z0-9_]{20,}/g, replacement: '[REDACTED]' },
+  { regex: /\bgh[pousr]_[A-Za-z0-9]{20,}/g, replacement: '[REDACTED]' },
+];
+
+// The child of runShellCommand starts from these variables only. Everything
+// else — every provider key — stays in this process, so a command cannot read
+// a credential even when it sends no output back.
+const SHELL_BASE_VARS = ['PATH', 'HOME', 'TZ', 'LANG'];
+const DEFAULT_PATH = '/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin';
+
+/**
+ * Environment for a shell command: the base variables plus the names listed
+ * in SHELL_ENV_PASSTHROUGH (comma or space separated), and nothing else.
+ */
+function shellEnv(env = process.env) {
+  const out = {};
+  for (const name of SHELL_BASE_VARS) {
+    if (typeof env[name] === 'string' && env[name] !== '') out[name] = env[name];
+  }
+  if (!out.PATH) out.PATH = DEFAULT_PATH;
+  const extra = String(env.SHELL_ENV_PASSTHROUGH || '').split(/[\s,]+/).filter(Boolean);
+  for (const name of extra) {
+    if (name === 'SHELL_ENV_PASSTHROUGH') continue;
+    if (typeof env[name] === 'string') out[name] = env[name];
+  }
+  return out;
+}
 
 /**
  * Removes credentials from tool output before it reaches the model, logs or DB.
@@ -37,10 +71,14 @@ function redactSecrets(text, env = process.env) {
   for (const [name, value] of values) {
     if (out.includes(value)) out = out.split(value).join(`[REDACTED:${name}]`);
   }
-  return out.replace(
-    /^(\s*(?:export\s+)?["']?[A-Za-z0-9_.-]*(?:PASS|PWD|TOKEN|SECRET|KEY|CREDENTIAL|COOKIE|AUTH|PRIVATE)[A-Za-z0-9_.-]*["']?\s*[=:]\s*)(?!\[REDACTED)(\S.*)$/gim,
+  out = out.replace(
+    /^(\s*(?:export\s+)?["']?[A-Za-z0-9_.-]*(?:PASS|PWD|TOKEN|SECRET|KEY|CREDENTIAL|COOKIE|AUTH|PRIVATE|PAT|WEBHOOK)[A-Za-z0-9_.-]*["']?\s*[=:]\s*)(?!\[REDACTED)(\S.*)$/gim,
     '$1[REDACTED]'
   );
+  for (const { regex, replacement } of SECRET_PATTERNS) {
+    out = out.replace(regex, replacement);
+  }
+  return out;
 }
 
 class LocalTools {
@@ -110,6 +148,7 @@ class LocalTools {
       console.log(`[LocalTools] Executing: ${command}`);
       const { stdout, stderr } = await execAsync(command, {
         cwd: this.workDir,
+        env: shellEnv(),
         timeout: options.timeout || 30000 // default 30s
       });
       return { stdout: redactSecrets(stdout.trim()), stderr: redactSecrets(stderr.trim()) };
@@ -125,4 +164,4 @@ class LocalTools {
   }
 }
 
-module.exports = { LocalTools, redactSecrets };
+module.exports = { LocalTools, redactSecrets, shellEnv, SHELL_BASE_VARS };

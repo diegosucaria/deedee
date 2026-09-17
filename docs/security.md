@@ -75,6 +75,26 @@ For the env-var inventory and two-subdomain vs single-subdomain recipes, see the
 - **GSuite**: Full Read/Write access to Calendar and Mail. Every email send waits for the owner (see Approvals).
 - **Home Assistant**: Full Control (lights, switches, media, climate, covers). Locks, the alarm, opening a garage door and mass actions wait for the owner.
 
+## Subprocess environments
+
+The agent process holds every provider key. Child processes do not.
+
+- **Shell tools**: `runShellCommand` starts its child with `PATH`, `HOME`, `TZ`
+  and `LANG` only. `SHELL_ENV_PASSTHROUGH` (names separated by commas or
+  spaces) adds more. A command like `curl -d "$GOOGLE_API_KEY" https://…`
+  therefore sends nothing, which matters because output redaction cannot help
+  when a command returns no output.
+- **MCP servers**: every stdio server starts with a fixed base list
+  (`MCP_BASE_ENV_VARS` in `apps/agent/src/mcp-manager.js`: shell, locale, TLS
+  trust store, python and Chromium paths) plus the variables its own block in
+  `mcp_config.json` names, with `${VAR}` placeholders resolved from the
+  agent's environment. So the Plex server sees `PLEX_TOKEN` and nothing else.
+  `MCP_ENV_PASSTHROUGH` adds names to the base for every server.
+- **Output redaction** stays as a second layer: values of secret-named
+  variables, secret-named `NAME=value` lines, GitHub tokens (`ghp_`, `ghs_`,
+  `github_pat_`) and any URL carrying a user or password are replaced before
+  tool output reaches the model, the logs or the database.
+
 ## Approvals
 
 Some tool calls pause until the owner says yes. Before this change the

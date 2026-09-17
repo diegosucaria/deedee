@@ -20,6 +20,11 @@ services:
       # the agent-data volume. Without this rag.db fell back to the working dir
       # and was rebuilt after every release.
       - DATA_DIR=/app/data
+      # runShellCommand children start with PATH, HOME, TZ and LANG only, and
+      # MCP servers with a fixed base plus their own config block. Add names
+      # here (comma separated) when a command or server needs more:
+      # - SHELL_ENV_PASSTHROUGH=
+      # - MCP_ENV_PASSTHROUGH=
       # DEEDEE_INTERNAL_TOKEN required at runtime — agent rejects /internal/*
       # callers without a matching bearer token. Inject via Balena/.env.
       # SUPERVISOR_TOKEN also required — sent on every call to the supervisor.

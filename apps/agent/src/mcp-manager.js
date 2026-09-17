@@ -17,6 +17,20 @@ const VAR_RE = /\$\{([^}]+)\}/g;
 // The browser entry that replaces older saved ones. Its args name this file.
 const BROWSER_LAUNCHER = 'browser-mcp.js';
 
+// A stdio MCP child starts from these variables plus whatever its own config
+// block names. Everything else the agent holds — every provider key — stays
+// in the agent process. The list covers what the shipped servers need: a
+// shell PATH, a home directory, locale and timezone, the TLS trust store for
+// node and python, and the paths Chromium reads.
+const MCP_BASE_ENV_VARS = [
+    'PATH', 'HOME', 'TZ', 'LANG', 'LC_ALL', 'TMPDIR', 'NODE_ENV',
+    'NODE_EXTRA_CA_CERTS', 'SSL_CERT_FILE', 'SSL_CERT_DIR', 'REQUESTS_CA_BUNDLE',
+    'PYTHONPATH', 'PYTHONHOME', 'PYTHONUNBUFFERED', 'VIRTUAL_ENV',
+    'PLAYWRIGHT_BROWSERS_PATH', 'PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD',
+    'DISPLAY', 'DBUS_SESSION_BUS_ADDRESS',
+    'XDG_RUNTIME_DIR', 'XDG_CONFIG_HOME', 'XDG_CACHE_HOME', 'XDG_DATA_HOME',
+];
+
 // "*" matches any run of characters; everything else is literal.
 function _toolPatternToRegex(pattern) {
     const escaped = String(pattern).replace(/[.+?^${}()|[\]\\]/g, '\\$&').replace(/\*/g, '.*');
@@ -172,63 +186,82 @@ class MCPManager {
         await this._refreshToolCache();
     }
 
+    /**
+     * Environment for one stdio MCP child: a fixed base (see MCP_BASE_ENV_VARS)
+     * plus the variables this server's own config block names, with ${VAR}
+     * placeholders resolved from the agent's environment. The agent's own
+     * credentials stay in the agent process, so a server that was never given
+     * a provider key cannot read one.
+     * MCP_ENV_PASSTHROUGH (names separated by commas or spaces) adds variables
+     * to the base for every server, for cases the list does not cover.
+     */
+    _childEnv(name, serverConfig = {}) {
+        const env = {};
+        const extra = String(process.env.MCP_ENV_PASSTHROUGH || '').split(/[\s,]+/).filter(Boolean);
+        for (const key of [...MCP_BASE_ENV_VARS, ...extra]) {
+            if (typeof process.env[key] === 'string') env[key] = process.env[key];
+        }
+        if (serverConfig.env) {
+            for (const [k, v] of Object.entries(serverConfig.env)) {
+                env[k] = this._resolveVars(v);
+            }
+        }
+
+        // GWS CLI token cache isolation: each GWS account gets its own HOME
+        // directory so the CLI doesn't share cached OAuth tokens between accounts.
+        // Without this, the second GWS server reuses the first's cached tokens
+        // and returns the wrong account's data for ALL tools (not just calendar).
+        if (name.startsWith('gws_')) {
+            const dataDir = path.dirname(this.configPath); // /app/data
+            const gwsHome = path.join(dataDir, `gws-home-${name}`);
+            if (!fs.existsSync(gwsHome)) {
+                fs.mkdirSync(gwsHome, { recursive: true });
+            }
+            env.HOME = gwsHome;
+            console.log(`[MCP] GWS cache isolation: ${name} HOME=${gwsHome}`);
+        }
+
+        // SPECIAL HANDLING: Home Assistant
+        if (name === 'homeassistant') {
+            // Map standard variables for 'ha-mcp' package (and others that use HASS_*)
+            if (env.HA_URL) {
+                env.HASS_URL = env.HA_URL;
+                env.HOMEASSISTANT_URL = env.HA_URL; // Required by ha-mcp
+            }
+            if (env.HA_TOKEN) {
+                env.HASS_TOKEN = env.HA_TOKEN;
+                env.HOMEASSISTANT_TOKEN = env.HA_TOKEN; // Required by ha-mcp
+            }
+
+            // Also derive WebSocket URL for 'mcp-server-home-assistant' legacy support or fallback
+            if (env.HA_URL && !env.HOME_ASSISTANT_WEB_SOCKET_URL) {
+                try {
+                    const haUrl = new URL(env.HA_URL);
+                    const proto = haUrl.protocol === 'https:' ? 'wss:' : 'ws:';
+                    // Construct standard WS path
+                    const wsUrl = `${proto}//${haUrl.host}${haUrl.pathname.replace(/\/$/, '')}/api/websocket`;
+                    env.HOME_ASSISTANT_WEB_SOCKET_URL = wsUrl;
+                    console.log(`[MCP] Derived HOME_ASSISTANT_WEB_SOCKET_URL: ${wsUrl}`);
+                } catch (e) {
+                    console.warn(`[MCP] Failed to derive WS URL from HA_URL: ${env.HA_URL}`, e);
+                }
+            }
+            // Map Token for 'mcp-server-home-assistant'
+            if (env.HA_TOKEN && !env.HOME_ASSISTANT_API_TOKEN) {
+                env.HOME_ASSISTANT_API_TOKEN = env.HA_TOKEN;
+            }
+        }
+
+        return env;
+    }
+
+
     /** Spawns (or connects to) one server and stores its client. Returns true on success. */
     async _connectServer(name, serverConfig) {
         try {
             console.log(`[MCP] Connecting to server: ${name}...`);
 
-            // Resolve Env Vars
-            const env = { ...process.env };
-            if (serverConfig.env) {
-                for (const [k, v] of Object.entries(serverConfig.env)) {
-                    env[k] = this._resolveVars(v);
-                }
-            }
-
-            // GWS CLI token cache isolation: each GWS account gets its own HOME
-            // directory so the CLI doesn't share cached OAuth tokens between accounts.
-            // Without this, the second GWS server reuses the first's cached tokens
-            // and returns the wrong account's data for ALL tools (not just calendar).
-            if (name.startsWith('gws_')) {
-                const dataDir = path.dirname(this.configPath); // /app/data
-                const gwsHome = path.join(dataDir, `gws-home-${name}`);
-                if (!fs.existsSync(gwsHome)) {
-                    fs.mkdirSync(gwsHome, { recursive: true });
-                }
-                env.HOME = gwsHome;
-                console.log(`[MCP] GWS cache isolation: ${name} HOME=${gwsHome}`);
-            }
-
-            // SPECIAL HANDLING: Home Assistant
-            if (name === 'homeassistant') {
-                // Map standard variables for 'ha-mcp' package (and others that use HASS_*)
-                if (env.HA_URL) {
-                    env.HASS_URL = env.HA_URL;
-                    env.HOMEASSISTANT_URL = env.HA_URL; // Required by ha-mcp
-                }
-                if (env.HA_TOKEN) {
-                    env.HASS_TOKEN = env.HA_TOKEN;
-                    env.HOMEASSISTANT_TOKEN = env.HA_TOKEN; // Required by ha-mcp
-                }
-
-                // Also derive WebSocket URL for 'mcp-server-home-assistant' legacy support or fallback
-                if (env.HA_URL && !env.HOME_ASSISTANT_WEB_SOCKET_URL) {
-                    try {
-                        const haUrl = new URL(env.HA_URL);
-                        const proto = haUrl.protocol === 'https:' ? 'wss:' : 'ws:';
-                        // Construct standard WS path
-                        const wsUrl = `${proto}//${haUrl.host}${haUrl.pathname.replace(/\/$/, '')}/api/websocket`;
-                        env.HOME_ASSISTANT_WEB_SOCKET_URL = wsUrl;
-                        console.log(`[MCP] Derived HOME_ASSISTANT_WEB_SOCKET_URL: ${wsUrl}`);
-                    } catch (e) {
-                        console.warn(`[MCP] Failed to derive WS URL from HA_URL: ${env.HA_URL}`, e);
-                    }
-                }
-                // Map Token for 'mcp-server-home-assistant'
-                if (env.HA_TOKEN && !env.HOME_ASSISTANT_API_TOKEN) {
-                    env.HOME_ASSISTANT_API_TOKEN = env.HA_TOKEN;
-                }
-            }
+            const env = this._childEnv(name, serverConfig);
 
             let transport;
             if (serverConfig.transport === 'sse') {
@@ -710,4 +743,4 @@ class MCPManager {
     }
 }
 
-module.exports = { MCPManager, GWS_MCP_SERVICES, OPTIONAL_VARS, BROWSER_LAUNCHER };
+module.exports = { MCPManager, GWS_MCP_SERVICES, OPTIONAL_VARS, BROWSER_LAUNCHER, MCP_BASE_ENV_VARS };
