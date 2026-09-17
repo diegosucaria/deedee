@@ -1,25 +1,39 @@
 const { GitOps } = require('../src/git-ops');
 const child_process = require('child_process');
 
-// Mock git so no real repo is touched. exec answers `git status`; execFile records adds.
+// Mock git so no real repo is touched. The mock answers status, write-tree,
+// rev-parse and commit-tree; everything else prints nothing.
+let mockStatusOutput = '';
 jest.mock('child_process', () => ({
-    exec: jest.fn((cmd, opts, cb) => {
-        if (typeof opts === 'function') cb = opts;
-        cb(null, { stdout: '', stderr: '' });
-        return { unref: () => { } };
-    }),
     execFile: jest.fn((file, args, opts, cb) => {
         if (typeof args === 'function') cb = args;
         if (typeof opts === 'function') cb = opts;
-        cb(null, { stdout: '', stderr: '' });
+        let stdout = '';
+        if (args.includes('status')) stdout = mockStatusOutput;
+        else if (args.includes('write-tree')) stdout = 'tree-new\n';
+        else if (args.includes('rev-parse')) stdout = 'tree-old\n';
+        else if (args.includes('commit-tree')) stdout = 'c0ffee\n';
+        cb(null, { stdout, stderr: '' });
         return { unref: () => { } };
     })
 }));
 
+/** The git arguments after the fixed safety flags and --git-dir/--work-tree. */
+function gitArgs(call) {
+    const args = call[1];
+    const start = args.findIndex(a => a.startsWith('--work-tree=')) + 1;
+    return args.slice(start);
+}
+
 function addCalls() {
     return child_process.execFile.mock.calls
-        .filter(call => call[0] === 'git' && call[1].includes('add') && !call[1].includes('commit'))
-        .map(call => call[1]);
+        .filter(call => call[0] === 'git')
+        .map(gitArgs)
+        .filter(args => args.includes('add'));
+}
+
+function fakeFetch() {
+    return jest.fn(async () => ({ ok: true, status: 201, text: async () => '{"number":7,"html_url":"https://github.example/pull/7"}' }));
 }
 
 describe('GitOps staging rules', () => {
@@ -27,19 +41,25 @@ describe('GitOps staging rules', () => {
 
     beforeEach(() => {
         jest.clearAllMocks();
-        gitOps = new GitOps('/tmp/test', { name: 'Deedee Supervisor', email: 'supervisor@example.test' });
+        mockStatusOutput = '';
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
+        jest.spyOn(console, 'error').mockImplementation(() => {});
+        gitOps = new GitOps('/tmp/test', { name: 'Deedee Supervisor', email: 'supervisor@example.test' },
+            { stateDir: require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'staging-state-')), fetch: fakeFetch() });
+        gitOps.remoteUrl = 'https://github.com/owner/repo.git';
+        gitOps.token = 'tok';
         gitOps._scanForSecrets = jest.fn().mockResolvedValue();
         gitOps.verifier = { verify: jest.fn().mockResolvedValue() };
     });
 
+    afterEach(() => {
+        require('fs').rmSync(gitOps.stateDir, { recursive: true, force: true });
+        jest.restoreAllMocks();
+    });
+
     // `git status --porcelain -z` ends every entry with NUL.
     function mockStatus(entries) {
-        child_process.exec.mockImplementation((cmd, opts, cb) => {
-            if (typeof opts === 'function') cb = opts;
-            const stdout = cmd.includes('git status') ? entries.map(e => `${e}\0`).join('') : '';
-            cb(null, { stdout, stderr: '' });
-            return { unref: () => { } };
-        });
+        mockStatusOutput = entries.map(e => `${e}\0`).join('');
     }
 
     test('never runs git add . ; uses add -u with literal pathspecs for tracked changes', async () => {
@@ -51,8 +71,8 @@ describe('GitOps staging rules', () => {
         const adds = addCalls();
         expect(adds).toEqual([['--literal-pathspecs', 'add', '-u', '--', 'apps/agent/src/agent.js']]);
         expect(adds.some(args => args.includes('.'))).toBe(false);
-        const statusCmd = child_process.exec.mock.calls.find(([cmd]) => cmd.includes('git status'))[0];
-        expect(statusCmd).toBe('git status --porcelain -z --untracked-files=all');
+        const status = child_process.execFile.mock.calls.map(gitArgs).find(args => args.includes('status'));
+        expect(status).toEqual(['status', '--porcelain', '-z', '--untracked-files=all']);
     });
 
     test('_parseStatus keeps a path with a space as is and takes the new name of a rename', () => {
@@ -94,19 +114,58 @@ describe('GitOps staging rules', () => {
         expect(addCalls()).toEqual([]);
     });
 
-    test('commit carries the identity per command, so repo config is irrelevant', async () => {
+    test('the commit is built with commit-tree, carries the identity, and goes to a self branch', async () => {
         mockStatus([' M apps/agent/src/agent.js']);
 
-        await gitOps.commitAndPush('fix: thing');
+        const result = await gitOps.commitAndPush('fix: thing');
 
-        const commit = child_process.execFile.mock.calls
-            .map(call => call[1])
-            .find(args => args.includes('commit'));
-        expect(commit).toEqual([
+        expect(result.success).toBe(true);
+        const calls = child_process.execFile.mock.calls.map(gitArgs);
+        expect(calls.find(args => args.includes('commit-tree'))).toEqual([
             '-c', 'user.name=Deedee Supervisor',
             '-c', 'user.email=supervisor@example.test',
-            'commit', '-m', 'fix: thing'
+            'commit-tree', 'tree-new', '-p', 'HEAD', '-m', 'fix: thing'
         ]);
+        expect(calls.some(args => args.includes('commit'))).toBe(false);
+        const push = calls.find(args => args.includes('push'));
+        expect(push.at(-1)).toMatch(/^c0ffee:refs\/heads\/deedee\/self\/\d{8}-\d{6}$/);
+        expect(calls.some(args => args.some(a => /master/.test(a)) && args.includes('push'))).toBe(false);
+        // Staging uses a throwaway index, never the main one
+        const addOpts = child_process.execFile.mock.calls.find(call => gitArgs(call).includes('add'))[2];
+        expect(addOpts.env.GIT_INDEX_FILE).toMatch(/index\.tmp-/);
+    });
+
+    test('every git command carries the safety flags, its own git dir and no system config', async () => {
+        mockStatus([' M apps/agent/src/agent.js']);
+        await gitOps.commitAndPush('fix: thing');
+
+        for (const [file, args, opts] of child_process.execFile.mock.calls) {
+            if (file !== 'git') continue;
+            expect(args.slice(0, 4)).toEqual(['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false']);
+            expect(args).toContain(`--git-dir=${gitOps.gitDir}`);
+            expect(opts.env.GIT_CONFIG_NOSYSTEM).toBe('1');
+        }
+    });
+
+    test('a tracked or untracked change under .github or .git fails the commit', async () => {
+        mockStatus([' M apps/agent/src/agent.js', ' M .github/workflows/deploy.yml']);
+        let result = await gitOps.commitAndPush('feat: x');
+        expect(result.success).toBe(false);
+        expect(result.error).toMatch(/\.github/);
+
+        mockStatus(['?? apps/agent/.git/hooks/x.sh']);
+        result = await gitOps.commitAndPush('feat: x');
+        expect(result.success).toBe(false);
+        expect(addCalls()).toEqual([]);
+    });
+
+    test('without a GitHub remote and token nothing runs', async () => {
+        gitOps.token = null;
+        mockStatus([' M apps/agent/src/agent.js']);
+        const result = await gitOps.commitAndPush('feat: x');
+        expect(result.success).toBe(false);
+        expect(result.error).toMatch(/GITHUB_PAT/);
+        expect(child_process.execFile).not.toHaveBeenCalled();
     });
 
     test('skips a root-level untracked file and root data/ paths, commit goes on', async () => {
@@ -182,23 +241,19 @@ describe('GitOps staging rules', () => {
         process.env.GIT_WORK_TREE = '/elsewhere';
         process.env.GIT_INDEX_FILE = '/elsewhere/index';
         try {
-            await gitOps.runSafe('git', ['status']);
-            await gitOps.run('git status');
+            await gitOps.git(['status']);
         } finally {
             delete process.env.GIT_DIR;
             delete process.env.GIT_WORK_TREE;
             delete process.env.GIT_INDEX_FILE;
         }
 
-        const safeOpts = child_process.execFile.mock.calls.at(-1)[2];
-        const shellOpts = child_process.exec.mock.calls.at(-1)[1];
-        for (const opts of [safeOpts, shellOpts]) {
-            expect(opts.cwd).toBe('/tmp/test');
-            expect(opts.env.GIT_DIR).toBeUndefined();
-            expect(opts.env.GIT_WORK_TREE).toBeUndefined();
-            expect(opts.env.GIT_INDEX_FILE).toBeUndefined();
-            expect(opts.env.PATH).toBe(process.env.PATH);
-        }
+        const opts = child_process.execFile.mock.calls.at(-1)[2];
+        expect(opts.cwd).toBe('/tmp/test');
+        expect(opts.env.GIT_DIR).toBeUndefined();
+        expect(opts.env.GIT_WORK_TREE).toBeUndefined();
+        expect(opts.env.GIT_INDEX_FILE).toBeUndefined();
+        expect(opts.env.PATH).toBe(process.env.PATH);
     });
 
     test('isAllowedPath rules', () => {
@@ -227,61 +282,5 @@ describe('GitOps staging rules', () => {
         expect(gitOps.isAllowedPath('apps/agent/src/$(id).js')).toBe(false);
         expect(gitOps.isAllowedPath('apps/agent/src/my file.js')).toBe(false);
         expect(gitOps.isAllowedPath('apps/agent/src/`id`.js')).toBe(false);
-    });
-});
-
-describe('GitOps rollback guard', () => {
-    let gitOps;
-    let commands;
-
-    function safeCalls() {
-        return child_process.execFile.mock.calls.map(call => call[1]);
-    }
-
-    beforeEach(() => {
-        jest.clearAllMocks();
-        commands = [];
-        gitOps = new GitOps('/tmp/test', { name: 'Deedee Supervisor', email: 'supervisor@example.test' });
-        child_process.exec.mockImplementation((cmd, opts, cb) => {
-            if (typeof opts === 'function') cb = opts;
-            commands.push(cmd);
-            const stdout = cmd.includes('rev-parse') ? 'aaaa111\n' : '';
-            cb(null, { stdout, stderr: '' });
-            return { unref: () => { } };
-        });
-    });
-
-    test('reverts when HEAD still is the expected self-commit', async () => {
-        const result = await gitOps.rollback({ expectedHead: 'aaaa111' });
-        expect(result.success).toBe(true);
-        expect(result.revertCommit).toBe('aaaa111');
-        expect(safeCalls().some(args => args.includes('revert'))).toBe(true);
-        expect(safeCalls().some(args => args.includes('push'))).toBe(true);
-    });
-
-    test('revert carries the identity per command and never touches a shell', async () => {
-        await gitOps.rollback({ expectedHead: 'aaaa111' });
-
-        const revert = safeCalls().find(args => args.includes('revert'));
-        expect(revert).toEqual([
-            '-c', 'user.name=Deedee Supervisor',
-            '-c', 'user.email=supervisor@example.test',
-            'revert', '--no-edit', 'HEAD'
-        ]);
-        expect(commands.some(c => c.includes('revert'))).toBe(false);
-    });
-
-    test('refuses when HEAD moved away from the self-commit', async () => {
-        const result = await gitOps.rollback({ expectedHead: 'bbbb222' });
-        expect(result.success).toBe(false);
-        expect(result.error).toMatch(/Rollback aborted/);
-        expect(safeCalls().some(args => args.includes('revert'))).toBe(false);
-        expect(safeCalls().some(args => args.includes('push'))).toBe(false);
-    });
-
-    test('manual rollback without expectedHead still reverts', async () => {
-        const result = await gitOps.rollback();
-        expect(result.success).toBe(true);
-        expect(safeCalls().some(args => args.includes('revert'))).toBe(true);
     });
 });

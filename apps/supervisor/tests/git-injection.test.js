@@ -4,31 +4,36 @@ const child_process = require('child_process');
 
 // Mock child_process at top level to ensure promisify picks it up
 jest.mock('child_process', () => ({
-    exec: jest.fn((cmd, opts, cb) => {
-        if (typeof opts === 'function') cb = opts;
-        cb(null, { stdout: '', stderr: '' });
-        return { unref: () => { } };
-    }),
     execFile: jest.fn((file, args, opts, cb) => {
         if (typeof args === 'function') cb = args;
         if (typeof opts === 'function') cb = opts;
-        cb(null, { stdout: '', stderr: '' });
+        let stdout = '';
+        if (args.includes('status')) stdout = ' M apps/agent/src/a.js\0';
+        else if (args.includes('write-tree')) stdout = 'tree-new';
+        else if (args.includes('rev-parse')) stdout = 'tree-old';
+        else if (args.includes('commit-tree')) stdout = 'c0ffee';
+        cb(null, { stdout, stderr: '' });
         return { unref: () => { } };
     })
 }));
 
 describe('GitOps Shell Injection Prevention', () => {
     let gitOps;
-    let mockExec;
     let mockExecFile;
 
     beforeEach(() => {
         // Clear history but keep implementation
         jest.clearAllMocks();
-        mockExec = child_process.exec;
         mockExecFile = child_process.execFile;
 
-        gitOps = new GitOps('/tmp/test');
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
+        jest.spyOn(console, 'error').mockImplementation(() => {});
+        gitOps = new GitOps('/tmp/test', null, {
+            stateDir: require('fs').mkdtempSync(require('path').join(require('os').tmpdir(), 'inj-state-')),
+            fetch: jest.fn(async () => ({ ok: true, status: 201, text: async () => '{"number":1,"html_url":"u"}' }))
+        });
+        gitOps.remoteUrl = 'https://github.com/owner/repo.git';
+        gitOps.token = 'tok';
         // Mock internal methods
         gitOps._scanForSecrets = jest.fn().mockResolvedValue();
         gitOps.verifier = { verify: jest.fn().mockResolvedValue() };
@@ -39,24 +44,10 @@ describe('GitOps Shell Injection Prevention', () => {
 
         await gitOps.commitAndPush(maliciousMessage);
 
-        // Verify execFile was called for commit
-        // Expected args: git, ['commit', '-m', maliciousMessage]
-        // Verify execFile was called for commit
-        // Filter calls to find the one that is NOT git status (if any)
-        // Or just check that ONE of the calls matches our expectation
-        expect(mockExecFile).toHaveBeenCalledWith(
-            'git',
-            expect.arrayContaining(['commit', '-m', maliciousMessage]),
-            expect.any(Object),
-            expect.any(Function)
-        );
-
-        // Verify the malicious message was passed as a SINGLE argument, not interpreted
-        const commitCall = mockExecFile.mock.calls.find(call => call[1].includes('commit'));
+        const commitCall = mockExecFile.mock.calls.find(call => call[1].includes('commit-tree'));
+        expect(commitCall[0]).toBe('git');
         const args = commitCall[1];
-        const messageArg = args[args.indexOf('-m') + 1];
-
-        expect(messageArg).toBe(maliciousMessage);
+        expect(args[args.indexOf('-m') + 1]).toBe(maliciousMessage);
     });
 
     test('a malicious file name is refused before any git or node command', async () => {
