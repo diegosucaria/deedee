@@ -150,12 +150,13 @@ class MemoryPruningService {
         // FLASH: the verdict is bounded in code — the cap, the protected-fact
         // filter and the backup file all cover a wrong answer.
         const modelName = this.agent.configService.getModel('FLASH');
+        const thinking = this.agent.configService.getThinkingConfig('FLASH', 'pruning', { model: modelName });
 
         try {
             const response = await this.agent.client.models.generateContent({
                 model: modelName,
                 contents: [{ parts: [{ text: prompt }] }],
-                config: { responseMimeType: 'application/json' }
+                config: { responseMimeType: 'application/json', ...(thinking ? { thinkingConfig: thinking } : {}) }
             });
 
             this._config.logUsageFromResponse(this.agent.db, modelName, response, null, 'memory_pruning');

@@ -37,7 +37,7 @@ describe('MemoryPruningService LLM guards', () => {
                 deleteFact: jest.fn(key => { deleted.push(key); }),
                 logTokenUsage: jest.fn()
             },
-            configService: { getModel: jest.fn().mockReturnValue('gemini-3.6-flash') },
+            configService: { getModel: jest.fn().mockReturnValue('gemini-3.6-flash'), getThinkingConfig: () => null },
             client: {
                 models: {
                     generateContent: jest.fn().mockImplementation(async () => ({

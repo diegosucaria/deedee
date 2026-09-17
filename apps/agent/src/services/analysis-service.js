@@ -48,6 +48,7 @@ class AnalysisService {
             // Use Worker Flash Model (Cheaper/Faster)
             // Hardcoded model dependency extracted from env or default
             const model = this.config.getModel('FLASH');
+            const thinking = this.config.getThinkingConfig('FLASH', 'analysis', { model });
 
             // We need a fresh client or use the agent's client?
             // Agent's client might be busy or we want a one-off request.
@@ -64,7 +65,8 @@ class AnalysisService {
                 }],
                 config: {
                     responseMimeType: 'application/json',
-                    responseSchema: schema
+                    responseSchema: schema,
+                    ...(thinking ? { thinkingConfig: thinking } : {})
                 }
             });
 

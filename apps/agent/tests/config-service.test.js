@@ -180,3 +180,157 @@ describe('ConfigService pricing', () => {
         expect(c.logUsageFromResponse({ logTokenUsage: jest.fn() }, 'gemini-3.6-flash', {})).toEqual({ cost: 0, tokens: 0 });
     });
 });
+
+describe('ConfigService thinking levels', () => {
+    const THINKING_ENV = Object.keys(process.env).filter(k => k.startsWith('THINKING_'));
+    let saved;
+    beforeEach(() => {
+        saved = {};
+        for (const k of THINKING_ENV) { saved[k] = process.env[k]; delete process.env[k]; }
+    });
+    afterEach(() => {
+        for (const k of Object.keys(process.env)) if (k.startsWith('THINKING_')) delete process.env[k];
+        Object.assign(process.env, saved);
+    });
+
+    test.each([
+        ['ROUTER', 'router', 'MINIMAL'],
+        ['LITE', 'cron_helper', 'MINIMAL'],
+        ['LITE', 'eager_extract', 'MINIMAL'],
+        ['SEARCH', 'search', 'LOW'],
+        ['FLASH', 'chat', 'LOW'],
+        ['FLASH', 'tool_loop', 'LOW'],
+        ['FLASH', 'job', 'LOW'],
+        ['FLASH', 'subagent', 'LOW'],
+        ['FLASH', 'watcher', 'LOW'],
+        ['FLASH', 'summarization', 'MINIMAL'],
+        ['FLASH', 'title', 'MINIMAL'],
+        ['FLASH', 'scoper', 'MINIMAL'],
+        ['FLASH', 'people_enrich', 'MINIMAL'],
+        ['FLASH', 'cron_helper', 'MINIMAL'],
+        ['FLASH', 'analysis', 'MINIMAL'],
+        ['FLASH', 'transcribe', 'MINIMAL'],
+        ['FLASH', 'partner_greeting', 'MINIMAL'],
+        ['FLASH', 'dj', 'MINIMAL'],
+        ['FLASH', 'wardrobe', 'LOW'],
+        ['PRO', 'chat', 'MEDIUM'],
+        ['PRO', 'tool_loop', 'LOW'],
+        ['PRO', 'dream', 'LOW'],
+        ['PRO', 'pruning', 'LOW'],
+        ['PRO', 'job', 'MEDIUM'],
+        ['PRO', 'subagent', 'MEDIUM'],
+        ['PRO', 'consolidation', 'MEDIUM'],
+        ['PRO', 'wardrobe', 'MEDIUM'],
+        ['PRO', 'coding', 'HIGH'],
+        ['PRO', 'dj', 'LOW'],
+    ])('%s %s -> %s', (role, cls, level) => {
+        const { ConfigService } = loadWithEnv();
+        expect(new ConfigService().getThinking(role, cls).thinkingLevel).toBe(level);
+    });
+
+    test('class names are case-insensitive and default to chat', () => {
+        const { ConfigService } = loadWithEnv();
+        const c = new ConfigService();
+        expect(c.getThinking('PRO', 'JOB').thinkingLevel).toBe('MEDIUM');
+        expect(c.getThinking('PRO').thinkingLevel).toBe('MEDIUM');
+        expect(c.getThinking('pro', 'chat').thinkingLevel).toBe('MEDIUM');
+        expect(c.getThinking('PRO', 'dream').thinkingLevel).toBe('LOW');
+    });
+
+    test('THINKING_<ROLE> sets every class of the role, THINKING_<ROLE>_<CLASS> one class', () => {
+        const { ConfigService } = loadWithEnv();
+        Object.assign(process.env, { THINKING_PRO: 'HIGH', THINKING_PRO_CHAT: 'medium', THINKING_FLASH_TITLE: 'LOW' });
+        const c = new ConfigService();
+        expect(c.getThinking('PRO', 'chat').thinkingLevel).toBe('MEDIUM');
+        expect(c.getThinking('PRO', 'job').thinkingLevel).toBe('HIGH');
+        expect(c.getThinking('PRO', 'tool_loop').thinkingLevel).toBe('HIGH');
+        // Every listed class, not only the ones missing from the table.
+        expect(c.getThinking('PRO', 'pruning').thinkingLevel).toBe('HIGH');
+        expect(c.getThinking('FLASH', 'title').thinkingLevel).toBe('LOW');
+        expect(c.getThinking('FLASH', 'chat').thinkingLevel).toBe('LOW');
+    });
+
+    test('THINKING_PRO_TOOL_LOOP raises the loop without touching chat', () => {
+        const { ConfigService } = loadWithEnv();
+        process.env.THINKING_PRO_TOOL_LOOP = 'MEDIUM';
+        const c = new ConfigService();
+        expect(c.getThinking('PRO', 'chat').thinkingLevel).toBe('MEDIUM');
+        expect(c.getThinking('PRO', 'tool_loop').thinkingLevel).toBe('MEDIUM');
+    });
+
+    test('a bad env value is ignored and warned once', () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => { });
+        const { ConfigService } = loadWithEnv();
+        process.env.THINKING_ROUTER = 'TURBO';
+        const c = new ConfigService();
+        expect(c.getThinking('ROUTER', 'router').thinkingLevel).toBe('MINIMAL');
+        expect(c.getThinking('ROUTER', 'router').thinkingLevel).toBe('MINIMAL');
+        expect(warn.mock.calls.filter(([m]) => String(m).includes('THINKING_ROUTER')).length).toBe(1);
+        warn.mockRestore();
+    });
+
+    test('guard: Pro never gets MINIMAL, even by env', () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => { });
+        const { ConfigService } = loadWithEnv();
+        process.env.THINKING_PRO = 'MINIMAL';
+        const c = new ConfigService();
+        expect(c.getThinking('PRO', 'chat').thinkingLevel).toBe('LOW');
+        expect(c.getThinking('PRO', 'title').thinkingLevel).toBe('LOW');
+        expect(c.getThinking('PRO', 'chat', { model: 'gemini-3-pro-preview' }).thinkingLevel).toBe('LOW');
+        expect(c.getThinking('PRO', 'chat', { model: 'gemini-3.9-pro-something' }).thinkingLevel).toBe('LOW');
+        warn.mockRestore();
+    });
+
+    test('guard: gemini-3.8-flash and 3.7-flash raise MINIMAL to LOW and log once per model', () => {
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => { });
+        const { ConfigService } = loadWithEnv({ WORKER_FLASH: 'gemini-3.8-flash' });
+        const c = new ConfigService();
+        expect(c.getThinking('FLASH', 'title').thinkingLevel).toBe('LOW');
+        expect(c.getThinking('FLASH', 'summarization').thinkingLevel).toBe('LOW');
+        expect(c.getThinking('FLASH', 'chat').thinkingLevel).toBe('LOW');
+        expect(c.getThinking('FLASH', 'title', { model: 'gemini-3.7-flash' }).thinkingLevel).toBe('LOW');
+        const raised = warn.mock.calls.filter(([m]) => String(m).includes('does not accept thinkingLevel MINIMAL'));
+        expect(raised.length).toBe(2); // once for 3.8-flash, once for 3.7-flash
+        warn.mockRestore();
+    });
+
+    test('guard: models that accept every level keep MINIMAL', () => {
+        const { ConfigService } = loadWithEnv();
+        const c = new ConfigService();
+        for (const model of ['gemini-3.6-flash', 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3-flash-preview']) {
+            expect(c.getThinking('FLASH', 'title', { model }).thinkingLevel).toBe('MINIMAL');
+        }
+        expect(c.getModelThinkingLevels('gemini-3.1-pro-preview')).toEqual(['LOW', 'MEDIUM', 'HIGH']);
+        expect(c.getModelThinkingLevels('gemini-3.6-flash')).toEqual(['MINIMAL', 'LOW', 'MEDIUM', 'HIGH']);
+    });
+
+    test('non-3.x ids never get a thinkingLevel', () => {
+        const { ConfigService } = loadWithEnv({ WORKER_PRO: 'gemini-2.5-pro' });
+        process.env.THINKING_PRO = 'HIGH';
+        const c = new ConfigService();
+        expect(c.getThinking('PRO', 'chat').thinkingLevel).toBeNull();
+        expect(c.getThinking('FLASH', 'chat', { model: 'gemini-2.5-flash' }).thinkingLevel).toBeNull();
+        expect(c.getThinkingConfig('PRO', 'chat', { source: 'whatsapp' })).toBeNull();
+        expect(c.getThinkingConfig('PRO', 'chat', { source: 'web' })).toEqual({ includeThoughts: true });
+        expect(c.getModelThinkingLevels('gemini-2.5-flash')).toBeNull();
+    });
+
+    test('includeThoughts only for web and live', () => {
+        const { ConfigService } = loadWithEnv();
+        const c = new ConfigService();
+        expect(c.getThinking('PRO', 'chat', { source: 'web' }).includeThoughts).toBe(true);
+        expect(c.getThinking('PRO', 'chat', { source: 'live' }).includeThoughts).toBe(true);
+        for (const source of ['whatsapp', 'whatsapp_group', 'telegram', 'slack', 'ios', 'scheduler', 'subagent', 'system', 'http', undefined]) {
+            expect(c.getThinking('PRO', 'chat', { source }).includeThoughts).toBe(false);
+        }
+    });
+
+    test('getThinkingConfig never carries thinkingBudget and omits a false includeThoughts', () => {
+        const { ConfigService } = loadWithEnv();
+        const c = new ConfigService();
+        expect(c.getThinkingConfig('PRO', 'chat', { source: 'web' })).toEqual({ thinkingLevel: 'MEDIUM', includeThoughts: true });
+        expect(c.getThinkingConfig('PRO', 'chat', { source: 'whatsapp' })).toEqual({ thinkingLevel: 'MEDIUM' });
+        expect(c.getThinkingConfig('FLASH', 'title')).toEqual({ thinkingLevel: 'MINIMAL' });
+        expect(Object.keys(c.getThinkingConfig('PRO', 'coding'))).not.toContain('thinkingBudget');
+    });
+});

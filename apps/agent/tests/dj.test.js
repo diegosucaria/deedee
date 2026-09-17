@@ -452,7 +452,7 @@ describe('Hidden Gems', () => {
             expect(result).toBe('A seminal deep house release from 1997.');
             expect(mockAgent.client.models.generateContent).toHaveBeenCalledWith(
                 expect.objectContaining({
-                    config: { tools: [{ googleSearch: {} }] }
+                    config: expect.objectContaining({ tools: [{ googleSearch: {} }] })
                 })
             );
         });

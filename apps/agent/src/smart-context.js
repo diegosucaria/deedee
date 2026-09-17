@@ -327,9 +327,11 @@ class SmartContextManager {
             `;
 
             // Use @google/genai SDK pattern (models.generateContent)
+            const thinking = this.config.getThinkingConfig('FLASH', 'summarization', { model: this.SUMMARY_MODEL });
             const result = await this.client.models.generateContent({
                 model: this.SUMMARY_MODEL,
-                contents: [{ parts: [{ text: prompt }] }]
+                contents: [{ parts: [{ text: prompt }] }],
+                ...(thinking ? { config: { thinkingConfig: thinking } } : {})
             });
             let summaryText = '';
             try {

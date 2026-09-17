@@ -27,6 +27,13 @@ describe('filterToolsByGroups', () => {
         expect(r.externalTools.map(t => t.name)).toEqual(['ha_call_service', 'future_tool']);
     });
 
+    test('the code group loads nothing extra yet: filesystem tools are core', () => {
+        const fs = [{ name: 'runShellCommand', category: 'filesystem' }, { name: 'readFile', category: 'filesystem' }];
+        expect(filterToolsByGroups(fs, [], []).internalTools.map(t => t.name)).toEqual(['runShellCommand', 'readFile']);
+        expect(filterToolsByGroups(fs, [], ['code']).internalTools.map(t => t.name)).toEqual(['runShellCommand', 'readFile']);
+        expect(TOOL_GROUPS.code).toContain('git');
+    });
+
     test('every gws_* server maps to workspace', () => {
         expect(mcpServerGroup('gws_personal')).toBe('workspace');
         expect(mcpServerGroup('gws_anything')).toBe('workspace');
@@ -63,5 +70,25 @@ describe('groupsNamedIn', () => {
         expect(TOOL_GROUPS.browser).toContain('Playwright');
         expect(groupsNamedIn('hola, como estas?')).toEqual([]);
         expect(groupsNamedIn(undefined)).toEqual([]);
+    });
+
+    test('product names still fire with a suffix on them', () => {
+        expect(groupsNamedIn('mira mi google calendario')).toEqual(['workspace']);
+        expect(groupsNamedIn('mandame los gmails')).toEqual(['workspace']);
+        expect(groupsNamedIn('slackeame el resumen')).toEqual(['slack']);
+        expect(groupsNamedIn('proba en varios browsers')).toEqual(['browser']);
+        expect(groupsNamedIn('this is a complex problem')).toEqual([]);
+    });
+
+    test('shell, git and repo name the code group, as whole words only', () => {
+        expect(groupsNamedIn('fix the failing test in the repo and commit')).toEqual(['code']);
+        expect(groupsNamedIn('run git status')).toEqual(['code']);
+        expect(groupsNamedIn('open a shell and check disk space')).toEqual(['code']);
+        expect(groupsNamedIn('Refactor the codebase, then push.')).toEqual(['code']);
+        expect(groupsNamedIn('send me the digital report')).toEqual([]);
+        expect(groupsNamedIn('is the seashell shop open?')).toEqual([]);
+        expect(groupsNamedIn('check the github actions run')).toEqual([]);
+        const m = new ToolGroupMemory();
+        expect(m.merge('c3', ['code'])).toEqual(['code']);
     });
 });

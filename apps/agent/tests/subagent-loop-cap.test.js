@@ -88,7 +88,11 @@ describe('sub-agent run limits in processMessage', () => {
 
     test('sub-agent turns do not ask for thought parts; web turns do', async () => {
         await agent.processMessage(msg('subagent', { isSubAgent: true, forceModel: 'FLASH', maxToolLoops: 1 }), jest.fn());
-        expect(create.mock.calls[0][0].config.thinkingConfig).toEqual({ includeThoughts: false });
+        // The thinking work resolves the level per call class and only sets
+        // includeThoughts when the source renders thoughts (web, live). A
+        // sub-agent runs as source 'subagent', so the key is absent, which the
+        // API reads as false: no thought parts either way.
+        expect(create.mock.calls[0][0].config.thinkingConfig).toEqual({ thinkingLevel: 'LOW' });
 
         create.mockClear();
         agent._executeTool = jest.fn().mockResolvedValue({ ok: true });
@@ -99,6 +103,6 @@ describe('sub-agent run limits in processMessage', () => {
         } finally {
             if (saved === undefined) delete process.env.MAX_TOOL_LOOPS; else process.env.MAX_TOOL_LOOPS = saved;
         }
-        expect(create.mock.calls[0][0].config.thinkingConfig).toEqual({ includeThoughts: true });
+        expect(create.mock.calls[0][0].config.thinkingConfig).toEqual(expect.objectContaining({ includeThoughts: true }));
     });
 });

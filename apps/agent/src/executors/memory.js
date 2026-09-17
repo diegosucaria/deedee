@@ -174,13 +174,14 @@ class MemoryExecutor extends BaseExecutor {
                 try {
                     // @google/genai reads `config`; the old `generationConfig` key was ignored,
                     // so JSON mode never reached the API.
+                    const _cfg = new ConfigService();
+                    const thinking = _cfg.getThinkingConfig('PRO', 'consolidation', { model: modelName });
                     const response = await client.models.generateContent({
                         model: modelName,
                         contents: [{ parts: [{ text: summaryReq }] }],
-                        config: { responseMimeType: 'application/json' }
+                        config: { responseMimeType: 'application/json', ...(thinking ? { thinkingConfig: thinking } : {}) }
                     });
 
-                    const _cfg = new ConfigService();
                     _cfg.logUsageFromResponse(db, modelName, response, null, 'consolidation');
 
                     const data = parseJsonReply(responseText(response));

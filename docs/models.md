@@ -129,7 +129,7 @@ Per role it runs:
 | `get` | all | `models.get` returns the id |
 | `text` | ROUTER LITE FLASH SEARCH PRO | a 20-token reply has text (lowest thinking level the model accepts) |
 | `tools` | same | the model calls `getTime`, then answers a `functionResponse` with text |
-| `thinking` | same | text at the role level: ROUTER/LITE MINIMAL, FLASH/SEARCH LOW, PRO HIGH; prints `thoughtsTokenCount` |
+| `thinking` | same | text at the smoke's role level (ROUTER/LITE MINIMAL, FLASH/SEARCH LOW, PRO HIGH); prints `thoughtsTokenCount`. Runtime levels: "Thinking levels" below |
 | `tts` | TTS | an `inlineData` part with an `audio/*` mime type |
 | `image` | IMAGE | an `inlineData` part with an `image/*` mime type (needs `--with-image`) |
 | `embed` | EMBEDDING | `values.length === EMBEDDING_DIMENSIONS` |
@@ -212,10 +212,70 @@ in `docs/interfaces.md`, "Gemini Live".
 
 ## Thinking levels
 
-Only the eager media extraction sends `thinkingLevel` today (MINIMAL on LITE).
-Per-role levels in `ConfigService` are a later change; the smoke uses the
-planned mapping above. `gemini-3.7-flash`, `gemini-3.8-flash` and the Pro
-models reject MINIMAL.
+Every text call asks `ConfigService.getThinking(role, callClass, { source, model })`
+for its `thinkingLevel` and `includeThoughts`. Before this, the main chat call
+sent no level, so Pro thought at HIGH on every turn and paid for it as output.
+Image, TTS, embedding and Live calls do not take part.
+
+Defaults (`THINKING_DEFAULTS` in `config-service.js`):
+
+| Role | Class | Level |
+|---|---|---|
+| ROUTER, LITE | all (`router`, `scoper`, `cron_helper`, `eager_extract`) | MINIMAL |
+| SEARCH | `search` (the googleSearch polyfill) | LOW |
+| FLASH | `chat`, `tool_loop`, `job`, `subagent`, `watcher`, `coding`, `wardrobe`, `impersonation` | LOW |
+| FLASH | `summarization`, `title`, `scoper`, `people_enrich`, `cron_helper`, `analysis`, `transcribe`, `partner_greeting`, `dj`, `impersonation_learn`, any other | MINIMAL |
+| PRO | `tool_loop`, `dream`, `pruning`, `dj`, any other | LOW |
+| PRO | `chat`, `job`, `subagent`, `consolidation`, `wardrobe`, `impersonation` | MEDIUM |
+| PRO | `coding` | HIGH |
+
+PRO `chat` sits at MEDIUM because the router sends only deep work to Pro:
+Terraform, GCP, Kubernetes, planning, analysis, history search. LOW there made
+those turns thinner than they were before this change.
+
+Call classes for the main agent turn: `coding` on a code signal, else
+`subagent` when `metadata.isSubAgent`, `job` when `source` is `scheduler`,
+`watcher` for watcher alerts, else `chat`. The code signal is the `code` tool
+group on the session, the router asking for `code`, or a message that says
+`shell`, `git`, `repo`, `repository` or `codebase` as a word
+(`GROUP_NAME_WORDS` in `services/tool-groups.js`). Sub-agents and jobs never
+get scoped groups, so for them the signal is the router's pick and their own
+prompt; a sub-agent sent to change the repo thinks at `coding`, not `subagent`.
+Jobs and watcher runs keep their own class either way. The group keeps its name
+for 30 minutes per chat, like every other group. Today it changes the thinking
+class only: the shell and file tools stay core until tool deferral moves them
+behind `code`. Tool-loop turns of a `chat` session use `tool_loop`, one step
+down at LOW; the other classes keep their level through the loop.
+When the loop level differs from the session level the agent re-sends the full
+session config on each loop call (the SDK replaces, not merges, a per-call
+config).
+
+Env overrides, read on every call, so a Balena variable is the rollback:
+
+- `THINKING_<ROLE>` sets every class of that role, not only the ones missing
+  from the table: `THINKING_PRO=HIGH` raises chat, jobs, dream and pruning at
+  once.
+- `THINKING_<ROLE>_<CLASS>` sets one class (`THINKING_PRO_TOOL_LOOP=MEDIUM`,
+  `THINKING_FLASH_TITLE=LOW`). The class part is the class name in upper case.
+- Values: `MINIMAL`, `LOW`, `MEDIUM`, `HIGH`. Anything else is ignored with one
+  warning.
+
+Guard (`MODEL_THINKING_LEVELS`): `gemini-3.1-pro*`, `gemini-3-pro*`,
+`gemini-3.8-flash`, `gemini-3.7-flash` accept LOW/MEDIUM/HIGH;
+`gemini-3.6-flash`, `gemini-3.5-flash-lite`, `gemini-3.1-flash-lite`,
+`gemini-3-flash-preview` accept all four. A level the model lacks is raised to
+the lowest it accepts and logged once per model and level. Ids outside the
+3.x family get no `thinkingLevel` at all (they take `thinkingBudget`, and the
+two keys together are a 400). Nothing here ever sets `thinkingBudget`.
+
+`includeThoughts` is true only when `source` is `web` or `live`: only the web
+UI renders `agent:thought`. WhatsApp, Telegram, Slack, iOS, scheduler and
+sub-agent turns get none, which also keeps thought text out of stored parts.
+Billing follows the full thought tokens either way; the level is the cost lever.
+
+Measure with `AVG(thoughts_tokens)` per `tag` in `token_usage`: Pro `chat`
+should sit well under 1k per turn, `router`, `title` and `summarization` near
+zero. If Pro tool planning gets worse, set `THINKING_PRO_TOOL_LOOP=MEDIUM`.
 
 ## Watch after a change
 

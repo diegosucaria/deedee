@@ -331,7 +331,7 @@ describe('SmartContextManager summarization', () => {
             }
         };
         manager = new SmartContextManager(db, client);
-        manager.config = { logUsageFromResponse: jest.fn(), getModel: () => 'flash' };
+        manager.config = { logUsageFromResponse: jest.fn(), getModel: () => 'flash', getThinkingConfig: () => null };
         manager.TOKEN_THRESHOLD = 1; // Any history is "too big".
     });
 

@@ -747,7 +747,12 @@ class Agent {
     return { role: 'user', parts: [{ text: turnContext }, ...parts] };
   }
 
-  async _generateStream(session, payload, chatId, source, turnId) {
+  /**
+   * @param {object} [config] - Optional full request config. The SDK replaces
+   *   the session config with it, so callers pass the whole thing.
+   */
+  async _generateStream(session, payload, chatId, source, turnId, config) {
+    const sendParams = (message) => (config ? { message, config } : { message });
     // Retry helper for transient errors (up to 8 retries with longer backoff)
     const MAX_RETRIES = 8;
     const REQUEST_TIMEOUT_MS = 120000; // 120 seconds per attempt
@@ -828,7 +833,7 @@ class Agent {
         console.log(`[Agent] Streaming request content type: ${typeof payload}`);
 
         // SDK Expects { message: ... } for sendMessageStream
-        const result = await _retryCall(() => session.sendMessageStream({ message: normalizedMessage }));
+        const result = await _retryCall(() => session.sendMessageStream(sendParams(normalizedMessage)));
 
         // Handle both iterable result (new SDK) and result.stream (legacy/mock)
         const stream = result.stream || result;
@@ -937,7 +942,7 @@ class Agent {
         // Standard (WhatsApp/Telegram) - No stream
         // FIX: Use normalizedMessage here too!
         // SDK Expects { message: ... } for sendMessage in new SDK versions too, or strict types
-        const result = await _retryCall(() => session.sendMessage({ message: normalizedMessage }));
+        const result = await _retryCall(() => session.sendMessage(sendParams(normalizedMessage)));
         let response = result.response;
         if (!response && result.candidates) response = result;
         return response;
@@ -1326,12 +1331,11 @@ class Agent {
                   const prompt = isAudio ? "Transcribe this audio verbatim in the original language." : "Describe this image in detail concisely.";
 
                   console.log(`${logPrefix} Eagerly extracting semantics for passive 1:1 ${isAudio ? 'audio' : 'image'} (model: ${liteModel})...`);
+                  const eagerThinking = this.configService.getThinkingConfig('LITE', 'eager_extract', { model: liteModel });
                   const result = await genAI.models.generateContent({
                     model: liteModel,
                     contents: [{ role: 'user', parts: [part, { text: prompt }] }],
-                    config: {
-                      thinkingConfig: { thinkingLevel: 'MINIMAL' }
-                    }
+                    config: eagerThinking ? { thinkingConfig: eagerThinking } : {}
                   });
 
                   this.configService.logUsageFromResponse(this.db, liteModel, result, chatId, isAudio ? 'eager_transcribe' : 'eager_describe');
@@ -1754,11 +1758,15 @@ class Agent {
       // stays loaded.
       // Watcher runs are skipped too: their instructions are free-form and
       // often need tools (calendar, messaging) the router can't infer.
+      // Text of this turn, for the named-integration backstop and the coding class.
+      const messageText = message.content || (message.parts || []).map(p => p.text || '').join(' ');
+      let loadedGroups = [];
       if (!message.metadata?.isSubAgent && message.source !== 'scheduler' && !isWatcherRun && Array.isArray(decision?.toolGroups)) {
         this._toolGroupMemory = this._toolGroupMemory || new ToolGroupMemory();
         // Integrations the user names are always loaded, on top of the router's pick.
-        const named = groupsNamedIn(message.content || (message.parts || []).map(p => p.text || '').join(' '));
+        const named = groupsNamedIn(messageText);
         const groups = this._toolGroupMemory.merge(chatId, [...decision.toolGroups, ...named]);
+        loadedGroups = groups;
         const before = internalTools.length + externalTools.length;
         ({ internalTools, externalTools } = filterToolsByGroups(internalTools, externalTools, groups));
         console.log(`${logPrefix} Tool groups [${groups.join(', ') || 'core only'}]: ${internalTools.length + externalTools.length} of ${before} tools.`);
@@ -1925,6 +1933,37 @@ class Agent {
 
       // 2. Send Message to Gemini (with Retry Logic)
       const MAX_EMPTY_RETRIES = 2;
+      // Thinking level by call class (docs/models.md, "Thinking levels"). The
+      // code signal is the loaded `code` group, the router's own pick, or a
+      // message that names shell, git or the repo (groupsNamedIn). Sub-agents
+      // skip group scoping, so they read the signal from their own prompt: one
+      // doing repo work thinks as `coding`, not `subagent`.
+      // The tool loop re-sends the session config with its own level only when
+      // it differs, so an unchanged loop keeps the request byte-identical.
+      const selectedRole = decision.model === 'FLASH' ? 'FLASH' : decision.model === 'LITE' ? 'LITE' : 'PRO';
+      const isCodingTurn = loadedGroups.includes('code')
+        || (Array.isArray(decision?.toolGroups) && decision.toolGroups.includes('code'))
+        || groupsNamedIn(messageText).includes('code');
+      const thinkingClass = isSubAgent ? (isCodingTurn ? 'coding' : 'subagent')
+        : message.source === 'scheduler' ? 'job'
+          : isWatcherRun ? 'watcher'
+            : isCodingTurn ? 'coding'
+              : 'chat';
+      const thinkingOpts = { source: message.source, model: selectedModel };
+      const sessionThinking = this.configService.getThinkingConfig(selectedRole, thinkingClass, thinkingOpts);
+      const loopThinking = thinkingClass === 'chat'
+        ? this.configService.getThinkingConfig(selectedRole, 'tool_loop', thinkingOpts)
+        : sessionThinking;
+      const sessionConfig = {
+        tools: geminiTools,
+        systemInstruction: systemInstruction,
+        ...(sessionThinking ? { thinkingConfig: sessionThinking } : {}),
+      };
+      const loopConfig = JSON.stringify(loopThinking) === JSON.stringify(sessionThinking)
+        ? undefined
+        : { ...sessionConfig, ...(loopThinking ? { thinkingConfig: loopThinking } : { thinkingConfig: undefined }) };
+      console.log(`${logPrefix} Thinking: ${sessionThinking?.thinkingLevel || 'model default'} (${thinkingClass}, thoughts ${sessionThinking?.includeThoughts ? 'on' : 'off'})`);
+
       let retryCount = 0;
       let response;
       let session;
@@ -1941,12 +1980,7 @@ class Agent {
 
         session = this.client.chats.create({
           model: selectedModel,
-          config: {
-            tools: geminiTools,
-            systemInstruction: systemInstruction,
-            // Sub-agents run unattended: nobody reads their thought stream.
-            thinkingConfig: { includeThoughts: !isSubAgent },
-          },
+          config: sessionConfig,
           history: history
         });
 
@@ -2462,7 +2496,7 @@ class Agent {
         try {
           // ENABLE STREAMING for Tool Responses
           // This allows "Thinking..." or large function arguments (JSON) to be visible to the user
-          response = await this._generateStream(session, functionResponseParts, chatId, message.source, turnId);
+          response = await this._generateStream(session, functionResponseParts, chatId, message.source, turnId, loopConfig);
 
         } catch (e) {
           if (hasInlineParts && isPartsRejection(e)) {
@@ -2471,11 +2505,11 @@ class Agent {
             // give up on the images.
             console.warn(`${logPrefix} Model rejected functionResponse.parts (${e.message}). Falling back.`);
             const textOnly = stripInlineParts(functionResponseParts);
-            response = await this._generateStream(session, textOnly, chatId, message.source, turnId);
+            response = await this._generateStream(session, textOnly, chatId, message.source, turnId, loopConfig);
             const imageContent = imagesAsUserContent(functionResponseParts);
             if (imageContent && !getFunctionCalls(response).length) {
               try {
-                response = await this._generateStream(session, imageContent, chatId, message.source, turnId);
+                response = await this._generateStream(session, imageContent, chatId, message.source, turnId, loopConfig);
               } catch (e2) {
                 console.warn(`${logPrefix} Image content also rejected (${e2.message}); continuing without the screenshot.`);
               }
@@ -2766,11 +2800,14 @@ class Agent {
       try {
         // Create a dedicated session just for this search
         // We use a separate model instance to ensure isolation and access to native search
+        const searchModel = this.configService.getModel('SEARCH');
+        const searchThinking = this.configService.getThinkingConfig('SEARCH', 'search', { model: searchModel });
         const searchSession = this.client.chats.create({
-          model: this.configService.getModel('SEARCH'), // Use dedicated search model
+          model: searchModel, // Use dedicated search model
           config: {
             tools: [{ googleSearch: {} }], // Enable Native Search here
-            systemInstruction: 'You are a search engine. Return the answer to the user query based on the search results. Be concise. IMPORTANT: You MUST answer in the SAME language as the user query. Do not switch languages.'
+            systemInstruction: 'You are a search engine. Return the answer to the user query based on the search results. Be concise. IMPORTANT: You MUST answer in the SAME language as the user query. Do not switch languages.',
+            ...(searchThinking ? { thinkingConfig: searchThinking } : {})
           }
         });
 

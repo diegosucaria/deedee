@@ -171,9 +171,11 @@ Output a concise list of rules for this specific relationship.
 `;
         try {
             const analyzeModel = this._config.getModel('PRO');
+            const analyzeThinking = this._config.getThinkingConfig('PRO', 'impersonation', { model: analyzeModel });
             const result = await this.agent.client.models.generateContent({
                 model: analyzeModel,
-                contents: [{ role: 'user', parts: [{ text: prompt }] }]
+                contents: [{ role: 'user', parts: [{ text: prompt }] }],
+                ...(analyzeThinking ? { config: { thinkingConfig: analyzeThinking } } : {})
             });
 
             this._config.logUsageFromResponse(this.db, analyzeModel, result, contactIdentifier, 'impersonation_analyze');
@@ -205,6 +207,7 @@ Output a concise list of rules for this specific relationship.
     async transcribeAudio(part) {
         try {
             const transcribeModel = this._config.getModel('FLASH');
+            const transcribeThinking = this._config.getThinkingConfig('FLASH', 'transcribe', { model: transcribeModel });
             const result = await this.agent.client.models.generateContent({
                 model: transcribeModel,
                 contents: [{
@@ -213,7 +216,8 @@ Output a concise list of rules for this specific relationship.
                         part, // The audio part
                         { text: "Transcribe this audio EXACTLY. Return only the text. If it is empty or noise, return nothing." }
                     ]
-                }]
+                }],
+                ...(transcribeThinking ? { config: { thinkingConfig: transcribeThinking } } : {})
             });
 
             this._config.logUsageFromResponse(this.db, transcribeModel, result, null, 'transcribe');
@@ -517,10 +521,12 @@ ${transcript}
         try {
             console.log('Prompt:', JSON.stringify({ prompt }));
             const modelName = this._config.getModel('FLASH');
+            const replyThinking = this._config.getThinkingConfig('FLASH', 'impersonation', { model: modelName });
 
             const result = await this.agent.client.models.generateContent({
                 model: modelName,
-                contents: [{ role: 'user', parts: [{ text: prompt }] }]
+                contents: [{ role: 'user', parts: [{ text: prompt }] }],
+                ...(replyThinking ? { config: { thinkingConfig: replyThinking } } : {})
             });
 
             // Handle both New SDK (@google/genai) and Old SDK structure
@@ -668,9 +674,11 @@ Return a SINGLE, concise rule (max 10 words).
 
         try {
             const learnModel = this._config.getModel('FLASH');
+            const learnThinking = this._config.getThinkingConfig('FLASH', 'impersonation_learn', { model: learnModel });
             const result = await this.agent.client.models.generateContent({
                 model: learnModel,
-                contents: [{ role: 'user', parts: [{ text: prompt }] }]
+                contents: [{ role: 'user', parts: [{ text: prompt }] }],
+                ...(learnThinking ? { config: { thinkingConfig: learnThinking } } : {})
             });
 
             this._config.logUsageFromResponse(this.db, learnModel, result, chatId, 'impersonation_learn');

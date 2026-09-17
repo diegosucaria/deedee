@@ -128,12 +128,14 @@ Example: ["slack", "calendar_email", "memory", "subagent", "scheduler"]`;
 
         try {
             const model = this.config.getModel('ROUTER'); // Use cheapest model
+            const thinking = this.config.getThinkingConfig('ROUTER', 'scoper', { model });
             const response = await this.client.models.generateContent({
                 model,
                 contents: prompt,
                 config: {
                     responseMimeType: 'application/json',
-                    temperature: 0
+                    temperature: 0,
+                    ...(thinking ? { thinkingConfig: thinking } : {})
                 }
             });
 

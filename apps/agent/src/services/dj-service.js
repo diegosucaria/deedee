@@ -101,7 +101,8 @@ class DJService {
                 parts: [imagePart, { text: prompt }]
             }],
             config: {
-                responseMimeType: 'application/json'
+                responseMimeType: 'application/json',
+                ...this._thinkingConfig('FLASH', modelName)
             }
         });
 
@@ -471,7 +472,8 @@ IMPORTANT RULES:
 Respond ONLY with valid JSON.` }]
                 }],
                 config: {
-                    tools: [{ googleSearch: {} }]
+                    tools: [{ googleSearch: {} }],
+                    ...this._thinkingConfig('FLASH', modelName)
                 }
             });
 
@@ -631,7 +633,7 @@ Respond ONLY with valid JSON.` }]
                         text: `Write 2-3 sentences about the vinyl record "${artist || ''} - ${title || ''}"${label ? ` on ${label}` : ''}${year ? ` (${year})` : ''}. Cover: release significance, why it matters in its genre, and any notable context about the artist or label. Be specific and factual. Respond with plain text only, no markdown.`
                     }]
                 }],
-                config: { tools: [{ googleSearch: {} }] }
+                config: { tools: [{ googleSearch: {} }], ...this._thinkingConfig('FLASH', modelName) }
             });
 
             this.config.logUsageFromResponse(this.agent.db, modelName, result, null, 'dj_history');
@@ -1210,7 +1212,7 @@ Use Camelot wheel notation (1A-12B), NOT traditional key names.
 If unsure, return { "bpm": 0, "key": "" }`
                     }]
                 }],
-                config: { tools: [{ googleSearch: {} }] }
+                config: { tools: [{ googleSearch: {} }], ...this._thinkingConfig('FLASH', modelName) }
             }).then(result => {
                 this.config.logUsageFromResponse(this.agent.db, modelName, result, null, 'dj_track_enrich');
                 let text = '';
@@ -1340,11 +1342,19 @@ If unsure, return { "bpm": 0, "key": "" }`
      * The old `client.getGenerativeModel` shape from @google/generative-ai does not
      * exist on @google/genai and threw at runtime.
      */
-    _generateText(modelName, prompt) {
+    _generateText(modelName, prompt, role = 'PRO') {
+        const config = this._thinkingConfig(role, modelName);
         return this.agent.client.models.generateContent({
             model: modelName,
-            contents: [{ role: 'user', parts: [{ text: prompt }] }]
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            ...(Object.keys(config).length ? { config } : {})
         });
+    }
+
+    /** `{ thinkingConfig }` for a text call on `role`, or `{}` (docs/models.md, "Thinking levels"). */
+    _thinkingConfig(role, modelName) {
+        const thinking = this.config.getThinkingConfig(role, 'dj', { model: modelName });
+        return thinking ? { thinkingConfig: thinking } : {};
     }
 
     /** Text of the first candidate: the SDK `text` getter when present, else the joined text parts. */

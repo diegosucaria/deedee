@@ -902,12 +902,14 @@ Examples:
 
 Input: "${input.replace(/"/g, '\\"')}"`;
 
+            const thinking = config.getThinkingConfig('LITE', 'cron_helper', { model: modelName });
             const response = await client.models.generateContent({
                 model: modelName,
                 contents: prompt,
                 config: {
                     responseMimeType: 'application/json',
                     temperature: 0.0,
+                    ...(thinking ? { thinkingConfig: thinking } : {})
                 }
             });
 

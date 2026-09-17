@@ -97,13 +97,14 @@ class DreamService {
         const prompt = getDreamPrompt(recentLogs, randomFacts, plexContext);
         // FLASH: creative text with low stakes; the TTS call follows.
         const modelName = this.agent.configService.getModel('FLASH');
+        const thinking = this.agent.configService.getThinkingConfig('FLASH', 'dream', { model: modelName });
 
         let dreamContent = null;
         try {
             const response = await this.agent.client.models.generateContent({
                 model: modelName,
                 contents: [{ parts: [{ text: prompt }] }],
-                config: { responseMimeType: 'application/json' }
+                config: { responseMimeType: 'application/json', ...(thinking ? { thinkingConfig: thinking } : {}) }
             });
 
             this._config.logUsageFromResponse(this.agent.db, modelName, response, null, 'dream');

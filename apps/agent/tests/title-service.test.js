@@ -23,7 +23,7 @@ describe('TitleService', () => {
         jest.clearAllMocks();
         titleService = new TitleService(mockAgent);
         // Mock ConfigService lookup
-        titleService.config = { getModel: jest.fn().mockReturnValue('gemini-2.0-flash'), logUsageFromResponse: jest.fn().mockReturnValue({ cost: 0, tokens: 0 }) };
+        titleService.config = { getModel: jest.fn().mockReturnValue('gemini-2.0-flash'), logUsageFromResponse: jest.fn().mockReturnValue({ cost: 0, tokens: 0 }), getThinkingConfig: () => null };
     });
 
     test('should extract title via .text()', async () => {
