@@ -106,6 +106,60 @@ describe('WhatsApp SQLiteStore', () => {
         expect(recent[0].lastTimestamp).toBe(2000000); // 2000 * 1000
     });
 
+    describe('getMessagesByDate', () => {
+        // Build a timestamp inside the local day the test asks for, so the
+        // query's 'localtime' conversion matches wherever the test runs.
+        const dayStart = new Date(2026, 0, 15, 12, 0, 0); // 15 Jan 2026, local noon
+        const dateStr = '2026-01-15';
+        const seconds = Math.floor(dayStart.getTime() / 1000);
+
+        beforeEach(async () => {
+            ev.emit('contacts.upsert', [{ id: '5551234@s.whatsapp.net', name: 'Contact', notify: 'Contact' }]);
+            ev.emit('messages.upsert', {
+                type: 'notify',
+                messages: [
+                    {
+                        key: { remoteJid: '5551234@s.whatsapp.net', id: 'a', fromMe: false },
+                        messageTimestamp: seconds,
+                        message: { conversation: 'one to one' }
+                    },
+                    {
+                        key: { remoteJid: '5551234@s.whatsapp.net', id: 'b', fromMe: true },
+                        messageTimestamp: seconds + 60,
+                        message: { conversation: 'reply' }
+                    },
+                    {
+                        key: { remoteJid: '9999@g.us', id: 'c', fromMe: false },
+                        messageTimestamp: seconds + 120,
+                        message: { conversation: 'group chatter' }
+                    },
+                    {
+                        key: { remoteJid: '5551234@s.whatsapp.net', id: 'd', fromMe: false },
+                        messageTimestamp: seconds - 86400 * 3,
+                        message: { conversation: 'another day' }
+                    }
+                ]
+            });
+            await new Promise(r => setTimeout(r, 600));
+        });
+
+        test('returns that day only, without group chats', () => {
+            const rows = store.getMessagesByDate(dateStr);
+            expect(rows.map(r => r.content)).toEqual(['one to one', 'reply']);
+            expect(rows.map(r => r.role)).toEqual(['user', 'assistant']);
+            expect(rows.every(r => r.source === 'whatsapp:user')).toBe(true);
+            expect(JSON.parse(rows[0].metadata)).toEqual({
+                chatId: '5551234@s.whatsapp.net',
+                session: 'user',
+                notifyName: 'Contact'
+            });
+        });
+
+        test('returns [] for a day with nothing', () => {
+            expect(store.getMessagesByDate('2026-01-16')).toEqual([]);
+        });
+    });
+
     describe('resolveIdentity', () => {
         test('Strategy 1: should resolve by phone JID', () => {
             const contact = { id: '5551234@s.whatsapp.net', lid: '100000000000001@lid', name: 'Alice' };

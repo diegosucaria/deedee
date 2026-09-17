@@ -44,6 +44,7 @@ DeeDee operates on a **"YOLO but Safe"** model. This means we prioritize **Perso
 - **Read/Write**: `/app/source` (The repo itself).
 - **Read/Write**: `/app/data` (Persistent DBs).
 - **Supervisor only**: `/app/state` (`supervisor-state` volume; rollback trust anchors). Not mounted into the agent.
+- **Interfaces only**: `interfaces-data` (WhatsApp session credentials and message database). Not mounted into the agent: a shell command there would have read the credentials that own the owner's WhatsApp account. The agent asks the interfaces service for the day's messages over `GET /internal/whatsapp/messages-by-date` (bearer `DEEDEE_INTERNAL_TOKEN`, which an `DEEDEE_API_TOKEN` holder does not have).
 - **Read-Only**: `/proc`, `/sys`.
 
 ### Network

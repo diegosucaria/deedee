@@ -211,3 +211,42 @@ describe('AgentDB.searchMessages result size', () => {
     expect(row.content.length).toBe(1000);
   });
 });
+
+describe('AgentDB.getMessagesByDate', () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deedee-db-date-'));
+  let db;
+
+  beforeEach(() => { db = new AgentDB(dir); });
+  afterEach(() => {
+    if (db) db.close();
+    fs.rmSync(dir, { recursive: true, force: true });
+  });
+
+  // Local noon, so the query's 'localtime' comparison holds anywhere.
+  const localNoon = (day) => {
+    const d = new Date(2026, 0, day, 12, 0, 0);
+    return new Date(d.getTime() - d.getTimezoneOffset() * 60000).toISOString().replace('Z', '');
+  };
+
+  test('merges messages the caller fetched elsewhere, in time order', () => {
+    db.saveMessage({ role: 'user', content: 'agent side', metadata: { chatId: 'web' }, timestamp: localNoon(15) });
+
+    const fromInterfaces = [{
+      role: 'user',
+      content: 'whatsapp side',
+      timestamp: '2026-01-15 00:01:00',
+      source: 'whatsapp:user',
+      metadata: '{"chatId":"1@s.whatsapp.net","session":"user"}'
+    }];
+
+    const rows = db.getMessagesByDate('2026-01-15', fromInterfaces);
+    expect(rows.map(r => r.content)).toEqual(['whatsapp side', 'agent side']);
+  });
+
+  test('works with no external messages and skips other days', () => {
+    db.saveMessage({ role: 'user', content: 'today', metadata: { chatId: 'web' }, timestamp: localNoon(15) });
+    db.saveMessage({ role: 'user', content: 'yesterday', metadata: { chatId: 'web' }, timestamp: localNoon(14) });
+
+    expect(db.getMessagesByDate('2026-01-15').map(r => r.content)).toEqual(['today']);
+  });
+});
