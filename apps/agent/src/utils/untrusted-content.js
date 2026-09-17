@@ -29,6 +29,11 @@ const INTERNAL_UNTRUSTED = Object.freeze({
     readAllMonitoredSlackHistory: 'Slack messages',
     readVaultFile: 'a document',
     searchDocuments: 'a document',
+    // Same stored messages as searchHistory and the same index as
+    // searchDocuments: email, web and contact text come back through it.
+    searchMemory: 'chat messages and documents',
+    // Summarizes a day of chats, contacts' WhatsApp messages included.
+    consolidateMemory: 'chat messages',
     // A sub-agent's answer relays what it read. Clean only when the
     // sub-agent service reports it read no untrusted content.
     spawnAgent: 'a sub-agent report',
@@ -43,7 +48,7 @@ const INTERNAL_UNTRUSTED = Object.freeze({
 // lists (a test checks it), so a new tool needs a decision.
 const INTERNAL_TRUSTED = Object.freeze(new Set([
     'askUser', // the owner's answer
-    'rememberFact', 'saveJobState', 'getJobState', 'getFact', 'searchMemory', 'consolidateMemory',
+    'rememberFact', 'saveJobState', 'getJobState', 'getFact',
     'addGoal', 'updateGoalProgress', 'completeGoal',
     'readFile', 'writeFile', 'listDirectory', 'rollbackLastChange', 'pullLatestChanges', 'commitAndPush',
     'logJournal', 'scheduleJob', 'listJobs', 'cancelJob', 'setReminder', 'scheduleTask',
@@ -84,8 +89,13 @@ const MCP_SERVERS = Object.freeze({
     // Pages written by anyone on the web.
     browser: () => 'a web page',
     // Device states, entity names and history the owner set up. Calendar
-    // events can be invites from other people.
-    homeassistant: (tool) => (/calendar/i.test(tool) ? 'calendar events' : null),
+    // events can be invites from other people, and shared todo lists hold
+    // items other people wrote; any tool can return those entities.
+    homeassistant: (tool, { args, result } = {}) => {
+        if (/calendar/i.test(tool)) return 'calendar events';
+        if (/todo/i.test(tool)) return 'todo items';
+        return haTextEntityKind(args) || haTextEntityKind(result);
+    },
     // The owner's own flows.
     'node-red': () => null,
     // Library metadata.
@@ -95,6 +105,22 @@ const MCP_SERVERS = Object.freeze({
     pilotfy: () => null,
     allende: () => null,
 });
+
+// A Home Assistant entity id whose attributes carry other people's text.
+const HA_TEXT_ENTITY_RE = /(?:^|[^a-z0-9_])(calendar|todo)\.[a-z0-9_]+/i;
+
+function haTextEntityKind(value) {
+    if (value == null) return null;
+    let text;
+    try {
+        text = typeof value === 'string' ? value : JSON.stringify(value);
+    } catch {
+        return null;
+    }
+    const m = HA_TEXT_ENTITY_RE.exec(String(text || ''));
+    if (!m) return null;
+    return m[1].toLowerCase() === 'calendar' ? 'calendar events' : 'todo items';
+}
 
 /** The MCP server, or 'browser' for a browser_* tool whose server is restarting. */
 function resolveServer(toolName, serverName) {
@@ -118,6 +144,13 @@ function classifyToolResult(toolName, { serverName = null, args = {}, result = n
         if (name === 'runShellCommand') {
             return SHELL_FETCH_RE.test(String(args?.command || '')) ? { untrusted: true, kind: INTERNAL_UNTRUSTED[name] } : { untrusted: false };
         }
+        if (name === 'searchMemory') {
+            // A search that found nothing carries no text.
+            const found = result && typeof result === 'object'
+                && ((Array.isArray(result.chat_history) && result.chat_history.length > 0)
+                    || (Array.isArray(result.knowledge) && result.knowledge.length > 0));
+            return found ? { untrusted: true, kind: INTERNAL_UNTRUSTED[name] } : { untrusted: false };
+        }
         if (name === 'spawnAgent' || name === 'getAgentResult') {
             // Nothing to read yet (spawned in the background, not found, failed to start).
             const hasReport = result && typeof result === 'object' && (result.result != null || result.partial);
@@ -131,7 +164,7 @@ function classifyToolResult(toolName, { serverName = null, args = {}, result = n
     const server = resolveServer(name, serverName);
     if (server.startsWith('gws_')) return { untrusted: true, kind: gwsKind(name) };
     if (server && Object.prototype.hasOwnProperty.call(MCP_SERVERS, server)) {
-        const kind = MCP_SERVERS[server](name);
+        const kind = MCP_SERVERS[server](name, { args, result });
         return kind ? { untrusted: true, kind } : { untrusted: false };
     }
     // Unknown MCP server, or a tool no one can place: treat as untrusted.
@@ -186,10 +219,97 @@ class TurnTaint {
 // --- side effects that need approval in a tainted run ---
 
 const GWS_READ_METHODS = /^(?:get|list|search|export|batchGet|getProfile|query|instances|watchers?List)$/i;
-const HA_TAINT_DOMAINS = new Set(['lock', 'alarm_control_panel', 'cover', 'homeassistant', 'hassio', 'automation', 'script']);
-const BROWSER_INPUT_TOOLS = new Set(['browser_type', 'browser_fill_form', 'browser_select_option', 'browser_file_upload', 'browser_evaluate', 'browser_drag', 'browser_drop']);
+// Home Assistant domains a tainted run may still call: home control that
+// neither sends anything nor opens the house. Every other domain asks
+// (notify, rest_command, shell_command, tts, lock, cover, script, ...).
+const HA_FREE_DOMAINS = new Set([
+    'light', 'switch', 'fan', 'climate', 'media_player', 'vacuum', 'scene', 'remote', 'humidifier',
+    'water_heater', 'input_boolean', 'input_number', 'input_select', 'input_text', 'input_datetime',
+    'input_button', 'counter', 'timer', 'number', 'select',
+]);
+// Browser tools a tainted run may still call: they read, move around or
+// wait, and type nothing into a page. Every other browser tool asks, so a
+// tool a package update adds starts out gated.
+const BROWSER_FREE_TOOLS = new Set([
+    'browser_snapshot', 'browser_take_screenshot', 'browser_wait_for', 'browser_tabs', 'browser_console_messages',
+    'browser_network_requests', 'browser_network_request', 'browser_webmcp_list', 'browser_navigate',
+    'browser_navigate_back', 'browser_hover', 'browser_resize', 'browser_find', 'browser_close',
+]);
 const SUBMIT_WORDS = /submit|send|pay|buy|purchase|order|checkout|confirm|delete|remove|book|reserve|transfer|sign ?in|log ?in|accept|authori[sz]e|enviar|pagar|comprar|confirmar|reservar|eliminar|borrar|aceptar|ingresar/i;
 const UNKNOWN_MCP_WRITE = /send|create|delete|remove|update|set_|write|post|put|patch|book|cancel|submit|publish|share|transfer|pay|order|deploy|execute|run|upload|move|trash|reply|forward|invite|insert|modify|import|restart|reload/i;
+
+// Flags a read-only curl or wget may carry. `N` is a numeric value.
+const CURL_FLAG_RE = /^(?:-[sSLfkIigv]+|--(?:silent|show-error|location|fail|insecure|head|include|compressed|globoff|verbose))$/;
+const CURL_VALUE_FLAGS = new Set(['-m', '--max-time', '--connect-timeout', '--retry']);
+const WGET_FLAG_RE = /^(?:-q|--quiet|-nv|--no-verbose|-qO-|-O-|--output-document=-|--(?:timeout|tries)=\d+(?:\.\d+)?)$/;
+const WGET_VALUE_FLAGS = new Set(['-T', '-t']);
+
+/**
+ * Split a command into words, honoring quotes. Returns null when it holds
+ * shell syntax outside single quotes (pipes, redirects, chaining,
+ * substitution, escapes) or a quote is left open.
+ */
+function shellWords(command) {
+    const words = [];
+    let cur = '';
+    let has = false;
+    let quote = null;
+    for (const ch of String(command || '')) {
+        if (quote === "'") {
+            if (ch === "'") quote = null; else cur += ch;
+            continue;
+        }
+        if (quote === '"') {
+            if (ch === '"') quote = null;
+            else if (ch === '$' || ch === '`' || ch === '\\') return null;
+            else cur += ch;
+            continue;
+        }
+        if (ch === "'" || ch === '"') { quote = ch; has = true; continue; }
+        if (ch === ' ' || ch === '\t') {
+            if (has) { words.push(cur); cur = ''; has = false; }
+            continue;
+        }
+        if (/[|;&<>`$()\\\n\r{}*?[\]~#!]/.test(ch)) return null;
+        cur += ch;
+        has = true;
+    }
+    if (quote) return null;
+    if (has) words.push(cur);
+    return words;
+}
+
+/** True for `curl -s "https://..."` or `wget -qO- URL`: one GET, output to stdout. */
+function isPlainFetch(command) {
+    const words = shellWords(command);
+    if (!words || words.length < 2) return false;
+    const [bin, ...rest] = words;
+    const flagRe = bin === 'curl' ? CURL_FLAG_RE : bin === 'wget' ? WGET_FLAG_RE : null;
+    const valueFlags = bin === 'curl' ? CURL_VALUE_FLAGS : WGET_VALUE_FLAGS;
+    if (!flagRe) return false;
+    let urls = 0;
+    // wget saves to a file unless told to print; curl prints by default.
+    let toStdout = bin === 'curl';
+    for (let i = 0; i < rest.length; i++) {
+        const w = rest[i];
+        if (bin === 'wget' && (w === '-O' || w === '-qO') && rest[i + 1] === '-') { toStdout = true; i++; continue; }
+        if (bin === 'wget' && /^(?:-qO-|-O-|--output-document=-)$/.test(w)) { toStdout = true; continue; }
+        if (valueFlags.has(w)) {
+            if (!/^\d+(?:\.\d+)?$/.test(rest[i + 1] || '')) return false;
+            i++;
+            continue;
+        }
+        if (w.startsWith('-')) {
+            if (!flagRe.test(w)) return false;
+            continue;
+        }
+        // A URL: a host or http(s) address, never a local file or a config.
+        if (/^(?:file|ftp|scp|sftp|dict|gopher|telnet|ldap|smtp|imap|pop3)s?:/i.test(w) || w.startsWith('@')) return false;
+        if (/^[a-z][a-z0-9+.-]*:\/\//i.test(w) && !/^https?:\/\//i.test(w)) return false;
+        urls++;
+    }
+    return urls === 1 && toStdout;
+}
 
 function haDomains(args) {
     const out = [];
@@ -229,7 +349,9 @@ function taintedAction(toolName, args, { serverName = null, isOwnerTarget = () =
             // A message to the owner himself is how jobs and watchers report.
             return isOwnerTarget(a) ? null : 'send a message';
         case 'sendSlackMessage': return 'send a Slack message';
-        case 'runShellCommand': return 'run a shell command';
+        // A plain GET (curl/wget, no pipe, redirect, upload or output file)
+        // only reads, and its result comes back wrapped as untrusted.
+        case 'runShellCommand': return isPlainFetch(a.command) ? null : 'run a shell command';
         case 'writeFile': return 'write a file';
         case 'commitAndPush':
         case 'pullLatestChanges':
@@ -251,16 +373,17 @@ function taintedAction(toolName, args, { serverName = null, isOwnerTarget = () =
         if (/^ha_config_(?:set|remove)_|^ha_remove_/.test(name)) return 'change the Home Assistant setup';
         if (name === 'ha_call_service' || name === 'ha_bulk_control' || name === 'call_service') {
             const domains = haDomains(a);
-            return domains.some(d => d === 'all' || HA_TAINT_DOMAINS.has(d)) ? 'control a lock, the alarm, a cover, an automation or every device' : null;
+            const free = domains.length > 0 && domains.every(d => HA_FREE_DOMAINS.has(d));
+            return free ? null : 'call a Home Assistant service that is not plain home control (notify, a web call, a lock, a cover, a script, every device)';
         }
         return null;
     }
     if (server === 'browser') {
-        if (BROWSER_INPUT_TOOLS.has(name)) return 'type or submit on a web page';
+        if (BROWSER_FREE_TOOLS.has(name)) return null;
         if (name === 'browser_press_key') return /enter|return/i.test(String(a.key || '')) ? 'submit on a web page' : null;
         if (name === 'browser_handle_dialog') return a.accept === false ? null : 'accept a web page dialog';
         if (name === 'browser_click') return SUBMIT_WORDS.test(String(a.element || '')) ? 'submit on a web page' : null;
-        return null;
+        return 'type or submit on a web page';
     }
     if (server === 'plex') return null; // playback only; deletes are always gated
     if (server === 'pilotfy' || server === 'allende') {
@@ -283,5 +406,6 @@ module.exports = {
     wrapUntrusted,
     isUntrustedEnvelope,
     taintedAction,
+    isPlainFetch,
     TurnTaint,
 };

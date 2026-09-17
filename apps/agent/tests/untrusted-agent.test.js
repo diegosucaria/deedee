@@ -284,6 +284,14 @@ describe('untrusted content through the Agent', () => {
     expect(summary.toolOutputs[0].result.error).toMatch(/sub-agent cannot ask/);
   });
 
+  test('a tainted sub-agent can still fetch the weather with a plain curl', async () => {
+    script = [{ name: 'runShellCommand', args: { command: 'curl -s "wttr.in/Some+City?format=%l:+%c+%t"' } }, { text: 'sunny' }];
+    const sub = { role: 'user', content: 'weather', source: 'subagent', metadata: { chatId: 'subagent-sub-2', isSubAgent: true, taskId: 'sub-2', untrustedTaint: ['calendar events (personal_calendar)'] } };
+    const summary = await agent.processMessage(sub, async () => {});
+    expect(agent.toolExecutor.execute.mock.calls.map(c => c[0])).toEqual(['runShellCommand']);
+    expect(summary.toolOutputs[0].result?.error || '').not.toMatch(/sub-agent cannot ask/);
+  });
+
   test('a watcher run starts tainted: its message to the contact goes to the owner channel for approval', async () => {
     agent.db.getWatchers.mockReturnValue([{ id: 'w1', contact_string: '5490000000000', condition: 'contains "invoice"', instruction: 'Reply that it is paid', status: 'active' }]);
     script = [{ name: 'sendMessage', args: { to: '5490000000000', content: 'paid' } }, { text: 'Done' }];
