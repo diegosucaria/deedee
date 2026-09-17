@@ -28,6 +28,7 @@ class SubAgentService {
     constructor(agent) {
         this.agent = agent;
         this.running = new Map(); // taskId → { promise, controller, replies }
+        this.untrustedByTask = new Map(); // taskId → untrusted sources the run read ([] = clean)
         this.MAX_CONCURRENT = 10;
         this.MAX_TIMEOUT_MINUTES = 10;
         this.DEFAULT_TIMEOUT_MINUTES = 6;
@@ -113,7 +114,7 @@ class SubAgentService {
      * Spawn a sub-agent to perform a specific task.
      * @returns {string|object} taskId (async) or { taskId, result } (blocking)
      */
-    async spawn({ task, model, tools, timeoutMinutes, parentChatId, parentSource = null, waitForResult = true, parentDepth = 0, lightweight = false }) {
+    async spawn({ task, model, tools, timeoutMinutes, parentChatId, parentSource = null, waitForResult = true, parentDepth = 0, lightweight = false, untrustedTaint = [] }) {
         // Concurrent limit
         if (this.running.size >= this.MAX_CONCURRENT) {
             throw new Error(`Max concurrent sub-agents reached (${this.MAX_CONCURRENT}). Wait for existing tasks to complete.`);
@@ -155,7 +156,10 @@ class SubAgentService {
                 forceModel: selectedModel,
                 subAgentDepth: parentDepth + 1,
                 lightweight: !!lightweight,
-                maxToolLoops
+                maxToolLoops,
+                // A sub-agent spawned by a run that read untrusted content
+                // starts tainted, so it cannot act on that content unasked.
+                ...(Array.isArray(untrustedTaint) && untrustedTaint.length > 0 ? { untrustedTaint: [...untrustedTaint] } : {})
             }
         };
 
@@ -174,7 +178,7 @@ class SubAgentService {
 
         const promise = (async () => {
             try {
-                await Promise.race([
+                const summary = await Promise.race([
                     this.agent.processMessage(message, sendCallback),
                     new Promise((_, reject) => {
                         controller.signal.addEventListener('abort', () =>
@@ -183,6 +187,7 @@ class SubAgentService {
                     })
                 ]);
 
+                this._recordTaint(taskId, summary);
                 const full = replies.join('\n').trim() || 'Task completed (no text output).';
                 const { result, summarized } = await this.compressResult(taskId, full);
                 const completedAt = new Date().toISOString();
@@ -200,6 +205,8 @@ class SubAgentService {
                 if (isTimeout && typeof this.agent.abortChat === 'function') {
                     this.agent.abortChat(chatId);
                 }
+                // The run did not finish: what it read is unknown.
+                this.untrustedByTask.set(taskId, ['an unfinished sub-agent run']);
                 const partial = replies.join('\n').trim();
                 const status = isTimeout ? 'timeout' : 'failed';
                 const error = isTimeout ? `Timed out after ${timeout} minutes` : err.message;
@@ -233,7 +240,7 @@ class SubAgentService {
 
         if (waitForResult) {
             const result = await promise;
-            return { taskId, status: 'completed', result };
+            return { taskId, status: 'completed', result, ...this._trustFields(taskId) };
         }
 
         return { taskId, status: 'running', info: `Sub-agent spawned. Use getAgentResult("${taskId}") to check status.` };
@@ -246,6 +253,7 @@ class SubAgentService {
         // Check in-memory first (still running)
         const running = this.running.get(taskId);
         if (running) {
+            // Still reading: its partial output counts as untrusted.
             return { taskId, status: 'running', partial: running.replies.join('\n').trim() };
         }
 
@@ -265,7 +273,29 @@ class SubAgentService {
             task: record.task,
             createdAt: record.created_at,
             completedAt: record.completed_at,
+            ...this._trustFields(record.id),
         };
+    }
+
+    /** What the sub-agent run read, from processMessage's summary. */
+    _recordTaint(taskId, summary) {
+        const sources = Array.isArray(summary?.untrustedSources) ? summary.untrustedSources : null;
+        // No summary (a stub agent): unknown, so untrusted.
+        this.untrustedByTask.set(taskId, sources ? [...sources] : ['an unknown sub-agent run']);
+        if (this.untrustedByTask.size > 500) {
+            this.untrustedByTask.delete(this.untrustedByTask.keys().next().value);
+        }
+    }
+
+    /**
+     * { contentTrusted: true } only when this process saw the run finish
+     * without reading untrusted content. Otherwise (it read some, or it ran
+     * before a restart) the parent treats the report as untrusted.
+     */
+    _trustFields(taskId) {
+        const sources = this.untrustedByTask.get(taskId);
+        if (Array.isArray(sources) && sources.length === 0) return { contentTrusted: true };
+        return sources ? { untrustedSources: sources.slice(0, 5) } : {};
     }
 
     /**
