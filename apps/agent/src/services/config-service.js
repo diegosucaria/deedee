@@ -185,13 +185,16 @@ class ConfigService {
 
     /**
      * Thinking settings for one call.
-     * Level: env THINKING_<ROLE>_<CLASS>, else THINKING_<ROLE>, else the table
-     * in THINKING_DEFAULTS. A level the model lacks is raised to the lowest one
+     * Level: opts.level when the caller asked for one, else env
+     * THINKING_<ROLE>_<CLASS>, else THINKING_<ROLE>, else the table in
+     * THINKING_DEFAULTS. A level the model lacks is raised to the lowest one
      * it accepts (logged once). Non-3.x ids get `thinkingLevel: null`.
      * Thought summaries only for sources that render them (web, live).
      * @param {string} role - FLASH | LITE | PRO | ROUTER | SEARCH
      * @param {string} [callClass='chat'] - chat, tool_loop, job, subagent, title, ...
-     * @param {{ source?: string, model?: string }} [opts]
+     * @param {{ source?: string, model?: string, level?: string }} [opts]
+     *   level: one of THINKING_LEVELS, from the owner's quick/deep pick. It
+     *   beats both env vars and is still clamped by the model guard.
      * @returns {{ thinkingLevel: string|null, includeThoughts: boolean }}
      */
     getThinking(role, callClass = 'chat', opts = {}) {
@@ -201,7 +204,8 @@ class ConfigService {
         const includeThoughts = THOUGHT_SOURCES.has(opts.source);
 
         const table = THINKING_DEFAULTS[roleKey] || THINKING_DEFAULTS.FLASH;
-        let level = this._thinkingEnv(`THINKING_${roleKey}_${cls.toUpperCase()}`)
+        let level = this._explicitLevel(opts.level)
+            || this._thinkingEnv(`THINKING_${roleKey}_${cls.toUpperCase()}`)
             || this._thinkingEnv(`THINKING_${roleKey}`)
             || table[cls]
             || table['*'];
@@ -229,6 +233,13 @@ class ConfigService {
         if (thinkingLevel) cfg.thinkingLevel = thinkingLevel;
         if (includeThoughts) cfg.includeThoughts = true;
         return Object.keys(cfg).length ? cfg : null;
+    }
+
+    /** A level the caller asked for, or null for anything else (including 'auto'). */
+    _explicitLevel(value) {
+        if (value === undefined || value === null || value === '') return null;
+        const level = String(value).trim().toUpperCase();
+        return THINKING_LEVELS.includes(level) ? level : null;
     }
 
     _thinkingEnv(name) {

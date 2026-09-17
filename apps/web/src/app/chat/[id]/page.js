@@ -8,6 +8,7 @@ import { Send, Play, Wifi, WifiOff, Mic, Image as ImageIcon, X, Loader2, StopCir
 import clsx from 'clsx';
 import { getSession, getUserLocation, getVaults, updateSession, uploadChatFile, getAgentConfig, rewindChat, forkChat, stopChat } from '../../actions';
 import { resolveModelPref, modelOptions, MODEL_PREF_KEY, AUTO_MODEL } from '@/lib/model-pref';
+import { THINKING_PREF_KEY, THINKING_CHOICES, AUTO_THINKING, resolveThinkingPref, thinkingLevelFor } from '@/lib/thinking-pref';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
 import { approvalEventKind, isApprovalOpen } from '@/lib/approvals';
 
@@ -100,10 +101,14 @@ export default function ChatSessionPage({ params }) {
     // means the picker shows 'auto' alone until the config loads.
     const [configuredModels, setConfiguredModels] = useState([]);
 
+    // How hard the model should think: auto, quick or deep.
+    const [thinkingPref, setThinkingPref] = useState(AUTO_THINKING);
+
     // Load Model Pref
     useEffect(() => {
         const saved = localStorage.getItem(MODEL_PREF_KEY);
         if (saved) setSelectedModel(saved);
+        setThinkingPref(resolveThinkingPref(localStorage.getItem(THINKING_PREF_KEY)));
     }, []);
 
     // One-shot prefill (e.g. from wardrobe "ask about this outfit").
@@ -1077,6 +1082,7 @@ export default function ChatSessionPage({ params }) {
                     location: userLocation,
                     vaultId: selectedVault !== 'none' ? selectedVault : undefined,
                     model: selectedModel !== 'auto' ? selectedModel : undefined,
+                    thinking: thinkingLevelFor(thinkingPref),
                     turnId: newTurnId
                 }
             };
@@ -1225,6 +1231,28 @@ export default function ChatSessionPage({ params }) {
                             ))}
                         </select>
                         <ChevronDown className="absolute right-2 top-1/2 -translate-y-1/2 h-3 w-3 text-zinc-500 pointer-events-none" />
+                    </div>
+
+                    {/* How hard the model thinks on this turn */}
+                    <div className="flex items-center gap-0.5 bg-zinc-900 border border-zinc-700 rounded-lg p-0.5" title="How hard the model thinks">
+                        {THINKING_CHOICES.map(choice => (
+                            <button
+                                key={choice.value}
+                                type="button"
+                                onClick={() => {
+                                    setThinkingPref(choice.value);
+                                    localStorage.setItem(THINKING_PREF_KEY, choice.value);
+                                }}
+                                className={clsx(
+                                    'px-2 py-1 rounded-md text-xs transition-colors',
+                                    thinkingPref === choice.value
+                                        ? 'bg-indigo-600 text-white'
+                                        : 'text-zinc-400 hover:text-white hover:bg-zinc-800'
+                                )}
+                            >
+                                {choice.label}
+                            </button>
+                        ))}
                     </div>
 
                     {/* Vault Selector */}
@@ -1463,6 +1491,11 @@ export default function ChatSessionPage({ params }) {
                                             {msg.metadata?.model && (
                                                 <span className="px-1.5 py-0.5 rounded text-[9px] font-medium border border-zinc-600 bg-zinc-700/50">
                                                     {msg.metadata.model}
+                                                </span>
+                                            )}
+                                            {msg.metadata?.thinking && (
+                                                <span className="px-1.5 py-0.5 rounded text-[9px] font-medium border border-zinc-600 bg-zinc-700/50" title="Thinking level this reply ran with">
+                                                    thinks {String(msg.metadata.thinking).toLowerCase()}
                                                 </span>
                                             )}
                                         </div>

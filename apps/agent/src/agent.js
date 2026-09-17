@@ -1950,7 +1950,12 @@ class Agent {
           : isWatcherRun ? 'watcher'
             : isCodingTurn ? 'coding'
               : 'chat';
-      const thinkingOpts = { source: message.source, model: selectedModel };
+      // The owner's quick/deep pick from the chat page. 'auto' (or anything
+      // else) leaves the env defaults and the table in charge; a level here
+      // beats them and is still clamped to what the model accepts.
+      const askedLevel = String(message.metadata?.thinking || '').trim().toUpperCase();
+      const requestedThinking = this.configService.get('THINKING_LEVELS').includes(askedLevel) ? askedLevel : null;
+      const thinkingOpts = { source: message.source, model: selectedModel, ...(requestedThinking ? { level: requestedThinking } : {}) };
       const sessionThinking = this.configService.getThinkingConfig(selectedRole, thinkingClass, thinkingOpts);
       const loopThinking = thinkingClass === 'chat'
         ? this.configService.getThinkingConfig(selectedRole, 'tool_loop', thinkingOpts)
@@ -1963,7 +1968,7 @@ class Agent {
       const loopConfig = JSON.stringify(loopThinking) === JSON.stringify(sessionThinking)
         ? undefined
         : { ...sessionConfig, ...(loopThinking ? { thinkingConfig: loopThinking } : { thinkingConfig: undefined }) };
-      console.log(`${logPrefix} Thinking: ${sessionThinking?.thinkingLevel || 'model default'} (${thinkingClass}, thoughts ${sessionThinking?.includeThoughts ? 'on' : 'off'})`);
+      console.log(`${logPrefix} Thinking: ${sessionThinking?.thinkingLevel || 'model default'} (${thinkingClass}${requestedThinking ? ', asked for' : ''}, thoughts ${sessionThinking?.includeThoughts ? 'on' : 'off'})`);
 
       let retryCount = 0;
       let response;
@@ -2577,7 +2582,13 @@ class Agent {
           console.log('[Agent] Final Response (to console):', text);
         } else {
           const reply = createAssistantMessage(text);
-          reply.metadata = { chatId: message.metadata?.chatId, model: decision.model };
+          // thinking: the level this turn actually ran with, so the chat page
+          // can print it next to the model.
+          reply.metadata = {
+            chatId: message.metadata?.chatId,
+            model: decision.model,
+            thinking: sessionThinking?.thinkingLevel || null
+          };
           reply.source = message.source; // Ensure reply source matches incoming message source
           reply.cost = e2eCost;
           reply.tokenCount = e2eTokens;
