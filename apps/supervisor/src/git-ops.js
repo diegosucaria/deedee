@@ -227,8 +227,16 @@ class GitOps {
       const base = await this._legacyBase();
       if (base) {
         await this.git(['reset', '-q', '--mixed', base]);
+      } else if (await this._workTreeHasContent()) {
+        // Files are there, but their commit is not: a commit the old flow
+        // never pushed, or a HEAD that could not be read. A hard reset would
+        // overwrite every local edit. Set only the index, so the files show
+        // up as edits against origin/master. pullLatestChanges resets them.
+        console.warn('[GitOps] The work tree holds files, but its previous commit was not found. Keeping the files as local edits against origin/master; pull to reset them.');
+        await this.git(['reset', '-q', '--mixed', 'refs/remotes/origin/master']);
+        return;
       } else {
-        // No commit to start from: a new device or a wiped volume. Check the
+        // No commit and no files: a new device or a wiped volume. Check the
         // files out. `--mixed` would set only the index, and every tracked
         // file would read as deleted in the next self-improvement.
         console.log('[GitOps] No previous commit in the work tree. Checking out origin/master.');
@@ -300,6 +308,30 @@ class GitOps {
       return true;
     } catch {
       return false;
+    }
+  }
+
+  /**
+   * True when any top-level entry of origin/master exists in the work tree.
+   * An empty volume (or one holding only data the repository does not
+   * track) has none.
+   */
+  async _workTreeHasContent() {
+    try {
+      const names = (await this.git(['ls-tree', '--name-only', '-z', 'refs/remotes/origin/master'], { raw: true }))
+        .split('\0').filter(Boolean);
+      return names.some((name) => {
+        try {
+          fs.lstatSync(path.join(this.workDir, name));
+          return true;
+        } catch {
+          return false;
+        }
+      });
+    } catch (error) {
+      // When in doubt, keep the files.
+      console.warn(`[GitOps] Could not list origin/master: ${error.message}`);
+      return true;
     }
   }
 

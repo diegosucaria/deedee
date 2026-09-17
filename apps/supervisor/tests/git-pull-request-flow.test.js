@@ -224,6 +224,26 @@ describe('GitOps pull request flow against real git', () => {
         expect(status).toBe('M apps/agent/src/a.js');
     });
 
+    test('a first start whose previous commit the remote lacks keeps local edits', async () => {
+        // The old flow left a commit it never pushed, plus an uncommitted edit.
+        fs.writeFileSync(path.join(work, 'apps/agent/src/local.js'), 'local();\n');
+        git(['add', '--', 'apps/agent/src/local.js'], work);
+        git(['-c', `user.name=${SELF.name}`, '-c', `user.email=${SELF.email}`, 'commit', '-q', '-m', 'unpushed'], work);
+        fs.writeFileSync(path.join(work, 'apps/agent/src/a.js'), 'module.exports = 9;\n');
+        ownerCommit('apps/agent/src/c.js', 'c();\n', 'feat: c upstream');
+        fs.rmSync(stateDir, { recursive: true, force: true });
+
+        const fresh = new GitOps(work, SELF, { stateDir, fetch: fakeFetch(), repoSlug: 'owner/repo' });
+        await fresh.configure(SELF.name, SELF.email, remote, TOKEN);
+
+        expect(fs.readFileSync(path.join(work, 'apps/agent/src/a.js'), 'utf8')).toBe('module.exports = 9;\n');
+        expect(fs.readFileSync(path.join(work, 'apps/agent/src/local.js'), 'utf8')).toBe('local();\n');
+        expect(await fresh.git(['rev-parse', 'HEAD'])).toBe(git(['rev-parse', 'master'], remote));
+        const status = await fresh.git(['status', '--porcelain']);
+        expect(status).toContain('M apps/agent/src/a.js');
+        expect(status).toContain('?? apps/agent/src/local.js');
+    });
+
     test('a first start on an empty volume checks the files out', async () => {
         const empty = path.join(root, 'empty-source');
         const emptyState = path.join(root, 'empty-state');
