@@ -604,11 +604,20 @@ function historyHasUntrusted(history, serverOf = () => null) {
 // Row sources that hold other people's words: a contact's WhatsApp messages, Slack.
 const FOREIGN_SOURCE_RE = /^(?:whatsapp:user|slack)\b/;
 
+/** The stored metadata of a row, parsed. */
+function rowMeta(row) {
+    let meta = row ? row.metadata : null;
+    if (typeof meta === 'string') {
+        try { meta = JSON.parse(meta); } catch { meta = null; }
+    }
+    return meta && typeof meta === 'object' ? meta : null;
+}
+
 /**
- * Do a chat's newest rows hold text someone other than the owner or the
- * agent wrote, outside a tool result? A contact's message, a watcher alert,
- * or a message stored with taint (a forwarded message, a tainted job's
- * prompt). Rows come from AgentDB.getRecentMessageOrigins.
+ * Do a chat's newest rows hold messages someone other than the owner wrote?
+ * A contact's own message, or a watcher alert quoting one. The chat is then
+ * not a place where his word stands for itself.
+ * Rows come from AgentDB.getRecentMessageOrigins.
  * @param {Array<{ role: string, source?: string, head?: string, metadata?: string|object }>} rows
  */
 function originsHaveForeignText(rows) {
@@ -616,10 +625,20 @@ function originsHaveForeignText(rows) {
         if (!r || r.role !== 'user') continue;
         if (FOREIGN_SOURCE_RE.test(String(r.source || ''))) return true;
         if (String(r.head || '').startsWith('SYSTEM_WATCHER_ALERT')) return true;
-        let meta = r.metadata;
-        if (typeof meta === 'string') {
-            try { meta = JSON.parse(meta); } catch { meta = null; }
-        }
+    }
+    return false;
+}
+
+/**
+ * Do a chat's newest rows carry someone else's words inside a message the
+ * owner sent: a forwarded message, or a prompt written by a run that had read
+ * third-party content? They read like a tool result a third party wrote, so
+ * they hold back messages, email and the house, and nothing else.
+ */
+function originsHaveTaintedRows(rows) {
+    for (const r of Array.isArray(rows) ? rows : []) {
+        if (!r || r.role !== 'user') continue;
+        const meta = rowMeta(r);
         if (meta && Array.isArray(meta.untrustedTaint) && meta.untrustedTaint.length > 0) return true;
     }
     return false;
@@ -667,6 +686,7 @@ module.exports = {
     isUntrustedEnvelope,
     historyHasUntrusted,
     originsHaveForeignText,
+    originsHaveTaintedRows,
     taintedAction,
     haEntityIds,
     isPlainFetch,

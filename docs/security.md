@@ -153,12 +153,14 @@ his approval. It counts when all of these hold:
 - the run has read no untrusted content and carries no taint from the run
   that created it. A forwarded WhatsApp or Telegram message arrives tainted
   (`a forwarded message`), since it holds someone else's words;
-- the window the model reads holds no rows other people wrote: a contact's
-  messages, a watcher alert, a row stored with taint. That covers a WhatsApp
-  or Slack chat opened on the web and a chat forked from one
+- the window the model reads holds no messages other people wrote: a
+  contact's own messages, or a watcher alert quoting one. That covers a
+  WhatsApp or Slack chat opened on the web and a chat forked from one
   (`originsHaveForeignText` over `AgentDB.getRecentMessageOrigins`, same
   window as the model: 20 rows on Flash, 50 otherwise). A web message in a
-  chat whose id holds `@` never counts either.
+  chat whose id holds `@` never counts either. A message he forwarded is
+  still his own message: it reads like a tool result a third party wrote
+  (`originsHaveTaintedRows`), so it holds back only the rules below.
 
 Then a call the rules above pause runs with no card and no guardian call,
 and the history stores `owner_instructed`. Three limits stay:
@@ -173,7 +175,8 @@ and the history stores `owner_instructed`. Three limits stay:
   history the model reads this turn holds no untrusted envelope, that is no
   tool result a third party wrote. Rows stored before envelopes existed are
   judged by the tool name (`historyHasUntrusted`). Otherwise they take the
-  usual path.
+  usual path. A forwarded message, or a prompt written by a run that had read
+  third-party content, counts the same way.
 
 **One card per action.** Two calls are the same action when the tool and the
 target match (`stepKey` in `apps/agent/src/utils/two-step-tools.js`: for a
@@ -193,6 +196,11 @@ two-step tool the target argument, for anything else every argument).
   gate cannot tell that case from a call that never ran.
 - A call that waits on an existing card leaves its own history row
   (`escalated_duplicate`), so the owner's answer still settles one row per card.
+  The model reads our own rule text there, never the stored card reason: that
+  one can carry the guardian's words, which quote what a third party wrote.
+- The Guardian page counts `owner_instructed` and `escalated_duplicate` rows
+  apart from the calls the guardian judged, so the auto-decision rate stays
+  honest. A card the action outran reads "already done", not "expired".
 
 Before this, an explicit "book it" in his chat still raised a card for the
 check step and another for the booking.

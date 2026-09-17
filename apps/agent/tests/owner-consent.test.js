@@ -14,7 +14,7 @@ const {
 } = require('../src/services/approval-service');
 const { GuardianService } = require('../src/services/guardian-service');
 const { ConfirmationManager } = require('../src/confirmation-manager');
-const { TurnTaint, historyHasUntrusted, originsHaveForeignText, wrapUntrusted } = require('../src/utils/untrusted-content');
+const { TurnTaint, historyHasUntrusted, originsHaveForeignText, originsHaveTaintedRows, wrapUntrusted } = require('../src/utils/untrusted-content');
 const { isPreviewCall, stepKey, previewSummary, parseToolOutput } = require('../src/utils/two-step-tools');
 const { SmartContextManager } = require('../src/smart-context');
 
@@ -159,14 +159,27 @@ describe('replies that decide a card', () => {
     });
 });
 
-describe('originsHaveForeignText', () => {
-    test('a contact\'s rows, a watcher alert or a tainted row count; the owner\'s own rows do not', () => {
+describe('what the chat\'s own rows say', () => {
+    const forwarded = [{ role: 'user', source: 'whatsapp:assistant', head: 'x', metadata: JSON.stringify({ untrustedTaint: ['a forwarded message (whatsapp)'] }) }];
+
+    test('messages other people wrote count as foreign; the owner\'s own rows do not', () => {
         expect(originsHaveForeignText([])).toBe(false);
         expect(originsHaveForeignText([{ role: 'user', source: 'whatsapp:assistant', head: 'book it', metadata: '{}' }, { role: 'assistant', source: 'whatsapp:user', head: 'x' }])).toBe(false);
         expect(originsHaveForeignText([{ role: 'user', source: 'whatsapp:user', head: 'hi' }])).toBe(true);
         expect(originsHaveForeignText([{ role: 'user', source: 'slack', head: 'hi' }])).toBe(true);
         expect(originsHaveForeignText([{ role: 'user', source: 'web', head: 'SYSTEM_WATCHER_ALERT: x' }])).toBe(true);
-        expect(originsHaveForeignText([{ role: 'user', source: 'whatsapp:assistant', head: 'x', metadata: JSON.stringify({ untrustedTaint: ['a forwarded message (whatsapp)'] }) }])).toBe(true);
+        // A message he forwarded is still his own message: it holds back
+        // messages, email and the house, not everything.
+        expect(originsHaveForeignText(forwarded)).toBe(false);
+    });
+
+    test('a forwarded message, or a tainted job prompt, marks the chat as carrying someone else\'s words', () => {
+        expect(originsHaveTaintedRows([])).toBe(false);
+        expect(originsHaveTaintedRows([{ role: 'user', source: 'whatsapp:assistant', head: 'book it', metadata: '{}' }])).toBe(false);
+        expect(originsHaveTaintedRows(forwarded)).toBe(true);
+        expect(originsHaveTaintedRows([{ role: 'user', source: 'telegram', head: 'x', metadata: { untrustedTaint: ['a forwarded message (telegram)'] } }])).toBe(true);
+        // Only what he sent counts; our own replies are not his words.
+        expect(originsHaveTaintedRows([{ role: 'assistant', source: 'web', head: 'x', metadata: JSON.stringify({ untrustedTaint: ['x'] }) }])).toBe(false);
     });
 });
 
@@ -191,7 +204,7 @@ describe('historyHasUntrusted', () => {
 });
 
 describe('history time stamps', () => {
-    test('only the owner\'s rows carry a stamp', async () => {
+    test('every row carries a stamp, so the model knows when it spoke', async () => {
         const db = {
             getHistoryForSummary: () => [],
             getLatestSummary: () => null,
@@ -203,7 +216,7 @@ describe('history time stamps', () => {
         const ctx = new SmartContextManager(db, null);
         const out = await ctx.getContext('c1', 'FLASH');
         expect(out[0].parts[0].text).toMatch(/^\[\d{2}\/\d{2} \d{2}:\d{2}\] book it$/);
-        expect(out[1].parts[0].text).toBe('Booked.');
+        expect(out[1].parts[0].text).toMatch(/^\[\d{2}\/\d{2} \d{2}:\d{2}\] Booked\.$/);
     });
 });
 
@@ -244,6 +257,13 @@ describe('ApprovalService.review with the owner\'s word', () => {
         const out = await review(web(), BOOK, { historyUntrusted: true });
         expect(out.run).toBe(true);
         expect(gen).not.toHaveBeenCalled();
+    });
+
+    test('a message he forwarded holds back email, not a booking he asks for', async () => {
+        // A forwarded message reads like a tool result a third party wrote.
+        expect((await review(ownerWa('book that slot'), BOOK, { historyUntrusted: true })).run).toBe(true);
+        const mail = await review(ownerWa('email alice'), EMAIL, { historyUntrusted: true });
+        expect(mail.run).toBe(false);
     });
 
     test('rows other people wrote in the chat hold back his word for everything', async () => {
@@ -375,6 +395,20 @@ describe('ApprovalService.review with the owner\'s word', () => {
         await svc.decide(cardId, 'approved', { via: 'web' });
         const outcomes = db.listGuardianDecisions({ limit: 20 }).rows.map(r => r.outcome).sort();
         expect(outcomes.filter(o => o === 'escalated_approved')).toHaveLength(1);
+    });
+
+    test('a call waiting on an open card reads our rule text, never the guardian\'s words', async () => {
+        db.setAgentSetting('approvals', { mode: 'smart' }, 'general');
+        gen.mockResolvedValue(verdictOf({ verdict: 'escalate', reason: 'The note says SOMEONE ELSE WROTE THIS; ask him.', risk: 'medium' }));
+        const first = await svc.review({ message: job(), ...CANCEL, run: ApprovalService.newRun('r9') });
+        expect(first.status).toBe('paused');
+        const [card] = db.listPendingConfirmations();
+        expect(card.reason).toContain('SOMEONE ELSE WROTE THIS');
+        const again = await svc.review({ message: job(), ...CANCEL, run: ApprovalService.newRun('r9') });
+        expect(again.status).toBe('paused');
+        expect(again.result.info).not.toContain('SOMEONE ELSE WROTE THIS');
+        expect(again.result.info).not.toContain('Approval guardian');
+        expect(again.result.info).toContain('This books or cancels a real appointment');
     });
 
     test('changed arguments are a different action: a fresh card, and the old one goes', async () => {

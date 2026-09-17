@@ -39,12 +39,13 @@ class SmartContextManager {
 
         // INJECT TIMESTAMPS
         // The model receives raw text history. To give it temporal awareness,
-        // we prepend the timestamp to the owner's messages. The model's own
-        // rows stay bare: stamped replies taught it to start new replies
-        // with a stamp, and the owner saw "[01/02 10:00]" in his chat.
+        // we prepend the timestamp to every row, its own replies included, so
+        // it can tell when it last said something. Copying that stamp into a
+        // new reply is handled where the reply is built (stripLeadingStamp in
+        // agent.js), which is what the owner saw in his chat.
         // The row id is for bookkeeping only; keep it out of the model history.
         const timestampedHistory = recentHistory.map(({ id, ...msg }) => {
-            if (msg.timestamp && msg.role === 'user') {
+            if (msg.timestamp) {
                 const date = new Date(msg.timestamp);
                 // Format: [02/04 10:00]
                 const month = (date.getMonth() + 1).toString().padStart(2, '0');

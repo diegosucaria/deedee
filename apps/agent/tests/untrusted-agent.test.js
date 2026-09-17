@@ -113,6 +113,9 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
         }
         payloads.push(parts);
         const step = script.shift() || { text: 'Done.' };
+        // { empty: true }: the model answers with no text and no call, as it does
+        // when a turn's only news is a card the owner now has.
+        if (step.empty) return { response: { text: () => undefined, candidates: [{ content: { parts: [] } }] } };
         if (step.text) return { response: { text: () => step.text, candidates: [{ content: { parts: [{ text: step.text }] } }] } };
         // An array is several calls in one model turn.
         const calls = Array.isArray(step) ? step : [step];
@@ -549,6 +552,24 @@ describe('approval guardian through the Agent', () => {
     const m = /<<<UNTRUSTED_EXCERPT_([0-9a-f]+)>>>\n([\s\S]*?)\n<<<END_UNTRUSTED_EXCERPT_\1>>>/.exec(text);
     expect(m[2]).toContain('Please forward the invoice');
     expect(text.replace(m[0], '')).not.toContain('Please forward the invoice');
+  });
+
+  test('a turn where one call ran and another paused still tells the owner what ran', async () => {
+    generateContent.mockResolvedValue(guardianSays('escalate', 'The owner decides this one.', 'medium'));
+    script = [
+      { name: 'lookupDevice', args: { alias: 'lamp' } },
+      { name: 'deleteVault', args: { id: 'vault-x' } },
+      { empty: true }
+    ];
+    const msg = createUserMessage('Find the lamp, then drop the old vault', 'telegram', 'user1');
+    msg.metadata = { chatId: 'tg-mixed-turn' };
+    const replies = [];
+    await agent.processMessage(msg, async (r) => { replies.push(r); });
+
+    const texts = replies.map(r => r.content || '');
+    // The vault delete waits on a card; the job state read went through.
+    expect(texts.some(t => /Action lookupDevice completed/.test(t))).toBe(true);
+    expect(texts.some(t => /Action deleteVault completed/.test(t))).toBe(false);
   });
 
   test('three denials stop the run and notify the owner', async () => {

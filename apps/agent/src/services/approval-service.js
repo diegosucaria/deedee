@@ -289,7 +289,6 @@ function approvedResultText(toolName, result, { untrusted = false } = {}) {
     if (untrusted) {
         // Third-party text stays out of the line: it would land in the chat
         // history as our own words, with no untrusted marker.
-        const data = parseToolOutput(result);
         return callFailed(result) ? `⚠️ ${name} did not work.` : `✅ Done: ${name}.`;
     }
     if (result === undefined || result === null) return `✅ Done: ${name}.`;
@@ -768,7 +767,9 @@ class ApprovalService {
                     ...withHits, outcome: 'escalated_duplicate', decidedBy: 'owner', approvalId: existing.id,
                     reason: 'A card for this action already waits for him.'
                 });
-                return { run: false, status: 'paused', decisionId: row?.id, result: { info: pausedInfo(toolName, existing.reason || why, where, true) } };
+                // Our own rule text, never the stored card reason: that one can
+                // carry the guardian's words, which quote what a third party wrote.
+                return { run: false, status: 'paused', decisionId: row?.id, result: { info: pausedInfo(toolName, why || 'This action needs the owner\'s approval.', where, true) } };
             }
         }
 

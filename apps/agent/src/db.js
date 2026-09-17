@@ -3689,6 +3689,11 @@ class AgentDB {
     const outcomes = {};
     for (const d of perDay) for (const [k, v] of Object.entries(d)) if (k !== 'day') outcomes[k] = (outcomes[k] || 0) + v;
     const total = Object.values(outcomes).reduce((a, b) => a + b, 0);
+    // Calls the gate had to decide. A call the owner asked for himself, and a
+    // call that waited on a card already open, were never the guardian's to judge.
+    const ownerInstructed = outcomes.owner_instructed || 0;
+    const duplicates = outcomes.escalated_duplicate || 0;
+    const judged = total - ownerInstructed - duplicates;
     const auto = (outcomes.auto_allowed || 0) + (outcomes.auto_denied || 0);
     const escalatedDecided = (outcomes.escalated_approved || 0) + (outcomes.escalated_denied || 0);
     const escalations = escalatedDecided + (outcomes.escalated || 0) + (outcomes.escalated_expired || 0) + (outcomes.escalated_failed || 0);
@@ -3749,7 +3754,10 @@ class AgentDB {
       outcomes,
       perDay,
       autoDecisions: auto,
-      autoRate: total > 0 ? auto / total : null,
+      autoRate: judged > 0 ? auto / judged : null,
+      judged,
+      ownerInstructed,
+      duplicates,
       escalations,
       escalationsApproved: outcomes.escalated_approved || 0,
       escalationApprovalShare: escalatedDecided > 0 ? (outcomes.escalated_approved || 0) / escalatedDecided : null,

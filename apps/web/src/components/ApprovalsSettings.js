@@ -14,6 +14,12 @@ const STATUS_STYLE = {
     expired: 'text-zinc-400 bg-zinc-700/40 border-zinc-600/40',
 };
 
+/** A card the action outran is not one you let expire. */
+function statusLabel(row) {
+    if (row.status === 'expired' && row.decided_via === 'superseded') return 'already done';
+    return row.status;
+}
+
 const DEFAULTS = { ttlInteractiveMin: 30, ttlDeferredHours: 6, deny: [] };
 
 function when(dateStr) {
@@ -190,10 +196,10 @@ export default function ApprovalsSettings({ value, onSave }) {
                         <ul className="mt-2 space-y-1">
                             {view.recent.filter(r => r.status !== 'pending').slice(0, 20).map(row => (
                                 <li key={row.id} className="flex flex-wrap items-center gap-2 text-[11px] text-zinc-400">
-                                    <span className={clsx('px-2 py-0.5 rounded-full border capitalize text-[10px]', STATUS_STYLE[row.status] || STATUS_STYLE.expired)}>{row.status}</span>
+                                    <span className={clsx('px-2 py-0.5 rounded-full border capitalize text-[10px]', STATUS_STYLE[row.status] || STATUS_STYLE.expired)}>{statusLabel(row)}</span>
                                     <span className="font-mono">{row.id}</span>
                                     <span className="text-zinc-300">{row.tool_name}</span>
-                                    <span className="text-zinc-600">{when(row.decided_at || row.created_at)}{row.decided_via ? ` via ${row.decided_via}` : ''}</span>
+                                    <span className="text-zinc-600">{when(row.decided_at || row.created_at)}{row.decided_via && row.decided_via !== 'superseded' ? ` via ${row.decided_via}` : ''}</span>
                                 </li>
                             ))}
                         </ul>

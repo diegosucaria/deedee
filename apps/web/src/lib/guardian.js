@@ -31,7 +31,7 @@ export const SOURCE_KINDS = [
 ];
 const SOURCE_KIND_IDS = SOURCE_KINDS.map(s => s.id);
 export const MODES = [
-    { id: 'manual', label: 'Manual', hint: 'You decide every paused call.' },
+    { id: 'manual', label: 'Manual', hint: 'You decide every paused call you did not ask for yourself.' },
     { id: 'smart', label: 'Smart', hint: 'The guardian allows, denies or asks you.' },
     { id: 'off', label: 'Off', hint: 'Nobody asks. Only the floor and your own list still ask.' },
 ];
