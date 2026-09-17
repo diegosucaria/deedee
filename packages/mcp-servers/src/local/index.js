@@ -210,7 +210,7 @@ function shellEnv(env = process.env) {
  * appears, and the value side of "NAME=value" / "NAME: value" lines whose name
  * looks secret (covers .env files and variables this process doesn't have).
  */
-function redactSecrets(text, env = process.env) {
+function redactSecrets(text, env = process.env, { lineRules = true } = {}) {
   if (typeof text !== 'string' || text.length === 0) return text;
   let out = text;
   const values = Object.entries(env)
@@ -219,9 +219,11 @@ function redactSecrets(text, env = process.env) {
   for (const [name, value] of values) {
     if (out.includes(value)) out = out.split(value).join(`[REDACTED:${name}]`);
   }
-  out = out.replace(SECRET_LINE, (line, prefix, name, separator) => (
-    isSecretName(name) ? `${prefix}${name}${separator}[REDACTED]` : line
-  ));
+  if (lineRules) {
+    out = out.replace(SECRET_LINE, (line, prefix, name, separator) => (
+      isSecretName(name) ? `${prefix}${name}${separator}[REDACTED]` : line
+    ));
+  }
   for (const { regex, replacement } of SECRET_PATTERNS) {
     out = out.replace(regex, replacement);
   }
@@ -240,6 +242,11 @@ const REDACTION_MARKER = '[REDACTED';
 // Flags for the one git command the file tools run (is this path tracked?).
 // No hook, no fsmonitor, no system config: the tree belongs to the agent.
 const SAFE_GIT_FLAGS = ['-c', 'core.hooksPath=/dev/null', '-c', 'core.fsmonitor=false'];
+
+/** How many times `needle` occurs in `text`. */
+function countOf(text, needle) {
+  return String(text).split(needle).length - 1;
+}
 
 /** True when `child` is `root` or sits below it. Both must be absolute. */
 function isInside(root, child) {
@@ -284,6 +291,10 @@ class LocalTools {
    */
   constructor(workDir = '/app', options = {}) {
     this.workDir = workDir;
+    // (relative path) => Promise<boolean>. On the device the supervisor
+    // answers from its own index. Without it, git in the tree answers, which
+    // is fine for tests and local runs but is an index the shell can write.
+    this.isTrackedFn = typeof options.isTracked === 'function' ? options.isTracked : null;
     this.allowedRoots = options.allowedRoots && options.allowedRoots.length
       ? options.allowedRoots
       : [workDir];
@@ -317,13 +328,22 @@ class LocalTools {
   }
 
   /**
-   * True when git tracks this path in the repository that holds it. Tracked
-   * source comes back unredacted: the redactor's line rules turn ordinary
-   * code into [REDACTED], and a read-modify-write would store that. Any
-   * failure (no git, no repo) counts as untracked, so the output is redacted.
+   * True when git tracks this path. Tracked source skips the redactor's line
+   * rules, which turn ordinary code into [REDACTED] that a read-modify-write
+   * would store. Any failure (no git, no repo, no answer) counts as
+   * untracked, so the output gets every rule.
    */
   async _isTracked(root, relative) {
-    if (!relative || relative.split(path.sep).some(seg => seg === '.git')) return false;
+    if (!relative || relative.split(path.sep).some(seg => seg.toLowerCase() === '.git')) return false;
+    if (this.isTrackedFn) {
+      try {
+        const realWorkDir = await fs.realpath(path.resolve(this.workDir));
+        if (root !== realWorkDir) return false;
+        return (await this.isTrackedFn(relative.split(path.sep).join('/'))) === true;
+      } catch {
+        return false;
+      }
+    }
     try {
       await execFileAsync('git', [
         ...SAFE_GIT_FLAGS, '--literal-pathspecs', 'ls-files', '--error-unmatch', '--', relative
@@ -342,8 +362,10 @@ class LocalTools {
     try {
       const { realPath, root, relative } = await this._resolveSafe(filePath);
       const content = await fs.readFile(realPath, 'utf8');
-      if (await this._isTracked(root, relative)) return content;
-      return redactSecrets(content);
+      // Secret values and token shapes go from every file. Only the
+      // name-based line rules are skipped for tracked source.
+      const tracked = await this._isTracked(root, relative);
+      return redactSecrets(content, process.env, { lineRules: !tracked });
     } catch (error) {
       throw new Error(`Failed to read file: ${error.message}`);
     }
@@ -358,7 +380,13 @@ class LocalTools {
         throw new Error(`Access denied: writing under ${denied}/ is not allowed.`);
       }
       if (typeof content === 'string' && content.includes(REDACTION_MARKER)) {
-        throw new Error('The content holds a [REDACTED] marker, so it came from a redacted read. Writing it would replace real lines. Rewrite those lines, or edit the file with a command that changes only the lines you mean to change.');
+        // Refuse only markers the file on disk does not hold already. A file
+        // that quotes the marker (the redactor, its tests, the docs) can
+        // still be rewritten; a redacted read written back adds markers.
+        const current = await fs.readFile(realPath, 'utf8').catch(() => '');
+        if (countOf(content, REDACTION_MARKER) > countOf(current, REDACTION_MARKER)) {
+          throw new Error('The content holds more [REDACTED] markers than the file on disk, so it likely came from a redacted read. Writing it would replace real lines. Rewrite those lines, or edit the file with a command that changes only the lines you mean to change.');
+        }
       }
       await fs.mkdir(path.dirname(realPath), { recursive: true });
       await fs.writeFile(realPath, content, 'utf8');

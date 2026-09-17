@@ -261,6 +261,17 @@ describe('GitOps pull request flow against real git', () => {
         expect(fs.readFileSync(path.join(work, 'apps/agent/src/c.js'), 'utf8')).toBe('c();\n');
     });
 
+    test('isTracked answers from the supervisor index, not the agent one', async () => {
+        fs.writeFileSync(path.join(work, 'apps/agent/src/planted.env'), 'X=1\n');
+        git(['add', '-f', 'apps/agent/src/planted.env'], work);
+        expect(await gitOps.isTracked('apps/agent/src/a.js')).toBe(true);
+        expect(await gitOps.isTracked('apps/agent/src/planted.env')).toBe(false);
+        expect(await gitOps.isTracked('.git/config')).toBe(false);
+        expect(await gitOps.isTracked('../outside')).toBe(false);
+        expect(await gitOps.isTracked('apps/agent/src/*')).toBe(false);
+        expect(await gitOps.isTracked('')).toBe(false);
+    });
+
     test('the token never reaches the stored config', async () => {
         expect(fs.readFileSync(path.join(stateDir, 'repo.git', 'config'), 'utf8')).not.toContain(TOKEN);
     });

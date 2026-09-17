@@ -26,7 +26,8 @@ describe('Supervisor API', () => {
           git: jest.fn().mockResolvedValue('hash\towner@example.test\tmock subject'),
           listSelfPullRequests: jest.fn(() => []),
           rollback: jest.fn().mockResolvedValue({ success: true }),
-          pull: jest.fn().mockResolvedValue({ success: true })
+          pull: jest.fn().mockResolvedValue({ success: true }),
+          isTracked: jest.fn(async (file) => file === 'apps/agent/src/a.js')
         }))
       };
     });
@@ -44,6 +45,15 @@ describe('Supervisor API', () => {
     const res = await request(app).get('/health');
     expect(res.statusCode).toBe(200);
     expect(res.body.status).toBe('ok');
+  });
+
+  test('GET /cmd/tracked answers from the supervisor and needs the token', async () => {
+    const yes = await request(app).get('/cmd/tracked').query({ path: 'apps/agent/src/a.js' }).set('x-supervisor-token', 'test-token');
+    expect(yes.body).toEqual({ tracked: true });
+    const no = await request(app).get('/cmd/tracked').query({ path: 'notes.env' }).set('x-supervisor-token', 'test-token');
+    expect(no.body).toEqual({ tracked: false });
+    const denied = await request(app).get('/cmd/tracked').query({ path: 'apps/agent/src/a.js' });
+    expect(denied.statusCode).toBe(403);
   });
 
   test('POST /cmd/commit success', async () => {

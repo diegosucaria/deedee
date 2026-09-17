@@ -161,7 +161,7 @@ class GitOps {
    * @param {string[]} args
    * @param {object} [opts] - { authed, env, raw }
    */
-  async git(args, { authed = false, env = {}, raw = false } = {}) {
+  async git(args, { authed = false, env = {}, raw = false, quiet = false } = {}) {
     const argv = [
       ...SAFE_GIT_FLAGS,
       `--git-dir=${this.gitDir}`,
@@ -179,7 +179,7 @@ class GitOps {
       return raw ? stdout : stdout.trim();
     } catch (error) {
       const message = this._scrub(`${error.message}${error.stderr ? `\n${error.stderr}` : ''}`);
-      console.error(`Git Error: ${message}`);
+      if (!quiet) console.error(`Git Error: ${message}`);
       throw new Error(message);
     }
   }
@@ -281,6 +281,24 @@ class GitOps {
       return true;
     } catch (error) {
       console.warn(`[GitOps] Could not compare local edits with origin/master: ${error.message}`);
+      return false;
+    }
+  }
+
+  /**
+   * True when the supervisor's own index lists this path. The agent asks
+   * this before it reads a file unredacted; the index inside the work tree
+   * is the agent's to write, so it cannot answer.
+   */
+  async isTracked(file) {
+    if (typeof file !== 'string' || file === '' || file.length > 4096 || file.includes('\0')) return false;
+    const normal = file.replace(/\\/g, '/');
+    if (normal.startsWith('/') || normal.split('/').some(seg => seg === '..')) return false;
+    if (hasDeniedSegment(normal)) return false;
+    try {
+      await this.git(['--literal-pathspecs', 'ls-files', '--error-unmatch', '--', normal], { quiet: true });
+      return true;
+    } catch {
       return false;
     }
   }

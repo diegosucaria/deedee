@@ -124,7 +124,20 @@ class Agent {
     this.mcp = new MCPManager(path.join(dataDir, 'mcp_config.json'));
 
     // Tools Setup
-    this.local = new LocalTools('/app/source');
+    // The supervisor says which files git tracks, from its own index; the
+    // index inside /app/source is one the shell can write.
+    this.local = new LocalTools('/app/source', {
+      isTracked: async (file) => {
+        const url = `${process.env.SUPERVISOR_URL || 'http://supervisor:4000'}/cmd/tracked?path=${encodeURIComponent(file)}`;
+        const res = await fetch(url, {
+          headers: { 'x-supervisor-token': process.env.SUPERVISOR_TOKEN || '' },
+          signal: AbortSignal.timeout(5000)
+        });
+        if (!res.ok) return false;
+        const body = await res.json();
+        return body && body.tracked === true;
+      }
+    });
     this.journal = new JournalManager();
     this.vaults = new VaultManager(dataDir); // Initialize Vaults with dynamic path
     this.backupManager = new BackupManager(this);

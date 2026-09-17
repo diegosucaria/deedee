@@ -149,6 +149,52 @@ describe('LocalTools redaction of reads', () => {
         await expect(tools.writeFile('src/new.js', 'x = "[REDACTED:GOOGLE_API_KEY]"')).rejects.toThrow(/REDACTED/);
     });
 
+    test('a file that already quotes the marker can be read and written back', async () => {
+        const quoting = "const MARKER = '[REDACTED';\nexpect(out).toBe('[REDACTED]');\n";
+        fs.writeFileSync(path.join(root, 'src', 'redactor.js'), quoting);
+        git(root, 'add', 'src/redactor.js');
+        const text = await tools.readFile('src/redactor.js');
+        expect(text).toBe(quoting);
+        await tools.writeFile('src/redactor.js', `${text}// edited\n`);
+        expect(fs.readFileSync(path.join(root, 'src', 'redactor.js'), 'utf8')).toBe(`${quoting}// edited\n`);
+        // Adding one more marker than the file holds is still refused.
+        await expect(tools.writeFile('src/redactor.js', `${text}x = '[REDACTED]';\n`)).rejects.toThrow(/REDACTED/);
+    });
+
+    test('a secret value in a tracked file is still redacted', async () => {
+        const previous = process.env.SANDBOX_TEST_TOKEN;
+        process.env.SANDBOX_TEST_TOKEN = 'value-from-the-environment-123';
+        try {
+            fs.writeFileSync(path.join(root, 'src', 'copied.txt'), 'value-from-the-environment-123\nconst token = getToken();\n');
+            git(root, 'add', 'src/copied.txt');
+            const text = await tools.readFile('src/copied.txt');
+            expect(text).not.toContain('value-from-the-environment-123');
+            expect(text).toContain('[REDACTED:SANDBOX_TEST_TOKEN]');
+            expect(text).toContain('const token = getToken();');
+        } finally {
+            if (previous === undefined) delete process.env.SANDBOX_TEST_TOKEN;
+            else process.env.SANDBOX_TEST_TOKEN = previous;
+        }
+    });
+
+    test('with an isTracked answer, the tree index is not trusted', async () => {
+        const asked = [];
+        const guarded = new LocalTools(root, { isTracked: async (file) => { asked.push(file); return file === 'src/tracked.js'; } });
+        fs.writeFileSync(path.join(root, 'src', 'planted.env'), 'SERVICE_API_KEY=abc123xyz\n');
+        git(root, 'add', 'src/planted.env');
+        expect(await guarded.readFile('src/planted.env')).toBe('SERVICE_API_KEY=[REDACTED]\n');
+        expect(await guarded.readFile('src/tracked.js')).toBe(SOURCE);
+        expect(asked).toEqual(['src/planted.env', 'src/tracked.js']);
+    });
+
+    test('an isTracked answer that fails counts as untracked', async () => {
+        fs.writeFileSync(path.join(root, 'src', 'login.js'), 'password = input.password;\n');
+        git(root, 'add', 'src/login.js');
+        expect(await tools.readFile('src/login.js')).toBe('password = input.password;\n');
+        const guarded = new LocalTools(root, { isTracked: async () => { throw new Error('down'); } });
+        expect(await guarded.readFile('src/login.js')).toBe('password = [REDACTED]\n');
+    });
+
     test('outside a git repository every read is redacted', async () => {
         const plain = fs.realpathSync(fs.mkdtempSync(path.join(os.tmpdir(), 'local-plain-')));
         try {

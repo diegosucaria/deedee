@@ -119,6 +119,17 @@ app.post('/cmd/rollback', async (req, res) => {
   }
 });
 
+// Whether git tracks a path of the work tree, from the supervisor's own index.
+// The agent's file tools read tracked source without the line redaction.
+app.get('/cmd/tracked', async (req, res) => {
+  try {
+    const file = typeof req.query.path === 'string' ? req.query.path : '';
+    res.json({ tracked: await git.isTracked(file) });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 app.post('/cmd/pull', async (req, res) => {
   try {
     console.log('[Supervisor] Received Pull Request');
