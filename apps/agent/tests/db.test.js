@@ -4,19 +4,21 @@ const path = require('path');
 const crypto = require('crypto');
 
 // Setup tmp dir
-const tmpDir = path.join(__dirname, 'tmp_db');
+const os = require('os');
+// Unique per run; see the note in proactive-mirror.test.js.
+const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deedee-db-'));
 
 describe('AgentDB', () => {
   let db;
 
   beforeEach(() => {
     // Cleanup old run
-    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
     db = new AgentDB(tmpDir);
   });
 
   afterAll(() => {
-    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true });
+    if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true });
   });
 
   afterEach(() => {

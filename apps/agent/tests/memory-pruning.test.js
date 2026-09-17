@@ -81,6 +81,37 @@ describe('MemoryPruningService LLM guards', () => {
         expect(out.prunedCount).toBe(1);
     });
 
+    // Found by running the real prompt against the live fact set: Pro asked to
+    // delete a concert nine days away. Its key is category 'temporal' and was
+    // last touched outside the recency window, so no other rule covered it.
+    test('never deletes a fact whose date has not arrived yet', async () => {
+        const day = (offset) => {
+            const d = new Date();
+            d.setDate(d.getDate() + offset);
+            return d.toISOString().split('T')[0];
+        };
+        const facts = [
+            fact(`user_concert_on_${day(9)}`, { category: 'temporal' }),
+            fact(`user_appointment_on_${day(60)}`, { category: 'temporal' }),
+            fact(`user_flight_on_${day(0)}`, { category: 'temporal' }),
+            fact(`user_dinner_on_${day(-30)}`, { category: 'temporal' }),
+            fact('user_note_on_not-a-date', { category: 'temporal' })
+        ];
+        setup(facts);
+        deleteKeys = facts.map(f => f.key);
+
+        await service.prune();
+
+        // Nothing still to come may go, whatever the model named.
+        expect(deleted).not.toContain(`user_concert_on_${day(9)}`);
+        expect(deleted).not.toContain(`user_appointment_on_${day(60)}`);
+        expect(deleted).not.toContain(`user_flight_on_${day(0)}`);
+        // A date already past and a key with no date are still fair game (the
+        // past-dated one goes in the deterministic pass before the model runs).
+        expect(deleted).toContain(`user_dinner_on_${day(-30)}`);
+        expect(deleted).toContain('user_note_on_not-a-date');
+    });
+
     test('caps one run at MEMORY_PRUNE_MAX_DELETES keys', async () => {
         const facts = Array.from({ length: 30 }, (_, i) => fact(`stale_item_${i}`));
         setup(facts);
