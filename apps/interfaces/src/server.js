@@ -275,10 +275,29 @@ function tokenMatches(presented, expected) {
   return crypto.timingSafeEqual(a, b);
 }
 
+// Internal Authentication Middleware
+// /internal/* serves the agent, not people. It carries WhatsApp message
+// bodies, so a DEEDEE_API_TOKEN holder (iOS Shortcuts, the monitor) must not
+// reach it: these routes take DEEDEE_INTERNAL_TOKEN and nothing else.
+const internalAuthMiddleware = (req, res, next) => {
+  const expected = process.env.DEEDEE_INTERNAL_TOKEN;
+  if (!expected) {
+    console.error('[Interfaces] DEEDEE_INTERNAL_TOKEN is not set; refusing internal request.');
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  const token = req.headers.authorization?.split(' ')[1];
+  if (!tokenMatches(token, expected)) {
+    return res.status(401).json({ error: 'Unauthorized' });
+  }
+  next();
+};
+
 // Authentication Middleware
 const authMiddleware = (req, res, next) => {
   // Skip auth for health check
   if (req.path === '/health') return next();
+  // /internal/* has its own, stricter check above.
+  if (req.path.startsWith('/internal/')) return next();
 
   const expected = process.env.DEEDEE_API_TOKEN;
   if (!expected) {
@@ -294,7 +313,27 @@ const authMiddleware = (req, res, next) => {
   next();
 };
 
+app.use('/internal', internalAuthMiddleware);
 app.use(authMiddleware);
+
+// GET /internal/whatsapp/messages-by-date?date=YYYY-MM-DD&session=user
+// The agent's memory consolidation reads one local day of one-to-one
+// messages. The agent has no access to the WhatsApp session files.
+app.get('/internal/whatsapp/messages-by-date', (req, res) => {
+  const { date, session } = req.query;
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(String(date || ''))) {
+    return res.status(400).json({ error: 'date must be YYYY-MM-DD' });
+  }
+  if (isWhatsAppDisabled) return res.json({ messages: [] });
+  const service = whatsappSessions[session || 'user'];
+  if (!service) return res.status(400).json({ error: 'Invalid session' });
+  try {
+    res.json({ messages: service.getMessagesByDate(date) });
+  } catch (e) {
+    console.error('[Interfaces] messages-by-date failed:', e.message);
+    res.status(500).json({ error: 'Could not read messages' });
+  }
+});
 
 app.get('/health', (req, res) => {
   res.json({

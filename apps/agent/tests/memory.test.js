@@ -6,6 +6,11 @@ const { JournalManager } = require('../src/journal');
 // Mock dependencies
 jest.mock('../src/db');
 jest.mock('../src/journal');
+// WhatsApp messages arrive over HTTP from the interfaces service.
+jest.mock('../src/services/whatsapp-messages', () => ({
+    fetchWhatsAppMessagesByDate: jest.fn().mockResolvedValue([])
+}));
+const { fetchWhatsAppMessagesByDate } = require('../src/services/whatsapp-messages');
 
 describe('Memory Tools', () => {
     let db, journal, executor, client;
@@ -81,7 +86,7 @@ describe('Memory Tools', () => {
 
         const result = await executor.execute('consolidateMemory', { date: '2023-01-01' }, {});
 
-        expect(db.getMessagesByDate).toHaveBeenCalledWith('2023-01-01');
+        expect(db.getMessagesByDate).toHaveBeenCalledWith('2023-01-01', []);
         expect(client.models.generateContent).toHaveBeenCalled();
         expect(journal.log).toHaveBeenCalledWith(expect.stringContaining('Summary of the day'));
         expect(result.success).toBe(true);
@@ -142,6 +147,25 @@ describe('Memory Tools', () => {
         expect(journal.log).toHaveBeenCalledWith(expect.stringContaining('CONFLICT'));
         // Should NOT call setKey for the pinned fact
         expect(db.setKey).not.toHaveBeenCalled();
+    });
+
+    test('consolidateMemory asks the interfaces service for WhatsApp messages', async () => {
+        const waMessage = {
+            role: 'user', content: 'from whatsapp', timestamp: '2023-01-01T09:00:00Z',
+            source: 'whatsapp:user', metadata: '{"chatId":"1@s.whatsapp.net","session":"user"}'
+        };
+        fetchWhatsAppMessagesByDate.mockResolvedValueOnce([waMessage]);
+        db.getMessagesByDate = jest.fn().mockReturnValue([waMessage]);
+        db.getAllFacts = jest.fn().mockReturnValue([]);
+        db.getFact = jest.fn().mockReturnValue(null);
+        db.getPerson = jest.fn().mockReturnValue(null);
+        journal.log = jest.fn();
+        journal.syncFactsToMemory = jest.fn().mockResolvedValue('path/to/memory.md');
+
+        await executor.execute('consolidateMemory', { date: '2023-01-01' }, {});
+
+        expect(fetchWhatsAppMessagesByDate).toHaveBeenCalledWith('2023-01-01');
+        expect(db.getMessagesByDate).toHaveBeenCalledWith('2023-01-01', [waMessage]);
     });
 
     test('consolidateMemory should handle empty day', async () => {

@@ -202,27 +202,38 @@ export async function toggleFactPin(key, pinned) {
 }
 
 // --- Browser Secrets (via Agent API) ---
-// Secure: No direct filesystem access from Web container
+// Site passwords. The browser never receives a value: reads return names,
+// writes name one secret at a time.
 
-export async function getBrowserSecretsRaw() {
+export async function getBrowserSecretNames() {
     await requireActionSession();
     try {
-        const secrets = await fetchAPI('/v1/browser-secrets');
-        return JSON.stringify(secrets, null, 2);
+        const res = await fetchAPI('/v1/browser-secrets');
+        return Array.isArray(res?.names) ? res.names : [];
     } catch (e) {
-        console.error('Failed to fetch browser secrets:', e);
-        return '{}';
+        console.error('Failed to fetch browser secret names:', e);
+        return [];
     }
 }
 
-export async function saveBrowserSecretsRaw(jsonContent) {
+export async function saveBrowserSecret(name, value) {
     await requireActionSession();
     try {
-        const secrets = JSON.parse(jsonContent);
-        await fetchAPI('/v1/browser-secrets', {
-            method: 'POST',
-            body: JSON.stringify(secrets)
+        await fetchAPI(`/v1/browser-secrets/${encodeURIComponent(name)}`, {
+            method: 'PUT',
+            body: JSON.stringify({ value })
         });
+        revalidatePath('/brain');
+        return { success: true };
+    } catch (e) {
+        return { success: false, error: e.message };
+    }
+}
+
+export async function deleteBrowserSecret(name) {
+    await requireActionSession();
+    try {
+        await fetchAPI(`/v1/browser-secrets/${encodeURIComponent(name)}`, { method: 'DELETE' });
         revalidatePath('/brain');
         return { success: true };
     } catch (e) {

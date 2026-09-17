@@ -804,28 +804,9 @@ function createInternalRouter(agent) {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    // --- Agent Settings (Private/Secrets) ---
-    router.get('/settings', (req, res) => {
-        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
-        try {
-            const settings = agent.db.getAllAgentSettings();
-            // Mask sensitive keys if needed? 
-            // For now, this is internal Admin API, so returning as is is acceptable
-            // provided the UI handles masking (which it does with password fields)
-            res.json(settings);
-        } catch (e) { res.status(500).json({ error: e.message }); }
-    });
-
-    router.post('/settings', (req, res) => {
-        if (!agent.db) return res.status(503).json({ error: 'DB not ready' });
-        try {
-            const { key, value, category } = req.body;
-            if (!key || value === undefined) return res.status(400).json({ error: 'Key and Value required' });
-
-            agent.db.setAgentSetting(key, value, category);
-            res.json({ success: true });
-        } catch (e) { res.status(500).json({ error: e.message }); }
-    });
+    // Agent settings live in routes/settings.js, mounted at /internal/settings.
+    // A second, unmasked copy of GET and POST used to sit here and returned
+    // provider keys in clear.
 
     // --- Browser Secrets ---
     // The Settings UI edits a JSON map. The browser MCP server reads a dotenv
@@ -833,35 +814,47 @@ function createInternalRouter(agent) {
     // server. The restart waits while a browser_ call is in flight.
     const browserDataDir = () => process.env.DATA_DIR || agent.dataDir || (agent.db && agent.db.dbPath ? path.dirname(agent.db.dbPath) : path.join(process.cwd(), 'data'));
 
+    // Names only. These are site passwords; every DEEDEE_API_TOKEN holder
+    // (iOS Shortcuts, the monitor) can reach this route through the api.
     router.get('/browser-secrets', (req, res) => {
         try {
-            res.json(browserSecrets.readSecrets(browserDataDir()));
+            res.json({ names: browserSecrets.readSecretNames(browserDataDir()) });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
-    router.post('/browser-secrets', async (req, res) => {
+    /** Restarts the browser MCP server so it reads the new secrets file. */
+    const restartBrowser = async () => {
+        if (!agent.mcp?.restartServer || !agent.mcp.config?.browser) return { skipped: true };
         try {
-            const secrets = req.body;
-            if (!secrets || typeof secrets !== 'object' || Array.isArray(secrets)) {
-                return res.status(400).json({ error: 'Invalid format. Expected JSON object.' });
-            }
+            return await agent.mcp.restartServer('browser');
+        } catch (e) {
+            console.warn('[API] browser server restart after secrets save failed:', e.message);
+            return { error: e.message };
+        }
+    };
+
+    // One secret at a time: set or replace.
+    router.put('/browser-secrets/:name', async (req, res) => {
+        try {
+            const name = req.params.name;
+            const value = req.body?.value;
+            if (typeof value !== 'string') return res.status(400).json({ error: 'value must be a string' });
             let count;
             try {
-                count = browserSecrets.writeSecrets(browserDataDir(), secrets);
+                count = browserSecrets.upsertSecret(browserDataDir(), name, value);
             } catch (e) {
                 return res.status(400).json({ error: e.message });
             }
+            res.json({ success: true, count, restart: await restartBrowser() });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
 
-            let restart = { skipped: true };
-            if (agent.mcp?.restartServer && agent.mcp.config?.browser) {
-                try {
-                    restart = await agent.mcp.restartServer('browser');
-                } catch (e) {
-                    console.warn('[API] browser server restart after secrets save failed:', e.message);
-                    restart = { error: e.message };
-                }
-            }
-            res.json({ success: true, count, restart });
+    // One secret at a time: remove.
+    router.delete('/browser-secrets/:name', async (req, res) => {
+        try {
+            const { count, removed } = browserSecrets.removeSecret(browserDataDir(), req.params.name);
+            if (!removed) return res.status(404).json({ error: 'No such secret' });
+            res.json({ success: true, count, restart: await restartBrowser() });
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 

@@ -40,12 +40,16 @@ The prompt rules live in `apps/agent/src/prompts/system.js` (BROWSER PROTOCOL).
 
 ## Secrets by name
 
-Diego saves secrets in **Settings > Browser secrets** as a JSON map
-(`{"SITE_USER": "...", "SITE_PASSWORD": "..."}`). Names must match
-`^[A-Z0-9_]+$`. The agent stores `browser-secrets.json`, renders
+Diego saves secrets in **Settings > Browser secrets**, one at a time. Names
+must match `^[A-Z0-9_]+$`. The agent stores `browser-secrets.json`, renders
 `browser-secrets.env` for the server's `--secrets` flag, and restarts the
 browser server (after any running browser call ends). It renders the `.env`
 again on every boot.
+
+The page never receives a value. `GET /v1/browser-secrets` returns
+`{ names: [...] }`; `PUT /v1/browser-secrets/<NAME>` with `{ "value": "…" }`
+sets or replaces one; `DELETE /v1/browser-secrets/<NAME>` removes one. Before
+this, any `DEEDEE_API_TOKEN` holder could read every site password.
 
 The model only ever sees the names, listed in each turn's context. It types a
 name with `browser_type`; the server swaps it for the value on an exact match.

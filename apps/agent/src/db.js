@@ -1789,83 +1789,24 @@ class AgentDB {
     return stmt.all(likeQuery, likeQuery, limit);
   }
 
-  getMessagesByDate(dateStr) {
-    // 1. Get Agent.db Messages
-    // dateStr format YYYY-MM-DD
-    // Compare against Local Time date of the timestamp
+  /**
+   * Agent messages of one local day, merged with messages the caller fetched
+   * elsewhere. WhatsApp messages come from the interfaces service (its
+   * /internal/whatsapp/messages-by-date route): the session files live in
+   * that container only, so the agent never opens that database.
+   * @param {string} dateStr YYYY-MM-DD
+   * @param {Array} externalMessages rows in the same shape, already fetched
+   */
+  getMessagesByDate(dateStr, externalMessages = []) {
     const stmt = this.db.prepare(`
         SELECT role, content, timestamp, source, metadata FROM messages
         WHERE date(timestamp, 'localtime') = ?
       `);
     const agentMessages = stmt.all(dateStr);
-    console.log(`[DB] getMessagesByDate(${dateStr}): Agent DB returned ${agentMessages.length} messages`);
-    if (agentMessages.length > 0) {
-      console.log(`[DB]   Agent preview: "${(agentMessages[0].content || '').substring(0, 80)}..." (source: ${agentMessages[0].source})`);
-    }
+    console.log(`[DB] getMessagesByDate(${dateStr}): agent DB ${agentMessages.length}, external ${externalMessages?.length || 0}`);
 
-    // 2. Safely get WhatsApp User Messages
-    // The WhatsApp DB lives in the interfaces container's volume.
-    // In Docker (Balena), it's mounted at /app/interfaces-data/messages_user.db (read-only).
-    // In local dev, it may be in the same directory as agent.db.
-    let whatsappMessages = [];
-    const interfacesDataPath = path.join('/app', 'interfaces-data', 'messages_user.db');
-    const localFallbackPath = path.join(path.dirname(this.dbPath), 'messages_user.db');
-    const whatsappDbPath = fs.existsSync(interfacesDataPath) ? interfacesDataPath : localFallbackPath;
-    console.log(`[DB] WhatsApp DB path: ${whatsappDbPath} | exists: ${fs.existsSync(whatsappDbPath)}`);
-    if (fs.existsSync(whatsappDbPath)) {
-      try {
-        const waDb = new Database(whatsappDbPath, { readonly: true });
-
-        // Convert YYYY-MM-DD to unix timestamps for start and end of that day (Localtime)
-        // A simple way is to use SQLite date formatting in the query itself since the timestamp column in msg.db is unix seconds
-        // Exclude group messages (where remote_jid ends with '@g.us')
-        const waStmt = waDb.prepare(`
-          SELECT 
-            CASE WHEN m.from_me = 1 THEN 'assistant' ELSE 'user' END as role,
-            m.content,
-            datetime(m.timestamp, 'unixepoch') as timestamp,
-            'whatsapp:user' as source,
-            json_object(
-              'chatId', m.remote_jid,
-              'session', 'user',
-              'notifyName', COALESCE(c.notify, c.name)
-            ) as metadata
-          FROM messages m
-          LEFT JOIN contacts c ON c.id = m.remote_jid
-          WHERE date(datetime(m.timestamp, 'unixepoch'), 'localtime') = ?
-            AND m.content IS NOT NULL
-            AND m.content != ''
-            AND m.remote_jid NOT LIKE '%@g.us'
-        `);
-        whatsappMessages = waStmt.all(dateStr);
-        console.log(`[DB] getMessagesByDate(${dateStr}): WhatsApp DB returned ${whatsappMessages.length} messages`);
-        if (whatsappMessages.length > 0) {
-          console.log(`[DB]   WA preview: "${(whatsappMessages[0].content || '').substring(0, 80)}..."`);
-        }
-
-        // Diagnostic: also check total raw count for that date without filters
-        const debugStmt = waDb.prepare(`
-          SELECT COUNT(*) as cnt, 
-                 MIN(datetime(timestamp, 'unixepoch')) as earliest,
-                 MAX(datetime(timestamp, 'unixepoch')) as latest
-          FROM messages 
-          WHERE date(datetime(timestamp, 'unixepoch'), 'localtime') = ?
-        `);
-        const debugRow = debugStmt.get(dateStr);
-        console.log(`[DB]   WA total (incl. groups, empty): ${debugRow.cnt} | range: ${debugRow.earliest} - ${debugRow.latest}`);
-
-        waDb.close();
-      } catch (e) {
-        console.error(`[DB] Failed to fetch WhatsApp messages for consolidation:`, e.message);
-      }
-    }
-
-    // 3. Merge and Sort
-    const allMessages = [...agentMessages, ...whatsappMessages];
-
-    // Sort by Date (ascending)
+    const allMessages = [...agentMessages, ...(Array.isArray(externalMessages) ? externalMessages : [])];
     allMessages.sort((a, b) => new Date(a.timestamp) - new Date(b.timestamp));
-
     return allMessages;
   }
 

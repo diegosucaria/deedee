@@ -15,6 +15,7 @@
  * services/approval-service.js. This file holds no state between calls.
  */
 const { toolDefinitions } = require('./tools-definition');
+const { BLOCKED_PATTERNS: SHELL_BLOCKED } = require('@deedee/mcp-servers/src/local/index');
 
 const HA_CALL_TOOLS = new Set(['ha_call_service', 'call_service']);
 // Domains where any service call changes physical security. Climate,
@@ -194,17 +195,13 @@ class ConfirmationManager {
                 message: 'The shell command can damage the system.'
             },
             {
+                // Same list the local MCP server refuses outright, so the two
+                // layers never disagree. A glob is a hit as well: the rules
+                // read the command text, so `/app/data/browser*/*.env` must
+                // not walk around the spelled-out path.
                 id: 'shell-credentials',
-                condition: (name, args) => {
-                    if (name !== 'runShellCommand') return false;
-                    const command = asString(args.command);
-                    return /\.db\b/.test(command)
-                        || /agent\.db/.test(command)
-                        || /\bstrings\s+.*\/app\/data/i.test(command)
-                        || /\/app\/interfaces-data/i.test(command)
-                        || /browser[_-]profile/i.test(command)
-                        || /browser-secrets/i.test(command);
-                },
+                condition: (name, args) => name === 'runShellCommand'
+                    && SHELL_BLOCKED.some(rule => rule.match(asString(args.command))),
                 message: 'Direct database or credentials access through the shell is not allowed. Use the proper tools instead.'
             },
             {

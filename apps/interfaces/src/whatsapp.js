@@ -288,6 +288,36 @@ class SQLiteStore {
 
     // --- Access Methods ---
 
+    /**
+     * One-to-one messages of one local day, for the agent's nightly memory
+     * consolidation. The agent used to open this database through a mounted
+     * volume; it now asks the interfaces service, which is the only service
+     * that holds the WhatsApp session. Group chats and empty bodies are left
+     * out. Shape matches the agent's own message rows.
+     */
+    getMessagesByDate(dateStr) {
+        const rows = this.db.prepare(`
+            SELECT
+              CASE WHEN m.from_me = 1 THEN 'assistant' ELSE 'user' END as role,
+              m.content,
+              datetime(m.timestamp, 'unixepoch') as timestamp,
+              'whatsapp:user' as source,
+              json_object(
+                'chatId', m.remote_jid,
+                'session', 'user',
+                'notifyName', COALESCE(c.notify, c.name)
+              ) as metadata
+            FROM messages m
+            LEFT JOIN contacts c ON c.id = m.remote_jid
+            WHERE date(datetime(m.timestamp, 'unixepoch'), 'localtime') = ?
+              AND m.content IS NOT NULL
+              AND m.content != ''
+              AND m.remote_jid NOT LIKE '%@g.us'
+            ORDER BY m.timestamp ASC
+        `).all(dateStr);
+        return rows;
+    }
+
     getGlobalUserHistory(limit) {
         // from_me = 1 means sent by the user account owner
         const rows = this.db.prepare(`
@@ -1397,6 +1427,12 @@ class WhatsAppService {
     getGlobalUserHistory(limit = 500) {
         if (!this.store) return [];
         return this.store.getGlobalUserHistory(limit);
+    }
+
+    /** One-to-one messages of one local day (YYYY-MM-DD). */
+    getMessagesByDate(dateStr) {
+        if (!this.store) return [];
+        return this.store.getMessagesByDate(dateStr);
     }
 
     // Helper for Wake & Sleep

@@ -52,6 +52,48 @@ describe('Interfaces API Tests', () => {
     return serverModule.app;
   }
 
+  describe('Internal routes (agent only)', () => {
+    const PATH = '/internal/whatsapp/messages-by-date?date=2026-09-15';
+
+    test('401 without a token', async () => {
+      process.env.DEEDEE_INTERNAL_TOKEN = 'internal-token';
+      app = await loadApp();
+      const res = await request(app).get(PATH);
+      expect(res.statusCode).toBe(401);
+    });
+
+    test('401 for a DEEDEE_API_TOKEN holder', async () => {
+      process.env.DEEDEE_INTERNAL_TOKEN = 'internal-token';
+      app = await loadApp();
+      const res = await request(app).get(PATH).set('Authorization', 'Bearer valid-token');
+      expect(res.statusCode).toBe(401);
+    });
+
+    test('401 when DEEDEE_INTERNAL_TOKEN is unset', async () => {
+      delete process.env.DEEDEE_INTERNAL_TOKEN;
+      app = await loadApp();
+      const res = await request(app).get(PATH).set('Authorization', 'Bearer anything');
+      expect(res.statusCode).toBe(401);
+    });
+
+    test('the internal token is accepted', async () => {
+      process.env.DEEDEE_INTERNAL_TOKEN = 'internal-token';
+      app = await loadApp();
+      const res = await request(app).get(PATH).set('Authorization', 'Bearer internal-token');
+      expect(res.statusCode).toBe(200);
+      expect(res.body).toEqual({ messages: [] });
+    });
+
+    test('400 for a date that is not YYYY-MM-DD', async () => {
+      process.env.DEEDEE_INTERNAL_TOKEN = 'internal-token';
+      app = await loadApp();
+      const res = await request(app)
+        .get('/internal/whatsapp/messages-by-date?date=../../etc')
+        .set('Authorization', 'Bearer internal-token');
+      expect(res.statusCode).toBe(400);
+    });
+  });
+
   describe('Auth & Smoke', () => {
     test('GET /health should be public (no auth needed)', async () => {
       app = await loadApp();

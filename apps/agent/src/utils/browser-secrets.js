@@ -74,6 +74,26 @@ function writeSecrets(dataDir, secrets) {
     return Object.keys(secrets).length;
 }
 
+/** Sets or replaces one secret. Returns how many are stored afterwards. */
+function upsertSecret(dataDir, name, value) {
+    if (!KEY_RE.test(String(name || ''))) throw new Error(`Invalid secret name "${name}": use A-Z, 0-9 and _ only`);
+    if (typeof value !== 'string') throw new Error(`Secret "${name}" must be a string`);
+    quoteValue(value); // throws on a value that cannot be written
+    const secrets = readSecrets(dataDir);
+    secrets[name] = value;
+    return writeSecrets(dataDir, secrets);
+}
+
+/** Removes one secret. Returns { count, removed }. */
+function removeSecret(dataDir, name) {
+    const secrets = readSecrets(dataDir);
+    if (!Object.prototype.hasOwnProperty.call(secrets, name)) {
+        return { count: Object.keys(secrets).length, removed: false };
+    }
+    delete secrets[name];
+    return { count: writeSecrets(dataDir, secrets), removed: true };
+}
+
 /**
  * Regenerates the dotenv file from the JSON file. Run on boot before the MCP
  * servers start so the browser server always reads the current values.
@@ -93,4 +113,4 @@ function regenerateEnv(dataDir) {
     return Object.keys(valid).length;
 }
 
-module.exports = { KEY_RE, secretsPaths, quoteValue, renderDotenv, readSecrets, readSecretNames, writeSecrets, regenerateEnv };
+module.exports = { KEY_RE, secretsPaths, quoteValue, renderDotenv, readSecrets, readSecretNames, writeSecrets, upsertSecret, removeSecret, regenerateEnv };

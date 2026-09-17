@@ -58,7 +58,11 @@ class MemoryExecutor extends BaseExecutor {
 
                 console.log(`[Consolidation] Target date: ${date} | TZ: ${process.env.TZ} | Now (UTC): ${new Date().toISOString()}`);
 
-                const messages = db.getMessagesByDate(date);
+                // WhatsApp messages come from the interfaces service; the
+                // agent has no access to its session volume.
+                const { fetchWhatsAppMessagesByDate } = require('../services/whatsapp-messages');
+                const whatsappMessages = await fetchWhatsAppMessagesByDate(date);
+                const messages = db.getMessagesByDate(date, whatsappMessages);
 
                 // Diagnostic: count messages by source
                 const sourceCounts = {};

@@ -68,3 +68,36 @@ describe('writeSecrets / readSecretNames / regenerateEnv', () => {
         expect(readSecretNames(dataDir)).toEqual([]);
     });
 });
+
+describe('upsertSecret / removeSecret', () => {
+    const fs = require('fs');
+    const os = require('os');
+    const path = require('path');
+    const { upsertSecret, removeSecret, readSecrets, readSecretNames } = require('../src/utils/browser-secrets');
+    let dir;
+
+    beforeEach(() => { dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deedee-secret-crud-')); });
+    afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    test('upsert adds, then replaces, one secret and leaves the rest', () => {
+        expect(upsertSecret(dir, 'ONE', 'a')).toBe(1);
+        expect(upsertSecret(dir, 'TWO', 'b')).toBe(2);
+        expect(upsertSecret(dir, 'ONE', 'c')).toBe(2);
+        expect(readSecrets(dir)).toEqual({ ONE: 'c', TWO: 'b' });
+    });
+
+    test('upsert refuses a bad name or a value that is not a string', () => {
+        expect(() => upsertSecret(dir, 'bad name', 'a')).toThrow(/Invalid secret name/);
+        expect(() => upsertSecret(dir, 'OK', 5)).toThrow(/must be a string/);
+        expect(readSecretNames(dir)).toEqual([]);
+    });
+
+    test('remove drops one secret and reports an unknown name', () => {
+        upsertSecret(dir, 'ONE', 'a');
+        upsertSecret(dir, 'TWO', 'b');
+
+        expect(removeSecret(dir, 'ONE')).toEqual({ count: 1, removed: true });
+        expect(readSecretNames(dir)).toEqual(['TWO']);
+        expect(removeSecret(dir, 'NOPE')).toEqual({ count: 1, removed: false });
+    });
+});

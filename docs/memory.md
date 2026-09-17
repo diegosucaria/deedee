@@ -37,7 +37,7 @@ DeeDee uses a multi-tiered memory architecture to maintain state, context, and l
 
 ## Database Locations
 - **Agent DB**: `/app/data/agent.db` (messages, kv_store, goals, people, summaries)
-- **WhatsApp DB**: `/app/interfaces-data/messages_user.db` (Baileys/SQLite, read-only mount)
+- **WhatsApp messages**: held by the interfaces service. The agent asks for one day at a time over `GET /internal/whatsapp/messages-by-date` (bearer `DEEDEE_INTERNAL_TOKEN`); it does not mount the WhatsApp volume.
 - **RAG DB**: `/app/data/rag.db` (document chunks + vector embeddings)
 - **Volume**: `agent-data` (Docker volume, preserved across rebuilds)
 

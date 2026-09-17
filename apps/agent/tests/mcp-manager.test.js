@@ -364,3 +364,172 @@ describe('MCPManager.restartServer', () => {
         expect(manager._connectServer).toHaveBeenCalledTimes(1);
     });
 });
+
+describe('MCPManager._childEnv', () => {
+    const originalEnv = { ...process.env };
+    let manager;
+
+    beforeEach(() => {
+        manager = new MCPManager();
+        jest.spyOn(console, 'log').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        process.env = { ...originalEnv };
+        jest.restoreAllMocks();
+    });
+
+    test('a child gets the base plus its own config, never another key', () => {
+        process.env.PATH = '/usr/bin';
+        process.env.HOME = '/root';
+        process.env.GOOGLE_API_KEY = 'google-key';
+        process.env.GITHUB_PAT = 'github-pat';
+        process.env.PLEX_TOKEN = 'plex-token';
+
+        const env = manager._childEnv('plex', {
+            env: { PLEX_URL: 'http://plex.local', PLEX_TOKEN: '${PLEX_TOKEN}' }
+        });
+
+        expect(env.PLEX_TOKEN).toBe('plex-token');
+        expect(env.PLEX_URL).toBe('http://plex.local');
+        expect(env.PATH).toBe('/usr/bin');
+        expect(env.HOME).toBe('/root');
+        expect(env.GOOGLE_API_KEY).toBeUndefined();
+        expect(env.GITHUB_PAT).toBeUndefined();
+    });
+
+    test('the browser server keeps the variables Chromium and playwright need', () => {
+        process.env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD = '1';
+        process.env.BROWSER_EXECUTABLE_PATH = '/usr/bin/chromium-browser';
+        process.env.DATA_DIR = '/app/data';
+        process.env.GOOGLE_API_KEY = 'google-key';
+
+        const env = manager._childEnv('browser', {
+            env: {
+                PLAYWRIGHT_MCP_EXECUTABLE_PATH: '${BROWSER_EXECUTABLE_PATH}',
+                DATA_DIR: '${DATA_DIR}'
+            }
+        });
+
+        expect(env.PLAYWRIGHT_MCP_EXECUTABLE_PATH).toBe('/usr/bin/chromium-browser');
+        expect(env.DATA_DIR).toBe('/app/data');
+        expect(env.PLAYWRIGHT_SKIP_BROWSER_DOWNLOAD).toBe('1');
+        expect(env.GOOGLE_API_KEY).toBeUndefined();
+    });
+
+    test('home assistant still gets every derived variable', () => {
+        process.env.HA_URL = 'http://ha.local:8123';
+        process.env.HA_TOKEN = 'ha-token';
+
+        const env = manager._childEnv('homeassistant', {
+            env: { HA_URL: '${HA_URL}', HA_TOKEN: '${HA_TOKEN}' }
+        });
+
+        expect(env.HASS_URL).toBe('http://ha.local:8123');
+        expect(env.HOMEASSISTANT_URL).toBe('http://ha.local:8123');
+        expect(env.HASS_TOKEN).toBe('ha-token');
+        expect(env.HOMEASSISTANT_TOKEN).toBe('ha-token');
+        expect(env.HOME_ASSISTANT_API_TOKEN).toBe('ha-token');
+        expect(env.HOME_ASSISTANT_WEB_SOCKET_URL).toBe('ws://ha.local:8123/api/websocket');
+    });
+
+    test('a Google Workspace server keeps its own HOME and credentials file', () => {
+        const os = require('os');
+        const fs = require('fs');
+        const path = require('path');
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'mcp-gws-'));
+        manager.configPath = path.join(dir, 'mcp_config.json');
+        process.env.HOME = '/root';
+        process.env.GOOGLE_API_KEY = 'google-key';
+
+        const env = manager._childEnv('gws_personal', {
+            command: 'gws',
+            env: {
+                GOOGLE_WORKSPACE_CLI_CREDENTIALS_FILE: path.join(dir, 'gws-credentials-personal.json'),
+                GOOGLE_WORKSPACE_CLI_ACCOUNT: 'someone@example.com'
+            }
+        });
+
+        expect(env.HOME).toBe(path.join(dir, 'gws-home-gws_personal'));
+        expect(fs.existsSync(env.HOME)).toBe(true);
+        expect(env.GOOGLE_WORKSPACE_CLI_ACCOUNT).toBe('someone@example.com');
+        expect(env.GOOGLE_API_KEY).toBeUndefined();
+        fs.rmSync(dir, { recursive: true, force: true });
+    });
+
+    test('MCP_ENV_PASSTHROUGH adds named variables for every server', () => {
+        process.env.MCP_ENV_PASSTHROUGH = 'EXTRA_ONE, EXTRA_TWO';
+        process.env.EXTRA_ONE = '1';
+        process.env.EXTRA_TWO = '2';
+        process.env.EXTRA_THREE = '3';
+
+        const env = manager._childEnv('node-red', {});
+        expect(env.EXTRA_ONE).toBe('1');
+        expect(env.EXTRA_TWO).toBe('2');
+        expect(env.EXTRA_THREE).toBeUndefined();
+    });
+});
+
+describe('MCPManager optional server variables', () => {
+    const originalEnv = { ...process.env };
+    let manager;
+
+    beforeEach(() => {
+        manager = new MCPManager();
+        jest.spyOn(console, 'log').mockImplementation(() => {});
+    });
+
+    afterEach(() => {
+        process.env = { ...originalEnv };
+        jest.restoreAllMocks();
+    });
+
+    test('an unset ${VAR} is left out, so the server keeps its own default', () => {
+        delete process.env.PILOTFY_BASE;
+        process.env.PILOTFY_TOKEN = 'pilotfy-token';
+
+        const env = manager._childEnv('pilotfy', {
+            env: { PILOTFY_TOKEN: '${PILOTFY_TOKEN}', PILOTFY_BASE: '${PILOTFY_BASE}' }
+        });
+
+        expect(env.PILOTFY_TOKEN).toBe('pilotfy-token');
+        expect('PILOTFY_BASE' in env).toBe(false);
+    });
+
+    test('a set optional variable does reach the child', () => {
+        process.env.PILOTFY_BASE = 'https://api.example.test';
+        const env = manager._childEnv('pilotfy', { env: { PILOTFY_BASE: '${PILOTFY_BASE}' } });
+        expect(env.PILOTFY_BASE).toBe('https://api.example.test');
+    });
+
+    test('the shipped config names every optional variable its servers read', () => {
+        const config = require('../mcp_config.json');
+        expect(Object.keys(config.pilotfy.env)).toEqual(expect.arrayContaining([
+            'PILOTFY_BASE', 'PILOTFY_SCHOOL_ID', 'PILOTFY_TZ_OFFSET',
+            'PILOTFY_AERODROME_LAT', 'PILOTFY_AERODROME_LON', 'PILOTFY_AERODROME_NAME'
+        ]));
+        expect(Object.keys(config.allende.env)).toEqual(expect.arrayContaining([
+            'ALLENDE_BASE', 'ALLENDE_ID_PACIENTE', 'ALLENDE_ID_FINANCIADOR',
+            'ALLENDE_ID_PLAN', 'ALLENDE_ID_TIPO_DOCUMENTO', 'ALLENDE_ENV_FILE'
+        ]));
+        expect(Object.keys(config.plex.env)).toEqual(expect.arrayContaining([
+            'PLEX_USERNAME', 'PLEX_PASSWORD', 'PLEX_SERVER_NAME'
+        ]));
+    });
+
+    test('a saved entry picks up env names the image added later', () => {
+        const saved = { pilotfy: { command: 'python3', env: { PILOTFY_TOKEN: '${PILOTFY_TOKEN}' } } };
+        const defaults = { pilotfy: { command: 'python3', env: { PILOTFY_TOKEN: '${PILOTFY_TOKEN}', PILOTFY_BASE: '${PILOTFY_BASE}' } } };
+
+        expect(manager._migrateConfig(saved, defaults)).toBe(true);
+        expect(saved.pilotfy.env).toEqual({ PILOTFY_TOKEN: '${PILOTFY_TOKEN}', PILOTFY_BASE: '${PILOTFY_BASE}' });
+    });
+
+    test('a value the owner edited is left alone', () => {
+        const saved = { plex: { env: { PLEX_URL: 'http://plex.local:32400' } } };
+        const defaults = { plex: { env: { PLEX_URL: '${PLEX_URL}' } } };
+
+        expect(manager._migrateConfig(saved, defaults)).toBe(false);
+        expect(saved.plex.env.PLEX_URL).toBe('http://plex.local:32400');
+    });
+});

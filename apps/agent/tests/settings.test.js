@@ -43,7 +43,7 @@ describe('Settings API', () => {
         expect(mockRun).toHaveBeenCalledWith('voice_settings', '"Puck"', 'voice');
     });
 
-    test('POST /internal/settings should broadcast update if interface exists', async () => {
+    test('POST /internal/settings broadcasts the name, never the value', async () => {
         const mockRun = jest.fn();
         mockDb.db.prepare.mockReturnValue({ run: mockRun });
 
@@ -58,8 +58,7 @@ describe('Settings API', () => {
         expect(res.statusCode).toBe(200);
         expect(mockAgent.interface.broadcast).toHaveBeenCalledWith('entity:update', {
             type: 'setting',
-            key: 'search_strategy',
-            value: 123
+            key: 'search_strategy'
         });
     });
 
@@ -187,5 +186,70 @@ describe('Settings API approvals', () => {
             expect(res.statusCode).toBe(400);
         }
         expect(run).not.toHaveBeenCalled();
+    });
+});
+
+describe('Settings API keeps secrets on the server', () => {
+    let app;
+    let rows;
+    let saved;
+
+    // Minimal stand-in for the settings table.
+    const makeAgent = () => ({
+        db: {
+            db: {
+                prepare: (sql) => {
+                    if (sql.includes('SELECT key, value')) return { all: () => rows };
+                    if (sql.includes('SELECT value FROM agent_settings')) {
+                        return { get: (key) => rows.find(r => r.key === key) };
+                    }
+                    return { run: (key, value, category) => { saved = { key, value, category }; } };
+                }
+            }
+        },
+        interface: { broadcast: jest.fn().mockResolvedValue(true) }
+    });
+
+    beforeEach(() => {
+        saved = undefined;
+        rows = [
+            { key: 'provider:xai', value: JSON.stringify({ apiKey: 'xai-abc123', models: ['grok-4'] }) },
+            { key: 'owner_name', value: JSON.stringify('Owner') }
+        ];
+        app = express();
+        app.use(express.json());
+        app.use('/internal/settings', createSettingsRouter(makeAgent()));
+    });
+
+    test('GET returns a set flag instead of the key', async () => {
+        const res = await request(app).get('/internal/settings');
+
+        expect(res.statusCode).toBe(200);
+        expect(res.body['provider:xai']).toEqual({ apiKey: { __secret: true, set: true }, models: ['grok-4'] });
+        expect(res.body.owner_name).toBe('Owner');
+        expect(JSON.stringify(res.body)).not.toContain('xai-abc123');
+    });
+
+    test('a save that sends the marker back keeps the stored key', async () => {
+        const res = await request(app)
+            .post('/internal/settings')
+            .send({ key: 'provider:xai', value: { apiKey: { __secret: true }, models: ['grok-4', 'grok-5'] } });
+
+        expect(res.statusCode).toBe(200);
+        expect(JSON.parse(saved.value)).toEqual({ apiKey: 'xai-abc123', models: ['grok-4', 'grok-5'] });
+        expect(JSON.stringify(res.body)).not.toContain('xai-abc123');
+        expect(res.body.value.apiKey).toEqual({ __secret: true, set: true });
+    });
+
+    test('a new value replaces the key and an empty string clears it', async () => {
+        await request(app)
+            .post('/internal/settings')
+            .send({ key: 'provider:xai', value: { apiKey: 'xai-new', models: [] } });
+        expect(JSON.parse(saved.value).apiKey).toBe('xai-new');
+
+        await request(app)
+            .post('/internal/settings')
+            .send({ key: 'provider:xai', value: { apiKey: '', models: [] } });
+        expect(JSON.parse(saved.value).apiKey).toBe('');
     });
 });

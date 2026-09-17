@@ -71,7 +71,8 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - `POST /v1/cron-helper`: AI-powered natural language to cron expression converter (uses LITE model).
     - `GET /v1/goals`: Manage agent goals (CRUD).
     - `GET /v1/config`: Read/Write system configuration & env.
-    - `POST /v1/settings`: Update runtime settings (updates DB + Cache).
+    - `GET /v1/settings`: Read runtime settings. Secret-looking values come back as `{ __secret: true, set: boolean }` — the name and whether it is set, never the value.
+    - `POST /v1/settings`: Update runtime settings (updates DB + Cache). Send a `{ __secret: true }` marker back for a secret you are not changing, `""` to clear it.
     - `GET /v1/backups`: Manage backup archives.
     - `GET /v1/logs/:container`: Stream real-time logs (SSE-like).
     - `POST /v1/whatsapp`: Control WhatsApp sessions (connect/disconnect).
@@ -81,7 +82,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - `GET /v1/live/config`: Proxy for the Live model, voice and the Agent's Live system instruction.
     - `POST /v1/live/tools/execute`: Proxy for Gemini Live client-side tool execution.
     - `GET /v1/vaults`: List and manage Life Vaults.
-    - `GET/POST /v1/browser-secrets`: Securely manage browser automation credentials.
+    - `GET /v1/browser-secrets`: Browser secret names only. `PUT`/`DELETE /v1/browser-secrets/<NAME>` set or remove one.
     - `GET/POST /v1/vaults/:id/files`: Secure file upload to vaults. [Proxy -> Agent]
     - `GET /v1/vaults/:id/files/:filename`: Secure file download. [Proxy -> Agent]
     - `GET /v1/subagents?page=1&limit=50`: List sub-agent tasks (paginated, max limit 100).
