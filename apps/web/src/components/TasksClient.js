@@ -15,6 +15,8 @@ export default function TasksClient() {
     const pathname = usePathname();
 
     const activeTab = searchParams.get('tab') || 'active';
+    // /tasks?tab=manage&job=<name> opens the history filtered to one job (the Guardian page links here).
+    const jobFilter = searchParams.get('job') || '';
 
     const setActiveTab = useCallback((tab) => {
         const params = new URLSearchParams(searchParams.toString());
@@ -45,7 +47,7 @@ export default function TasksClient() {
             {/* Tab Content */}
             {activeTab === 'manage' && (
                 <div className="space-y-8 animate-in fade-in slide-in-from-bottom-2 duration-500">
-                    <JobLogsTable />
+                    <JobLogsTable key={jobFilter} initialSearch={jobFilter} />
                 </div>
             )}
 
