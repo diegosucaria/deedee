@@ -95,7 +95,9 @@ export default function ChatSessionPage({ params }) {
 
     // Model State
     const [selectedModel, setSelectedModel] = useState('auto');
-    const [configuredModels, setConfiguredModels] = useState(['grok-beta', 'grok-2-vision-1212']); // Fallback defaults
+    // The provider config is the only source of model ids; an empty list
+    // means the picker shows 'auto' alone until the config loads.
+    const [configuredModels, setConfiguredModels] = useState([]);
 
     // Load Model Pref
     useEffect(() => {
