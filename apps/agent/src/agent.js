@@ -216,6 +216,12 @@ class Agent {
     this.browserLive = new BrowserLive(this);
     this.toolScoper = new ToolScoper(config.googleApiKey, this.db);
     this.notifications = new NotificationService(this.db, this.interface);
+    // When an approval is decided its bell entry is marked read in the
+    // database. Tell the open page, so the count drops without a reload.
+    this.db.onNotificationsRead = (approvalIds) => {
+      // The page holds notification ids, not approval ids, so it refetches.
+      this.interface?.broadcast?.('notification:read', { approvalIds }).catch?.(() => { });
+    };
     // Delivery ledger: retries, backoff and the fallback channel for owner notifications.
     this.delivery = new DeliveryService(this);
 

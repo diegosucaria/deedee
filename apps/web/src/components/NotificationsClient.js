@@ -67,8 +67,14 @@ export default function NotificationsClient({ initialNotifications, initialUnrea
             setNotifications(prev => [notification, ...prev]);
             setUnreadCount(prev => prev + 1);
         };
+        // An approval he has answered stops being unread on the server.
+        const readHandler = () => refresh();
         socket.on('notification:new', handler);
-        return () => socket.off('notification:new', handler);
+        socket.on('notification:read', readHandler);
+        return () => {
+            socket.off('notification:new', handler);
+            socket.off('notification:read', readHandler);
+        };
     }, [socket, refresh]);
 
     const handleMarkRead = async (id) => {

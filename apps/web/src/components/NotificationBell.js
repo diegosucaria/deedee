@@ -66,8 +66,15 @@ export default function NotificationBell() {
             setPulse(true);
             setTimeout(() => setPulse(false), 3000);
         };
+        // An approval he has answered stops being unread on the server, so
+        // the count here follows without a reload.
+        const readHandler = () => fetchNotifications();
         socket.on('notification:new', handler);
-        return () => socket.off('notification:new', handler);
+        socket.on('notification:read', readHandler);
+        return () => {
+            socket.off('notification:new', handler);
+            socket.off('notification:read', readHandler);
+        };
     }, [socket, fetchNotifications]);
 
     // Click outside to close

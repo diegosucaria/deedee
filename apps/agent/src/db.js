@@ -755,7 +755,45 @@ class AgentDB {
       this.db.exec("ALTER TABLE wr_user_profile ADD COLUMN style_preferences TEXT");
     } catch (err) { }
 
+    this._settleOldApprovalNotifications();
     this._migrateMessageTimestampsToIso();
+  }
+
+  /**
+   * Nothing ever marked an approval's notification read, so a card he
+   * answered hours ago still sat unread in the bell. Every notification for
+   * an approval that is no longer pending (decided, expired, or cleaned up
+   * with the old rows) is marked read once at boot. The row stays: the list
+   * is still the history of what was asked.
+   */
+  _settleOldApprovalNotifications() {
+    try {
+      const approvals = this.db.prepare(`
+        UPDATE notifications SET is_read = 1
+        WHERE type = 'approval' AND is_read = 0
+          AND NOT EXISTS (
+            SELECT 1 FROM pending_confirmations c
+            WHERE c.id = json_extract(notifications.metadata, '$.approvalId')
+              AND c.status = 'pending'
+          )
+      `).run().changes;
+      // No wait survives a restart, so every question in the bell has been
+      // settled by the time this runs.
+      const questions = this.db.prepare(`
+        UPDATE notifications SET is_read = 1
+        WHERE type = 'ask_user' AND is_read = 0
+          AND NOT EXISTS (
+            SELECT 1 FROM pending_questions q
+            WHERE q.id = json_extract(notifications.metadata, '$.questionId')
+              AND q.status = 'pending'
+          )
+      `).run().changes;
+      if (approvals + questions > 0) {
+        console.log(`[DB] Marked ${approvals} decided approval and ${questions} answered question notification(s) read.`);
+      }
+    } catch (err) {
+      console.warn('[DB] Could not settle old approval notifications:', err.message);
+    }
   }
 
   // One-time data migration: older rows stored epoch ms in messages.timestamp.
@@ -3151,11 +3189,13 @@ class AgentDB {
   }
 
   closePendingQuestion(id, status, answer = null) {
-    this.db.prepare(`
+    const { changes } = this.db.prepare(`
       UPDATE pending_questions
       SET status = ?, answer = ?, answered_at = datetime('now')
       WHERE id = ? AND status = 'pending'
     `).run(status, answer, id);
+    // A question he has answered stops asking from the bell.
+    if (changes > 0) this.markQuestionNotificationsRead(id);
   }
 
   /**
@@ -3169,6 +3209,7 @@ class AgentDB {
         UPDATE pending_questions SET status = 'expired', answered_at = datetime('now')
         WHERE status = 'pending'
       `).run();
+      this.markQuestionNotificationsRead(rows.map(r => r.id));
     }
     return rows;
   }
@@ -3498,7 +3539,43 @@ class AgentDB {
           WHERE id = ? AND status = 'pending' AND expires_at > ?
         `).run(status, nowIso, via, id, nowIso);
     if (res.changes > 0) this._settleGuardianDecision([id], status, { via });
-    return res.changes > 0 ? this.getPendingConfirmation(id) : null;
+    if (res.changes === 0) return null;
+    // The question has an answer now, so it stops asking from the bell.
+    this.markApprovalNotificationsRead(id);
+    return this.getPendingConfirmation(id);
+  }
+
+  /**
+   * Mark the bell entries for these approvals read. They stay in the list,
+   * so he can still see what was asked and what he said.
+   * @returns {number} rows changed
+   */
+  markApprovalNotificationsRead(ids) {
+    return this._markAnsweredNotificationsRead('approval', 'approvalId', ids);
+  }
+
+  /** The same for a question he has answered, or that ran out of time. */
+  markQuestionNotificationsRead(ids) {
+    return this._markAnsweredNotificationsRead('ask_user', 'questionId', ids);
+  }
+
+  _markAnsweredNotificationsRead(type, field, ids) {
+    const list = (Array.isArray(ids) ? ids : [ids]).filter(Boolean).map(String);
+    if (list.length === 0) return 0;
+    const holes = list.map(() => '?').join(',');
+    try {
+      const { changes } = this.db.prepare(`
+        UPDATE notifications SET is_read = 1
+        WHERE type = ? AND is_read = 0
+          AND json_extract(metadata, '$.${field}') IN (${holes})
+      `).run(type, ...list);
+      // The open page should not keep the count it had a moment ago.
+      if (changes > 0) this.onNotificationsRead?.(list);
+      return changes;
+    } catch (err) {
+      console.warn(`[DB] Could not mark ${type} notifications read:`, err.message);
+      return 0;
+    }
   }
 
   /** What the approved call returned (or the error), for the settings card. */
@@ -3522,6 +3599,8 @@ class AgentDB {
         WHERE status = 'pending' AND expires_at <= ?
       `).run(nowIso, nowIso);
       this._settleGuardianDecision(rows.map(r => r.id), 'expired');
+      // A card that ran out of time is not a question any more either.
+      this.markApprovalNotificationsRead(rows.map(r => r.id));
     }
     return rows;
   }
