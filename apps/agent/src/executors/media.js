@@ -2,6 +2,9 @@ const { BaseExecutor } = require('./base');
 const { createAssistantMessage } = require('@deedee/shared/src/types');
 const { createWavHeader } = require('../utils/audio');
 const { ConfigService } = require('../services/config-service');
+const fs = require('fs');
+const path = require('path');
+const { fetchCityWeather, cityImagePrompt } = require('../utils/city-weather');
 
 class MediaExecutor extends BaseExecutor {
     async execute(name, args, context, callServices) {
@@ -10,6 +13,47 @@ class MediaExecutor extends BaseExecutor {
         const { message, sendCallback } = context;
 
         switch (name) {
+            case 'cityWeatherImage': {
+                // The morning briefing's picture, in one step: no shell, no
+                // token, no second agent turn. It is saved and returned, not
+                // sent: the job sends it with the briefing as its caption.
+                const { client, agent, db } = services;
+                const city = String(args.city || '').trim();
+                if (!city) return { success: false, error: 'A city is required.' };
+
+                let weather;
+                try {
+                    weather = await fetchCityWeather(city);
+                } catch (e) {
+                    // No picture with made-up weather: the job sends text instead.
+                    return { success: false, error: `Weather lookup failed: ${e.message}` };
+                }
+
+                const imagenModel = agent.configService.getModel('IMAGE');
+                const response = await client.models.generateContent({
+                    model: imagenModel,
+                    contents: cityImagePrompt(city, weather),
+                    // Search helps it draw the right landmarks, as generateImage does.
+                    // Only the picture comes back from this call, never its text.
+                    config: { responseModalities: ['TEXT', 'IMAGE'], tools: [{ googleSearch: {} }] },
+                });
+                new ConfigService().logUsageFromResponse(db, imagenModel, response, message?.metadata?.chatId, 'image_gen');
+
+                const parts = response?.candidates?.[0]?.content?.parts || [];
+                const imagePart = parts.find(p => p.inlineData && String(p.inlineData.mimeType || '').startsWith('image/'));
+                if (!imagePart) return { success: false, error: 'The image model returned no picture.', weather };
+
+                const bytes = Buffer.from(imagePart.inlineData.data, 'base64');
+                const dataRoot = process.env.DATA_DIR
+                    || ((fs.existsSync('/app') && process.platform !== 'darwin') ? '/app/data' : path.join(process.cwd(), 'data'));
+                // output/ is one of the folders open to the shell and to sendMessage.
+                const dir = path.join(dataRoot, 'output', 'briefing');
+                fs.mkdirSync(dir, { recursive: true });
+                const imagePath = path.join(dir, 'city.png');
+                fs.writeFileSync(imagePath, bytes);
+                return { success: true, imagePath, bytes: bytes.length, city, weather };
+            }
+
             case 'generateImage': {
                 const { client, agent } = services;
                 const imagenModel = agent.configService.getModel('IMAGE');

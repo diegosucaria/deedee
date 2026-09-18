@@ -339,6 +339,18 @@ const toolDefinitions = [
       },
       // Image Generation
       {
+        name: "cityWeatherImage",
+        category: "generative",
+        description: "Draw today's weather picture for a city (the morning briefing image) and save it. It looks up today's weather itself, so no shell command or API call is needed. Returns imagePath; send it with sendMessage(type: \"image\", imagePath). Nothing is sent by this tool.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            city: { type: "STRING", description: "The city, optionally with its country to pick the right one (e.g. 'Springfield, United States')" }
+          },
+          required: ["city"]
+        }
+      },
+      {
         name: "generateImage",
         category: "generative",
         description: "Create/Draw/Render a NEW image using Gemini 3 Pro. Returns a base64 string. Do NOT use this to analyze images.",
