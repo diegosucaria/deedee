@@ -23,6 +23,8 @@ function emptyStore() {
         passkeys: [],              // [{ id, publicKey, counter, transports, deviceType, name, created, lastUsed }]
         webauthnChallenges: {},    // { challenge: { kind, expires, userId? } }
         revokedJtis: [],           // [{ jti, expires }]
+        revokedSids: [],           // [{ sid, expires }] — signed-out sessions, whatever token they hold
+        revokedCredentials: [],    // [{ credentialId, expires }] — sessions a deleted passkey issued
         sessionSecret: null,       // optional persisted secret (env wins if set)
     };
 }
@@ -70,6 +72,11 @@ export function gcStore() {
             if (!v?.expires || v.expires < now) delete store.webauthnChallenges[k];
         }
         store.revokedJtis = (store.revokedJtis || []).filter((r) => r.expires > now);
+        store.revokedSids = (store.revokedSids || []).filter((r) => r.expires > now);
+        // A deleted passkey is revoked for good. A credential id is random
+        // and never comes back, the entry costs a few bytes, and the edge
+        // re-dates a token on every visit, so no finite date can outlive one.
+        store.revokedCredentials = (store.revokedCredentials || []).filter((r) => !r.expires || r.expires > now);
         return store;
     });
 }

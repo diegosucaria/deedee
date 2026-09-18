@@ -71,8 +71,9 @@ DeeDee is single-user. Browser sessions are gated by a self-contained `/login` p
 
 - **Password**: scrypt hash (N=32768, r=8, p=1) stored in `data/auth.json` on the `web-data` Docker volume. Set via `LOGIN_PASSWORD` env var (idempotent on every boot — also acts as the recovery path) or `npm run auth:init`.
 - **Passkeys (WebAuthn)**: Optional. Self-service enrollment at `/settings/security`. Requires `WEBAUTHN_RP_ID` + HTTPS `WEBAUTHN_ORIGIN`. Disabled automatically on plain HTTP except `localhost`.
-- **Sessions**: Signed JWT (HS256 + `SESSION_SECRET`) in an `httpOnly; Secure; SameSite=Lax` cookie. 30-day TTL with sliding refresh — re-issued on the next authenticated request once the token is past half-life, so weekly use never requires re-login.
-- **Logout**: Clears the cookie and adds the JTI to the revocation list in `auth.json`. Rotate `SESSION_SECRET` to invalidate all outstanding sessions.
+- **Sessions**: Signed JWT (HS256 + `SESSION_SECRET`) in an `httpOnly; Secure; SameSite=Lax` cookie. A passkey sign-in lasts 30 days (`SESSION_TTL_PASSKEY_SECONDS`), any other sign-in lasts `SESSION_TTL_SECONDS`, 30 days by default; a refreshed session keeps the lifetime its sign-in earned. The session slides: it is re-issued on the next authenticated request once it is a day old (or past half its life, whichever comes first), so regular use never requires a new sign-in. `GET /api/auth/me` returns when the session was issued and when it expires, which tells a session that really ended from a cookie the browser dropped.
+- **Logout**: Clears the cookie and revokes the **session**, not one token of it. A session carries a `sid` that every refresh keeps, so a signed-out session stays dead however many times the edge slid it; the token id goes on the list too, for sessions issued before `sid` existed. The middleware never refreshes `/api/auth/logout`, so the response cannot carry a fresh token. Deleting a passkey revokes the sessions it signed in (`revokedCredentials`). Rotating `SESSION_SECRET` still invalidates everything at once.
+- **Known gap**: the api gateway checks the signature and expiry of the same cookie on the socket upgrade (`apps/api/src/session.js`); it cannot read `auth.json`, so a revoked session keeps its socket until the token expires. Rotating `SESSION_SECRET` closes it.
 - **Rate limit**: `/api/auth/login`, `/api/auth/passkey/login/*` and `/api/auth/password` are capped at 5 attempts per 15 minutes per IP.
   A second, global bucket counts failed password logins across all IPs: 50 failures in 10 minutes pause password sign-in (429, `paused: true`).
   Only `/api/auth/login` reads or feeds that bucket, so passkey sign-in and the session-gated password change keep working during a spray.
@@ -235,7 +236,8 @@ buttons; the dashboard bell gets a notification.
 
 **Answers**: `/confirm <id>`, `/approve <id>`, `/cancel <id>`, `/deny <id>`
 work from any of the owner's chats (web, his Telegram, his WhatsApp);
-`/approvals` lists every pending row. A plain reply of at most five words
+the Approvals tab of the Brain page (`/brain?tab=approvals`; `/approvals`
+redirects there) lists every pending row. A plain reply of at most five words
 counts when every word is on a short list and one says yes (`yes`, `si`,
 `ok`, `dale`, `confirmo`, `👍`, with fillers such as `por favor` or
 `reservalo`) or no (`no`, `nope`, `cancel`, `cancelar`, with fillers such as
@@ -405,9 +407,10 @@ outcome, tool, run kind and risk).
 - `POST /feedback/:id { feedback: should_allow | should_deny | null, note? }`:
   never changes the decision.
 
-The web app shows all of this on the **Guardian** page (`/guardian`, next to
-Approvals in the sidebar). History has filters, a row detail with the exact
-input the guardian saw, and feedback buttons. Stats covers the routes above.
+The web app shows all of this on the **Guardian** tab of the Brain page
+(`/brain?tab=guardian`, with its own sub-tabs in `view`; `/guardian`
+redirects there and keeps the sub-tab). History has filters, a row detail
+with the exact input the guardian saw, and feedback buttons. Stats covers the routes above.
 Policy holds the mode, `smart_policy`, the read-only floor, the owner's
 additions and a dry-run form. Every server action calls
 `requireActionSession`. A save from Settings > Approvals keeps the guardian

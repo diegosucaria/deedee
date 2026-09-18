@@ -1,29 +1,14 @@
-import { Suspense } from 'react';
-import Link from 'next/link';
-import { ShieldHalf } from 'lucide-react';
-import PageShell from '@/components/PageShell';
-import GuardianClient from '@/components/guardian/GuardianClient';
+import { redirect } from 'next/navigation';
 
 export const dynamic = 'force-dynamic';
 
 /**
- * The approval guardian: what it decided and why, how often it asks, and
- * the policy it follows. Pending calls stay on the Approvals page.
+ * The guardian lives in the Brain page now. The old address still works,
+ * and keeps the sub-tab it was asked for: /guardian?tab=policy lands on the
+ * policy tab, where the sub-tab travels as `view`.
  */
-export default function GuardianPage() {
-    return (
-        <PageShell
-            icon={ShieldHalf}
-            title="Guardian"
-            subtitle="The model that allows, denies or asks you about paused tool calls."
-        >
-            <Suspense fallback={<div className="p-4 text-zinc-500 animate-pulse">Loading...</div>}>
-                <GuardianClient />
-            </Suspense>
-            <p className="mt-6 text-xs text-zinc-500">
-                Calls waiting for you are on{' '}
-                <Link href="/approvals" className="text-indigo-400 hover:text-indigo-300">Approvals</Link>.
-            </p>
-        </PageShell>
-    );
+export default async function GuardianPage({ searchParams }) {
+    const params = await searchParams;
+    const view = typeof params?.view === 'string' ? params.view : (typeof params?.tab === 'string' ? params.tab : null);
+    redirect(view ? `/brain?tab=guardian&view=${encodeURIComponent(view)}` : '/brain?tab=guardian');
 }

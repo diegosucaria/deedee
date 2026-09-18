@@ -17,6 +17,10 @@ import { jwtVerify, SignJWT } from 'jose';
 const SESSION_COOKIE_NAME = 'deedee_session';
 const ALG = 'HS256';
 const DEFAULT_TTL_SECONDS = 30 * 24 * 60 * 60;
+// Mirrors @/lib/auth/session: a passkey session may live longer than a
+// password one, and a refresh must keep the same lifetime it was issued with.
+const DEFAULT_PASSKEY_TTL_SECONDS = 30 * 24 * 60 * 60;
+const REFRESH_AFTER_SECONDS = 24 * 60 * 60;
 
 let cachedKey = null;
 let cachedSecret = null;
@@ -30,9 +34,22 @@ function secret() {
     return cachedKey;
 }
 
-function ttlSeconds() {
-    const v = parseInt(process.env.SESSION_TTL_SECONDS || '', 10);
-    return Number.isFinite(v) && v > 60 ? v : DEFAULT_TTL_SECONDS;
+// Mirrors parseTtl in @/lib/auth/session: "2592000", "30d", "12h", "45m",
+// nothing else, and never under five minutes.
+const MIN_TTL_SECONDS = 300;
+const TTL_UNITS = { s: 1, m: 60, h: 3600, d: 86400 };
+function envSeconds(name) {
+    const m = /^\s*(\d+)\s*([smhd])?\s*$/i.exec(String(process.env[name] ?? ''));
+    if (!m) return null;
+    const seconds = parseInt(m[1], 10) * TTL_UNITS[(m[2] || 's').toLowerCase()];
+    return Number.isFinite(seconds) && seconds >= MIN_TTL_SECONDS ? seconds : null;
+}
+
+function ttlSeconds(method = null) {
+    if (String(method || '') === 'passkey') {
+        return envSeconds('SESSION_TTL_PASSKEY_SECONDS') || envSeconds('SESSION_TTL_SECONDS') || DEFAULT_PASSKEY_TTL_SECONDS;
+    }
+    return envSeconds('SESSION_TTL_SECONDS') || DEFAULT_TTL_SECONDS;
 }
 
 function isProd() {
@@ -57,26 +74,56 @@ async function verifyToken(token) {
     }
 }
 
-// Once a session is past half its TTL, re-issue it on the next
-// authenticated request so a user who keeps coming back never has to
-// log in again. New JTI on each refresh; the old one is left to expire
-// naturally (no revocation needed since we replace the cookie).
+/**
+ * Why a session was refused, for the log. The owner is signed out about once
+ * a day and nothing recorded it, so there was no way to tell a cookie the
+ * browser never sent from one the server rejected. Those two have completely
+ * different causes, and this line separates them in one look.
+ */
+async function refusalReason(token) {
+    if (!token) return 'no cookie sent';
+    if (!secret()) return 'SESSION_SECRET missing or too short';
+    try {
+        await jwtVerify(token, secret(), { algorithms: [ALG] });
+        return 'accepted';
+    } catch (err) {
+        const code = err?.code || err?.name || 'unknown';
+        if (code === 'ERR_JWT_EXPIRED') {
+            const exp = err?.payload?.exp;
+            const iat = err?.payload?.iat;
+            const now = Math.floor(Date.now() / 1000);
+            const lived = exp && iat ? `, issued for ${Math.round((exp - iat) / 3600)}h` : '';
+            const ago = exp ? `, expired ${Math.round((now - exp) / 60)} min ago` : '';
+            return `expired${lived}${ago}`;
+        }
+        if (code === 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED') return 'signature does not match SESSION_SECRET';
+        return `rejected (${code})`;
+    }
+}
+
+// Once a session is a day old (or past half its life, whichever comes
+// first), re-issue it on the next authenticated request, so a user who keeps
+// coming back never has to log in again. New JTI on each refresh; the old one
+// is left to expire naturally (no revocation needed since we replace the cookie).
 function shouldRefresh(payload) {
     if (!payload?.iat || !payload?.exp) return false;
     const total = payload.exp - payload.iat;
     const elapsed = Math.floor(Date.now() / 1000) - payload.iat;
-    return elapsed > total / 2;
+    return elapsed > Math.min(REFRESH_AFTER_SECONDS, total / 2);
 }
 
 async function reissue(payload) {
     const key = secret();
     if (!key) return null;
-    const ttl = ttlSeconds();
+    const ttl = ttlSeconds(payload.method);
     const now = Math.floor(Date.now() / 1000);
     const jti = crypto.randomUUID();
     const carry = {};
     if (payload.method) carry.method = payload.method;
     if (payload.credentialId) carry.credentialId = payload.credentialId;
+    // The session id travels unchanged, so signing out ends every token in
+    // the chain. Without it a refreshed cookie would outlive the sign-out.
+    if (payload.sid) carry.sid = payload.sid;
     const token = await new SignJWT(carry)
         .setProtectedHeader({ alg: ALG })
         .setIssuedAt(now)
@@ -164,6 +211,9 @@ export async function middleware(request) {
         if (!accept.includes('text/html')) {
             return new NextResponse('Unauthorized', { status: 401 });
         }
+        // A page he asked for, sent to the login screen: that is the sign-out
+        // he sees. One line says why, so it is not a guess next time.
+        console.warn(`[auth] Sign-in required for ${pathname}: ${await refusalReason(token)}.`);
         const url = request.nextUrl.clone();
         url.pathname = '/login';
         url.searchParams.set('next', pathname + (request.nextUrl.search || ''));
@@ -171,7 +221,9 @@ export async function middleware(request) {
     }
 
     const res = NextResponse.next({ request: { headers: requestHeaders } });
-    if (shouldRefresh(payload)) {
+    // Never on the way out: a refresh here would hand the browser a live
+    // token while the handler revokes the one it was sent.
+    if (pathname !== '/api/auth/logout' && shouldRefresh(payload)) {
         const refreshed = await reissue(payload);
         if (refreshed) {
             res.cookies.set({
