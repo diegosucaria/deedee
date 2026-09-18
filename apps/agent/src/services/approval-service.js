@@ -34,7 +34,17 @@ const { DeliveryService, telegramOwnerIds, splitChannel } = require('./delivery-
 const { isLiveSource } = require('./ask-user');
 const { TurnTaint, classifyToolResult } = require('../utils/untrusted-content');
 const { isTwoStepTool, isPreviewCall, stepKey, parseToolOutput } = require('../utils/two-step-tools');
-const { GuardianService, DRY_RUN_USAGE_TAG } = require('./guardian-service');
+const { GuardianService, DRY_RUN_USAGE_TAG, SYSTEM_INSTRUCTION: GUARDIAN_SYSTEM_INSTRUCTION } = require('./guardian-service');
+const { BLOCKED_PATTERNS: SHELL_BLOCKED } = require('@deedee/mcp-servers/src/local/index');
+
+/** The shell's own reason for refusing a command, as runShellCommand would give it. */
+function shellRefusal(command) {
+    const text = typeof command === 'string' ? command : String(command ?? '');
+    const hit = SHELL_BLOCKED.find((rule) => {
+        try { return rule.match(text); } catch { return false; }
+    });
+    return hit ? hit.message : 'The shell refuses this command.';
+}
 // Breaker state of live runs, by root run id (see acquireRun).
 const ACTIVE_RUNS = new Map();
 const {
@@ -566,6 +576,20 @@ class ApprovalService {
         const ruled = this.rules.check(toolName, args, { serverName });
         // A preview step changes nothing: no rule and no taint pause it.
         if (ruled.preview) return ruled;
+        // The shell refuses these commands itself, whatever anyone approves:
+        // the same patterns run again inside runShellCommand. Asking the owner
+        // only produced a card that could not work. Refuse at once, with the
+        // shell's own reason, so the model can pick an allowed path instead.
+        if (ruled.rule === 'shell-credentials') {
+            const reason = shellRefusal(args?.command);
+            console.warn(`[Approvals] ${toolName} refused: the shell blocks this command.`);
+            return {
+                denied: true,
+                refused: 'shell',
+                rule: ruled.rule,
+                message: `${reason} The command did not run, and no approval can make it run. Use an allowed path or a tool built for the job.`
+            };
+        }
         if (!taint || !taint.tainted || typeof this.rules.taintCheck !== 'function') return ruled;
         const tainted = this.rules.taintCheck(toolName, args, { taint, serverName });
         if (!tainted.requiresConfirmation) return ruled;
@@ -783,7 +807,9 @@ class ApprovalService {
 
         const guard = this.check(toolName, args, { taint, serverName });
         if (guard.denied) {
-            const row = this._record({ ...base, outcome: 'deny_list', decidedBy: 'deny_list', reason: `Deny pattern "${guard.pattern}"` });
+            const row = guard.refused
+                ? this._record({ ...base, outcome: 'shell_refused', decidedBy: 'shell', reason: guard.message })
+                : this._record({ ...base, outcome: 'deny_list', decidedBy: 'deny_list', reason: `Deny pattern "${guard.pattern}"` });
             return { run: false, status: 'error', result: { error: guard.message }, decisionId: row?.id };
         }
         if (guard.preview) return { run: true };
@@ -966,7 +992,9 @@ class ApprovalService {
         const runKind = ['chat', 'job', 'watcher', 'subagent', 'system'].includes(kind) ? kind : (jobName ? 'job' : 'chat');
 
         const guard = this.check(name, safeArgs, { taint, serverName });
-        if (guard.denied) return { outcome: 'deny_list', gated: true, pattern: guard.pattern, message: guard.message, mode: settings.mode, executed: false };
+        if (guard.denied) {
+            return { outcome: guard.refused ? 'shell_refused' : 'deny_list', gated: true, pattern: guard.pattern || null, message: guard.message, mode: settings.mode, executed: false };
+        }
         const hits = guard.preview ? { floor: [], additions: [] }
             : matchAlwaysAsk(name, safeArgs, { alwaysAsk: settings.always_ask, reason: guard.message || '', rule: guard.rule || '', serverName });
         const gated = !!guard.requiresConfirmation || hits.additions.length > 0;
@@ -1016,7 +1044,11 @@ class ApprovalService {
         } catch (e) { console.warn('[Guardian] feedback list failed:', e.message); }
         return {
             mode: s.mode, smart_policy: s.smart_policy, always_ask: s.always_ask,
-            floor: floorView(), categories: categoryView(), feedbackCandidates: feedback
+            floor: floorView(), categories: categoryView(), feedbackCandidates: feedback,
+            // The guardian's own rules, read-only. The smart policy box holds
+            // only the owner's additions, so an empty box read as "the
+            // guardian has no policy" when it has this one.
+            builtin: GUARDIAN_SYSTEM_INSTRUCTION
         };
     }
 

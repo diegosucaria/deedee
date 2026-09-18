@@ -63,3 +63,17 @@ export function isApprovalOpen(approval, { decidedIds, now = Date.now() } = {}) 
     if (approval.expiresAt && now > new Date(approval.expiresAt).getTime()) return false;
     return true;
 }
+
+/**
+ * Where an approval came from, as a link: the chat he asked in, or the run of
+ * the job or watcher that paused. That history is what explains the card;
+ * where the card was sent is only the channel he answers on.
+ * @returns {{ href: string, label: string } | null}
+ */
+export function chatLinkOf(row) {
+    const id = row?.origin_chat_id || row?.reply_chat_id;
+    if (!id) return null;
+    const meta = row.origin_meta || {};
+    const label = meta.jobName || row.mode === 'deferred' ? 'Open the run' : 'Open the chat';
+    return { href: `/chat/${encodeURIComponent(id)}`, label };
+}

@@ -10,6 +10,14 @@ import {
 
 const FIELD = 'w-full bg-black border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-indigo-500/50';
 const CARD = 'bg-zinc-900 border border-zinc-800 rounded-xl p-6';
+// Shown in the empty box only. Nothing here is saved or sent to the guardian
+// until he writes rules of his own.
+const POLICY_EXAMPLES = [
+    'Examples. Nothing here applies until you write your own:',
+    '- My scheduled jobs may fetch public web pages and weather without asking.',
+    '- Lights, climate and media in any room may run without asking.',
+    '- A message to anyone I did not name in the same chat always comes to me.',
+].join('\n');
 
 const DRY_RUN_OUTCOMES = {
     runs_without_gate: { label: 'Runs without a gate', tone: 'text-zinc-300 bg-zinc-700/40 border-zinc-600/40' },
@@ -217,11 +225,24 @@ export default function GuardianPolicy() {
 
             <div className={CARD}>
                 <h2 className="text-lg font-semibold text-zinc-200 mb-1">Smart policy</h2>
-                <p className="text-xs text-zinc-500 mb-3">Plain words the guardian reads in smart mode: what it may allow on its own and what it should bring to you.</p>
+                <p className="text-xs text-zinc-500 mb-3">
+                    Your own rules, in plain words, added on top of the guardian&apos;s built-in ones below. Empty is fine: the built-in rules
+                    apply either way. Your rules win over the built-in guidance, except that money, deleting data, cancelling a booking and
+                    publishing always come to you.
+                </p>
+                {policy?.builtin && (
+                    <details className="mb-3 rounded-lg border border-zinc-800 bg-zinc-950/60">
+                        <summary className="cursor-pointer select-none px-3 py-2 text-xs text-zinc-300 hover:text-white">
+                            Built-in rules (always on)
+                        </summary>
+                        <pre className="px-3 pb-3 text-[11px] leading-relaxed text-zinc-400 whitespace-pre-wrap font-mono">{policy.builtin}</pre>
+                    </details>
+                )}
                 <textarea
                     value={smartPolicy}
                     onChange={e => setSmartPolicy(e.target.value.slice(0, MAX_POLICY_CHARS))}
                     rows={8}
+                    placeholder={POLICY_EXAMPLES}
                     className={clsx(FIELD, 'font-mono text-xs leading-relaxed')}
                 />
                 <p className="mt-1 text-right text-[11px] text-zinc-500">{smartPolicy.length} / {MAX_POLICY_CHARS}</p>

@@ -1,11 +1,11 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { ShieldCheck, RefreshCw, Check, X, Loader2, Save } from 'lucide-react';
+import { ShieldCheck, RefreshCw, Check, X, Loader2, Save, MessageSquare } from 'lucide-react';
 import { clsx } from 'clsx';
 import { getApprovals, decideApproval } from '../app/actions';
 import { useSocket } from '@/hooks/useSocket';
-import { approvalEventKind, applySettledApproval } from '@/lib/approvals';
+import { approvalEventKind, applySettledApproval, chatLinkOf } from '@/lib/approvals';
 
 const STATUS_STYLE = {
     pending: 'text-amber-300 bg-amber-400/10 border-amber-400/20',
@@ -161,6 +161,12 @@ export default function ApprovalsSettings({ value, onSave }) {
                                         <span className="font-mono text-xs text-white">{row.id}</span>
                                         <span className="text-xs text-indigo-300">{row.tool_name}</span>
                                         <span className="text-[10px] px-2 py-0.5 rounded-full bg-zinc-800 text-zinc-400 border border-zinc-700">{originOf(row)}</span>
+                                        {chatLinkOf(row) && (
+                                            <a href={chatLinkOf(row).href} className="text-[10px] text-zinc-500 hover:text-indigo-400 inline-flex items-center gap-1 transition-colors">
+                                                <MessageSquare className="w-3 h-3" />
+                                                {chatLinkOf(row).label}
+                                            </a>
+                                        )}
                                     </div>
                                     <p className="text-xs text-zinc-300 mt-2 break-words font-mono">{row.summary}</p>
                                     <p className="text-[11px] text-zinc-500 mt-1">{row.reason}</p>
@@ -200,6 +206,12 @@ export default function ApprovalsSettings({ value, onSave }) {
                                     <span className="font-mono">{row.id}</span>
                                     <span className="text-zinc-300">{row.tool_name}</span>
                                     <span className="text-zinc-600">{when(row.decided_at || row.created_at)}{row.decided_via && row.decided_via !== 'superseded' ? ` via ${row.decided_via}` : ''}</span>
+                                    {chatLinkOf(row) && (
+                                        <a href={chatLinkOf(row).href} className="text-zinc-500 hover:text-indigo-400 inline-flex items-center gap-1 transition-colors">
+                                            <MessageSquare className="w-3 h-3" />
+                                            {chatLinkOf(row).label}
+                                        </a>
+                                    )}
                                 </li>
                             ))}
                         </ul>

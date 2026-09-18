@@ -76,3 +76,31 @@ describe('isApprovalOpen', () => {
         expect(isApprovalOpen({ status: 'pending' }, { now })).toBe(false);
     });
 });
+
+describe('chatLinkOf', () => {
+    const { chatLinkOf } = require('../src/lib/approvals.js');
+
+    test('a chat card links to the chat he asked in', () => {
+        expect(chatLinkOf({ origin_chat_id: 'web-1', reply_chat_id: 'web-1', mode: 'interactive' }))
+            .toEqual({ href: '/chat/web-1', label: 'Open the chat' });
+    });
+
+    test('a job card links to the run that paused, not to where the card went', () => {
+        const row = {
+            origin_chat_id: 'scheduled_morning_briefing_1700000000000',
+            reply_chat_id: '10000000000@s.whatsapp.net',
+            mode: 'deferred',
+            origin_meta: { jobName: 'morning_briefing' },
+        };
+        expect(chatLinkOf(row)).toEqual({ href: '/chat/scheduled_morning_briefing_1700000000000', label: 'Open the run' });
+    });
+
+    test('a WhatsApp chat id is encoded, and a row with no chat has no link', () => {
+        expect(chatLinkOf({ origin_chat_id: '10000000000@s.whatsapp.net', mode: 'interactive' }).href)
+            .toBe('/chat/10000000000%40s.whatsapp.net');
+        // An older row that only knows where the card went still links there.
+        expect(chatLinkOf({ reply_chat_id: 'web-2', mode: 'interactive' }).href).toBe('/chat/web-2');
+        expect(chatLinkOf({})).toBeNull();
+        expect(chatLinkOf(null)).toBeNull();
+    });
+});

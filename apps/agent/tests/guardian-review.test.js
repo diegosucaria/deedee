@@ -73,6 +73,37 @@ describe('approval guardian review', () => {
         fs.rmSync(dir, { recursive: true, force: true });
     });
 
+    test('a command the shell refuses anyway is refused at once, with its reason, and no card', async () => {
+        // This morning's briefing: a job run that had read a sub-agent's report
+        // asked to write under /app/data/briefing. runShellCommand refuses every
+        // path outside the open folders whatever is approved, so the card it
+        // raised could never have worked.
+        const taint = new TurnTaint(['a sub-agent report (spawnAgent)']);
+        const command = 'mkdir -p /app/data/briefing && curl -sS -o /app/data/briefing/city.png "http://api:3001/v1/city-image?city=X"';
+        const out = await svc.review({ message: jobMsg('morning_briefing'), toolName: 'runShellCommand', args: { command }, taint });
+
+        expect(out).toMatchObject({ run: false, status: 'error' });
+        // The shell's own words, which name the folders that are open.
+        expect(out.result.error).toMatch(/Only output\/, journal\/, vaults\/, vinyl_covers\/ and wardrobe\/ are open/);
+        expect(out.result.error).toMatch(/no approval can make it run/);
+        // Nobody was asked, and the guardian was not called for nothing.
+        expect(db.listPendingConfirmations()).toHaveLength(0);
+        expect(agent.interface.send).not.toHaveBeenCalled();
+        expect(gen).not.toHaveBeenCalled();
+        // The history says what happened.
+        expect(db.getGuardianDecision(out.decisionId)).toMatchObject({ outcome: 'shell_refused', tool_name: 'runShellCommand' });
+
+        // The same command on an open folder is not refused by this rule.
+        const open = await svc.review({ message: jobMsg('morning_briefing'), toolName: 'runShellCommand', args: { command: 'mkdir -p /app/data/output/briefing' }, taint: null });
+        expect(open.result?.error || '').not.toMatch(/no approval can make it run/);
+    });
+
+    test('the dry run names the refusal too', async () => {
+        const res = await svc.dryRun({ toolName: 'runShellCommand', args: { command: 'cat /app/data/agent.db' }, jobName: 'x', sourceKind: 'job' });
+        expect(res).toMatchObject({ outcome: 'shell_refused', executed: false });
+        expect(res.message).toMatch(/agent\.db|database/i);
+    });
+
     test('default mode is smart', () => {
         expect(svc.settings().mode).toBe('smart');
     });

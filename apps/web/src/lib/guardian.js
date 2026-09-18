@@ -19,6 +19,7 @@ export const OUTCOMES = [
     { id: 'owner_instructed', label: 'You asked for it', tone: 'text-teal-300 bg-teal-400/10 border-teal-400/20' },
     { id: 'escalated_duplicate', label: 'Already waiting', tone: 'text-zinc-400 bg-zinc-700/40 border-zinc-600/40' },
     { id: 'escalated_superseded', label: 'Already done', tone: 'text-zinc-400 bg-zinc-700/40 border-zinc-600/40' },
+    { id: 'shell_refused', label: 'Refused: the shell blocks it', tone: 'text-red-300 bg-red-400/10 border-red-400/20' },
 ];
 const OUTCOME_IDS = OUTCOMES.map(o => o.id);
 
@@ -60,7 +61,7 @@ export const OUTCOME_GROUPS = [
     { key: 'You denied', color: '#c98500', outcomes: ['escalated_denied'] },
     { key: 'Waiting, expired or unasked', color: '#d55181', outcomes: ['escalated', 'escalated_expired', 'escalated_failed', 'escalated_duplicate', 'escalated_superseded'] },
     { key: 'Ran with mode off', color: '#008300', outcomes: ['ran_unasked'] },
-    { key: 'Deny-list or breaker', color: '#9085e9', outcomes: ['deny_list', 'breaker_stop'] },
+    { key: 'Blocked outright', color: '#9085e9', outcomes: ['deny_list', 'breaker_stop', 'shell_refused'] },
     { key: 'You asked for it', color: '#a3a3a3', outcomes: ['owner_instructed'] },
 ];
 

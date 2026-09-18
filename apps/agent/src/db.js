@@ -4035,7 +4035,9 @@ class AgentDB {
   // ran_unasked (mode off), owner_instructed (the owner asked for it in his
   // own chat, so no card), escalated_duplicate (a card for that action was
   // already waiting), escalated_superseded (the action ran another way before
-  // he answered). An escalated row follows its approval row.
+  // he answered), shell_refused (the shell blocks that command whatever is
+  // approved, so it was refused with no card). An escalated row follows its
+  // approval row.
 
   /** An escalated decision takes the owner's answer (or the expiry). */
   _settleGuardianDecision(approvalIds, status, { via = null } = {}) {
