@@ -109,9 +109,20 @@ ${dedent(LANGUAGE_MATCHING_RULES)}
     const room = Math.max(0, Math.min(MAX_FACTS_CHARS, MAX_INSTRUCTION_CHARS - spent));
     // An index arrives already inside its own budget and already counts what
     // it left out; a raw dump needs cutting and counting here.
-    const compact = factsPreCapped
-        ? { text: cutToLines(facts, room), shown: factsShown, hidden: factsHidden }
-        : compactFacts(facts, room);
+    let compact;
+    if (factsPreCapped) {
+        const text = cutToLines(facts, room);
+        compact = { text, shown: factsShown, hidden: factsHidden };
+        // Trimming a block that already counted itself would leave the figures
+        // claiming facts the model cannot see.
+        if (text.length < facts.length && Number.isFinite(factsShown)) {
+            const kept = text.split('\n').filter(l => l.startsWith('- ')).length;
+            compact.hidden = (Number(factsHidden) || 0) + (factsShown - kept);
+            compact.shown = kept;
+        }
+    } else {
+        compact = compactFacts(facts, room);
+    }
 
     const sections = [
         ...fixed,

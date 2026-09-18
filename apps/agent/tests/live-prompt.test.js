@@ -52,6 +52,28 @@ describe('getLiveSystemInstruction', () => {
         expect(chat).toContain(LANGUAGE_MATCHING_RULES);
     });
 
+    test('an index trimmed to fit reports what it lost, not what it was given', () => {
+        // The block arrives with its own figures. If the voice prompt has to
+        // trim it further, the figures must follow, or the log claims facts
+        // the model cannot see.
+        const facts = Array.from({ length: 200 }, (_, i) => `- f${i}: "${'x'.repeat(60)}"`).join('\n');
+        const { text, stats } = getLiveSystemInstruction({
+            facts,
+            factsPreCapped: true,
+            factsShown: 200,
+            factsHidden: 12,
+            communicationStyle: 'z'.repeat(30000)
+        });
+        expect(stats.factsShown).toBeLessThan(200);
+        expect(stats.factsShown).toBeGreaterThan(0);
+        expect(stats.factsHidden).toBeGreaterThan(12);
+        expect(stats.factsShown + stats.factsHidden).toBe(212);
+        // Whole lines only, and the rule under the facts survives.
+        expect(text).not.toMatch(/\n- f\d+: "x*$/);
+        expect(text).toContain('getFact(key)');
+        expect(text).toContain('COMMUNICATION STYLE');
+    });
+
     test('reports hidden facts and truncation in the stats', () => {
         const facts = Array.from({ length: 1000 }, (_, i) => `- f${i}: "${'x'.repeat(30)}"`).join('\n');
         const { text, stats } = getLiveSystemInstruction({ facts, communicationStyle: 'z'.repeat(30000) });
