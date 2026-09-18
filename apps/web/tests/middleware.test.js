@@ -189,3 +189,56 @@ describe('sliding the session at the edge', () => {
         expect(setCookie(res)).toBeFalsy();
     });
 });
+
+describe('the log that says why he was signed out', () => {
+    let middleware;
+    let warn;
+
+    beforeAll(() => {
+        process.env.SESSION_SECRET = SECRET;
+        ({ middleware } = require('../src/middleware.js'));
+    });
+    afterAll(() => { delete process.env.SESSION_SECRET; });
+    beforeEach(() => { warn = jest.spyOn(console, 'warn').mockImplementation(() => { }); });
+    afterEach(() => warn.mockRestore());
+
+    const lastWarning = () => warn.mock.calls.map(c => c.join(' ')).filter(l => l.includes('[auth]')).pop();
+    const html = (cookie) => makeRequest('/brain', { headers: { accept: 'text/html' }, cookie });
+
+    test('a cookie the browser never sent reads differently from one the server refused', async () => {
+        // These two have different causes: the first is the browser or the
+        // address, the second is the token itself. Telling them apart is the
+        // whole point of the line.
+        await middleware(html());
+        expect(lastWarning()).toContain('no cookie sent');
+
+        const now = Math.floor(Date.now() / 1000);
+        const stale = await new SignJWT({ method: 'passkey' })
+            .setProtectedHeader({ alg: 'HS256' })
+            .setIssuedAt(now - 40 * 86400)
+            .setExpirationTime(now - 600)
+            .setJti('old')
+            .setSubject('owner')
+            .sign(new TextEncoder().encode(SECRET));
+        await middleware(html(stale));
+        const line = lastWarning();
+        expect(line).toContain('expired');
+        // How long it was meant to live, and how long ago it died: that says
+        // whether the lifetime is the problem or something else is.
+        expect(line).toContain('issued for 960h');
+        expect(line).toMatch(/expired 10 min ago/);
+
+        const wrongKey = await new SignJWT({ method: 'passkey' })
+            .setProtectedHeader({ alg: 'HS256' })
+            .setIssuedAt(now).setExpirationTime(now + 3600).setJti('x').setSubject('owner')
+            .sign(new TextEncoder().encode('another-secret-that-is-at-least-32-chars'));
+        await middleware(html(wrongKey));
+        expect(lastWarning()).toContain('signature does not match');
+    });
+
+    test('a good session says nothing', async () => {
+        const token = await signedSession();
+        await middleware(html(token));
+        expect(lastWarning()).toBeUndefined();
+    });
+});

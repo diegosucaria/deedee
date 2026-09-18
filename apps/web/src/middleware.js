@@ -74,6 +74,33 @@ async function verifyToken(token) {
     }
 }
 
+/**
+ * Why a session was refused, for the log. The owner is signed out about once
+ * a day and nothing recorded it, so there was no way to tell a cookie the
+ * browser never sent from one the server rejected. Those two have completely
+ * different causes, and this line separates them in one look.
+ */
+async function refusalReason(token) {
+    if (!token) return 'no cookie sent';
+    if (!secret()) return 'SESSION_SECRET missing or too short';
+    try {
+        await jwtVerify(token, secret(), { algorithms: [ALG] });
+        return 'accepted';
+    } catch (err) {
+        const code = err?.code || err?.name || 'unknown';
+        if (code === 'ERR_JWT_EXPIRED') {
+            const exp = err?.payload?.exp;
+            const iat = err?.payload?.iat;
+            const now = Math.floor(Date.now() / 1000);
+            const lived = exp && iat ? `, issued for ${Math.round((exp - iat) / 3600)}h` : '';
+            const ago = exp ? `, expired ${Math.round((now - exp) / 60)} min ago` : '';
+            return `expired${lived}${ago}`;
+        }
+        if (code === 'ERR_JWS_SIGNATURE_VERIFICATION_FAILED') return 'signature does not match SESSION_SECRET';
+        return `rejected (${code})`;
+    }
+}
+
 // Once a session is a day old (or past half its life, whichever comes
 // first), re-issue it on the next authenticated request, so a user who keeps
 // coming back never has to log in again. New JTI on each refresh; the old one
@@ -184,6 +211,9 @@ export async function middleware(request) {
         if (!accept.includes('text/html')) {
             return new NextResponse('Unauthorized', { status: 401 });
         }
+        // A page he asked for, sent to the login screen: that is the sign-out
+        // he sees. One line says why, so it is not a guess next time.
+        console.warn(`[auth] Sign-in required for ${pathname}: ${await refusalReason(token)}.`);
         const url = request.nextUrl.clone();
         url.pathname = '/login';
         url.searchParams.set('next', pathname + (request.nextUrl.search || ''));
