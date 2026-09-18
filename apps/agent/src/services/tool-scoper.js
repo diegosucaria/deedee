@@ -15,6 +15,7 @@ const CATEGORY_DESCRIPTIONS = {
     filesystem: 'Read/write files, run shell commands, git operations',
     search: 'Google Search for web lookups, weather, news',
     generative: 'Generate images, text-to-speech audio responses',
+    briefing: "The morning briefing's picture: today's weather drawn over a city",
     smarthome: 'Control smart home devices (lights, AC, etc.)',
     communication: 'Send WhatsApp messages, search contacts, read chat history, watchers',
     people: 'Manage people/contacts database (list, search, update)',
