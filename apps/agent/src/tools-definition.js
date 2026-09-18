@@ -340,8 +340,8 @@ const toolDefinitions = [
       // Image Generation
       {
         name: "cityWeatherImage",
-        category: "generative",
-        description: "Draw today's weather picture for a city (the morning briefing image) and save it. It looks up today's weather itself, so no shell command or API call is needed. Returns imagePath; send it with sendMessage(type: \"image\", imagePath). Nothing is sent by this tool.",
+        category: "briefing",
+        description: "Draw today's weather picture for a city (the morning briefing image) and save it. It looks up the weather and the date itself, so it needs no shell command or API call. Give \"City, Country\" when the name is shared; a country it cannot find is an error, never another place. Returns imagePath and the place it drew; send the picture with sendMessage(type: \"image\", imagePath). This tool sends nothing.",
         parameters: {
           type: "OBJECT",
           properties: {
