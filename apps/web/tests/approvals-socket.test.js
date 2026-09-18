@@ -80,27 +80,35 @@ describe('isApprovalOpen', () => {
 describe('chatLinkOf', () => {
     const { chatLinkOf } = require('../src/lib/approvals.js');
 
-    test('a chat card links to the chat he asked in', () => {
+    test('a chat card opens the chat he asked in', () => {
         expect(chatLinkOf({ origin_chat_id: 'web-1', reply_chat_id: 'web-1', mode: 'interactive' }))
-            .toEqual({ href: '/chat/web-1', label: 'Open the chat' });
+            .toEqual({ href: '/chat/web-1', label: 'Open chat' });
     });
 
-    test('a job card links to the run that paused, not to where the card went', () => {
+    test('a job card opens the job\'s runs, never the run\'s synthetic chat', () => {
+        // Typing on a scheduled_ chat page counts as an unattended run, so his
+        // own words there would never count as his consent.
         const row = {
             origin_chat_id: 'scheduled_morning_briefing_1700000000000',
             reply_chat_id: '10000000000@s.whatsapp.net',
             mode: 'deferred',
             origin_meta: { jobName: 'morning_briefing' },
         };
-        expect(chatLinkOf(row)).toEqual({ href: '/chat/scheduled_morning_briefing_1700000000000', label: 'Open the run' });
+        expect(chatLinkOf(row)).toEqual({ href: '/tasks?tab=manage&job=morning_briefing', label: 'Job runs' });
     });
 
-    test('a WhatsApp chat id is encoded, and a row with no chat has no link', () => {
-        expect(chatLinkOf({ origin_chat_id: '10000000000@s.whatsapp.net', mode: 'interactive' }).href)
-            .toBe('/chat/10000000000%40s.whatsapp.net');
-        // An older row that only knows where the card went still links there.
-        expect(chatLinkOf({ reply_chat_id: 'web-2', mode: 'interactive' }).href).toBe('/chat/web-2');
+    test('runs with no conversation have no link, and where the card went is never the link', () => {
+        for (const id of ['system_watch_mail_1700000000000', 'live-session', 'subagent-123', 'api_city_image_1', 'sys_x']) {
+            expect(chatLinkOf({ origin_chat_id: id, mode: 'deferred' })).toBeNull();
+        }
+        // An older row that only knows where the card went gets no link.
+        expect(chatLinkOf({ reply_chat_id: '10000000000@s.whatsapp.net', mode: 'deferred' })).toBeNull();
         expect(chatLinkOf({})).toBeNull();
         expect(chatLinkOf(null)).toBeNull();
+    });
+
+    test('a WhatsApp chat is encoded in the link, and the chat page decodes it once', () => {
+        expect(chatLinkOf({ origin_chat_id: '10000000000@s.whatsapp.net', mode: 'interactive' }).href)
+            .toBe('/chat/10000000000%40s.whatsapp.net');
     });
 });

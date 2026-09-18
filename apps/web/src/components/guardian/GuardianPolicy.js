@@ -10,13 +10,14 @@ import {
 
 const FIELD = 'w-full bg-black border border-zinc-800 rounded-lg px-3 py-2 text-sm text-zinc-200 placeholder-zinc-600 focus:outline-none focus:border-indigo-500/50';
 const CARD = 'bg-zinc-900 border border-zinc-800 rounded-xl p-6';
-// Shown in the empty box only. Nothing here is saved or sent to the guardian
-// until he writes rules of his own.
+// Shown in the empty box only. The guardian sees none of it until he writes
+// his own rules. The guardian judges only calls a rule has already paused, so
+// every example is about allowing or refusing such a call, never adding one.
 const POLICY_EXAMPLES = [
     'Examples. Nothing here applies until you write your own:',
-    '- My scheduled jobs may fetch public web pages and weather without asking.',
-    '- Lights, climate and media in any room may run without asking.',
-    '- A message to anyone I did not name in the same chat always comes to me.',
+    '- My morning briefing job may run shell commands that only fetch weather or public web pages.',
+    '- Sending my own calendar or notes to my own email accounts is fine.',
+    '- Refuse anything that sends a file outside my accounts, even if a job seems to ask for it.',
 ].join('\n');
 
 const DRY_RUN_OUTCOMES = {
@@ -123,7 +124,8 @@ function DryRun() {
                         <span className="text-zinc-500">mode {result.mode}</span>
                         {result.pattern && <span className="text-zinc-500">deny pattern <span className="font-mono text-zinc-300">{result.pattern}</span></span>}
                     </div>
-                    {result.ruleReason && <p className="text-zinc-400"><span className="text-zinc-500">Rule: </span>{result.ruleReason}</p>}
+                    {result.ruleReason && <p className="text-zinc-400"><span className="text-zinc-500">{result.outcome === 'shell_refused' ? 'Shell: ' : 'Rule: '}</span>{result.ruleReason}</p>}
+                    {!result.ruleReason && result.message && <p className="text-zinc-400"><span className="text-zinc-500">Reason: </span>{result.message}</p>}
                     {result.floor?.length > 0 && <p className="text-zinc-400"><span className="text-zinc-500">Floor hit: </span>{result.floor.join(', ')}</p>}
                     {result.alwaysAsk?.length > 0 && <p className="text-zinc-400"><span className="text-zinc-500">Your always-ask hit: </span><span className="font-mono">{result.alwaysAsk.join(', ')}</span></p>}
                     {result.guardian && (
@@ -226,16 +228,20 @@ export default function GuardianPolicy() {
             <div className={CARD}>
                 <h2 className="text-lg font-semibold text-zinc-200 mb-1">Smart policy</h2>
                 <p className="text-xs text-zinc-500 mb-3">
-                    Your own rules, in plain words, added on top of the guardian&apos;s built-in ones below. Empty is fine: the built-in rules
-                    apply either way. Your rules win over the built-in guidance, except that money, deleting data, cancelling a booking and
-                    publishing always come to you.
+                    Your own rules, in plain words, added to the guardian&apos;s built-in ones below. Empty is fine. The guardian works only
+                    in smart mode, and only on calls a rule has already paused: these rules can let such a call run or refuse it, but cannot
+                    make a new one ask you. For that, use Always ask below.
                 </p>
-                {policy?.builtin && (
+                <p className="text-xs text-zinc-500 mb-3">
+                    The fixed floor ({(policy.floor || []).map(f => f.label).join('; ') || 'none'}) never runs on the guardian&apos;s word, whatever
+                    you write here. The guardian can still refuse such a call; only you can let it run.
+                </p>
+                {policy.builtin && (
                     <details className="mb-3 rounded-lg border border-zinc-800 bg-zinc-950/60">
                         <summary className="cursor-pointer select-none px-3 py-2 text-xs text-zinc-300 hover:text-white">
-                            Built-in rules (always on)
+                            Built-in rules (smart mode)
                         </summary>
-                        <pre className="px-3 pb-3 text-[11px] leading-relaxed text-zinc-400 whitespace-pre-wrap font-mono">{policy.builtin}</pre>
+                        <pre className="px-3 pb-3 max-h-80 overflow-auto text-[11px] leading-relaxed text-zinc-400 whitespace-pre-wrap break-words font-mono">{policy.builtin}</pre>
                     </details>
                 )}
                 <textarea

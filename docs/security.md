@@ -140,7 +140,9 @@ unasked, and jobs stay quiet unless they truly need him.
 - appointment tools named `*book_appointment` / `*cancel_appointment` (Allende) and `*book_turn` / `*cancel_turn` (Pilotfy). Their first step never pauses: on the `allende` and `pilotfy` servers a call with `confirm` false or left out only checks the slot and describes the action (`apps/agent/src/utils/two-step-tools.js`). A string or a number in `confirm`, or the same tool name on another server, is gated as usual;
 - `commitAndPush` (code that will run on the device);
 - data-destroying deletes: `deletePerson`, `deleteVault`, `delete_garment`, `deleteDeviceAlias` (per-tool flags), Plex deletes and edits, and `ha_config_remove_*` / `ha_remove_device|entity|zone|area_or_floor|helpers_integrations`. Everyday removals run unasked: `ha_remove_todo_item`, Plex `playlist_remove_from` / `collection_remove_from`, `remove_from_wardrobe_trip_capsule`, `cancelJob`;
-- shell commands that pipe remote content into an interpreter, damage the system, touch the databases, the WhatsApp credentials volume, the browser profile, `/proc`, a closed folder of the data volume or the CDP port. The rule reads the same list the local MCP server refuses (`BLOCKED_PATTERNS` in `packages/mcp-servers/src/local/index.js`), so the two layers cannot drift apart.
+- shell commands that pipe remote content into an interpreter, damage the system, or reach the CDP port.
+
+**Refused, never asked.** The shell refuses some commands whatever anyone approves: blocked programs (`sudo`, `env`, `printenv`, `sqlite3`, `dd`, editors and the like), the databases, the WhatsApp credentials volume, the browser profile, `/proc`, process environments and any folder of the data volume except `output/`, `journal/`, `vaults/`, `vinyl_covers/` and `wardrobe/`. A card for one of these could never work, so the gate asks the shell first, through the one check it uses itself (`shellRefusal` in `packages/mcp-servers/src/local/index.js`), before any rule. Such a call is refused at once with the shell's reason and stored as `shell_refused`. It is not quiet: many of these reach for credentials, so it counts toward the breaker like a guardian denial, and the owner gets one notification per run. The model is told not to retry it or look for another way. The patterns read the command's text, so they are a guard rail, not a boundary.
 
 A rule that throws on odd arguments counts as a hit. A malformed call is
 held, never let through.
@@ -169,8 +171,9 @@ and the history stores `owner_instructed`. Three limits stay:
   reading sessions or credentials) and his own always-ask list still ask,
   once, with the card sent at once and no guardian call;
 - the rules that guard the system itself (`shell-remote-exec`,
-  `shell-system-damage`, `shell-credentials`, `shell-cdp`,
-  `file-browser-profile`, a malformed call) take the usual path;
+  `shell-system-damage`, `shell-cdp`, `file-browser-profile`, a malformed
+  call) take the usual path, and a command the shell refuses is refused
+  before any of this (see "Refused, never asked");
 - email, a first message to a contact and the house rules (`email-send`,
   `first-contact`, `ha-critical`, `ha-bulk`) run on his word only while the
   history the model reads this turn holds no untrusted envelope, that is no
@@ -325,14 +328,17 @@ of three verdicts:
 recommended.
 
 **Order** (`ApprovalService.review` in `apps/agent/src/services/approval-service.js`):
-1. The deny-list blocks first, in every mode. The guardian never runs.
+1. The deny-list blocks first, in every mode. The guardian never runs. Then a
+   `runShellCommand` the shell would refuse is refused (`shell_refused`),
+   also without the guardian; it counts toward the breaker and the owner
+   hears of it once per run.
 2. The safety rules and the taint rule decide whether the call is gated.
    The check step of a two-step tool is never gated.
 3. The always-ask list (`apps/agent/src/services/guardian-policy.js`). The
    floor is fixed in code and cannot be removed: pay, buy, order or transfer
    money; delete user data; cancel a booking; commit or publish; read the
-   browser's saved sessions, cookies or credentials (rules `shell-credentials`,
-   `shell-cdp`, `file-browser-profile`). Money words match the button labels,
+   browser's saved sessions, cookies or credentials (rules `shell-cdp` and
+   `file-browser-profile`; the shell's own refusals come before this step). Money words match the button labels,
    dialog text and gate reason, and are a superset of the browser gate's
    money labels (bid, upgrade, donate, subscribe included). For
    `browser_evaluate`, `browser_run_code_unsafe` and `browser_webmcp_call`
@@ -381,7 +387,8 @@ only on a denial, quoted and marked as not an instruction.
 **History** (table `guardian_decisions`): one row per gated call with the
 outcome (`auto_allowed`, `auto_denied`, `escalated`, `escalated_approved`,
 `escalated_denied`, `escalated_expired`, `escalated_failed`, `deny_list`,
-`breaker_stop`, `ran_unasked`, `owner_instructed`), who decided, verdict, reason, risk, latency,
+`breaker_stop`, `ran_unasked`, `owner_instructed`, `escalated_duplicate`, `escalated_superseded`,
+`shell_refused`), who decided, verdict, reason, risk, latency,
 cost, the exact guardian input, the approval id and the owner's feedback.
 An escalated row follows its approval row when the owner answers or it
 expires. The nightly job keeps 180 days of rows, then folds them into

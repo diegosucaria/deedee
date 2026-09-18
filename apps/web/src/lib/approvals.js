@@ -9,6 +9,8 @@
 //   { id, status: 'pending'|'approved'|'denied'|'expired', chatId, toolName,
 //     summary?, expiresAt? }
 
+import { rowLink } from './guardian.js';
+
 /** A status that is no longer waiting for the owner. */
 export function isSettledStatus(status) {
     return typeof status === 'string' && status !== '' && status !== 'pending';
@@ -65,15 +67,14 @@ export function isApprovalOpen(approval, { decidedIds, now = Date.now() } = {}) 
 }
 
 /**
- * Where an approval came from, as a link: the chat he asked in, or the run of
- * the job or watcher that paused. That history is what explains the card;
- * where the card was sent is only the channel he answers on.
+ * Where an approval came from, as a link, by the same rule as the Guardian
+ * history: a job opens its runs, a chat opens that chat. A watcher, a
+ * sub-agent or a voice session has no conversation to open. Where the card
+ * was sent is only the channel he answers on, so it is never the link.
  * @returns {{ href: string, label: string } | null}
  */
 export function chatLinkOf(row) {
-    const id = row?.origin_chat_id || row?.reply_chat_id;
-    if (!id) return null;
+    if (!row) return null;
     const meta = row.origin_meta || {};
-    const label = meta.jobName || row.mode === 'deferred' ? 'Open the run' : 'Open the chat';
-    return { href: `/chat/${encodeURIComponent(id)}`, label };
+    return rowLink({ job_name: meta.jobName || null, chat_id: row.origin_chat_id || null });
 }

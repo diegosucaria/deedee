@@ -50,7 +50,7 @@ export function outcomeTone(outcome) {
 }
 
 /**
- * The stacked chart folds thirteen outcomes into eight series. Colors are a
+ * The stacked chart folds the outcomes into a few series. Colors are a
  * categorical set checked for color-blind separation on the dark surface,
  * in a fixed order: a series keeps its color whatever the range shows.
  */
@@ -161,8 +161,14 @@ export function normalizeFeedback(value) {
     return value === 'should_allow' || value === 'should_deny' ? value : null;
 }
 
-function isSyntheticChatId(chatId) {
-    return /^(?:scheduled|system)_/.test(String(chatId || ''));
+/**
+ * Ids that name a run, not a conversation: jobs, system jobs, watchers,
+ * sub-agents, the api's internal turns and the voice session. There is no
+ * chat to open for them, and anything typed on such a page would count as an
+ * unattended run rather than the owner's own words.
+ */
+export function isSyntheticChatId(chatId) {
+    return /^(?:scheduled|system|sys|api)_|^subagent-|^live-session$/.test(String(chatId || ''));
 }
 
 /** Where a row came from, in a few words. */

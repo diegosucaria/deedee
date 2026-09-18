@@ -4035,8 +4035,9 @@ class AgentDB {
   // ran_unasked (mode off), owner_instructed (the owner asked for it in his
   // own chat, so no card), escalated_duplicate (a card for that action was
   // already waiting), escalated_superseded (the action ran another way before
-  // he answered), shell_refused (the shell blocks that command whatever is
-  // approved, so it was refused with no card). An escalated row follows its
+  // he answered), shell_refused (the shell blocks that command whatever anyone
+  // approves, so the gate refuses it with no card, counts it toward the
+  // breaker and tells the owner once per run). An escalated row follows its
   // approval row.
 
   /** An escalated decision takes the owner's answer (or the expiry). */
@@ -4181,7 +4182,9 @@ class AgentDB {
     // call that waited on a card already open, were never the guardian's to judge.
     const ownerInstructed = outcomes.owner_instructed || 0;
     const duplicates = outcomes.escalated_duplicate || 0;
-    const judged = total - ownerInstructed - duplicates;
+    // A command the shell blocks is refused before the guardian sees it.
+    const shellRefused = outcomes.shell_refused || 0;
+    const judged = total - ownerInstructed - duplicates - shellRefused;
     const auto = (outcomes.auto_allowed || 0) + (outcomes.auto_denied || 0);
     const escalatedDecided = (outcomes.escalated_approved || 0) + (outcomes.escalated_denied || 0);
     const escalations = escalatedDecided + (outcomes.escalated || 0) + (outcomes.escalated_expired || 0) + (outcomes.escalated_failed || 0);
