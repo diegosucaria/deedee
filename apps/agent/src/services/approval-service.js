@@ -1132,13 +1132,25 @@ class ApprovalService {
         }
 
         try {
+            // The check step's own words, like the card in the chat. The raw
+            // arguments of a booking are an opaque token, which told him
+            // nothing about what he was approving.
+            const preview = typeof row.origin_meta?.preview === 'string' ? row.origin_meta.preview : '';
             this.agent.notifications?.create({
                 type: 'approval',
                 severity: 'warning',
                 title: `Approval needed: ${toolName}`,
-                message: `${row.summary}\n${why}`,
-                metadata: { approvalId: row.id, chatId: route.replyChatId, mode: row.mode, link: '/settings?tab=approvals' }
+                message: `${preview || row.summary}\n${why}`,
+                // The card itself, not the approval settings: this is the page
+                // where he can answer it.
+                metadata: { approvalId: row.id, chatId: route.replyChatId, mode: row.mode, link: '/approvals' }
             });
+            // The card went out before this row existed, so he may have
+            // answered already, or a newer card may have replaced this one.
+            // Then the bell would keep asking for something already settled.
+            if (this.db.getPendingConfirmation?.(row.id)?.status !== 'pending') {
+                this.db.markApprovalNotificationsRead?.(row.id);
+            }
         } catch (e) { console.warn('[Approvals] notification failed:', e.message); }
         this._broadcast({ id: row.id, status: 'pending', chatId: route.replyChatId, toolName, summary: row.summary, expiresAt: row.expires_at });
 
