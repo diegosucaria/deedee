@@ -53,6 +53,21 @@ const SWEEP_MS = 60e3;
 const PREVIEW_TTL_MS = 30 * 60e3;
 const PREVIEW_MAX = 50;
 
+/**
+ * The arguments a stored summary was written for, without `confirm`. The
+ * check step and the real call differ in `confirm` alone when the call is
+ * really the same action; anything else (a cancellation reason, a note) makes
+ * it a different call, which the check step never described.
+ */
+function previewArgs(args) {
+    const src = args && typeof args === 'object' && !Array.isArray(args) ? args : {};
+    const rest = {};
+    for (const key of Object.keys(src).sort()) {
+        if (key !== 'confirm') rest[key] = src[key];
+    }
+    try { return JSON.stringify(rest); } catch { return '{}'; }
+}
+
 // Short ids the owner can type on a phone. No i, l, o, 0, 1.
 const ID_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
 const ID_LENGTH = 6;
@@ -463,20 +478,31 @@ class ApprovalService {
         for (const [key, entry] of this._recentPreviews) {
             if (now - entry.at > PREVIEW_TTL_MS) this._recentPreviews.delete(key);
         }
-        this._recentPreviews.set(stepKey(toolName, args), { summary: text, at: now });
+        const key = stepKey(toolName, args);
+        // Delete before setting: a Map keeps its first insertion order, so
+        // refreshing an old entry in place would leave it first in line to be
+        // dropped, and the newest summary would be the one thrown away.
+        this._recentPreviews.delete(key);
+        this._recentPreviews.set(key, { summary: text, at: now, args: previewArgs(args) });
         while (this._recentPreviews.size > PREVIEW_MAX) {
             this._recentPreviews.delete(this._recentPreviews.keys().next().value);
         }
     }
 
-    /** What the check step said, if it was recent enough to still be true. */
+    /** What the check step said, if it still describes this exact call. */
     previewFor(toolName, args) {
-        const entry = this._recentPreviews.get(stepKey(toolName, args));
+        const key = stepKey(toolName, args);
+        const entry = this._recentPreviews.get(key);
         if (!entry) return null;
         if (Date.now() - entry.at > PREVIEW_TTL_MS) {
-            this._recentPreviews.delete(stepKey(toolName, args));
+            this._recentPreviews.delete(key);
             return null;
         }
+        // stepKey names the target, not the whole call: a cancellation carries
+        // a reason and a note that the check step never saw. A summary that
+        // does not describe what this call will send would put the wrong words
+        // on the card, and the card is where he decides.
+        if (entry.args !== previewArgs(args)) return null;
         return entry.summary;
     }
 

@@ -338,6 +338,27 @@ describe('ApprovalService.review with the owner\'s word', () => {
         expect(svc.previewFor(other.toolName, other.args)).toBeNull();
     });
 
+    test('a summary is not used for a call the check step never described', () => {
+        // The key names the target, so a cancellation with a reason and a note
+        // shares it with the bare check. The card would then show the words of
+        // the check step while the call sends something else.
+        svc.notePreview('cancel_appointment', CANCEL.args, 'Cancel appointment #7, reason: prefer not to say.');
+        expect(svc.previewFor('cancel_appointment', CANCEL.args)).toBe('Cancel appointment #7, reason: prefer not to say.');
+        expect(svc.previewFor('cancel_appointment', { ...CANCEL.args, reasonId: 5, observaciones: 'moved clinic' })).toBeNull();
+        // The real call differs from the check step by `confirm` alone.
+        expect(svc.previewFor('cancel_appointment', { ...CANCEL.args, confirm: true })).toBe('Cancel appointment #7, reason: prefer not to say.');
+    });
+
+    test('refreshing a summary does not make it the first to be dropped', () => {
+        // A Map keeps its first insertion order, so writing over an old entry
+        // in place left the newest summary first in line to be evicted.
+        svc.notePreview('cancel_appointment', CANCEL.args, 'first');
+        for (let i = 0; i < 60; i++) svc.notePreview('cancel_appointment', { appointmentId: `filler-${i}` }, `other ${i}`);
+        svc.notePreview('cancel_appointment', CANCEL.args, 'the newest words');
+        for (let i = 60; i < 70; i++) svc.notePreview('cancel_appointment', { appointmentId: `filler-${i}` }, `other ${i}`);
+        expect(svc.previewFor('cancel_appointment', CANCEL.args)).toBe('the newest words');
+    });
+
     test('a check step summary is forgotten once it is too old to be true', () => {
         svc.notePreview('cancel_appointment', CANCEL.args, 'Cancel appointment #7.');
         expect(svc.previewFor('cancel_appointment', CANCEL.args)).toBe('Cancel appointment #7.');
