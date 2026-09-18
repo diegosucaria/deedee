@@ -234,6 +234,20 @@ describe('finding a fact that is not in the list', () => {
         await expect(runTool(db, 'getFact', { key: 'nothing_like_this' })).resolves.toMatchObject({ info: expect.stringMatching(/nothing close/) });
     });
 
+    test('a loose match is offered, never stated as the answer', async () => {
+        // Search falls back to loose matching so a question still finds
+        // something. A hit whose key carries none of the words must not come
+        // back as "this one is close": that would report another fact's value.
+        db.setKey('work_client_acme_note', 'renewal in June', { category: 'work' });
+        const loose = await runTool(db, 'getFact', { key: 'renewal' });
+        expect(loose.value).toBeUndefined();
+        expect(loose.info).toMatch(/Closest keys|nothing close/);
+
+        // A real near miss still answers.
+        const near = await runTool(db, 'getFact', { key: 'acme_contact' });
+        expect(near).toMatchObject({ key: 'work_client_acme_contact', value: 'Ada' });
+    });
+
     test('rememberFact stores the kind and the summary it was given', async () => {
         await runTool(db, 'rememberFact', { key: 'user_coffee', value: 'black', kind: 'profile', summary: 'black, no sugar' });
         const row = db.getFact('user_coffee');

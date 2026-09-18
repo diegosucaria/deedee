@@ -3137,7 +3137,13 @@ class Agent {
       // The prompt lists one line per fact, so the model often has a near miss.
       const near = this.db.findFacts?.(args.key, 5) || [];
       if (near.length === 0) return { info: 'No fact with that key, and nothing close.' };
-      if (near.length === 1) {
+      // One hit is answered as the fact only when its key really carries a
+      // word of the question. A search falls back to loose matching to find
+      // what he meant, and a loose hit stating itself as the answer would let
+      // the model report another fact's value as this one.
+      const asked = String(args.key || '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 2);
+      const keyCarriesAWord = (key) => asked.some(w => String(key).toLowerCase().includes(w));
+      if (near.length === 1 && keyCarriesAWord(near[0].key)) {
         this.db.touchFacts?.(near[0].key);
         return { key: near[0].key, value: near[0].value, info: `No exact key '${args.key}'; this one is close.` };
       }
