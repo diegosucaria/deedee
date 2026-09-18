@@ -533,3 +533,57 @@ describe('MCPManager optional server variables', () => {
         expect(saved.plex.env.PLEX_URL).toBe('http://plex.local:32400');
     });
 });
+
+describe('MCPManager._refreshToolCache', () => {
+    let manager, warn, log, error;
+
+    beforeEach(() => {
+        manager = new MCPManager();
+        [log, warn, error] = ['log', 'warn', 'error'].map(m => jest.spyOn(console, m).mockImplementation(() => { }));
+    });
+
+    afterEach(() => [log, warn, error].forEach(s => s.mockRestore()));
+
+    const server = (name, tools, listTools) => {
+        manager.clients.set(name, { listTools: listTools || (async () => ({ tools })) });
+        manager.config = { ...(manager.config || {}), [name]: {} };
+    };
+
+    test('a tool keeps its server name while the list rebuilds', async () => {
+        // The approval gate asks the map which server owns a tool. That is how
+        // it knows a confirm:false call to book_appointment is only the check
+        // step. While the map was emptied and refilled, the gate saw no server
+        // and asked for a second approval of a booking he had already approved.
+        let release;
+        const slow = new Promise(resolve => { release = resolve; });
+        server('allende', [{ name: 'book_appointment', description: 'book', inputSchema: {} }]);
+        await manager._refreshToolCache();
+        expect(manager.toolMap.get('book_appointment').name).toBe('allende');
+
+        manager.clients.set('allende', { listTools: async () => { await slow; return { tools: [{ name: 'book_appointment', description: 'book', inputSchema: {} }] }; } });
+        const refreshing = manager._refreshToolCache();
+        // Mid-rebuild: the answer must be the old one, never nothing.
+        expect(manager.toolMap.get('book_appointment')?.name).toBe('allende');
+        expect(manager.toolCache).toHaveLength(1);
+        release();
+        await refreshing;
+        expect(manager.toolMap.get('book_appointment').name).toBe('allende');
+        expect(manager.toolCache).toHaveLength(1);
+    });
+
+    test('a tool that is gone after the rebuild is gone', async () => {
+        server('allende', [{ name: 'book_appointment', description: 'book', inputSchema: {} }]);
+        await manager._refreshToolCache();
+        manager.clients.set('allende', { listTools: async () => ({ tools: [] }) });
+        await manager._refreshToolCache();
+        expect(manager.toolMap.get('book_appointment')).toBeUndefined();
+        expect(manager.toolCache).toHaveLength(0);
+    });
+
+    test('a server that fails to answer does not take the others down', async () => {
+        server('allende', [{ name: 'book_appointment', description: 'book', inputSchema: {} }]);
+        server('broken', [], async () => { throw new Error('gone'); });
+        await manager._refreshToolCache();
+        expect(manager.toolMap.get('book_appointment').name).toBe('allende');
+    });
+});

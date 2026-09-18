@@ -2599,9 +2599,14 @@ class Agent {
                 try { this.approvals.noteRan(executionName, call.args, { serverName }); } catch (e) { console.warn(`${logPrefix} Could not retire waiting cards: ${e.message}`); }
               }
               // A preview step's summary goes on the card if the real call pauses.
-              if (isPreviewCall(executionName, call.args, serverName) && approvalRun?.previews) {
+              if (isPreviewCall(executionName, call.args, serverName)) {
                 const summary = previewSummary(toolResult);
-                if (summary) approvalRun.previews.set(stepKey(executionName, call.args), summary);
+                if (summary) {
+                  approvalRun?.previews?.set?.(stepKey(executionName, call.args), summary);
+                  // Also outside this run: he often checks in one turn and
+                  // books in the next.
+                  try { this.approvals.notePreview(executionName, call.args, summary); } catch (e) { /* the card falls back to the arguments */ }
+                }
               }
               // Browser calls run one at a time: the next call's gate sees this page state.
               if (serverName === 'browser' || (!serverName && String(executionName).startsWith('browser_'))) {

@@ -49,6 +49,9 @@ const MAX_TTL_INTERACTIVE_MIN = 24 * 60;
 const MAX_TTL_DEFERRED_HOURS = 24 * 7;
 const MAX_DENY_PATTERNS = 200;
 const SWEEP_MS = 60e3;
+// How long a check step's summary still describes the booking it checked.
+const PREVIEW_TTL_MS = 30 * 60e3;
+const PREVIEW_MAX = 50;
 
 // Short ids the owner can type on a phone. No i, l, o, 0, 1.
 const ID_ALPHABET = 'abcdefghjkmnpqrstuvwxyz23456789';
@@ -445,6 +448,36 @@ class ApprovalService {
         this.sweepMs = opts.sweepMs ?? SWEEP_MS;
         this.timer = null;
         this._warnedNoStore = false;
+        // stepKey -> { summary, at }. The check step and the real booking are
+        // often two turns apart ("is there a slot?", then "book it"), and a
+        // run only remembers its own. Without this the card falls back to raw
+        // arguments, which for a booking is an opaque token.
+        this._recentPreviews = new Map();
+    }
+
+    /** Remember what a two-step check step said it would do. */
+    notePreview(toolName, args, summary) {
+        const text = typeof summary === 'string' ? summary.trim() : '';
+        if (!text) return;
+        const now = Date.now();
+        for (const [key, entry] of this._recentPreviews) {
+            if (now - entry.at > PREVIEW_TTL_MS) this._recentPreviews.delete(key);
+        }
+        this._recentPreviews.set(stepKey(toolName, args), { summary: text, at: now });
+        while (this._recentPreviews.size > PREVIEW_MAX) {
+            this._recentPreviews.delete(this._recentPreviews.keys().next().value);
+        }
+    }
+
+    /** What the check step said, if it was recent enough to still be true. */
+    previewFor(toolName, args) {
+        const entry = this._recentPreviews.get(stepKey(toolName, args));
+        if (!entry) return null;
+        if (Date.now() - entry.at > PREVIEW_TTL_MS) {
+            this._recentPreviews.delete(stepKey(toolName, args));
+            return null;
+        }
+        return entry.summary;
     }
 
     get db() { return this.agent.db; }
@@ -835,7 +868,9 @@ class ApprovalService {
             ...withHits, ...guardianFields, verdict: verdict ? 'escalate' : null,
             outcome: 'escalated', decidedBy: 'owner'
         });
-        const preview = isTwoStepTool(toolName, serverName) ? (run?.previews?.get?.(stepKey(toolName, args)) || null) : null;
+        const preview = isTwoStepTool(toolName, serverName)
+            ? (run?.previews?.get?.(stepKey(toolName, args)) || this.previewFor(toolName, args) || null)
+            : null;
         const paused = await this.request({
             message, toolName, args, reason, sendCallback, taintSources: guard.tainted ? taintSources : null,
             modelReason: why || null, guardianDecisionId: row?.id || null, ownerConsent: ownerAsked, preview
