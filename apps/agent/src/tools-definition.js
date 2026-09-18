@@ -21,14 +21,46 @@ const toolDefinitions = [
       {
         name: "rememberFact",
         category: "memory",
-        description: "Save a fact or preference to long-term memory",
+        description: "Save a fact to long-term memory. Only for things that still matter next month; a one-off belongs in the reply, not here.",
         parameters: {
           type: "OBJECT",
           properties: {
-            key: { type: "STRING", description: "Unique key (e.g., 'user_name')" },
-            value: { type: "STRING", description: "Value to store" }
+            key: { type: "STRING", description: "Unique key (e.g., 'user_home_city')" },
+            value: { type: "STRING", description: "Value to store" },
+            kind: { type: "STRING", description: "'profile' for a durable fact about the owner or his people, 'note' for something you learned about doing the job. Left out, it is read from the key." },
+            summary: { type: "STRING", description: "One line, at most 80 characters, for the list the prompt carries. Left out, the value is shortened." }
           },
           required: ["key", "value"]
+        }
+      },
+      {
+        name: "updateFact",
+        category: "memory",
+        description: "Correct a fact already in memory. The key may be exact or close: with one match it is updated, with several you get the candidates and nothing changes. A pinned fact needs force: true and only when the owner asked for the change himself. A copy of the old value goes to data/pruned_memories.json.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            key: { type: "STRING", description: "The key, or words from it" },
+            value: { type: "STRING", description: "The new value" },
+            summary: { type: "STRING", description: "One line for the list the prompt carries" },
+            force: { type: "BOOLEAN", description: "Required for a pinned fact" }
+          },
+          required: ["key", "value"]
+        }
+      },
+      {
+        name: "forgetFact",
+        category: "memory",
+        requiresConfirmation: true,
+        confirmationReason: "Forgetting a fact removes something the owner told me.",
+        description: "Drop a fact from memory, by key. A pinned fact, or a durable fact about the owner, needs force: true and only when he asked for it himself. A copy goes to data/pruned_memories.json.",
+        parameters: {
+          type: "OBJECT",
+          properties: {
+            key: { type: "STRING", description: "The key, or words from it" },
+            force: { type: "BOOLEAN", description: "Required for a pinned fact or one about the owner" }
+          },
+          required: ["key"]
         }
       },
       {
@@ -57,7 +89,7 @@ const toolDefinitions = [
       {
         name: "getFact",
         category: "memory",
-        description: "Retrieve a fact from long-term memory",
+        description: "Read the full value of a fact. The prompt lists facts one line each; use this for the whole value, or when the key is not listed at all.",
         parameters: {
           type: "OBJECT",
           properties: { key: { type: "STRING" } },
@@ -67,11 +99,11 @@ const toolDefinitions = [
       {
         name: "searchMemory",
         category: "memory",
-        description: "Search the agent's full memory: chat history, daily journal summaries, durable facts, and vault documents. Use this for 'What did I do last Tuesday?', 'When did I talk to X about Y?', or recalling any past information.",
+        description: "Search the agent's full memory: chat history, daily journal summaries, durable facts, and vault documents. Use it to recall anything past. Search with two or three bare keywords in English ('grocery budget', 'dentist appointment'), not a whole question: facts are stored in English and a question's own words match nothing.",
         parameters: {
           type: "OBJECT",
           properties: {
-            query: { type: "STRING", description: "Keyword to search for (e.g. 'grocery', 'project')" },
+            query: { type: "STRING", description: "Two or three keywords in English (e.g. 'grocery', 'car tyres')" },
             limit: { type: "NUMBER", description: "Max results (default 10)" }
           },
           required: ["query"]

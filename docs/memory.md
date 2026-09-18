@@ -51,12 +51,30 @@ DeeDee uses a multi-tiered memory architecture to maintain state, context, and l
 ### 2. Semantic Memory (KV Facts)
 - **Table**: `kv_store`
 - **Content**: Key-value pairs with metadata for long-term storage (preferences, relationships, settings)
-- **Schema**: `key TEXT PRIMARY KEY, value TEXT, category TEXT, confidence TEXT, source TEXT, created_at DATETIME, pinned INTEGER, updated_at DATETIME`
+- **Schema**: `key TEXT PRIMARY KEY, value TEXT, category TEXT, confidence TEXT, source TEXT, created_at DATETIME, pinned INTEGER, updated_at DATETIME, kind TEXT, summary TEXT, last_used_at DATETIME, use_count INTEGER`
+- **Kind**: `profile` (durable facts about the owner and his people), `note` (what the agent learned about doing its job), `state` (job bookkeeping, notification flags, Node-RED dumps). Stored when a tool or the consolidator says so; otherwise read from the key and the category (`factKind` in `db.js`), so it works for rows written before the column existed.
 - **Categories**: `preference`, `relationship`, `temporal`, `system`, `general`
 - **Confidence levels**: `user_explicit` (stated by user), `consolidated` (extracted by LLM), `inferred` (system-derived)
 - **Sources**: `manual` (dashboard), `tool` (rememberFact), `consolidation` (nightly), `system`
 - **Pinning**: Facts can be pinned (via dashboard or API) to protect from auto-pruning and consolidation overwrite
-- **Agent Access**: `rememberFact(key, value)`, `getFact(key)`
+- **Agent Access**: `rememberFact(key, value, kind?, summary?)`, `updateFact(key, value, summary?, force?)`, `forgetFact(key, force?)`, `getFact(key)`, `searchMemory(query)`. `updateFact` and `forgetFact` write only on an exact key; a near key comes back as a candidate to call again with, and several come back as a list. `force: true` is needed for a pinned fact on either tool, and by `forgetFact` for a fact about the owner. They live in `utils/fact-tools.js`, so a voice call reaches them through the tool executor as well as a chat through the agent.
+
+### The facts index (what the prompt carries)
+Every turn used to carry every fact in full: on the device, 642 rows, about 56,000 characters, roughly 14,000 tokens of a 45,000-token chat turn. `db.getFactsIndex()` now renders the block in two tiers inside one budget of 24,000 characters (`FACTS_INDEX_CHARS`, a plain number, clamped to 2,000–60,000):
+
+1. **With values**: the facts nearest the top of the order carry a one-line value (80 characters).
+2. **Names only**: every other key is still printed, under `ALSO STORED`. The model can read any of them in full with `getFact(key)` instead of guessing whether the fact exists.
+
+Naming every key costs about 17,000 characters on the device, so most of the budget buys reach and the rest buys detail. That is deliberate: one-lining the values saves only about 8% on his data (only a quarter of his values are longer than 80 characters), so a smaller budget would not have been a cheaper format, only a smaller memory. When even the names do not fit, the block falls back to as many value lines as fit plus a count of the rest.
+
+- **Order**: pinned first, the owner's profile before the agent's notes, newest first, then the key. Nothing in the order depends on what was read lately, so the block stays byte-identical while the facts do not change and the cached prefix survives. The old renderer varied with the turn (it hid Node-RED facts unless the turn mentioned them), which broke that.
+- **Left out**: `state` keys (`job:`, `notified_`, `config:`, `sys_`, `sch_`, `system_web_navigator_`, Node-RED and Home Assistant dumps), dated keys older than five days, and anything past the budget. `system_` keys are ordinary facts, not state. All of it stays in the table, and `getFact` or `searchMemory` still reach it. `searchMemory` searches facts as well as chats and documents, word by word, so a two-word question finds the fact that holds both.
+- **A changed value drops a summary written for the old one**, so the block can never state a value that has been corrected. The `kind` describes the key, not the value, so it survives a new value: losing it would move the fact to another section and drop the guard that makes `forgetFact` ask first.
+- **Writing asks when it should.** `forgetFact` carries a confirmation flag and counts as deleting the owner's data for the guardian; a copy of the fact goes to `data/pruned_memories.json` first, and so does the old value of an `updateFact`. A damaged backup file is renamed aside, never overwritten. `updateFact` and `forgetFact` match by key only, so a word in another fact's value can never rewrite or delete it. A pinned fact needs `force: true` on either tool (both declare it), `rememberFact` refuses to write over a pinned key, and `forgetFact` refuses a `state` key outright.
+- **Searching takes keywords, not questions.** `findFacts` strips punctuation and the grammar words of both languages before matching, so "What is my home city?" reaches the same row as "home city", and a plain plural finds the singular the key uses ("car tyres" reaches `user_car_tyre_size`). Every word must appear; when no fact holds them all, the rows holding the most come back instead of nothing. `state` rows stay out of a search as well as out of the prompt, and a searched value is cut to 600 characters, so one machine dump cannot fill the turn. The write tools skip the loose fallback and act on an exact key only.
+- **Use tracking**: `getFact` and a `searchMemory` hit bump `use_count` and `last_used_at`. They are bookkeeping for the memory page and do not change the order of the block: reordering on use would throw away the cached prefix every turn.
+- **Escape hatch**: `FACTS_INDEX=0` brings the full dump back.
+- **The live voice prompt** uses the same renderer with its own smaller budget (`MAX_FACTS_CHARS`, 6,000), because the whole voice instruction has to fit in 12,000 characters. The facts take what is left after the rules, the recall line and the owner's style, so they can never push those off the end.
 - **RAG Sync**: Facts are synced to `data/MEMORY.md` and embedded into RAG (vault: `memory`)
 - **Pruning**: Nightly job uses Gemini to cull stale/obsolete facts, backed up to `data/pruned_memories.json`. Pinned facts are excluded from the pruning prompt and have a server-side safety net.
 - **Contradiction Detection**: During consolidation, if a new fact value conflicts with an existing one, the change is logged to the journal. Pinned facts block the overwrite entirely.

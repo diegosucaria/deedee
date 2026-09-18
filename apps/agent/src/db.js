@@ -83,6 +83,108 @@ const EFFECTIVE_TAG_SQL = `
   END`;
 
 /** The goal fields a tainted run wrote. A tainted row without the list counts as fully tainted. */
+// --- facts index (docs/memory.md) ---
+// Every turn used to carry every fact: 642 rows, about 13k tokens. The prompt
+// now carries one line each, newest and most used first, inside a character
+// budget; the full value comes back through getFact or searchMemory.
+const FACT_SUMMARY_CHARS = 80;
+// One budget for the whole block: about 6,000 tokens of a chat turn, against
+// the 14,000 every fact in full used to cost. It buys two things at once. The
+// facts the owner touched last carry their value on one line, and every other
+// key is still named, so the model can read any fact by name instead of
+// guessing that it exists. A tighter budget saves another 3,000 tokens and
+// hides three quarters of his memory, which is not a trade worth making.
+const FACT_INDEX_CHARS = 24000;
+// Room kept back for the headings and the closing note.
+const FACT_INDEX_RESERVE = 400;
+const FACT_NOTES_SHARE = 0.25;
+
+/** The block's character budget: FACTS_INDEX_CHARS, within reason. */
+function factsIndexBudget() {
+  const set = String(process.env.FACTS_INDEX_CHARS || '').trim();
+  if (!set) return FACT_INDEX_CHARS;
+  // "12k" or "8000 chars" used to parse as a number and quietly shrink his
+  // memory to the floor, so only a plain number counts.
+  if (!/^\d+$/.test(set)) {
+    console.warn(`[Memory] FACTS_INDEX_CHARS is not a plain number ("${set}"), using ${FACT_INDEX_CHARS}.`);
+    return FACT_INDEX_CHARS;
+  }
+  return Math.max(2000, Math.min(60000, Number(set)));
+}
+// Keys that hold state: a job's bookkeeping, a notification flag, a Node-RED
+// dump. They stay in the table and out of the prompt. `system_` is NOT state:
+// on the device those are ordinary facts about his setup (the apartment code,
+// which tyres the car takes), so they belong in the notes.
+const STATE_KEY_RE = /^(?:job:|notified_|config:|sys_|sch_|system_web_navigator_|ha_nodes|node_red)/i;
+// Keys that are durable facts about the owner and the people around him.
+const PROFILE_KEY_RE = /^(?:user_|relationship_|preference_|work_|family_|contact_|partner_|colleague_|project_|goal_|birthday)/i;
+// Keys that are the agent's own notes about doing its job.
+const NOTE_KEY_RE = /^(?:device_|agent_|skill_|lesson_|ha_|alias_)/i;
+const PROFILE_CATEGORIES = new Set(['relationship', 'preference', 'work', 'temporal']);
+// A fact written for one day stops being news after five.
+const DATED_KEY_RE = /_on_(\d{4}-\d{2}-\d{2})$/;
+const DATED_FACT_DAYS = 5;
+// Grammar words a question carries, in both languages the owner uses. They
+// match half the table as a substring ("is" hits "this", "list"), so they
+// would drown the ranking of a question asked in full.
+const FACT_STOP_WORDS = new Set([
+  'what', 'whats', 'which', 'where', 'when', 'who', 'whom', 'whose', 'why', 'how',
+  'the', 'an', 'and', 'or', 'of', 'for', 'to', 'in', 'on', 'at', 'by', 'with', 'from',
+  'is', 'are', 'was', 'were', 'be', 'do', 'does', 'did', 'has', 'have', 'had', 'can', 'will',
+  'my', 'me', 'mine', 'his', 'her', 'hers', 'their', 'our', 'your', 'yours', 'it', 'its',
+  'that', 'this', 'these', 'those', 'there', 'here', 'about', 'again', 'please', 'tell', 'know',
+  'qué', 'que', 'cuál', 'cual', 'cuándo', 'cuando', 'dónde', 'donde', 'quién', 'quien',
+  'cómo', 'como', 'por', 'para', 'del', 'las', 'los', 'una', 'uno', 'unos', 'unas',
+  'mi', 'mis', 'su', 'sus', 'tu', 'tus', 'el', 'la', 'lo', 'de', 'en', 'un', 'al',
+  'es', 'son', 'era', 'fue', 'ser', 'está', 'esta', 'este', 'esto', 'esos', 'esas',
+  'tiene', 'tengo', 'sobre', 'dime', 'decime', 'sabes', 'sabés', 'con', 'sin', 'yo', 'vos'
+]);
+
+/**
+ * profile, note or state, from the stored kind when it has one, else from the
+ * key and the category. Read-time classification keeps the index working
+ * before (and without) the migration.
+ */
+function factKind(key, category, stored = null) {
+    const known = String(stored || '').toLowerCase();
+    if (known === 'profile' || known === 'note' || known === 'state') return known;
+    const k = String(key || '');
+    if (STATE_KEY_RE.test(k)) return 'state';
+    if (PROFILE_KEY_RE.test(k)) return 'profile';
+    if (NOTE_KEY_RE.test(k)) return 'note';
+    const c = String(category || '').toLowerCase();
+    if (PROFILE_CATEGORIES.has(c)) return 'profile';
+    if (c === 'system') return 'note';
+    return 'profile';
+}
+
+/**
+ * One line for the index: the stored summary, else the value, shortened.
+ * Always one line. A summary is written by the model from chat logs that
+ * carry other people's text, so a newline in it would otherwise print extra
+ * "- key: value" lines into the prompt and forge facts.
+ */
+function factSummary(row) {
+    const stored = typeof row.summary === 'string' ? row.summary.replace(/\s+/g, ' ').trim() : '';
+    if (stored) return stored.length > FACT_SUMMARY_CHARS ? `${stored.slice(0, FACT_SUMMARY_CHARS - 1)}…` : stored;
+    let text = row.value;
+    try {
+        const parsed = JSON.parse(row.value);
+        text = typeof parsed === 'string' ? parsed : JSON.stringify(parsed);
+    } catch { /* keep raw */ }
+    text = String(text ?? '').replace(/\s+/g, ' ').trim();
+    return text.length > FACT_SUMMARY_CHARS ? `${text.slice(0, FACT_SUMMARY_CHARS - 1)}…` : text;
+}
+
+/** A dated fact older than five days is history, not context. */
+function factIsStale(key, now = Date.now()) {
+    const m = DATED_KEY_RE.exec(String(key || ''));
+    if (!m) return false;
+    const when = new Date(`${m[1]}T00:00:00`).getTime();
+    if (Number.isNaN(when)) return false;
+    return (now - when) / 86400000 > DATED_FACT_DAYS;
+}
+
 function goalTaintedFields(meta) {
   if (!meta || meta.tainted !== true) return [];
   return Array.isArray(meta.taintedFields) ? meta.taintedFields.map(String) : ['description', 'progress'];
@@ -722,6 +824,19 @@ class AgentDB {
       this.db.exec("ALTER TABLE kv_store ADD COLUMN pinned INTEGER DEFAULT 0");
     } catch (err) { }
 
+    // Migration: facts index (docs/memory.md). `kind` splits durable facts
+    // about the owner from the agent's own notes and from plain state;
+    // `summary` is the one line the prompt shows; the two use columns say
+    // which facts still earn their place.
+    for (const sql of [
+      "ALTER TABLE kv_store ADD COLUMN kind TEXT",
+      "ALTER TABLE kv_store ADD COLUMN summary TEXT",
+      "ALTER TABLE kv_store ADD COLUMN last_used_at DATETIME",
+      "ALTER TABLE kv_store ADD COLUMN use_count INTEGER DEFAULT 0"
+    ]) {
+      try { this.db.exec(sql); } catch (err) { }
+    }
+
     // Migration: Add enrichment_status to dj_vinyls
     try {
       this.db.exec("ALTER TABLE dj_vinyls ADD COLUMN enrichment_status TEXT DEFAULT 'complete'");
@@ -835,8 +950,62 @@ class AgentDB {
   }
 
   // --- Extended CRUD ---
+  /**
+   * Keep a copy of a fact before it goes, in the same file the nightly pruning
+   * writes, so a deletion is never final without a trace.
+   */
+  /**
+   * Keep a copy of a fact before it is changed or deleted.
+   * @returns {boolean} whether the copy was really written. The tools promise
+   * the owner a copy, so a failure has to be reported rather than assumed.
+   */
+  backupFact(row, reason = 'forgetFact') {
+    if (!row) return false;
+    try {
+      const fs = require('fs');
+      const path = require('path');
+      const dir = this.dbPath ? path.dirname(this.dbPath) : path.join(process.cwd(), 'data');
+      const file = path.join(dir, 'pruned_memories.json');
+      let current = [];
+      let damaged = false;
+      try {
+        if (fs.existsSync(file)) current = JSON.parse(fs.readFileSync(file, 'utf8'));
+      } catch { damaged = true; current = []; }
+      if (!Array.isArray(current)) { damaged = fs.existsSync(file); current = []; }
+      // The file is the only copy of every fact ever dropped. Overwriting one
+      // we cannot read would throw all of them away, so it is moved aside.
+      if (damaged) {
+        const aside = path.join(dir, `pruned_memories.corrupt-${Date.now()}.json`);
+        try {
+          fs.renameSync(file, aside);
+          console.warn(`[DB] pruned_memories.json could not be read; kept as ${path.basename(aside)}.`);
+        } catch (e) {
+          // It could not be read and could not be moved. Writing over it now
+          // would destroy every fact ever pruned, so this one is written
+          // beside it instead and the damaged file is left alone.
+          console.warn('[DB] pruned_memories.json is damaged and could not be moved aside:', e.message);
+          const spare = path.join(dir, `pruned_memories.${Date.now()}.json`);
+          try {
+            fs.writeFileSync(spare, JSON.stringify([{ ...row, pruned_at: new Date().toISOString(), reason }], null, 2));
+            return true;
+          } catch (err) {
+            console.warn('[DB] Could not keep a copy of the fact:', err.message);
+            return false;
+          }
+        }
+      }
+      current.push({ ...row, pruned_at: new Date().toISOString(), reason });
+      fs.writeFileSync(file, JSON.stringify(current, null, 2));
+      return true;
+    } catch (e) {
+      console.warn('[DB] Could not back up a fact before deleting it:', e.message);
+      return false;
+    }
+  }
+
+  /** @returns {boolean} whether a row was there to delete */
   deleteFact(key) {
-    this.db.prepare('DELETE FROM kv_store WHERE key = ?').run(key);
+    return this.db.prepare('DELETE FROM kv_store WHERE key = ?').run(key).changes > 0;
   }
 
   deleteGoal(id) {
@@ -1410,17 +1579,112 @@ class AgentDB {
   // --- KV Store (Memory) ---
   setKey(key, value, options = {}) {
     const valStr = JSON.stringify(value);
-    const { category, confidence, source } = options;
+    const { category, confidence, source, kind, summary } = options;
     const stmt = this.db.prepare(`
-      INSERT INTO kv_store (key, value, category, confidence, source) VALUES (?, ?, COALESCE(?, 'general'), COALESCE(?, 'inferred'), COALESCE(?, 'system'))
+      INSERT INTO kv_store (key, value, category, confidence, source, kind, summary)
+      VALUES (?, ?, COALESCE(?, 'general'), COALESCE(?, 'inferred'), COALESCE(?, 'system'), ?, ?)
       ON CONFLICT(key) DO UPDATE SET
         value = excluded.value,
         updated_at = CURRENT_TIMESTAMP,
         category = COALESCE(excluded.category, kv_store.category),
         confidence = COALESCE(excluded.confidence, kv_store.confidence),
-        source = COALESCE(excluded.source, kv_store.source)
+        source = COALESCE(excluded.source, kv_store.source),
+        -- The kind describes the key, not the value, so it survives a new
+        -- value. Losing it would move the fact to another section and, worse,
+        -- drop the guard that makes forgetFact ask before deleting a fact
+        -- about the owner.
+        kind = COALESCE(excluded.kind, kv_store.kind),
+        -- A summary written for the old value must not survive a new one: the
+        -- prompt shows the summary, so it would state the old fact.
+        summary = CASE WHEN excluded.summary IS NOT NULL THEN excluded.summary
+                       WHEN excluded.value <> kv_store.value THEN NULL
+                       ELSE kv_store.summary END
     `);
-    stmt.run(key, valStr, category || null, confidence || null, source || null);
+    stmt.run(key, valStr, category || null, confidence || null, source || null,
+      kind ? String(kind) : null, summary ? String(summary).slice(0, FACT_SUMMARY_CHARS) : null);
+  }
+
+  /**
+   * Facts the owner asked for by name, or that a search returned, have earned
+   * their place in the index. Never throws: this is bookkeeping.
+   */
+  touchFacts(keys) {
+    const list = (Array.isArray(keys) ? keys : [keys]).map(k => String(k || '')).filter(Boolean).slice(0, 20);
+    if (list.length === 0) return;
+    try {
+      const stmt = this.db.prepare('UPDATE kv_store SET use_count = COALESCE(use_count, 0) + 1, last_used_at = CURRENT_TIMESTAMP WHERE key = ?');
+      for (const key of list) stmt.run(key);
+    } catch (e) {
+      console.warn('[DB] Could not record fact use:', e.message);
+    }
+  }
+
+  /**
+   * Facts whose key, summary or value holds `term`, for a tool that has to
+   * find the fact the owner means. Exact key first.
+   * @returns {Array<{ key: string, value: any, kind: string, summary: string|null, pinned: number }>}
+   */
+  findFacts(term, limit = 5, { keysOnly = false, includeState = false } = {}) {
+    const q = String(term || '').trim().toLowerCase();
+    if (!q) return [];
+    // % and _ are wildcards in LIKE, so a term holding them must not widen the
+    // search.
+    const esc = (t) => t.replace(/[\\%_]/g, (c) => `\\${c}`);
+    // People ask questions, not keywords: "what is his birthday?" used to keep
+    // the question mark inside the last word and match nothing. Punctuation
+    // goes, and the words that carry no meaning go with it.
+    const cleaned = q.replace(/[^\p{L}\p{N}\s_]+/gu, ' ');
+    const all = cleaned.split(/[\s_]+/).filter((w) => w.length >= 2);
+    let words = all.filter((w) => !FACT_STOP_WORDS.has(w)).slice(0, 6);
+    if (words.length === 0) words = all.slice(0, 6);
+    if (words.length === 0) return [];
+    const target = keysOnly
+      ? 'LOWER(key)'
+      : "LOWER(key) || ' ' || LOWER(COALESCE(summary, '')) || ' ' || LOWER(COALESCE(value, ''))";
+    const lim = Math.max(1, Math.min(20, Number(limit) || 5));
+    // He asks in the plural, the key is written in the singular: "car tyres"
+    // used to miss user_car_tyre_size entirely. Only a plain trailing "s" on a
+    // word of four letters or more goes, so "gas" and "address" stay whole.
+    // The stem is a prefix of the word, so this only ever widens the search.
+    const stem = (w) => (w.length >= 4 && /s$/.test(w) && !/ss$/.test(w) ? w.slice(0, -1) : w);
+    const pats = words.map((w) => `%${esc(stem(w))}%`);
+    const decorate = (rows) => rows
+      .map((row) => {
+        const { hit_count, ...rest } = row;
+        let value = rest.value;
+        try { value = JSON.parse(rest.value); } catch { /* keep raw */ }
+        return { ...rest, value, kind: factKind(rest.key, rest.category, rest.kind) };
+      })
+      // A job's bookkeeping and the Node-RED and Home Assistant dumps are kept
+      // out of the prompt on purpose. Handing them back through a search puts
+      // tens of thousands of characters into the turn instead, and a long dump
+      // holds more of the words than a real fact, so it wins the ranking too.
+      .filter((row) => includeState || row.kind !== 'state');
+
+    // Every word has to appear, so a two-word query finds the fact that holds
+    // both rather than everything that holds either.
+    const where = words.map(() => `${target} LIKE ? ESCAPE '\\'`).join(' AND ');
+    const rows = this.db.prepare(`
+      SELECT * FROM kv_store
+      WHERE LOWER(key) = ? OR (${where})
+      ORDER BY (LOWER(key) = ?) DESC, (LOWER(key) LIKE ? ESCAPE '\\') DESC, pinned DESC, updated_at DESC
+      LIMIT ?
+    `).all(q, ...pats, q, `%${esc(q)}%`, lim);
+    if (rows.length > 0 || words.length < 2 || keysOnly) return decorate(rows);
+
+    // Nothing held every word. Rather than answer "I do not know" when the
+    // fact is there under other wording, take the rows that hold any word,
+    // best match first. Not for keysOnly: updateFact and forgetFact write, so
+    // they must never act on a loose match.
+    const score = words.map(() => `(CASE WHEN ${target} LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END)`).join(' + ');
+    const anyWhere = words.map(() => `${target} LIKE ? ESCAPE '\\'`).join(' OR ');
+    const loose = this.db.prepare(`
+      SELECT *, (${score}) AS hit_count FROM kv_store
+      WHERE ${anyWhere}
+      ORDER BY hit_count DESC, (LOWER(key) LIKE ? ESCAPE '\\') DESC, pinned DESC, updated_at DESC
+      LIMIT ?
+    `).all(...pats, ...pats, `%${esc(q)}%`, lim);
+    return decorate(loose);
   }
 
   getKey(key) {
@@ -1432,8 +1696,10 @@ class AgentDB {
   getFact(key) {
     const row = this.db.prepare('SELECT * FROM kv_store WHERE key = ?').get(key);
     if (!row) return null;
-    try { return { ...row, value: JSON.parse(row.value) }; }
-    catch (e) { return row; }
+    // The kind a caller reads is the stored one, or the one the key implies.
+    const kind = factKind(row.key, row.category, row.kind);
+    try { return { ...row, kind, value: JSON.parse(row.value) }; }
+    catch (e) { return { ...row, kind }; }
   }
 
   toggleFactPin(key, pinned) {
@@ -1456,6 +1722,138 @@ class AgentDB {
         pinned: row.pinned || 0
       };
     });
+  }
+
+  /**
+   * The facts block the prompt carries: one line per fact, the owner's profile
+   * first, then the agent's own notes, each inside a character budget. Stable
+   * between turns (no query in the ordering), so the cached prefix survives.
+   * State keys, stale dated facts and Node-RED dumps stay out; getFact and
+   * searchMemory still reach them.
+   * @returns {{ text: string, shown: number, total: number, hidden: number, chars: number }}
+   */
+  getFactsIndex({ indexChars = factsIndexBudget(), now = Date.now() } = {}) {
+    let rows = [];
+    try {
+      rows = this.db.prepare('SELECT key, value, category, kind, summary, pinned, last_used_at, updated_at FROM kv_store').all();
+    } catch (e) {
+      // The caller falls back to the full list rather than tell the model
+      // there is nothing stored.
+      console.warn('[Memory] Facts index read failed:', e.message);
+      return null;
+    }
+    const total = rows.length;
+    const usable = [];
+    let stateRows = 0;
+    for (const row of rows) {
+      const kind = factKind(row.key, row.category, row.kind);
+      if (kind === 'state' || factIsStale(row.key, now)) { stateRows++; continue; }
+      // The key is printed into the prompt too, so it is flattened for the
+      // same reason as the summary: one fact, one line, always.
+      usable.push({
+        key: String(row.key).replace(/\s+/g, ' ').trim(),
+        kind,
+        pinned: row.pinned ? 1 : 0,
+        line: factSummary(row),
+        updated: row.updated_at || ''
+      });
+    }
+    // Stable order: pinned first, the owner's facts before the agent's notes,
+    // newest first, then the key. Nothing here depends on what was read
+    // lately, so the block moves only when the facts do and the cached prefix
+    // survives.
+    usable.sort((a, b) => (b.pinned - a.pinned)
+      || (a.kind === b.kind ? 0 : a.kind === 'profile' ? -1 : 1)
+      || String(b.updated).localeCompare(String(a.updated))
+      || a.key.localeCompare(b.key));
+
+    const render = (f) => `- ${f.key}: ${f.line}`;
+    const lineCost = (f) => render(f).length + 1;
+    const nameCost = (f) => f.key.length + 2;
+    // The headings and the closing note are printed too. Reserving them keeps
+    // the block inside the budget the caller asked for, which matters because
+    // the voice prompt sizes the rest of its instruction around it.
+    const content = Math.max(0, indexChars - FACT_INDEX_RESERVE);
+    const profileRows = usable.filter(f => f.kind === 'profile');
+    const noteRows = usable.filter(f => f.kind === 'note');
+
+    // Naming every key costs this much. If it fits, no fact is ever invisible
+    // to the model: it can read any of them by name with getFact.
+    const wholeTail = usable.reduce((n, f) => n + nameCost(f), 0);
+    const withTail = wholeTail > 0 && wholeTail <= content;
+
+    let profileLines = [];
+    let noteLines = [];
+    let hidden = 0;
+    let named = [];
+
+    if (withTail) {
+      // Every key is named already. A value line only has to buy the value,
+      // so promoting a fact costs its line minus the name it drops.
+      const promote = (list, room) => {
+        const taken = [];
+        let used = 0;
+        for (const f of list) {
+          const extra = lineCost(f) - nameCost(f);
+          if (used + extra > room) continue;
+          taken.push(f);
+          used += extra;
+        }
+        return { taken, used };
+      };
+      const room = content - wholeTail;
+      // The notes take at most a quarter of the room, and only what they need;
+      // the profile takes the rest, and lends back what it leaves.
+      const notesWanted = noteRows.reduce((n, f) => n + lineCost(f) - nameCost(f), 0);
+      const notesRoom = Math.min(Math.round(room * FACT_NOTES_SHARE), notesWanted);
+      const profile = promote(profileRows, room - notesRoom);
+      const notes = promote(noteRows, room - profile.used);
+      const promoted = new Set([...profile.taken, ...notes.taken]);
+      profileLines = profile.taken.map(render);
+      noteLines = notes.taken.map(render);
+      named = usable.filter(f => !promoted.has(f)).map(f => f.key);
+    } else {
+      // Too little room to name them all, so fall back to as many value lines
+      // as fit and a count of the rest.
+      const fit = (list, budget) => {
+        const lines = [];
+        let used = 0;
+        let left = 0;
+        for (const f of list) {
+          if (used + lineCost(f) > budget) { left++; continue; }
+          lines.push(render(f));
+          used += lineCost(f);
+        }
+        return { lines, left, used };
+      };
+      const notesWanted = noteRows.reduce((n, f) => n + lineCost(f), 0);
+      const notesBudget = Math.min(Math.round(content * FACT_NOTES_SHARE), notesWanted);
+      const profile = fit(profileRows, content - notesBudget);
+      const notes = fit(noteRows, content - profile.used);
+      profileLines = profile.lines;
+      noteLines = notes.lines;
+      hidden = profile.left + notes.left;
+    }
+
+    const parts = [];
+    if (profileLines.length > 0) parts.push(`USER PROFILE (durable facts about the owner):\n${profileLines.join('\n')}`);
+    if (noteLines.length > 0) parts.push(`AGENT NOTES (what you learned about doing the job):\n${noteLines.join('\n')}`);
+    if (named.length > 0) {
+      parts.push(`ALSO STORED, names only (${named.length}). Their values are kept in full; getFact(key) reads one:\n${named.join(', ')}`);
+    }
+    if (parts.length > 0 && hidden > 0) {
+      parts.push(`(${hidden} more facts are stored and not listed. getFact(key) reads any fact by name; searchMemory(query) finds one by words. Use them before saying you do not know.)`);
+    }
+    const text = parts.join('\n');
+    return {
+      text,
+      shown: profileLines.length + noteLines.length,
+      named: named.length,
+      total,
+      hidden,
+      state: stateRows,
+      chars: text.length
+    };
   }
 
   getFactsFormatted(query = '') {

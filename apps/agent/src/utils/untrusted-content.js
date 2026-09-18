@@ -53,7 +53,7 @@ const INTERNAL_UNTRUSTED = Object.freeze({
 // lists (a test checks it), so a new tool needs a decision.
 const INTERNAL_TRUSTED = Object.freeze(new Set([
     'askUser', // the owner's answer
-    'rememberFact', 'saveJobState', 'getJobState', 'getFact',
+    'rememberFact', 'updateFact', 'forgetFact', 'saveJobState', 'getJobState', 'getFact',
     'addGoal', 'updateGoalProgress', 'completeGoal',
     'readFile', 'writeFile', 'listDirectory', 'rollbackLastChange', 'pullLatestChanges', 'commitAndPush',
     'logJournal', 'scheduleJob', 'listJobs', 'cancelJob', 'setReminder', 'scheduleTask',

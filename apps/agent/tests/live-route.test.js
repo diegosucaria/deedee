@@ -9,6 +9,7 @@ jest.mock('google-auth-library', () => {
 
 const { createLiveRouter, TOKEN_TTL_MS, NEW_SESSION_WINDOW_MS } = require('../src/routes/live');
 const { MAX_FACTS_CHARS, MAX_INSTRUCTION_CHARS } = require('../src/prompts/live');
+const { FACTS_HEADER } = require('../src/prompts/system');
 
 function makeAgent(overrides = {}) {
     return {
@@ -105,7 +106,7 @@ describe('GET /live/config', () => {
         expect(text).toContain('CONSTITUTION:');
         expect(text).toContain('**Privacy First**');
         expect(text).toContain('**Strict Matching**');
-        expect(text).toContain('USER FACTS & PREFERENCES (ALWAYS RESPECT THESE):');
+        expect(text).toContain(FACTS_HEADER);
         expect(text).toContain('- favorite_color: "blue"');
         expect(text).toContain('COMMUNICATION STYLE');
         expect(text).toContain('Dry and brief.');
@@ -130,11 +131,55 @@ describe('GET /live/config', () => {
 
         expect(text.length).toBeLessThanOrEqual(MAX_INSTRUCTION_CHARS);
         expect(text).toContain('more facts not shown');
-        const factsStart = text.indexOf('USER FACTS & PREFERENCES');
+        const factsStart = text.indexOf(FACTS_HEADER);
         const factsEnd = text.indexOf('COMMUNICATION STYLE');
         expect(factsEnd).toBeGreaterThan(factsStart);
-        expect(factsEnd - factsStart).toBeLessThanOrEqual(MAX_FACTS_CHARS + 200);
+        // The block, plus the heading and the rule that explains it.
+        expect(factsEnd - factsStart).toBeLessThanOrEqual(MAX_FACTS_CHARS + 900);
         expect(logSpy.mock.calls.some(c => c.join(' ').includes('TRUNCATED'))).toBe(true);
+    });
+
+    test('a full memory does not push the recall rule or his style off the end', async () => {
+        // The real db builds the block, sized for a voice call. Asking it for
+        // the chat budget used to fill the whole instruction with facts and
+        // cut everything under them.
+        const { AgentDB } = require('../src/db');
+        const fs = require('fs');
+        const os = require('os');
+        const path = require('path');
+        const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deedee-live-facts-'));
+        const db = new AgentDB(dir);
+        const warn = jest.spyOn(console, 'warn').mockImplementation(() => { });
+        try {
+            for (let i = 0; i < 700; i++) {
+                db.setKey(`user_fact_${String(i).padStart(3, '0')}`, `value number ${i} ${'x'.repeat(50)}`, {});
+            }
+            const agent = makeAgent({ db, settings: { voice: 'Puck', communication_style: 'Dry and brief.', owner_name: 'Owner' } });
+            const res = await request(makeApp(agent)).get('/live/config');
+            const text = res.body.systemInstruction;
+
+            expect(text.length).toBeLessThanOrEqual(MAX_INSTRUCTION_CHARS);
+            // Everything the call needs is still there, in order.
+            expect(text).toContain(FACTS_HEADER);
+            expect(text).toContain('user_fact_');
+            expect(text).toContain('getFact(key)');
+            expect(text).toContain('COMMUNICATION STYLE');
+            expect(text).toContain('Dry and brief.');
+            expect(text).toContain('VOICE CALL RULES');
+            // No line is left half printed.
+            expect(text.endsWith(')')).toBe(true);
+            // The log states what was left out instead of "undefined shown".
+            const line = logSpy.mock.calls.map(c => c.join(' ')).find(l => l.includes('[Live] Config'));
+            expect(line).toBeDefined();
+            expect(line).not.toContain('undefined');
+            expect(line).toMatch(/facts \d+ shown \/ \d+ hidden/);
+            expect(Number(/facts (\d+) shown/.exec(line)[1])).toBeGreaterThan(0);
+            expect(Number(/\/ (\d+) hidden/.exec(line)[1])).toBeGreaterThan(0);
+        } finally {
+            warn.mockRestore();
+            db.close();
+            fs.rmSync(dir, { recursive: true, force: true });
+        }
     });
 
     test('falls back to defaults when the agent is not ready', async () => {
@@ -142,7 +187,7 @@ describe('GET /live/config', () => {
         expect(res.status).toBe(200);
         expect(res.body.model.startsWith('models/')).toBe(true);
         expect(res.body.voice).toBe('Kore');
-        expect(res.body.systemInstruction).toContain('No specific preferences stored.');
+        expect(res.body.systemInstruction).toContain('Nothing stored yet.');
         expect(res.body.systemInstruction).not.toContain('COMMUNICATION STYLE');
     });
 });

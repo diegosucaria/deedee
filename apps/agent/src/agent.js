@@ -15,6 +15,7 @@ const { RateLimiter } = require('./rate-limiter');
 const { ConfirmationManager } = require('./confirmation-manager');
 const { ApprovalService, APPROVAL_CONTINUATION, continuationOf, approvedResultText, callFailed } = require('./services/approval-service');
 const { isPreviewCall, previewSummary, stepKey } = require('./utils/two-step-tools');
+const { FACT_TOOLS, runFactTool } = require('./utils/fact-tools');
 const { ImpersonationService } = require('./services/impersonation');
 const { ToolExecutor } = require('./tool-executor');
 const path = require('path');
@@ -515,6 +516,36 @@ class Agent {
     } catch (e) {
       console.error(`[Agent] Resumed run after approval failed: ${e.message}`);
       return sendOutcome();
+    }
+  }
+
+  /**
+   * The facts block the prompt carries. The index (one line per fact, inside a
+   * budget) replaces the old full dump; FACTS_INDEX=0 brings the dump back.
+   * The old renderer takes the turn's text to decide on the Node-RED block;
+   * the index ignores it on purpose, so the block stays byte-identical between
+   * turns and the cached prefix survives.
+   */
+  _factsBlock(contextQuery = '') {
+    if (String(process.env.FACTS_INDEX || '1') === '0') {
+      return typeof this.db.getFactsFormatted === 'function' ? this.db.getFactsFormatted(contextQuery) : '';
+    }
+    if (typeof this.db.getFactsIndex !== 'function') {
+      return typeof this.db.getFactsFormatted === 'function' ? this.db.getFactsFormatted(contextQuery) : '';
+    }
+    try {
+      const index = this.db.getFactsIndex();
+      // A failed read returns null. Without this the next line throws and the
+      // fallback happens anyway, but the log blames the wrong thing.
+      if (!index) {
+        console.warn('[Agent] Facts index unavailable; falling back to the full list.');
+        return typeof this.db.getFactsFormatted === 'function' ? this.db.getFactsFormatted(contextQuery) : '';
+      }
+      console.log(`[Agent] [Context] Facts index: ${index.shown} of ${index.total} with values, ${index.named} by name, ${index.chars} chars (${index.hidden} on request).`);
+      return index.text;
+    } catch (e) {
+      console.warn(`[Agent] Facts index failed (${e.message}); falling back to the full list.`);
+      return typeof this.db.getFactsFormatted === 'function' ? this.db.getFactsFormatted(contextQuery) : '';
     }
   }
 
@@ -1762,7 +1793,7 @@ class Agent {
 
         // --- PREPARE SYSTEM PROMPT FOR GROK ---
         const contextQuery = message.content || (message.parts ? message.parts.map(p => p.text).join(' ') : '');
-        const facts = this.db.getFactsFormatted(contextQuery);
+        const facts = this._factsBlock(contextQuery);
         const activeGoals = this._formatGoals(this.db.getPendingGoals(), turnTaint);
 
         let vaultContext = null;
@@ -2068,7 +2099,7 @@ class Agent {
 
       // Lightweight sub-agents skip expensive context loading (facts, goals, skills, vault)
       const contextQuery = message.content || (message.parts ? message.parts.map(p => p.text).join(' ') : '');
-      const facts = isLightweight ? '' : this.db.getFactsFormatted(contextQuery);
+      const facts = isLightweight ? '' : this._factsBlock(contextQuery);
       const activeGoals = isLightweight ? '' : this._formatGoals(this.db.getPendingGoals(), turnTaint);
       const skillsContext = isLightweight ? null : this.skillService.getContextualInstructions(contextQuery);
 
@@ -2419,7 +2450,7 @@ class Agent {
         // Gmail/calendar/people tools are exempt from Tier 1 because the normal workflow is
         // list → fetch each item by ID (e.g. list emails → get each email). Multi-account
         // setups (work_/personal_ prefixes) multiply the call count further.
-        const LOOP_EXEMPT_TOOLS = new Set(['spawnAgent', 'askUser', 'readChatHistory', 'searchMemory', 'getFact', 'getAgentResult', 'listAgentTasks']);
+        const LOOP_EXEMPT_TOOLS = new Set(['spawnAgent', 'askUser', 'readChatHistory', 'searchMemory', 'getFact', 'updateFact', 'forgetFact', 'getAgentResult', 'listAgentTasks']);
         function isLoopExemptTool(toolName) {
           if (!toolName) return false;
           if (LOOP_EXEMPT_TOOLS.has(toolName)) return true;
@@ -3083,14 +3114,12 @@ class Agent {
     }
 
     // --- INTERNAL DB TOOLS ---
-    if (executionName === 'rememberFact') {
-      this.db.setKey(args.key, args.value, { source: 'tool', confidence: 'user_explicit' });
-      return { success: true };
+    // The four fact tools live in utils/fact-tools.js: a voice call reaches
+    // them through the tool executor, which never sees these branches.
+    if (FACT_TOOLS.has(executionName)) {
+      return runFactTool(this.db, executionName, args);
     }
-    if (executionName === 'getFact') {
-      const val = this.db.getKey(args.key);
-      return val ? { value: val } : { info: 'Fact not found in database.' };
-    }
+
     if (executionName === 'saveJobState') {
       const jobName = message.metadata?.jobName;
       if (!jobName) return { error: "This tool can only be used within a scheduled job." };

@@ -1,4 +1,4 @@
-const { getLiveSystemInstruction, compactFacts, MAX_FACTS_CHARS } = require('../src/prompts/live');
+const { getLiveSystemInstruction, compactFacts, MAX_FACTS_CHARS, MAX_INSTRUCTION_CHARS } = require('../src/prompts/live');
 const { getSystemInstruction, CONSTITUTION, LANGUAGE_MATCHING_RULES, IDENTITY } = require('../src/prompts/system');
 
 describe('compactFacts', () => {
@@ -52,6 +52,28 @@ describe('getLiveSystemInstruction', () => {
         expect(chat).toContain(LANGUAGE_MATCHING_RULES);
     });
 
+    test('an index trimmed to fit reports what it lost, not what it was given', () => {
+        // The block arrives with its own figures. If the voice prompt has to
+        // trim it further, the figures must follow, or the log claims facts
+        // the model cannot see.
+        const facts = Array.from({ length: 200 }, (_, i) => `- f${i}: "${'x'.repeat(60)}"`).join('\n');
+        const { text, stats } = getLiveSystemInstruction({
+            facts,
+            factsPreCapped: true,
+            factsShown: 200,
+            factsHidden: 12,
+            communicationStyle: 'z'.repeat(30000)
+        });
+        expect(stats.factsShown).toBeLessThan(200);
+        expect(stats.factsShown).toBeGreaterThan(0);
+        expect(stats.factsHidden).toBeGreaterThan(12);
+        expect(stats.factsShown + stats.factsHidden).toBe(212);
+        // Whole lines only, and the rule under the facts survives.
+        expect(text).not.toMatch(/\n- f\d+: "x*$/);
+        expect(text).toContain('getFact(key)');
+        expect(text).toContain('COMMUNICATION STYLE');
+    });
+
     test('reports hidden facts and truncation in the stats', () => {
         const facts = Array.from({ length: 1000 }, (_, i) => `- f${i}: "${'x'.repeat(30)}"`).join('\n');
         const { text, stats } = getLiveSystemInstruction({ facts, communicationStyle: 'z'.repeat(30000) });
@@ -59,5 +81,26 @@ describe('getLiveSystemInstruction', () => {
         expect(stats.factsHidden).toBeGreaterThan(0);
         expect(stats.truncated).toBe(true);
         expect(text.length).toBe(stats.chars);
+    });
+});
+
+describe('his own voice on a voice call', () => {
+    test('a style written as one long paragraph is trimmed, not dropped', () => {
+        // He writes a paragraph, not a list. Cutting on a line boundary threw
+        // the whole block away, so the call lost his tone and said nothing.
+        const style = 'Be dry and short. ' + 'x'.repeat(30000);
+        const { text, stats } = getLiveSystemInstruction({ communicationStyle: style, facts: '- a: 1' });
+        expect(text).toContain('COMMUNICATION STYLE');
+        expect(text).toContain('Be dry and short.');
+        // The note that stops the style being used when writing as him stays.
+        expect(text).toContain('Do NOT apply it when drafting');
+        expect(text.length).toBeLessThanOrEqual(MAX_INSTRUCTION_CHARS);
+        expect(stats.chars).toBe(text.length);
+    });
+
+    test('a short style is untouched', () => {
+        const { text } = getLiveSystemInstruction({ communicationStyle: 'Dry and brief.', facts: '' });
+        expect(text).toContain('Dry and brief.');
+        expect(text).toContain('Do NOT apply it when drafting');
     });
 });

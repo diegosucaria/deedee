@@ -1,6 +1,6 @@
 const express = require('express');
 const { ConfigService } = require('../services/config-service');
-const { getLiveSystemInstruction } = require('../prompts/live');
+const { getLiveSystemInstruction, MAX_FACTS_CHARS } = require('../prompts/live');
 
 /** A Live session may run this long once connected. */
 const TOKEN_TTL_MS = 30 * 60 * 1000;
@@ -29,13 +29,34 @@ function timeString() {
 /** The agent's brain for a voice call: model, voice and system instruction. */
 function buildLiveConfig(agent) {
     let facts = '';
+    let preCapped = false;
+    let shown = null;
+    let hidden = null;
     try {
-        facts = typeof agent?.db?.getFactsFormatted === 'function' ? agent.db.getFactsFormatted('') : '';
+        // The same index the chat prompt carries, so there is one renderer.
+        if (typeof agent?.db?.getFactsIndex === 'function' && String(process.env.FACTS_INDEX || '1') !== '0') {
+            // A voice call has far less room than a chat turn, so the block is
+            // built to the voice budget. Asking for the chat budget used to
+            // push the recall rule and his style off the end of the prompt.
+            const index = agent.db.getFactsIndex({ indexChars: MAX_FACTS_CHARS });
+            facts = index ? index.text : '';
+            preCapped = !!index;
+            if (index) { shown = index.shown; hidden = index.hidden; }
+        }
+        if (!facts && typeof agent?.db?.getFactsFormatted === 'function') {
+            facts = agent.db.getFactsFormatted('');
+            preCapped = false;
+            shown = null;
+            hidden = null;
+        }
     } catch (e) {
         console.warn('[Live] Could not load facts for the voice prompt:', e.message);
     }
     const { text, stats } = getLiveSystemInstruction({
         facts,
+        factsPreCapped: preCapped,
+        factsShown: shown,
+        factsHidden: hidden,
         communicationStyle: agent?.settings?.communication_style || '',
         ownerName: agent?.settings?.owner_name || '',
         dateString: timeString()
