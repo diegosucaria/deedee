@@ -176,7 +176,7 @@ export default function SecurityClient({ passkeysEnabled }) {
         const hours = Math.max(0, Math.floor(left / 3600000));
         const how = session.method === 'passkey' ? 'a passkey' : session.method === 'google' ? 'Google' : 'a password';
         const when = left <= 0 ? 'now' : days >= 1 ? `in ${days} day${days === 1 ? '' : 's'}` : `in ${hours} hour${hours === 1 ? '' : 's'}`;
-        return `Signed in with ${how}. This session ends ${when}, and each visit puts it back to full.`;
+        return `Signed in with ${how}. This session ends ${when}, and a visit after the first day puts it back to full.`;
     })();
 
     return (

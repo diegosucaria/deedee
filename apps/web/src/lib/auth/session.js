@@ -120,10 +120,22 @@ export async function verifySession(token) {
         const secret = loadSecret();
         const { payload } = await jwtVerify(token, secret, { algorithms: [ALG] });
         const store = readStore();
-        if ((store.revokedJtis || []).some((r) => r.jti === payload.jti)) return null;
+        if ((store.revokedJtis || []).some((r) => r.jti === payload.jti)) {
+            keepRevocationAlive('revokedJtis', 'jti', payload.jti, payload.exp);
+            return null;
+        }
         // A signed-out session: every token in its chain is dead, however new.
-        if (payload.sid && (store.revokedSids || []).some((r) => r.sid === payload.sid)) return null;
-        // A passkey the owner deleted cannot hold a session open either.
+        if (payload.sid && (store.revokedSids || []).some((r) => r.sid === payload.sid)) {
+            // The edge keeps sliding a cookie it cannot check against this
+            // list, so the chain can mint a token that outlives the record
+            // that kills it. Every refusal pushes the record out to cover the
+            // token it just refused.
+            keepRevocationAlive('revokedSids', 'sid', payload.sid, payload.exp);
+            return null;
+        }
+        // A passkey the owner deleted cannot hold a session open either. That
+        // record never expires: the edge re-dates a token on every visit, so
+        // its life has no end and no finite record could outlive it.
         if (payload.credentialId && (store.revokedCredentials || []).some((r) => r.credentialId === payload.credentialId)) return null;
         return payload;
     } catch {
@@ -145,6 +157,21 @@ export function shouldRefresh(payload) {
 
 function expiresAt(exp) {
     return (exp || Math.floor(Date.now() / 1000) + 30 * 86400) * 1000;
+}
+
+/**
+ * Keep a revocation record until after the token it just refused expires.
+ * A record is dropped once it is past its own expiry, but the edge can slide
+ * a cookie into a token that outlives the record, and it cannot read this
+ * list to know better. Seeing the later token is the signal to hold on.
+ */
+function keepRevocationAlive(list, field, value, exp) {
+    const until = expiresAt(exp);
+    updateStore((s) => {
+        const row = (s[list] || []).find((r) => r[field] === value);
+        if (row && (!row.expires || row.expires < until)) row.expires = until;
+        return s;
+    });
 }
 
 export function revokeJti(jti, exp) {
@@ -179,12 +206,14 @@ export function revokeSession(payload) {
 }
 
 /** A deleted passkey takes its sessions with it. */
-export function revokeCredential(credentialId, { days = 60 } = {}) {
+export function revokeCredential(credentialId) {
     if (!credentialId) return;
     updateStore((s) => {
         s.revokedCredentials = s.revokedCredentials || [];
         if (!s.revokedCredentials.some((r) => r.credentialId === credentialId)) {
-            s.revokedCredentials.push({ credentialId, expires: Date.now() + days * 86400 * 1000 });
+            // No expiry: see verifySession. A credential id is random and is
+            // never handed out twice, so the row can stay for good.
+            s.revokedCredentials.push({ credentialId, revokedAt: new Date().toISOString() });
         }
         return s;
     });

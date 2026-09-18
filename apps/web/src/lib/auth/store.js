@@ -73,7 +73,10 @@ export function gcStore() {
         }
         store.revokedJtis = (store.revokedJtis || []).filter((r) => r.expires > now);
         store.revokedSids = (store.revokedSids || []).filter((r) => r.expires > now);
-        store.revokedCredentials = (store.revokedCredentials || []).filter((r) => r.expires > now);
+        // A deleted passkey is revoked for good. A credential id is random
+        // and never comes back, the entry costs a few bytes, and the edge
+        // re-dates a token on every visit, so no finite date can outlive one.
+        store.revokedCredentials = (store.revokedCredentials || []).filter((r) => !r.expires || r.expires > now);
         return store;
     });
 }
