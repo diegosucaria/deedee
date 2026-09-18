@@ -954,8 +954,13 @@ class AgentDB {
    * Keep a copy of a fact before it goes, in the same file the nightly pruning
    * writes, so a deletion is never final without a trace.
    */
+  /**
+   * Keep a copy of a fact before it is changed or deleted.
+   * @returns {boolean} whether the copy was really written. The tools promise
+   * the owner a copy, so a failure has to be reported rather than assumed.
+   */
   backupFact(row, reason = 'forgetFact') {
-    if (!row) return;
+    if (!row) return false;
     try {
       const fs = require('fs');
       const path = require('path');
@@ -975,13 +980,26 @@ class AgentDB {
           fs.renameSync(file, aside);
           console.warn(`[DB] pruned_memories.json could not be read; kept as ${path.basename(aside)}.`);
         } catch (e) {
+          // It could not be read and could not be moved. Writing over it now
+          // would destroy every fact ever pruned, so this one is written
+          // beside it instead and the damaged file is left alone.
           console.warn('[DB] pruned_memories.json is damaged and could not be moved aside:', e.message);
+          const spare = path.join(dir, `pruned_memories.${Date.now()}.json`);
+          try {
+            fs.writeFileSync(spare, JSON.stringify([{ ...row, pruned_at: new Date().toISOString(), reason }], null, 2));
+            return true;
+          } catch (err) {
+            console.warn('[DB] Could not keep a copy of the fact:', err.message);
+            return false;
+          }
         }
       }
       current.push({ ...row, pruned_at: new Date().toISOString(), reason });
       fs.writeFileSync(file, JSON.stringify(current, null, 2));
+      return true;
     } catch (e) {
       console.warn('[DB] Could not back up a fact before deleting it:', e.message);
+      return false;
     }
   }
 
@@ -1606,7 +1624,7 @@ class AgentDB {
    * find the fact the owner means. Exact key first.
    * @returns {Array<{ key: string, value: any, kind: string, summary: string|null, pinned: number }>}
    */
-  findFacts(term, limit = 5, { keysOnly = false } = {}) {
+  findFacts(term, limit = 5, { keysOnly = false, includeState = false } = {}) {
     const q = String(term || '').trim().toLowerCase();
     if (!q) return [];
     // % and _ are wildcards in LIKE, so a term holding them must not widen the
@@ -1624,13 +1642,24 @@ class AgentDB {
       ? 'LOWER(key)'
       : "LOWER(key) || ' ' || LOWER(COALESCE(summary, '')) || ' ' || LOWER(COALESCE(value, ''))";
     const lim = Math.max(1, Math.min(20, Number(limit) || 5));
-    const pats = words.map((w) => `%${esc(w)}%`);
-    const decorate = (rows) => rows.map((row) => {
-      const { hit_count, ...rest } = row;
-      let value = rest.value;
-      try { value = JSON.parse(rest.value); } catch { /* keep raw */ }
-      return { ...rest, value, kind: factKind(rest.key, rest.category, rest.kind) };
-    });
+    // He asks in the plural, the key is written in the singular: "car tyres"
+    // used to miss user_car_tyre_size entirely. Only a plain trailing "s" on a
+    // word of four letters or more goes, so "gas" and "address" stay whole.
+    // The stem is a prefix of the word, so this only ever widens the search.
+    const stem = (w) => (w.length >= 4 && /s$/.test(w) && !/ss$/.test(w) ? w.slice(0, -1) : w);
+    const pats = words.map((w) => `%${esc(stem(w))}%`);
+    const decorate = (rows) => rows
+      .map((row) => {
+        const { hit_count, ...rest } = row;
+        let value = rest.value;
+        try { value = JSON.parse(rest.value); } catch { /* keep raw */ }
+        return { ...rest, value, kind: factKind(rest.key, rest.category, rest.kind) };
+      })
+      // A job's bookkeeping and the Node-RED and Home Assistant dumps are kept
+      // out of the prompt on purpose. Handing them back through a search puts
+      // tens of thousands of characters into the turn instead, and a long dump
+      // holds more of the words than a real fact, so it wins the ranking too.
+      .filter((row) => includeState || row.kind !== 'state');
 
     // Every word has to appear, so a two-word query finds the fact that holds
     // both rather than everything that holds either.

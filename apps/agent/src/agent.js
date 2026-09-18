@@ -15,6 +15,7 @@ const { RateLimiter } = require('./rate-limiter');
 const { ConfirmationManager } = require('./confirmation-manager');
 const { ApprovalService, APPROVAL_CONTINUATION, continuationOf, approvedResultText, callFailed } = require('./services/approval-service');
 const { isPreviewCall, previewSummary, stepKey } = require('./utils/two-step-tools');
+const { FACT_TOOLS, runFactTool } = require('./utils/fact-tools');
 const { ImpersonationService } = require('./services/impersonation');
 const { ToolExecutor } = require('./tool-executor');
 const path = require('path');
@@ -3113,79 +3114,12 @@ class Agent {
     }
 
     // --- INTERNAL DB TOOLS ---
-    if (executionName === 'rememberFact') {
-      // Only the two kinds the index knows. 'state' would hide the fact for good.
-      const kind = ['profile', 'note'].includes(String(args.kind || '')) ? args.kind : undefined;
-      // Writing over a pinned key is a correction, so it goes through the same
-      // guard as updateFact rather than round the side of it.
-      const standing = this.db.getFact?.(args.key);
-      if (standing?.pinned) {
-        return { error: `'${args.key}' is pinned. Use updateFact with force: true, once the owner has asked for the change.` };
-      }
-      this.db.setKey(args.key, args.value, {
-        source: 'tool', confidence: 'user_explicit',
-        kind, summary: args.summary
-      });
-      return { success: true };
+    // The four fact tools live in utils/fact-tools.js: a voice call reaches
+    // them through the tool executor, which never sees these branches.
+    if (FACT_TOOLS.has(executionName)) {
+      return runFactTool(this.db, executionName, args);
     }
-    if (executionName === 'getFact') {
-      const val = this.db.getKey(args.key);
-      if (val !== null && val !== undefined) {
-        this.db.touchFacts?.(args.key);
-        return { value: val };
-      }
-      // The prompt lists one line per fact, so the model often has a near miss.
-      const near = this.db.findFacts?.(args.key, 5) || [];
-      if (near.length === 0) return { info: 'No fact with that key, and nothing close.' };
-      // One hit is answered as the fact only when its key really carries a
-      // word of the question. A search falls back to loose matching to find
-      // what he meant, and a loose hit stating itself as the answer would let
-      // the model report another fact's value as this one.
-      const asked = String(args.key || '').toLowerCase().split(/[^\p{L}\p{N}]+/u).filter(w => w.length >= 2);
-      const keyCarriesAWord = (key) => asked.some(w => String(key).toLowerCase().includes(w));
-      if (near.length === 1 && keyCarriesAWord(near[0].key)) {
-        this.db.touchFacts?.(near[0].key);
-        return { key: near[0].key, value: near[0].value, info: `No exact key '${args.key}'; this one is close.` };
-      }
-      return { info: `No exact key '${args.key}'. Closest keys: ${near.map(f => f.key).join(', ')}. Ask for one by name.` };
-    }
-    if (executionName === 'updateFact') {
-      // By key only: a fact must never be rewritten because a word appears in
-      // some other fact's value.
-      const exact = this.db.getFact?.(args.key);
-      const near = exact ? [exact] : (this.db.findFacts?.(args.key, 5, { keysOnly: true }) || []);
-      if (near.length === 0) return { error: `No fact with a key like '${args.key}'. Use rememberFact to write a new one.` };
-      if (near.length > 1) return { info: 'Several keys match; nothing changed.', candidates: near.map(f => f.key) };
-      if (near[0].pinned && args.force !== true) {
-        return { error: `'${near[0].key}' is pinned. Ask the owner, then call again with force: true.` };
-      }
-      // The old value goes to the same file a deletion writes, so a wrong
-      // correction can be read back.
-      this.db.backupFact?.(near[0], 'updateFact');
-      this.db.setKey(near[0].key, args.value, { source: 'tool', confidence: 'user_explicit', summary: args.summary, kind: near[0].kind });
-      return { success: true, key: near[0].key, ...(exact ? {} : { info: `Matched '${near[0].key}'.` }) };
-    }
-    if (executionName === 'forgetFact') {
-      // By key only, like updateFact.
-      const exact = this.db.getFact?.(args.key);
-      const matches = exact ? [exact] : (this.db.findFacts?.(args.key, 5, { keysOnly: true }) || []);
-      if (matches.length === 0) return { error: `No fact with a key like '${args.key}'.` };
-      if (matches.length > 1) return { info: 'Several keys match; nothing deleted.', candidates: matches.map(f => f.key) };
-      const row = matches[0];
-      const kind = row.kind || 'profile';
-      // A job's bookkeeping or a config row is not his to lose through a
-      // conversation: deleting one breaks the job that keeps it.
-      if (kind === 'state') {
-        return { error: `'${row.key}' is state a job or a setting keeps, not a fact. Nothing deleted.` };
-      }
-      if ((row.pinned || kind === 'profile') && args.force !== true) {
-        return { error: `'${row.key}' is ${row.pinned ? 'pinned' : 'a durable fact about the owner'}. Ask him, then call again with force: true.` };
-      }
-      // A copy goes to the file the nightly pruning writes, so nothing is lost outright.
-      this.db.backupFact?.(row, 'forgetFact');
-      const gone = this.db.deleteFact?.(row.key);
-      return gone ? { success: true, key: row.key, info: 'A copy is in data/pruned_memories.json.' } : { error: `Could not delete '${row.key}'.` };
-    }
+
     if (executionName === 'saveJobState') {
       const jobName = message.metadata?.jobName;
       if (!jobName) return { error: "This tool can only be used within a scheduled job." };

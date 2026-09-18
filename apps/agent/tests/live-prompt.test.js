@@ -1,4 +1,4 @@
-const { getLiveSystemInstruction, compactFacts, MAX_FACTS_CHARS } = require('../src/prompts/live');
+const { getLiveSystemInstruction, compactFacts, MAX_FACTS_CHARS, MAX_INSTRUCTION_CHARS } = require('../src/prompts/live');
 const { getSystemInstruction, CONSTITUTION, LANGUAGE_MATCHING_RULES, IDENTITY } = require('../src/prompts/system');
 
 describe('compactFacts', () => {
@@ -81,5 +81,26 @@ describe('getLiveSystemInstruction', () => {
         expect(stats.factsHidden).toBeGreaterThan(0);
         expect(stats.truncated).toBe(true);
         expect(text.length).toBe(stats.chars);
+    });
+});
+
+describe('his own voice on a voice call', () => {
+    test('a style written as one long paragraph is trimmed, not dropped', () => {
+        // He writes a paragraph, not a list. Cutting on a line boundary threw
+        // the whole block away, so the call lost his tone and said nothing.
+        const style = 'Be dry and short. ' + 'x'.repeat(30000);
+        const { text, stats } = getLiveSystemInstruction({ communicationStyle: style, facts: '- a: 1' });
+        expect(text).toContain('COMMUNICATION STYLE');
+        expect(text).toContain('Be dry and short.');
+        // The note that stops the style being used when writing as him stays.
+        expect(text).toContain('Do NOT apply it when drafting');
+        expect(text.length).toBeLessThanOrEqual(MAX_INSTRUCTION_CHARS);
+        expect(stats.chars).toBe(text.length);
+    });
+
+    test('a short style is untouched', () => {
+        const { text } = getLiveSystemInstruction({ communicationStyle: 'Dry and brief.', facts: '' });
+        expect(text).toContain('Dry and brief.');
+        expect(text).toContain('Do NOT apply it when drafting');
     });
 });

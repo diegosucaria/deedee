@@ -19,6 +19,26 @@ const MAX_INSTRUCTION_CHARS = 12000;
 /** The owner's own style block, which has no other limit. */
 const MAX_STYLE_CHARS = 2000;
 
+/**
+ * Cut the owner's style block to maxChars, keeping its heading and the note
+ * under it and trimming only his own words. He often writes one long
+ * paragraph, and cutting on a line boundary threw the whole block away: his
+ * tone vanished from the voice call and nothing said so.
+ */
+function trimStyle(block, maxChars) {
+    const whole = String(block || '');
+    if (!whole || whole.length <= maxChars) return whole;
+    const lines = whole.split('\n');
+    const head = lines[0] || '';
+    // The last line is the note about not using this style when writing as him.
+    const tail = lines.length > 2 ? lines[lines.length - 1] : '';
+    const body = lines.slice(1, tail ? -1 : undefined).join('\n').trim();
+    const room = maxChars - head.length - tail.length - 3;
+    if (room < 40) return cutToLines(whole, maxChars) || head;
+    const kept = body.length > room ? `${body.slice(0, room - 1)}…` : body;
+    return [head, kept, tail].filter(Boolean).join('\n');
+}
+
 /** Cut text to maxChars on a line boundary, so no line is left half printed. */
 function cutToLines(text, maxChars) {
     const whole = String(text || '');
@@ -84,7 +104,7 @@ function getLiveSystemInstruction({
     const owner = ownerName ? ` Your owner's name is ${ownerName}.` : '';
     // The owner writes his own style, so it is the one piece with no natural
     // size. Cutting it here keeps everything else inside the cap.
-    const style = cutToLines(dedent(formatCommunicationStyle(communicationStyle)).trim(), MAX_STYLE_CHARS);
+    const style = trimStyle(dedent(formatCommunicationStyle(communicationStyle)).trim(), MAX_STYLE_CHARS);
 
     const fixed = [
         `${IDENTITY} You are on a live voice call with your owner through the Deedee web app.${owner}`,

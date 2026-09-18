@@ -208,6 +208,17 @@ describe('finding a fact that is not in the list', () => {
         expect(db.findFacts('home city address', 5, { keysOnly: true }).map(f => f.key)).toEqual([]);
     });
 
+    test('the plural he says finds the singular the key uses', () => {
+        db.setKey('user_car_tyre_size', '205/55 R16', {});
+        db.setKey('user_car_tyre_pressure', '32 psi', {});
+        expect(db.findFacts('tyres').map(f => f.key).sort()).toEqual(['user_car_tyre_pressure', 'user_car_tyre_size']);
+        expect(db.findFacts('car tyres').map(f => f.key).sort()).toEqual(['user_car_tyre_pressure', 'user_car_tyre_size']);
+        // Only a plain trailing s on a longer word: these keep their own shape.
+        db.setKey('user_gas_provider', 'the gas company', {});
+        expect(db.findFacts('gas').map(f => f.key)).toEqual(['user_gas_provider']);
+        expect(db.findFacts('address').map(f => f.key)).toEqual(['user_home_address']);
+    });
+
     test('searchMemory answers a question asked the way he asks it', async () => {
         const services = { db, client: null, journal: { log: jest.fn() }, agent: {} };
         const out = await new MemoryExecutor(services).execute(
@@ -336,6 +347,44 @@ describe('finding a fact that is not in the list', () => {
         expect(db.getKey('job:weather:last_run')).toBe('2026-09-17');
     });
 
+    test('a voice call can read and correct a fact, like a chat can', async () => {
+        // A voice call runs its tools through /tools/execute, which goes to
+        // the tool executor. A tool that only the agent knew about was a dead
+        // tool on a voice call: it fell through to MCP and errored.
+        const { ToolExecutor } = require('../src/tool-executor');
+        const executor = new ToolExecutor({ db, client: null, journal: { log: jest.fn() }, agent: {}, mcp: { callTool: async () => { throw new Error('not an MCP tool'); } } });
+        const call = (name, args) => executor.execute(name, args, { message: { metadata: {} } });
+
+        await expect(call('getFact', { key: 'user_home_city' })).resolves.toEqual({ value: 'Springfield' });
+        await expect(call('rememberFact', { key: 'user_tea', value: 'green' })).resolves.toMatchObject({ success: true });
+        await expect(call('updateFact', { key: 'user_tea', value: 'black' })).resolves.toMatchObject({ success: true });
+        expect(db.getKey('user_tea')).toBe('black');
+        await expect(call('forgetFact', { key: 'user_tea', force: true })).resolves.toMatchObject({ success: true });
+        expect(db.getKey('user_tea')).toBeNull();
+    });
+
+    test('a fact is not deleted or rewritten when the copy cannot be written', async () => {
+        // The reply promises a copy in pruned_memories.json. If the write
+        // failed, the promise would be a lie and the value would be gone.
+        db.setKey('device_lamp', 'light.lamp', { category: 'system' });
+        const realBackup = db.backupFact.bind(db);
+        db.backupFact = () => false;
+        try {
+            const gone = await runTool(db, 'forgetFact', { key: 'device_lamp' });
+            expect(gone.error).toMatch(/Could not keep a copy/);
+            expect(db.getKey('device_lamp')).toBe('light.lamp');
+
+            const changed = await runTool(db, 'updateFact', { key: 'device_lamp', value: 'light.other' });
+            expect(changed.error).toMatch(/Could not keep a copy/);
+            expect(db.getKey('device_lamp')).toBe('light.lamp');
+        } finally {
+            db.backupFact = realBackup;
+        }
+        // A stub database without the method is not blocked by this.
+        const bare = { getFact: () => ({ key: 'x', value: 1, kind: 'note' }), findFacts: () => [], deleteFact: () => true, setKey: () => { } };
+        await expect(runTool(bare, 'forgetFact', { key: 'x' })).resolves.toMatchObject({ success: true });
+    });
+
     test('a damaged backup file is kept, not overwritten', () => {
         const file = path.join(dir, 'pruned_memories.json');
         fs.writeFileSync(file, '{ this is not json');
@@ -345,6 +394,43 @@ describe('finding a fact that is not in the list', () => {
         const kept = fs.readdirSync(dir).filter(f => f.startsWith('pruned_memories.corrupt-'));
         expect(kept).toHaveLength(1);
         expect(fs.readFileSync(path.join(dir, kept[0]), 'utf8')).toBe('{ this is not json');
+    });
+
+    test('a machine dump is not handed back as a fact, and a long value is cut', async () => {
+        // The index keeps these out of the prompt on purpose. Returning them
+        // through a search puts tens of thousands of characters into the turn,
+        // and a long dump holds more of the words than a real fact, so it
+        // would win the ranking too.
+        db.setKey('node_red_flow_dump', 'x'.repeat(50000), {});
+        db.setKey('ha_nodes', 'lamp '.repeat(8000), {});
+        db.setKey('user_long_note', 'y'.repeat(5000), {});
+        expect(db.findFacts('lamp').map(f => f.key)).not.toContain('ha_nodes');
+        expect(db.findFacts('dump').map(f => f.key)).not.toContain('node_red_flow_dump');
+
+        const services = { db, client: null, journal: { log: jest.fn() }, agent: {} };
+        const out = await new MemoryExecutor(services).execute(
+            'searchMemory', { query: 'long note' }, { message: { metadata: {} } }, services
+        );
+        const found = out.facts.find(f => f.key === 'user_long_note');
+        expect(found.value.length).toBeLessThanOrEqual(600);
+        expect(JSON.stringify(out.facts).length).toBeLessThan(4000);
+    });
+
+    test('a near key is offered, never written over', async () => {
+        // The key search matches anywhere in a key, so 'car' finds 's-car-f'.
+        db.setKey('user_scarf_colour', 'red', {});
+        const guessed = await runTool(db, 'updateFact', { key: 'car', value: 'a different car' });
+        expect(guessed.candidates).toEqual(['user_scarf_colour']);
+        expect(db.getKey('user_scarf_colour')).toBe('red');
+
+        const dropped = await runTool(db, 'forgetFact', { key: 'scarf', force: true });
+        expect(dropped.candidates).toEqual(['user_scarf_colour']);
+        expect(db.getKey('user_scarf_colour')).toBe('red');
+
+        // The exact key still acts.
+        await expect(runTool(db, 'updateFact', { key: 'user_scarf_colour', value: 'blue' }))
+            .resolves.toMatchObject({ success: true });
+        expect(db.getKey('user_scarf_colour')).toBe('blue');
     });
 
     test('searchMemory returns facts beside chats and documents', async () => {

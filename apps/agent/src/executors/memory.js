@@ -1,12 +1,20 @@
 const { BaseExecutor } = require('./base');
 const { getConsolidationPrompt } = require('../prompts/memory');
 const { ConfigService } = require('../services/config-service');
+const { FACT_TOOLS, runFactTool } = require('../utils/fact-tools');
+
+// A searched fact comes back shortened; getFact reads one in full.
+const FACT_VALUE_CHARS = 600;
 
 class MemoryExecutor extends BaseExecutor {
     async execute(name, args, context, callServices) {
         const services = this.getServices(callServices);
         const { db, client } = services;
         const { message } = context;
+
+        // The fact tools: reached from a chat turn through the agent and from
+        // a voice call through this executor, so they live in one place.
+        if (FACT_TOOLS.has(name)) return runFactTool(db, name, args);
 
         switch (name) {
             case 'searchMemory': {
@@ -37,8 +45,15 @@ class MemoryExecutor extends BaseExecutor {
                 // reach the ones it does not list.
                 let factResults = [];
                 try {
+                    // The value is cut: a fact answers a question, it does not
+                    // need to arrive whole, and one long row used to fill the
+                    // turn. getFact reads any of them in full.
+                    const cut = (v) => {
+                        const text = typeof v === 'string' ? v : JSON.stringify(v ?? null);
+                        return text.length > FACT_VALUE_CHARS ? `${text.slice(0, FACT_VALUE_CHARS - 1)}…` : v;
+                    };
                     factResults = (db.findFacts ? db.findFacts(query, 10) : []).map(f => ({
-                        key: f.key, value: f.value, kind: f.kind, summary: f.summary || null
+                        key: f.key, value: cut(f.value), kind: f.kind, summary: f.summary || null
                     }));
                     if (factResults.length > 0 && db.touchFacts) db.touchFacts(factResults.map(f => f.key));
                 } catch (e) {
@@ -240,10 +255,18 @@ class MemoryExecutor extends BaseExecutor {
                                                 console.warn(`[Consolidation] Blocked update to pinned fact: ${f.key}`);
                                                 continue;
                                             }
-                                        } else if (!f.summary) {
+                                        } else if (!f.summary || existingFact.pinned) {
                                             // The same value again. Writing it would only move the
                                             // fact's date, which reorders the list the prompt
                                             // carries and throws away the cached prefix for nothing.
+                                            //
+                                            // A pinned fact is skipped even when a summary comes
+                                            // with it: the summary is the line the prompt carries,
+                                            // so writing it would let the nightly job restate a
+                                            // fact he pinned precisely so it would not change.
+                                            if (existingFact.pinned && f.summary) {
+                                                services.journal.log(`**CONFLICT**: Consolidation wanted to rewrite the summary of pinned fact \`${f.key}\`. Change was blocked.`);
+                                            }
                                             continue;
                                         }
                                     }
