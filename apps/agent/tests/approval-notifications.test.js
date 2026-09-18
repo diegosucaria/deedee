@@ -138,6 +138,20 @@ describe('the bell after an approval is decided', () => {
         expect(unread(db)).toEqual([]);
     });
 
+    test('an answer that lands while the card is still going out is not left asking', () => {
+        // The bell row is written after the card is sent. If he answers in
+        // that window, or a newer card replaces this one, the row would be
+        // born unread and stay that way.
+        ask(db, 'a1');
+        db.decidePendingConfirmation('a1', 'approved', { via: 'chat' });
+        notify(db, 'n1', 'a1');
+        // Nothing has settled it, because the row was written afterwards.
+        expect(unread(db)).toEqual(['n1']);
+        // What the service does right after creating it.
+        if (db.getPendingConfirmation('a1')?.status !== 'pending') db.markApprovalNotificationsRead('a1');
+        expect(unread(db)).toEqual([]);
+    });
+
     test('the open page is told, so the count does not lag', () => {
         const told = [];
         db.onNotificationsRead = (ids) => told.push(ids);

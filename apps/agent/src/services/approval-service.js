@@ -1145,6 +1145,12 @@ class ApprovalService {
                 // where he can answer it.
                 metadata: { approvalId: row.id, chatId: route.replyChatId, mode: row.mode, link: '/approvals' }
             });
+            // The card went out before this row existed, so he may have
+            // answered already, or a newer card may have replaced this one.
+            // Then the bell would keep asking for something already settled.
+            if (this.db.getPendingConfirmation?.(row.id)?.status !== 'pending') {
+                this.db.markApprovalNotificationsRead?.(row.id);
+            }
         } catch (e) { console.warn('[Approvals] notification failed:', e.message); }
         this._broadcast({ id: row.id, status: 'pending', chatId: route.replyChatId, toolName, summary: row.summary, expiresAt: row.expires_at });
 
