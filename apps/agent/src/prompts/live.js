@@ -16,6 +16,22 @@ const {
 const MAX_FACTS_CHARS = 6000;
 /** About 3,000 tokens. The setup message also carries the tool declarations. */
 const MAX_INSTRUCTION_CHARS = 12000;
+/** The owner's own style block, which has no other limit. */
+const MAX_STYLE_CHARS = 2000;
+
+/** Cut text to maxChars on a line boundary, so no line is left half printed. */
+function cutToLines(text, maxChars) {
+    const whole = String(text || '');
+    if (whole.length <= maxChars) return whole;
+    const kept = [];
+    let size = 0;
+    for (const line of whole.split('\n')) {
+        if (size + line.length + 1 > maxChars) break;
+        kept.push(line);
+        size += line.length + 1;
+    }
+    return kept.join('\n');
+}
 
 /** Rough token count at four characters per token, as the agent logs elsewhere. */
 function approxTokens(text) {
@@ -56,13 +72,21 @@ function compactFacts(formatted, maxChars = MAX_FACTS_CHARS) {
  * Build the Live system instruction.
  * @returns {{ text: string, stats: object }} the prompt and its size figures for the log.
  */
-function getLiveSystemInstruction({ facts = '', factsPreCapped = false, communicationStyle = '', ownerName = '', dateString = '' } = {}) {
-    // The facts index arrives capped and already says what it left out; only a
-    // raw dump needs cutting here.
-    const compact = factsPreCapped ? { text: facts, hidden: 0 } : compactFacts(facts);
+function getLiveSystemInstruction({
+    facts = '',
+    factsPreCapped = false,
+    factsShown = null,
+    factsHidden = null,
+    communicationStyle = '',
+    ownerName = '',
+    dateString = ''
+} = {}) {
     const owner = ownerName ? ` Your owner's name is ${ownerName}.` : '';
+    // The owner writes his own style, so it is the one piece with no natural
+    // size. Cutting it here keeps everything else inside the cap.
+    const style = cutToLines(dedent(formatCommunicationStyle(communicationStyle)).trim(), MAX_STYLE_CHARS);
 
-    const sections = [
+    const fixed = [
         `${IDENTITY} You are on a live voice call with your owner through the Deedee web app.${owner}`,
         dedent(CONSTITUTION),
         dateString ? `CURRENT_TIME: ${dateString}` : '',
@@ -74,18 +98,37 @@ ${dedent(LANGUAGE_MATCHING_RULES)}
 2. Use your tools for anything about the owner's home, devices, messages, calendar, notes or the web. Say in a few words what you are doing, wait for the result, then answer from it.
 3. Before an action that sends a message, spends money, or deletes or changes data, say what you will do and wait for a yes.
 4. If a tool fails, say so in one sentence and offer the next step. Never invent a result.
-5. If you did not understand, ask a short question.`,
+5. If you did not understand, ask a short question.`
+    ].filter(Boolean);
+
+    // The facts are the only part that grows with his memory, so they take
+    // what is left rather than push the rule below them off the end. Slicing
+    // the whole instruction used to drop the recall rule and his style.
+    const wrapper = `${FACTS_HEADER}\n\n${FACTS_RECALL_RULE}`;
+    const spent = [...fixed, wrapper, style].filter(Boolean).join('\n\n').length;
+    const room = Math.max(0, Math.min(MAX_FACTS_CHARS, MAX_INSTRUCTION_CHARS - spent));
+    // An index arrives already inside its own budget and already counts what
+    // it left out; a raw dump needs cutting and counting here.
+    const compact = factsPreCapped
+        ? { text: cutToLines(facts, room), shown: factsShown, hidden: factsHidden }
+        : compactFacts(facts, room);
+
+    const sections = [
+        ...fixed,
         `${FACTS_HEADER}
 ${compact.text || 'Nothing stored yet.'}
 ${FACTS_RECALL_RULE}`,
-        dedent(formatCommunicationStyle(communicationStyle)).trim()
+        style
     ].filter(Boolean);
 
     let text = sections.join('\n\n');
-    let truncated = false;
-    if (text.length > MAX_INSTRUCTION_CHARS) {
-        text = text.slice(0, MAX_INSTRUCTION_CHARS);
-        truncated = true;
+    // A last resort that drops whole sections, never part of a line: the style
+    // first, then the facts. Everything above them is what makes the call work.
+    const dropped = [];
+    for (let i = sections.length - 1; text.length > MAX_INSTRUCTION_CHARS && i > fixed.length - 1; i--) {
+        dropped.push(i === sections.length - 1 && style ? 'communication_style' : 'facts');
+        sections.splice(i, 1);
+        text = sections.join('\n\n');
     }
 
     return {
@@ -96,9 +139,10 @@ ${FACTS_RECALL_RULE}`,
             factsChars: compact.text.length,
             factsShown: compact.shown,
             factsHidden: compact.hidden,
-            truncated
+            truncated: dropped.length > 0 || compact.text.length < facts.length,
+            dropped
         }
     };
 }
 
-module.exports = { getLiveSystemInstruction, compactFacts, approxTokens, MAX_FACTS_CHARS, MAX_INSTRUCTION_CHARS };
+module.exports = { getLiveSystemInstruction, compactFacts, cutToLines, approxTokens, MAX_FACTS_CHARS, MAX_INSTRUCTION_CHARS };

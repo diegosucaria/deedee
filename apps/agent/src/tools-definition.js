@@ -36,13 +36,14 @@ const toolDefinitions = [
       {
         name: "updateFact",
         category: "memory",
-        description: "Correct a fact already in memory. The key may be exact or close: with one match it is updated, with several you get the candidates and nothing changes.",
+        description: "Correct a fact already in memory. The key may be exact or close: with one match it is updated, with several you get the candidates and nothing changes. A pinned fact needs force: true and only when the owner asked for the change himself. A copy of the old value goes to data/pruned_memories.json.",
         parameters: {
           type: "OBJECT",
           properties: {
             key: { type: "STRING", description: "The key, or words from it" },
             value: { type: "STRING", description: "The new value" },
-            summary: { type: "STRING", description: "One line for the list the prompt carries" }
+            summary: { type: "STRING", description: "One line for the list the prompt carries" },
+            force: { type: "BOOLEAN", description: "Required for a pinned fact" }
           },
           required: ["key", "value"]
         }
@@ -98,11 +99,11 @@ const toolDefinitions = [
       {
         name: "searchMemory",
         category: "memory",
-        description: "Search the agent's full memory: chat history, daily journal summaries, durable facts, and vault documents. Use this for 'What did I do last Tuesday?', 'When did I talk to X about Y?', or recalling any past information.",
+        description: "Search the agent's full memory: chat history, daily journal summaries, durable facts, and vault documents. Use it to recall anything past. Search with two or three bare keywords in English ('grocery budget', 'dentist appointment'), not a whole question: facts are stored in English and a question's own words match nothing.",
         parameters: {
           type: "OBJECT",
           properties: {
-            query: { type: "STRING", description: "Keyword to search for (e.g. 'grocery', 'project')" },
+            query: { type: "STRING", description: "Two or three keywords in English (e.g. 'grocery', 'car tyres')" },
             limit: { type: "NUMBER", description: "Max results (default 10)" }
           },
           required: ["query"]

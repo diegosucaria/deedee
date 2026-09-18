@@ -534,7 +534,13 @@ class Agent {
     }
     try {
       const index = this.db.getFactsIndex();
-      console.log(`[Agent] [Context] Facts index: ${index.shown} of ${index.total} shown, ${index.chars} chars (${index.hidden} on request).`);
+      // A failed read returns null. Without this the next line throws and the
+      // fallback happens anyway, but the log blames the wrong thing.
+      if (!index) {
+        console.warn('[Agent] Facts index unavailable; falling back to the full list.');
+        return typeof this.db.getFactsFormatted === 'function' ? this.db.getFactsFormatted(contextQuery) : '';
+      }
+      console.log(`[Agent] [Context] Facts index: ${index.shown} of ${index.total} with values, ${index.named} by name, ${index.chars} chars (${index.hidden} on request).`);
       return index.text;
     } catch (e) {
       console.warn(`[Agent] Facts index failed (${e.message}); falling back to the full list.`);
@@ -3110,6 +3116,12 @@ class Agent {
     if (executionName === 'rememberFact') {
       // Only the two kinds the index knows. 'state' would hide the fact for good.
       const kind = ['profile', 'note'].includes(String(args.kind || '')) ? args.kind : undefined;
+      // Writing over a pinned key is a correction, so it goes through the same
+      // guard as updateFact rather than round the side of it.
+      const standing = this.db.getFact?.(args.key);
+      if (standing?.pinned) {
+        return { error: `'${args.key}' is pinned. Use updateFact with force: true, once the owner has asked for the change.` };
+      }
       this.db.setKey(args.key, args.value, {
         source: 'tool', confidence: 'user_explicit',
         kind, summary: args.summary
@@ -3141,6 +3153,9 @@ class Agent {
       if (near[0].pinned && args.force !== true) {
         return { error: `'${near[0].key}' is pinned. Ask the owner, then call again with force: true.` };
       }
+      // The old value goes to the same file a deletion writes, so a wrong
+      // correction can be read back.
+      this.db.backupFact?.(near[0], 'updateFact');
       this.db.setKey(near[0].key, args.value, { source: 'tool', confidence: 'user_explicit', summary: args.summary, kind: near[0].kind });
       return { success: true, key: near[0].key, ...(exact ? {} : { info: `Matched '${near[0].key}'.` }) };
     }
@@ -3152,6 +3167,11 @@ class Agent {
       if (matches.length > 1) return { info: 'Several keys match; nothing deleted.', candidates: matches.map(f => f.key) };
       const row = matches[0];
       const kind = row.kind || 'profile';
+      // A job's bookkeeping or a config row is not his to lose through a
+      // conversation: deleting one breaks the job that keeps it.
+      if (kind === 'state') {
+        return { error: `'${row.key}' is state a job or a setting keeps, not a fact. Nothing deleted.` };
+      }
       if ((row.pinned || kind === 'profile') && args.force !== true) {
         return { error: `'${row.key}' is ${row.pinned ? 'pinned' : 'a durable fact about the owner'}. Ask him, then call again with force: true.` };
       }

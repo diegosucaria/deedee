@@ -240,6 +240,11 @@ class MemoryExecutor extends BaseExecutor {
                                                 console.warn(`[Consolidation] Blocked update to pinned fact: ${f.key}`);
                                                 continue;
                                             }
+                                        } else if (!f.summary) {
+                                            // The same value again. Writing it would only move the
+                                            // fact's date, which reorders the list the prompt
+                                            // carries and throws away the cached prefix for nothing.
+                                            continue;
                                         }
                                     }
 

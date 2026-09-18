@@ -88,17 +88,28 @@ const EFFECTIVE_TAG_SQL = `
 // now carries one line each, newest and most used first, inside a character
 // budget; the full value comes back through getFact or searchMemory.
 const FACT_SUMMARY_CHARS = 80;
-// One budget for the whole block: about 3,000 tokens of a chat turn, against
-// the 13,400 every fact in full used to cost. On the owner's 642 facts that
-// shows roughly 240 lines; the rest come back through getFact and searchMemory.
-const FACT_INDEX_CHARS = 12000;
+// One budget for the whole block: about 6,000 tokens of a chat turn, against
+// the 14,000 every fact in full used to cost. It buys two things at once. The
+// facts the owner touched last carry their value on one line, and every other
+// key is still named, so the model can read any fact by name instead of
+// guessing that it exists. A tighter budget saves another 3,000 tokens and
+// hides three quarters of his memory, which is not a trade worth making.
+const FACT_INDEX_CHARS = 24000;
+// Room kept back for the headings and the closing note.
+const FACT_INDEX_RESERVE = 400;
 const FACT_NOTES_SHARE = 0.25;
 
 /** The block's character budget: FACTS_INDEX_CHARS, within reason. */
 function factsIndexBudget() {
-  const raw = parseInt(process.env.FACTS_INDEX_CHARS || '', 10);
-  if (!Number.isFinite(raw)) return FACT_INDEX_CHARS;
-  return Math.max(2000, Math.min(40000, raw));
+  const set = String(process.env.FACTS_INDEX_CHARS || '').trim();
+  if (!set) return FACT_INDEX_CHARS;
+  // "12k" or "8000 chars" used to parse as a number and quietly shrink his
+  // memory to the floor, so only a plain number counts.
+  if (!/^\d+$/.test(set)) {
+    console.warn(`[Memory] FACTS_INDEX_CHARS is not a plain number ("${set}"), using ${FACT_INDEX_CHARS}.`);
+    return FACT_INDEX_CHARS;
+  }
+  return Math.max(2000, Math.min(60000, Number(set)));
 }
 // Keys that hold state: a job's bookkeeping, a notification flag, a Node-RED
 // dump. They stay in the table and out of the prompt. `system_` is NOT state:
@@ -113,6 +124,21 @@ const PROFILE_CATEGORIES = new Set(['relationship', 'preference', 'work', 'tempo
 // A fact written for one day stops being news after five.
 const DATED_KEY_RE = /_on_(\d{4}-\d{2}-\d{2})$/;
 const DATED_FACT_DAYS = 5;
+// Grammar words a question carries, in both languages the owner uses. They
+// match half the table as a substring ("is" hits "this", "list"), so they
+// would drown the ranking of a question asked in full.
+const FACT_STOP_WORDS = new Set([
+  'what', 'whats', 'which', 'where', 'when', 'who', 'whom', 'whose', 'why', 'how',
+  'the', 'an', 'and', 'or', 'of', 'for', 'to', 'in', 'on', 'at', 'by', 'with', 'from',
+  'is', 'are', 'was', 'were', 'be', 'do', 'does', 'did', 'has', 'have', 'had', 'can', 'will',
+  'my', 'me', 'mine', 'his', 'her', 'hers', 'their', 'our', 'your', 'yours', 'it', 'its',
+  'that', 'this', 'these', 'those', 'there', 'here', 'about', 'again', 'please', 'tell', 'know',
+  'qué', 'que', 'cuál', 'cual', 'cuándo', 'cuando', 'dónde', 'donde', 'quién', 'quien',
+  'cómo', 'como', 'por', 'para', 'del', 'las', 'los', 'una', 'uno', 'unos', 'unas',
+  'mi', 'mis', 'su', 'sus', 'tu', 'tus', 'el', 'la', 'lo', 'de', 'en', 'un', 'al',
+  'es', 'son', 'era', 'fue', 'ser', 'está', 'esta', 'este', 'esto', 'esos', 'esas',
+  'tiene', 'tengo', 'sobre', 'dime', 'decime', 'sabes', 'sabés', 'con', 'sin', 'yo', 'vos'
+]);
 
 /**
  * profile, note or state, from the stored kind when it has one, else from the
@@ -132,10 +158,15 @@ function factKind(key, category, stored = null) {
     return 'profile';
 }
 
-/** One line for the index: the stored summary, else the value, shortened. */
+/**
+ * One line for the index: the stored summary, else the value, shortened.
+ * Always one line. A summary is written by the model from chat logs that
+ * carry other people's text, so a newline in it would otherwise print extra
+ * "- key: value" lines into the prompt and forge facts.
+ */
 function factSummary(row) {
-    const stored = typeof row.summary === 'string' ? row.summary.trim() : '';
-    if (stored) return stored.slice(0, FACT_SUMMARY_CHARS);
+    const stored = typeof row.summary === 'string' ? row.summary.replace(/\s+/g, ' ').trim() : '';
+    if (stored) return stored.length > FACT_SUMMARY_CHARS ? `${stored.slice(0, FACT_SUMMARY_CHARS - 1)}…` : stored;
     let text = row.value;
     try {
         const parsed = JSON.parse(row.value);
@@ -931,8 +962,22 @@ class AgentDB {
       const dir = this.dbPath ? path.dirname(this.dbPath) : path.join(process.cwd(), 'data');
       const file = path.join(dir, 'pruned_memories.json');
       let current = [];
-      try { if (fs.existsSync(file)) current = JSON.parse(fs.readFileSync(file, 'utf8')); } catch { current = []; }
-      if (!Array.isArray(current)) current = [];
+      let damaged = false;
+      try {
+        if (fs.existsSync(file)) current = JSON.parse(fs.readFileSync(file, 'utf8'));
+      } catch { damaged = true; current = []; }
+      if (!Array.isArray(current)) { damaged = fs.existsSync(file); current = []; }
+      // The file is the only copy of every fact ever dropped. Overwriting one
+      // we cannot read would throw all of them away, so it is moved aside.
+      if (damaged) {
+        const aside = path.join(dir, `pruned_memories.corrupt-${Date.now()}.json`);
+        try {
+          fs.renameSync(file, aside);
+          console.warn(`[DB] pruned_memories.json could not be read; kept as ${path.basename(aside)}.`);
+        } catch (e) {
+          console.warn('[DB] pruned_memories.json is damaged and could not be moved aside:', e.message);
+        }
+      }
       current.push({ ...row, pruned_at: new Date().toISOString(), reason });
       fs.writeFileSync(file, JSON.stringify(current, null, 2));
     } catch (e) {
@@ -1526,11 +1571,13 @@ class AgentDB {
         category = COALESCE(excluded.category, kv_store.category),
         confidence = COALESCE(excluded.confidence, kv_store.confidence),
         source = COALESCE(excluded.source, kv_store.source),
-        -- A summary or a kind written for the old value must not survive a new
-        -- one: the prompt shows the summary, so it would state the old fact.
-        kind = CASE WHEN excluded.kind IS NOT NULL THEN excluded.kind
-                    WHEN excluded.value <> kv_store.value THEN NULL
-                    ELSE kv_store.kind END,
+        -- The kind describes the key, not the value, so it survives a new
+        -- value. Losing it would move the fact to another section and, worse,
+        -- drop the guard that makes forgetFact ask before deleting a fact
+        -- about the owner.
+        kind = COALESCE(excluded.kind, kv_store.kind),
+        -- A summary written for the old value must not survive a new one: the
+        -- prompt shows the summary, so it would state the old fact.
         summary = CASE WHEN excluded.summary IS NOT NULL THEN excluded.summary
                        WHEN excluded.value <> kv_store.value THEN NULL
                        ELSE kv_store.summary END
@@ -1563,26 +1610,52 @@ class AgentDB {
     const q = String(term || '').trim().toLowerCase();
     if (!q) return [];
     // % and _ are wildcards in LIKE, so a term holding them must not widen the
-    // search. Every word has to appear, so a two-word query finds the fact that
-    // holds both rather than nothing.
+    // search.
     const esc = (t) => t.replace(/[\\%_]/g, (c) => `\\${c}`);
-    const words = q.split(/[\s_]+/).filter(Boolean).slice(0, 6);
+    // People ask questions, not keywords: "what is his birthday?" used to keep
+    // the question mark inside the last word and match nothing. Punctuation
+    // goes, and the words that carry no meaning go with it.
+    const cleaned = q.replace(/[^\p{L}\p{N}\s_]+/gu, ' ');
+    const all = cleaned.split(/[\s_]+/).filter((w) => w.length >= 2);
+    let words = all.filter((w) => !FACT_STOP_WORDS.has(w)).slice(0, 6);
+    if (words.length === 0) words = all.slice(0, 6);
     if (words.length === 0) return [];
     const target = keysOnly
       ? 'LOWER(key)'
       : "LOWER(key) || ' ' || LOWER(COALESCE(summary, '')) || ' ' || LOWER(COALESCE(value, ''))";
+    const lim = Math.max(1, Math.min(20, Number(limit) || 5));
+    const pats = words.map((w) => `%${esc(w)}%`);
+    const decorate = (rows) => rows.map((row) => {
+      const { hit_count, ...rest } = row;
+      let value = rest.value;
+      try { value = JSON.parse(rest.value); } catch { /* keep raw */ }
+      return { ...rest, value, kind: factKind(rest.key, rest.category, rest.kind) };
+    });
+
+    // Every word has to appear, so a two-word query finds the fact that holds
+    // both rather than everything that holds either.
     const where = words.map(() => `${target} LIKE ? ESCAPE '\\'`).join(' AND ');
     const rows = this.db.prepare(`
       SELECT * FROM kv_store
       WHERE LOWER(key) = ? OR (${where})
       ORDER BY (LOWER(key) = ?) DESC, (LOWER(key) LIKE ? ESCAPE '\\') DESC, pinned DESC, updated_at DESC
       LIMIT ?
-    `).all(q, ...words.map((w) => `%${esc(w)}%`), q, `%${esc(q)}%`, Math.max(1, Math.min(20, Number(limit) || 5)));
-    return rows.map((row) => {
-      let value = row.value;
-      try { value = JSON.parse(row.value); } catch { /* keep raw */ }
-      return { ...row, value, kind: factKind(row.key, row.category, row.kind) };
-    });
+    `).all(q, ...pats, q, `%${esc(q)}%`, lim);
+    if (rows.length > 0 || words.length < 2 || keysOnly) return decorate(rows);
+
+    // Nothing held every word. Rather than answer "I do not know" when the
+    // fact is there under other wording, take the rows that hold any word,
+    // best match first. Not for keysOnly: updateFact and forgetFact write, so
+    // they must never act on a loose match.
+    const score = words.map(() => `(CASE WHEN ${target} LIKE ? ESCAPE '\\' THEN 1 ELSE 0 END)`).join(' + ');
+    const anyWhere = words.map(() => `${target} LIKE ? ESCAPE '\\'`).join(' OR ');
+    const loose = this.db.prepare(`
+      SELECT *, (${score}) AS hit_count FROM kv_store
+      WHERE ${anyWhere}
+      ORDER BY hit_count DESC, (LOWER(key) LIKE ? ESCAPE '\\') DESC, pinned DESC, updated_at DESC
+      LIMIT ?
+    `).all(...pats, ...pats, `%${esc(q)}%`, lim);
+    return decorate(loose);
   }
 
   getKey(key) {
@@ -1646,7 +1719,15 @@ class AgentDB {
     for (const row of rows) {
       const kind = factKind(row.key, row.category, row.kind);
       if (kind === 'state' || factIsStale(row.key, now)) { stateRows++; continue; }
-      usable.push({ key: row.key, kind, pinned: row.pinned ? 1 : 0, line: factSummary(row), updated: row.updated_at || '' });
+      // The key is printed into the prompt too, so it is flattened for the
+      // same reason as the summary: one fact, one line, always.
+      usable.push({
+        key: String(row.key).replace(/\s+/g, ' ').trim(),
+        kind,
+        pinned: row.pinned ? 1 : 0,
+        line: factSummary(row),
+        updated: row.updated_at || ''
+      });
     }
     // Stable order: pinned first, the owner's facts before the agent's notes,
     // newest first, then the key. Nothing here depends on what was read
@@ -1658,36 +1739,92 @@ class AgentDB {
       || a.key.localeCompare(b.key));
 
     const render = (f) => `- ${f.key}: ${f.line}`;
-    const fit = (list, budget) => {
-      const lines = [];
-      let used = 0;
-      let left = 0;
-      for (const f of list) {
-        const line = render(f);
-        if (used + line.length + 1 > budget) { left++; continue; }
-        lines.push(line);
-        used += line.length + 1;
-      }
-      return { lines, left, used };
-    };
+    const lineCost = (f) => render(f).length + 1;
+    const nameCost = (f) => f.key.length + 2;
+    // The headings and the closing note are printed too. Reserving them keeps
+    // the block inside the budget the caller asked for, which matters because
+    // the voice prompt sizes the rest of its instruction around it.
+    const content = Math.max(0, indexChars - FACT_INDEX_RESERVE);
     const profileRows = usable.filter(f => f.kind === 'profile');
     const noteRows = usable.filter(f => f.kind === 'note');
-    // The notes take at most a quarter, and only what they need; the profile
-    // takes the rest, and lends back what it leaves.
-    const notesWanted = noteRows.reduce((n, f) => n + render(f).length + 1, 0);
-    const notesBudget = Math.min(Math.round(indexChars * FACT_NOTES_SHARE), notesWanted);
-    const profile = fit(profileRows, indexChars - notesBudget);
-    const notes = fit(noteRows, indexChars - profile.used);
+
+    // Naming every key costs this much. If it fits, no fact is ever invisible
+    // to the model: it can read any of them by name with getFact.
+    const wholeTail = usable.reduce((n, f) => n + nameCost(f), 0);
+    const withTail = wholeTail > 0 && wholeTail <= content;
+
+    let profileLines = [];
+    let noteLines = [];
+    let hidden = 0;
+    let named = [];
+
+    if (withTail) {
+      // Every key is named already. A value line only has to buy the value,
+      // so promoting a fact costs its line minus the name it drops.
+      const promote = (list, room) => {
+        const taken = [];
+        let used = 0;
+        for (const f of list) {
+          const extra = lineCost(f) - nameCost(f);
+          if (used + extra > room) continue;
+          taken.push(f);
+          used += extra;
+        }
+        return { taken, used };
+      };
+      const room = content - wholeTail;
+      // The notes take at most a quarter of the room, and only what they need;
+      // the profile takes the rest, and lends back what it leaves.
+      const notesWanted = noteRows.reduce((n, f) => n + lineCost(f) - nameCost(f), 0);
+      const notesRoom = Math.min(Math.round(room * FACT_NOTES_SHARE), notesWanted);
+      const profile = promote(profileRows, room - notesRoom);
+      const notes = promote(noteRows, room - profile.used);
+      const promoted = new Set([...profile.taken, ...notes.taken]);
+      profileLines = profile.taken.map(render);
+      noteLines = notes.taken.map(render);
+      named = usable.filter(f => !promoted.has(f)).map(f => f.key);
+    } else {
+      // Too little room to name them all, so fall back to as many value lines
+      // as fit and a count of the rest.
+      const fit = (list, budget) => {
+        const lines = [];
+        let used = 0;
+        let left = 0;
+        for (const f of list) {
+          if (used + lineCost(f) > budget) { left++; continue; }
+          lines.push(render(f));
+          used += lineCost(f);
+        }
+        return { lines, left, used };
+      };
+      const notesWanted = noteRows.reduce((n, f) => n + lineCost(f), 0);
+      const notesBudget = Math.min(Math.round(content * FACT_NOTES_SHARE), notesWanted);
+      const profile = fit(profileRows, content - notesBudget);
+      const notes = fit(noteRows, content - profile.used);
+      profileLines = profile.lines;
+      noteLines = notes.lines;
+      hidden = profile.left + notes.left;
+    }
 
     const parts = [];
-    if (profile.lines.length > 0) parts.push(`USER PROFILE (durable facts about the owner):\n${profile.lines.join('\n')}`);
-    if (notes.lines.length > 0) parts.push(`AGENT NOTES (what you learned about doing the job):\n${notes.lines.join('\n')}`);
-    const hidden = profile.left + notes.left;
+    if (profileLines.length > 0) parts.push(`USER PROFILE (durable facts about the owner):\n${profileLines.join('\n')}`);
+    if (noteLines.length > 0) parts.push(`AGENT NOTES (what you learned about doing the job):\n${noteLines.join('\n')}`);
+    if (named.length > 0) {
+      parts.push(`ALSO STORED, names only (${named.length}). Their values are kept in full; getFact(key) reads one:\n${named.join(', ')}`);
+    }
     if (parts.length > 0 && hidden > 0) {
       parts.push(`(${hidden} more facts are stored and not listed. getFact(key) reads any fact by name; searchMemory(query) finds one by words. Use them before saying you do not know.)`);
     }
     const text = parts.join('\n');
-    return { text, shown: profile.lines.length + notes.lines.length, total, hidden, state: stateRows, chars: text.length };
+    return {
+      text,
+      shown: profileLines.length + noteLines.length,
+      named: named.length,
+      total,
+      hidden,
+      state: stateRows,
+      chars: text.length
+    };
   }
 
   getFactsFormatted(query = '') {
