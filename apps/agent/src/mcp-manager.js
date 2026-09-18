@@ -436,8 +436,14 @@ class MCPManager {
     }
 
     async _refreshToolCache() {
-        this.toolCache = [];
-        this.toolMap.clear();
+        // Built aside and swapped in at the end. Emptying the live map first
+        // left a window, as long as a listTools round trip to every server, in
+        // which no tool had a server name. In that window the approval gate
+        // cannot tell a two-step check step from the real booking, so it asks
+        // for a second approval, and a tool result cannot be classified as
+        // another party's text.
+        const nextCache = [];
+        const nextMap = new Map();
 
         for (const [name, client] of this.clients.entries()) {
             try {
@@ -484,19 +490,24 @@ class MCPManager {
                     // Store reference and populate cache
                     mappedTools.forEach(t => {
                         // Deduplicate to avoid Gemini crashing on "Duplicate function declaration found"
-                        if (this.toolMap.has(t.name)) {
+                        if (nextMap.has(t.name)) {
                             console.warn(`[MCP] Warning: Duplicate tool name detected: ${t.name}. Skipping.`);
                             return;
                         }
                         t.serverName = name;
-                        this.toolMap.set(t.name, { name, client, originalName: t.originalName });
-                        this.toolCache.push(t);
+                        nextMap.set(t.name, { name, client, originalName: t.originalName });
+                        nextCache.push(t);
                     });
                 }
             } catch (err) {
                 console.error(`[MCP] Failed to list tools for ${name}:`, err);
             }
         }
+        // One statement each, so a reader never sees half a rebuild. The map
+        // object is replaced, not emptied, so nothing holding the old one can
+        // see it drain.
+        this.toolCache = nextCache;
+        this.toolMap = nextMap;
         console.log(`[MCP] Tool cache refreshed. ${this.toolCache.length} tools found.`);
     }
 

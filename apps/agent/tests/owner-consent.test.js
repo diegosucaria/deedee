@@ -321,6 +321,52 @@ describe('ApprovalService.review with the owner\'s word', () => {
         expect(out.result.info).not.toContain(row.id);
     });
 
+    test('the card still names the check step when the booking comes a turn later', async () => {
+        // He checks in one turn and books in the next, so the run that holds
+        // the preview is gone by the time the card is written. Without this
+        // the card shows the raw arguments, which for a booking is an opaque
+        // token and tells him nothing about what he is approving.
+        svc.notePreview('cancel_appointment', CANCEL.args, 'Cancel appointment #7 on 2026-04-14 at 11:15.');
+        const later = ApprovalService.newRun('another-run');
+        const out = await svc.review({ message: ownerWa('yes cancel it'), ...CANCEL, run: later, historyUntrusted: false, foreignText: false });
+        expect(out).toMatchObject({ run: false, status: 'paused' });
+        const [row] = db.listPendingConfirmations();
+        expect(row.origin_meta.preview).toBe('Cancel appointment #7 on 2026-04-14 at 11:15.');
+
+        // It describes one action, not any booking: different arguments, no line.
+        const other = { ...CANCEL, args: { ...CANCEL.args, appointmentId: 'another-one' } };
+        expect(svc.previewFor(other.toolName, other.args)).toBeNull();
+    });
+
+    test('a summary is not used for a call the check step never described', () => {
+        // The key names the target, so a cancellation with a reason and a note
+        // shares it with the bare check. The card would then show the words of
+        // the check step while the call sends something else.
+        svc.notePreview('cancel_appointment', CANCEL.args, 'Cancel appointment #7, reason: prefer not to say.');
+        expect(svc.previewFor('cancel_appointment', CANCEL.args)).toBe('Cancel appointment #7, reason: prefer not to say.');
+        expect(svc.previewFor('cancel_appointment', { ...CANCEL.args, reasonId: 5, observaciones: 'moved clinic' })).toBeNull();
+        // The real call differs from the check step by `confirm` alone.
+        expect(svc.previewFor('cancel_appointment', { ...CANCEL.args, confirm: true })).toBe('Cancel appointment #7, reason: prefer not to say.');
+    });
+
+    test('refreshing a summary does not make it the first to be dropped', () => {
+        // A Map keeps its first insertion order, so writing over an old entry
+        // in place left the newest summary first in line to be evicted.
+        svc.notePreview('cancel_appointment', CANCEL.args, 'first');
+        for (let i = 0; i < 60; i++) svc.notePreview('cancel_appointment', { appointmentId: `filler-${i}` }, `other ${i}`);
+        svc.notePreview('cancel_appointment', CANCEL.args, 'the newest words');
+        for (let i = 60; i < 70; i++) svc.notePreview('cancel_appointment', { appointmentId: `filler-${i}` }, `other ${i}`);
+        expect(svc.previewFor('cancel_appointment', CANCEL.args)).toBe('the newest words');
+    });
+
+    test('a check step summary is forgotten once it is too old to be true', () => {
+        svc.notePreview('cancel_appointment', CANCEL.args, 'Cancel appointment #7.');
+        expect(svc.previewFor('cancel_appointment', CANCEL.args)).toBe('Cancel appointment #7.');
+        const entry = svc._recentPreviews.get(stepKey('cancel_appointment', CANCEL.args));
+        entry.at -= 31 * 60e3;
+        expect(svc.previewFor('cancel_appointment', CANCEL.args)).toBeNull();
+    });
+
     test('his always-ask additions ask once in his chat, with no guardian call', async () => {
         db.setAgentSetting('approvals', { always_ask: ['category:book'] }, 'general');
         const out = await review(ownerWa(), BOOK);
