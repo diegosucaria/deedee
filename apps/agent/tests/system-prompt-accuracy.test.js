@@ -150,6 +150,8 @@ describe('the voice prompt', () => {
         // ...but a message to someone else is said back first: a misheard
         // name is caught there, and no card stops a contact he already wrote to.
         expect(text).toContain('A message or an email to anyone but him always asks: say the name you heard and what you will write');
+        // His word now covers the house in a call, so the spoken check names it too.
+        expect(text).toContain('A lock, the alarm or the garage door asks the same way.');
     });
 
     test('has the one home rule a call needs, not the whole block', () => {

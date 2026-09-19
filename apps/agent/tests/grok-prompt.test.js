@@ -57,6 +57,8 @@ describe('getGrokSystemInstruction', () => {
     test('factsWithoutLookups keeps the value lines only', () => {
         expect(factsWithoutLookups(FACTS).split('\n')).toHaveLength(4);
         expect(factsWithoutLookups('- a: 1')).toBe('- a: 1');
+        // With many facts the block can START with the names list: nothing is left to show.
+        expect(factsWithoutLookups('ALSO STORED, names only (810). Their values are kept in full; getFact(key) reads one:\na, b, c')).toBe('');
         expect(factsWithoutLookups(null)).toBe('');
     });
 });
@@ -100,6 +102,18 @@ describe('a Grok turn through the agent', () => {
         expect(sent.messages[0].content).not.toContain('replyWithAudio');
         expect(sent.messages.every(m => typeof m.content === 'string' && m.content.trim().length > 0)).toBe(true);
         expect(agent.client.chats.create).not.toHaveBeenCalled();
+    });
+
+    test('his message goes once, and an attachment with no text still makes a valid request', async () => {
+        await agent.processMessage({ role: 'user', source: 'web', content: 'what is the capital of France', metadata: { chatId: 'web-2', model: 'grok-4', replyMode: 'text' } }, jest.fn());
+        const asked = create.mock.calls[0][0].messages.filter(m => m.role === 'user' && m.content === 'what is the capital of France');
+        expect(asked).toHaveLength(1);
+
+        create.mockClear();
+        await agent._generateStreamGrok(agent.xaiClient, 'grok-4', undefined, [], 'c3', 't3', 'P');
+        const sent = create.mock.calls[0][0].messages;
+        expect(sent[sent.length - 1]).toMatchObject({ role: 'user' });
+        expect(sent[sent.length - 1].content).toMatch(/cannot read it/);
     });
 
     test('the prompt belongs to the turn, not to the agent', async () => {

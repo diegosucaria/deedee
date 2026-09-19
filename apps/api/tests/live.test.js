@@ -39,6 +39,19 @@ describe('API Live Router', () => {
         expect(axios.get).toHaveBeenCalledWith(expect.stringContaining('/live/config'));
     });
 
+    test('POST /live/tools/execute passes the call\'s id and what it read to the Agent', async () => {
+        // The agent cannot see either: which call this is, and whether its
+        // model read the web through Google's own search.
+        axios.post.mockResolvedValue({ data: { result: { ok: true } } });
+        const res = await request(app).post('/live/tools/execute').send({ name: 'getFact', args: { key: 'x' }, sessionId: 'call-0001-aaaa', readWeb: true });
+        expect(res.statusCode).toBe(200);
+        expect(axios.post).toHaveBeenCalledWith(expect.stringContaining('/tools/execute'), { name: 'getFact', args: { key: 'x' }, sessionId: 'call-0001-aaaa', readWeb: true });
+
+        // Anything else in those fields is dropped, not forwarded.
+        await request(app).post('/live/tools/execute').send({ name: 'getFact', args: {}, sessionId: { $ne: 1 }, readWeb: 'yes' });
+        expect(axios.post).toHaveBeenLastCalledWith(expect.any(String), { name: 'getFact', args: {}, sessionId: null, readWeb: false });
+    });
+
     test('POST /live/token should proxy to Agent and pass model and expiry through', async () => {
         const data = { token: 'auth_tokens/mock-token', model: 'models/mock-live', expiresAt: '2026-01-01T00:30:00.000Z' };
         axios.post.mockResolvedValue({ data });

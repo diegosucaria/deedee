@@ -1198,8 +1198,15 @@ class Agent {
       // which an OpenAI-style API may refuse: leave them out.
       const messages = geminiToOpenAIHistory(history).filter(m => typeof m.content === 'string' && m.content.trim());
 
-      // 2. Add current user message
-      messages.push({ role: 'user', content: userContent });
+      // 2. Add current user message. It is saved before this runs, so the
+      // history often ends with it already: never twice. A photo or a voice
+      // note has no text, and this model reads none of it: say so, rather
+      // than send a message with no content, which the API refuses.
+      const asked = typeof userContent === 'string' && userContent.trim()
+        ? userContent
+        : '[The owner sent an attachment. This model cannot read it: say so, and ask him to send it again with the default model.]';
+      const last = messages[messages.length - 1];
+      if (!(last && last.role === 'user' && last.content === asked)) messages.push({ role: 'user', content: asked });
 
       // 3. Create Stream
       const stream = await client.chat.completions.create({

@@ -28,7 +28,7 @@ You are answering through an external model, and no tool can run here: no web se
  */
 function factsWithoutLookups(facts) {
     const text = String(facts || '');
-    const cut = text.search(/\n(?:ALSO STORED, names only|\(\d+ more facts are stored)/);
+    const cut = text.search(/^(?:ALSO STORED, names only|\(\d+ more facts are stored)/m);
     return (cut >= 0 ? text.slice(0, cut) : text).trim();
 }
 

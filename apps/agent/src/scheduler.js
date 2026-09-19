@@ -358,8 +358,11 @@ class Scheduler {
                         const textLower = text.toLowerCase();
 
                         // A result that speaks to him by name is meant for him.
-                        const ownerName = String(this.agent?.settings?.owner_name || '').trim().toLowerCase();
-                        if ((ownerName && textLower.includes(`${ownerName},`)) || textLower.includes('alert:') || textLower.includes('warning:')) {
+                        // His first name as a whole word before a comma ("Sam, the
+                        // door is open"), so a short name cannot match inside a word.
+                        const firstName = String(this.agent?.settings?.owner_name || '').trim().split(/\s+/)[0].toLowerCase();
+                        const named = firstName.length > 1 && new RegExp(`(^|[^\\p{L}])${firstName.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')},`, 'u').test(textLower);
+                        if (named || textLower.includes('alert:') || textLower.includes('warning:')) {
                             shouldNotify = true;
                         }
 

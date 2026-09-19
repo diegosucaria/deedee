@@ -341,8 +341,20 @@ text his word stops covering what goes out. Three things make that safe:
   mark on the `live` channel alone.
 - The agent never hears the call: the audio runs between his browser and
   Google. So the guardian is never told that our own `[live] <tool>` label is
-  his words, and the voice prompt has the model say back the name and the text
-  before any message or email to someone else, where a misheard name is caught.
+  his words, and the voice prompt has the model say back what it heard before
+  a message or an email to someone else, a lock, the alarm or the garage door.
+  A misheard name is caught there.
+- What the call has READ decides whether his word still covers what goes
+  out, so the agent must know it. Tool results pass through the route and are
+  classified there. Google's built-in search does not: its text reaches the
+  model straight from Google. The live page sees those turns
+  (`messageShowsWebReading`) and sends `readWeb` with every later tool call,
+  along with a session id. The mark is kept per session and lasts for the
+  whole call; it used to age out after 15 minutes, in a call that runs for 30.
+  A page that sends no id shares one mark, kept for 15 minutes after the last
+  call.
+- A shell command the shell refuses still counts and rings in a call, unlike
+  in his typed chat: there his own words show it is an honest miss.
 
 Calendar results in a call pass through the same calendar filter as in a chat.
 The nightly

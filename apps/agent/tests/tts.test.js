@@ -147,6 +147,16 @@ describe('Agent TTS', () => {
       expect(calls[1]).not.toHaveProperty('languageCode');
     });
 
+    test('a quota error is not read as a refused language, whatever words it holds', async () => {
+      // The SDK's message is the whole error body; a quota body names
+      // "generativelanguage.googleapis.com". Retrying doubled the failed call.
+      agent.client.models.generateContent.mockClear();
+      const quota = Object.assign(new Error('{"error":{"code":429,"status":"RESOURCE_EXHAUSTED","details":[{"quotaMetric":"generativelanguage.googleapis.com/generate_content_requests"}]}}'), { status: 429 });
+      agent.client.models.generateContent.mockRejectedValue(quota);
+      const { calls } = await speak({ languageCode: 'es-419' }).catch(() => ({ calls: agent.client.models.generateContent.mock.calls }));
+      expect(calls).toHaveLength(1);
+    });
+
     test('another failure is not retried', async () => {
       agent.client.models.generateContent.mockClear();
       agent.client.models.generateContent.mockRejectedValue(new Error('503 overloaded'));

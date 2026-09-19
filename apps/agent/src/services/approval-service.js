@@ -804,7 +804,10 @@ class ApprovalService {
             // command is an honest miss ("top", a closed folder), not a probe.
             // It must not stop his run or raise a "steered run" alarm. Jobs,
             // watchers, sub-agents, tainted runs and contacts' chats still count.
-            const ownRun = foreignText === false && historyUntrusted === false && await this._ownerConsent(message, taint);
+            // Not in a voice call: what he said never reaches us, so a refused
+            // command there cannot be told from a probe.
+            const spokenRun = splitChannel(message?.source).channel === 'live';
+            const ownRun = !spokenRun && foreignText === false && historyUntrusted === false && await this._ownerConsent(message, taint);
             return this._refuseShell({ message, toolName, run, base, reason: guard.reason, counts: !ownRun });
         }
         if (guard.denied) {

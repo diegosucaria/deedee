@@ -139,3 +139,23 @@ export function closeOutcome(event, opened) {
     }
     return { status: 'error', message: `Could not start the session${suffix}.` };
 }
+
+/**
+ * Did this server message carry text the model read on the web? The call's
+ * setup turns on Google's built-in search, and its results reach the model
+ * without ever passing through our tool route, which is where the agent
+ * learns what a session has read. The page is the only place that sees them.
+ * It looks for the grounding block by name and, in case the API renames a
+ * field, for any key that looks like one.
+ * @param {object} data - one parsed WebSocket message
+ * @returns {boolean}
+ */
+export function messageShowsWebReading(data) {
+    const WEB_KEY = /grounding|websearchqueries|searchentrypoint|urlcontext/i;
+    const scan = (value, depth) => {
+        if (!value || typeof value !== 'object' || depth > 6) return false;
+        if (Array.isArray(value)) return value.some(v => scan(v, depth + 1));
+        return Object.entries(value).some(([key, v]) => WEB_KEY.test(key) || scan(v, depth + 1));
+    };
+    return scan(data?.serverContent, 0) || scan(data?.toolCallResult, 0);
+}

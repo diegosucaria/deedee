@@ -6,19 +6,56 @@ const { ApprovalService } = require('../services/approval-service');
 const { classifyToolResult, TurnTaint } = require('../utils/untrusted-content');
 const { filterCalendarResult } = require('../utils/calendar-filter');
 
-// What the live session has read lately. Each call arrives on its own request,
-// so there is no run to carry taint: this stands in for one. It ages out, since
-// a session that read an email an hour ago is not the session talking now.
+// What a live session has read. Each tool call arrives on its own request, so
+// there is no run to carry taint: this stands in for one.
+//
+// The live page sends a session id with every call. A mark then lasts for the
+// whole call: it used to age out after 15 minutes, and a call runs for 30, so
+// the same call got the owner's consent back with the email still in the
+// model's context. A page that sends no id (an old tab) shares one mark that
+// lasts 15 minutes after the LAST call, not after the last read.
 const LIVE_TAINT_MS = 15 * 60 * 1000;
-let liveTaint = null;
-let liveTaintAt = 0;
+const LIVE_SESSION_MS = 6 * 60 * 60 * 1000;
+const LIVE_SESSIONS_KEPT = 8;
+const NO_SESSION = '(no session id)';
+const liveSessions = new Map(); // session id -> { taint: TurnTaint, at: number }
 
-function currentLiveTaint(now = Date.now()) {
-    if (!liveTaint || now - liveTaintAt > LIVE_TAINT_MS) return null;
-    return liveTaint.tainted ? liveTaint : null;
+function sessionKey(sessionId) {
+    const id = typeof sessionId === 'string' ? sessionId.trim() : '';
+    return /^[A-Za-z0-9._-]{8,64}$/.test(id) ? id : NO_SESSION;
 }
 
-function noteLiveResult(toolName, args, result, serverName, now = Date.now()) {
+function currentLiveTaint(now = Date.now(), sessionId = null) {
+    const key = sessionKey(sessionId);
+    const entry = liveSessions.get(key);
+    if (!entry) return null;
+    const maxAge = key === NO_SESSION ? LIVE_TAINT_MS : LIVE_SESSION_MS;
+    if (now - entry.at > maxAge) { liveSessions.delete(key); return null; }
+    return entry.taint.tainted ? entry.taint : null;
+}
+
+/** A call was made in this session: a shared mark stays alive while calls keep coming. */
+function touchLiveSession(sessionId, now = Date.now()) {
+    // An expired mark is dropped here, not revived.
+    if (!currentLiveTaint(now, sessionId)) return;
+    liveSessions.get(sessionKey(sessionId)).at = now;
+}
+
+function markLiveRead(sessionId, label, now = Date.now()) {
+    const key = sessionKey(sessionId);
+    let entry = liveSessions.get(key);
+    if (!entry || !currentLiveTaint(now, sessionId)) {
+        entry = { taint: new TurnTaint([]), at: now };
+        liveSessions.delete(key);
+        liveSessions.set(key, entry);
+        while (liveSessions.size > LIVE_SESSIONS_KEPT) liveSessions.delete(liveSessions.keys().next().value);
+    }
+    entry.taint.add(label);
+    entry.at = now;
+    return entry.taint;
+}
+
+function noteLiveResult(toolName, args, result, serverName, now = Date.now(), sessionId = null) {
     let verdict;
     try {
         verdict = classifyToolResult(toolName, { serverName, args, result });
@@ -26,16 +63,13 @@ function noteLiveResult(toolName, args, result, serverName, now = Date.now()) {
         verdict = { untrusted: true, kind: 'an unknown tool' };
     }
     if (!verdict.untrusted) return;
-    if (!currentLiveTaint(now)) liveTaint = new TurnTaint([]);
-    liveTaint.add(`${verdict.kind} (${toolName})`);
-    try { liveTaint.observe(toolName, verdict.kind, args, result); } catch { /* metadata only */ }
-    liveTaintAt = now;
+    const taint = markLiveRead(sessionId, `${verdict.kind} (${toolName})`, now);
+    try { taint.observe(toolName, verdict.kind, args, result); } catch { /* metadata only */ }
 }
 
 /** Tests and a restart start the live session clean. */
 function resetLiveTaint() {
-    liveTaint = null;
-    liveTaintAt = 0;
+    liveSessions.clear();
 }
 
 function createToolRouter(agent) {
@@ -82,8 +116,12 @@ function createToolRouter(agent) {
     router.post('/tools/execute', async (req, res) => {
         if (!agent || !agent.toolExecutor) return res.status(503).json({ error: 'Agent not ready' });
         try {
-            const { name, args } = req.body;
+            const { name, args, sessionId = null, readWeb = false } = req.body;
             console.log(`[Agent] Executing tool request from Live Client: ${name}`, args);
+            touchLiveSession(sessionId);
+            // Google's built-in search answers the model directly; its text
+            // never comes through this route. The page sees it and says so.
+            if (readWeb === true) markLiveRead(sessionId, 'web search results (the call\'s own search)');
 
             const ownerSession = req.internalAuth === true;
             const message = { role: 'user', content: `[live] ${name}`, source: 'live', metadata: { chatId: 'live-session', ownerSession } };
@@ -102,7 +140,7 @@ function createToolRouter(agent) {
                 // READ does, as tool results, and currentLiveTaint() keeps it
                 // for 15 minutes. That stands in for a chat's history. Without
                 // a checked token nothing is known, which asks.
-                const liveTaintNow = currentLiveTaint();
+                const liveTaintNow = currentLiveTaint(Date.now(), sessionId);
                 const review = await agent.approvals.review({
                     message, toolName: name, args, serverName, run, taint: liveTaintNow,
                     historyUntrusted: ownerSession ? !!liveTaintNow : null,
@@ -119,7 +157,7 @@ function createToolRouter(agent) {
 
             const raw = await agent.toolExecutor.execute(name, args, context);
             // What this session has read now counts for the calls that follow.
-            noteLiveResult(name, args, raw, agent.mcp?.toolMap?.get?.(name)?.name || null);
+            noteLiveResult(name, args, raw, agent.mcp?.toolMap?.get?.(name)?.name || null, Date.now(), sessionId);
             // A call reads the same calendars a chat does: the ones he ticked.
             let result = raw;
             try {

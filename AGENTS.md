@@ -14,8 +14,8 @@ It is a Node monorepo (npm workspaces `apps/*` and `packages/*`):
 | Folder | What it does |
 |---|---|
 | `apps/agent` | The brain: Gemini through `@google/genai`, the tool loop, the scheduler, SQLite (`agent.db`), approvals, memory |
-| `apps/api` | The HTTP gateway. Every route needs the bearer token |
-| `apps/web` | Next.js dashboard and chat. Talks to the API through Server Actions only |
+| `apps/api` | The HTTP gateway. Every route but `/health` needs the bearer token |
+| `apps/web` | Next.js dashboard and chat. Fetches data through Server Actions; live updates come over a socket |
 | `apps/interfaces` | WhatsApp, Telegram and Slack connectors |
 | `apps/supervisor` | Git, pull requests, health checks and rollback. Runs no code the agent wrote |
 | `packages/shared` | Message types shared by the services |
@@ -32,7 +32,8 @@ Feature docs are in `docs/`; start with `docs/architecture.md` and
   gives each test file its own data folder; from inside a workspace that step
   is skipped.
 - One file: `NODE_OPTIONS=--experimental-vm-modules npx jest apps/agent/tests/<file>.test.js`
-- `npm run build` builds the web app. `npm run lint` runs ESLint.
+- `npm run build` builds the web app. There is no repo-wide lint: only
+  `apps/web` has an ESLint config (`npm run lint --workspace=apps/web`).
 - CI runs four jobs: the personal-data scan, the tests, the web build and a
   browser smoke test.
 
@@ -58,10 +59,13 @@ device before the owner merges.
    `user@example.com`, `100000000000001@g.us`, `U01EXAMPLE1`.
    `scripts/check-pii.js` runs before every commit and in CI; names to block
    go in the gitignored `.pii-denylist` (see `docs/security.md`).
-2. **Every endpoint is authenticated.** Routes in `apps/api` need the bearer
-   token. Agent routes under `/internal` and `/tools` need the internal token.
-   No token ever reaches the browser: the web app fetches through Server
-   Actions. Only `/health` is public.
+2. **Every new endpoint is authenticated.** Routes in `apps/api` need the
+   bearer token; only its `/health` is public. Agent routes under `/internal`
+   and `/tools` need the internal token. The agent's other routes (`/status`,
+   `/webhook`, `/chat`, `/live/*`, `/v1/*`) have no check of their own and
+   rely on the Docker network being closed, so a new agent route must bring
+   its own check. No token ever reaches the browser: the web app fetches
+   through Server Actions.
 3. **A new tool is a security decision.** Classify it in
    `apps/agent/src/utils/untrusted-content.js` (our own text, or text a third
    party wrote). Decide whether it needs the owner's approval

@@ -207,7 +207,9 @@ class MediaExecutor extends BaseExecutor {
                 } catch (err) {
                     // A model that does not know the code must not cost him
                     // the answer: say it once more and let the model guess.
-                    const rejected = languageCode && /400|INVALID_ARGUMENT|language/i.test(String(err?.message || ''));
+                    // A real bad request only. The SDK's message holds the whole error
+                    // body, and a quota error names "generativelanguage.googleapis.com".
+                    const rejected = languageCode && (err?.status === 400 || /INVALID_ARGUMENT/.test(String(err?.message || '')));
                     if (!rejected) throw err;
                     console.warn(`[MediaExecutor] The speech model refused language "${languageCode}" (${String(err.message).slice(0, 120)}). Retrying without it.`);
                     audioResponse = await speak(false);
