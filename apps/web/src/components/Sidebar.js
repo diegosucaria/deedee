@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import Image from 'next/image';
 import { usePathname, useSearchParams } from 'next/navigation';
-import { MessageSquare, ClipboardList, Database, Activity, Terminal, ChevronLeft, ChevronRight, Settings, Mic, Users, Disc, ShieldAlert, ShieldCheck, Shirt, Globe } from 'lucide-react';
+import { MessageSquare, ClipboardList, Database, Activity, Terminal, ChevronLeft, ChevronRight, Settings, Mic, Users, Disc, ShieldAlert, Shirt, Globe } from 'lucide-react';
 import { clsx } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { useState, useEffect, useCallback } from 'react';
@@ -12,17 +12,17 @@ import { useHealthStatus } from '@/hooks/useHealthStatus';
 import { useSocket } from '@/hooks/useSocket';
 import { getApprovals } from '@/app/actions';
 import { approvalEventKind } from '@/lib/approvals';
-import { isNavActive } from '@/lib/nav';
+import { isNavActive, navHref } from '@/lib/nav';
 
 const navItems = [
     { name: 'Chat', href: '/', icon: MessageSquare },
     { name: 'Live', href: '/live', icon: Mic },
     { name: 'Browser', href: '/browser', icon: Globe },
     { name: 'Tasks', href: '/tasks', icon: ClipboardList },
-    // Approvals and the guardian are tabs of the Brain page; the entry keeps
-    // the pending badge one click away.
-    { name: 'Approvals', href: '/brain?tab=approvals', icon: ShieldCheck, badge: 'approvals' },
-    { name: 'Brain', href: '/brain', icon: Activity },
+    // Approvals and the guardian are tabs of the Brain page and have no entry
+    // of their own. Brain carries the pending badge, and while something
+    // waits it opens on the approvals tab, so a card is still one click away.
+    { name: 'Brain', href: '/brain', icon: Activity, badge: 'approvals', badgeHref: '/brain?tab=approvals' },
     { name: 'DJ Crate', href: '/dj', icon: Disc },
     { name: 'Wardrobe', href: '/wardrobe', icon: Shirt },
     { name: 'Life Vaults', href: '/vaults', icon: Database },
@@ -121,11 +121,12 @@ export function Sidebar() {
                 {navItems.map((item) => {
                     const isActive = isNavActive(item.href, pathname, activeTab, navItems);
                     const badgeCount = item.badge === 'approvals' ? pendingApprovals : 0;
+                    const waiting = badgeCount > 0 ? ` (${badgeCount} approval${badgeCount === 1 ? '' : 's'} waiting)` : '';
                     return (
                         <Link
                             key={item.href}
-                            href={item.href}
-                            title={isCollapsed ? item.name : ''}
+                            href={navHref(item, badgeCount)}
+                            title={isCollapsed || waiting ? `${item.name}${waiting}` : ''}
                             className={twMerge(
                                 clsx(
                                     'group flex h-10 items-center rounded-xl transition-all',

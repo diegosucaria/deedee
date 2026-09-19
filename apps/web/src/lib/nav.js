@@ -19,3 +19,14 @@ export function isNavActive(href, pathname, activeTab, items = []) {
     // A tab with an entry of its own owns the highlight.
     return !items.some(i => String(i.href || '') === `${path}?tab=${activeTab}`);
 }
+
+/**
+ * Where an entry's click goes. An entry with a badge may name a second
+ * address for the moments the badge shows: Brain opens on its approvals tab
+ * while an approval waits, and on its first tab otherwise.
+ * @param {{ href: string, badgeHref?: string }} item
+ * @param {number} badgeCount
+ */
+export function navHref(item, badgeCount = 0) {
+    return badgeCount > 0 && item?.badgeHref ? item.badgeHref : item?.href;
+}
