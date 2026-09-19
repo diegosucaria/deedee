@@ -199,7 +199,36 @@ class CommunicationExecutor extends BaseExecutor {
                     }
                     const logPreview = imagePath ? `[image: ${imagePath}${caption ? `; caption: "${caption}"` : ''}]` : `"${content}"`;
                     console.log(`[CommunicationExecutor] Sending to ${cleanTo} (${svc}): ${logPreview}`);
-                    await services.interface.send(payload);
+
+                    // A message to the owner goes through the delivery ledger,
+                    // like every other owner notification: it retries with
+                    // backoff and tries his other channel. A job sends its
+                    // briefing here and then answers [SILENT], so a send that
+                    // failed quietly was a briefing lost without a trace.
+                    const delivery = services.agent?.delivery;
+                    const toOwner = !!(delivery && typeof delivery.deliver === 'function'
+                        && typeof delivery.isOwnerTarget === 'function' && delivery.isOwnerTarget(svc, metadata.chatId));
+                    if (toOwner) {
+                        const kind = message?.source === 'scheduler' ? 'job_notification' : 'reply';
+                        const outcome = await delivery.deliver(kind, svc, metadata.chatId,
+                            { content: resolvedContent, type: type || 'text', caption, metadata: { session: metadata.session } },
+                            // The model asked for this send; an equal text sent twice is its call, not a duplicate.
+                            { origin: message?.metadata?.jobName ? `job:${message.metadata.jobName}` : 'sendMessage', dedupe: false });
+                        if (!outcome.delivered && outcome.queued) {
+                            return { success: true, queued: true, info: `Not delivered to ${cleanTo} yet: the messaging service did not take it. It is queued and will be retried, so do not send it again.` };
+                        }
+                        if (!outcome.delivered) {
+                            return { success: false, error: `The message to ${cleanTo} was not delivered (${outcome.error || outcome.status || 'unknown reason'}). Nothing is queued. Say so; do not claim it was sent.` };
+                        }
+                    } else {
+                        // A contact gets one try and no retry: a message that
+                        // arrives hours late can be worse than none. The
+                        // failure is reported, never passed off as sent.
+                        const sent = await services.interface.send(payload);
+                        if (sent === false) {
+                            return { success: false, error: `The message to ${cleanTo} was not delivered: the messaging service refused it or is down. It was not queued. Tell the owner; do not claim it was sent.` };
+                        }
+                    }
 
                     // Verification handled above: an approved call marks the contact verified, verified contacts skip the check
                     // Owner-chat mirroring is handled by the agent-level interface.send wrapper
