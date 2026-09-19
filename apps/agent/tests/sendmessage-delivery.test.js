@@ -103,6 +103,20 @@ describe('sendMessage delivery', () => {
         expect(db.listRecentOutbox({ limit: 5 })).toHaveLength(1);
     });
 
+    test('a row is known as waiting for as long as it is retried', async () => {
+        // The last delay repeats until the attempts run out: six attempts end
+        // 141 minutes after the first, not 81. A repeat at two hours used to
+        // queue a second copy, and both went out.
+        expect(agent.delivery.retrySpanMs()).toBe((1 + 5 + 15 + 60 + 60 + 10) * 60 * 1000);
+        send.mockResolvedValue(false);
+        await toOwner();
+        const twoHoursAgo = new Date(Date.now() - 120 * 60 * 1000).toISOString();
+        db.db.prepare('UPDATE notification_outbox SET created_at = ?').run(twoHoursAgo);
+        const again = await toOwner();
+        expect(again).toMatchObject({ queued: true });
+        expect(db.listRecentOutbox({ limit: 5 })).toHaveLength(1);
+    });
+
     test('a send that cannot be delivered or queued is a failure', async () => {
         // The ledger refuses an empty text outright.
         const out = await toOwner({ content: '' });
@@ -159,6 +173,30 @@ describe('sendMessage delivery', () => {
             expect(out).toMatchObject({ success: true, queued: true, status: 'queued' });
             expect(out.info).toMatch(/Its text is queued/);
             expect(db.listRecentOutbox({ limit: 5 })).toHaveLength(1);
+        });
+
+        test('a picture that goes out on a second try retires the words still queued', async () => {
+            // The model tried the picture again. Its caption reached him under
+            // the picture, so the text copy in the queue must not follow it.
+            send.mockResolvedValueOnce(false).mockResolvedValueOnce(false).mockResolvedValue(true);
+            const first = await toOwner({ type: 'image', imagePath: img, content: 'the briefing words' });
+            expect(first).toMatchObject({ status: 'queued' });
+            const second = await toOwner({ type: 'image', imagePath: img, content: 'the briefing words' });
+            expect(second).toMatchObject({ success: true });
+            expect(second.status).toBeUndefined();
+            const [row] = db.listRecentOutbox({ limit: 5 });
+            expect(row.status).toBe('sent');
+
+            const before = send.mock.calls.length;
+            db.db.prepare("UPDATE notification_outbox SET next_attempt_at = '2000-01-01T00:00:00.000Z'").run();
+            await agent.delivery.tick();
+            expect(send.mock.calls.length).toBe(before);
+        });
+
+        test('words that already went out tell the model not to send them again', async () => {
+            send.mockResolvedValueOnce(false).mockResolvedValue(true);
+            const out = await toOwner({ type: 'image', imagePath: img, content: 'the words' });
+            expect(out.info).toMatch(/Its text went out without the picture, so it should not be sent again\./);
         });
 
         test('a refused picture with no words is a failure', async () => {

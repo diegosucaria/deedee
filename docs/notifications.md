@@ -66,10 +66,14 @@ repeat is an accident.
 asked for each send, so an equal text that already went out is sent again.
 But an equal text still waiting in the queue is not queued twice: a model
 that retries after "queued" would otherwise deliver two copies when the
-service returns. A message to a contact never enters the ledger: it gets one
+service returns. The rule looks back over the whole time a row can wait
+(`retrySpanMs()`: the last delay repeats until the attempts run out, so 141
+minutes plus a margin with the defaults). A message to a contact never enters the ledger: it gets one
 direct try, and a refused try is reported. A picture or a voice note to the
 owner stays out too (its row would hold megabytes); if it is refused, its
-caption goes through the ledger as text.
+caption goes through the ledger as text. If the picture then goes out on a
+second try, the caption has arrived under it, and `retirePending` marks the
+waiting text row sent so the words do not follow a second time.
 
 The nightly maintenance removes `sent` and `dead` rows older than 30 days.
 
