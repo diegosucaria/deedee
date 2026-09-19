@@ -182,6 +182,44 @@ describe('filterCalendarResult', () => {
         });
     });
 
+    describe('the calendar that was read decides, not who organised the event', () => {
+        // Google puts the INVITER in organizer.email, not the calendar's id.
+        // Going by it dropped every meeting someone else organised from the
+        // owner's own calendar, so the briefing never listed them.
+        const invited = (summary, from) => ({ ...makeEvent(summary, from, false), attendees: [{ email: 'user@gmail.com', self: true }, { email: from }] });
+        const settings = { 'gws_calendar_filter:personal': { calendarIds: ['user@gmail.com', 'trips@group.calendar.google.com'] } };
+        const list = (calendarId) => ({ resource: 'events', method: 'list', params: { calendarId, timeMin: 'a', timeMax: 'b' } });
+
+        test('a meeting a client organised stays on his own calendar', () => {
+            const events = [makeEvent('Mine', 'user@gmail.com', true), invited('Client review', 'someone@client.example'), invited('Dinner', 'friend@example.com')];
+            const result = makeEventResponse(events);
+            for (const id of ['user@gmail.com', 'primary', 'USER@gmail.com']) {
+                expect(filterCalendarResult('personal_calendar', result, settings, toolMap, list(id))).toBe(result);
+            }
+            // params may arrive as a JSON string.
+            expect(filterCalendarResult('personal_calendar', result, settings, toolMap, { resource: 'events', method: 'list', params: JSON.stringify({ calendarId: 'primary' }) })).toBe(result);
+        });
+
+        test('a calendar that is not on the list shows nothing, whoever organised', () => {
+            const events = [invited('Their 1:1', 'user@gmail.com'), makeEvent('Their lunch', 'colleague@work.example')];
+            const out = JSON.parse(filterCalendarResult('personal_calendar', makeEventResponse(events), settings, toolMap, list('colleague@work.example')).output);
+            expect(out.items).toEqual([]);
+        });
+
+        test('with no calendar to go by, an event he is invited to is his', () => {
+            const events = [invited('Client review', 'someone@client.example'), makeEvent('A stranger\'s event', 'other@example.com'), makeEvent('Flight', 'trips@group.calendar.google.com')];
+            const out = JSON.parse(filterCalendarResult('personal_calendar', makeEventResponse(events), settings, toolMap).output);
+            expect(out.items.map(e => e.summary)).toEqual(['Client review', 'Flight']);
+        });
+
+        test('primary-only mode keeps what he is invited to, and still hides the rest', () => {
+            const events = [makeEvent('Mine', 'user@gmail.com', true), invited('Client review', 'someone@client.example'), makeEvent('Not his', 'family@group.calendar.google.com')];
+            const out = JSON.parse(filterCalendarResult('personal_calendar', makeEventResponse(events), {}, toolMap, list('someone-else@example.com')).output);
+            expect(out.items.map(e => e.summary)).toEqual(['Mine', 'Client review']);
+            expect(filterCalendarResult('personal_calendar', makeEventResponse(events), {}, toolMap, list('primary')).output).toContain('Not his');
+        });
+    });
+
     describe('primary-only mode for events', () => {
         test('keeps only events where organizer.self is true', () => {
             const events = [
