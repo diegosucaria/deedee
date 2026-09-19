@@ -77,6 +77,9 @@ function stripLeadingStamp(text) {
 // The approved call's result as the resumed run's model reads it.
 const RESUME_RESULT_CHARS = 6000;
 // Metadata the resumed run keeps from the owner's answer.
+// Sources only the owner can write from: the web UI behind his login, and the
+// API entries behind his token. Everything else must prove the chat is his.
+const OWNER_ONLY_SOURCES = new Set(['web', 'web_chat', 'iphone', 'ios_shortcut', 'live', 'http', 'api']);
 const RESUME_META_KEYS = ['session', 'phoneNumber', 'isGroup', 'groupName', 'thinking', 'turnId', 'model', 'location'];
 const browserSecrets = require('./utils/browser-secrets');
 const { sanitizeFunctionDeclarations } = require('./utils/gemini-schema-sanitizer');
@@ -857,6 +860,30 @@ class Agent {
     console.log('Agent listening for messages.');
   }
 
+  /**
+   * Did the owner himself type this text? Slash commands wipe history, stop
+   * every run and forge inbound messages, and the handler used to run for
+   * any text that reached processMessage: a contact's WhatsApp message, a
+   * Slack message, a group message, a sub-agent's task written by a model
+   * that had read a hostile page. Anything we cannot tie to the owner is
+   * plain text for the model (or for passive mode to ignore).
+   * @param {object} message
+   * @returns {Promise<boolean>}
+   */
+  async _ownerTyped(message) {
+    const meta = message?.metadata || {};
+    const source = String(message?.source || '');
+    if (meta.isSubAgent || meta.isGroup) return false;
+    // Behind his login or his API token.
+    if (OWNER_ONLY_SOURCES.has(source)) return true;
+    // His own chat with the assistant. The mirror of his personal account
+    // ('whatsapp:user') carries his contacts' messages: never.
+    if (source === 'whatsapp' || source === 'whatsapp:assistant' || source === 'telegram') {
+      try { return !!(await this.approvals._isOwnerChat(message)); } catch (e) { return false; }
+    }
+    return false;
+  }
+
   async onMessage(message) {
     // Intercept Presence Updates for Autopilot Debounce
     if (message.type === 'presence') {
@@ -1408,8 +1435,10 @@ class Agent {
         this.stopFlags.delete('GLOBAL_STOP');
       }
 
-      // 1. Slash Commands (only for text messages)
-      if (!commandResult && !continuation) commandResult = !isMultiModal ? await this.commandHandler.handle(message) : false;
+      // 1. Slash Commands (only for text messages, and only text the owner typed)
+      if (!commandResult && !continuation && !isMultiModal && await this._ownerTyped(message)) {
+        commandResult = await this.commandHandler.handle(message);
+      }
 
       if (typeof commandResult === 'object' && commandResult.type === 'EXECUTE_PENDING') {
         // ... (existing slash command logic) ...

@@ -59,6 +59,11 @@ jest.mock('@deedee/mcp-servers/src/gsuite/index', () => ({ GSuiteTools: jest.fn(
 jest.mock('@deedee/mcp-servers/src/local/index', () => ({ LocalTools: jest.fn() }));
 
 describe('Slash Commands', () => {
+    // Commands run only for the owner: these tests write as him.
+    const savedTelegramIds = process.env.ALLOWED_TELEGRAM_IDS;
+    beforeAll(() => { process.env.ALLOWED_TELEGRAM_IDS = 'chat123,user1'; });
+    afterAll(() => { if (savedTelegramIds === undefined) delete process.env.ALLOWED_TELEGRAM_IDS; else process.env.ALLOWED_TELEGRAM_IDS = savedTelegramIds; });
+
     let agent;
     let mockInterface;
 
