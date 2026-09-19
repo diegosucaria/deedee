@@ -31,6 +31,13 @@ const GEO_CORDOBA = { results: [
 const GEO_ES = { results: [
     place('Springfield', 'Estados Unidos', 'US', 37.2, -93.3, 'Misuri'),
 ] };
+const GEO_CORDOBA_ES = { results: [
+    place('Córdoba', 'Argentina', 'AR', -31.4, -64.2, 'Córdoba'),
+    place('Córdoba', 'España', 'ES', 37.9, -4.8, 'Andalucía'),
+] };
+// "Londres": in English a village in Argentina, in Spanish the capital.
+const GEO_LONDRES_EN = { results: [{ ...place('Londres', 'Argentina', 'AR', -27.7, -67.1, 'Catamarca'), population: 2100 }] };
+const GEO_LONDRES_ES = { results: [{ ...place('Londres', 'Reino Unido', 'GB', 51.5, -0.1, 'Inglaterra'), population: 8900000 }] };
 const FORECAST = {
     current: { temperature_2m: 21.4, weather_code: 2 },
     daily: { time: ['2026-09-18'], temperature_2m_max: [27.6], temperature_2m_min: [14.2], weather_code: [61] },
@@ -80,16 +87,73 @@ describe('fetchCityWeather', () => {
         expect(w.place.country).toBe('Argentina');
         expect(latOf(calls)).toBe('-31.4');
         // Accents do not matter, and a region picks among several in one country.
-        const spain = fakeFetch({ geo: GEO_CORDOBA });
+        const spain = fakeFetch({ geo: GEO_CORDOBA, geoEs: GEO_CORDOBA_ES });
         await fetchCityWeather('Córdoba, Andalucia, spain', { fetchImpl: spain.impl, retryDelayMs: 0 });
         expect(latOf(spain.calls)).toBe('37.9');
     });
 
-    test('a country written in Spanish is found through the Spanish names', async () => {
-        const { impl, calls } = fakeFetch();
-        const w = await fetchCityWeather('Springfield, Estados Unidos', { fetchImpl: impl, retryDelayMs: 0 });
-        expect(w.place.country).toBe('Estados Unidos');
-        expect(calls.some(u => u.includes('language=es'))).toBe(true);
+    test('a region that matches nothing is an error, not the first city in that country', async () => {
+        const { impl } = fakeFetch({ geoEs: { results: [] } });
+        await expect(fetchCityWeather('Springfield, Oregon, United States', { fetchImpl: impl, retryDelayMs: 0 }))
+            .rejects.toThrow(/no place called "Springfield" was found in United States/);
+    });
+
+    test('a hint that repeats the city adds nothing, and a county of that name elsewhere is not it', async () => {
+        const geo = { results: [
+            place('Lima', 'Peru', 'PE', -12.0, -77.0, 'Lima Province'),
+            { ...place('Limaville', 'Paraguay', 'PY', -23.9, -56.5, 'San Pedro'), admin2: 'Lima' },
+        ] };
+        const { impl, calls } = fakeFetch({ geo });
+        await fetchCityWeather('Lima, Lima', { fetchImpl: impl, retryDelayMs: 0 });
+        expect(latOf(calls)).toBe('-12');
+    });
+
+    test('a US state code works, and an exact name beats a renamed town near the top', async () => {
+        const geo = { results: [
+            place('Springfield', 'United States', 'US', 37.2, -93.3, 'Missouri'),
+            // The service also matches old names: this town is called Jackson now.
+            place('Jackson', 'United States', 'US', 43.6, -95.0, 'Minnesota'),
+            ...Array.from({ length: 12 }, (_, i) => place('Springfield', 'United States', 'US', 30 + i, -80, `State ${i}`)),
+            place('Springfield', 'United States', 'US', 44.2, -94.9, 'Minnesota'),
+        ] };
+        const byName = fakeFetch({ geo });
+        const w = await fetchCityWeather('Springfield, Minnesota', { fetchImpl: byName.impl, retryDelayMs: 0 });
+        expect(w.place.name).toBe('Springfield');
+        expect(latOf(byName.calls)).toBe('44.2');
+        const byCode = fakeFetch({ geo });
+        await fetchCityWeather('Springfield, MN', { fetchImpl: byCode.impl, retryDelayMs: 0 });
+        expect(latOf(byCode.calls)).toBe('44.2');
+    });
+
+    test('only commas is no city at all', async () => {
+        await expect(fetchCityWeather(' , , ', { fetchImpl: fakeFetch().impl, retryDelayMs: 0 })).rejects.toThrow(/a city is required/);
+    });
+
+    test('a country is known by its English name, its Spanish name and the way people write it', async () => {
+        for (const hint of ['United States', 'Estados Unidos', 'USA', 'us', 'EE.UU.']) {
+            const { impl, calls } = fakeFetch();
+            const w = await fetchCityWeather(`Springfield, ${hint}`, { fetchImpl: impl, retryDelayMs: 0 });
+            expect(w.place.country).toBe('United States');
+            expect(latOf(calls)).toBe('37.2');
+        }
+        const au = fakeFetch();
+        await fetchCityWeather('Springfield, Australia', { fetchImpl: au.impl, retryDelayMs: 0 });
+        expect(latOf(au.calls)).toBe('-27.6');
+    });
+
+    test('a city he names in Spanish is the capital, not a village of that name', async () => {
+        // Bare: both lists are asked and the larger place wins.
+        const bare = fakeFetch({ geo: GEO_LONDRES_EN, geoEs: GEO_LONDRES_ES });
+        const w = await fetchCityWeather('Londres', { fetchImpl: bare.impl, retryDelayMs: 0 });
+        expect(w.place.country).toBe('Reino Unido');
+        expect(latOf(bare.calls)).toBe('51.5');
+        // With a country: the English list has no match, the Spanish one does.
+        const hinted = fakeFetch({ geo: GEO_LONDRES_EN, geoEs: GEO_LONDRES_ES });
+        await fetchCityWeather('Londres, Reino Unido', { fetchImpl: hinted.impl, retryDelayMs: 0 });
+        expect(latOf(hinted.calls)).toBe('51.5');
+        // An empty English list does not end the search.
+        const none = fakeFetch({ geo: { results: [] }, geoEs: GEO_LONDRES_ES });
+        await expect(fetchCityWeather('Londres', { fetchImpl: none.impl, retryDelayMs: 0 })).resolves.toMatchObject({ place: { country: 'Reino Unido' } });
     });
 
     test('"City, State" works: the last part may be a region', async () => {
@@ -109,6 +173,10 @@ describe('fetchCityWeather', () => {
         await expect(fetchCityWeather('Springfield', { fetchImpl: fakeFetch({ forecast: nulls }).impl, retryDelayMs: 0 })).rejects.toThrow(/incomplete forecast/);
         const empty = { current: {}, daily: {} };
         await expect(fetchCityWeather('Springfield', { fetchImpl: fakeFetch({ forecast: empty }).impl, retryDelayMs: 0 })).rejects.toThrow(/incomplete forecast/);
+        const strings = { current: { temperature_2m: '', weather_code: 1 }, daily: { time: ['2026-09-18'], temperature_2m_max: ['27'], temperature_2m_min: [10] } };
+        await expect(fetchCityWeather('Springfield', { fetchImpl: fakeFetch({ forecast: strings }).impl, retryDelayMs: 0 })).rejects.toThrow(/incomplete forecast/);
+        const badDay = { ...FORECAST, daily: { ...FORECAST.daily, time: ['2026-99-99'] } };
+        await expect(fetchCityWeather('Springfield', { fetchImpl: fakeFetch({ forecast: badDay }).impl, retryDelayMs: 0 })).rejects.toThrow(/incomplete forecast/);
         const noCoords = { results: [{ name: 'Springfield', country: 'United States', country_code: 'US', latitude: null, longitude: null }] };
         await expect(fetchCityWeather('Springfield', { fetchImpl: fakeFetch({ geo: noCoords }).impl, retryDelayMs: 0 })).rejects.toThrow(/no coordinates/);
     });
@@ -139,12 +207,14 @@ describe('fetchCityWeather', () => {
     test('a place name keeps only what a name needs', async () => {
         const odd = { results: [place('Spring<field> {{ignore}} $x', 'United States', 'US', 37.2, -93.3, 'Missouri')] };
         const w = await fetchCityWeather('Springfield', { fetchImpl: fakeFetch({ geo: odd }).impl, retryDelayMs: 0 });
-        expect(w.place.name).toBe('Springfield ignore x');
+        expect(w.place.name).toBe('Spring field ignore x');
     });
 
     test('the prompt carries the weather, the place and the date', () => {
-        const text = cityImagePrompt('Springfield', { tempC: 21, condition: 'Partly cloudy', highC: 28, lowC: 14, forecastCondition: 'Slight rain', date: '2026-09-18' });
-        expect(text).toContain('CITY=Springfield');
+        const text = cityImagePrompt('Springfield', { tempC: 21, condition: 'Partly cloudy', highC: 28, lowC: 14, forecastCondition: 'Slight rain', date: '2026-09-18', place: { name: 'Springfield', region: 'Illinois', country: 'United States' } });
+        // The scene names the whole place, so the model draws the right city; the title stays short.
+        expect(text).toContain('CITY=Springfield, Illinois, United States');
+        expect(text).toContain('place the title "Springfield"');
         expect(text).toContain('(21°C)');
         expect(text).toContain('High: 28°C, Low: 14°C');
         expect(text).toContain('Friday, 18 September 2026');
@@ -153,7 +223,18 @@ describe('fetchCityWeather', () => {
 
 describe('the cityWeatherImage tool', () => {
     const OLD_FETCH = globalThis.fetch;
-    let spies;
+    const OLD_DATA_DIR = process.env.DATA_DIR;
+    let spies, dataDir;
+
+    // Its own folder, whatever started jest, and the old value put back after.
+    beforeAll(() => {
+        dataDir = fs.mkdtempSync(path.join(require('os').tmpdir(), 'deedee-cityimg-'));
+        process.env.DATA_DIR = dataDir;
+    });
+    afterAll(() => {
+        if (OLD_DATA_DIR === undefined) delete process.env.DATA_DIR; else process.env.DATA_DIR = OLD_DATA_DIR;
+        fs.rmSync(dataDir, { recursive: true, force: true });
+    });
 
     beforeEach(() => {
         globalThis.fetch = fakeFetch().impl;
@@ -217,6 +298,14 @@ describe('the cityWeatherImage tool', () => {
         const out = await run(services(generateContent), 'Springfield');
         expect(out).toEqual({ success: false, error: 'No picture today: the weather service could not be reached.' });
         expect(generateContent).not.toHaveBeenCalled();
+    });
+
+    test('a failed image call says so in our words, never "fetch failed"', async () => {
+        const out = await run(services(jest.fn().mockRejectedValue(new TypeError('fetch failed'))), 'Springfield');
+        expect(out).toMatchObject({ success: false, error: 'No picture today: the image model could not be reached.' });
+        expect(JSON.stringify(out)).not.toMatch(/fetch failed/);
+        // The weather still comes back, so the briefing text can use it.
+        expect(out.weather).toMatchObject({ tempC: 21 });
     });
 
     test('an empty picture is a failure, not a broken file', async () => {

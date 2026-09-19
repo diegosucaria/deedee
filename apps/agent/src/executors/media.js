@@ -51,22 +51,7 @@ class MediaExecutor extends BaseExecutor {
                 const place = weather.place;
                 const title = place.name;
 
-                const imagenModel = agent.configService.getModel('IMAGE');
-                const response = await client.models.generateContent({
-                    model: imagenModel,
-                    contents: cityImagePrompt(title, weather),
-                    // A story picture. The prompt alone does not set the shape:
-                    // without this the model draws its default square. No
-                    // search: the weather and the date are in the prompt.
-                    config: { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: '9:16' } },
-                });
-                new ConfigService().logUsageFromResponse(db, imagenModel, response, message?.metadata?.chatId, 'image_gen');
-
-                const parts = response?.candidates?.[0]?.content?.parts || [];
-                const imagePart = parts.find(p => p.inlineData && String(p.inlineData.mimeType || '').startsWith('image/'));
-                const bytes = imagePart && typeof imagePart.inlineData.data === 'string' ? Buffer.from(imagePart.inlineData.data, 'base64') : null;
-                if (!bytes || bytes.length === 0) return { success: false, error: 'No picture today: the image model returned none.', place, weather: withoutPlace(weather) };
-
+                // The folder first: a disk problem should not cost a paid picture.
                 const dataRoot = process.env.DATA_DIR
                     || ((fs.existsSync('/app') && process.platform !== 'darwin') ? '/app/data' : path.join(process.cwd(), 'data'));
                 // output/ is open to the shell and to sendMessage. A new name
@@ -74,10 +59,43 @@ class MediaExecutor extends BaseExecutor {
                 // shared file would send the same picture twice. A failed day
                 // leaves no file behind to be mistaken for today's.
                 const dir = path.join(dataRoot, 'output', 'briefing');
-                fs.mkdirSync(dir, { recursive: true });
+                try {
+                    fs.mkdirSync(dir, { recursive: true });
+                } catch {
+                    return { success: false, error: 'No picture today: the pictures folder could not be made.', place, weather: withoutPlace(weather) };
+                }
+
+                const imagenModel = agent.configService.getModel('IMAGE');
+                let response;
+                try {
+                    response = await client.models.generateContent({
+                        model: imagenModel,
+                        contents: cityImagePrompt(title, weather),
+                        // A story picture. The prompt alone does not set the shape:
+                        // without this the model draws its default square. No
+                        // search: the weather and the date are in the prompt.
+                        config: { responseModalities: ['TEXT', 'IMAGE'], imageConfig: { aspectRatio: '9:16' } },
+                    });
+                } catch (e) {
+                    // Our own words again: the SDK passes Node's "fetch failed"
+                    // through, and the scheduler drops a reply that says it.
+                    console.warn('[MediaExecutor] cityWeatherImage: the image call failed:', e?.message);
+                    return { success: false, error: 'No picture today: the image model could not be reached.', place, weather: withoutPlace(weather) };
+                }
+                new ConfigService().logUsageFromResponse(db, imagenModel, response, message?.metadata?.chatId, 'image_gen');
+
+                const parts = response?.candidates?.[0]?.content?.parts || [];
+                const imagePart = parts.find(p => p.inlineData && String(p.inlineData.mimeType || '').startsWith('image/'));
+                const bytes = imagePart && typeof imagePart.inlineData.data === 'string' ? Buffer.from(imagePart.inlineData.data, 'base64') : null;
+                if (!bytes || bytes.length === 0) return { success: false, error: 'No picture today: the image model returned none.', place, weather: withoutPlace(weather) };
+
                 sweepOldPictures(dir);
                 const imagePath = path.join(dir, `city-${Date.now()}-${crypto.randomBytes(4).toString('hex')}.png`);
-                fs.writeFileSync(imagePath, bytes);
+                try {
+                    fs.writeFileSync(imagePath, bytes);
+                } catch {
+                    return { success: false, error: 'No picture today: the picture could not be saved.', place, weather: withoutPlace(weather) };
+                }
                 return { success: true, imagePath, bytes: bytes.length, place, weather: withoutPlace(weather) };
             }
 
