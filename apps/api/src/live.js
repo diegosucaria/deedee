@@ -31,8 +31,12 @@ router.get('/config', async (req, res) => {
 // 2. Execute Backend Tools
 router.post('/tools/execute', async (req, res) => {
     try {
-        const { name, args } = req.body;
-        const response = await axios.post(`${AGENT_URL}/tools/execute`, { name, args });
+        const { name, args, sessionId, readWeb } = req.body;
+        const response = await axios.post(`${AGENT_URL}/tools/execute`, {
+            name, args,
+            sessionId: typeof sessionId === 'string' ? sessionId.slice(0, 64) : null,
+            readWeb: readWeb === true
+        });
         res.json(response.data);
     } catch (error) {
         console.error(`[API] Live Tool Error (${req.body.name}):`, error.message);

@@ -2,7 +2,7 @@
 
 import { useState, useEffect, useRef } from 'react';
 import { getLiveToken, executeLiveTool, getLiveConfig, getAgentTools } from './actions';
-import { liveWebSocketUrl, buildLiveSetup, realtimeAudioMessage, messageSizeBytes, sessionCountdown, closeOutcome } from './live-session';
+import { liveWebSocketUrl, buildLiveSetup, realtimeAudioMessage, messageSizeBytes, sessionCountdown, closeOutcome, messageShowsWebReading } from './live-session';
 import { Mic, MicOff, PhoneOff, Settings2, Terminal, X } from 'lucide-react';
 import AudioSettingsDialog from '@/components/AudioSettingsDialog';
 import clsx from 'clsx';
@@ -41,6 +41,12 @@ export default function GeminiLivePage() {
     // True once the socket opened. A close before that is a failed connect,
     // not a session that ran its course.
     const sessionOpenedRef = useRef(false);
+    // What the agent cannot see of a call: which session this is, and whether
+    // the model has read the web through Google's built-in search. Both go
+    // with every tool call, so his word stops covering what goes out once
+    // the call has read a stranger's text, for the rest of that call.
+    const liveSessionIdRef = useRef(null);
+    const readWebRef = useRef(false);
 
 
     const log = (msg) => setLogs(p => [...p.slice(-4), msg]);
@@ -75,6 +81,8 @@ export default function GeminiLivePage() {
             setStatus('connecting');
             setExpiresAt(null);
             sessionOpenedRef.current = false;
+            liveSessionIdRef.current = (globalThis.crypto?.randomUUID?.() || `${Date.now()}-${Math.random().toString(36).slice(2)}`);
+            readWebRef.current = false;
             log('Getting Config & Token...');
 
             // Parallel fetch for speed
@@ -147,6 +155,11 @@ export default function GeminiLivePage() {
                     clearAudioQueue();
                 }
 
+                if (!readWebRef.current && messageShowsWebReading(data)) {
+                    readWebRef.current = true;
+                    log('The model read the web: actions that reach other people will ask first.');
+                }
+
                 // Tool Call
                 // API v1alpha might return it at top level or inside serverContent
                 const toolCall = data.toolCall || data.serverContent?.toolCall;
@@ -192,7 +205,7 @@ export default function GeminiLivePage() {
             try {
                 // Proxy to Backend
                 console.log(`[Live] Executing tool: ${call.name} with args:`, call.args);
-                const res = await executeLiveTool(call.name, call.args);
+                const res = await executeLiveTool(call.name, call.args, { sessionId: liveSessionIdRef.current, readWeb: readWebRef.current });
                 console.log(`[Live] Tool ${call.name} result:`, res);
 
                 if (res.success) {

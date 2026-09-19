@@ -720,7 +720,10 @@ class ApprovalService {
         let owner = false;
         try { owner = await this._isOwnerChat(message); } catch { owner = false; }
         // A resumed run's text is ours, not his: only his stored messages count.
-        const text = continuationOf(message) ? '' : (typeof message?.content === 'string' ? message.content : '');
+        // Nor is a voice call's: its content is our own "[live] <tool>" label,
+        // and what he said never passes through the agent.
+        const spoken = splitChannel(message?.source).channel === 'live';
+        const text = continuationOf(message) || spoken ? '' : (typeof message?.content === 'string' ? message.content : '');
         const earlier = owner ? this._earlierOwnerMessages(message, text) : [];
         return { kind, jobName: null, ownerMessage: owner && text ? text : null, earlierOwnerMessages: earlier, ownerChat: owner };
     }
@@ -801,7 +804,10 @@ class ApprovalService {
             // command is an honest miss ("top", a closed folder), not a probe.
             // It must not stop his run or raise a "steered run" alarm. Jobs,
             // watchers, sub-agents, tainted runs and contacts' chats still count.
-            const ownRun = foreignText === false && historyUntrusted === false && await this._ownerConsent(message, taint);
+            // Not in a voice call: what he said never reaches us, so a refused
+            // command there cannot be told from a probe.
+            const spokenRun = splitChannel(message?.source).channel === 'live';
+            const ownRun = !spokenRun && foreignText === false && historyUntrusted === false && await this._ownerConsent(message, taint);
             return this._refuseShell({ message, toolName, run, base, reason: guard.reason, counts: !ownRun });
         }
         if (guard.denied) {
@@ -1173,6 +1179,9 @@ class ApprovalService {
         const channel = splitChannel(message?.source).channel;
         if (!chatId) return false;
         if (channel === 'web') return true;
+        // A voice call: his only when the route saw the gateway's token, which
+        // only his logged-in web session can reach (routes/tools.js).
+        if (channel === 'live') return message?.metadata?.ownerSession === true;
         if (channel === 'telegram') return telegramOwnerIds().includes(String(chatId));
         if (channel === 'whatsapp') return this._isOwnerWaChat(chatId);
         return false;

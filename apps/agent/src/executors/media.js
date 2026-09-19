@@ -151,7 +151,12 @@ class MediaExecutor extends BaseExecutor {
             case 'replyWithAudio': {
                 const { client, db, agent } = services;
                 const text = args.text;
-                const language = args.languageCode || args.language || 'detect';
+                // Sent to the speech call when it looks like a language tag. A
+                // refactor once dropped it: the value was logged and never
+                // used, so the accent was whatever the model guessed.
+                const asked = String(args.languageCode || args.language || '').trim();
+                const languageCode = /^[A-Za-z]{2,3}(?:-[A-Za-z0-9]{2,8})*$/.test(asked) ? asked : null;
+                const language = languageCode || 'detect';
 
                 // Fetch Voice Setting (Memory -> DB -> Default)
                 let voiceName = 'Kore'; // Default
@@ -179,7 +184,7 @@ class MediaExecutor extends BaseExecutor {
                 console.log(`[MediaExecutor] Generating audio with Model: ${modelName} for: "${text.substring(0, 30)}..." (Voice: ${voiceName}, Lang: ${language})`);
 
                 const ttsStart = Date.now();
-                const audioResponse = await client.models.generateContent({
+                const speak = (withLanguage) => client.models.generateContent({
                     model: modelName,
                     contents: [{
                         parts: [{ text: `Please read the following text aloud in a natural, fast-paced, clear voice. Return ONLY the audio data. Text: "${text}"` }]
@@ -191,10 +196,24 @@ class MediaExecutor extends BaseExecutor {
                                 prebuiltVoiceConfig: {
                                     voiceName: voiceName
                                 }
-                            }
+                            },
+                            ...(withLanguage && languageCode ? { languageCode } : {})
                         }
                     }
                 });
+                let audioResponse;
+                try {
+                    audioResponse = await speak(true);
+                } catch (err) {
+                    // A model that does not know the code must not cost him
+                    // the answer: say it once more and let the model guess.
+                    // A real bad request only. The SDK's message holds the whole error
+                    // body, and a quota error names "generativelanguage.googleapis.com".
+                    const rejected = languageCode && (err?.status === 400 || /INVALID_ARGUMENT/.test(String(err?.message || '')));
+                    if (!rejected) throw err;
+                    console.warn(`[MediaExecutor] The speech model refused language "${languageCode}" (${String(err.message).slice(0, 120)}). Retrying without it.`);
+                    audioResponse = await speak(false);
+                }
                 const ttsDuration = Date.now() - ttsStart;
                 console.log(`[MediaExecutor] TTS Generation took ${ttsDuration}ms`);
 

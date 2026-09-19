@@ -63,7 +63,7 @@ Each tool in `tools-definition.js` has a `category` field used for automatic too
 |----------|-------------|---------------|
 | `memory` | Remember/recall facts, search history, journal | `rememberFact`, `searchMemory`, `consolidateMemory` |
 | `goals` | Agent's multi-session resumable work | `addGoal`, `updateGoalProgress`, `completeGoal` |
-| `scheduler` | Job scheduling, state persistence | `scheduleJob`, `saveJobState`, `getJobState` |
+| `scheduler` | Reminders, jobs, timed tasks, state persistence | `setReminder`, `scheduleJob`, `scheduleTask`, `saveJobState`, `getJobState` |
 | `filesystem` | File I/O, shell commands, git | `readFile`, `writeFile`, `runShellCommand` |
 | `search` | Web search | `googleSearch` |
 | `generative` | Image generation, TTS | `generateImage`, `replyWithAudio` |

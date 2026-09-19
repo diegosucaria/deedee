@@ -136,3 +136,27 @@ describe('closeOutcome', () => {
         expect(closeOutcome(undefined, true).message).toBe('Session ended.');
     });
 });
+
+describe('messageShowsWebReading', () => {
+    // The call's setup turns on Google's built-in search. Its results reach
+    // the model without passing through our tool route, so only the page can
+    // tell the agent that the call has read the web.
+    const { messageShowsWebReading } = require('../src/app/live/live-session.js');
+
+    test('a grounded turn is seen, in the shape the Live API sends', () => {
+        expect(messageShowsWebReading({ serverContent: { modelTurn: { parts: [{ text: 'x' }] }, groundingMetadata: { webSearchQueries: ['q'], groundingChunks: [{ web: { uri: 'https://example.com' } }] } } })).toBe(true);
+        expect(messageShowsWebReading({ serverContent: { turnComplete: true, groundingMetadata: {} } })).toBe(true);
+    });
+
+    test('a renamed or nested field is still seen', () => {
+        expect(messageShowsWebReading({ serverContent: { modelTurn: { parts: [{ grounding_metadata: {} }] } } })).toBe(true);
+        expect(messageShowsWebReading({ serverContent: { searchEntryPoint: { renderedContent: '<div/>' } } })).toBe(true);
+    });
+
+    test('ordinary turns, audio and tool calls are not web reading', () => {
+        expect(messageShowsWebReading({ serverContent: { modelTurn: { parts: [{ inlineData: { mimeType: 'audio/pcm', data: 'AAAA' } }] } } })).toBe(false);
+        expect(messageShowsWebReading({ toolCall: { functionCalls: [{ name: 'getFact', args: { key: 'grounding' } }] } })).toBe(false);
+        expect(messageShowsWebReading({ setupComplete: {} })).toBe(false);
+        expect(messageShowsWebReading(null)).toBe(false);
+    });
+});

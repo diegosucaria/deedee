@@ -241,7 +241,7 @@ const toolDefinitions = [
       {
         name: "pullLatestChanges",
         category: "filesystem",
-        description: "Updates the codebase by pulling the latest changes from the remote repository. IMPORTANT: Upon success, do NOT report 'I have pulled changes'. Proceed IMMEDIATELY to the next step (e.g., listDirectory, readFile).",
+        description: "Resets the work tree to origin/master (a fetch plus `git reset --hard`). Edits to tracked files that you have not committed are lost (new, untracked files stay). Call it at the start of a coding task, or after the owner merges your pull request — never in between. IMPORTANT: Upon success, do NOT report 'I have pulled changes'. Proceed IMMEDIATELY to the next step (e.g., listDirectory, readFile).",
         parameters: {
           type: "OBJECT",
           properties: {},
@@ -443,7 +443,7 @@ const toolDefinitions = [
         parameters: {
           type: "OBJECT",
           properties: {
-            query: { type: "STRING", description: "Name to search for (e.g. 'Mom', 'Diego')." },
+            query: { type: "STRING", description: "Name to search for (e.g. 'Mom', 'Alice')." },
             session: { type: "STRING", description: "Optional. Session to search in. Default: 'user'." }
           },
           required: ["query"]
@@ -571,7 +571,7 @@ const toolDefinitions = [
       {
         name: "replyWithAudio",
         category: "generative",
-        description: "Generate and send an audio response (text-to-speech) to the user using Gemini TTS. FAIL if the user did NOT explicitly request an audio/voice response. Do NOT use this for simple greetings.",
+        description: "Generate and send an audio response (text-to-speech) using Gemini TTS. Default to text: use it when the user sent a voice message, when he asks you to speak, or when an OUTPUT RESTRICTION block in this turn says he is on voice. Do not use it for a typed greeting, or when an OUTPUT RESTRICTION block asks for text only.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -1194,7 +1194,7 @@ const toolDefinitions = [
       {
         name: "searchSlack",
         category: "slack",
-        description: "Search Slack messages across channels and DMs. WARNING: If the user asks to summarize messages, find tasks for the day, or asks 'what happened yesterday', DO NOT use this tool. This tool is for SPECIFIC keyword lookups ONLY. Instead, use getSlackMonitoredChannels and readSlackHistory to scan their important conversations. You MUST use Slack's advanced search syntax to filter results efficiently and avoid hitting limits. Examples: 'from:@U01P1A8BUCQ', 'in:#channel', 'has:link', 'after:2024-01-01'. IMPORTANT: When filtering by person, ALWAYS call resolveSlackUser FIRST to get their exact userId, then use 'from:@USERID' syntax. NEVER guess usernames or try multiple name variations.",
+        description: "Search Slack messages across channels and DMs. WARNING: If the user asks to summarize messages, find tasks for the day, or asks 'what happened yesterday', DO NOT use this tool. This tool is for SPECIFIC keyword lookups ONLY. Instead, use getSlackMonitoredChannels and readSlackHistory to scan their important conversations. You MUST use Slack's advanced search syntax to filter results efficiently and avoid hitting limits. Examples: 'from:@U01EXAMPLE1', 'in:#channel', 'has:link', 'after:2024-01-01'. IMPORTANT: When filtering by person, ALWAYS call resolveSlackUser FIRST to get their exact userId, then use 'from:@USERID' syntax. NEVER guess usernames or try multiple name variations.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -1248,11 +1248,11 @@ const toolDefinitions = [
       {
         name: "resolveSlackUser",
         category: "slack",
-        description: "Resolve a person's name to their Slack user ID and username. ALWAYS call this FIRST when the user asks about messages from a specific person (e.g., 'what did Sean say?'). Returns the user's Slack ID, real name, display name, and email so you can use their exact ID in searchSlack queries (e.g., 'from:@U01P1A8BUCQ') or readSlackHistory. This avoids guessing usernames.",
+        description: "Resolve a person's name to their Slack user ID and username. ALWAYS call this FIRST when the user asks about messages from a specific person (e.g., 'what did Alice say?'). Returns the user's Slack ID, real name, display name, and email so you can use their exact ID in searchSlack queries (e.g., 'from:@U01EXAMPLE1') or readSlackHistory. This avoids guessing usernames.",
         parameters: {
           type: "OBJECT",
           properties: {
-            name: { type: "STRING", description: "The name (or partial name) to search for (e.g., 'Sean', 'alice')." },
+            name: { type: "STRING", description: "The name (or partial name) to search for (e.g., 'Alice', 'bob')." },
             workspace: { type: "STRING", description: "Optional. The specific workspace team ID to search in. If omitted, searches all workspaces." }
           },
           required: ["name"]

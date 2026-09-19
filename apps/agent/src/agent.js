@@ -25,6 +25,7 @@ const { BackupManager } = require('./backup');
 const { Scheduler } = require('./scheduler');
 const axios = require('axios');
 const { getSystemInstruction, getTurnContext } = require('./prompts/system');
+const { getGrokSystemInstruction } = require('./prompts/grok');
 const { filterToolsByGroups, ToolGroupMemory, groupsNamedIn, sortToolsByName, listedRunTools, UNLISTED_TOOL_TEXT } = require('./services/tool-groups');
 const { getFunctionCalls, getThinkingMessage } = require('./utils/helpers');
 const { usageTag, promptComposition, usageColumns } = require('./services/usage-attribution');
@@ -1191,19 +1192,28 @@ class Agent {
   /**
    * Generates stream from Grok/OpenAI client and broadcasts tokens.
    */
-  async _generateStreamGrok(client, model, userContent, history, chatId, turnId) {
+  async _generateStreamGrok(client, model, userContent, history, chatId, turnId, systemPrompt = '') {
     try {
-      // 1. Map History
-      const messages = geminiToOpenAIHistory(history);
+      // 1. Map History. Tool rows carry no text and map to empty messages,
+      // which an OpenAI-style API may refuse: leave them out.
+      const messages = geminiToOpenAIHistory(history).filter(m => typeof m.content === 'string' && m.content.trim());
 
-      // 2. Add current user message
-      messages.push({ role: 'user', content: userContent });
+      // 2. Add current user message. It is saved before this runs, so the
+      // history often ends with it already: never twice. A photo or a voice
+      // note has no text, and this model reads none of it: say so, rather
+      // than send a message with no content, which the API refuses.
+      const asked = typeof userContent === 'string' && userContent.trim()
+        ? userContent
+        : '[The owner sent an attachment. This model cannot read it: say so, and ask him to send it again with the default model.]';
+      const last = messages[messages.length - 1];
+      if (!(last && last.role === 'user' && last.content === asked)) messages.push({ role: 'user', content: asked });
 
       // 3. Create Stream
       const stream = await client.chat.completions.create({
         model: model,
         messages: [
-          { role: 'system', content: this.currentSystemPrompt || 'You are DeeDee, a helpful AI assistant.' }, // Fallback if not set
+          // The prompt of THIS turn: it used to sit on the agent, where two turns at once could swap theirs.
+          { role: 'system', content: systemPrompt || 'You are Deedee, a helpful AI assistant.' },
           ...messages
         ],
         stream: true,
@@ -1836,7 +1846,6 @@ class Agent {
         // --- PREPARE SYSTEM PROMPT FOR GROK ---
         const contextQuery = message.content || (message.parts ? message.parts.map(p => p.text).join(' ') : '');
         const facts = this._factsBlock(contextQuery);
-        const activeGoals = this._formatGoals(this.db.getPendingGoals(), turnTaint);
 
         let vaultContext = null;
         const activeTopic = this.activeTopics.get(chatId);
@@ -1849,24 +1858,15 @@ class Agent {
 
         // Context-aware skill injection: only inject on-demand skills that match the user message
         const skillsContext = this.skillService.getContextualInstructions(contextQuery);
-        const notificationContext = {
-            ownerName: this.settings?.owner_name || 'the user',
-            ownerPhone: this.settings?.owner_phone || '',
-            notificationChannel: this.settings?.notification_channel || 'whatsapp'
-        };
-        let grokSystemPrompt = getSystemInstruction(timeString, activeGoals, facts, { codingMode: true, vaultContext, skillsContext, notificationContext, communicationStyle: this.settings?.communication_style || '' });
+        // No tools go to this model, so it gets no tool rules (prompts/grok.js).
+        const grokSystemPrompt = getGrokSystemInstruction({
+          dateString: timeString, facts, vaultContext, skillsContext,
+          communicationStyle: this.settings?.communication_style || '',
+          ownerName: this.settings?.owner_name || ''
+        });
+        console.log(`${logPrefix} [Context] External model prompt: ~${grokSystemPrompt.length} chars.`);
 
-        // Add Tool Manifest since Grok can't see definitions natively yet
-        grokSystemPrompt += `\n\n ** AVAILABLE TOOLS(You cannot execute them directly, but you know they exist):**\n` +
-          `- googleSearch: Search the web.\n` +
-          `- replyWithAudio: Speak to the user.\n` +
-          `- rememberFact / getFact: Memory.\n` +
-          `- addGoal / updateGoalProgress / completeGoal: Resumable multi-session work (your own tasks only).\n` +
-          `- Smart Home: Control lights, vacuum, etc.\n`;
-
-        this.currentSystemPrompt = grokSystemPrompt;
-
-        const stream = await this._generateStreamGrok(this.xaiClient, targetModel, message.content, history, chatId, turnId);
+        const stream = await this._generateStreamGrok(this.xaiClient, targetModel, message.content, history, chatId, turnId, grokSystemPrompt);
 
         // Handle stream and callback similar to _generateStream but adapted
         // _generateStreamGrok handles streaming and broadcasting directly
@@ -2096,9 +2096,13 @@ class Agent {
       // 1. Native Search (Grounding): Faster, Cheaper, Better Citations. BUT cannot mix with other tools (e.g. replyWithAudio).
       // 2. Standard Mode (Polyfill): Slower, separate session. BUT allows mixing search + text-to-speech.
 
+      // Named once: the mode pick below and the prompt block further down
+      // must agree on what an audio turn is.
+      const hasAudioInput = message.content === '[Voice]'
+        || !!(message.parts && message.parts.some(p => p.inlineData?.mimeType?.startsWith('audio/')));
       const isAudioContext =
         // Input is Audio
-        (message.content === '[Voice]' || (message.parts && message.parts.some(p => p.inlineData?.mimeType?.startsWith('audio/')))) ||
+        hasAudioInput ||
         // Output explicitly requested as Audio (e.g. iOS Shortcut)
         ['iphone', 'ios_shortcut'].includes(message.source) ||
         message.metadata?.replyMode === 'audio';
@@ -2176,11 +2180,14 @@ class Agent {
 
       // Names only, read each turn so a fresh save shows up at once.
       const browserSecretNames = browserSecrets.readSecretNames(this.dataDir);
+      // The names say which sites he uses. A run that cannot type them does
+      // not read them: jobs and watcher runs read email and contacts' chats.
+      const hasBrowserTools = allTools.some(t => typeof t?.name === 'string' && t.name.startsWith('browser_'));
       let systemInstruction = getSystemInstruction(
         timeString,
         activeGoals,
         facts,
-        { codingMode: !isLightweight, vaultContext, skillsContext, notificationContext, isLightweight, communicationStyle: this.settings?.communication_style || '', dynamicInTurn: !isLightweight, browserSecretNames }
+        { codingMode: !isLightweight, vaultContext, skillsContext, notificationContext, isLightweight, communicationStyle: this.settings?.communication_style || '', dynamicInTurn: !isLightweight, browserSecretNames, browserTools: hasBrowserTools }
       );
       // Time, goals, skills, vault and location change per message, so they go
       // in the user turn and the system instruction stays cacheable.
@@ -2190,7 +2197,7 @@ class Agent {
         skillsContext,
         vaultContext,
         location: message.metadata?.location,
-        browserSecretNames
+        browserSecretNames: hasBrowserTools ? browserSecretNames : null
       });
 
       console.log(`${logPrefix} [Context] System Instruction Size: ~${systemInstruction.length} chars(~${Math.round(systemInstruction.length / 4)} tokens)${isLightweight ? ' (lightweight)' : ''}.`);
@@ -2200,14 +2207,21 @@ class Agent {
         // If we are acting on behalf of the user (whatsapp:user), we must sound like them.
         systemInstruction += `\n
         \n === IMPERSONATION & TONE MATCHING ===
-          IF you are asked to draft a message for the user, or if you are replying via the 'user'(whatsapp: user) session:
-        1. ** Analyze History **: Look at the user's previous messages in the chat history.
-        2. ** Match Tone **: Mimic their style, brevity, capitalization(lowercase ?), and emoji usage.
-        3. ** Be Natural **: Do not sound like an AI.Use "I", not "Deedee".
+          IF you are asked to draft a message for the user, or if you are replying via the 'user' (whatsapp:user) session:
+        1. **His own messages**: in that chat his messages are the ones 'readChatHistory' marks "Me"; "Them" is the contact. Mirror him, never the contact.
+        2. **Match Tone**: Mimic his style, brevity, capitalization (lowercase?), and emoji usage.
+        3. **Be Natural**: Do not sound like an AI. Use "I", not "Deedee".
+        This never applies to what you say back to the owner, and never to a watcher report: there you write as Deedee.
         --------------------------------
         `;
 
-        if (['iphone', 'ios_shortcut'].includes(message.source)) {
+        // The audio endpoint posts the recording itself: the model hears him,
+        // it does not read error-prone dictation. No turn loses the brake.
+        if (['iphone', 'ios_shortcut'].includes(message.source) && hasAudioInput) {
+          systemInstruction += `\n
+              **AUDIO INPUT**: You are hearing the owner's own recording. If the words are unclear or the request is ambiguous, ask before you run a tool.
+          `;
+        } else if (['iphone', 'ios_shortcut'].includes(message.source)) {
           systemInstruction += `\n
               **DICTATION SAFEGUARD**: You are receiving input from iOS Voice Dictation. It is prone to errors.
               - If the user's request is AMBIGUOUS, resembles gibberish, or matches a tool only weakly (e.g. "turn on the light" but no room specified, or "play movie" but name is garbled), DO NOT EXECUTE THE TOOL.
@@ -2223,8 +2237,17 @@ class Agent {
         if (replyMode === 'text') {
           systemInstruction += `\n
               **OUTPUT RESTRICTION**: The user has explicitly requested a TEXT-ONLY response.
-              - DO NOT call the 'replyWithAudio' tool.
+              - DO NOT call the 'replyWithAudio' tool, even if the message came in as voice or from iOS.
+              - This overrides the AUDIO PROTOCOL above.
               - Provide your response purely as text.
+          `;
+        } else if (useNativeSearch) {
+          // Native search declares no functions at all: ordering the tool
+          // would ask for a call that cannot be made.
+          systemInstruction += `\n
+              **OUTPUT RESTRICTION**: Audio is not available this turn (native search mode).
+              - The 'replyWithAudio' tool is not loaded. Do not try to call it.
+              - Answer in text.
           `;
         } else if (isIOS || (replyMode === 'audio' && !message.parts)) {
           systemInstruction += `\n

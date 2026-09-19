@@ -27,12 +27,13 @@ export async function getLiveToken() {
     }
 }
 
-export async function executeLiveTool(name, args) {
+export async function executeLiveTool(name, args, session = {}) {
     await requireActionSession();
     try {
         const response = await fetchAPI('/v1/live/tools/execute', {
             method: 'POST',
-            body: JSON.stringify({ name, args })
+            // The call's id and whether its model has read the web: the agent sees neither on its own.
+            body: JSON.stringify({ name, args, sessionId: session?.sessionId || null, readWeb: session?.readWeb === true })
         });
         return { success: true, result: response.result };
     } catch (error) {
