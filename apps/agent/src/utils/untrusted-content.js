@@ -57,7 +57,7 @@ const INTERNAL_TRUSTED = Object.freeze(new Set([
     'addGoal', 'updateGoalProgress', 'completeGoal',
     'readFile', 'writeFile', 'listDirectory', 'rollbackLastChange', 'pullLatestChanges', 'commitAndPush',
     'logJournal', 'scheduleJob', 'listJobs', 'cancelJob', 'setReminder', 'scheduleTask',
-    'generateImage', 'lookupDevice', 'learnDevice', 'listDeviceAliases', 'deleteDeviceAlias',
+    'generateImage', 'cityWeatherImage', 'lookupDevice', 'learnDevice', 'listDeviceAliases', 'deleteDeviceAlias',
     'sendMessage', 'searchContacts', 'listPeople', 'getPerson', 'searchPeople', 'updatePerson', 'deletePerson',
     'addWatcher', 'replyWithAudio',
     'createVault', 'deleteVault', 'listVaults', 'addToVault', 'readVaultPage', 'writeVaultPage', 'listVaultFiles',

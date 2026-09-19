@@ -20,6 +20,9 @@ const INTERNAL_CATEGORY_GROUPS = {
     slack: 'slack',
     vault: 'docs',
     rag: 'docs',
+    // The briefing picture: the morning job names it in its own tool list, so
+    // a chat needs it only when the owner asks for that picture.
+    briefing: 'briefing',
 };
 
 // MCP server name → group. Servers not listed here are always sent, so a newly
@@ -48,6 +51,7 @@ const TOOL_GROUPS = {
     flights: 'Pilotfy flight school: lessons, bookings, flight hours',
     health: 'Sanatorio Allende medical appointments ("turnos"): search, book, cancel',
     code: 'repo files, shell, git, editing this codebase',
+    briefing: "the morning briefing's picture: today's weather drawn over a city",
 };
 
 // Words that name an integration outright. A message that names one always

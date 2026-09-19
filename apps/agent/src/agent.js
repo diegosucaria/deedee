@@ -3085,7 +3085,9 @@ class Agent {
     // If an argument is "$SECRET_KEY", replace it with the actual value from SkillService.
     // browser_ tools skip this: the browser server swaps secret NAMES for
     // values itself, so names must reach it as typed.
-    if (this.skillService && !String(executionName).startsWith('browser_')) {
+    // cityWeatherImage sends its argument to a weather service and draws it on
+    // a picture, so a "$NAME" there must stay a name and never become a secret.
+    if (this.skillService && !String(executionName).startsWith('browser_') && executionName !== 'cityWeatherImage') {
       const allSecrets = this.skillService.getAllEnabledSecrets();
 
       const resolveSecrets = (obj) => {
