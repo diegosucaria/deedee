@@ -52,8 +52,8 @@ function originOf(row) {
  * Approvals card: tool calls that wait for the owner, the two expiry times
  * and the deny-list. Saved as the `approvals` agent setting.
  *
- * Without `onSave` the card shows only the queue, so the /approvals page can
- * reuse it and leave the rules on the settings tab.
+ * Without `onSave` the card shows only the queue, so the Approvals tab of the
+ * Brain page can reuse it and leave the rules on the settings tab.
  */
 export default function ApprovalsSettings({ value, onSave }) {
     const saved = value && typeof value === 'object' ? value : DEFAULTS;
