@@ -53,7 +53,9 @@ function filterCalendarResult(toolName, result, settings, mcpToolMap, args, mcpC
     const account = mcpConfig?.[toolEntry.name]?.env?.GOOGLE_WORKSPACE_CLI_ACCOUNT;
     const primaryId = typeof account === 'string' && account.trim() ? account.trim().toLowerCase() : null;
 
-    const filtered = filterParsed(parsed, allowedIds, calendarIdOf(args), primaryId);
+    // 'get', 'events.get' and 'Events.Get' are the same method.
+    const method = String(args?.method || '').split('.').pop().trim().toLowerCase();
+    const filtered = filterParsed(parsed, allowedIds, calendarIdOf(args), primaryId, method);
     if (filtered === parsed) return result; // no change
 
     return { ...result, output: JSON.stringify(filtered) };
@@ -75,7 +77,7 @@ function calendarIdOf(args) {
 /**
  * Route to the right filter based on response shape.
  */
-function filterParsed(obj, allowedIds, calendarId = null, primaryId = null) {
+function filterParsed(obj, allowedIds, calendarId = null, primaryId = null, method = '') {
     if (!obj || typeof obj !== 'object') return obj;
 
     // calendarList.list → { kind: "calendar#calendarList", items: [...] }
@@ -96,18 +98,18 @@ function filterParsed(obj, allowedIds, calendarId = null, primaryId = null) {
     }
 
     // events.get: one event. It used to pass whole, whatever calendar it was on.
-    if (!Array.isArray(obj) && obj.start && (obj.kind === 'calendar#event' || obj.organizer || obj.summary)) {
+    // Only a READ is judged. The result of insert, patch, update, move or
+    // quickAdd is a single event too: turning that into an error would tell
+    // the model a meeting was not created when Google did create it, and it
+    // would create it again.
+    if ((!method || method === 'get') && !Array.isArray(obj) && obj.start) {
         return filterEventsArray([obj], allowedIds, calendarId, primaryId).length === 1
             ? obj
             : { error: 'That event is on a calendar the owner has not made visible.' };
     }
 
-    // freebusy.query: busy blocks per calendar, under `calendars`.
-    if (obj.kind === 'calendar#freeBusy' && obj.calendars && typeof obj.calendars === 'object') {
-        const visible = visibility(allowedIds, primaryId);
-        const kept = Object.fromEntries(Object.entries(obj.calendars).filter(([id]) => visible.calendar(id) === true));
-        return Object.keys(kept).length === Object.keys(obj.calendars).length ? obj : { ...obj, calendars: kept };
-    }
+    // free/busy is left as it comes: it holds busy blocks only, no titles or
+    // guests, and "when is this person free" is the question it exists for.
 
     return obj;
 }
@@ -154,16 +156,15 @@ function filterEventsList(response, allowedIds, calendarId = null, primaryId = n
  * `primary` is a nickname for the account's own calendar, whose real id is
  * the account's address. With an allow-list it is visible only when that id
  * is ticked: an owner who unticks his own calendar and leaves a shared one
- * must not see it again because a call said `primary`. When the account is
- * not known, a plain address on the list (not a group or an imported
- * calendar) stands for it.
+ * must not see it again because a call said `primary`.
  */
 function visibility(allowedIds, primaryId) {
     const allowed = allowedIds ? new Set([...allowedIds].map(id => String(id).toLowerCase())) : null;
-    const looksLikeAccount = (id) => /^[^@\s#]+@[^@\s]+$/.test(id) && !/@(?:group|import|resource)\.calendar\.google\.com$/.test(id);
-    const primaryVisible = !allowed
-        ? true
-        : (primaryId ? allowed.has(primaryId) : [...allowed].some(looksLikeAccount));
+    // With a list, `primary` shows only when the account's own address is
+    // ticked. An account we cannot name (every writer of the config names it)
+    // keeps `primary` hidden: guessing from the list let a ticked colleague's
+    // address open the owner's whole calendar.
+    const primaryVisible = !allowed ? true : (primaryId ? allowed.has(primaryId) : false);
     return {
         allowed,
         primaryVisible,
@@ -200,13 +201,15 @@ function filterEventsArray(events, allowedIds, calendarId = null, primaryId = nu
     if (read === true) return events;
     if (read === false) return [];
     return events.filter(ev => {
+        // An event made ON a shared calendar names that calendar as its
+        // organizer: a ticked one shows, whoever made the event.
+        const organizer = ev?.organizer?.email ? String(ev.organizer.email).toLowerCase() : null;
+        if (visible.allowed && organizer && visible.allowed.has(organizer)) return true;
         const his = ev?.organizer?.self === true || ev?.creator?.self === true
             || (Array.isArray(ev?.attendees) && ev.attendees.some(a => a?.self === true));
         if (his) return visible.primaryVisible;
         if (!visible.allowed) return false; // primary-only: not his event
-        const organizer = ev?.organizer?.email;
-        if (!organizer) return true; // keep if we can't determine source
-        return visible.allowed.has(String(organizer).toLowerCase());
+        return !organizer; // keep if we can't determine source
     });
 }
 
