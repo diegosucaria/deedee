@@ -111,4 +111,12 @@ describe('sortToolsByName', () => {
         expect(list.map(t => t.name)).toEqual(['b', 'a']);
         expect(sortToolsByName(null)).toEqual([]);
     });
+
+    test('a tool with no name still lands in one fixed place', () => {
+        const a = [{ name: 'b' }, {}, { name: 'a' }, null];
+        const b = [null, { name: 'a' }, {}, { name: 'b' }];
+        const names = (list) => sortToolsByName(list).map(t => t?.name || '');
+        expect(names(a)).toEqual(['', '', 'a', 'b']);
+        expect(names(b)).toEqual(names(a));
+    });
 });

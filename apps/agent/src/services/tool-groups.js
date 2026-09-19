@@ -145,7 +145,9 @@ class ToolGroupMemory {
  * for nothing. A plain code-point compare: the same on every machine.
  */
 function sortToolsByName(tools) {
-    return [...(tools || [])].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+    // A tool with no name sorts as '': comparing undefined would give no order at all.
+    const key = (t) => String(t?.name || '');
+    return [...(tools || [])].sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
 }
 
 module.exports = { TOOL_GROUPS, INTERNAL_CATEGORY_GROUPS, mcpServerGroup, filterToolsByGroups, ToolGroupMemory, groupsNamedIn, sortToolsByName };

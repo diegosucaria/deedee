@@ -259,8 +259,10 @@ Env overrides, read on every call, so a Balena variable is the rollback:
 - `THINKING_<ROLE>` sets every class of that role, not only the ones missing
   from the table: `THINKING_PRO=HIGH` raises chat, jobs, dream and pruning at
   once.
-- `THINKING_<ROLE>_<CLASS>` sets one class (`THINKING_PRO_TOOL_LOOP=MEDIUM`,
+- `THINKING_<ROLE>_<CLASS>` sets one class (`THINKING_PRO_CHAT=HIGH`,
   `THINKING_FLASH_TITLE=LOW`). The class part is the class name in upper case.
+  `THINKING_<ROLE>_TOOL_LOOP` does nothing alone: set `THINKING_LOOP_OWN_LEVEL=1`
+  with it.
 - Values: `MINIMAL`, `LOW`, `MEDIUM`, `HIGH`. Anything else is ignored with one
   warning.
 
@@ -279,7 +281,8 @@ Billing follows the full thought tokens either way; the level is the cost lever.
 
 Measure with `AVG(thoughts_tokens)` per `tag` in `token_usage`: Pro `chat`
 should sit well under 1k per turn, `router`, `title` and `summarization` near
-zero. If Pro tool planning gets worse, set `THINKING_PRO_TOOL_LOOP=MEDIUM`.
+zero. A `chat` turn now plans its tool loop at the chat level (MEDIUM on Pro),
+so its thought tokens rise a little: about 290 per loop call on the device.
 
 ## Watch after a change
 
