@@ -92,6 +92,13 @@ describe('fetchCityWeather', () => {
         expect(calls.some(u => u.includes('language=es'))).toBe(true);
     });
 
+    test('"City, State" works: the last part may be a region', async () => {
+        const { impl, calls } = fakeFetch();
+        const w = await fetchCityWeather('Springfield, Illinois', { fetchImpl: impl, retryDelayMs: 0 });
+        expect(w.place.region).toBe('Illinois');
+        expect(latOf(calls)).toBe('39.8');
+    });
+
     test('a country it cannot find is an error, never a quiet swap for another place', async () => {
         const { impl } = fakeFetch({ geo: GEO_EN, geoEs: { results: [] } });
         await expect(fetchCityWeather('Springfield, Narnia', { fetchImpl: impl, retryDelayMs: 0 })).rejects.toThrow(/no place called "Springfield" was found in Narnia/);

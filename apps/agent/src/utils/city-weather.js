@@ -80,11 +80,15 @@ function pickPlace(candidates, { country = '', region = '' } = {}) {
         if (wantCountry.length === 2) return fold(r.country_code) === wantCountry;
         return fold(r.country) === wantCountry;
     };
-    const regionHit = (r) => !wantRegion || fold(r.admin1) === wantRegion || fold(r.admin2) === wantRegion;
+    const inRegion = (r, want) => fold(r.admin1) === want || fold(r.admin2) === want;
+    const regionHit = (r) => !wantRegion || inRegion(r, wantRegion);
     return candidates.find((r) => countryHit(r) && regionHit(r))
         // A region that matches nothing is not worth failing over when the
         // country does match: "Córdoba, Córdoba, Argentina" is still Argentina.
         || (wantRegion ? candidates.find(countryHit) : null)
+        // "Paris, Texas": the last part may be a state or province, not a
+        // country. It still has to match something the service returned.
+        || (wantCountry && !wantRegion ? candidates.find((r) => inRegion(r, wantCountry)) : null)
         || null;
 }
 
