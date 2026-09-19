@@ -587,3 +587,57 @@ describe('MCPManager._refreshToolCache', () => {
         expect(manager.toolMap.get('book_appointment').name).toBe('allende');
     });
 });
+
+describe('MCPManager lists a failed server again', () => {
+    // A server whose listTools failed at refresh is missing from the cache. A
+    // call to one of its tools used to repair that by chance; a run with a
+    // tool list can no longer call a tool it was not shown.
+    const tool = (name) => ({ name, description: name, inputSchema: { type: 'object', properties: {} } });
+    let manager, spies;
+
+    beforeEach(() => {
+        manager = new MCPManager();
+        manager.config = {};
+        spies = ['log', 'warn', 'error'].map(m => jest.spyOn(console, m).mockImplementation(() => { }));
+    });
+    afterEach(() => spies.forEach(s => s.mockRestore()));
+
+    test('getTools asks again, without waiting, at most once a minute', async () => {
+        const flaky = { listTools: jest.fn().mockRejectedValueOnce(new Error('not ready')).mockResolvedValue({ tools: [tool('gmail_read')] }) };
+        const steady = { listTools: jest.fn().mockResolvedValue({ tools: [tool('ha_call_service')] }) };
+        manager.clients = new Map([['steady', steady], ['flaky', flaky]]);
+
+        await manager._refreshToolCache();
+        expect(manager.toolCache.map(t => t.name)).toEqual(['ha_call_service']);
+
+        // This turn does not wait for the retry...
+        expect((await manager.getTools()).map(t => t.name)).toEqual(['ha_call_service']);
+        await new Promise(r => setImmediate(r));
+        // ...the next one has the tool back.
+        expect((await manager.getTools()).map(t => t.name).sort()).toEqual(['gmail_read', 'ha_call_service']);
+        expect(flaky.listTools).toHaveBeenCalledTimes(2);
+    });
+
+    test('a server that keeps failing is asked once a minute, not on every turn', async () => {
+        const broken = { listTools: jest.fn().mockRejectedValue(new Error('down')) };
+        const steady = { listTools: jest.fn().mockResolvedValue({ tools: [tool('ha_call_service')] }) };
+        manager.clients = new Map([['steady', steady], ['broken', broken]]);
+        await manager._refreshToolCache();
+        for (let i = 0; i < 5; i++) { await manager.getTools(); await new Promise(r => setImmediate(r)); }
+        expect(broken.listTools).toHaveBeenCalledTimes(2);
+
+        manager._lastListRetry = Date.now() - 61 * 1000;
+        await manager.getTools();
+        await new Promise(r => setImmediate(r));
+        expect(broken.listTools).toHaveBeenCalledTimes(3);
+    });
+
+    test('with every server listed, getTools starts nothing', async () => {
+        const steady = { listTools: jest.fn().mockResolvedValue({ tools: [tool('ha_call_service')] }) };
+        manager.clients = new Map([['steady', steady]]);
+        await manager._refreshToolCache();
+        await manager.getTools();
+        await manager.getTools();
+        expect(steady.listTools).toHaveBeenCalledTimes(1);
+    });
+});

@@ -77,6 +77,7 @@ function stripLeadingStamp(text) {
 // The approved call's result as the resumed run's model reads it.
 const RESUME_RESULT_CHARS = 6000;
 // Metadata the resumed run keeps from the owner's answer.
+const LISTED_RUN_RULE = "ONLY THIS RUN'S TOOLS: This run was given a short tool list. The rules above may name tools that are not in it. Call only the tools declared to you. If one you need is missing, say so in your answer, and do not look for another way to get the same effect.";
 const RESUME_META_KEYS = ['session', 'phoneNumber', 'isGroup', 'groupName', 'thinking', 'turnId', 'model', 'location'];
 const browserSecrets = require('./utils/browser-secrets');
 const { sanitizeFunctionDeclarations } = require('./utils/gemini-schema-sanitizer');
@@ -1150,7 +1151,9 @@ class Agent {
           // With the config of this call: a bare send falls back to the
           // session's, and loses a thinking level set for the loop.
           const result = await session.sendMessage(sendParams(payload));
-          return result.response;
+          // The SDK resolves to the response itself; older code paths and
+          // mocks wrap it in { response }.
+          return result?.response || (result?.candidates ? result : undefined);
         } catch (ex) { throw ex; }
       }
       throw e;
@@ -1252,7 +1255,8 @@ class Agent {
     const executionSummary = {
       toolOutputs: [], // List of { name, result }
       replies: [],     // List of text/audio replies
-      untrustedSources: turnTaint.sources // live list, read by the sub-agent service
+      untrustedSources: turnTaint.sources, // live list, read by the sub-agent service
+      refusedUnlisted: [] // tool names refused because they were not in this run's list
     };
     // Approval guardian state for this run: denials count toward the breaker.
     // A sub-agent shares its parent's state, so its denials count there too.
@@ -1856,6 +1860,14 @@ class Agent {
       }
 
       // --- BYPASS: DIRECT IMAGE GENERATION ---
+      // The shortcut runs a tool with no model call, before the run's tool
+      // list exists. A job or a sub-agent that was not given generateImage
+      // does not take it: it answers as a plain turn.
+      const listedRunMeta = message.metadata?.isSubAgent || (message.source === 'scheduler' && !!message.metadata?.allowedTools);
+      if (decision.model === 'IMAGE' && listedRunMeta && !(Array.isArray(message.metadata?.allowedTools) && message.metadata.allowedTools.includes('generateImage'))) {
+        console.warn(`${logPrefix} generateImage is not in this run's tool list; the image shortcut is skipped.`);
+        decision = { ...decision, model: 'FLASH', reason: "generateImage is not in this run's tool list" };
+      }
       if (decision.model === 'IMAGE') {
         console.log('[Agent] Executing Direct Image Generation Bypass');
 
@@ -2191,6 +2203,13 @@ class Agent {
               - DO NOT just return text.
           `;
         }
+      }
+
+      // A run with a list still reads the full rules, which name tools it may
+      // not hold (googleSearch, scheduleJob, lookupDevice...). Fixed text, so
+      // every listed run shares one prefix.
+      if (runToolList) {
+        systemInstruction += `\n\n${LISTED_RUN_RULE}`;
       }
 
       // Usage attribution: call class for the token_usage rows of this turn
@@ -2627,6 +2646,24 @@ class Agent {
             if (unlisted) {
               console.warn(`${logPrefix} ${executionName} is not in this run's tool list (${runToolList.size} tools); refused.`);
               try { this.db.logMetric('tool_refused_unlisted', 1, { chatId, runId, tool: executionName, job: message.metadata?.jobName || null, subAgent: !!message.metadata?.isSubAgent }); } catch (e) { /* a metric must not stop the turn */ }
+              executionSummary.refusedUnlisted.push(executionName);
+              // One bell per run, on the first refusal: the metric has no
+              // reader, and a run reaching outside its list is either a
+              // broken job or something it read talking. Not the breaker: a
+              // wrong name is a soft failure, and three would stop the run.
+              if (approvalRun && !approvalRun.notifiedUnlisted) {
+                approvalRun.notifiedUnlisted = true;
+                const who = message.metadata?.jobName ? `The job "${message.metadata.jobName}"` : (message.metadata?.isSubAgent ? 'A sub-agent' : 'A run');
+                try {
+                  this.notifications.create({
+                    type: 'tool_refused_unlisted',
+                    severity: 'warning',
+                    title: `Refused: ${executionName} is not in this run's tool list`,
+                    message: `${who} called ${executionName}, which was not declared to it. It did not run.`,
+                    metadata: { chatId, toolName: executionName, job: message.metadata?.jobName || null, link: chatId ? `/system/history?chatId=${encodeURIComponent(chatId)}` : '/system/history' }
+                  });
+                } catch (e) { /* a notification must not stop the turn */ }
+              }
             }
             const review = unlisted
               ? { run: false, status: 'error', result: { error: UNLISTED_TOOL_TEXT } }

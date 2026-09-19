@@ -225,6 +225,28 @@ describe('SubAgentService', () => {
         });
     });
 
+    describe('a run whose every call was refused', () => {
+        test('does not report "Task completed" to its parent', async () => {
+            mockAgent.processMessage.mockResolvedValue({
+                toolOutputs: [{ name: 'sendMessage', result: { error: 'refused' } }, { name: 'sendMessage', result: { error: 'refused' } }],
+                refusedUnlisted: ['sendMessage', 'sendMessage'],
+                untrustedSources: []
+            });
+            const out = await service.spawn({ task: 'tell them', parentChatId: 'p-1', waitForResult: true });
+            expect(out.result).toBe('Task NOT done: the sub-agent wrote no answer, and its calls were refused because these tools were not in its list: sendMessage.');
+        });
+
+        test('a run that did something else keeps the usual line', async () => {
+            mockAgent.processMessage.mockResolvedValue({
+                toolOutputs: [{ name: 'getFact', result: { value: 'x' } }, { name: 'sendMessage', result: { error: 'refused' } }],
+                refusedUnlisted: ['sendMessage'],
+                untrustedSources: []
+            });
+            const out = await service.spawn({ task: 'tell them', parentChatId: 'p-1', waitForResult: true });
+            expect(out.result).toBe('Task completed (no text output).');
+        });
+    });
+
     describe('getResult()', () => {
         it('should return running status for in-progress tasks', async () => {
             service.running.set('task-1', {

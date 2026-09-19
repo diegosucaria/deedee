@@ -1,4 +1,6 @@
 const { BaseExecutor } = require('./base');
+const { toolDefinitions } = require('../tools-definition');
+const { checkToolList } = require('../services/tool-groups');
 
 class SubAgentExecutor extends BaseExecutor {
     constructor(services) {
@@ -32,11 +34,41 @@ class SubAgentExecutor extends BaseExecutor {
                 const parentChatId = context?.message?.metadata?.chatId || 'unknown';
                 const parentSource = context?.message?.source || null;
 
+                // The child's tool list. A list is enforced when a call runs,
+                // so a list that matches nothing would leave the child unable
+                // to do anything: check it before anything runs.
+                let childTools = tools;
+                let ignoredTools = [];
+                if (Array.isArray(tools) && tools.length > 0) {
+                    let mcpTools = [];
+                    try { mcpTools = (await services.agent?.mcp?.getTools?.()) || []; } catch (e) { mcpTools = []; }
+                    const internal = toolDefinitions.flatMap(td => td.functionDeclarations || []);
+                    const checked = checkToolList(tools, internal, mcpTools);
+                    if (checked.tools.length === 0) {
+                        return {
+                            success: false,
+                            error: `None of the tools you listed exist: ${checked.unknown.join(', ') || '(empty list)'}. Use exact tool names, or "server:<name>" for every tool of an MCP server${checked.servers.length ? ` (servers: ${checked.servers.join(', ')})` : ''}. Nothing was started.`
+                        };
+                    }
+                    if (checked.unknown.length > 0) console.warn(`[SubAgent] Ignoring unknown tools in spawnAgent: ${checked.unknown.join(', ')}`);
+                    childTools = checked.tools;
+                    ignoredTools = checked.unknown;
+                } else {
+                    // No list given. A parent that has a list of its own must
+                    // not widen its child by saying nothing: the child gets
+                    // the parent's list. (A parent may still NAME tools it
+                    // does not hold; the system jobs fan out that way.)
+                    const pMeta = context?.message?.metadata || {};
+                    const parentListed = Array.isArray(pMeta.allowedTools) && pMeta.allowedTools.length > 0
+                        && (parentSource === 'scheduler' || pMeta.isSubAgent);
+                    childTools = parentListed ? pMeta.allowedTools.filter(t => t !== 'spawnAgent') : undefined;
+                }
+
                 try {
                     const result = await subAgentService.spawn({
                         task,
                         model,
-                        tools,
+                        tools: childTools,
                         timeoutMinutes,
                         parentChatId,
                         parentSource,
@@ -46,7 +78,7 @@ class SubAgentExecutor extends BaseExecutor {
                         untrustedTaint: Array.isArray(context?.untrustedTaint) ? context.untrustedTaint : [],
                         approvalRunId: context?.approvalRunId || null,
                     });
-                    return { success: true, ...result };
+                    return { success: true, ...result, ...(ignoredTools && ignoredTools.length ? { ignoredTools, note: `These listed tools do not exist and were left out: ${ignoredTools.join(', ')}.` } : {}) };
                 } catch (err) {
                     return { success: false, error: err.message };
                 }

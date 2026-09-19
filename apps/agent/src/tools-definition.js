@@ -1287,7 +1287,7 @@ const toolDefinitions = [
             tools: {
               type: "ARRAY",
               items: { type: "STRING" },
-              description: "Optional allowlist of tool names the sub-agent can use. Default: all tools."
+              description: "Optional list of what the sub-agent may use: exact tool names, or \"server:<name>\" for every tool of an MCP server (e.g. \"server:gws_personal\"). The sub-agent cannot call anything else. Default: all tools, or your own list when you run with one."
             },
             timeoutMinutes: { type: "NUMBER", description: "Max execution time in minutes (default: 6, max: 10)." },
             waitForResult: { type: "BOOLEAN", description: "Default: true (blocks until done). Set to false ONLY for fire-and-forget tasks where you don't need the result." },

@@ -44,7 +44,7 @@ const TOOL_GROUPS = {
     workspace: 'Gmail, Google Calendar, Google Drive / Docs / Sheets / Slides',
     slack: 'Slack messages, channels and people',
     wardrobe: 'clothes, outfits, packing for trips',
-    dj: 'vinyl records, DJ sets, track picks',
+    dj: 'vinyl records, the DJ crate, DJ sets, track picks',
     docs: 'life vaults, notes, uploaded documents',
     media: 'Plex movies, shows and music',
     browser: 'opening or acting on web pages (Playwright browser)',
@@ -66,6 +66,9 @@ const GROUP_NAME_WORDS = {
     flights: ['pilotfy'],
     health: ['allende'],
     code: ['shell', 'git', 'repo', 'repository', 'codebase'],
+    // Not an integration's name, but its read tools used to ride on every
+    // turn; now the group must load for "what is in my crate?" to work.
+    dj: ['vinyl', 'vinilo', 'crate'],
 };
 
 const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -164,11 +167,43 @@ function sortToolsByName(tools) {
  */
 function listedRunTools(message, declared) {
     const meta = message?.metadata || {};
-    const listed = meta.isSubAgent || (message?.source === 'scheduler' && Array.isArray(meta.allowedTools));
+    // Any list at all, as the declaration filter reads it: a list of the wrong
+    // type declares nothing, and must then allow nothing.
+    const listed = meta.isSubAgent || (message?.source === 'scheduler' && !!meta.allowedTools);
     if (!listed) return null;
     return new Set((declared || []).map(t => String(t?.name || '')).filter(Boolean));
 }
 
+/**
+ * Check a tool list a model wrote (spawnAgent's `tools`). It is free text:
+ * nothing taught the model the `server:<name>` form, and a list that matches
+ * nothing used to leave the child with every call still working, since lists
+ * only hid declarations. Now that a list is enforced, a wrong list would
+ * leave the child unable to do anything.
+ * - a bare MCP server name becomes `server:<name>`;
+ * - an entry that names no tool and no server is reported, not kept;
+ * - `spawnAgent` is dropped: a sub-agent never spawns.
+ * @param {string[]} entries
+ * @param {Array<{ name: string }>} internalTools
+ * @param {Array<{ name: string, serverName?: string }>} mcpTools
+ * @returns {{ tools: string[], unknown: string[], servers: string[] }}
+ */
+function checkToolList(entries, internalTools, mcpTools) {
+    const names = new Set([...(internalTools || []), ...(mcpTools || [])].map(t => String(t?.name || '')).filter(Boolean));
+    const servers = new Set((mcpTools || []).map(t => t?.serverName).filter(Boolean));
+    const tools = [];
+    const unknown = [];
+    for (const raw of Array.isArray(entries) ? entries : []) {
+        const entry = String(raw ?? '').trim();
+        if (!entry || entry === 'spawnAgent') continue;
+        if (entry.startsWith('server:')) { (servers.has(entry.slice(7)) ? tools : unknown).push(entry); continue; }
+        if (names.has(entry)) { tools.push(entry); continue; }
+        if (servers.has(entry)) { tools.push(`server:${entry}`); continue; }
+        unknown.push(entry);
+    }
+    return { tools: [...new Set(tools)], unknown, servers: [...servers].sort() };
+}
+
 const UNLISTED_TOOL_TEXT = "Refused: this tool is not in this run's tool list. It was not run. Use only the tools you were given.";
 
-module.exports = { TOOL_GROUPS, INTERNAL_CATEGORY_GROUPS, mcpServerGroup, filterToolsByGroups, ToolGroupMemory, groupsNamedIn, sortToolsByName, listedRunTools, UNLISTED_TOOL_TEXT };
+module.exports = { TOOL_GROUPS, INTERNAL_CATEGORY_GROUPS, mcpServerGroup, filterToolsByGroups, ToolGroupMemory, groupsNamedIn, sortToolsByName, listedRunTools, checkToolList, UNLISTED_TOOL_TEXT };
