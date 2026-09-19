@@ -241,12 +241,17 @@ class CommunicationExecutor extends BaseExecutor {
                             const outcome = await delivery.deliver(kind, svc, metadata.chatId,
                                 { content: caption, type: 'text', metadata: { session: metadata.session } }, ledgerOpts);
                             if (outcome.delivered) {
-                                return { success: true, status: 'partial', info: `The picture to ${cleanTo} was not delivered. Its text went out without the picture.` };
+                                return { success: true, status: 'partial', info: `The picture to ${cleanTo} was not delivered. Its text went out without the picture, so it should not be sent again.` };
                             }
                             if (outcome.queued) {
                                 return { success: true, status: 'queued', queued: true, info: `The picture to ${cleanTo} was not delivered. ${queuedText('Its text')}` };
                             }
                             return { success: false, error: `Neither the picture nor its text reached ${cleanTo} (${outcome.error || outcome.status || 'unknown reason'}), and nothing is queued.` };
+                        }
+                        if (sent !== false && toOwner && caption) {
+                            // An earlier try may have queued these words as
+                            // text. They have arrived now, under the picture.
+                            delivery?.retirePending?.(kind, svc, metadata.chatId, caption);
                         }
                         if (sent === false) {
                             // A refusal and a timeout look the same from here, so

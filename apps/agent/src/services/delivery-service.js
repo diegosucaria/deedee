@@ -230,6 +230,47 @@ class DeliveryService {
     }
 
     /**
+     * How long a row can keep retrying, with a margin. The last delay repeats
+     * until the attempts run out, so this is not the sum of `backoffMs`: with
+     * six attempts a row is still tried 141 minutes after it was queued.
+     * @returns {number}
+     */
+    retrySpanMs() {
+        const last = this.backoffMs.length - 1;
+        let span = 10 * 60 * 1000;
+        for (let i = 0; i < this.maxAttempts - 1; i++) span += this.backoffMs[Math.min(i, last)] || 0;
+        return span;
+    }
+
+    /**
+     * The same words have just reached him another way (as the caption of a
+     * picture that went out on a second try). A text copy still waiting in the
+     * queue must not arrive after them.
+     * @param {string} kind
+     * @param {string} channel
+     * @param {string} target
+     * @param {string} text
+     * @returns {boolean} true when a waiting row was retired
+     */
+    retirePending(kind, channel, target, text) {
+        try {
+            if (!this.hasLedger() || !text) return false;
+            const { channel: ch } = splitChannel(channel);
+            const tgt = formatTarget(ch, target);
+            if (!tgt) return false;
+            const hash = contentHash(this.normalizePayload({ content: text, type: 'text' }));
+            const row = this.db.findOutboxDuplicate(kind, tgt, hash, new Date(Date.now() - this.retrySpanMs()));
+            if (!row || (row.status !== 'pending' && row.status !== 'failed')) return false;
+            this.db.markOutboxSent(row.id, { via: row.channel });
+            console.log(`[Delivery] ${kind} for ${tgt} went out as a caption; the queued text (row ${row.id}) is retired.`);
+            return true;
+        } catch (err) {
+            console.warn('[Delivery] Could not retire a queued text:', err.message);
+            return false;
+        }
+    }
+
+    /**
      * Send one notification: immediate attempt, ledger row, retries.
      * @param {string} kind - reply|reminder|job_notification|system_alert|ask_user|watcher
      * @param {string} channel - whatsapp|telegram|web|slack (a ':session' suffix is allowed)
@@ -279,8 +320,7 @@ class DeliveryService {
             // in the queue is the same message asked for twice (a model that
             // retries after "queued"): one copy is enough. The window covers
             // the whole retry span, not the short duplicate window.
-            const span = this.backoffMs.reduce((a, b) => a + b, 0) + 10 * 60 * 1000;
-            const waiting = this.db.findOutboxDuplicate(kind, tgt, hash, new Date(Date.now() - span));
+            const waiting = this.db.findOutboxDuplicate(kind, tgt, hash, new Date(Date.now() - this.retrySpanMs()));
             if (waiting && (waiting.status === 'pending' || waiting.status === 'failed')) {
                 console.log(`[Delivery] ${kind} for ${tgt} is already queued (row ${waiting.id}); not queued twice.`);
                 return { delivered: false, deduped: true, id: waiting.id, status: waiting.status, queued: true };
