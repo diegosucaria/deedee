@@ -182,6 +182,122 @@ describe('filterCalendarResult', () => {
         });
     });
 
+    describe('the calendar that was read decides, not who organised the event', () => {
+        // Google puts the INVITER in organizer.email, not the calendar's id.
+        // Going by it dropped every meeting someone else organised from the
+        // owner's own calendar, so the briefing never listed them.
+        const invited = (summary, from) => ({ ...makeEvent(summary, from, false), attendees: [{ email: 'user@gmail.com', self: true }, { email: from }] });
+        const settings = { 'gws_calendar_filter:personal': { calendarIds: ['user@gmail.com', 'trips@group.calendar.google.com'] } };
+        const list = (calendarId) => ({ resource: 'events', method: 'list', params: { calendarId, timeMin: 'a', timeMax: 'b' } });
+        // Every real config names the account; its address is the id of `primary`.
+        const mcpConfig = { gws_personal: { env: { GOOGLE_WORKSPACE_CLI_ACCOUNT: 'user@gmail.com' } } };
+
+        test('a meeting a client organised stays on his own calendar', () => {
+            const events = [makeEvent('Mine', 'user@gmail.com', true), invited('Client review', 'someone@client.example'), invited('Dinner', 'friend@example.com')];
+            const result = makeEventResponse(events);
+            for (const id of ['user@gmail.com', 'primary', 'USER@gmail.com']) {
+                expect(filterCalendarResult('personal_calendar', result, settings, toolMap, list(id), mcpConfig)).toBe(result);
+            }
+            // params may arrive as a JSON string.
+            expect(filterCalendarResult('personal_calendar', result, settings, toolMap, { resource: 'events', method: 'list', params: JSON.stringify({ calendarId: 'primary' }) }, mcpConfig)).toBe(result);
+        });
+
+        test('a calendar that is not on the list shows nothing, whoever organised', () => {
+            const events = [invited('Their 1:1', 'user@gmail.com'), makeEvent('Their lunch', 'colleague@work.example')];
+            const out = JSON.parse(filterCalendarResult('personal_calendar', makeEventResponse(events), settings, toolMap, list('colleague@work.example'), mcpConfig).output);
+            expect(out.items).toEqual([]);
+        });
+
+        test('with no calendar to go by, an event he is invited to is his', () => {
+            const events = [invited('Client review', 'someone@client.example'), makeEvent('A stranger\'s event', 'other@example.com'), makeEvent('Flight', 'trips@group.calendar.google.com')];
+            const out = JSON.parse(filterCalendarResult('personal_calendar', makeEventResponse(events), settings, toolMap, undefined, mcpConfig).output);
+            expect(out.items.map(e => e.summary)).toEqual(['Client review', 'Flight']);
+        });
+
+        test('primary-only mode keeps what he is invited to, and still hides the rest', () => {
+            const events = [makeEvent('Mine', 'user@gmail.com', true), invited('Client review', 'someone@client.example'), makeEvent('Not his', 'family@group.calendar.google.com')];
+            const out = JSON.parse(filterCalendarResult('personal_calendar', makeEventResponse(events), {}, toolMap, list('someone-else@example.com'), mcpConfig).output);
+            expect(out.items.map(e => e.summary)).toEqual(['Mine', 'Client review']);
+            expect(filterCalendarResult('personal_calendar', makeEventResponse(events), {}, toolMap, list('primary'), mcpConfig).output).toContain('Not his');
+        });
+    });
+
+    describe('`primary` is a nickname, not a way round the list', () => {
+        // Review finding: with only a shared calendar ticked, a call that said
+        // calendarId 'primary' (the briefing's prompt does) showed his whole
+        // own calendar again. The account's address is that calendar's id.
+        const mcpConfig = { gws_personal: { env: { GOOGLE_WORKSPACE_CLI_ACCOUNT: 'User@gmail.com' } } };
+        const onlyTrips = { 'gws_calendar_filter:personal': { calendarIds: ['trips@group.calendar.google.com'] } };
+        const withPrimary = { 'gws_calendar_filter:personal': { calendarIds: ['user@gmail.com', 'trips@group.calendar.google.com'] } };
+        const list = (calendarId) => ({ resource: 'events', method: 'list', params: { calendarId } });
+        const invited = (summary, from) => ({ ...makeEvent(summary, from, false), attendees: [{ email: 'user@gmail.com', self: true }] });
+        const events = [makeEvent('Private appointment', 'user@gmail.com', true), invited('Review', 'boss@work.example'), makeEvent('Flight', 'trips@group.calendar.google.com')];
+        const kept = (settings, args, config = mcpConfig) => JSON.parse(filterCalendarResult('personal_calendar', makeEventResponse(events), settings, toolMap, args, config).output).items.map(e => e.summary);
+
+        test('an unticked primary calendar stays hidden, by nickname and by address', () => {
+            expect(kept(onlyTrips, list('primary'))).toEqual([]);
+            expect(kept(onlyTrips, list('user@gmail.com'))).toEqual([]);
+            // With no calendar named, his own events follow primary; the ticked shared calendar shows.
+            expect(kept(onlyTrips, undefined)).toEqual(['Flight']);
+        });
+
+        test('a ticked primary calendar shows everything on it, invitations too', () => {
+            const result = makeEventResponse(events);
+            expect(filterCalendarResult('personal_calendar', result, withPrimary, toolMap, list('primary'), mcpConfig)).toBe(result);
+            expect(filterCalendarResult('personal_calendar', result, withPrimary, toolMap, list('user@gmail.com'), mcpConfig)).toBe(result);
+        });
+
+        test('an account we cannot name keeps primary hidden under a list: no guessing', () => {
+            // A guess from the list let a ticked colleague's address open his whole calendar.
+            expect(kept(withPrimary, list('primary'), null)).toEqual([]);
+            expect(kept({ 'gws_calendar_filter:personal': { calendarIds: ['colleague@work.example'] } }, list('primary'), null)).toEqual([]);
+            // Read by its address, a ticked calendar still shows.
+            expect(kept(withPrimary, list('user@gmail.com'), null)).toEqual(['Private appointment', 'Review', 'Flight']);
+        });
+
+        test('an event he made on a ticked shared calendar shows, even when primary is unticked', () => {
+            const onShared = { ...makeEvent('Packing list', 'trips@group.calendar.google.com'), creator: { email: 'user@gmail.com', self: true } };
+            const out = JSON.parse(filterCalendarResult('personal_calendar', makeEventResponse([onShared, events[0]]), onlyTrips, toolMap, undefined, mcpConfig).output);
+            expect(out.items.map(e => e.summary)).toEqual(['Packing list']);
+        });
+
+        test('with no list at all, primary is his, as before', () => {
+            const result = makeEventResponse(events);
+            expect(filterCalendarResult('personal_calendar', result, {}, toolMap, list('primary'), mcpConfig)).toBe(result);
+            expect(filterCalendarResult('personal_calendar', result, {}, toolMap, list('user@gmail.com'), mcpConfig)).toBe(result);
+        });
+    });
+
+    describe('one event, and free/busy, follow the same list', () => {
+        const settings = { 'gws_calendar_filter:personal': { calendarIds: ['user@gmail.com'] } };
+        const mcpConfig = { gws_personal: { env: { GOOGLE_WORKSPACE_CLI_ACCOUNT: 'user@gmail.com' } } };
+
+        test('events.get on a hidden calendar returns no event', () => {
+            const event = { kind: 'calendar#event', ...makeEvent('Their 1:1', 'colleague@work.example') };
+            const out = JSON.parse(filterCalendarResult('personal_calendar', { output: JSON.stringify(event) }, settings, toolMap,
+                { resource: 'events', method: 'get', params: { calendarId: 'colleague@work.example', eventId: 'e1' } }, mcpConfig).output);
+            expect(out).toEqual({ error: 'That event is on a calendar the owner has not made visible.' });
+            const own = { output: JSON.stringify(event) };
+            expect(filterCalendarResult('personal_calendar', own, settings, toolMap, { resource: 'events', method: 'get', params: { calendarId: 'primary', eventId: 'e1' } }, mcpConfig)).toBe(own);
+        });
+
+        test('the result of creating or changing an event is never turned into an error', () => {
+            // A hidden calendar, or primary-only mode with another id: Google
+            // DID create the event. An error here made the model create it again.
+            const created = { output: JSON.stringify({ kind: 'calendar#event', ...makeEvent('Planning', 'colleague@work.example') }) };
+            for (const method of ['insert', 'patch', 'update', 'quickAdd', 'move', 'import']) {
+                expect(filterCalendarResult('personal_calendar', created, settings, toolMap, { resource: 'events', method, params: { calendarId: 'colleague@work.example' } }, mcpConfig)).toBe(created);
+                expect(filterCalendarResult('personal_calendar', created, {}, toolMap, { resource: 'events', method, params: { calendarId: 'colleague@work.example' } }, mcpConfig)).toBe(created);
+            }
+        });
+
+        test('free/busy is left as it comes: busy blocks only, and the question it exists for', () => {
+            const body = { output: JSON.stringify({ kind: 'calendar#freeBusy', calendars: { 'user@gmail.com': { busy: [{ start: 'a', end: 'b' }] }, 'colleague@work.example': { busy: [{ start: 'c', end: 'd' }] } } }) };
+            expect(filterCalendarResult('personal_calendar', body, settings, toolMap, { resource: 'freebusy', method: 'query' }, mcpConfig)).toBe(body);
+            expect(filterCalendarResult('personal_calendar', body, {}, toolMap, { resource: 'freebusy', method: 'query' }, mcpConfig)).toBe(body);
+        });
+    });
+
     describe('primary-only mode for events', () => {
         test('keeps only events where organizer.self is true', () => {
             const events = [
