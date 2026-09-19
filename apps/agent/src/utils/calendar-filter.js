@@ -14,9 +14,10 @@
  * @param {Object} settings   - agent.settings (key → parsed value)
  * @param {Map}    mcpToolMap - MCPManager.toolMap  (toolName → { name, client, originalName })
  * @param {Object} [args]     - the call's arguments; `params.calendarId` names the calendar that was read
+ * @param {Object} [mcpConfig] - MCPManager.config (server name → config); its env names the account, whose address is the id of `primary`
  * @returns {*} Filtered result (or original if not applicable)
  */
-function filterCalendarResult(toolName, result, settings, mcpToolMap, args) {
+function filterCalendarResult(toolName, result, settings, mcpToolMap, args, mcpConfig) {
     if (!toolName || !result) return result;
 
     // Quick exit: only process calendar tools
@@ -48,7 +49,11 @@ function filterCalendarResult(toolName, result, settings, mcpToolMap, args) {
         return result;
     }
 
-    const filtered = filterParsed(parsed, allowedIds, calendarIdOf(args));
+    // `primary` is a nickname: the account's own address is that calendar's id.
+    const account = mcpConfig?.[toolEntry.name]?.env?.GOOGLE_WORKSPACE_CLI_ACCOUNT;
+    const primaryId = typeof account === 'string' && account.trim() ? account.trim().toLowerCase() : null;
+
+    const filtered = filterParsed(parsed, allowedIds, calendarIdOf(args), primaryId);
     if (filtered === parsed) return result; // no change
 
     return { ...result, output: JSON.stringify(filtered) };
@@ -70,7 +75,7 @@ function calendarIdOf(args) {
 /**
  * Route to the right filter based on response shape.
  */
-function filterParsed(obj, allowedIds, calendarId = null) {
+function filterParsed(obj, allowedIds, calendarId = null, primaryId = null) {
     if (!obj || typeof obj !== 'object') return obj;
 
     // calendarList.list → { kind: "calendar#calendarList", items: [...] }
@@ -81,13 +86,27 @@ function filterParsed(obj, allowedIds, calendarId = null) {
     // +agenda helper or events.list returning events from mixed calendars
     // Events have start/end; calendar list entries have accessRole
     if (Array.isArray(obj.items) && obj.items[0]?.start) {
-        return filterEventsList(obj, allowedIds, calendarId);
+        return filterEventsList(obj, allowedIds, calendarId, primaryId);
     }
 
     // Top-level array of events (some helpers return plain arrays)
     if (Array.isArray(obj) && obj[0]?.start) {
-        const filtered = filterEventsArray(obj, allowedIds, calendarId);
+        const filtered = filterEventsArray(obj, allowedIds, calendarId, primaryId);
         return filtered.length === obj.length ? obj : filtered;
+    }
+
+    // events.get: one event. It used to pass whole, whatever calendar it was on.
+    if (!Array.isArray(obj) && obj.start && (obj.kind === 'calendar#event' || obj.organizer || obj.summary)) {
+        return filterEventsArray([obj], allowedIds, calendarId, primaryId).length === 1
+            ? obj
+            : { error: 'That event is on a calendar the owner has not made visible.' };
+    }
+
+    // freebusy.query: busy blocks per calendar, under `calendars`.
+    if (obj.kind === 'calendar#freeBusy' && obj.calendars && typeof obj.calendars === 'object') {
+        const visible = visibility(allowedIds, primaryId);
+        const kept = Object.fromEntries(Object.entries(obj.calendars).filter(([id]) => visible.calendar(id) === true));
+        return Object.keys(kept).length === Object.keys(obj.calendars).length ? obj : { ...obj, calendars: kept };
     }
 
     return obj;
@@ -117,15 +136,45 @@ function filterCalendarList(response, allowedIds) {
  * Filter an events.list response (has items array with event objects).
  * Uses organizer.email or the response-level summary to match calendar.
  */
-function filterEventsList(response, allowedIds, calendarId = null) {
+function filterEventsList(response, allowedIds, calendarId = null, primaryId = null) {
     if (!Array.isArray(response.items)) return response;
 
     const before = response.items.length;
-    const filtered = filterEventsArray(response.items, allowedIds, calendarId);
+    const filtered = filterEventsArray(response.items, allowedIds, calendarId, primaryId);
     if (filtered.length === before) return response;
 
     console.log(`[CalendarFilter] events filtered: ${before} → ${filtered.length} events`);
     return { ...response, items: filtered };
+}
+
+/**
+ * Which calendars the owner made visible.
+ * `calendar(id)` answers true, false, or null when it cannot tell.
+ *
+ * `primary` is a nickname for the account's own calendar, whose real id is
+ * the account's address. With an allow-list it is visible only when that id
+ * is ticked: an owner who unticks his own calendar and leaves a shared one
+ * must not see it again because a call said `primary`. When the account is
+ * not known, a plain address on the list (not a group or an imported
+ * calendar) stands for it.
+ */
+function visibility(allowedIds, primaryId) {
+    const allowed = allowedIds ? new Set([...allowedIds].map(id => String(id).toLowerCase())) : null;
+    const looksLikeAccount = (id) => /^[^@\s#]+@[^@\s]+$/.test(id) && !/@(?:group|import|resource)\.calendar\.google\.com$/.test(id);
+    const primaryVisible = !allowed
+        ? true
+        : (primaryId ? allowed.has(primaryId) : [...allowed].some(looksLikeAccount));
+    return {
+        allowed,
+        primaryVisible,
+        calendar(rawId) {
+            const id = String(rawId || '').toLowerCase();
+            if (!id) return null;
+            if (id === 'primary' || (primaryId && id === primaryId)) return primaryVisible;
+            if (allowed) return allowed.has(id);
+            return null; // primary-only mode, another calendar: judge event by event
+        },
+    };
 }
 
 /**
@@ -138,26 +187,26 @@ function filterEventsList(response, allowedIds, calendarId = null) {
  * someone else organised was dropped from the owner's own calendar, and the
  * model (and the morning briefing) never saw it.
  *
- * - `primary`, or an id on the allow-list: every event on it is his to see.
- * - an id that is not on the allow-list: nothing.
- * - no id to go by (a helper that mixes calendars, or primary-only mode with
- *   an explicit id): event by event. It is his when he organised it, made it
- *   or is invited to it, or when it sits on an allowed shared calendar.
+ * - a visible calendar (see `visibility`): every event on it is his to see;
+ * - a calendar that is not visible: nothing;
+ * - no way to tell (a helper that mixes calendars, or primary-only mode with
+ *   another calendar's id): event by event. An event he organised, made or
+ *   is invited to sits on his own calendar, so it follows `primary`. Any
+ *   other event is kept when it sits on an allowed shared calendar.
  */
-function filterEventsArray(events, allowedIds, calendarId = null) {
-    const allowed = allowedIds ? new Set([...allowedIds].map(id => String(id).toLowerCase())) : null;
-    if (calendarId) {
-        const id = calendarId.toLowerCase();
-        if (id === 'primary') return events;
-        if (allowed) return allowed.has(id) ? events : [];
-    }
+function filterEventsArray(events, allowedIds, calendarId = null, primaryId = null) {
+    const visible = visibility(allowedIds, primaryId);
+    const read = visible.calendar(calendarId);
+    if (read === true) return events;
+    if (read === false) return [];
     return events.filter(ev => {
-        if (ev?.organizer?.self === true || ev?.creator?.self === true) return true;
-        if (Array.isArray(ev?.attendees) && ev.attendees.some(a => a?.self === true)) return true;
+        const his = ev?.organizer?.self === true || ev?.creator?.self === true
+            || (Array.isArray(ev?.attendees) && ev.attendees.some(a => a?.self === true));
+        if (his) return visible.primaryVisible;
+        if (!visible.allowed) return false; // primary-only: not his event
         const organizer = ev?.organizer?.email;
-        if (!allowed) return false; // primary-only: not his event
         if (!organizer) return true; // keep if we can't determine source
-        return allowed.has(String(organizer).toLowerCase());
+        return visible.allowed.has(String(organizer).toLowerCase());
     });
 }
 

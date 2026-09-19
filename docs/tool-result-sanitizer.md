@@ -98,7 +98,7 @@ Runs **before** the sanitizer to remove calendars the user has not configured as
 | Default (no config) | Only the primary calendar is visible |
 | With config | Only calendars in the `calendarIds` allowlist are visible |
 | `calendarList.list` | Filters the items array by calendar ID |
-| Events responses | Goes by the calendar the call read (`params.calendarId`): `primary` or an allowed id keeps every event, another id keeps none. With no id to go by, an event is kept when the owner organised it, made it or is invited to it, or when it sits on an allowed shared calendar. `organizer.email` alone is not the calendar: for an invitation it is the person who sent it |
+| Events responses | Goes by the calendar the call read (`params.calendarId`): a visible calendar keeps every event, another keeps none. `primary` is a nickname for the account's own address, so with a list it is visible only when that address is ticked. One event (`events.get`) and free/busy follow the same list. With no id to go by, an event is kept when the owner organised it, made it or is invited to it, or when it sits on an allowed shared calendar. `organizer.email` alone is not the calendar: for an invitation it is the person who sent it |
 
 Configuration is stored per-GWS-account in `agent_settings` with key `gws_calendar_filter:{label}`. Managed via Settings > Interfaces > Google Workspace > Calendar Access.
 

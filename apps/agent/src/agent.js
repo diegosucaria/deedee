@@ -486,7 +486,7 @@ class Agent {
 
     let shown = result;
     try {
-      shown = sanitizeToolResult(action.name, filterCalendarResult(action.name, result, this.settings, this.mcp?.toolMap, action.args));
+      shown = sanitizeToolResult(action.name, filterCalendarResult(action.name, result, this.settings, this.mcp?.toolMap, action.args, this.mcp?.config));
     } catch (e) {
       console.warn(`[Agent] Approved result not sanitized (${action.name}): ${e.message}`);
     }
@@ -2834,7 +2834,7 @@ class Agent {
           }
 
           // Filter calendar results to only include user-configured calendars
-          dbToolResult = filterCalendarResult(executionName, dbToolResult, this.settings, this.mcp?.toolMap, call.args);
+          dbToolResult = filterCalendarResult(executionName, dbToolResult, this.settings, this.mcp?.toolMap, call.args, this.mcp?.config);
 
           // Sanitize MCP tool results (strip email bloat, cap oversized results)
           dbToolResult = sanitizeToolResult(executionName, dbToolResult);
