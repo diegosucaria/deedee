@@ -25,7 +25,7 @@ class CommunicationExecutor extends BaseExecutor {
 
                 // Fetch owner phone from DB or Env
                 let ownerPhone = process.env.MY_PHONE;
-                let ownerName = 'diego'; // Default fallback
+                let ownerName = 'owner'; // no owner_name set yet; the approval guard uses the same default
                 let dryRun = false;
 
                 try {

@@ -333,7 +333,7 @@ You can talk to Deedee via Siri using Apple Shortcuts.
     *   Get `agentResponse.replies` from the result.
     *   Iterate and Speak/Show the content.
 
-> **Tip**: Setting `source: iphone` enables special safeguards where Deedee will ask for clarification if your dictation is garbled.
+> **Tip**: Setting `source: iphone` enables special safeguards where Deedee will ask for clarification if your dictation is garbled. When you send the recording itself (the audio endpoint), she hears you directly and asks only when the words are unclear.
 
 ## 🌅 Morning Briefing Setup
 

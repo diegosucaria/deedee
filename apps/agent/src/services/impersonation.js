@@ -10,14 +10,17 @@ class ImpersonationService {
     }
 
     getOwnerName() {
+        // Settings are stored as JSON: a raw read gave the name with its
+        // quotes, and the autopilot prompt then said: acting as the user ""Name"".
+        const parse = (v) => { try { const p = JSON.parse(v); return typeof p === 'string' ? p : v; } catch { return v; } };
         try {
             const row = this.db.db.prepare("SELECT value FROM agent_settings WHERE key = 'owner_name'").get();
-            if (row && row.value) return row.value;
-            // Fallback
+            if (row && row.value) return parse(row.value);
             const userRow = this.db.db.prepare("SELECT value FROM agent_settings WHERE key = 'user_name'").get();
-            return userRow ? userRow.value : 'Diego';
+            if (userRow && userRow.value) return parse(userRow.value);
+            return 'the owner';
         } catch (e) {
-            return 'Diego';
+            return 'the owner';
         }
     }
 

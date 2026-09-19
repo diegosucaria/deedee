@@ -2096,9 +2096,13 @@ class Agent {
       // 1. Native Search (Grounding): Faster, Cheaper, Better Citations. BUT cannot mix with other tools (e.g. replyWithAudio).
       // 2. Standard Mode (Polyfill): Slower, separate session. BUT allows mixing search + text-to-speech.
 
+      // Named once: the mode pick below and the prompt block further down
+      // must agree on what an audio turn is.
+      const hasAudioInput = message.content === '[Voice]'
+        || !!(message.parts && message.parts.some(p => p.inlineData?.mimeType?.startsWith('audio/')));
       const isAudioContext =
         // Input is Audio
-        (message.content === '[Voice]' || (message.parts && message.parts.some(p => p.inlineData?.mimeType?.startsWith('audio/')))) ||
+        hasAudioInput ||
         // Output explicitly requested as Audio (e.g. iOS Shortcut)
         ['iphone', 'ios_shortcut'].includes(message.source) ||
         message.metadata?.replyMode === 'audio';
@@ -2180,7 +2184,7 @@ class Agent {
         timeString,
         activeGoals,
         facts,
-        { codingMode: !isLightweight, vaultContext, skillsContext, notificationContext, isLightweight, communicationStyle: this.settings?.communication_style || '', dynamicInTurn: !isLightweight, browserSecretNames }
+        { codingMode: !isLightweight, vaultContext, skillsContext, notificationContext, isLightweight, communicationStyle: this.settings?.communication_style || '', dynamicInTurn: !isLightweight, browserSecretNames, browserTools: allTools.some(t => typeof t?.name === 'string' && t.name.startsWith('browser_')) }
       );
       // Time, goals, skills, vault and location change per message, so they go
       // in the user turn and the system instruction stays cacheable.
@@ -2200,14 +2204,21 @@ class Agent {
         // If we are acting on behalf of the user (whatsapp:user), we must sound like them.
         systemInstruction += `\n
         \n === IMPERSONATION & TONE MATCHING ===
-          IF you are asked to draft a message for the user, or if you are replying via the 'user'(whatsapp: user) session:
-        1. ** Analyze History **: Look at the user's previous messages in the chat history.
-        2. ** Match Tone **: Mimic their style, brevity, capitalization(lowercase ?), and emoji usage.
-        3. ** Be Natural **: Do not sound like an AI.Use "I", not "Deedee".
+          IF you are asked to draft a message for the user, or if you are replying via the 'user' (whatsapp:user) session:
+        1. **His own messages**: in that chat his messages are the ones 'readChatHistory' marks "Me"; "Them" is the contact. Mirror him, never the contact.
+        2. **Match Tone**: Mimic his style, brevity, capitalization (lowercase?), and emoji usage.
+        3. **Be Natural**: Do not sound like an AI. Use "I", not "Deedee".
+        This never applies to what you say back to the owner, and never to a watcher report: there you write as Deedee.
         --------------------------------
         `;
 
-        if (['iphone', 'ios_shortcut'].includes(message.source)) {
+        // The audio endpoint posts the recording itself: the model hears him,
+        // it does not read error-prone dictation. No turn loses the brake.
+        if (['iphone', 'ios_shortcut'].includes(message.source) && hasAudioInput) {
+          systemInstruction += `\n
+              **AUDIO INPUT**: You are hearing the owner's own recording. If the words are unclear or the request is ambiguous, ask before you run a tool.
+          `;
+        } else if (['iphone', 'ios_shortcut'].includes(message.source)) {
           systemInstruction += `\n
               **DICTATION SAFEGUARD**: You are receiving input from iOS Voice Dictation. It is prone to errors.
               - If the user's request is AMBIGUOUS, resembles gibberish, or matches a tool only weakly (e.g. "turn on the light" but no room specified, or "play movie" but name is garbled), DO NOT EXECUTE THE TOOL.
@@ -2223,8 +2234,17 @@ class Agent {
         if (replyMode === 'text') {
           systemInstruction += `\n
               **OUTPUT RESTRICTION**: The user has explicitly requested a TEXT-ONLY response.
-              - DO NOT call the 'replyWithAudio' tool.
+              - DO NOT call the 'replyWithAudio' tool, even if the message came in as voice or from iOS.
+              - This overrides the AUDIO PROTOCOL above.
               - Provide your response purely as text.
+          `;
+        } else if (useNativeSearch) {
+          // Native search declares no functions at all: ordering the tool
+          // would ask for a call that cannot be made.
+          systemInstruction += `\n
+              **OUTPUT RESTRICTION**: Audio is not available this turn (native search mode).
+              - The 'replyWithAudio' tool is not loaded. Do not try to call it.
+              - Answer in text, and keep it short.
           `;
         } else if (isIOS || (replyMode === 'audio' && !message.parts)) {
           systemInstruction += `\n

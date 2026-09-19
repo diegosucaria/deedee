@@ -91,7 +91,7 @@ Naming every key costs about 17,000 characters on the device, so most of the bud
 
 ### 4. Intentional Memory (Goals)
 - **Table**: `goals` (columns: `description`, `status`, `metadata`, `progress`, `last_activity_at`, `created_at`)
-- **Content**: Multi-session work the AGENT is executing that must survive a restart. NOT for user TODOs — those go through `scheduleJob` (reminders) or stay as chat responses.
+- **Content**: Multi-session work the AGENT is executing that must survive a restart. NOT for user TODOs — those become a reminder (`setReminder` for one time, `scheduleJob` for a repeat, `scheduleTask` when something must be done at that time) or stay as chat responses.
 - **Checkpoints**: Agent calls `updateGoalProgress` after each significant step, writing a free-form state string (cursors, IDs, counts) that future-agent reads to resume.
 - **Solves**: The "Amnesia Problem" — on boot, agent reads each pending goal's last checkpoint and resumes from there. Rule of thumb: if restarting wouldn't lose progress, it's not a goal.
 
