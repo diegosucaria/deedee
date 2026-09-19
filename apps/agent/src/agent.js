@@ -77,8 +77,9 @@ function stripLeadingStamp(text) {
 // The approved call's result as the resumed run's model reads it.
 const RESUME_RESULT_CHARS = 6000;
 // Metadata the resumed run keeps from the owner's answer.
-const LISTED_RUN_RULE = "ONLY THIS RUN'S TOOLS: This run was given a short tool list. The rules above may name tools that are not in it. Call only the tools declared to you. If one you need is missing, say so in your answer, and do not look for another way to get the same effect.";
 const RESUME_META_KEYS = ['session', 'phoneNumber', 'isGroup', 'groupName', 'thinking', 'turnId', 'model', 'location'];
+// Fixed text for a run with a tool list of its own (see runToolList).
+const LISTED_RUN_RULE = "ONLY THIS RUN'S TOOLS: This run was given a short tool list. The rules above may name tools that are not in it. Call only the tools declared to you. If one you need is missing, say so in your answer, and do not look for another way to get the same effect.";
 const browserSecrets = require('./utils/browser-secrets');
 const { sanitizeFunctionDeclarations } = require('./utils/gemini-schema-sanitizer');
 const { filterCalendarResult } = require('./utils/calendar-filter');

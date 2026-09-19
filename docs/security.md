@@ -86,34 +86,6 @@ For the env-var inventory and two-subdomain vs single-subdomain recipes, see the
 - **GSuite**: Full Read/Write access to Calendar and Mail. Every email send waits for the owner (see Approvals).
 - **Home Assistant**: Full Control (lights, switches, media, climate, covers). Locks, the alarm, opening a garage door and mass actions wait for the owner.
 
-### A run's tool list is checked when a call runs
-A scheduled job with `allowedTools`, and every sub-agent, may call only the tools
-declared to that run. The list used to work by leaving declarations out of the
-request and nothing else: a model that wrote the name of a tool it was never
-shown had it run, held back only by the approval gates. A sub-agent sent to
-read a web page is the case that matters, since the page can ask for the shell
-by name.
-
-- `listedRunTools` (`services/tool-groups.js`) returns the declared names for such a run. `server:<name>` entries are already resolved at that point, and a sub-agent never holds `spawnAgent`. A list of the wrong type allows nothing, as it declares nothing.
-- The tool loop checks the name before any gate. A call outside the list gets the fixed text `Refused: this tool is not in this run's tool list...` and never becomes an approval card: the owner is not asked to approve what the run was not given.
-- The first refusal of a run rings once (`tool_refused_unlisted`), and each one is counted as a metric of the same name (tool, job, sub-agent). It means a model reached outside its list, by mistake or because something it read told it to. It does not feed the breaker: a wrong name is a soft failure, and three would stop the run.
-- The whole fixed sentence is on `GATE_TEXT_RE`, so the refusal reads as our own text and does not mark the chat as holding third-party text. Only the whole sentence counts: a tool cannot borrow its start.
-- A listed run reads one more fixed rule, `ONLY THIS RUN'S TOOLS`: the full rules name tools it may not hold.
-- The direct image route runs a tool with no model call. A listed run without `generateImage` does not take it.
-- `spawnAgent`'s `tools` is text a model writes. `checkToolList` reads a bare server name as `server:<name>`, leaves out what names nothing (and tells the parent), and starts nothing when no entry is real. A sub-agent with only refused calls and no answer reports "Task NOT done", not "Task completed".
-- A chat turn is not limited. Its tool groups save tokens; they are not a permission, and a call to a tool from a group used earlier in the chat still runs.
-- An MCP server whose `listTools` failed is asked again by `getTools()`, at most once a minute and without making the turn wait. A call to one of its tools used to repair the cache by chance; a listed run can no longer make that call.
-- On the device, in the 30 days before this check, no job called outside its list once the lists existed.
-
-What the list does not cover, by design or for later:
-
-- **A child may hold tools its parent lacks.** A parent that names `tools` for `spawnAgent` can name any tool: the system jobs fan out that way (a briefing that holds no mail tool starts a mail reader). A parent that gives no `tools` hands down its own list, so silence never widens. The child's taint, the approval gates and the breaker it shares with its parent still hold.
-- **A job, task or watcher that a listed run creates carries no list.** Its later runs get every tool; the taint it carries and the approval gates hold them.
-- **A run resumed after an approval keeps no list.** No listed run reaches that path today: jobs are answered deferred and run the one approved call, and a sub-agent cannot ask.
-- **A watcher run on a contact's chat still gets every tool**, held by the approval gates and the untrusted-content rules.
-
-These boundaries belong to the security review.
-
 ## Subprocess environments
 
 The agent process holds every provider key. Child processes do not.
@@ -456,6 +428,34 @@ keys it does not send.
 boundary. The boundaries stay: scrubbed environments, the deny-list, owner
 escalation for money and irreversible actions, and the owner's review of
 every pull request.
+
+## A run's tool list is checked when a call runs
+A scheduled job with `allowedTools`, and every sub-agent, may call only the tools
+declared to that run. The list used to work by leaving declarations out of the
+request and nothing else: a model that wrote the name of a tool it was never
+shown had it run, held back only by the approval gates. A sub-agent sent to
+read a web page is the case that matters, since the page can ask for the shell
+by name.
+
+- `listedRunTools` (`services/tool-groups.js`) returns the declared names for such a run. `server:<name>` entries are already resolved at that point, and a sub-agent never holds `spawnAgent`. A list of the wrong type allows nothing, as it declares nothing.
+- The tool loop checks the name before any gate. A call outside the list gets the fixed text `Refused: this tool is not in this run's tool list...` and never becomes an approval card: the owner is not asked to approve what the run was not given.
+- The first refusal of a run rings once (`tool_refused_unlisted`), and each one is counted as a metric of the same name (tool, job, sub-agent). It means a model reached outside its list, by mistake or because something it read told it to. It does not feed the breaker: a wrong name is a soft failure, and three would stop the run.
+- The whole fixed sentence is on `GATE_TEXT_RE`, so the refusal reads as our own text and does not mark the chat as holding third-party text. Only the whole sentence counts: a tool cannot borrow its start.
+- A listed run reads one more fixed rule, `ONLY THIS RUN'S TOOLS`: the full rules name tools it may not hold.
+- The direct image route runs a tool with no model call. A listed run without `generateImage` does not take it.
+- `spawnAgent`'s `tools` is text a model writes. `checkToolList` reads a bare server name as `server:<name>`, leaves out what names nothing (and tells the parent), and starts nothing when no entry is real. A sub-agent with only refused calls and no answer reports "Task NOT done", not "Task completed".
+- A chat turn is not limited. Its tool groups save tokens; they are not a permission, and a call to a tool from a group used earlier in the chat still runs.
+- An MCP server whose `listTools` failed is asked again by `getTools()`, at most once a minute and without making the turn wait. A call to one of its tools used to repair the cache by chance; a listed run can no longer make that call.
+- On the device, in the 30 days before this check, no job called outside its list once the lists existed.
+
+What the list does not cover, by design or for later:
+
+- **A child may hold tools its parent lacks.** A parent that names `tools` for `spawnAgent` can name any tool: the system jobs fan out that way (a briefing that holds no mail tool starts a mail reader). A parent that gives no `tools` hands down its own list, so silence never widens. The child's taint, the approval gates and the breaker it shares with its parent still hold.
+- **A job, task or watcher that a listed run creates carries no list.** Its later runs get every tool; the taint it carries and the approval gates hold them.
+- **A run resumed after an approval keeps no list.** No listed run reaches that path today: jobs are answered deferred and run the one approved call, and a sub-agent cannot ask.
+- **A watcher run on a contact's chat still gets every tool**, held by the approval gates and the untrusted-content rules.
+
+These boundaries belong to the security review.
 
 ## Untrusted content
 
