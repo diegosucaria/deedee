@@ -92,3 +92,31 @@ describe('groupsNamedIn', () => {
         expect(m.merge('c3', ['code'])).toEqual(['code']);
     });
 });
+
+describe('sortToolsByName', () => {
+    const { sortToolsByName } = require('../src/services/tool-groups');
+
+    test('the same tools give the same order, whatever order the servers connected in', () => {
+        // A restarted MCP server moves to the end of the list. The order is
+        // part of the prefix Gemini caches, so it must not depend on that.
+        const a = [{ name: 'sendMessage' }, { name: 'ha_call_service' }, { name: 'browser_click' }, { name: 'askUser' }];
+        const b = [{ name: 'browser_click' }, { name: 'askUser' }, { name: 'sendMessage' }, { name: 'ha_call_service' }];
+        expect(sortToolsByName(a).map(t => t.name)).toEqual(sortToolsByName(b).map(t => t.name));
+        expect(sortToolsByName(a).map(t => t.name)).toEqual(['askUser', 'browser_click', 'ha_call_service', 'sendMessage']);
+    });
+
+    test('it does not change the list it was given, and copes with nothing', () => {
+        const list = [{ name: 'b' }, { name: 'a' }];
+        sortToolsByName(list);
+        expect(list.map(t => t.name)).toEqual(['b', 'a']);
+        expect(sortToolsByName(null)).toEqual([]);
+    });
+
+    test('a tool with no name still lands in one fixed place', () => {
+        const a = [{ name: 'b' }, {}, { name: 'a' }, null];
+        const b = [null, { name: 'a' }, {}, { name: 'b' }];
+        const names = (list) => sortToolsByName(list).map(t => t?.name || '');
+        expect(names(a)).toEqual(['', '', 'a', 'b']);
+        expect(names(b)).toEqual(names(a));
+    });
+});
