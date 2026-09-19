@@ -1017,6 +1017,9 @@ NEVER contact anyone other than the owner.`,
                         this.agent.db.cleanupTokenUsage(30);
                         // Guardian history: 180 days of rows, daily aggregates after.
                         if (typeof this.agent.db.cleanupGuardianDecisions === 'function') this.agent.db.cleanupGuardianDecisions(180);
+                        // The delivery ledger: sent and dead rows were never
+                        // removed. Rows still waiting are kept whatever their age.
+                        if (typeof this.agent.db.cleanupOutbox === 'function') this.agent.db.cleanupOutbox(30);
                     }
                 } catch (e) {
                     console.error('[Scheduler] Log cleanup failed:', e);

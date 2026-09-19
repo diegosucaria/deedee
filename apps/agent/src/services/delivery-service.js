@@ -235,7 +235,7 @@ class DeliveryService {
      * @param {string} channel - whatsapp|telegram|web|slack (a ':session' suffix is allowed)
      * @param {string} target - chat id / phone
      * @param {object} payload - { content, type, metadata, caption } or a message
-     * @param {{ origin?: string, id?: string, expiresAt?: string, dedupe?: boolean,
+     * @param {{ origin?: string, id?: string, expiresAt?: string, dedupe?: boolean|'pending',
      *           immediateFallback?: boolean, alreadyFailed?: boolean, error?: string }} [opts]
      * @returns {Promise<{ delivered: boolean, id?: string, status?: string, queued?: boolean, deduped?: boolean, via?: string, error?: string }>}
      */
@@ -273,7 +273,19 @@ class DeliveryService {
         }
 
         const hash = contentHash(p);
-        if (opts.dedupe !== false) {
+        if (opts.dedupe === 'pending') {
+            // The caller means every send it asks for, so an equal text that
+            // already went out is sent again. But an equal text still waiting
+            // in the queue is the same message asked for twice (a model that
+            // retries after "queued"): one copy is enough. The window covers
+            // the whole retry span, not the short duplicate window.
+            const span = this.backoffMs.reduce((a, b) => a + b, 0) + 10 * 60 * 1000;
+            const waiting = this.db.findOutboxDuplicate(kind, tgt, hash, new Date(Date.now() - span));
+            if (waiting && (waiting.status === 'pending' || waiting.status === 'failed')) {
+                console.log(`[Delivery] ${kind} for ${tgt} is already queued (row ${waiting.id}); not queued twice.`);
+                return { delivered: false, deduped: true, id: waiting.id, status: waiting.status, queued: true };
+            }
+        } else if (opts.dedupe !== false) {
             const since = new Date(Date.now() - this.dedupeWindowMs);
             const dup = this.db.findOutboxDuplicate(kind, tgt, hash, since);
             if (dup) {
@@ -288,10 +300,19 @@ class DeliveryService {
             lastError: String(opts.error || 'interface refused the message').slice(0, 500),
             nextAttemptAt: new Date(Date.now() + this.backoffMs[0]).toISOString()
         } : {};
-        const row = this.db.enqueueOutbox({
-            id: pseudoRow.id, kind, channel: ch, target: tgt, payload: p,
-            origin: opts.origin || null, contentHash: hash, expiresAt: opts.expiresAt || null, ...preset
-        });
+        let row;
+        try {
+            row = this.db.enqueueOutbox({
+                id: pseudoRow.id, kind, channel: ch, target: tgt, payload: p,
+                origin: opts.origin || null, contentHash: hash, expiresAt: opts.expiresAt || null, ...preset
+            });
+        } catch (e) {
+            // A full disk or a locked database must not cost the message: send
+            // it once, directly, and say the ledger holds nothing.
+            console.error(`[Delivery] Could not write the ${kind} row (${e.message}); sending once without the ledger.`);
+            if (opts.alreadyFailed) return { delivered: false, error: 'no ledger' };
+            return this._directOnly(pseudoRow, opts);
+        }
 
         if (opts.alreadyFailed) {
             console.warn(`[Delivery] ${kind} to ${ch} queued for retry after a refused send (row ${row.id}).`);
@@ -344,7 +365,10 @@ class DeliveryService {
 
             const res = await this._send(row);
             if (res.sent) {
-                this.db.markOutboxSent(row.id, { via: row.channel });
+                // It went out. A row that cannot be marked must not turn that
+                // into a failure, or the caller would send it again.
+                try { this.db.markOutboxSent(row.id, { via: row.channel }); }
+                catch (e) { console.error(`[Delivery] Row ${row.id} was sent but could not be marked: ${e.message}`); }
                 return { delivered: true, id: row.id, status: 'sent', via: row.channel };
             }
 
