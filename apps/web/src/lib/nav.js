@@ -1,8 +1,8 @@
 // Which sidebar entry is the current page.
 //
-// An entry may point at a tab of a page ("/brain?tab=approvals"). Such an
-// entry lights up only on that tab, and the plain entry for the same page
-// ("/brain") lights up on every other tab, so exactly one is ever lit.
+// An entry may point at a tab of a page ("/brain?tab=approvals"); none does
+// today. Such an entry lights up only on that tab, and the plain entry for the
+// same page ("/brain") lights up on every other tab, so exactly one is ever lit.
 
 /**
  * @param {string} href - the entry's link, with or without a query

@@ -40,12 +40,16 @@ describe('the sidebar as it is: approvals and the guardian have no entry of thei
     const source = fs.readFileSync(path.join(__dirname, '../src/components/Sidebar.js'), 'utf8');
 
     test('no Approvals or Guardian entry is left in the sidebar', () => {
-        const names = [...source.matchAll(/\{ name: '([^']+)', href:/g)].map(m => m[1]);
+        // Either quote style, so a formatter cannot make this pass on nothing.
+        const names = [...source.matchAll(/\bname:\s*['"]([^'"]+)['"]/g)].map(m => m[1]);
+        expect(names.length).toBeGreaterThan(5);
         expect(names).toContain('Brain');
         expect(names).not.toContain('Approvals');
         expect(names).not.toContain('Guardian');
         // No entry points at a tab, so nothing can steal Brain's highlight.
-        expect([...source.matchAll(/href: '([^']+)'/g)].map(m => m[1]).filter(h => h.includes('?'))).toEqual([]);
+        const hrefs = [...source.matchAll(/\bhref:\s*['"]([^'"]+)['"]/g)].map(m => m[1]);
+        expect(hrefs).toContain('/brain');
+        expect(hrefs.filter(h => h.includes('?'))).toEqual([]);
     });
 
     test('Brain is lit on every one of its tabs', () => {
