@@ -50,6 +50,26 @@ describe('SmartContextManager.trimOldToolResults', () => {
         expect(note).toMatch(/Never repeat an action/);
     });
 
+    test('a list keeps the start of every entry, not 400 characters of the first', () => {
+        // listJobs: the first job's prompt is thousands of characters long.
+        const jobs = Array.from({ length: 12 }, (_, i) => ({ name: `job_number_${i}`, cron: '0 7 * * *', task: `STEP 1 ${'do a long thing '.repeat(i === 0 ? 400 : 20)}` }));
+        const out = SmartContextManager.trimOldToolResults([...exchange('listJobs', { jobs }), ...filler()]);
+        const { preview } = responses(out)[0].response;
+        expect(preview).toMatch(/^12 entries; the first 10/);
+        for (let i = 0; i < 10; i++) expect(preview).toContain(`job_number_${i}`);
+        expect(preview.endsWith('…[cut]')).toBe(true);
+        expect(preview.length).toBeLessThan(600);
+    });
+
+    test('the note says the preview is not the whole result', () => {
+        const out = SmartContextManager.trimOldToolResults([...exchange('listJobs', { text: 'Dear all, '.repeat(400) }), ...filler()]);
+        expect(responses(out)[0].response.note).toMatch(/never send or quote it as if it were/);
+        // A tool we do not know is third-party text: our note then sits beside the envelope's own.
+        const unknown = SmartContextManager.trimOldToolResults([...exchange('draftLetter', { text: 'Dear all, '.repeat(400) }), ...filler()]);
+        expect(responses(unknown)[0].response).toMatchObject({ untrusted: true });
+        expect(responses(unknown)[0].response.shortenedNote).toMatch(/never send or quote it as if it were/);
+    });
+
     test('parallel results of one round stay together', () => {
         // Five calls at once answer in one row. Counting results one by one
         // cut two of the five the model had fetched a turn ago.
@@ -181,7 +201,9 @@ describe('getContext and the summary trigger use the shortened window', () => {
         expect(responses(history)[0].response).toMatchObject({ shortened: true });
     });
 
-    test('the summary threshold measures what is sent', () => {
-        expect(SmartContextManager.estimateTokens(rows)).toBeLessThan(1000);
+    test('the summary trigger still measures the stored window', () => {
+        // Measured after the cut, a chat full of tool results never reached
+        // the threshold again, and so never got a summary.
+        expect(SmartContextManager.estimateTokens(rows)).toBeGreaterThan(10000);
     });
 });

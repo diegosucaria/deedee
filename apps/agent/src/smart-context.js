@@ -11,6 +11,7 @@ const { isUntrustedEnvelope, classifyToolResult, wrapUntrusted } = require('./ut
 const TRIM_KEEP_LAST_ROWS = 3;
 const TRIM_OVER_CHARS = 1500;
 const TRIM_PREVIEW_CHARS = 400;
+const TRIM_PREVIEW_ITEMS = 10;
 
 class SmartContextManager {
     constructor(db, client) {
@@ -128,15 +129,34 @@ class SmartContextManager {
         if (rounds <= keepLastRows) return history;
 
         const size = (value) => { try { return JSON.stringify(value ?? null).length; } catch { return 0; } };
+        const slice = (text, chars) => {
+            const cut = text.slice(0, chars);
+            // A cut can land inside an emoji; drop the half that is left.
+            return typeof cut.toWellFormed === 'function' ? cut.toWellFormed() : cut;
+        };
+        // The list a result holds: the result itself, or its one array field.
+        const listIn = (value) => {
+            if (Array.isArray(value)) return value;
+            if (!value || typeof value !== 'object') return null;
+            const arrays = Object.values(value).filter(Array.isArray);
+            return arrays.length === 1 ? arrays[0] : null;
+        };
         const head = (value) => {
             // An MCP result is { output: "<text>" }: show the text, not its escaped wrapper.
             const inner = value && typeof value === 'object' && !Array.isArray(value)
                 && Object.keys(value).length === 1 && typeof value.output === 'string' ? value.output : value;
-            const text = typeof inner === 'string' ? inner : JSON.stringify(inner ?? null);
+            const text = (v) => (typeof v === 'string' ? v : JSON.stringify(v ?? null));
+            // A list shows the start of each entry, not 400 characters of the
+            // first: one job's long prompt used to hide every other job's name.
+            const list = listIn(inner);
+            if (list && list.length > 1) {
+                const shown = Math.min(list.length, TRIM_PREVIEW_ITEMS);
+                const each = Math.max(40, Math.floor(previewChars / shown));
+                const rows = list.slice(0, shown).map(item => `${slice(text(item), each)}${text(item).length > each ? ' …' : ''}`);
+                return `${list.length} entries; the first ${shown}, each cut short:\n${rows.join('\n')}\n…[cut]`;
+            }
             // The mark shows where it was cut, so a cut number is not read as a whole one.
-            const cut = text.slice(0, previewChars);
-            // A cut can land inside an emoji; drop the half that is left.
-            return `${typeof cut.toWellFormed === 'function' ? cut.toWellFormed() : cut} …[cut]`;
+            return `${slice(text(inner), previewChars)} …[cut]`;
         };
         const isGateText = (response) => {
             const keys = response && typeof response === 'object' && !Array.isArray(response) ? Object.keys(response) : [];
@@ -157,7 +177,7 @@ class SmartContextManager {
                 const chars = size(enveloped ? response.content : response);
                 if (chars <= overChars || isGateText(response)) return p;
                 const name = p.functionResponse.name;
-                const note = `Older tool result shortened to save context (it was ${chars} characters). If you need the rest, fetch it again with a read-only call. Never repeat an action (a send, a booking, a push) just to see its result.`;
+                const note = `Older tool result shortened to save context (it was ${chars} characters). If you need the rest, fetch it again with a read-only call. Never repeat an action (a send, a booking, a push) just to see its result. The preview is not the whole result: never send or quote it as if it were.`;
                 let shorter;
                 if (enveloped) {
                     shorter = { ...response, shortened: true, shortenedNote: note, content: { preview: head(response.content) } };
@@ -350,10 +370,10 @@ class SmartContextManager {
      * this, one photo in the window tripped the threshold on its own.
      */
     static estimateTokens(history) {
-        // Shortened like the window that goes out, or the threshold would fire
-        // on tool results the model no longer receives.
-        const sent = SmartContextManager.trimOldToolResults(SmartContextManager.normalizeHistoryForModel(history));
-        return JSON.stringify(sent).length / 4;
+        // The stored window, not the shortened one that goes out: the summary
+        // trigger asks how much has happened in the chat. Measured after the
+        // cut, a chat full of tool results never reached it again.
+        return JSON.stringify(SmartContextManager.normalizeHistoryForModel(history)).length / 4;
     }
 
     /**
