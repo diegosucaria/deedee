@@ -25,7 +25,7 @@ const { BackupManager } = require('./backup');
 const { Scheduler } = require('./scheduler');
 const axios = require('axios');
 const { getSystemInstruction, getTurnContext } = require('./prompts/system');
-const { filterToolsByGroups, ToolGroupMemory, groupsNamedIn, sortToolsByName } = require('./services/tool-groups');
+const { filterToolsByGroups, ToolGroupMemory, groupsNamedIn, sortToolsByName, listedRunTools, UNLISTED_TOOL_TEXT } = require('./services/tool-groups');
 const { getFunctionCalls, getThinkingMessage } = require('./utils/helpers');
 const { usageTag, promptComposition, usageColumns } = require('./services/usage-attribution');
 const { geminiToOpenAIHistory, openAIToGeminiChunk } = require('./utils/mapper');
@@ -1147,7 +1147,9 @@ class Agent {
       // Fallback to standard if stream fails?
       if (source === 'web' && !e.message.includes('sendMessage')) {
         try {
-          const result = await session.sendMessage(payload);
+          // With the config of this call: a bare send falls back to the
+          // session's, and loses a thinking level set for the loop.
+          const result = await session.sendMessage(sendParams(payload));
           return result.response;
         } catch (ex) { throw ex; }
       }
@@ -2042,6 +2044,11 @@ class Agent {
         ...externalTools.map(({ serverName, ...rest }) => rest)
       ]);
 
+      // A job or a sub-agent may call only what was declared to it; checked
+      // again when a call runs, since a list that only hides declarations
+      // does not stop a model that writes the name anyway.
+      const runToolList = listedRunTools(message, allTools);
+
       // construct the tools object for Gemini
       // --- HYBRID SEARCH STRATEGY ---
       // 1. Native Search (Grounding): Faster, Cheaper, Better Citations. BUT cannot mix with other tools (e.g. replyWithAudio).
@@ -2614,12 +2621,21 @@ class Agent {
             // In smart mode the approval guardian decides the gated calls:
             // allow runs, deny fails with a reason, escalate asks the owner.
             const serverName = this.mcp?.toolMap?.get?.(executionName)?.name || null;
-            const review = await this.approvals.review({
-              message, toolName: executionName, args: call.args, taint: turnTaint, serverName,
-              run: approvalRun, sendCallback: activeSendCallback, historyUntrusted, foreignText
-            });
+            // Outside this run's list: refused before any gate, and never
+            // offered to the owner as a card. The run was given its tools.
+            const unlisted = !!runToolList && !runToolList.has(executionName);
+            if (unlisted) {
+              console.warn(`${logPrefix} ${executionName} is not in this run's tool list (${runToolList.size} tools); refused.`);
+              try { this.db.logMetric('tool_refused_unlisted', 1, { chatId, runId, tool: executionName, job: message.metadata?.jobName || null, subAgent: !!message.metadata?.isSubAgent }); } catch (e) { /* a metric must not stop the turn */ }
+            }
+            const review = unlisted
+              ? { run: false, status: 'error', result: { error: UNLISTED_TOOL_TEXT } }
+              : await this.approvals.review({
+                message, toolName: executionName, args: call.args, taint: turnTaint, serverName,
+                run: approvalRun, sendCallback: activeSendCallback, historyUntrusted, foreignText
+              });
             if (!review.run) {
-              console.log(`${logPrefix} Action ${executionName} held by the approval gate (${review.status}).`);
+              if (!unlisted) console.log(`${logPrefix} Action ${executionName} held by the approval gate (${review.status}).`);
               toolResult = review.result;
               toolStatus = review.status;
               if (review.status === 'paused') executionSummary.pausedCalls = (executionSummary.pausedCalls || 0) + 1;

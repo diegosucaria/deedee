@@ -6,7 +6,7 @@ describe('filterToolsByGroups', () => {
         { name: 'sendMessage', category: 'communication' },
         { name: 'lookupDevice', category: 'smarthome' },
         { name: 'recommend_outfit', category: 'wardrobe' },
-        { name: 'list_vinyls' } // no category → core
+        { name: 'askUser' } // no category → core
     ];
     const external = [
         { name: 'ha_call_service', serverName: 'homeassistant' },
@@ -17,7 +17,7 @@ describe('filterToolsByGroups', () => {
 
     test('core only keeps uncategorised/core tools and unmapped servers', () => {
         const r = filterToolsByGroups(internal, external, []);
-        expect(r.internalTools.map(t => t.name)).toEqual(['rememberFact', 'sendMessage', 'list_vinyls']);
+        expect(r.internalTools.map(t => t.name)).toEqual(['rememberFact', 'sendMessage', 'askUser']);
         expect(r.externalTools.map(t => t.name)).toEqual(['future_tool']);
     });
 

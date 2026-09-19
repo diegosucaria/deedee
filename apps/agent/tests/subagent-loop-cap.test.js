@@ -31,7 +31,7 @@ describe('sub-agent run limits in processMessage', () => {
     });
 
     // Every model turn asks for one more tool call, so only the cap ends the loop.
-    const functionCallChunk = () => ({ candidates: [{ content: { parts: [{ functionCall: { name: 'getWeather', args: {} } }] } }] });
+    const functionCallChunk = () => ({ candidates: [{ content: { parts: [{ functionCall: { name: 'getFact', args: {} } }] } }] });
     const alwaysCall = () => ({
         stream: (async function* () { yield functionCallChunk(); })(),
         response: Promise.resolve(functionCallChunk())

@@ -86,6 +86,23 @@ For the env-var inventory and two-subdomain vs single-subdomain recipes, see the
 - **GSuite**: Full Read/Write access to Calendar and Mail. Every email send waits for the owner (see Approvals).
 - **Home Assistant**: Full Control (lights, switches, media, climate, covers). Locks, the alarm, opening a garage door and mass actions wait for the owner.
 
+### A run's tool list is checked when a call runs
+A scheduled job with `allowedTools`, and every sub-agent, may call only the tools
+declared to that run. The list used to work by leaving declarations out of the
+request and nothing else: a model that wrote the name of a tool it was never
+shown had it run, held back only by the approval gates. A sub-agent sent to
+read a web page is the case that matters, since the page can ask for the shell
+by name.
+
+- `listedRunTools` (`services/tool-groups.js`) returns the declared names for such a run. `server:<name>` entries are already resolved at that point, and a sub-agent never holds `spawnAgent`.
+- The tool loop checks the name before any gate. A call outside the list gets the fixed text `Refused: this tool is not in this run's tool list...` and never becomes an approval card: the owner is not asked to approve what the run was not given.
+- The refusal is logged and counted as the metric `tool_refused_unlisted` (tool, job, sub-agent). A count above zero means a model reached outside its list, by mistake or because something it read told it to.
+- The whole fixed sentence is on `GATE_TEXT_RE`, so the refusal reads as our own text and does not mark the chat as holding third-party text. Only the whole sentence counts: a tool cannot borrow its start.
+- A chat turn is not limited. Its tool groups save tokens; they are not a permission, and a call to a tool from a group used earlier in the chat still runs.
+- On the device, in the 30 days before this check, no job called outside its list once the lists existed.
+
+Not covered here: a watcher run on a contact's chat still gets every tool, held by the approval gates and the untrusted-content rules. That boundary belongs to the security review.
+
 ## Subprocess environments
 
 The agent process holds every provider key. Child processes do not.

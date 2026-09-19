@@ -150,4 +150,25 @@ function sortToolsByName(tools) {
     return [...(tools || [])].sort((a, b) => (key(a) < key(b) ? -1 : key(a) > key(b) ? 1 : 0));
 }
 
-module.exports = { TOOL_GROUPS, INTERNAL_CATEGORY_GROUPS, mcpServerGroup, filterToolsByGroups, ToolGroupMemory, groupsNamedIn, sortToolsByName };
+/**
+ * The tool names a run may call, for a run that has a list of its own: a
+ * scheduled job with `allowedTools`, and every sub-agent (one without a list
+ * still may not spawn sub-agents). The list used to work only by leaving
+ * declarations out of the request, and nothing checked a call when it ran:
+ * a model that wrote the name of a tool it was never shown had it run.
+ * An interactive turn returns null: its groups save tokens, they are not a
+ * permission, and a call from an earlier turn's group must still work.
+ * @param {{ source?: string, metadata?: object }} message
+ * @param {Array<{ name: string }>} declared - the declarations sent this turn
+ * @returns {Set<string>|null}
+ */
+function listedRunTools(message, declared) {
+    const meta = message?.metadata || {};
+    const listed = meta.isSubAgent || (message?.source === 'scheduler' && Array.isArray(meta.allowedTools));
+    if (!listed) return null;
+    return new Set((declared || []).map(t => String(t?.name || '')).filter(Boolean));
+}
+
+const UNLISTED_TOOL_TEXT = "Refused: this tool is not in this run's tool list. It was not run. Use only the tools you were given.";
+
+module.exports = { TOOL_GROUPS, INTERNAL_CATEGORY_GROUPS, mcpServerGroup, filterToolsByGroups, ToolGroupMemory, groupsNamedIn, sortToolsByName, listedRunTools, UNLISTED_TOOL_TEXT };
