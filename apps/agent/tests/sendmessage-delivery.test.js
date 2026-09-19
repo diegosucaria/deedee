@@ -63,9 +63,11 @@ describe('sendMessage delivery', () => {
         send.mockResolvedValue(false);
         const out = await toOwner();
         // Not "Message sent": it has not been.
-        expect(out).toMatchObject({ success: true, queued: true });
+        expect(out).toMatchObject({ success: true, queued: true, status: 'queued' });
         expect(out.info).toMatch(/Not delivered .* yet/);
-        expect(out.info).toMatch(/do not send it again/);
+        // He may read this line himself, so it states facts and gives no orders.
+        expect(out.info).toMatch(/should not be sent again/);
+        expect(out.info).not.toMatch(/\bdo not\b|\bSay so\b/i);
         const [row] = db.listRecentOutbox({ limit: 5 });
         expect(['pending', 'failed']).toContain(row.status);
         expect(row.target).toBe(OWNER_JID);
@@ -88,20 +90,83 @@ describe('sendMessage delivery', () => {
         await toOwner();
         await toOwner();
         expect(send).toHaveBeenCalledTimes(2);
+        expect(db.listRecentOutbox({ limit: 5 }).map(r => r.status)).toEqual(['sent', 'sent']);
     });
 
-    test('a picture to the owner keeps its caption', async () => {
-        const img = path.join(dir, 'pic.png');
-        fs.writeFileSync(img, 'png-bytes');
-        const old = process.env.DATA_DIR;
-        process.env.DATA_DIR = dir;
-        try {
+    test('a model that retries after "queued" does not get him the briefing twice', async () => {
+        send.mockResolvedValue(false);
+        const first = await toOwner();
+        const second = await toOwner();
+        expect(first.queued).toBe(true);
+        expect(second).toMatchObject({ success: true, queued: true });
+        // One row waits, not two, so one copy goes out when the service returns.
+        expect(db.listRecentOutbox({ limit: 5 })).toHaveLength(1);
+    });
+
+    test('a send that cannot be delivered or queued is a failure', async () => {
+        // The ledger refuses an empty text outright.
+        const out = await toOwner({ content: '' });
+        expect(out.success).toBe(false);
+        expect(out.error).toMatch(/nothing is queued/);
+        expect(send).not.toHaveBeenCalled();
+        expect(db.listRecentOutbox({ limit: 5 })).toHaveLength(0);
+    });
+
+    test('a chat send is filed as a reply, with its own origin', async () => {
+        await executor.execute('sendMessage', { to: OWNER_DIGITS, content: 'note to self' }, { message: { source: 'web', metadata: { chatId: 'web-1' } } });
+        expect(db.listRecentOutbox({ limit: 5 })[0]).toMatchObject({ kind: 'reply', origin: 'sendMessage', status: 'sent' });
+    });
+
+    test('a database that cannot take the row does not cost him the message', async () => {
+        jest.spyOn(db, 'enqueueOutbox').mockImplementation(() => { throw new Error('disk full'); });
+        const out = await toOwner();
+        expect(out).toMatchObject({ success: true });
+        expect(send).toHaveBeenCalledTimes(1);
+    });
+
+    describe('pictures', () => {
+        let img, oldDataDir;
+        beforeEach(() => {
+            img = path.join(dir, 'pic.png');
+            fs.writeFileSync(img, 'png-bytes');
+            oldDataDir = process.env.DATA_DIR;
+            process.env.DATA_DIR = dir;
+        });
+        afterEach(() => { if (oldDataDir === undefined) delete process.env.DATA_DIR; else process.env.DATA_DIR = oldDataDir; });
+
+        test('a picture to the owner keeps its caption and leaves no megabyte row', async () => {
             const out = await toOwner({ type: 'image', imagePath: img, content: 'the caption' });
             expect(out).toMatchObject({ success: true });
+            expect(send).toHaveBeenCalledTimes(1);
             expect(send.mock.calls[0][0]).toMatchObject({ type: 'image', caption: 'the caption', content: Buffer.from('png-bytes').toString('base64') });
-        } finally {
-            if (old === undefined) delete process.env.DATA_DIR; else process.env.DATA_DIR = old;
-        }
+            // The ledger holds text only: a picture row would be megabytes of base64.
+            expect(db.listRecentOutbox({ limit: 5 })).toHaveLength(0);
+        });
+
+        test('a refused picture still gets him the words, through the ledger', async () => {
+            send.mockResolvedValueOnce(false).mockResolvedValue(true);
+            const out = await toOwner({ type: 'image', imagePath: img, content: 'Good morning! Here is your daily briefing:' });
+            expect(out).toMatchObject({ success: true, status: 'partial' });
+            expect(out.info).toMatch(/picture .* was not delivered\. Its text went out/);
+            const [row] = db.listRecentOutbox({ limit: 5 });
+            expect(row).toMatchObject({ kind: 'job_notification', status: 'sent' });
+            expect(row.payload).toMatchObject({ type: 'text', content: 'Good morning! Here is your daily briefing:' });
+        });
+
+        test('with the service down, the words are queued and the model is told', async () => {
+            send.mockResolvedValue(false);
+            const out = await toOwner({ type: 'image', imagePath: img, content: 'the words' });
+            expect(out).toMatchObject({ success: true, queued: true, status: 'queued' });
+            expect(out.info).toMatch(/Its text is queued/);
+            expect(db.listRecentOutbox({ limit: 5 })).toHaveLength(1);
+        });
+
+        test('a refused picture with no words is a failure', async () => {
+            send.mockResolvedValue(false);
+            const out = await toOwner({ type: 'image', imagePath: img, content: '' });
+            expect(out.success).toBe(false);
+            expect(db.listRecentOutbox({ limit: 5 })).toHaveLength(0);
+        });
     });
 
     test('a contact gets one try: a refused send is a failure, not queued, never "sent"', async () => {
@@ -109,8 +174,10 @@ describe('sendMessage delivery', () => {
         send.mockResolvedValue(false);
         const out = await executor.execute('sendMessage', { to: CONTACT_DIGITS, content: 'on my way' }, { message: { source: 'web', metadata: { chatId: 'web-1' } } });
         expect(out.success).toBe(false);
-        expect(out.error).toMatch(/was not delivered/);
+        // A refusal and a timeout look alike, so it may have landed.
+        expect(out.error).toMatch(/may not have been delivered/);
         expect(out.error).toMatch(/not queued/);
+        expect(out.error).toMatch(/should not be sent again before checking/);
         expect(db.listRecentOutbox({ limit: 5 })).toHaveLength(0);
         expect(send).toHaveBeenCalledTimes(1);
     });

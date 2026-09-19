@@ -12,12 +12,12 @@ Each one made a single attempt; the only trace was the dashboard bell.
 
 | kind | source |
 |---|---|
-| `job_notification` | scheduler smart notifications (`_processSmartNotification`) |
+| `job_notification` | scheduler smart notifications (`_processSmartNotification`), and a text the `sendMessage` tool sends to the owner from a job |
 | `reminder` | `setReminder` jobs, also late ones found at boot |
 | `system_alert` | `agent.deliverSystemAlert` (Slack token expiry, WhatsApp needs repair, ...) |
 | `ask_user` | questions the `askUser` tool sends |
 | `watcher` | watcher replies redirected to `admin_chat_id` when the interface refused them |
-| `reply` | a normal chat reply the interface refused (`_deliverReply`) |
+| `reply` | a normal chat reply the interface refused (`_deliverReply`), and a text the `sendMessage` tool sends to the owner from a chat |
 | `approval` | cards for tool calls that wait for the owner, and their results (`services/approval-service.js`; see `docs/security.md`, "Approvals") |
 
 Channels: `whatsapp`, `telegram`, `web`, `slack`. The service builds the id
@@ -59,7 +59,19 @@ Dedupe: the same kind, target and content within 10 minutes is queued once.
 `askUser` and approvals turn this off (two equal questions are two questions), and so do
 the scheduler paths: a job that fires every 5 minutes with the same text, or
 two reminders with the same words, mean every one of them. The dedupe stays
-on for `reply`, `system_alert` and `watcher`, where a repeat is an accident.
+on for a `reply` the interface refused, `system_alert` and `watcher`, where a
+repeat is an accident.
+
+`sendMessage` to the owner uses a third rule (`dedupe: 'pending'`). The model
+asked for each send, so an equal text that already went out is sent again.
+But an equal text still waiting in the queue is not queued twice: a model
+that retries after "queued" would otherwise deliver two copies when the
+service returns. A message to a contact never enters the ledger: it gets one
+direct try, and a refused try is reported. A picture or a voice note to the
+owner stays out too (its row would hold megabytes); if it is refused, its
+caption goes through the ledger as text.
+
+The nightly maintenance removes `sent` and `dead` rows older than 30 days.
 
 Same message twice: a retry carries the message id (`POST /send` body field
 `id`). The interfaces service keeps the ids it handed to a transport for

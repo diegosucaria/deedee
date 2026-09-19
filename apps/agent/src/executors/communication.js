@@ -205,28 +205,54 @@ class CommunicationExecutor extends BaseExecutor {
                     // backoff and tries his other channel. A job sends its
                     // briefing here and then answers [SILENT], so a send that
                     // failed quietly was a briefing lost without a trace.
+                    //
+                    // The texts below are read by the model and, after an
+                    // approved send, by the owner word for word. They state
+                    // facts and give no orders.
                     const delivery = services.agent?.delivery;
                     const toOwner = !!(delivery && typeof delivery.deliver === 'function'
                         && typeof delivery.isOwnerTarget === 'function' && delivery.isOwnerTarget(svc, metadata.chatId));
-                    if (toOwner) {
-                        const kind = message?.source === 'scheduler' ? 'job_notification' : 'reply';
+                    const kind = message?.source === 'scheduler' ? 'job_notification' : 'reply';
+                    // Every send the model asks for goes out, even an equal text.
+                    // Only a copy still waiting in the queue is not queued twice.
+                    const ledgerOpts = { origin: message?.metadata?.jobName ? `job:${message.metadata.jobName}` : 'sendMessage', dedupe: 'pending' };
+                    const queuedText = (what) => `${what} is queued and will be retried, so it should not be sent again.`;
+                    const isMedia = payload.type === 'image' || payload.type === 'audio';
+
+                    if (toOwner && !isMedia) {
                         const outcome = await delivery.deliver(kind, svc, metadata.chatId,
-                            { content: resolvedContent, type: type || 'text', caption, metadata: { session: metadata.session } },
-                            // The model asked for this send; an equal text sent twice is its call, not a duplicate.
-                            { origin: message?.metadata?.jobName ? `job:${message.metadata.jobName}` : 'sendMessage', dedupe: false });
+                            { content: resolvedContent, type: 'text', metadata: { session: metadata.session } }, ledgerOpts);
                         if (!outcome.delivered && outcome.queued) {
-                            return { success: true, queued: true, info: `Not delivered to ${cleanTo} yet: the messaging service did not take it. It is queued and will be retried, so do not send it again.` };
+                            return { success: true, status: 'queued', queued: true, info: `Not delivered to ${cleanTo} yet: the messaging service did not take it. ${queuedText('It')}` };
                         }
                         if (!outcome.delivered) {
-                            return { success: false, error: `The message to ${cleanTo} was not delivered (${outcome.error || outcome.status || 'unknown reason'}). Nothing is queued. Say so; do not claim it was sent.` };
+                            return { success: false, error: `Not delivered to ${cleanTo} (${outcome.error || outcome.status || 'unknown reason'}), and nothing is queued.` };
                         }
                     } else {
-                        // A contact gets one try and no retry: a message that
-                        // arrives hours late can be worse than none. The
-                        // failure is reported, never passed off as sent.
+                        // One direct try. A contact gets no retry: a message
+                        // that arrives hours late can be worse than none. A
+                        // picture or a voice note stays out of the ledger too:
+                        // its row would hold megabytes, and his other channel
+                        // would drop the caption.
                         const sent = await services.interface.send(payload);
+                        if (sent === false && toOwner && caption) {
+                            // The words matter more than the picture: they go
+                            // through the ledger as text, so they still arrive.
+                            const outcome = await delivery.deliver(kind, svc, metadata.chatId,
+                                { content: caption, type: 'text', metadata: { session: metadata.session } }, ledgerOpts);
+                            if (outcome.delivered) {
+                                return { success: true, status: 'partial', info: `The picture to ${cleanTo} was not delivered. Its text went out without the picture.` };
+                            }
+                            if (outcome.queued) {
+                                return { success: true, status: 'queued', queued: true, info: `The picture to ${cleanTo} was not delivered. ${queuedText('Its text')}` };
+                            }
+                            return { success: false, error: `Neither the picture nor its text reached ${cleanTo} (${outcome.error || outcome.status || 'unknown reason'}), and nothing is queued.` };
+                        }
                         if (sent === false) {
-                            return { success: false, error: `The message to ${cleanTo} was not delivered: the messaging service refused it or is down. It was not queued. Tell the owner; do not claim it was sent.` };
+                            // A refusal and a timeout look the same from here, so
+                            // it may have landed. Not queued, and not to be
+                            // repeated blindly: a contact must not get it twice.
+                            return { success: false, error: `The message to ${cleanTo} may not have been delivered: the messaging service refused it or did not answer in time. It was not queued. It should not be sent again before checking.` };
                         }
                     }
 
