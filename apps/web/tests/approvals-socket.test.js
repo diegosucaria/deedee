@@ -100,7 +100,10 @@ describe('chatLinkOf', () => {
     test('runs with no conversation have no link, and where the card went is never the link', () => {
         for (const id of ['system_watch_mail_1700000000000', 'live-session', 'subagent-123', 'api_city_image_1', 'sys_x']) {
             expect(chatLinkOf({ origin_chat_id: id, mode: 'deferred' })).toBeNull();
+            expect(chatLinkOf({ origin_chat_id: id, mode: 'interactive' })).toBeNull();
         }
+        // A real watcher run: a contact's chat id, asked on the owner's channel.
+        expect(chatLinkOf({ origin_chat_id: '10000000001@s.whatsapp.net', origin_source: 'whatsapp:user', mode: 'deferred' })).toBeNull();
         // An older row that only knows where the card went gets no link.
         expect(chatLinkOf({ reply_chat_id: '10000000000@s.whatsapp.net', mode: 'deferred' })).toBeNull();
         expect(chatLinkOf({})).toBeNull();

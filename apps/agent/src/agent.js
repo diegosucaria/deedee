@@ -2359,7 +2359,7 @@ class Agent {
         // CHECK GUARDIAN BREAKER: too many refused actions mean the run is being steered.
         if (approvalRun.stopped) {
           console.warn(`${logPrefix} Approval guardian breaker tripped. Breaking loop.`);
-          await activeSendCallback(createAssistantMessage('Stopped: the approval guardian refused several actions in this run. The owner was notified.'));
+          await activeSendCallback(createAssistantMessage('Stopped: several actions were refused in this run. The owner was notified.'));
           stoppedEarly = 'the approval guardian breaker';
           break;
         }

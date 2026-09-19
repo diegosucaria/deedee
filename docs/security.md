@@ -142,7 +142,7 @@ unasked, and jobs stay quiet unless they truly need him.
 - data-destroying deletes: `deletePerson`, `deleteVault`, `delete_garment`, `deleteDeviceAlias` (per-tool flags), Plex deletes and edits, and `ha_config_remove_*` / `ha_remove_device|entity|zone|area_or_floor|helpers_integrations`. Everyday removals run unasked: `ha_remove_todo_item`, Plex `playlist_remove_from` / `collection_remove_from`, `remove_from_wardrobe_trip_capsule`, `cancelJob`;
 - shell commands that pipe remote content into an interpreter, damage the system, or reach the CDP port.
 
-**Refused, never asked.** The shell refuses some commands whatever anyone approves: blocked programs (`sudo`, `env`, `printenv`, `sqlite3`, `dd`, editors and the like), the databases, the WhatsApp credentials volume, the browser profile, `/proc`, process environments and any folder of the data volume except `output/`, `journal/`, `vaults/`, `vinyl_covers/` and `wardrobe/`. A card for one of these could never work, so the gate asks the shell first, through the one check it uses itself (`shellRefusal` in `packages/mcp-servers/src/local/index.js`), before any rule. Such a call is refused at once with the shell's reason and stored as `shell_refused`. It is not quiet: many of these reach for credentials, so it counts toward the breaker like a guardian denial, and the owner gets one notification per run. The model is told not to retry it or look for another way. The patterns read the command's text, so they are a guard rail, not a boundary.
+**Refused, never asked.** The shell refuses some commands whatever anyone approves: blocked programs (`sudo`, `env`, `printenv`, `sqlite3`, `dd`, editors and the like), the databases, the WhatsApp credentials volume, the browser profile, `/proc`, process environments and any folder of the data volume except `output/`, `journal/`, `vaults/`, `vinyl_covers/` and `wardrobe/`. A card for one of these could never work, so the gate asks the shell first, through the one check it uses itself (`shellRefusal` in `packages/mcp-servers/src/local/index.js`), before any rule. Such a call is refused at once with the shell's reason and stored as `shell_refused`. It is not quiet: many of these reach for credentials, so it counts toward the breaker like a guardian denial, and the owner gets one notification per run (its own, apart from the one a guardian denial gets). The exception is the owner's own clean chat, where a refused command is an honest miss (`top`, a closed folder): it is refused and recorded, but it never counts or rings, so it cannot stop his run. The model is told not to retry it in the shell or spell the path another way, and to use a proper tool or an open folder if one does the job. The patterns read the command's text, so they are a guard rail, not a boundary. A live voice session has no shared run: each tool call there is its own run, so each refused call rings and the breaker does not apply.
 
 A rule that throws on odd arguments counts as a hit. A malformed call is
 held, never let through.
@@ -358,7 +358,8 @@ recommended.
    keys, or nesting past 4 levels), since the full call is what would run. In the owner's own chat
    a denial short of high risk becomes `escalate`, so he can still approve
    what he just asked for.
-5. Breaker: 3 guardian denials in one run stop the run and notify the
+5. Breaker: 3 refusals in one run (guardian denials, or shell refusals
+   outside the owner's own clean chat) stop the run and notify the
    owner. The first denial in a run also raises one notification. Calls in
    the same model turn run in parallel, so each checks the breaker again
    after its verdict. A sub-agent shares its parent's breaker state

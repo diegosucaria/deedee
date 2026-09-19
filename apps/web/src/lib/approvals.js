@@ -67,14 +67,17 @@ export function isApprovalOpen(approval, { decidedIds, now = Date.now() } = {}) 
 }
 
 /**
- * Where an approval came from, as a link, by the same rule as the Guardian
- * history: a job opens its runs, a chat opens that chat. A watcher, a
- * sub-agent or a voice session has no conversation to open. Where the card
- * was sent is only the channel he answers on, so it is never the link.
+ * Where an approval came from, as a link. A job opens its runs. A chat opens
+ * only when the card was asked in that chat (mode 'interactive': the web,
+ * Telegram, his own WhatsApp chat). A watcher run carries a contact's chat
+ * id, and a sub-agent or a voice session has no conversation, so they get
+ * none. Where the card was sent is only the channel he answers on.
  * @returns {{ href: string, label: string } | null}
  */
 export function chatLinkOf(row) {
     if (!row) return null;
     const meta = row.origin_meta || {};
-    return rowLink({ job_name: meta.jobName || null, chat_id: row.origin_chat_id || null });
+    if (meta.jobName) return rowLink({ job_name: meta.jobName });
+    if (row.mode !== 'interactive') return null;
+    return rowLink({ chat_id: row.origin_chat_id || null });
 }

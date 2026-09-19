@@ -6,7 +6,7 @@
 // goes, rather than the whole file failing to load.
 const { OPEN_DATA_DIRS = [] } = require('@deedee/mcp-servers/src/local/index') || {};
 const OPEN_DATA_TEXT = OPEN_DATA_DIRS.length
-  ? ` Under /app/data only ${OPEN_DATA_DIRS.map(d => `/app/data/${d}/`).join(', ')} are open, without globs; put files you make in /app/data/output/ or /tmp.`
+  ? ` Under /app/data only ${OPEN_DATA_DIRS.map(d => `/app/data/${d}/`).join(', ')} are open, without globs; put files you make in /app/data/output/ (sendMessage can send a file from there, not from /tmp).`
   : '';
 
 const toolDefinitions = [

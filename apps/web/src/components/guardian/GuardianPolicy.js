@@ -125,7 +125,6 @@ function DryRun() {
                         {result.pattern && <span className="text-zinc-500">deny pattern <span className="font-mono text-zinc-300">{result.pattern}</span></span>}
                     </div>
                     {result.ruleReason && <p className="text-zinc-400"><span className="text-zinc-500">{result.outcome === 'shell_refused' ? 'Shell: ' : 'Rule: '}</span>{result.ruleReason}</p>}
-                    {!result.ruleReason && result.message && <p className="text-zinc-400"><span className="text-zinc-500">Reason: </span>{result.message}</p>}
                     {result.floor?.length > 0 && <p className="text-zinc-400"><span className="text-zinc-500">Floor hit: </span>{result.floor.join(', ')}</p>}
                     {result.alwaysAsk?.length > 0 && <p className="text-zinc-400"><span className="text-zinc-500">Your always-ask hit: </span><span className="font-mono">{result.alwaysAsk.join(', ')}</span></p>}
                     {result.guardian && (

@@ -86,7 +86,9 @@ describe('approval guardian review', () => {
         // The shell's own words, and no hint to try another way.
         expect(out.result.error).toMatch(/no approval can make it run/);
         expect(out.result.error).toMatch(/Only output\/, journal\/, vaults\/, vinyl_covers\/ and wardrobe\/ are open/);
-        expect(out.result.error).toMatch(/Do not retry it or look for another way to do it/);
+        // Aimed at the shell only: a proper tool or an open folder is still fine.
+        expect(out.result.error).toMatch(/Do not retry it in the shell or spell the path another way/);
+        expect(out.result.error).toMatch(/If a proper tool or an open folder does the job, use that/);
         // No card and no guardian call, but he hears of it once, in the bell.
         expect(db.listPendingConfirmations()).toHaveLength(0);
         expect(agent.interface.send).not.toHaveBeenCalled();
@@ -130,6 +132,40 @@ describe('approval guardian review', () => {
         // The next call in that run is stopped, whatever it is.
         const next = await svc.review({ message: jobMsg('j'), toolName: 'sendMessage', args: { to: '10000000009', content: 'hi' }, taint, run });
         expect(next).toMatchObject({ run: false });
+    });
+
+    test('in his own clean chat an honest miss never stops the run or rings an alarm', async () => {
+        // "top", a grep for ".db" text, a glob: three refusals in one turn used
+        // to stop his own run and raise a "steered run" error in the bell.
+        const run = ApprovalService.newRun('own');
+        for (const command of ['top -bn1 | head -5', 'grep -rn "this.db.saveMessage" apps/agent/src', 'ls /app/data/output/*.png']) {
+            const out = await svc.review({ message: webMsg('check the box'), toolName: 'runShellCommand', args: { command }, taint: null, run, historyUntrusted: false, foreignText: false });
+            expect(out).toMatchObject({ run: false, status: 'error' });
+            expect(db.getGuardianDecision(out.decisionId)).toMatchObject({ outcome: 'shell_refused' });
+        }
+        expect(run.denials).toBe(0);
+        expect(run.stopped).toBe(false);
+        expect(agent.notifications.create).not.toHaveBeenCalled();
+        // The next call in his run still goes through the gate as usual.
+        const next = await svc.review({ message: webMsg('check the box'), toolName: 'runShellCommand', args: { command: 'uptime' }, taint: null, run, historyUntrusted: false, foreignText: false });
+        expect(next).toEqual({ run: true });
+
+        // A chat that holds a third party's words is not his clean chat: it counts.
+        const mixed = ApprovalService.newRun('mixed');
+        await svc.review({ message: webMsg('check the box'), toolName: 'runShellCommand', args: { command: 'top' }, taint: null, run: mixed, historyUntrusted: false, foreignText: true });
+        expect(mixed.denials).toBe(1);
+    });
+
+    test('a shell refusal does not use up the bell a later guardian denial is owed', async () => {
+        gen.mockResolvedValue(verdictOf({ verdict: 'deny', reason: 'Not something the owner asked for.', risk: 'high' }));
+        const run = ApprovalService.newRun('both');
+        const taint = emailTaint();
+        await svc.review({ message: jobMsg('j'), toolName: 'runShellCommand', args: { command: 'top' }, taint, run });
+        await svc.review({ message: jobMsg('j'), toolName: 'sendEmail', args: { to: 'someone@example.com' }, taint, run });
+        const titles = agent.notifications.create.mock.calls.map(c => c[0].message);
+        expect(titles).toHaveLength(2);
+        expect(titles[0]).toMatch(/The shell blocks a command/);
+        expect(titles[1]).toMatch(/approval guardian refused sendEmail/);
     });
 
     test('a command on an open folder is not refused', async () => {
