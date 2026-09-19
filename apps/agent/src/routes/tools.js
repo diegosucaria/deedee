@@ -123,7 +123,7 @@ function createToolRouter(agent) {
             // A call reads the same calendars a chat does: the ones he ticked.
             let result = raw;
             try {
-                result = filterCalendarResult(name, raw, agent.settings, agent.mcp?.toolMap, args);
+                result = filterCalendarResult(name, raw, agent.settings, agent.mcp?.toolMap, args, agent.mcp?.config);
             } catch (e) {
                 console.warn(`[Agent] Live calendar result not filtered (${name}): ${e.message}`);
             }
