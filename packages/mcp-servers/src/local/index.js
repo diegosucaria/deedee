@@ -204,7 +204,10 @@ function commandHeads(command, depth = 0) {
 // a `..` hop from an open folder can point at those, so a path that carries
 // either counts as a hit.
 const DATA_DIR_PATH = /\/app\/data(?![\w-])(\/[^\s"';|&)>]*)?/gi;
-const DATA_DIR_OPEN = /^\/(?:output|journal|vaults|vinyl_covers|wardrobe)(?:\/|$)/i;
+// The folders under /app/data a command may use. Tool descriptions name them
+// from this list, so what the model is told and what is checked agree.
+const OPEN_DATA_DIRS = Object.freeze(['output', 'journal', 'vaults', 'vinyl_covers', 'wardrobe']);
+const DATA_DIR_OPEN = new RegExp(`^\\/(?:${OPEN_DATA_DIRS.join('|')})(?:\\/|$)`, 'i');
 
 /** True when a command names a path under /app/data that is not open. */
 function touchesProtectedData(command) {
@@ -502,18 +505,8 @@ class LocalTools {
   }
 
   async runShellCommand(command, options = {}) {
-    // Basic validation to prevent running interactive tools that hang or highly destructive commands
-    const blocked = commandHeads(command).find(name => BLOCKED_BINARIES.includes(name));
-    if (blocked) {
-      throw new Error(`Command '${blocked}' is blocked for security or stability reasons.`);
-    }
-
-    // Block commands that target credentials or the databases directly
-    for (const pattern of BLOCKED_PATTERNS) {
-      if (pattern.match(command)) {
-        throw new Error(pattern.message);
-      }
-    }
+    const refusal = shellRefusal(command);
+    if (refusal) throw new Error(refusal);
 
     try {
       console.log(`[LocalTools] Executing: ${command}`);
@@ -535,4 +528,28 @@ class LocalTools {
   }
 }
 
-module.exports = { LocalTools, commandHeads, redactSecrets, isSecretName, shellEnv, SHELL_BASE_VARS, BLOCKED_PATTERNS };
+/**
+ * Why the shell refuses a command, or null when it would run it. This is the
+ * only copy of the check: runShellCommand throws its answer, and the approval
+ * gate asks it first, so no approval card is ever raised for a command that
+ * cannot run. Blocked programs come first, then the blocked patterns, the
+ * same order the shell has always used.
+ * @param {string} command
+ * @returns {string|null}
+ */
+function shellRefusal(command) {
+  const text = typeof command === 'string' ? command : String(command ?? '');
+  // Interactive tools that hang, and programs too destructive to run.
+  const blocked = commandHeads(text).find(name => BLOCKED_BINARIES.includes(name));
+  if (blocked) return `Command '${blocked}' is blocked for security or stability reasons.`;
+  // Commands that reach credentials or the databases directly.
+  for (const pattern of BLOCKED_PATTERNS) {
+    if (pattern.match(text)) return pattern.message;
+  }
+  return null;
+}
+
+module.exports = {
+  LocalTools, commandHeads, redactSecrets, isSecretName, shellEnv, shellRefusal,
+  SHELL_BASE_VARS, BLOCKED_PATTERNS, OPEN_DATA_DIRS
+};

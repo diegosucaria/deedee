@@ -116,7 +116,7 @@ function RowDetail({ row, onFeedback }) {
                 {!detail && !error && <p className="text-xs text-zinc-500">Loading…</p>}
                 {detail && (detail.guardian_input
                     ? <pre className="max-h-96 overflow-auto rounded-lg border border-zinc-800 bg-black p-3 text-[11px] leading-relaxed text-zinc-300 whitespace-pre-wrap break-words">{JSON.stringify(detail.guardian_input, null, 2)}</pre>
-                    : <p className="text-xs text-zinc-500">The guardian was not called for this row (deny-list, breaker, manual or off mode).</p>)}
+                    : <p className="text-xs text-zinc-500">The guardian was not called for this row (deny-list, a command the shell blocks, breaker, manual or off mode).</p>)}
             </div>
             <FeedbackButtons row={full} onChange={onFeedback} />
         </div>

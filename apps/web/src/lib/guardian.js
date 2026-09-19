@@ -19,6 +19,7 @@ export const OUTCOMES = [
     { id: 'owner_instructed', label: 'You asked for it', tone: 'text-teal-300 bg-teal-400/10 border-teal-400/20' },
     { id: 'escalated_duplicate', label: 'Already waiting', tone: 'text-zinc-400 bg-zinc-700/40 border-zinc-600/40' },
     { id: 'escalated_superseded', label: 'Already done', tone: 'text-zinc-400 bg-zinc-700/40 border-zinc-600/40' },
+    { id: 'shell_refused', label: 'Refused: the shell blocks it', tone: 'text-red-300 bg-red-400/10 border-red-400/20' },
 ];
 const OUTCOME_IDS = OUTCOMES.map(o => o.id);
 
@@ -49,7 +50,7 @@ export function outcomeTone(outcome) {
 }
 
 /**
- * The stacked chart folds thirteen outcomes into eight series. Colors are a
+ * The stacked chart folds the outcomes into a few series. Colors are a
  * categorical set checked for color-blind separation on the dark surface,
  * in a fixed order: a series keeps its color whatever the range shows.
  */
@@ -60,7 +61,7 @@ export const OUTCOME_GROUPS = [
     { key: 'You denied', color: '#c98500', outcomes: ['escalated_denied'] },
     { key: 'Waiting, expired or unasked', color: '#d55181', outcomes: ['escalated', 'escalated_expired', 'escalated_failed', 'escalated_duplicate', 'escalated_superseded'] },
     { key: 'Ran with mode off', color: '#008300', outcomes: ['ran_unasked'] },
-    { key: 'Deny-list or breaker', color: '#9085e9', outcomes: ['deny_list', 'breaker_stop'] },
+    { key: 'Blocked outright', color: '#9085e9', outcomes: ['deny_list', 'breaker_stop', 'shell_refused'] },
     { key: 'You asked for it', color: '#a3a3a3', outcomes: ['owner_instructed'] },
 ];
 
@@ -160,8 +161,14 @@ export function normalizeFeedback(value) {
     return value === 'should_allow' || value === 'should_deny' ? value : null;
 }
 
-function isSyntheticChatId(chatId) {
-    return /^(?:scheduled|system)_/.test(String(chatId || ''));
+/**
+ * Ids that name a run, not a conversation: jobs, system jobs, watchers,
+ * sub-agents, the api's internal turns and the voice session. There is no
+ * chat to open for them, and anything typed on such a page would count as an
+ * unattended run rather than the owner's own words.
+ */
+export function isSyntheticChatId(chatId) {
+    return /^(?:scheduled|system|sys|api)_|^subagent-|^live-session$/.test(String(chatId || ''));
 }
 
 /** Where a row came from, in a few words. */

@@ -27,7 +27,7 @@ describe('guardian page helpers', () => {
         expect(rows.map(r => r.date)).toEqual(['2026-08-31', '2026-09-01', '2026-09-02', '2026-09-03']);
         expect(rows[0]['Auto-allowed']).toBe(0);
         expect(rows[1]['Auto-allowed']).toBe(2);
-        expect(rows[1]['Deny-list or breaker']).toBe(2);
+        expect(rows[1]['Blocked outright']).toBe(2);
         expect(rows[2]['Auto-denied']).toBe(0);
         expect(rows[3]['Waiting, expired or unasked']).toBe(3);
         expect(g.outcomesPerDay([], {})).toEqual([]);

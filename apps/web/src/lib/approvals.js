@@ -9,6 +9,8 @@
 //   { id, status: 'pending'|'approved'|'denied'|'expired', chatId, toolName,
 //     summary?, expiresAt? }
 
+import { rowLink } from './guardian.js';
+
 /** A status that is no longer waiting for the owner. */
 export function isSettledStatus(status) {
     return typeof status === 'string' && status !== '' && status !== 'pending';
@@ -62,4 +64,20 @@ export function isApprovalOpen(approval, { decidedIds, now = Date.now() } = {}) 
     if (decidedIds && decidedIds.has(approval.id)) return false;
     if (approval.expiresAt && now > new Date(approval.expiresAt).getTime()) return false;
     return true;
+}
+
+/**
+ * Where an approval came from, as a link. A job opens its runs. A chat opens
+ * only when the card was asked in that chat (mode 'interactive': the web,
+ * Telegram, his own WhatsApp chat). A watcher run carries a contact's chat
+ * id, and a sub-agent or a voice session has no conversation, so they get
+ * none. Where the card was sent is only the channel he answers on.
+ * @returns {{ href: string, label: string } | null}
+ */
+export function chatLinkOf(row) {
+    if (!row) return null;
+    const meta = row.origin_meta || {};
+    if (meta.jobName) return rowLink({ job_name: meta.jobName });
+    if (row.mode !== 'interactive') return null;
+    return rowLink({ chat_id: row.origin_chat_id || null });
 }

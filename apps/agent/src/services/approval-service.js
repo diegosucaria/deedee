@@ -34,7 +34,10 @@ const { DeliveryService, telegramOwnerIds, splitChannel } = require('./delivery-
 const { isLiveSource } = require('./ask-user');
 const { TurnTaint, classifyToolResult } = require('../utils/untrusted-content');
 const { isTwoStepTool, isPreviewCall, stepKey, parseToolOutput } = require('../utils/two-step-tools');
-const { GuardianService, DRY_RUN_USAGE_TAG } = require('./guardian-service');
+const { GuardianService, DRY_RUN_USAGE_TAG, SYSTEM_INSTRUCTION: GUARDIAN_SYSTEM_INSTRUCTION } = require('./guardian-service');
+// The shell's own check: the gate asks it before any rule, so it never
+// raises a card for a command no approval could make run.
+const { shellRefusal } = require('@deedee/mcp-servers/src/local/index');
 // Breaker state of live runs, by root run id (see acquireRun).
 const ACTIVE_RUNS = new Map();
 const {
@@ -559,9 +562,20 @@ class ApprovalService {
             console.warn(`[Approvals] ${toolName} blocked by deny pattern "${deny.pattern}".`);
             return {
                 denied: true,
+                outcome: 'deny_list',
                 pattern: deny.pattern,
                 message: `Blocked by the owner's deny-list (pattern "${deny.pattern}"). The action did not run. Do not retry it or work around it; tell the user it is blocked.`
             };
+        }
+        // The shell refuses some commands whatever anyone approves. Asking the
+        // owner about one only raised a card that could not work, so the gate
+        // asks the shell first, before any rule can claim the call.
+        if (toolName === 'runShellCommand') {
+            const refusal = shellRefusal(args?.command);
+            if (refusal) {
+                console.warn(`[Approvals] ${toolName} refused: the shell blocks this command.`);
+                return { denied: true, outcome: 'shell_refused', reason: refusal };
+            }
         }
         const ruled = this.rules.check(toolName, args, { serverName });
         // A preview step changes nothing: no rule and no taint pause it.
@@ -580,7 +594,7 @@ class ApprovalService {
     /** A fresh per-run state for review(): denials count toward the breaker. */
     static newRun(id = null) {
         // previews: stepKey -> the summary a two-step tool's preview returned in this run
-        return { id, denials: 0, stopped: false, notifiedDenial: false, previews: new Map() };
+        return { id, denials: 0, stopped: false, notifiedDenial: false, notifiedShellRefusal: false, previews: new Map() };
     }
 
     /**
@@ -743,10 +757,10 @@ class ApprovalService {
 
     /** The result for a call in a run the breaker already stopped. */
     _breakerStop(base, extra = {}) {
-        const row = this._record({ ...base, ...extra, outcome: 'breaker_stop', decidedBy: 'breaker', reason: 'The run was already stopped by the guardian breaker.' });
+        const row = this._record({ ...base, ...extra, outcome: 'breaker_stop', decidedBy: 'breaker', reason: 'The run was already stopped by the breaker.' });
         return {
             run: false, status: 'error', decisionId: row?.id,
-            result: { error: `Stopped: the approval guardian refused ${BREAKER_DENIALS} actions in this run, so the run ends here. The owner was notified. Do not retry.` }
+            result: { error: `Stopped: ${BREAKER_DENIALS} actions were refused in this run, so the run ends here. The owner was notified. Do not retry.` }
         };
     }
 
@@ -782,6 +796,14 @@ class ApprovalService {
         if (run?.stopped) return this._breakerStop(base);
 
         const guard = this.check(toolName, args, { taint, serverName });
+        if (guard.outcome === 'shell_refused') {
+            // In his own chat, with nothing a third party wrote in it, a refused
+            // command is an honest miss ("top", a closed folder), not a probe.
+            // It must not stop his run or raise a "steered run" alarm. Jobs,
+            // watchers, sub-agents, tainted runs and contacts' chats still count.
+            const ownRun = foreignText === false && historyUntrusted === false && await this._ownerConsent(message, taint);
+            return this._refuseShell({ message, toolName, run, base, reason: guard.reason, counts: !ownRun });
+        }
         if (guard.denied) {
             const row = this._record({ ...base, outcome: 'deny_list', decidedBy: 'deny_list', reason: `Deny pattern "${guard.pattern}"` });
             return { run: false, status: 'error', result: { error: guard.message }, decisionId: row?.id };
@@ -911,6 +933,53 @@ class ApprovalService {
         return { run: false, status: paused.paused ? 'paused' : 'error', result: paused.result, decisionId: row?.id };
     }
 
+    /**
+     * A command the shell refuses whatever is approved. No card: nobody can
+     * make it run. It is not quiet either. Many of these reach for credentials
+     * or a database, which used to bring the owner a card every time, so it
+     * counts toward the breaker like a guardian denial and the owner hears of
+     * it once per run. The model is told not to work round it: the patterns
+     * read the command's text, and a path spelled another way can get through.
+     */
+    _refuseShell({ message, toolName, run, base, reason, counts = true }) {
+        const state = run || ApprovalService.newRun();
+        if (counts) state.denials += 1;
+        const tripped = counts && state.denials >= BREAKER_DENIALS && !state.stopped;
+        if (tripped) state.stopped = true;
+        const stored = this._record({ ...base, outcome: 'shell_refused', decidedBy: 'shell', reason, breakerTripped: tripped });
+        const chatId = message?.metadata?.chatId || null;
+        try {
+            if (tripped) {
+                this.agent.notifications?.create({
+                    type: 'guardian_breaker', severity: 'error',
+                    title: `Run stopped: ${BREAKER_DENIALS} actions refused`,
+                    message: `${BREAKER_DENIALS} actions were refused in one run (${describeOrigin(message)}), the last one a command the shell blocks. A run being steered looks like this, so it was stopped.`,
+                    metadata: { chatId, toolName, decisionId: stored?.id || null, link: '/guardian' }
+                });
+            } else if (counts && !state.notifiedShellRefusal) {
+                // Its own flag: a shell refusal must not use up the one bell a
+                // later guardian denial in the same run is owed.
+                state.notifiedShellRefusal = true;
+                this.agent.notifications?.create({
+                    type: 'guardian_denied', severity: 'warning',
+                    title: `Refused: ${toolName}`,
+                    message: `The shell blocks a command in ${describeOrigin(message)}: ${reason}`,
+                    metadata: { chatId, toolName, decisionId: stored?.id || null, link: '/guardian' }
+                });
+            }
+        } catch (e) { console.warn('[Approvals] notification failed:', e.message); }
+        const stop = tripped ? ` This is the ${BREAKER_DENIALS}rd refusal in this run, so the run stops now.` : '';
+        return {
+            run: false, status: 'error', decisionId: stored?.id,
+            result: {
+                // Aimed at the shell only: the shell's reason often names the
+                // right way (a proper tool, an open folder), and that way is fine.
+                error: `Refused: the shell blocks this command, and no approval can make it run. ${reason}${stop} ` +
+                    'Do not retry it in the shell or spell the path another way. If a proper tool or an open folder does the job, use that; if not, tell the owner what you tried.'
+            }
+        };
+    }
+
     /** A guardian denial: the model hears why, the owner hears once per run, three stop the run. */
     _deny({ message, toolName, run, row, verdict }) {
         const state = run || ApprovalService.newRun();
@@ -966,6 +1035,9 @@ class ApprovalService {
         const runKind = ['chat', 'job', 'watcher', 'subagent', 'system'].includes(kind) ? kind : (jobName ? 'job' : 'chat');
 
         const guard = this.check(name, safeArgs, { taint, serverName });
+        if (guard.outcome === 'shell_refused') {
+            return { outcome: 'shell_refused', gated: true, ruleReason: guard.reason, message: guard.reason, mode: settings.mode, executed: false };
+        }
         if (guard.denied) return { outcome: 'deny_list', gated: true, pattern: guard.pattern, message: guard.message, mode: settings.mode, executed: false };
         const hits = guard.preview ? { floor: [], additions: [] }
             : matchAlwaysAsk(name, safeArgs, { alwaysAsk: settings.always_ask, reason: guard.message || '', rule: guard.rule || '', serverName });
@@ -1016,7 +1088,11 @@ class ApprovalService {
         } catch (e) { console.warn('[Guardian] feedback list failed:', e.message); }
         return {
             mode: s.mode, smart_policy: s.smart_policy, always_ask: s.always_ask,
-            floor: floorView(), categories: categoryView(), feedbackCandidates: feedback
+            floor: floorView(), categories: categoryView(), feedbackCandidates: feedback,
+            // The guardian's own rules, read-only. The smart policy box holds
+            // only the owner's additions, so an empty box read as "the
+            // guardian has no policy" when it has this one.
+            builtin: GUARDIAN_SYSTEM_INSTRUCTION
         };
     }
 

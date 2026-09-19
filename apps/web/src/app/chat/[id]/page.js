@@ -11,6 +11,7 @@ import { resolveModelPref, modelOptions, MODEL_PREF_KEY, AUTO_MODEL } from '@/li
 import { THINKING_PREF_KEY, THINKING_CHOICES, AUTO_THINKING, resolveThinkingPref, thinkingLevelFor } from '@/lib/thinking-pref';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
 import { approvalEventKind, isApprovalOpen } from '@/lib/approvals';
+import { chatIdFromParam } from '@/lib/chat-id';
 
 
 import { useRouter } from 'next/navigation';
@@ -19,7 +20,7 @@ import LiveBrowserWidget from '@/components/LiveBrowserWidget';
 import ThinkingPanel from '@/components/ThinkingPanel';
 
 export default function ChatSessionPage({ params }) {
-    const { id: chatId } = params;
+    const chatId = chatIdFromParam(params.id);
     const router = useRouter(); // For refreshing sidebar on title update
     const [socket, setSocket] = useState(null);
     const [isConnected, setIsConnected] = useState(false);

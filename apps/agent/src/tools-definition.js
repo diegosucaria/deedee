@@ -1,5 +1,14 @@
 // Tool Definitions for Gemini
 
+// The folders under /app/data the shell opens, from the shell's own list, so
+// the model is told what the check allows before it guesses a path.
+// A test that mocks the shell module may leave the list out; the sentence then
+// goes, rather than the whole file failing to load.
+const { OPEN_DATA_DIRS = [] } = require('@deedee/mcp-servers/src/local/index') || {};
+const OPEN_DATA_TEXT = OPEN_DATA_DIRS.length
+  ? ` Under /app/data only ${OPEN_DATA_DIRS.map(d => `/app/data/${d}/`).join(', ')} are open, without globs; put files you make in /app/data/output/ (sendMessage can send a file from there, not from /tmp).`
+  : '';
+
 const toolDefinitions = [
   {
     functionDeclarations: [
@@ -207,7 +216,7 @@ const toolDefinitions = [
       {
         name: "runShellCommand",
         category: "filesystem",
-        description: "Run a shell command. Default timeout is 30000ms (30s); pass timeoutMs up to 300000 (5 min) for slower operations like image generation or large downloads.",
+        description: `Run a shell command. Default timeout is 30000ms (30s); pass timeoutMs up to 300000 (5 min) for slower operations like image generation or large downloads.${OPEN_DATA_TEXT} The shell refuses any other /app/data path, databases, /proc, process environments and interactive programs, and no approval changes that.`,
         parameters: {
           type: "OBJECT",
           properties: {

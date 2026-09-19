@@ -569,7 +569,8 @@ function taintedAction(toolName, args, { serverName = null, isOwnerTarget = () =
 
 // A tool result the approval gate wrote (a pause, a refusal, a block): our
 // own text, not a third party's.
-const GATE_TEXT_RE = /^(?:Action PAUSED|Refused by the approval guardian|Blocked by the owner's deny-list|Stopped: the approval guardian)|needs the owner's approval/;
+// "Stopped: the approval guardian" is the older wording of the breaker stop; rows stored with it stay ours.
+const GATE_TEXT_RE = /^(?:Action PAUSED|Refused by the approval guardian|Refused: the shell blocks this command|Blocked by the owner's deny-list|Stopped: the approval guardian|Stopped: \d+ actions were refused)|needs the owner's approval/;
 
 /**
  * Does the history the model reads this turn hold text a third party wrote?
