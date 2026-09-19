@@ -7,7 +7,7 @@ const fs = require('fs');
 const path = require('path');
 const { AgentDB } = require('../src/db');
 const { SmartContextManager } = require('../src/smart-context');
-const { matchLevels, searchMessagesFts, BACKFILL_FLAG } = require('../src/utils/messages-fts');
+const { matchLevels, searchMessagesFts, schemaFingerprint, BACKFILL_FLAG, SCHEMA_FLAG } = require('../src/utils/messages-fts');
 
 const dir = path.join(__dirname, 'tmp_db_messages_fts');
 let db;
@@ -101,6 +101,17 @@ describe('what goes into the index', () => {
         expect(db.db.prepare("SELECT COUNT(*) AS n FROM messages_fts WHERE body LIKE '%QUJD%' OR tool LIKE '%QUJD%'").get().n).toBe(0);
     });
 
+    test('the arguments of a tool call are indexed: they may be the only copy of what was sent', () => {
+        const id = save({ role: 'model', content: '', parts: [{ functionCall: { name: 'sendMessage', args: { to: 'someone', content: 'dinner is at nine on friday' } } }] });
+        save({ content: 'what about dinner' });
+        expect(indexed(id).body).toBe('[tool: sendMessage]');
+        expect(indexed(id).tool).toContain('[tool call: sendMessage] {"to":"someone","content":"dinner is at nine on friday"}');
+        const rows = db.searchMessages('dinner', 5);
+        // What was said first, the call after it.
+        expect(rows.map(r => r.id)).toEqual([expect.any(String), id]);
+        expect(rows[1].content).toContain('dinner is at nine');
+    });
+
     test('a tool result goes to its own column, cut at 2,000 characters', () => {
         const id = save({ content: null, parts: [{ functionResponse: { name: 'listJobs', response: { jobs: 'zebra ' + 'x'.repeat(5000) } } }] });
         const row = indexed(id);
@@ -161,8 +172,67 @@ describe('ranked search', () => {
         for (const q of ['"garden', 'garden*', 'body: garden', 'garden AND', 'NEAR(garden', 'garden) OR (', '-garden', '^garden', "gar'den"]) {
             expect(() => db.searchMessages(q)).not.toThrow();
         }
-        expect(matchLevels('a "b" *')).toEqual({ all: [], any: [] });
-        expect(matchLevels('Car  TYRES car')).toEqual({ all: ['"car tyres"', '"car" "tyres"'], any: ['"car"* OR "tyres"*'] });
+        expect(matchLevels('a "b" *')).toEqual({ phrase: null, all: null, any: null });
+        expect(matchLevels('Car  TYRES car')).toEqual({ phrase: '"car tyres"', all: '"car" "tyres"*', any: '"car" OR "tyres"*' });
+    });
+
+    test('a dotted number or a code keeps all its pieces', () => {
+        // The index splits 17.4.1.5 into 17, 4, 1, 5. Dropping the short
+        // pieces left a search for "17", and the right row came last of 41.
+        for (let i = 0; i < 40; i++) save({ content: `we meet at 17, note ${i}` });
+        const ip = save({ content: 'the firmware went up to 17.4.1.5 last week' });
+        const code = save({ content: 'the part number is AB-1234 rev 17' });
+        expect(matchLevels('17.4.1.5').all).toBe('"17 4 1 5"');
+        expect(db.searchMessages('17.4.1.5', 5).map(r => r.id)).toEqual([ip]);
+        expect(db.searchMessages('AB-1234', 5).map(r => r.id)).toEqual([code]);
+    });
+
+    test('a one-letter word counts beside others, and says nothing alone', () => {
+        for (let i = 0; i < 12; i++) save({ content: `the plan for day ${i} is set` });
+        const b = save({ content: 'if it rains we go with plan B, the museum' });
+        expect(db.searchMessages('plan B', 5)[0].id).toBe(b);
+        expect(matchLevels('B')).toEqual({ phrase: null, all: null, any: null });
+    });
+
+    test('a plain word also matches its longer forms, in both languages; a number never does', () => {
+        // No stemming in the index. One exact hit in a tool dump used to end
+        // the search, and the owner's own line in another word form was lost.
+        save({ content: null, parts: [{ functionResponse: { name: 'searchWeb', response: { page: 'how to rotate a tyre at home' } } }] });
+        const said = save({ content: 'i changed the tyres yesterday' });
+        const dicho = save({ content: 'las reuniones quedaron los jueves' });
+        expect(db.searchMessages('tyre', 5).map(r => r.id)).toContain(said);
+        expect(db.searchMessages('reunion', 5).map(r => r.id)).toEqual([dicho]);
+        expect(matchLevels('50 tyre').all).toBe('"50" "tyre"*');
+    });
+
+    test('a stray hit in a tool dump does not end the search', () => {
+        save({ content: null, parts: [{ functionResponse: { name: 'searchWeb', response: { page: 'garden gate hinges, a buying guide' } } }] });
+        const said = save({ content: 'the gate makes a noise' });
+        // Every word is only in the dump; the loose pass still finds what was said.
+        expect(db.searchMessages('garden gate hinges', 5).map(r => r.id)).toContain(said);
+    });
+
+    test('the newest mention is in the answer, however long it is', () => {
+        // bm25 favours short rows: five short old lines pushed yesterday's
+        // long one out of a limit of five, and the model read the old date.
+        for (let i = 0; i < 6; i++) save({ content: `dentist on the ${i + 1}th`, timestamp: `2026-0${i + 1}-10T12:00:00.000Z` });
+        const latest = save({ content: `moved the dentist to the 25th at four because ${'that day is full of other things and '.repeat(8)}it suits`, timestamp: '2026-09-18T12:00:00.000Z' });
+        const ids = db.searchMessages('dentist', 5).map(r => r.id);
+        expect(ids).toHaveLength(5);
+        expect(ids).toContain(latest);
+    });
+
+    test('the newest half comes from what was said, not from tool dumps', () => {
+        const said = save({ content: 'the boiler was serviced', timestamp: '2026-01-10T12:00:00.000Z' });
+        for (let i = 0; i < 8; i++) save({ content: null, timestamp: `2026-09-1${i}T12:00:00.000Z`, parts: [{ functionResponse: { name: 'listDevices', response: { devices: ['boiler', `pump ${i}`] } } }] });
+        expect(db.searchMessages('boiler', 4)[0].id).toBe(said);
+    });
+
+    test('the excerpt cap never leaves half an emoji', () => {
+        save({ content: `zebra ${'x'.repeat(391)}😀😀😀 tail` });
+        const [row] = db.searchMessages('zebra');
+        expect(row.content.length).toBeLessThanOrEqual(400);
+        expect(Buffer.from(row.content, 'utf8').toString('utf8')).toBe(row.content);
     });
 
     test('filters: this chat, not this chat, and local days', () => {
@@ -227,6 +297,39 @@ describe('rows that were there before the index', () => {
 
     test('an empty database is ready at once', () => {
         expect(db._messagesFtsReady).toBe(true);
+    });
+});
+
+describe('a change of the indexing rules', () => {
+    test('the index is rebuilt when the stored fingerprint differs, and only then', async () => {
+        const id = save({ content: 'the chimney sweep' });
+        const stored = () => db.db.prepare('SELECT value FROM agent_settings WHERE key = ?').get(SCHEMA_FLAG)?.value;
+        expect(stored()).toBe(JSON.stringify(schemaFingerprint()));
+
+        // An older build left its triggers behind: SQLite would keep their text for ever.
+        db.db.prepare('UPDATE agent_settings SET value = ? WHERE key = ?').run('"older"', SCHEMA_FLAG);
+        db.db.prepare('UPDATE messages_fts SET body = ? WHERE rowid = (SELECT fts_id FROM messages_fts_map WHERE msg_id = ?)').run('indexed by old rules', id);
+        db.close();
+        open();
+        await ready();
+        expect(indexed(id).body).toBe('the chimney sweep');
+        expect(stored()).toBe(JSON.stringify(schemaFingerprint()));
+
+        // Same rules: nothing is rebuilt.
+        db.db.prepare('UPDATE messages_fts SET body = ? WHERE rowid = (SELECT fts_id FROM messages_fts_map WHERE msg_id = ?)').run('left alone', id);
+        db.close();
+        open();
+        expect(db._messagesFtsReady).toBe(true);
+        expect(indexed(id).body).toBe('left alone');
+    });
+
+    test('an index emptied by hand is built again', async () => {
+        save({ content: 'the chimney sweep' });
+        db.db.exec('DELETE FROM messages_fts; DELETE FROM messages_fts_map;');
+        db.close();
+        open();
+        await ready();
+        expect(counts()).toEqual({ fts: 1, map: 1 });
     });
 });
 

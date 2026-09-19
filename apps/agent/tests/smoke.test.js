@@ -275,10 +275,17 @@ describe('Agent with Tools', () => {
     const result = await agent._executeTool('searchHistory', { query: 'gate code', limit: 3, from: '2026-03-01', to: 'last week' }, message);
 
     expect(agent.db.searchMessages).toHaveBeenNthCalledWith(1, 'gate code', 3, { from: '2026-03-01', to: undefined, chatId: 'chat-1' });
-    expect(agent.db.searchMessages).toHaveBeenNthCalledWith(2, 'gate code', 2, { from: '2026-03-01', to: undefined, notChatId: 'chat-1' });
+    // This chat answered, so the other chats are asked through the index only.
+    expect(agent.db.searchMessages).toHaveBeenNthCalledWith(2, 'gate code', 2, { from: '2026-03-01', to: undefined, notChatId: 'chat-1', indexOnly: true });
     expect(result.matches[0]).toBe('[t1] user: here');
     expect(result.matches[1].startsWith('[t2] model (another chat): xxx')).toBe(true);
     expect(result.matches[1].length).toBeLessThan(440);
+  });
+
+  test('searchHistory with nothing in this chat lets the other chats use the full scan', async () => {
+    agent.db.searchMessages = jest.fn().mockReturnValue([]);
+    await agent._executeTool('searchHistory', { query: 'x' }, { metadata: { chatId: 'chat-1' } });
+    expect(agent.db.searchMessages).toHaveBeenNthCalledWith(2, 'x', 5, { from: undefined, to: undefined, notChatId: 'chat-1', indexOnly: false });
   });
 
   test('searchHistory stops at this chat when it fills the limit', async () => {

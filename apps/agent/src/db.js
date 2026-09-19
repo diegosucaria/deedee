@@ -891,8 +891,24 @@ class AgentDB {
         messagesFts.dropMessagesFts(this.db);
         return;
       }
+      // SQLite keeps a trigger's text as first created. When the indexing
+      // rules change, or the index was emptied by hand, build it again.
+      const setting = (key) => this.db.prepare('SELECT value FROM agent_settings WHERE key = ?').get(key)?.value;
+      const fingerprint = JSON.stringify(messagesFts.schemaFingerprint());
+      const indexed = !!setting(messagesFts.BACKFILL_FLAG);
+      const stale = setting(messagesFts.SCHEMA_FLAG) !== fingerprint;
+      const emptied = indexed && !stale && !!this.db.prepare(`
+        SELECT 1 FROM messages WHERE NOT EXISTS (SELECT 1 FROM messages_fts_map) LIMIT 1`).get();
+      if (stale || emptied) {
+        if (indexed) console.log(`[DB] Rebuilding the message search index (${stale ? 'its rules changed' : 'it was empty'}).`);
+        messagesFts.dropMessagesFts(this.db);
+      }
       messagesFts.createMessagesFts(this.db);
-      if (this.db.prepare('SELECT 1 FROM agent_settings WHERE key = ?').get(messagesFts.BACKFILL_FLAG)) {
+      this.db.prepare(`
+        INSERT INTO agent_settings(key, value, category) VALUES(?, ?, 'system')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+      `).run(messagesFts.SCHEMA_FLAG, fingerprint);
+      if (indexed && !stale && !emptied) {
         this._messagesFtsReady = true;
         return;
       }
@@ -2398,12 +2414,13 @@ class AgentDB {
    * inside a word).
    * @param {string} query
    * @param {number} [limit]
-   * @param {{ chatId?: string, notChatId?: string, from?: string, to?: string }} [opts]
-   *   `from` and `to` are local days, YYYY-MM-DD, both inclusive.
+   * @param {{ chatId?: string, notChatId?: string, from?: string, to?: string, indexOnly?: boolean }} [opts]
+   *   `from` and `to` are local days, YYYY-MM-DD, both inclusive. `indexOnly`
+   *   skips the scan: for a caller that has its answer and only wants more.
    * @returns {Array<{ timestamp: string, role: string, content: string, chat_id: string }>}
    */
   searchMessages(query, limit = 10, opts = {}) {
-    const { chatId, notChatId, from, to } = opts || {};
+    const { chatId, notChatId, from, to, indexOnly } = opts || {};
     if (this._messagesFtsReady) {
       try {
         const rows = messagesFts.searchMessagesFts(this.db, query, { limit, chatId, notChatId, from, to });
@@ -2411,6 +2428,7 @@ class AgentDB {
       } catch (err) {
         console.warn('[DB] Full-text message search failed, using the plain scan:', err.message);
       }
+      if (indexOnly) return [];
     }
 
     // Substring LIKE search. Escape LIKE wildcards so a literal "%" or "_"

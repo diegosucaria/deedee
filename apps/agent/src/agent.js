@@ -3156,8 +3156,11 @@ class Agent {
       const chatId = message?.metadata?.chatId;
       // This chat first: the summary that sends the model here is this chat's.
       const here = chatId ? this.db.searchMessages(args.query, limit, { ...range, chatId }) : [];
+      // With an answer from this chat in hand, the other chats are asked
+      // through the index only: the scan reads every row, and it ran on
+      // most calls, since few words fill the limit in one chat.
       const rest = here.length < limit
-        ? this.db.searchMessages(args.query, limit - here.length, { ...range, notChatId: chatId })
+        ? this.db.searchMessages(args.query, limit - here.length, { ...range, notChatId: chatId, indexOnly: here.length > 0 })
         : [];
       const line = (m, other) => `[${m.timestamp}] ${m.role}${other ? ' (another chat)' : ''}: ${(m.content || '').substring(0, 400)}`;
       return { matches: [...here.map(m => line(m, false)), ...rest.map(m => line(m, !!chatId))] };
