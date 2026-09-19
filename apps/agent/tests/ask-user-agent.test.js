@@ -88,6 +88,11 @@ const MockGoogleGenAI = jest.fn().mockImplementation(() => ({
 }));
 
 describe('askUser through the Agent', () => {
+  // Commands run only for the owner: tg-2 is his chat in the /stop test.
+  const savedTelegramIds = process.env.ALLOWED_TELEGRAM_IDS;
+  beforeAll(() => { process.env.ALLOWED_TELEGRAM_IDS = 'tg-2'; });
+  afterAll(() => { if (savedTelegramIds === undefined) delete process.env.ALLOWED_TELEGRAM_IDS; else process.env.ALLOWED_TELEGRAM_IDS = savedTelegramIds; });
+
   let agent;
   let mockInterface;
 

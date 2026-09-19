@@ -86,6 +86,24 @@ For the env-var inventory and two-subdomain vs single-subdomain recipes, see the
 - **GSuite**: Full Read/Write access to Calendar and Mail. Every email send waits for the owner (see Approvals).
 - **Home Assistant**: Full Control (lights, switches, media, climate, covers). Locks, the alarm, opening a garage door and mass actions wait for the owner.
 
+### Slash commands run only for the owner
+`/clear all` wipes every chat, `/stop` halts every run and `/simulate_watcher`
+forges an inbound message. The command handler used to run for any text that
+reached `processMessage`, ahead of the rule that ignores contacts' messages.
+So the same text ran as a command when a contact sent it to the owner's own
+WhatsApp, when it was posted in a watched Slack channel or a group, and when a
+model that had read a hostile page wrote it as a sub-agent's task.
+
+`Agent._ownerTyped(message)` now decides, and anything it cannot tie to the
+owner is plain text:
+
+- Yes: the web UI and the API entries (`web`, `iphone`, `ios_shortcut`, `live`, `api`, `http`), which sit behind his login or his token.
+- Yes: WhatsApp and Telegram, only when the chat is his own chat with the assistant (`ApprovalService._isOwnerChat`). A failed lookup means no.
+- No: the mirror of his personal WhatsApp account (`whatsapp:user`), Slack, groups, sub-agents, scheduled jobs, and any source not listed.
+
+If WhatsApp cannot tell that a chat is his (an unknown LID), `/stop` typed there
+reaches the model as text. The web UI always works.
+
 ## Subprocess environments
 
 The agent process holds every provider key. Child processes do not.
