@@ -223,7 +223,7 @@ Defaults (`THINKING_DEFAULTS` in `config-service.js`):
 |---|---|---|
 | ROUTER, LITE | all (`router`, `scoper`, `cron_helper`, `eager_extract`, `guardian`) | MINIMAL |
 | SEARCH | `search` (the googleSearch polyfill) | LOW |
-| FLASH | `chat`, `tool_loop`, `job`, `subagent`, `watcher`, `coding`, `wardrobe`, `impersonation` | LOW |
+| FLASH | `chat`, `tool_loop`, `job`, `subagent`, `watcher`, `coding`, `wardrobe`, `impersonation`, `dream`, `pruning` | LOW |
 | FLASH | `summarization`, `title`, `scoper`, `people_enrich`, `cron_helper`, `analysis`, `transcribe`, `partner_greeting`, `dj`, `impersonation_learn`, any other | MINIMAL |
 | PRO | `tool_loop`, `dream`, `pruning`, `dj`, any other | LOW |
 | PRO | `chat`, `job`, `subagent`, `consolidation`, `wardrobe`, `impersonation` | MEDIUM |
@@ -257,8 +257,9 @@ merges, a per-call config). The `tool_loop` row in the table applies only then.
 Env overrides, read on every call, so a Balena variable is the rollback:
 
 - `THINKING_<ROLE>` sets every class of that role, not only the ones missing
-  from the table: `THINKING_PRO=HIGH` raises chat, jobs, dream and pruning at
-  once.
+  from the table: `THINKING_PRO=HIGH` raises chat, jobs and sub-agents at
+  once. The nightly dream and pruning run on FLASH, so `THINKING_FLASH`
+  reaches them.
 - `THINKING_<ROLE>_<CLASS>` sets one class (`THINKING_PRO_CHAT=HIGH`,
   `THINKING_FLASH_TITLE=LOW`). The class part is the class name in upper case.
   `THINKING_<ROLE>_TOOL_LOOP` does nothing alone: set `THINKING_LOOP_OWN_LEVEL=1`
