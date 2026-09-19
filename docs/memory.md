@@ -47,6 +47,7 @@ DeeDee uses a multi-tiered memory architecture to maintain state, context, and l
 - **Tables**: `chat_sessions`, `messages`
 - **Content**: All user messages and assistant replies grouped by session
 - **Context Management**: `summaries` table tracks sliding-window summaries (`smart-context.js`) injected into prompts without passing full raw history
+- **Old tool results are shortened in the window** (`SmartContextManager.trimOldToolResults`). The window is the newest 50 rows (20 on FLASH), and on the device about 80% of it was old tool results: one stale `listJobs` result of 42,000 characters was 62% of a chat's history, sent again on every call for days. The last 3 results stay whole. An older one over 1,500 characters keeps its first 400 and a note that says how long it was and that the tool can be called again. The call and its response both stay, so the pairing the API checks holds. A result marked untrusted stays an untrusted envelope with only its `content` cut, so the rules that read that mark still see it. The stored rows are not changed: the chat page and the history search show every result in full. `HISTORY_TRIM=0` turns it off.
 
 ### 2. Semantic Memory (KV Facts)
 - **Table**: `kv_store`

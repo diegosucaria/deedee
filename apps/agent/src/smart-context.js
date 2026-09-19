@@ -1,5 +1,16 @@
 const { createAssistantMessage } = require('@deedee/shared/src/types');
 const { ConfigService } = require('./services/config-service');
+const { isUntrustedEnvelope } = require('./utils/untrusted-content');
+
+// Old tool results in the history window. On the device they were about 80%
+// of the window: one stale listJobs result of 42,000 characters was 62% of a
+// chat's history, sent again on every call for days. The last few results stay
+// whole, since the model is often still working from them; an older one keeps
+// its start and a note. The call and its response both stay, so the pairing
+// the API checks is untouched.
+const TRIM_KEEP_LAST = 3;
+const TRIM_OVER_CHARS = 1500;
+const TRIM_PREVIEW_CHARS = 400;
 
 class SmartContextManager {
     constructor(db, client) {
@@ -35,7 +46,8 @@ class SmartContextManager {
 
         // Saved rows carry raw parts (tool calls, tool results, media). Make
         // them safe for the model before anything else touches them.
-        const recentHistory = SmartContextManager.normalizeHistoryForModel(this.db.getHistoryForChat(chatId, limit));
+        const recentHistory = SmartContextManager.trimOldToolResults(
+            SmartContextManager.normalizeHistoryForModel(this.db.getHistoryForChat(chatId, limit)));
 
         // INJECT TIMESTAMPS
         // The model receives raw text history. To give it temporal awareness we
@@ -83,6 +95,52 @@ class SmartContextManager {
         }
 
         return SmartContextManager.ensureAlternation(timestampedHistory);
+    }
+
+    /**
+     * Shorten old, large tool results in a history window. Pure: returns new
+     * rows and new parts for the ones it changes.
+     *
+     * - The last `keepLast` results in the window stay whole, whatever their size.
+     * - An older result over `overChars` keeps its first `previewChars` and a
+     *   note saying how long it was and that the tool can be called again.
+     * - A result marked untrusted stays an untrusted envelope: only its
+     *   `content` is cut. The rules that hold back the owner's word when the
+     *   history holds a third party's text read that mark, and a shortened
+     *   piece of third-party text is still third-party text.
+     * - HISTORY_TRIM=0 turns it off.
+     */
+    static trimOldToolResults(history, { keepLast = TRIM_KEEP_LAST, overChars = TRIM_OVER_CHARS, previewChars = TRIM_PREVIEW_CHARS } = {}) {
+        if (!Array.isArray(history) || String(process.env.HISTORY_TRIM || '1') === '0') return history;
+        let total = 0;
+        for (const msg of history) for (const p of msg?.parts || []) if (p && p.functionResponse) total++;
+        if (total <= keepLast) return history;
+
+        let seen = 0;
+        const size = (value) => { try { return JSON.stringify(value ?? null).length; } catch { return 0; } };
+        const head = (value) => {
+            const text = typeof value === 'string' ? value : JSON.stringify(value ?? null);
+            return text.slice(0, previewChars);
+        };
+        return history.map((msg) => {
+            if (!Array.isArray(msg?.parts) || !msg.parts.some(p => p && p.functionResponse)) return msg;
+            let changed = false;
+            const parts = msg.parts.map((p) => {
+                if (!p || !p.functionResponse) return p;
+                seen++;
+                if (seen > total - keepLast) return p;
+                const response = p.functionResponse.response;
+                const chars = size(response);
+                if (chars <= overChars) return p;
+                changed = true;
+                const note = `Older tool result shortened to save context (it was ${chars} characters). Call the tool again if you need the rest.`;
+                const shorter = isUntrustedEnvelope(response)
+                    ? { ...response, content: { shortened: true, note, preview: head(response.content) } }
+                    : { shortened: true, note, preview: head(response) };
+                return { ...p, functionResponse: { ...p.functionResponse, response: shorter } };
+            });
+            return changed ? { ...msg, parts } : msg;
+        });
     }
 
     /**
