@@ -25,7 +25,7 @@ const { BackupManager } = require('./backup');
 const { Scheduler } = require('./scheduler');
 const axios = require('axios');
 const { getSystemInstruction, getTurnContext } = require('./prompts/system');
-const { filterToolsByGroups, ToolGroupMemory, groupsNamedIn } = require('./services/tool-groups');
+const { filterToolsByGroups, ToolGroupMemory, groupsNamedIn, sortToolsByName } = require('./services/tool-groups');
 const { getFunctionCalls, getThinkingMessage } = require('./utils/helpers');
 const { usageTag, promptComposition, usageColumns } = require('./services/usage-attribution');
 const { geminiToOpenAIHistory, openAIToGeminiChunk } = require('./utils/mapper');
@@ -2033,10 +2033,11 @@ class Agent {
         console.log(`${logPrefix} Tool groups [${groups.join(', ') || 'core only'}]: ${internalTools.length + externalTools.length} of ${before} tools.`);
       }
 
-      const allTools = [
+      // Sorted by name, so a restarted MCP server cannot reorder the prefix.
+      const allTools = sortToolsByName([
         ...internalTools.map(({ category, ...rest }) => rest),
         ...externalTools.map(({ serverName, ...rest }) => rest)
-      ];
+      ]);
 
       // construct the tools object for Gemini
       // --- HYBRID SEARCH STRATEGY ---
@@ -2215,7 +2216,15 @@ class Agent {
       const requestedThinking = this.configService.get('THINKING_LEVELS').includes(askedLevel) ? askedLevel : null;
       const thinkingOpts = { source: message.source, model: selectedModel, ...(requestedThinking ? { level: requestedThinking } : {}) };
       const sessionThinking = this.configService.getThinkingConfig(selectedRole, thinkingClass, thinkingOpts);
-      const loopThinking = thinkingClass === 'chat'
+      // One level for the whole turn. The loop used to think at `tool_loop`
+      // (LOW) after a `chat` first call (MEDIUM), and that one field made the
+      // second request a new prefix for Gemini's implicit cache: on the device
+      // the second call of a chat turn missed the cache 9 times of 9, while job
+      // runs, which keep one level, hit. A miss re-bills the whole prompt
+      // (about 45k tokens); the lower level saved about 290 thought tokens.
+      // THINKING_LOOP_OWN_LEVEL=1 brings the old split back.
+      const loopOwnLevel = String(process.env.THINKING_LOOP_OWN_LEVEL || '0') === '1';
+      const loopThinking = thinkingClass === 'chat' && loopOwnLevel
         ? this.configService.getThinkingConfig(selectedRole, 'tool_loop', thinkingOpts)
         : sessionThinking;
       const sessionConfig = {

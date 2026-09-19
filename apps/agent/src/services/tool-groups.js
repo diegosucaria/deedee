@@ -137,4 +137,15 @@ class ToolGroupMemory {
     }
 }
 
-module.exports = { TOOL_GROUPS, INTERNAL_CATEGORY_GROUPS, mcpServerGroup, filterToolsByGroups, ToolGroupMemory, groupsNamedIn };
+/**
+ * Declarations in one fixed order, by name. MCP tools arrive in the order
+ * their servers connected, and a server that restarts moves to the end, so
+ * the same tool set could reach the model in a different order. The order is
+ * part of the request prefix Gemini caches, so a changed order is a cache miss
+ * for nothing. A plain code-point compare: the same on every machine.
+ */
+function sortToolsByName(tools) {
+    return [...(tools || [])].sort((a, b) => (a.name < b.name ? -1 : a.name > b.name ? 1 : 0));
+}
+
+module.exports = { TOOL_GROUPS, INTERNAL_CATEGORY_GROUPS, mcpServerGroup, filterToolsByGroups, ToolGroupMemory, groupsNamedIn, sortToolsByName };

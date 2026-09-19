@@ -244,11 +244,15 @@ prompt; a sub-agent sent to change the repo thinks at `coding`, not `subagent`.
 Jobs and watcher runs keep their own class either way. The group keeps its name
 for 30 minutes per chat, like every other group. Today it changes the thinking
 class only: the shell and file tools stay core until tool deferral moves them
-behind `code`. Tool-loop turns of a `chat` session use `tool_loop`, one step
-down at LOW; the other classes keep their level through the loop.
-When the loop level differs from the session level the agent re-sends the full
-session config on each loop call (the SDK replaces, not merges, a per-call
-config).
+behind `code`. Every class keeps its level through the tool loop, `chat`
+included. A `chat` turn used to drop to `tool_loop` (LOW) after its first call.
+That one field made the second request a new prefix for Gemini's implicit
+cache: on the device the second call of a chat turn missed the cache 9 times of
+9, while job runs, which keep one level, hit. A miss re-bills the whole prompt
+(about 45k tokens, $0.08 on PRO); the lower level saved about 290 thought
+tokens ($0.0035). `THINKING_LOOP_OWN_LEVEL=1` brings the split back; the agent
+then re-sends the full session config on each loop call (the SDK replaces, not
+merges, a per-call config). The `tool_loop` row in the table applies only then.
 
 Env overrides, read on every call, so a Balena variable is the rollback:
 

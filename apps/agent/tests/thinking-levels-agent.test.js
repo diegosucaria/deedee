@@ -19,7 +19,7 @@ describe('Agent thinking config per call class and source', () => {
     let session;
 
     const reply = { candidates: [{ content: { parts: [{ text: 'ok' }] } }] };
-    const ENV = ['THINKING_PRO', 'THINKING_PRO_CHAT', 'THINKING_PRO_TOOL_LOOP', 'THINKING_FLASH'];
+    const ENV = ['THINKING_PRO', 'THINKING_PRO_CHAT', 'THINKING_PRO_TOOL_LOOP', 'THINKING_FLASH', 'THINKING_LOOP_OWN_LEVEL'];
     let saved;
 
     beforeEach(() => {
@@ -176,12 +176,28 @@ describe('Agent thinking config per call class and source', () => {
             expect(await runLoop({ model: 'FLASH', toolMode: 'STANDARD', toolGroups: [] })).toBeUndefined();
         });
 
-        test('a PRO chat drops to LOW in the loop and re-sends the session config', async () => {
+        test('a PRO chat keeps MEDIUM through the loop, so the second request is the same prefix', async () => {
+            // A different level in the loop made the second call of every chat
+            // turn miss Gemini's implicit cache: about 45k tokens billed again,
+            // to save about 290 thought tokens.
             const cfg = await runLoop();
             const sessionCfg = agent.client.chats.create.mock.calls[0][0].config;
             expect(sessionCfg.thinkingConfig).toEqual({ thinkingLevel: 'MEDIUM', includeThoughts: true });
-            expect(cfg.thinkingConfig).toEqual({ thinkingLevel: 'LOW', includeThoughts: true });
-            expect(cfg.tools).toBe(sessionCfg.tools);
+            // No per-call config at all: the session's config stands, byte for byte.
+            expect(cfg).toBeUndefined();
+        });
+
+        test('THINKING_LOOP_OWN_LEVEL=1 brings the old split back', async () => {
+            process.env.THINKING_LOOP_OWN_LEVEL = '1';
+            try {
+                const cfg = await runLoop();
+                const sessionCfg = agent.client.chats.create.mock.calls[0][0].config;
+                expect(sessionCfg.thinkingConfig).toEqual({ thinkingLevel: 'MEDIUM', includeThoughts: true });
+                expect(cfg.thinkingConfig).toEqual({ thinkingLevel: 'LOW', includeThoughts: true });
+                expect(cfg.tools).toBe(sessionCfg.tools);
+            } finally {
+                delete process.env.THINKING_LOOP_OWN_LEVEL;
+            }
         });
 
         test('a coding session keeps HIGH through the loop and sends no per-call config', async () => {
@@ -195,8 +211,9 @@ describe('Agent thinking config per call class and source', () => {
             expect(session.sendMessageStream.mock.calls[1][0].config).toBeUndefined();
         });
 
-        test('THINKING_PRO_TOOL_LOOP re-sends the full session config with the loop level', async () => {
+        test('with the split on, THINKING_PRO_TOOL_LOOP re-sends the full session config with the loop level', async () => {
             process.env.THINKING_PRO_TOOL_LOOP = 'HIGH';
+            process.env.THINKING_LOOP_OWN_LEVEL = '1';
             const cfg = await runLoop();
             const sessionCfg = agent.client.chats.create.mock.calls[0][0].config;
             expect(sessionCfg.thinkingConfig).toEqual({ thinkingLevel: 'MEDIUM', includeThoughts: true });
