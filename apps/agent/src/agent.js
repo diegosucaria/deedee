@@ -25,6 +25,7 @@ const { BackupManager } = require('./backup');
 const { Scheduler } = require('./scheduler');
 const axios = require('axios');
 const { getSystemInstruction, getTurnContext } = require('./prompts/system');
+const { getGrokSystemInstruction } = require('./prompts/grok');
 const { filterToolsByGroups, ToolGroupMemory, groupsNamedIn, sortToolsByName, listedRunTools, UNLISTED_TOOL_TEXT } = require('./services/tool-groups');
 const { getFunctionCalls, getThinkingMessage } = require('./utils/helpers');
 const { usageTag, promptComposition, usageColumns } = require('./services/usage-attribution');
@@ -1191,10 +1192,11 @@ class Agent {
   /**
    * Generates stream from Grok/OpenAI client and broadcasts tokens.
    */
-  async _generateStreamGrok(client, model, userContent, history, chatId, turnId) {
+  async _generateStreamGrok(client, model, userContent, history, chatId, turnId, systemPrompt = '') {
     try {
-      // 1. Map History
-      const messages = geminiToOpenAIHistory(history);
+      // 1. Map History. Tool rows carry no text and map to empty messages,
+      // which an OpenAI-style API may refuse: leave them out.
+      const messages = geminiToOpenAIHistory(history).filter(m => typeof m.content === 'string' && m.content.trim());
 
       // 2. Add current user message
       messages.push({ role: 'user', content: userContent });
@@ -1203,7 +1205,8 @@ class Agent {
       const stream = await client.chat.completions.create({
         model: model,
         messages: [
-          { role: 'system', content: this.currentSystemPrompt || 'You are DeeDee, a helpful AI assistant.' }, // Fallback if not set
+          // The prompt of THIS turn: it used to sit on the agent, where two turns at once could swap theirs.
+          { role: 'system', content: systemPrompt || 'You are Deedee, a helpful AI assistant.' },
           ...messages
         ],
         stream: true,
@@ -1836,7 +1839,6 @@ class Agent {
         // --- PREPARE SYSTEM PROMPT FOR GROK ---
         const contextQuery = message.content || (message.parts ? message.parts.map(p => p.text).join(' ') : '');
         const facts = this._factsBlock(contextQuery);
-        const activeGoals = this._formatGoals(this.db.getPendingGoals(), turnTaint);
 
         let vaultContext = null;
         const activeTopic = this.activeTopics.get(chatId);
@@ -1849,24 +1851,15 @@ class Agent {
 
         // Context-aware skill injection: only inject on-demand skills that match the user message
         const skillsContext = this.skillService.getContextualInstructions(contextQuery);
-        const notificationContext = {
-            ownerName: this.settings?.owner_name || 'the user',
-            ownerPhone: this.settings?.owner_phone || '',
-            notificationChannel: this.settings?.notification_channel || 'whatsapp'
-        };
-        let grokSystemPrompt = getSystemInstruction(timeString, activeGoals, facts, { codingMode: true, vaultContext, skillsContext, notificationContext, communicationStyle: this.settings?.communication_style || '' });
+        // No tools go to this model, so it gets no tool rules (prompts/grok.js).
+        const grokSystemPrompt = getGrokSystemInstruction({
+          dateString: timeString, facts, vaultContext, skillsContext,
+          communicationStyle: this.settings?.communication_style || '',
+          ownerName: this.settings?.owner_name || ''
+        });
+        console.log(`${logPrefix} [Context] External model prompt: ~${grokSystemPrompt.length} chars.`);
 
-        // Add Tool Manifest since Grok can't see definitions natively yet
-        grokSystemPrompt += `\n\n ** AVAILABLE TOOLS(You cannot execute them directly, but you know they exist):**\n` +
-          `- googleSearch: Search the web.\n` +
-          `- replyWithAudio: Speak to the user.\n` +
-          `- rememberFact / getFact: Memory.\n` +
-          `- addGoal / updateGoalProgress / completeGoal: Resumable multi-session work (your own tasks only).\n` +
-          `- Smart Home: Control lights, vacuum, etc.\n`;
-
-        this.currentSystemPrompt = grokSystemPrompt;
-
-        const stream = await this._generateStreamGrok(this.xaiClient, targetModel, message.content, history, chatId, turnId);
+        const stream = await this._generateStreamGrok(this.xaiClient, targetModel, message.content, history, chatId, turnId, grokSystemPrompt);
 
         // Handle stream and callback similar to _generateStream but adapted
         // _generateStreamGrok handles streaming and broadcasting directly

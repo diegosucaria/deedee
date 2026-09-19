@@ -145,7 +145,7 @@ describe('the voice prompt', () => {
         expect(text).not.toContain('Before an action that sends a message, spends money');
         // ...but a message to someone else is said back first: a misheard
         // name is caught there, and no card stops a contact he already wrote to.
-        expect(text).toContain('A message to anyone but him always asks: say the name you heard and what you will write');
+        expect(text).toContain('A message or an email to anyone but him always asks: say the name you heard and what you will write');
     });
 
     test('has the one home rule a call needs, not the whole block', () => {
