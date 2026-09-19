@@ -35,7 +35,7 @@ The user requires a way to send raw audio files (iOS Dictation, Voice Notes) dir
 ## Implementation Details
 - **API Service**: Uses `multer` (memory storage) to buffer the upload. Converts buffer to Base64.
 - **Agent Service**: Receives a standard `UserMessage` with a `parts` array containing the inline audio data.
-- **Handling**: The Agent treats this as a multimodal input. The System Prompt includes a "DICTATION SAFEGUARD" (implied for `ios_shortcut`) to handle ambiguities carefully.
+- **Handling**: The Agent treats this as a multimodal input. The model hears the recording itself, so the system prompt adds an "AUDIO INPUT" note (ask before running a tool when the words are unclear). The "DICTATION SAFEGUARD" is for typed iOS dictation only.
 
 ## Security
 - Protected by the same High-Level Auth Middleware as other `/v1` routes.

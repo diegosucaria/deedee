@@ -323,7 +323,29 @@ the caller reads the same "Action PAUSED" text the model reads in a chat.
 Without the approval service the route refuses rather than runs. Each call
 arrives on its own request, so there is no run to carry taint: the route keeps
 what the session read for 15 minutes and passes it to the gate, so the
-untrusted-content rule fires there as it does in a chat. The nightly
+untrusted-content rule fires there as it does in a chat.
+
+**A voice call is the owner's own chat** (his decision, 2026-09-20). What he
+asks for in a call is his approval, as in a typed chat: a covered call runs as
+`owner_instructed`, the floor still asks once (the card goes to his phone), the
+safety rules and the deny-list hold, and once the session has read third-party
+text his word stops covering what goes out. Three things make that safe:
+
+- `POST /tools/execute` sits behind the internal token (`server.js`). It was
+  open to the whole Docker network, the agent's own shell included. Only the
+  gateway holds the token, and only his logged-in web session reaches the
+  gateway's live routes.
+- The route marks a call as his only when a token was really checked
+  (`req.internalAuth`). With the token unset (a dev setup) a call stays
+  "unknown, which asks", as before. `ApprovalService._isOwnerChat` trusts the
+  mark on the `live` channel alone.
+- The agent never hears the call: the audio runs between his browser and
+  Google. So the guardian is never told that our own `[live] <tool>` label is
+  his words, and the voice prompt has the model say back the name and the text
+  before any message or email to someone else, where a misheard name is caught.
+
+Calendar results in a call pass through the same calendar filter as in a chat.
+The nightly
 `consolidateMemory` call in the scheduler is the one other direct call: a
 fixed internal tool with no arguments.
 

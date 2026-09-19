@@ -401,7 +401,7 @@ class PeopleService {
 
         let prompt = `You are a helpful assistant managing my contacts.
 Analyze the following conversation snippets from WhatsApp and suggest which people I should add to my contacts.
-I will provide the Known Name (from WhatsApp) if available. Use it as the primary name, but refine it if the conversation reveals a better real name (e.g. "Mom" instead of "Martha").
+I will provide the Known Name (from WhatsApp) if available. Use it as the primary name, but refine it if the conversation reveals a better real name (e.g. "Mom" instead of "M. Smith").
 Also extract any contact identifiers mentioned (Email, Instagram Handle, etc).
 
 Only suggest people who seem to be personal contacts (friends, family, colleagues, service providers). Ignore spam or strictly transactional bots.
@@ -420,7 +420,7 @@ Candidates:
 Return a JSON array of objects with this schema:
 {
   "phone": "extracted phone (same as candidate)",
-  "suggestedName": "Real Name (e.g. 'Diego', 'Mom')",
+  "suggestedName": "Real Name (e.g. 'Alex', 'Mom')",
   "relationship": "Relationship (e.g. 'Friend', 'Mother', 'Cardiologist')",
   "identifiers": { "email": "...", "instagram": "..." },
   "reason": "Brief explanation",

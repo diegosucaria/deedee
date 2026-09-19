@@ -10,14 +10,18 @@ class ImpersonationService {
     }
 
     getOwnerName() {
+        // Settings are stored as JSON: a raw read gave the name with its
+        // quotes, and the autopilot prompt then said: acting as the user ""Name"".
+        const parse = (v) => { try { const p = JSON.parse(v); return typeof p === 'string' ? p.trim() : ''; } catch { return String(v).trim(); } };
+        const read = (key) => {
+            const row = this.db.db.prepare('SELECT value FROM agent_settings WHERE key = ?').get(key);
+            return row && row.value ? parse(row.value) : '';
+        };
         try {
-            const row = this.db.db.prepare("SELECT value FROM agent_settings WHERE key = 'owner_name'").get();
-            if (row && row.value) return row.value;
-            // Fallback
-            const userRow = this.db.db.prepare("SELECT value FROM agent_settings WHERE key = 'user_name'").get();
-            return userRow ? userRow.value : 'Diego';
+            // A name cleared in Settings is stored as an empty string: unset.
+            return read('owner_name') || read('user_name') || 'the owner';
         } catch (e) {
-            return 'Diego';
+            return 'the owner';
         }
     }
 
@@ -519,7 +523,8 @@ ${transcript}
 `;
         // 4. Call LLM
         try {
-            console.log('Prompt:', JSON.stringify({ prompt }));
+            // The prompt holds the contact's messages: its size goes to the log, never its text.
+            console.log(`[Impersonation] Draft prompt: ${prompt.length} chars.`);
             const modelName = this._config.getModel('FLASH');
             const replyThinking = this._config.getThinkingConfig('FLASH', 'impersonation', { model: modelName });
 

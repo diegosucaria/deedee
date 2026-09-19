@@ -40,7 +40,7 @@ The prompt rules live in `apps/agent/src/prompts/system.js` (BROWSER PROTOCOL).
 
 ## Secrets by name
 
-Diego saves secrets in **Settings > Browser secrets**, one at a time. Names
+Diego saves secrets on the **Brain page, Browser Secrets tab** (`/brain?tab=secrets`), one at a time. Names
 must match `^[A-Z0-9_]+$`. The agent stores `browser-secrets.json`, renders
 `browser-secrets.env` for the server's `--secrets` flag, and restarts the
 browser server (after any running browser call ends). It renders the `.env`

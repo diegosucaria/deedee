@@ -173,6 +173,24 @@ describe('Impersonation Service Unit', () => {
         }));
     });
 
+    test('the owner name is read as the setting stores it, with a neutral fallback', () => {
+        const withRow = (value) => mockDb.db.prepare.mockImplementation((query) => ({
+            all: jest.fn().mockReturnValue([]), run: jest.fn(),
+            get: jest.fn((key) => (value && (key === 'owner_name' || /owner_name/.test(query)) ? { value } : undefined))
+        }));
+        withRow(JSON.stringify('Sam'));
+        expect(service.getOwnerName()).toBe('Sam');
+        withRow('Sam');
+        expect(service.getOwnerName()).toBe('Sam');
+        withRow(null);
+        expect(service.getOwnerName()).toBe('the owner');
+        // A name cleared in Settings is stored as an empty string.
+        for (const cleared of [JSON.stringify(''), JSON.stringify('   '), JSON.stringify(null)]) {
+            withRow(cleared);
+            expect(service.getOwnerName()).toBe('the owner');
+        }
+    });
+
     test('should generate draft with full conversation context', async () => {
         const chatId = '1234567890';
         mockDb.getPerson.mockReturnValue({ name: 'Papi', id: 'uuid' });
@@ -188,11 +206,12 @@ describe('Impersonation Service Unit', () => {
         // Mock DB prepare().all().reverse() logic
         // We need to support the .all() call and subsequent .reverse()
         const mockAll = jest.fn().mockReturnValue([...mockHistory]); // Return array that has .reverse
-        mockDb.db.prepare.mockReturnValue({
+        // The owner's name is a setting, stored as JSON like every setting.
+        mockDb.db.prepare.mockImplementation((query) => ({
             all: mockAll,
             run: jest.fn(),
-            get: jest.fn()
-        });
+            get: jest.fn((key) => (key === 'owner_name' || /owner_name/.test(query) ? { value: JSON.stringify('Sam') } : undefined))
+        }));
 
         // Mock generation
         mockAgent.client.models.generateContent.mockResolvedValue({
@@ -210,14 +229,9 @@ describe('Impersonation Service Unit', () => {
                             expect.objectContaining({
                                 text: expect.stringContaining('### Conversation History (Context):')
                             }),
-                            // Since we mock getOwnerName() to return 'Diego' (default/mocked?)
-                            // We need to check if 'Diego: Sup?' is in there.
-                            // BUT wait, getOwnerName calls `this.agent.settings.owner_name` or 'Diego'.
-                            // In test setup, `agent.settings` is undefined on mockAgent.
-                            // Service.getOwnerName() handles this safely? 
-                            // Let's verify service code on getOwnerName if needed, but safe to assume "Diego".
+                            // The label is the stored name, without the JSON quotes.
                             expect.objectContaining({
-                                text: expect.stringContaining('Diego: Sup?')
+                                text: expect.stringContaining('Sam: Sup?')
                             }),
                             expect.objectContaining({
                                 text: expect.stringContaining('Papi: Not much')

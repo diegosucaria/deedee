@@ -149,6 +149,8 @@ const internalTokenMiddleware = (req, res, next) => {
     if (a.length !== b.length || !cryptoTimingSafe(a, b)) {
         return res.status(401).json({ error: 'Invalid or missing internal token' });
     }
+    // A route may trust its caller only when a token was really checked.
+    req.internalAuth = true;
     next();
 };
 
@@ -178,6 +180,11 @@ app.use('/health', createHealthRouter(agent));
 // whether agent is initialized. Express runs middleware in registration
 // order, so this must come before any /internal route handlers.
 app.use('/internal', internalTokenMiddleware);
+// The voice call's tool route (POST /tools/execute) runs any tool by name. It
+// was open to the whole Docker network, the agent's own shell included. The
+// gateway already sends the internal token on every call to the agent, and a
+// call that passed this check is the owner's own session (routes/tools.js).
+app.use('/tools', internalTokenMiddleware);
 
 if (agent) {
   // Mount Modular Routers

@@ -720,7 +720,10 @@ class ApprovalService {
         let owner = false;
         try { owner = await this._isOwnerChat(message); } catch { owner = false; }
         // A resumed run's text is ours, not his: only his stored messages count.
-        const text = continuationOf(message) ? '' : (typeof message?.content === 'string' ? message.content : '');
+        // Nor is a voice call's: its content is our own "[live] <tool>" label,
+        // and what he said never passes through the agent.
+        const spoken = splitChannel(message?.source).channel === 'live';
+        const text = continuationOf(message) || spoken ? '' : (typeof message?.content === 'string' ? message.content : '');
         const earlier = owner ? this._earlierOwnerMessages(message, text) : [];
         return { kind, jobName: null, ownerMessage: owner && text ? text : null, earlierOwnerMessages: earlier, ownerChat: owner };
     }
@@ -1173,6 +1176,9 @@ class ApprovalService {
         const channel = splitChannel(message?.source).channel;
         if (!chatId) return false;
         if (channel === 'web') return true;
+        // A voice call: his only when the route saw the gateway's token, which
+        // only his logged-in web session can reach (routes/tools.js).
+        if (channel === 'live') return message?.metadata?.ownerSession === true;
         if (channel === 'telegram') return telegramOwnerIds().includes(String(chatId));
         if (channel === 'whatsapp') return this._isOwnerWaChat(chatId);
         return false;

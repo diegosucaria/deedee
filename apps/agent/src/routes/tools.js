@@ -4,6 +4,7 @@ const crypto = require('crypto');
 const { toolDefinitions } = require('../tools-definition');
 const { ApprovalService } = require('../services/approval-service');
 const { classifyToolResult, TurnTaint } = require('../utils/untrusted-content');
+const { filterCalendarResult } = require('../utils/calendar-filter');
 
 // What the live session has read lately. Each call arrives on its own request,
 // so there is no run to carry taint: this stands in for one. It ages out, since
@@ -70,13 +71,22 @@ function createToolRouter(agent) {
     // A paused call sends its card to the owner's notification channel (a live
     // session is not a chat he can answer in), and the model reads the same
     // "Action PAUSED" text it reads in a chat.
+    //
+    // A voice call is the owner's own chat (his decision, 2026-09-20): only
+    // his logged-in web session reaches this route, through the gateway, which
+    // proves itself with the internal token. So what he asks for in a call is
+    // his approval, as in a chat: the floor still asks once, the safety rules
+    // still ask, and once the session has read third-party text (an email, a
+    // web page) his word stops covering outward actions, as in a chat. With
+    // no token checked (a dev setup) the call stays "unknown, which asks".
     router.post('/tools/execute', async (req, res) => {
         if (!agent || !agent.toolExecutor) return res.status(503).json({ error: 'Agent not ready' });
         try {
             const { name, args } = req.body;
             console.log(`[Agent] Executing tool request from Live Client: ${name}`, args);
 
-            const message = { role: 'user', content: `[live] ${name}`, source: 'live', metadata: { chatId: 'live-session' } };
+            const ownerSession = req.internalAuth === true;
+            const message = { role: 'user', content: `[live] ${name}`, source: 'live', metadata: { chatId: 'live-session', ownerSession } };
             // Context simulation for the tool executor
             const context = {
                 message,
@@ -88,11 +98,15 @@ function createToolRouter(agent) {
             if (agent.approvals && typeof agent.approvals.review === 'function') {
                 const run = ApprovalService.newRun(crypto.randomUUID());
                 const serverName = agent.mcp?.toolMap?.get?.(name)?.name || null;
-                // Nothing here tracks a run's reading, so the checks a chat run
-                // answers with its history count as unknown, which asks.
+                // The call's audio never passes through here; what the session
+                // READ does, as tool results, and currentLiveTaint() keeps it
+                // for 15 minutes. That stands in for a chat's history. Without
+                // a checked token nothing is known, which asks.
+                const liveTaintNow = currentLiveTaint();
                 const review = await agent.approvals.review({
-                    message, toolName: name, args, serverName, run, taint: currentLiveTaint(),
-                    historyUntrusted: null, foreignText: null
+                    message, toolName: name, args, serverName, run, taint: liveTaintNow,
+                    historyUntrusted: ownerSession ? !!liveTaintNow : null,
+                    foreignText: ownerSession ? false : null
                 });
                 if (!review.run) {
                     console.log(`[Agent] Live tool ${name} held by the approval gate (${review.status}).`);
@@ -103,9 +117,16 @@ function createToolRouter(agent) {
                 return res.status(503).json({ error: 'Approvals not initialized' });
             }
 
-            const result = await agent.toolExecutor.execute(name, args, context);
+            const raw = await agent.toolExecutor.execute(name, args, context);
             // What this session has read now counts for the calls that follow.
-            noteLiveResult(name, args, result, agent.mcp?.toolMap?.get?.(name)?.name || null);
+            noteLiveResult(name, args, raw, agent.mcp?.toolMap?.get?.(name)?.name || null);
+            // A call reads the same calendars a chat does: the ones he ticked.
+            let result = raw;
+            try {
+                result = filterCalendarResult(name, raw, agent.settings, agent.mcp?.toolMap, args, agent.mcp?.config);
+            } catch (e) {
+                console.warn(`[Agent] Live calendar result not filtered (${name}): ${e.message}`);
+            }
             res.json({ result });
         } catch (error) {
             console.error('[Agent] Live Tool Execution Failed:', error);

@@ -110,4 +110,48 @@ describe('Agent TTS', () => {
     // Should start with RIFF (WAV header)
     expect(base64Audio).toMatch(/^UklGR/);
   });
+
+  describe('the language code reaches the speech call', () => {
+    // A refactor once dropped it: the value was logged and never sent, so
+    // the accent was whatever the model guessed.
+    const speak = async (args) => {
+      agent.toolExecutor.services.client = agent.client;
+      agent.toolExecutor.services.db = agent.db;
+      agent.toolExecutor.services.agent = agent;
+      const result = await agent._executeTool('replyWithAudio', { text: 'Hola', ...args }, { metadata: { chatId: 'test-chat' }, source: 'telegram' }, jest.fn());
+      return { result, calls: agent.client.models.generateContent.mock.calls.map(c => c[0].config.speechConfig) };
+    };
+
+    test('a language tag is sent; the old parameter name still works', async () => {
+      expect((await speak({ languageCode: 'es-419' })).calls[0].languageCode).toBe('es-419');
+      agent.client.models.generateContent.mockClear();
+      expect((await speak({ language: 'en-US' })).calls[0].languageCode).toBe('en-US');
+    });
+
+    test('nothing is sent when no code is given, or when it is not a language tag', async () => {
+      expect((await speak({})).calls[0]).not.toHaveProperty('languageCode');
+      agent.client.models.generateContent.mockClear();
+      expect((await speak({ languageCode: 'Spanish, please' })).calls[0]).not.toHaveProperty('languageCode');
+    });
+
+    test('a model that refuses the code still gets him the audio', async () => {
+      const ok = await agent.client.models.generateContent();
+      agent.client.models.generateContent.mockClear();
+      agent.client.models.generateContent
+        .mockRejectedValueOnce(new Error('400 INVALID_ARGUMENT: unsupported language code'))
+        .mockResolvedValue(ok);
+      const { result, calls } = await speak({ languageCode: 'xx-YY' });
+      expect(result.success).toBe(true);
+      expect(calls).toHaveLength(2);
+      expect(calls[0].languageCode).toBe('xx-YY');
+      expect(calls[1]).not.toHaveProperty('languageCode');
+    });
+
+    test('another failure is not retried', async () => {
+      agent.client.models.generateContent.mockClear();
+      agent.client.models.generateContent.mockRejectedValue(new Error('503 overloaded'));
+      const { calls } = await speak({ languageCode: 'es-419' }).catch(() => ({ calls: agent.client.models.generateContent.mock.calls }));
+      expect(calls).toHaveLength(1);
+    });
+  });
 });
