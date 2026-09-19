@@ -1,14 +1,14 @@
 const { createAssistantMessage } = require('@deedee/shared/src/types');
 const { ConfigService } = require('./services/config-service');
-const { isUntrustedEnvelope } = require('./utils/untrusted-content');
+const { isUntrustedEnvelope, classifyToolResult, wrapUntrusted } = require('./utils/untrusted-content');
 
 // Old tool results in the history window. On the device they were about 80%
 // of the window: one stale listJobs result of 42,000 characters was 62% of a
-// chat's history, sent again on every call for days. The last few results stay
-// whole, since the model is often still working from them; an older one keeps
-// its start and a note. The call and its response both stay, so the pairing
-// the API checks is untouched.
-const TRIM_KEEP_LAST = 3;
+// chat's history, sent again on every call for days. The results of the last
+// few tool rounds stay whole, since the model is often still working from
+// them; an older one keeps its start and a note. The call and its response
+// both stay, so the pairing the API checks is untouched.
+const TRIM_KEEP_LAST_ROWS = 3;
 const TRIM_OVER_CHARS = 1500;
 const TRIM_PREVIEW_CHARS = 400;
 
@@ -28,7 +28,7 @@ class SmartContextManager {
      * Main entry point to get context for a chat.
      * Checks if summarization is needed first.
      */
-    async getContext(chatId, modelType = 'PRO') {
+    async getContext(chatId, modelType = 'PRO', { serverOf } = {}) {
         // 1. Check if we need to summarize
         await this.checkAndSummarize(chatId);
 
@@ -47,7 +47,8 @@ class SmartContextManager {
         // Saved rows carry raw parts (tool calls, tool results, media). Make
         // them safe for the model before anything else touches them.
         const recentHistory = SmartContextManager.trimOldToolResults(
-            SmartContextManager.normalizeHistoryForModel(this.db.getHistoryForChat(chatId, limit)));
+            SmartContextManager.normalizeHistoryForModel(this.db.getHistoryForChat(chatId, limit)),
+            serverOf ? { serverOf } : {});
 
         // INJECT TIMESTAMPS
         // The model receives raw text history. To give it temporal awareness we
@@ -101,42 +102,74 @@ class SmartContextManager {
      * Shorten old, large tool results in a history window. Pure: returns new
      * rows and new parts for the ones it changes.
      *
-     * - The last `keepLast` results in the window stay whole, whatever their size.
+     * - The results of the last `keepLastRows` tool rounds stay whole. A round
+     *   is one row of responses: parallel calls answer in one row, and they
+     *   belong together.
      * - An older result over `overChars` keeps its first `previewChars` and a
-     *   note saying how long it was and that the tool can be called again.
-     * - A result marked untrusted stays an untrusted envelope: only its
-     *   `content` is cut. The rules that hold back the owner's word when the
-     *   history holds a third party's text read that mark, and a shortened
-     *   piece of third-party text is still third-party text.
+     *   note. The note never says to call the tool again: the tool may send,
+     *   book or push.
+     * - The verdict "a third party wrote this" is kept. An untrusted envelope
+     *   stays one, with only its `content` cut and the note outside `content`,
+     *   where the model is told to trust nothing. A plain result is judged
+     *   BEFORE it is cut, because for some tools the verdict is read from the
+     *   body (searchMemory, sub-agent reports, Home Assistant calendar text),
+     *   and one that was third-party text is wrapped as such. The rules that
+     *   hold back the owner's word read that mark.
+     * - The approval gate's own results (one key, info or error) are left
+     *   alone, so they are still recognised as ours.
      * - HISTORY_TRIM=0 turns it off.
+     * @param {Array} history
+     * @param {{ keepLastRows?: number, overChars?: number, previewChars?: number, serverOf?: (name: string) => string|null }} [opts]
      */
-    static trimOldToolResults(history, { keepLast = TRIM_KEEP_LAST, overChars = TRIM_OVER_CHARS, previewChars = TRIM_PREVIEW_CHARS } = {}) {
+    static trimOldToolResults(history, { keepLastRows = TRIM_KEEP_LAST_ROWS, overChars = TRIM_OVER_CHARS, previewChars = TRIM_PREVIEW_CHARS, serverOf = () => null } = {}) {
         if (!Array.isArray(history) || String(process.env.HISTORY_TRIM || '1') === '0') return history;
-        let total = 0;
-        for (const msg of history) for (const p of msg?.parts || []) if (p && p.functionResponse) total++;
-        if (total <= keepLast) return history;
+        const isRound = (msg) => Array.isArray(msg?.parts) && msg.parts.some(p => p && p.functionResponse);
+        const rounds = history.filter(isRound).length;
+        if (rounds <= keepLastRows) return history;
 
-        let seen = 0;
         const size = (value) => { try { return JSON.stringify(value ?? null).length; } catch { return 0; } };
         const head = (value) => {
-            const text = typeof value === 'string' ? value : JSON.stringify(value ?? null);
-            return text.slice(0, previewChars);
+            // An MCP result is { output: "<text>" }: show the text, not its escaped wrapper.
+            const inner = value && typeof value === 'object' && !Array.isArray(value)
+                && Object.keys(value).length === 1 && typeof value.output === 'string' ? value.output : value;
+            const text = typeof inner === 'string' ? inner : JSON.stringify(inner ?? null);
+            // The mark shows where it was cut, so a cut number is not read as a whole one.
+            const cut = text.slice(0, previewChars);
+            // A cut can land inside an emoji; drop the half that is left.
+            return `${typeof cut.toWellFormed === 'function' ? cut.toWellFormed() : cut} …[cut]`;
         };
+        const isGateText = (response) => {
+            const keys = response && typeof response === 'object' && !Array.isArray(response) ? Object.keys(response) : [];
+            return keys.length === 1 && (keys[0] === 'info' || keys[0] === 'error');
+        };
+
+        let round = 0;
         return history.map((msg) => {
-            if (!Array.isArray(msg?.parts) || !msg.parts.some(p => p && p.functionResponse)) return msg;
+            if (!isRound(msg)) return msg;
+            round++;
+            if (round > rounds - keepLastRows) return msg;
             let changed = false;
             const parts = msg.parts.map((p) => {
                 if (!p || !p.functionResponse) return p;
-                seen++;
-                if (seen > total - keepLast) return p;
                 const response = p.functionResponse.response;
-                const chars = size(response);
-                if (chars <= overChars) return p;
+                const enveloped = isUntrustedEnvelope(response);
+                // The envelope's own fields are ours: only what the tool returned counts.
+                const chars = size(enveloped ? response.content : response);
+                if (chars <= overChars || isGateText(response)) return p;
+                const name = p.functionResponse.name;
+                const note = `Older tool result shortened to save context (it was ${chars} characters). If you need the rest, fetch it again with a read-only call. Never repeat an action (a send, a booking, a push) just to see its result.`;
+                let shorter;
+                if (enveloped) {
+                    shorter = { ...response, shortened: true, shortenedNote: note, content: { preview: head(response.content) } };
+                } else {
+                    let verdict;
+                    try { verdict = classifyToolResult(name, { serverName: serverOf(name), args: {}, result: response }); }
+                    catch { verdict = { untrusted: true, kind: 'an unknown tool' }; }
+                    shorter = verdict.untrusted
+                        ? { ...wrapUntrusted(name, { preview: head(response) }, verdict.kind), shortened: true, shortenedNote: note }
+                        : { shortened: true, note, preview: head(response) };
+                }
                 changed = true;
-                const note = `Older tool result shortened to save context (it was ${chars} characters). Call the tool again if you need the rest.`;
-                const shorter = isUntrustedEnvelope(response)
-                    ? { ...response, content: { shortened: true, note, preview: head(response.content) } }
-                    : { shortened: true, note, preview: head(response) };
                 return { ...p, functionResponse: { ...p.functionResponse, response: shorter } };
             });
             return changed ? { ...msg, parts } : msg;
@@ -317,8 +350,10 @@ class SmartContextManager {
      * this, one photo in the window tripped the threshold on its own.
      */
     static estimateTokens(history) {
-        const normalized = SmartContextManager.normalizeHistoryForModel(history);
-        return JSON.stringify(normalized).length / 4;
+        // Shortened like the window that goes out, or the threshold would fire
+        // on tool results the model no longer receives.
+        const sent = SmartContextManager.trimOldToolResults(SmartContextManager.normalizeHistoryForModel(history));
+        return JSON.stringify(sent).length / 4;
     }
 
     /**

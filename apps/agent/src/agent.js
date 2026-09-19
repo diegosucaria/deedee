@@ -1929,7 +1929,10 @@ class Agent {
       console.log(`${logPrefix} Fetching history(Smart Context) for model: ${decision.model} `);
 
       // --- HYDRATION (Smart Context) ---
-      const history = await this.smartContext.getContext(chatId, decision.model);
+      // The MCP server of a tool name: the history trim needs it to keep the
+      // "a third party wrote this" verdict when it shortens an old result.
+      const serverOfTool = (name) => this.mcp?.toolMap?.get?.(name)?.name || null;
+      const history = await this.smartContext.getContext(chatId, decision.model, { serverOf: serverOfTool });
       // Third-party text the model reads in this history: the owner's word in
       // his chat then no longer covers messages, email or the house on its
       // own (ApprovalService.review). Unreadable history counts as untrusted.

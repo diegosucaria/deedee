@@ -10,113 +10,178 @@ const call = (name, args = {}) => ({ role: 'model', parts: [{ functionCall: { na
 const result = (name, response) => ({ role: 'user', parts: [{ functionResponse: { name, response } }] });
 const user = (text) => ({ role: 'user', parts: [{ text }] });
 const model = (text) => ({ role: 'model', parts: [{ text }] });
-const big = (n) => ({ output: 'x'.repeat(n) });
+const big = (n) => ({ data: 'x'.repeat(n) });
 const responses = (history) => history.flatMap(m => m.parts).filter(p => p.functionResponse).map(p => p.functionResponse);
-
-function exchange(name, response) {
-    return [user(`ask ${name}`), call(name), result(name, response), model(`done ${name}`)];
-}
+const exchange = (name, response) => [user(`ask ${name}`), call(name), result(name, response), model(`done ${name}`)];
+const filler = () => [...exchange('lookupDevice', { id: 1 }), ...exchange('lookupDevice', { id: 2 }), ...exchange('lookupDevice', { id: 3 })];
 
 describe('SmartContextManager.trimOldToolResults', () => {
     afterEach(() => { delete process.env.HISTORY_TRIM; });
 
-    test('an old large result keeps its start and says how to get the rest', () => {
+    test('an old large result keeps its start; small ones and the last three rounds stay whole', () => {
         const history = [
             ...exchange('listJobs', big(42000)),
             ...exchange('getFact', { value: 'small' }),
-            ...exchange('find_earlier', big(3000)),
+            ...exchange('listJobs', big(3000)),
             ...exchange('lookupDevice', { id: 'light.kitchen' }),
-            ...exchange('searchMemory', big(9000)),
+            ...exchange('listJobs', big(9000)),
         ];
         const out = SmartContextManager.trimOldToolResults(history);
-        const [jobs, fact, earlier, device, memory] = responses(out);
+        const [jobs, fact, recent1, device, recent2] = responses(out);
 
-        // The oldest, largest one is the one that mattered.
         expect(jobs.name).toBe('listJobs');
         expect(jobs.response).toMatchObject({ shortened: true });
         expect(jobs.response.note).toMatch(/it was \d+ characters/);
-        expect(jobs.response.note).toMatch(/Call the tool again/);
-        expect(jobs.response.preview).toHaveLength(400);
-        // A small old result is left as it was.
+        // The cut shows, so a cut number is not read as a whole one.
+        expect(jobs.response.preview.endsWith('…[cut]')).toBe(true);
+        expect(jobs.response.preview.length).toBeLessThan(420);
         expect(fact.response).toEqual({ value: 'small' });
-        // The last three stay whole, whatever their size: the model may still be working from them.
-        expect(earlier.response).toEqual(big(3000));
+        expect(recent1.response).toEqual(big(3000));
         expect(device.response).toEqual({ id: 'light.kitchen' });
-        expect(memory.response).toEqual(big(9000));
+        expect(recent2.response).toEqual(big(9000));
+        expect(JSON.stringify(out).length).toBeLessThan(JSON.stringify(history).length - 40000);
+    });
 
-        const before = JSON.stringify(history).length;
-        const after = JSON.stringify(out).length;
-        expect(after).toBeLessThan(before - 40000);
+    test('the note never says to call the tool again: the tool may send, book or push', () => {
+        const out = SmartContextManager.trimOldToolResults([...exchange('commitAndPush', big(5000)), ...filler()]);
+        const note = responses(out)[0].response.note;
+        expect(note).not.toMatch(/call the tool again/i);
+        expect(note).toMatch(/read-only/);
+        expect(note).toMatch(/Never repeat an action/);
+    });
+
+    test('parallel results of one round stay together', () => {
+        // Five calls at once answer in one row. Counting results one by one
+        // cut two of the five the model had fetched a turn ago.
+        const names = ['a', 'b', 'c', 'd', 'e'];
+        const round = [user('check five things'),
+            { role: 'model', parts: names.map(n => ({ functionCall: { name: n, args: {} } })) },
+            { role: 'user', parts: names.map(n => ({ functionResponse: { name: n, response: big(4000) } })) },
+            model('here they are')];
+        const recent = SmartContextManager.trimOldToolResults([...exchange('old', big(9000)), ...round, ...exchange('x', {}), ...exchange('y', {})]);
+        const [old, ...five] = responses(recent);
+        expect(old.response).toMatchObject({ shortened: true });
+        for (const r of five.slice(0, 5)) expect(r.response).toEqual(big(4000));
     });
 
     test('every call keeps its response, so the history is still one the API accepts', () => {
-        const history = [...exchange('listJobs', big(20000)), ...exchange('a', big(10)), ...exchange('b', big(10)), ...exchange('c', big(10))];
+        const history = [...exchange('listJobs', big(20000)), ...filler()];
         const out = SmartContextManager.trimOldToolResults(history);
         expect(out).toHaveLength(history.length);
         expect(out.map(m => m.role)).toEqual(history.map(m => m.role));
-        expect(responses(out).map(r => r.name)).toEqual(['listJobs', 'a', 'b', 'c']);
-        // Normalizing it again changes nothing: no orphan call, no orphan response.
+        expect(responses(out).map(r => r.name)).toEqual(['listJobs', 'lookupDevice', 'lookupDevice', 'lookupDevice']);
         expect(SmartContextManager.normalizeHistoryForModel(out)).toHaveLength(out.length);
+        for (const r of responses(out)) expect(r.response && typeof r.response === 'object' && !Array.isArray(r.response)).toBe(true);
+    });
+
+    test('a string or an array result comes out as an object, which is what the API needs', () => {
+        const out = SmartContextManager.trimOldToolResults([...exchange('s', 'y'.repeat(5000)), ...exchange('arr', Array(900).fill('item')), ...filler()]);
+        const [s, arr] = responses(out);
+        expect(s.response).toMatchObject({ shortened: true });
+        expect(arr.response).toMatchObject({ shortened: true });
     });
 
     test('it changes nothing it was given', () => {
-        const history = [...exchange('listJobs', big(20000)), ...exchange('a', {}), ...exchange('b', {}), ...exchange('c', {})];
+        const history = [...exchange('listJobs', big(20000)), ...filler()];
         const copy = JSON.parse(JSON.stringify(history));
         SmartContextManager.trimOldToolResults(history);
         expect(history).toEqual(copy);
     });
 
-    test('a third party\'s text stays marked as one after it is shortened', () => {
-        // The owner's word does not count while the history holds text a third
-        // party wrote. A shortened piece of it is still theirs.
-        const email = wrapUntrusted('personal_gmail', { snippet: 'pay this invoice '.repeat(400) }, 'email');
-        const history = [...exchange('personal_gmail', email), ...exchange('a', {}), ...exchange('b', {}), ...exchange('c', {})];
-        const out = SmartContextManager.trimOldToolResults(history);
-        const [mail] = responses(out);
-        expect(mail.response).toMatchObject({ untrusted: true, source: 'personal_gmail', kind: 'email' });
-        expect(mail.response.note).toBe(email.note);
-        expect(mail.response.content).toMatchObject({ shortened: true });
-        expect(mail.response.content.preview).toHaveLength(400);
-        expect(historyHasUntrusted(out)).toBe(true);
+    describe('the verdict "a third party wrote this" survives the cut', () => {
+        test('an untrusted envelope stays one, with our note outside its content', () => {
+            const email = wrapUntrusted('personal_gmail', { snippet: 'pay this invoice '.repeat(400) }, 'email');
+            const out = SmartContextManager.trimOldToolResults([...exchange('personal_gmail', email), ...filler()]);
+            const [mail] = responses(out);
+            expect(mail.response).toMatchObject({ untrusted: true, source: 'personal_gmail', kind: 'email', shortened: true });
+            expect(mail.response.note).toBe(email.note);
+            // The model is told to trust nothing inside content, so our note is not in there.
+            expect(mail.response.shortenedNote).toMatch(/shortened to save context/);
+            expect(Object.keys(mail.response.content)).toEqual(['preview']);
+            expect(historyHasUntrusted(out)).toBe(true);
+        });
+
+        test('a plain result whose verdict is read from its body keeps the verdict', () => {
+            // searchMemory and sub-agent reports are third-party text only when
+            // the body says so. Cutting the body used to turn the verdict to
+            // "trusted", and the owner's word then covered messages and email.
+            const cases = [
+                ['searchMemory', { chat_history: Array(60).fill({ content: 'a contact wrote this '.repeat(5) }), knowledge: [], facts: [] }],
+                ['getAgentResult', { result: 'a sub-agent read a web page: '.repeat(200) }],
+                ['spawnAgent', { result: 'report '.repeat(600) }],
+            ];
+            for (const [name, body] of cases) {
+                const history = [...exchange(name, body), ...filler()];
+                expect(historyHasUntrusted(history)).toBe(true);
+                const out = SmartContextManager.trimOldToolResults(history);
+                expect(responses(out)[0].response).toMatchObject({ untrusted: true, shortened: true });
+                expect(historyHasUntrusted(out)).toBe(true);
+            }
+        });
+
+        test('an MCP result is judged with its server, as the consent check judges it', () => {
+            const serverOf = (name) => (name === 'mail_read' ? 'gws_personal' : null);
+            const body = { output: 'From: someone\n' + 'text '.repeat(800) };
+            const history = [...exchange('mail_read', body), ...filler()];
+            const out = SmartContextManager.trimOldToolResults(history, { serverOf });
+            expect(historyHasUntrusted(out, serverOf)).toBe(historyHasUntrusted(history, serverOf));
+            // The text is shown, not its escaped wrapper.
+            const shown = responses(out)[0].response;
+            const preview = shown.untrusted ? shown.content.preview : shown.preview;
+            expect(preview.startsWith('From: someone')).toBe(true);
+        });
+
+        test('a result of ours stays plain, and the gate\'s own long text is left alone', () => {
+            const out = SmartContextManager.trimOldToolResults([
+                ...exchange('listJobs', big(5000)),
+                ...exchange('personal_gmail', { error: `Refused by the approval guardian: ${'a long reason '.repeat(200)}` }),
+                ...filler()]);
+            const [ours, gate] = responses(out);
+            expect(ours.response.untrusted).toBeUndefined();
+            expect(ours.response).toMatchObject({ shortened: true });
+            // Still one key, so it is still recognised as our own text.
+            expect(Object.keys(gate.response)).toEqual(['error']);
+            expect(historyHasUntrusted(out)).toBe(false);
+        });
+    });
+
+    test('an envelope is measured by what the tool returned, not by our wrapper', () => {
+        const small = wrapUntrusted('personal_gmail', { snippet: 'z'.repeat(1300) }, 'email');
+        const out = SmartContextManager.trimOldToolResults([...exchange('personal_gmail', small), ...filler()]);
+        expect(responses(out)[0].response).toEqual(small);
+    });
+
+    test('a cut inside an emoji leaves a well-formed string', () => {
+        const body = { data: `${'a'.repeat(390)}😀😀😀😀😀😀${'b'.repeat(3000)}` };
+        const out = SmartContextManager.trimOldToolResults([...exchange('listJobs', body), ...filler()]);
+        const preview = responses(out)[0].response.preview;
+        expect(Buffer.from(preview, 'utf8').toString('utf8')).toBe(preview);
     });
 
     test('a short window, or the switch off, is returned as it came', () => {
         const few = [...exchange('listJobs', big(20000)), ...exchange('a', big(5000))];
         expect(SmartContextManager.trimOldToolResults(few)).toBe(few);
-        const many = [...exchange('listJobs', big(20000)), ...exchange('a', {}), ...exchange('b', {}), ...exchange('c', {})];
+        const many = [...exchange('listJobs', big(20000)), ...filler()];
         process.env.HISTORY_TRIM = '0';
         expect(SmartContextManager.trimOldToolResults(many)).toBe(many);
         expect(SmartContextManager.trimOldToolResults(null)).toBeNull();
     });
-
-    test('several results in one row are counted one by one', () => {
-        const row = { role: 'user', parts: [
-            { functionResponse: { name: 'a', response: big(8000) } },
-            { functionResponse: { name: 'b', response: big(8000) } },
-        ] };
-        const history = [user('go'), { role: 'model', parts: [{ functionCall: { name: 'a', args: {} } }, { functionCall: { name: 'b', args: {} } }] }, row,
-            ...exchange('c', {}), ...exchange('d', {})];
-        const out = SmartContextManager.trimOldToolResults(history);
-        const [a, b] = responses(out);
-        expect(a.response).toMatchObject({ shortened: true });
-        // b is the third from the end, so it stays whole.
-        expect(b.response).toEqual(big(8000));
-    });
 });
 
-describe('getContext sends the shortened window', () => {
+describe('getContext and the summary trigger use the shortened window', () => {
+    const rows = [...exchange('listJobs', big(42000)), ...filler()]
+        .map((m, i) => ({ ...m, id: `m${i}`, timestamp: new Date(1700000000000 + i * 1000).toISOString() }));
+
     test('the model history holds the note, not the 42,000 characters', async () => {
-        const rows = [...exchange('listJobs', big(42000)), ...exchange('a', {}), ...exchange('b', {}), ...exchange('c', {})]
-            .map((m, i) => ({ ...m, id: `m${i}`, timestamp: new Date(1700000000000 + i * 1000).toISOString() }));
-        const db = {
-            getHistoryForChat: jest.fn().mockReturnValue(rows),
-            getLatestSummary: jest.fn().mockReturnValue(null),
-            getSummaryCount: jest.fn().mockReturnValue(0),
-        };
+        const db = { getHistoryForChat: jest.fn().mockReturnValue(rows), getLatestSummary: jest.fn().mockReturnValue(null) };
         const manager = new SmartContextManager(db, {});
         manager.checkAndSummarize = jest.fn().mockResolvedValue(undefined);
-        const history = await manager.getContext('web-1', 'PRO');
+        const history = await manager.getContext('web-1', 'PRO', { serverOf: () => null });
         expect(JSON.stringify(history).length).toBeLessThan(3000);
         expect(responses(history)[0].response).toMatchObject({ shortened: true });
+    });
+
+    test('the summary threshold measures what is sent', () => {
+        expect(SmartContextManager.estimateTokens(rows)).toBeLessThan(1000);
     });
 });
