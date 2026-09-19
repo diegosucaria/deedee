@@ -236,6 +236,28 @@ describe('the log that says why he was signed out', () => {
         expect(lastWarning()).toContain('signature does not match');
     });
 
+    test('"no cookie sent" says which other cookies did come: names and counts, never a value', async () => {
+        // A browser keeps a limited number of cookies per registrable domain.
+        // Another app under the same domain that floods it pushes ours out.
+        // The request then carries dozens of that app's cookies and not ours.
+        const flood = Array.from({ length: 30 }, (_, i) => `_forward_auth_csrf_${(0xabc000 + i).toString(16)}=SECRETVALUE${i}`);
+        const request = makeRequest('/brain', { headers: { accept: 'text/html', cookie: [...flood, '_forward_auth=TOPSECRET', 'theme=dark'].join('; ') } });
+        await middleware(request);
+        const line = lastWarning();
+        expect(line).toContain('no cookie sent (32 other cookies came: _forward_auth_csrf_* x30');
+        expect(line).toContain('_forward_auth');
+        expect(line).toContain('theme');
+        expect(line).not.toMatch(/SECRETVALUE|TOPSECRET|dark/);
+
+        await middleware(html());
+        expect(lastWarning()).toContain('no cookie sent (the request carried no cookie at all)');
+    });
+
+    test('the session cookie asks the browser to keep it longest', async () => {
+        const { cookieAttributes } = require('../src/lib/auth/session.js');
+        expect(cookieAttributes()).toMatchObject({ priority: 'high', httpOnly: true, sameSite: 'lax', path: '/' });
+    });
+
     test('a good session says nothing', async () => {
         const token = await signedSession();
         await middleware(html(token));

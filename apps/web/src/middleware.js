@@ -57,9 +57,38 @@ function isProd() {
 }
 
 function cookieAttributes() {
-    const attrs = { httpOnly: true, sameSite: 'lax', secure: isProd(), path: '/' };
+    // priority: a browser keeps a limited number of cookies per site (Chrome:
+    // 180 for the whole registrable domain, every subdomain included) and
+    // throws out the oldest when another app under the same domain floods it.
+    // Chrome and Edge evict high-priority cookies last; others ignore the flag.
+    const attrs = { httpOnly: true, sameSite: 'lax', secure: isProd(), path: '/', priority: 'high' };
     if (process.env.COOKIE_DOMAIN) attrs.domain = process.env.COOKIE_DOMAIN;
     return attrs;
+}
+
+/**
+ * Which other cookies came with a request that had no session cookie: how
+ * many, and their names with random tails folded ("_forward_auth_csrf_1a2b3c"
+ * counts under "_forward_auth_csrf_*"). Names only, never a value. A request
+ * that carries dozens of another app's cookies and not ours says the browser
+ * threw ours out to make room; a request with none says the browser had
+ * nothing for this host at all.
+ */
+export function otherCookies(request) {
+    try {
+        const all = request?.cookies?.getAll?.() || [];
+        if (all.length === 0) return ' (the request carried no cookie at all)';
+        const stems = new Map();
+        for (const { name } of all) {
+            const stem = String(name).replace(/[_-][0-9a-f]{4,}$/i, '_*').slice(0, 40);
+            stems.set(stem, (stems.get(stem) || 0) + 1);
+        }
+        const list = [...stems.entries()].sort((a, b) => b[1] - a[1]).slice(0, 8)
+            .map(([stem, n]) => (n > 1 ? `${stem} x${n}` : stem)).join(', ');
+        return ` (${all.length} other cookie${all.length === 1 ? '' : 's'} came: ${list})`;
+    } catch {
+        return '';
+    }
 }
 
 async function verifyToken(token) {
@@ -80,8 +109,8 @@ async function verifyToken(token) {
  * browser never sent from one the server rejected. Those two have completely
  * different causes, and this line separates them in one look.
  */
-async function refusalReason(token) {
-    if (!token) return 'no cookie sent';
+async function refusalReason(token, request = null) {
+    if (!token) return `no cookie sent${otherCookies(request)}`;
     if (!secret()) return 'SESSION_SECRET missing or too short';
     try {
         await jwtVerify(token, secret(), { algorithms: [ALG] });
@@ -213,7 +242,7 @@ export async function middleware(request) {
         }
         // A page he asked for, sent to the login screen: that is the sign-out
         // he sees. One line says why, so it is not a guess next time.
-        console.warn(`[auth] Sign-in required for ${pathname}: ${await refusalReason(token)}.`);
+        console.warn(`[auth] Sign-in required for ${pathname}: ${await refusalReason(token, request)}.`);
         const url = request.nextUrl.clone();
         url.pathname = '/login';
         url.searchParams.set('next', pathname + (request.nextUrl.search || ''));
