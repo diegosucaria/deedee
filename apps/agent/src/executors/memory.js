@@ -21,8 +21,9 @@ class MemoryExecutor extends BaseExecutor {
                 const query = args.query;
                 const limit = args.limit || 10;
 
-                // 1. Chat history (SQLite full-text)
-                const chatResults = db.searchMessages(query, limit);
+                // 1. Chat history (ranked full-text search, a short excerpt per match)
+                const chatResults = db.searchMessages(query, limit)
+                    .map(m => ({ timestamp: m.timestamp, role: m.role, content: m.content }));
 
                 // 2. RAG (journal + memory vaults — semantic + keyword hybrid)
                 const { agent } = this.services;

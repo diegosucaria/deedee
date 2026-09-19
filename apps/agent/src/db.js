@@ -2,6 +2,7 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const messagesFts = require('./utils/messages-fts');
 
 // Map raw tags to human-friendly service categories for cost breakdown
 // For tagged entries, use the tag directly. For NULL-tagged entries (main chat),
@@ -872,6 +873,76 @@ class AgentDB {
 
     this._settleOldApprovalNotifications();
     this._migrateMessageTimestampsToIso();
+    this._setupMessagesFts();
+  }
+
+  /**
+   * The full-text index over messages (utils/messages-fts.js). Triggers keep
+   * it current from the first boot; rows that were there before are indexed
+   * in small batches after boot, and until that ends `searchMessages` keeps
+   * the old LIKE scan. `MESSAGES_FTS=0` drops the index and its triggers, so
+   * a broken index can never stop a message from being saved; turning it back
+   * on rebuilds it.
+   */
+  _setupMessagesFts() {
+    this._messagesFtsReady = false;
+    try {
+      if (String(process.env.MESSAGES_FTS || '1') === '0') {
+        messagesFts.dropMessagesFts(this.db);
+        return;
+      }
+      // SQLite keeps a trigger's text as first created. When the indexing
+      // rules change, or the index was emptied by hand, build it again.
+      const setting = (key) => this.db.prepare('SELECT value FROM agent_settings WHERE key = ?').get(key)?.value;
+      const fingerprint = JSON.stringify(messagesFts.schemaFingerprint());
+      const indexed = !!setting(messagesFts.BACKFILL_FLAG);
+      const stale = setting(messagesFts.SCHEMA_FLAG) !== fingerprint;
+      const emptied = indexed && !stale && !!this.db.prepare(`
+        SELECT 1 FROM messages WHERE NOT EXISTS (SELECT 1 FROM messages_fts_map) LIMIT 1`).get();
+      if (stale || emptied) {
+        if (indexed) console.log(`[DB] Rebuilding the message search index (${stale ? 'its rules changed' : 'it was empty'}).`);
+        messagesFts.dropMessagesFts(this.db);
+      }
+      messagesFts.createMessagesFts(this.db);
+      this.db.prepare(`
+        INSERT INTO agent_settings(key, value, category) VALUES(?, ?, 'system')
+        ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+      `).run(messagesFts.SCHEMA_FLAG, fingerprint);
+      if (indexed && !stale && !emptied) {
+        this._messagesFtsReady = true;
+        return;
+      }
+      const scope = this.db.prepare('SELECT COUNT(*) AS n, MIN(rowid) AS lo, MAX(rowid) AS hi FROM messages').get();
+      if (!scope.n) return this._finishMessagesFtsBackfill(0);
+      console.log(`[DB] Indexing ${scope.n} stored messages for search, ${messagesFts.BACKFILL_BATCH} at a time...`);
+      this._backfillMessagesFts(scope.lo, scope.hi, 0);
+    } catch (err) {
+      // No FTS5 in this build, or a damaged index: search stays on LIKE.
+      console.warn('[DB] Message search index unavailable, using the plain scan:', err.message);
+    }
+  }
+
+  _backfillMessagesFts(from, hi, added) {
+    setImmediate(() => {
+      if (!this.db || !this.db.open) return; // closed meanwhile; the next boot carries on
+      try {
+        const upTo = from + messagesFts.BACKFILL_BATCH - 1;
+        const total = added + messagesFts.backfillRange(this.db, from, upTo);
+        if (upTo >= hi) return this._finishMessagesFtsBackfill(total);
+        this._backfillMessagesFts(upTo + 1, hi, total);
+      } catch (err) {
+        console.warn('[DB] Message search indexing stopped, using the plain scan:', err.message);
+      }
+    });
+  }
+
+  _finishMessagesFtsBackfill(added) {
+    this.db.prepare(`
+      INSERT INTO agent_settings(key, value, category) VALUES(?, ?, 'system')
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = CURRENT_TIMESTAMP
+    `).run(messagesFts.BACKFILL_FLAG, JSON.stringify(new Date().toISOString()));
+    this._messagesFtsReady = true;
+    if (added > 0) console.log(`[DB] Indexed ${added} stored messages for search.`);
   }
 
   /**
@@ -2336,23 +2407,51 @@ class AgentDB {
   }
 
   // --- Search & Consolidation ---
-  searchMessages(query, limit = 10) {
+  /**
+   * Search stored messages. Ranked full-text search when the index is ready
+   * (utils/messages-fts.js); the old LIKE scan before that, with
+   * `MESSAGES_FTS=0`, and when the index finds nothing (LIKE also matches
+   * inside a word).
+   * @param {string} query
+   * @param {number} [limit]
+   * @param {{ chatId?: string, notChatId?: string, from?: string, to?: string, indexOnly?: boolean }} [opts]
+   *   `from` and `to` are local days, YYYY-MM-DD, both inclusive. `indexOnly`
+   *   skips the scan: for a caller that has its answer and only wants more.
+   * @returns {Array<{ timestamp: string, role: string, content: string, chat_id: string }>}
+   */
+  searchMessages(query, limit = 10, opts = {}) {
+    const { chatId, notChatId, from, to, indexOnly } = opts || {};
+    if (this._messagesFtsReady) {
+      try {
+        const rows = messagesFts.searchMessagesFts(this.db, query, { limit, chatId, notChatId, from, to });
+        if (rows.length > 0) return rows;
+      } catch (err) {
+        console.warn('[DB] Full-text message search failed, using the plain scan:', err.message);
+      }
+      if (indexOnly) return [];
+    }
+
     // Substring LIKE search. Escape LIKE wildcards so a literal "%" or "_"
     // in the query doesn't match everything.
     // Rows that matched only inside tool data (parts) have no content; return
     // a short excerpt of the parts instead. Cap every result so a search can't
     // flood the context window.
+    const where = ["(content LIKE ? ESCAPE '\\' OR parts LIKE ? ESCAPE '\\')"];
+    const escaped = String(query ?? '').replace(/[\\%_]/g, '\\$&');
+    const params = [`%${escaped}%`, `%${escaped}%`];
+    if (chatId) { where.push('chat_id = ?'); params.push(chatId); }
+    if (notChatId) { where.push('(chat_id IS NULL OR chat_id != ?)'); params.push(notChatId); }
+    if (from) { where.push("date(timestamp, 'localtime') >= ?"); params.push(from); }
+    if (to) { where.push("date(timestamp, 'localtime') <= ?"); params.push(to); }
     const stmt = this.db.prepare(`
-        SELECT timestamp, role,
+        SELECT timestamp, role, chat_id,
           substr(COALESCE(NULLIF(content, ''), parts), 1, CASE WHEN content IS NULL OR content = '' THEN 400 ELSE 1000 END) AS content
         FROM messages
-        WHERE content LIKE ? ESCAPE '\\' OR parts LIKE ? ESCAPE '\\'
+        WHERE ${where.join(' AND ')}
         ORDER BY timestamp DESC
         LIMIT ?
         `);
-    const escaped = String(query ?? '').replace(/[\\%_]/g, '\\$&');
-    const likeQuery = `%${escaped}%`;
-    return stmt.all(likeQuery, likeQuery, limit);
+    return stmt.all(...params, limit);
   }
 
   /**

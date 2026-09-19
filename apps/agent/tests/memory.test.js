@@ -65,12 +65,13 @@ describe('Memory Tools', () => {
     });
 
     test('searchMemory should query DB and RAG', async () => {
-        db.searchMessages = jest.fn().mockReturnValue([{ content: 'found it' }]);
+        db.searchMessages = jest.fn().mockReturnValue([{ id: 'm1', chat_id: 'c1', timestamp: 't', role: 'user', content: 'found it' }]);
 
         const result = await executor.execute('searchMemory', { query: 'test' }, {});
 
         expect(db.searchMessages).toHaveBeenCalledWith('test', 10);
-        expect(result.chat_history).toHaveLength(1);
+        // Row ids and chat ids are of no use to the model.
+        expect(result.chat_history).toEqual([{ timestamp: 't', role: 'user', content: 'found it' }]);
         expect(result.knowledge).toBeDefined();
     });
 

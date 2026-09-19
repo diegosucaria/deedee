@@ -121,12 +121,14 @@ const toolDefinitions = [
       {
         name: "searchHistory",
         category: "memory",
-        description: "Search specific details from the chat history. Use this when the Context Summary is too high-level and you need exact details (e.g. 'what was the code for X?').",
+        description: "Search specific details from the chat history. Use this when the Context Summary is too high-level and you need exact details (e.g. 'what was the code for X?'). Matches from this chat come first, then other chats. Each match is a short excerpt around the words found.",
         parameters: {
           type: "OBJECT",
           properties: {
-            query: { type: "STRING", description: "The specific detail or keyword to search for." },
-            limit: { type: "NUMBER", description: "Max results (default 5)" }
+            query: { type: "STRING", description: "Two or three keywords, in the language the chat was in. Accents do not matter." },
+            limit: { type: "NUMBER", description: "Max results (default 5, at most 20)" },
+            from: { type: "STRING", description: "Only messages from this local day on, YYYY-MM-DD (optional)" },
+            to: { type: "STRING", description: "Only messages up to this local day, YYYY-MM-DD (optional)" }
           },
           required: ["query"]
         }
