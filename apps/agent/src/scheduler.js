@@ -357,7 +357,9 @@ class Scheduler {
                         const text = result.text;
                         const textLower = text.toLowerCase();
 
-                        if (textLower.includes('diego,') || textLower.includes('alert:') || textLower.includes('warning:')) {
+                        // A result that speaks to him by name is meant for him.
+                        const ownerName = String(this.agent?.settings?.owner_name || '').trim().toLowerCase();
+                        if ((ownerName && textLower.includes(`${ownerName},`)) || textLower.includes('alert:') || textLower.includes('warning:')) {
                             shouldNotify = true;
                         }
 

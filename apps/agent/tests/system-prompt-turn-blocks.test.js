@@ -73,6 +73,8 @@ describe('per-turn blocks of the system instruction', () => {
         const p = await promptOf({ source: 'ios_shortcut', content: 'what is the weather', metadata: { chatId: 'ios-4' } }, { model: 'FLASH', toolMode: 'SEARCH', toolGroups: [] });
         expect(p).toContain("The 'replyWithAudio' tool is not loaded. Do not try to call it.");
         expect(p).not.toContain("YOU MUST call the 'replyWithAudio' tool");
+        // The block stops a call that cannot be made; it sets no answer length.
+        expect(p).not.toContain('keep it short');
         expect(agent.client.chats.create.mock.calls[0][0].config.tools).toEqual([{ googleSearch: {} }]);
     });
 
@@ -88,6 +90,24 @@ describe('per-turn blocks of the system instruction', () => {
         expect(p).toContain('Do not sound like an AI. Use "I", not "Deedee".');
         expect(p).not.toContain('** Analyze History **');
         expect(p).not.toContain('capitalization(lowercase ?)');
+    });
+
+    test('a full job run with no browser tool does not read the secret names in its turn either', async () => {
+        agent.router.route = jest.fn().mockResolvedValue({ model: 'FLASH', toolMode: 'STANDARD' });
+        await agent.processMessage({ role: 'user', source: 'scheduler', content: 'Scheduled Task: read the inbox', metadata: { chatId: 'scheduled_x_1', jobName: 'x', allowedTools: ['getFact', 'sendMessage'] } }, jest.fn());
+        const session = agent.client.chats.create.mock.results[0].value;
+        const sent = JSON.stringify([...session.sendMessage.mock.calls, ...session.sendMessageStream.mock.calls]);
+        expect(sent).toContain('TURN CONTEXT');
+        expect(sent).not.toContain('BANK_PASSWORD');
+        expect(agent.client.chats.create.mock.calls[0][0].config.systemInstruction).not.toContain('BANK_PASSWORD');
+    });
+
+    test('a chat turn with the browser group loaded still reads them', async () => {
+        mockMcpTools = [{ name: 'browser_navigate', description: 'go', parameters: { type: 'object', properties: {} }, serverName: 'browser' }];
+        agent.router.route = jest.fn().mockResolvedValue({ model: 'FLASH', toolMode: 'STANDARD', toolGroups: ['browser'] });
+        await agent.processMessage({ role: 'user', source: 'telegram', content: 'log in to the site', metadata: { chatId: 'chat-9', replyMode: 'text' } }, jest.fn());
+        const session = agent.client.chats.create.mock.results[0].value;
+        expect(JSON.stringify([...session.sendMessage.mock.calls, ...session.sendMessageStream.mock.calls])).toContain('BANK_PASSWORD');
     });
 
     test('a scanner sub-agent with no browser tool does not read the saved secret names', async () => {

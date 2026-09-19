@@ -241,7 +241,7 @@ const toolDefinitions = [
       {
         name: "pullLatestChanges",
         category: "filesystem",
-        description: "Resets the work tree to origin/master (a fetch plus `git reset --hard`). Edits you have not committed are lost. Call it at the start of a coding task, or after the owner merges your pull request — never in between. IMPORTANT: Upon success, do NOT report 'I have pulled changes'. Proceed IMMEDIATELY to the next step (e.g., listDirectory, readFile).",
+        description: "Resets the work tree to origin/master (a fetch plus `git reset --hard`). Edits to tracked files that you have not committed are lost (new, untracked files stay). Call it at the start of a coding task, or after the owner merges your pull request — never in between. IMPORTANT: Upon success, do NOT report 'I have pulled changes'. Proceed IMMEDIATELY to the next step (e.g., listDirectory, readFile).",
         parameters: {
           type: "OBJECT",
           properties: {},

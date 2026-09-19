@@ -2180,11 +2180,14 @@ class Agent {
 
       // Names only, read each turn so a fresh save shows up at once.
       const browserSecretNames = browserSecrets.readSecretNames(this.dataDir);
+      // The names say which sites he uses. A run that cannot type them does
+      // not read them: jobs and watcher runs read email and contacts' chats.
+      const hasBrowserTools = allTools.some(t => typeof t?.name === 'string' && t.name.startsWith('browser_'));
       let systemInstruction = getSystemInstruction(
         timeString,
         activeGoals,
         facts,
-        { codingMode: !isLightweight, vaultContext, skillsContext, notificationContext, isLightweight, communicationStyle: this.settings?.communication_style || '', dynamicInTurn: !isLightweight, browserSecretNames, browserTools: allTools.some(t => typeof t?.name === 'string' && t.name.startsWith('browser_')) }
+        { codingMode: !isLightweight, vaultContext, skillsContext, notificationContext, isLightweight, communicationStyle: this.settings?.communication_style || '', dynamicInTurn: !isLightweight, browserSecretNames, browserTools: hasBrowserTools }
       );
       // Time, goals, skills, vault and location change per message, so they go
       // in the user turn and the system instruction stays cacheable.
@@ -2194,7 +2197,7 @@ class Agent {
         skillsContext,
         vaultContext,
         location: message.metadata?.location,
-        browserSecretNames
+        browserSecretNames: hasBrowserTools ? browserSecretNames : null
       });
 
       console.log(`${logPrefix} [Context] System Instruction Size: ~${systemInstruction.length} chars(~${Math.round(systemInstruction.length / 4)} tokens)${isLightweight ? ' (lightweight)' : ''}.`);
@@ -2244,7 +2247,7 @@ class Agent {
           systemInstruction += `\n
               **OUTPUT RESTRICTION**: Audio is not available this turn (native search mode).
               - The 'replyWithAudio' tool is not loaded. Do not try to call it.
-              - Answer in text, and keep it short.
+              - Answer in text.
           `;
         } else if (isIOS || (replyMode === 'audio' && !message.parts)) {
           systemInstruction += `\n

@@ -48,6 +48,9 @@ describe('names the prompt uses exist in the code', () => {
         const root = path.join(__dirname, '../../..');
         const dirs = (d) => fs.readdirSync(path.join(root, d), { withFileTypes: true }).filter(e => e.isDirectory()).map(e => `${d}/${e.name}`);
         for (const dir of [...dirs('apps'), ...dirs('packages')]) expect(full).toContain(dir);
+        // The map line itself, not another line that happens to name a folder.
+        expect(full).toContain('apps/agent (the brain)');
+        expect(full).toContain('apps/interfaces (WhatsApp, Telegram, Slack)');
         expect(full).not.toContain('tools/definition.js');
         expect(full).toContain('apps/agent/src/tools-definition.js');
     });
@@ -88,9 +91,9 @@ describe('rules that gave opposite orders', () => {
 
     test('pullLatestChanges says what it does to uncommitted edits, in the rule and in the tool', () => {
         expect(full).not.toContain("ALWAYS call 'pullLatestChanges'");
-        expect(full).toContain('edits you have not committed are lost');
+        expect(full).toContain('edits to tracked files that you have not committed are lost (new files stay)');
         expect(decl('pullLatestChanges').description).toContain('git reset --hard');
-        expect(decl('pullLatestChanges').description).toContain('Edits you have not committed are lost');
+        expect(decl('pullLatestChanges').description).toContain('Edits to tracked files that you have not committed are lost');
     });
 });
 
@@ -105,7 +108,8 @@ describe('what the prompt no longer carries', () => {
 
     test('example names are placeholders, and no Slack member id', () => {
         const text = JSON.stringify(decls) + full;
-        expect(text).not.toMatch(/from:@U0(?!1EXAMPLE1)[0-9A-Z]{8,}/);
+        // Any member id shape: U or W plus eight or more characters.
+        expect(text).not.toMatch(/from:@(?!U01EXAMPLE1)[UW][0-9A-Z]{8,}/);
         expect(decl('searchContacts').parameters.properties.query.description).toBe("Name to search for (e.g. 'Mom', 'Alice').");
     });
 });
@@ -137,7 +141,11 @@ describe('the voice prompt', () => {
     test('explains a paused action, and does not ask for a second yes', () => {
         expect(text).toContain('Action PAUSED');
         expect(text).toContain('never end a turn in silence');
-        expect(text).not.toContain('wait for a yes');
+        // No spoken yes before every action, as the old rule had it...
+        expect(text).not.toContain('Before an action that sends a message, spends money');
+        // ...but a message to someone else is said back first: a misheard
+        // name is caught there, and no card stops a contact he already wrote to.
+        expect(text).toContain('A message to anyone but him always asks: say the name you heard and what you will write');
     });
 
     test('has the one home rule a call needs, not the whole block', () => {

@@ -176,7 +176,7 @@ describe('Impersonation Service Unit', () => {
     test('the owner name is read as the setting stores it, with a neutral fallback', () => {
         const withRow = (value) => mockDb.db.prepare.mockImplementation((query) => ({
             all: jest.fn().mockReturnValue([]), run: jest.fn(),
-            get: jest.fn().mockReturnValue(value && /owner_name/.test(query) ? { value } : undefined)
+            get: jest.fn((key) => (value && (key === 'owner_name' || /owner_name/.test(query)) ? { value } : undefined))
         }));
         withRow(JSON.stringify('Sam'));
         expect(service.getOwnerName()).toBe('Sam');
@@ -184,6 +184,11 @@ describe('Impersonation Service Unit', () => {
         expect(service.getOwnerName()).toBe('Sam');
         withRow(null);
         expect(service.getOwnerName()).toBe('the owner');
+        // A name cleared in Settings is stored as an empty string.
+        for (const cleared of [JSON.stringify(''), JSON.stringify('   '), JSON.stringify(null)]) {
+            withRow(cleared);
+            expect(service.getOwnerName()).toBe('the owner');
+        }
     });
 
     test('should generate draft with full conversation context', async () => {
@@ -205,7 +210,7 @@ describe('Impersonation Service Unit', () => {
         mockDb.db.prepare.mockImplementation((query) => ({
             all: mockAll,
             run: jest.fn(),
-            get: jest.fn().mockReturnValue(/owner_name/.test(query) ? { value: JSON.stringify('Sam') } : undefined)
+            get: jest.fn((key) => (key === 'owner_name' || /owner_name/.test(query) ? { value: JSON.stringify('Sam') } : undefined))
         }));
 
         // Mock generation

@@ -186,11 +186,11 @@ ${notificationContext?.ownerPhone ? `\nOWNER CONTACT: Your owner is "${notificat
 
         const CODING_PROMPT = `
             REPO CONTEXT:
-            - Monorepo, npm workspaces apps/* and packages/*: apps/agent (the brain), apps/api (HTTP endpoints), apps/web (Next.js dashboard, Server Actions), apps/interfaces (WhatsApp, Telegram), apps/supervisor (git and deploys); packages/shared, packages/mcp-servers, packages/node-red-mcp, packages/plex-mcp-server.
+            - Monorepo, npm workspaces apps/* and packages/*: apps/agent (the brain), apps/api (HTTP endpoints), apps/web (Next.js dashboard, Server Actions), apps/interfaces (WhatsApp, Telegram, Slack), apps/supervisor (git and deploys); packages/shared, packages/mcp-servers, packages/node-red-mcp, packages/plex-mcp-server.
             - If file not found, use 'listDirectory' to explore.
 
             DEVELOPER PROTOCOL (CRITICAL):
-            1. **Pull First, once**: call 'pullLatestChanges' at the start of a coding task, before you edit anything. It is not a merge: it resets the work tree to origin/master, and edits you have not committed are lost. After you edit a file, do not call it again — the next time is after 'commitAndPush' and the owner's merge.
+            1. **Pull First, once**: call 'pullLatestChanges' at the start of a coding task, before you edit anything. It is not a merge: it resets the work tree to origin/master, and edits to tracked files that you have not committed are lost (new files stay). After you edit a file, do not call it again — the next time is after 'commitAndPush' and the owner's merge.
             2. **Plan First**: say in one or two lines what you will change, then change it. If he asked for the change, that is his approval — do not wait for a second yes (TOOL USAGE 5). If the request is vague, ask one short question first. Publishing asks on its own: 'commitAndPush' opens a pull request, and the owner merges it.
             3. **Tests**: When adding features, you MUST write/update tests to validate them.
             4. **Pull Request**: When done, call 'commitAndPush'. It opens a pull request; CI runs the tests and the owner merges. Nothing you commit reaches the device before that merge. Use Conventional Commits (e.g. 'feat: ...', 'fix: ...').
