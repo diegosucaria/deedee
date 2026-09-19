@@ -190,7 +190,15 @@ class SubAgentService {
                 ]);
 
                 this._recordTaint(taskId, summary);
-                const full = replies.join('\n').trim() || 'Task completed (no text output).';
+                // "Task completed" would be a lie when the run wrote no text
+                // and the only calls it made were refused.
+                const refused = Array.isArray(summary?.refusedUnlisted) ? summary.refusedUnlisted : [];
+                // toolOutputs holds every call, the refused ones too.
+                const ranSomething = Array.isArray(summary?.toolOutputs) && summary.toolOutputs.length > refused.length;
+                const silent = refused.length > 0 && !ranSomething
+                    ? `Task NOT done: the sub-agent wrote no answer, and its calls were refused because these tools were not in its list: ${[...new Set(refused)].join(', ')}.`
+                    : 'Task completed (no text output).';
+                const full = replies.join('\n').trim() || silent;
                 const { result, summarized } = await this.compressResult(taskId, full);
                 const completedAt = new Date().toISOString();
                 this.agent.db.updateSubAgent(taskId, {

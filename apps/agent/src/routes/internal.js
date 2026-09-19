@@ -335,6 +335,8 @@ function createInternalRouter(agent) {
                     source: 'scheduler',
                     metadata: {
                         chatId: `scheduled_${name}_${Date.now()}`,
+                        // As the callback built at boot sets it: job state tools and the refusal metric read it.
+                        jobName: name,
                         ...(payload.tainted ? { untrustedTaint: taintFromPayload(payload, `job "${name}"`) } : {}),
                         ...(payload.model ? { forceModel: payload.model } : {}),
                         ...(payload.allowedTools ? { allowedTools: payload.allowedTools } : {})

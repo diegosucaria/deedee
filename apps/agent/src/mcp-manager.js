@@ -37,6 +37,9 @@ function _toolPatternToRegex(pattern) {
     return new RegExp(`^${escaped}$`);
 }
 
+// How often getTools() asks a server again after its listTools failed.
+const LIST_RETRY_MS = 60 * 1000;
+
 class MCPManager {
     constructor(configPath = '../mcp_config.json') {
         this.clients = new Map(); // serverName -> Client
@@ -444,6 +447,7 @@ class MCPManager {
         // another party's text.
         const nextCache = [];
         const nextMap = new Map();
+        const listFailed = new Set();
 
         for (const [name, client] of this.clients.entries()) {
             try {
@@ -500,9 +504,11 @@ class MCPManager {
                     });
                 }
             } catch (err) {
+                listFailed.add(name);
                 console.error(`[MCP] Failed to list tools for ${name}:`, err);
             }
         }
+        this._listFailed = listFailed;
         // One statement each, so a reader never sees half a rebuild. The map
         // object is replaced, not emptied, so nothing holding the old one can
         // see it drain.
@@ -647,6 +653,20 @@ class MCPManager {
         // Return cached tools. If empty, try one refresh (unless truly empty)
         if (this.toolCache.length === 0 && this.clients.size > 0) {
             await this._refreshToolCache();
+        }
+        // A server whose listTools failed is missing from the cache. A call to
+        // one of its tools used to repair that by chance (callTool refreshes on
+        // an unknown name), but a run with a tool list no longer gets to call
+        // a tool it was not shown. So ask again here: at most once a minute,
+        // and without making this turn wait for a server that may hang.
+        if (this._listFailed && this._listFailed.size > 0 && !this._listRetrying
+            && Date.now() - (this._lastListRetry || 0) > LIST_RETRY_MS) {
+            this._lastListRetry = Date.now();
+            this._listRetrying = true;
+            console.log(`[MCP] Listing tools again for: ${[...this._listFailed].join(', ')}.`);
+            this._refreshToolCache()
+                .catch(err => console.warn('[MCP] Tool list retry failed:', err.message))
+                .finally(() => { this._listRetrying = false; });
         }
         return this.toolCache;
     }

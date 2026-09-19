@@ -43,7 +43,10 @@ list:
 
 Each list names `askUser` because the scheduler filter matches by exact name.
 User jobs keep it through the tool scoper, which keeps every internal tool
-with no category. Questions from a job go to the owner channel.
+with no category (`askUser` is the only one; the four DJ read tools used to
+lack a category and rode on every turn, about 330 tokens). Questions from a
+job go to the owner channel. The lists are checked again when a call runs:
+see "A run's tool list is checked when a call runs" in `docs/security.md`.
 
 The two wardrobe jobs run on FLASH because the quality sits in their inner PRO
 calls (`recommend_outfit`, `wardrobe_pack_for_trip`). `proactive_thought` has no
