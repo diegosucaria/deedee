@@ -112,9 +112,21 @@ KV Facts are the ground truth — always in context. Journal and RAG content onl
 
 ### searchMemory Flow
 When the agent calls `searchMemory(query)`:
-1. **Chat history**: `db.searchMessages(query)` — SQLite text search through raw messages
+1. **Chat history**: `db.searchMessages(query)` — ranked full-text search through stored messages (see below)
 2. **RAG**: `ragService.search(query)` — hybrid vector + FTS5 across all vaults (journal, memory, user vaults)
 3. Returns both as `{ chat_history, knowledge }` so the agent can reason across sources
+
+### Chat history search (`utils/messages-fts.js`)
+`searchMemory` and `searchHistory` both read stored messages through `db.searchMessages`. It used to be a `LIKE` scan of every row: no ranking, newest first, and a hit inside tool data came back as escaped JSON. It is now an FTS5 index.
+
+- **Two columns.** `body` is what was said: the message text, `[tool: name]` for a call, `[image attached]` and the like for attachments. `tool` is what tools returned: `[tool result: name]` and the first 2,000 characters. `bm25` weighs `body` at 1.0 and `tool` at 0.25, so a chat line outranks a tool dump that holds the same word. Base64 never enters the index. An untrusted envelope is indexed by its `content`, not by our note.
+- **Triggers, in SQL only.** `messages_fts_ai`, `messages_fts_au` and `messages_fts_ad` keep the index in step with every writer. Parts that are not valid JSON index as empty text; they never stop a message from being saved.
+- **A map table.** `messages.id` is text, so its rowid can change in a `VACUUM`. `messages_fts_map(fts_id, msg_id)` gives each message a stable integer id, and a delete finds its index row without a scan.
+- **Old rows.** After boot the rows that were there before are indexed 500 at a time (`setImmediate` between batches). `agent_settings.messages_fts_backfilled` marks the end. Until then search uses the old scan. A boot cut short carries on at the next one.
+- **Matching.** Words are lower-cased, accents are dropped (`remove_diacritics 2`), and every word is quoted, so nothing in a query is read as FTS5 syntax. Rows that hold every word come first, the exact phrase before the words in any order. Only when there are none does a loose match count: any one word, as a prefix. When the index finds nothing the old scan runs, because it also matches inside a word.
+- **Results.** Each match is an excerpt of about 48 words around the hit, at most 400 characters.
+- **`searchHistory`** looks in the current chat first and fills the rest of the limit from other chats, marked `(another chat)`. It takes `from` and `to` as local days, `YYYY-MM-DD`.
+- **`MESSAGES_FTS=0`** drops the index, the map and the triggers at boot, and search goes back to the scan. Setting it back to 1 rebuilds the index from the table. Use it if the index is ever damaged: a failing trigger would stop messages from being saved.
 
 ### RAG Search Pipeline
 The RAG service uses a dual search strategy:

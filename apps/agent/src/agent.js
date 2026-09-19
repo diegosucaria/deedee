@@ -3150,10 +3150,17 @@ class Agent {
       return val ? { value: val } : { info: 'State not found.' };
     }
     if (executionName === 'searchHistory') {
-      // Use internal specific search or general DB search
-      // Using existing searchMessages method
-      const matches = this.db.searchMessages(args.query, args.limit || 5);
-      return { matches: matches.map(m => `[${m.timestamp}] ${m.role}: ${(m.content || '').substring(0, 200)}`) };
+      const limit = Math.max(1, Math.min(Number(args.limit) || 5, 20));
+      const day = (v) => (/^\d{4}-\d{2}-\d{2}$/.test(String(v || '')) ? String(v) : undefined);
+      const range = { from: day(args.from), to: day(args.to) };
+      const chatId = message?.metadata?.chatId;
+      // This chat first: the summary that sends the model here is this chat's.
+      const here = chatId ? this.db.searchMessages(args.query, limit, { ...range, chatId }) : [];
+      const rest = here.length < limit
+        ? this.db.searchMessages(args.query, limit - here.length, { ...range, notChatId: chatId })
+        : [];
+      const line = (m, other) => `[${m.timestamp}] ${m.role}${other ? ' (another chat)' : ''}: ${(m.content || '').substring(0, 400)}`;
+      return { matches: [...here.map(m => line(m, false)), ...rest.map(m => line(m, !!chatId))] };
     }
     if (executionName === 'addGoal') {
       // A goal a tainted run writes carries the taint into every run that loads it.

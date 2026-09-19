@@ -266,6 +266,29 @@ describe('Agent with Tools', () => {
     expect(result.matches[1]).toContain('assistant: Hello');
   });
 
+  test('searchHistory looks in this chat first, then fills from the others', async () => {
+    agent.db.searchMessages = jest.fn((query, limit, opts) => (opts.chatId
+      ? [{ timestamp: 't1', role: 'user', content: 'here', chat_id: 'chat-1' }]
+      : [{ timestamp: 't2', role: 'model', content: 'x'.repeat(900), chat_id: 'chat-2' }]));
+    const message = { metadata: { chatId: 'chat-1' } };
+
+    const result = await agent._executeTool('searchHistory', { query: 'gate code', limit: 3, from: '2026-03-01', to: 'last week' }, message);
+
+    expect(agent.db.searchMessages).toHaveBeenNthCalledWith(1, 'gate code', 3, { from: '2026-03-01', to: undefined, chatId: 'chat-1' });
+    expect(agent.db.searchMessages).toHaveBeenNthCalledWith(2, 'gate code', 2, { from: '2026-03-01', to: undefined, notChatId: 'chat-1' });
+    expect(result.matches[0]).toBe('[t1] user: here');
+    expect(result.matches[1].startsWith('[t2] model (another chat): xxx')).toBe(true);
+    expect(result.matches[1].length).toBeLessThan(440);
+  });
+
+  test('searchHistory stops at this chat when it fills the limit', async () => {
+    agent.db.searchMessages = jest.fn().mockReturnValue([
+      { timestamp: 't1', role: 'user', content: 'a' }, { timestamp: 't2', role: 'user', content: 'b' }]);
+    const result = await agent._executeTool('searchHistory', { query: 'x', limit: 2 }, { metadata: { chatId: 'chat-1' } });
+    expect(agent.db.searchMessages).toHaveBeenCalledTimes(1);
+    expect(result.matches).toHaveLength(2);
+  });
+
   test('should suppress Auto-Title for passive mode (whatsapp:user)', async () => {
     // Spy on TitleService.autoTitleSession
     const autoTitleSpy = jest.spyOn(agent.titleService, 'autoTitleSession').mockResolvedValue();

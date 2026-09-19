@@ -244,6 +244,14 @@ describe('AgentDB.searchMessages result size', () => {
   test('long message content is capped', () => {
     db.saveMessage({ id: crypto.randomUUID(), role: 'user', content: 'zebra ' + 'y'.repeat(5000), source: 'web', metadata: { chatId: 's' }, timestamp: new Date().toISOString() });
     const [row] = db.searchMessages('zebra', 5);
+    expect(row.content).toContain('zebra');
+    expect(row.content.length).toBeLessThanOrEqual(400);
+  });
+
+  test('the plain scan caps it too', () => {
+    db.saveMessage({ id: crypto.randomUUID(), role: 'user', content: 'zebra ' + 'y'.repeat(5000), source: 'web', metadata: { chatId: 's' }, timestamp: new Date().toISOString() });
+    db._messagesFtsReady = false;
+    const [row] = db.searchMessages('zebra', 5);
     expect(row.content.length).toBe(1000);
   });
 });
