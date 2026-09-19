@@ -52,6 +52,10 @@ describe('names the prompt uses exist in the code', () => {
         expect(full).toContain('apps/agent (the brain)');
         expect(full).toContain('apps/interfaces (WhatsApp, Telegram, Slack)');
         expect(full).not.toContain('tools/definition.js');
+        // The checklist points at the rules file that exists; the two others only point to it.
+        expect(full).toContain('Update "AGENTS.md"');
+        expect(fs.existsSync(path.join(root, 'AGENTS.md'))).toBe(true);
+        for (const pointer of ['GEMINI.md', 'CLAUDE.md']) expect(fs.readFileSync(path.join(root, pointer), 'utf8')).toContain('AGENTS.md');
         expect(full).toContain('apps/agent/src/tools-definition.js');
     });
 

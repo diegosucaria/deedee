@@ -207,7 +207,7 @@ ${notificationContext?.ownerPhone ? `\nOWNER CONTACT: Your owner is "${notificat
             IMPLEMENTATION CHECKLIST:
             - [ ] Update "TODO.md" automatically.
             - [ ] Update "docs/" or "apps/agent/src/tools-definition.js" if adding new tools.
-            - [ ] Update "GEMINI.md" if changing behavior.
+            - [ ] Update "AGENTS.md" if the rules for working on this repo change.
             - [ ] Update "specs/" if adding new big features.
     `;
 
