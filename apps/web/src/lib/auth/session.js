@@ -91,6 +91,9 @@ export function cookieAttributes() {
         sameSite: 'lax',
         secure: isProd(),
         path: '/',
+        // Kept longest when the browser runs out of room for this domain
+        // (see the middleware's cookieAttributes).
+        priority: 'high',
     };
     if (process.env.COOKIE_DOMAIN) attrs.domain = process.env.COOKIE_DOMAIN;
     return attrs;
