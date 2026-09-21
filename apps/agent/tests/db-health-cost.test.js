@@ -58,15 +58,44 @@ describe('AgentDB.healthCheck', () => {
             for (let page = 8; page < pages; page++) fs.writeSync(fd, Buffer.alloc(pageSize, 0xAB), 0, pageSize, page * pageSize);
             fs.closeSync(fd);
 
+            // A file this damaged makes quick_check throw SQLITE_CORRUPT where a
+            // lightly damaged one returns rows. Both must read "corrupt": as an
+            // "error" it would be scanned again every minute, for ever.
             const scan = await db.scanIntegrity();
-            expect(scan.integrity).not.toBe('ok');
-            expect(scan.integrityErrors || scan.integrityError).toBeTruthy();
+            expect(scan.integrity).toBe('corrupt');
+            expect(scan.integrityErrors.length).toBeGreaterThan(0);
+            // The worker's exit comes after its message; it must not log a second, false result.
+            expect(console.log.mock.calls.filter(c => /Integrity scan/.test(String(c[0])))).toHaveLength(1);
         });
 
-        test('a file that is not there is an error, not a crash', async () => {
+        test('a file that is not there is a database error, not a crash', async () => {
             const gone = Object.assign(Object.create(AgentDB.prototype), { dbPath: path.join(dir, 'missing.db') });
             const scan = await gone.scanIntegrity();
             expect(scan).toMatchObject({ integrity: 'error', integrityError: expect.any(String) });
+        });
+
+        const workerFile = (body) => {
+            const file = path.join(dir, `worker-${Math.random().toString(36).slice(2)}.js`);
+            fs.writeFileSync(file, body);
+            return file;
+        };
+
+        test('a scan that never answers is stopped, and says nothing about the file', async () => {
+            const hung = workerFile('setInterval(() => {}, 1000);');
+            const scan = await db.scanIntegrity(Date.now(), { workerFile: hung, timeoutMs: 150 });
+            expect(scan.integrity).toBe('unknown');
+            expect(scan.integrityError).toMatch(/no answer/);
+        });
+
+        test('a worker that dies with no result is "unknown" too', async () => {
+            const dies = workerFile('process.exit(3);');
+            const scan = await db.scanIntegrity(Date.now(), { workerFile: dies });
+            expect(scan).toMatchObject({ integrity: 'unknown', integrityError: expect.stringMatching(/exited with code 3/) });
+        });
+
+        test('a worker file that is not there is "unknown", never a throw', async () => {
+            const scan = await db.scanIntegrity(Date.now(), { workerFile: path.join(dir, 'no-such-worker.js') });
+            expect(scan.integrity).toBe('unknown');
         });
     });
 
@@ -119,6 +148,31 @@ describe('AgentDB.healthCheck', () => {
             db.healthCheck({ now: t0 + 61 * 1000 }); await settle();
             expect(scans()).toBe(2);
             expect(db.healthCheck({ now: t0 + 62 * 1000 }).ok).toBe(true);
+        });
+
+        test('a check that could not run leaves the status alone, and is tried again within a minute', async () => {
+            const t0 = Date.now();
+            results.push({ integrity: 'unknown', integrityError: 'the scan could not start: out of memory' });
+            db.healthCheck({ now: t0 }); await settle();
+            const seen = db.healthCheck({ now: t0 + 30 * 1000 });
+            expect(seen.ok).toBe(true);
+            expect(seen.details).toMatchObject({ status: 'ok', integrity: 'unknown', integrityError: expect.stringMatching(/could not start/) });
+            db.healthCheck({ now: t0 + 61 * 1000 }); await settle();
+            expect(scans()).toBe(2);
+        });
+
+        test('an empty HEALTH_INTEGRITY_MINUTES is the default, not "off"; a tiny value is floored at a minute', async () => {
+            const t0 = Date.now();
+            process.env.HEALTH_INTEGRITY_MINUTES = '';
+            db.healthCheck({ now: t0 }); await settle();
+            expect(scans()).toBe(1);
+            expect(db.healthCheck({ now: t0 + 1000 }).details.integrity).toBe('ok');
+
+            process.env.HEALTH_INTEGRITY_MINUTES = '0.001';
+            db.healthCheck({ now: t0 + 30 * 1000 }); await settle();
+            expect(scans()).toBe(1);
+            db.healthCheck({ now: t0 + 61 * 1000 }); await settle();
+            expect(scans()).toBe(2);
         });
 
         test('HEALTH_INTEGRITY_MINUTES: read on every call, junk means the default, 0 turns the scan off', async () => {

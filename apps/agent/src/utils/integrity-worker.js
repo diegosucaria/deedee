@@ -17,5 +17,8 @@ try {
     }
     parentPort.postMessage({ rows: rows.slice(0, 10).map(r => r.quick_check) });
 } catch (err) {
-    parentPort.postMessage({ error: err.message });
+    // A badly damaged file makes quick_check throw (SQLITE_CORRUPT,
+    // SQLITE_NOTADB) where a lightly damaged one returns rows. The code tells
+    // AgentDB which it was.
+    parentPort.postMessage({ error: err.message, code: err.code || null });
 }

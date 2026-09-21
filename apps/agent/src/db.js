@@ -10,13 +10,17 @@ const INTEGRITY_WORKER = path.join(__dirname, 'utils', 'integrity-worker.js');
 // How often the whole file is walked for damage (PRAGMA quick_check), in ms.
 // Read on every call. HEALTH_INTEGRITY_MINUTES=0 turns the scan off.
 function integrityScanEveryMs() {
-  const raw = process.env.HEALTH_INTEGRITY_MINUTES;
-  if (raw !== undefined && Number(raw) === 0) return 0;
+  // An empty value (a device variable cleared in the dashboard) is not "0".
+  const raw = String(process.env.HEALTH_INTEGRITY_MINUTES ?? '').trim();
+  if (!raw) return 30 * 60 * 1000;
   const minutes = Number(raw);
-  return (Number.isFinite(minutes) && minutes > 0 ? minutes : 30) * 60 * 1000;
+  if (minutes === 0) return 0;
+  return (Number.isFinite(minutes) && minutes > 0 ? Math.max(1, minutes) : 30) * 60 * 1000;
 }
-// A scan that failed to run (an I/O error, not a damaged file) is tried again soon.
+// A scan that could not run (the worker would not start, an I/O error) is tried again soon.
 const INTEGRITY_RETRY_MS = 60 * 1000;
+// A scan that never answers (a stalled read) is stopped, or no later scan would ever start.
+const INTEGRITY_TIMEOUT_MS = 2 * 60 * 1000;
 
 // Map raw tags to human-friendly service categories for cost breakdown
 // For tagged entries, use the tag directly. For NULL-tagged entries (main chat),
@@ -2722,7 +2726,10 @@ class AgentDB {
    * blocks neither the request nor the agent. A request reports the last scan:
    * 'pending' until the first one lands. A damaged file does not heal itself,
    * so "corrupt" is kept and shown until a later scan says otherwise. A scan
-   * that could not run is tried again within a minute.
+   * that could not run is tried again within a minute: 'error' when SQLite
+   * could not read the file (that is a database fault), 'unknown' when the
+   * check itself failed (the worker would not start or never answered), which
+   * says nothing about the file and leaves the status alone.
    * @param {{ now?: number }} [opts]
    */
   healthCheck({ now = Date.now() } = {}) {
@@ -2772,7 +2779,8 @@ class AgentDB {
     const every = integrityScanEveryMs();
     if (!every || this._integrityRun) return null;
     const last = this._integrity;
-    const wait = last && last.integrity === 'error' ? Math.min(every, INTEGRITY_RETRY_MS) : every;
+    const retry = last && (last.integrity === 'error' || last.integrity === 'unknown');
+    const wait = retry ? Math.min(every, INTEGRITY_RETRY_MS) : every;
     if (last && now - last.at <= wait) return null;
     this._integrityRun = this.scanIntegrity(now).then((scan) => {
       this._integrityRun = null;
@@ -2786,8 +2794,9 @@ class AgentDB {
   /**
    * One full scan, in a worker thread on its own read-only connection.
    * Resolves to { at, integrity, integrityErrors?, integrityError? }; never rejects.
+   * The second argument is for tests: another worker file, a shorter timeout.
    */
-  scanIntegrity(now = Date.now()) {
+  scanIntegrity(now = Date.now(), { workerFile = INTEGRITY_WORKER, timeoutMs = INTEGRITY_TIMEOUT_MS } = {}) {
     const started = Date.now();
     return new Promise((resolve) => {
       let settled = false;
@@ -2802,18 +2811,28 @@ class AgentDB {
       };
       let worker;
       try {
-        worker = new Worker(INTEGRITY_WORKER, { workerData: { file: this.dbPath } });
+        worker = new Worker(workerFile, { workerData: { file: this.dbPath } });
       } catch (err) {
-        return done({ integrity: 'error', integrityError: err.message });
+        return done({ integrity: 'unknown', integrityError: `the scan could not start: ${err.message}` });
       }
+      const timer = setTimeout(() => {
+        done({ integrity: 'unknown', integrityError: `the scan gave no answer in ${Math.round(timeoutMs / 1000)} s and was stopped` });
+        worker.terminate().catch(() => { });
+      }, timeoutMs);
+      timer.unref();
       worker.once('message', (msg) => {
-        if (msg && msg.error) return done({ integrity: 'error', integrityError: msg.error });
+        clearTimeout(timer);
+        if (msg && msg.error) {
+          // A file too damaged to walk makes quick_check throw, not return rows.
+          if (/^SQLITE_(CORRUPT|NOTADB)/.test(String(msg.code || ''))) return done({ integrity: 'corrupt', integrityErrors: [msg.error] });
+          return done({ integrity: 'error', integrityError: msg.error });
+        }
         const rows = (msg && msg.rows) || [];
         if (rows.length === 1 && rows[0] === 'ok') return done({ integrity: 'ok' });
         done({ integrity: 'corrupt', integrityErrors: rows });
       });
-      worker.once('error', (err) => done({ integrity: 'error', integrityError: err.message }));
-      worker.once('exit', (code) => done({ integrity: 'error', integrityError: `the scan worker exited with code ${code} and no result` }));
+      worker.once('error', (err) => { clearTimeout(timer); done({ integrity: 'unknown', integrityError: `the scan worker failed: ${err.message}` }); });
+      worker.once('exit', (code) => { clearTimeout(timer); done({ integrity: 'unknown', integrityError: `the scan worker exited with code ${code} and no result` }); });
       // A scan in flight must not hold a shutdown open.
       worker.unref();
     });
