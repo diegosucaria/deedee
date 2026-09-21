@@ -330,13 +330,19 @@ function isCalendarListing(obj) {
     if (!obj || !Array.isArray(obj.items)) return false;
     if (obj.kind === 'calendar#calendarList') return true;
     if (obj.kind) return false;
-    return obj.items.length > 0 && obj.items.every(c => c && typeof c === 'object' && c.accessRole && !c.start);
+    // A fields mask can remove the kind, and the access role with it. What
+    // is left of an entry then is an id and no start: keep the id either way.
+    return obj.items.length > 0 && obj.items.every(c => c && typeof c === 'object' && (c.accessRole || c.id) && !c.start);
 }
 
 /** The id is the point: events.list needs it, and a shared calendar's id is not its name. */
 function extractCleanCalendar(cal) {
     if (!cal || typeof cal !== 'object') return cal;
-    const clean = { id: cal.id, summary: cal.summaryOverride || cal.summary || '(no name)' };
+    const clean = { id: cal.id };
+    const name = cal.summaryOverride || cal.summary;
+    if (name) clean.summary = name;
+    if (cal.deleted) clean.deleted = true;
+    if (cal.hidden) clean.hidden = true;
     if (cal.primary) clean.primary = true;
     if (cal.accessRole) clean.accessRole = cal.accessRole;
     if (cal.timeZone) clean.timeZone = cal.timeZone;
@@ -833,8 +839,18 @@ function sanitizeToolArgs(toolName, args) {
         );
         let target;
         if (isGwsShape) {
-            cleaned.params = cleaned.params && typeof cleaned.params === 'object'
-                ? { ...cleaned.params }
+            // The model sometimes sends params as a JSON string. Read it, or
+            // the defaults below would replace the call's own parameters.
+            let params = cleaned.params;
+            if (typeof params === 'string' && params.trim()) {
+                try {
+                    params = JSON.parse(params);
+                } catch {
+                    return args;
+                }
+            }
+            cleaned.params = params && typeof params === 'object' && !Array.isArray(params)
+                ? { ...params }
                 : {};
             target = cleaned.params;
         } else {
@@ -843,7 +859,7 @@ function sanitizeToolArgs(toolName, args) {
 
         // A sync token asks for what changed, and Google refuses it together
         // with a time range or an order. Leave such a call as it came.
-        if (target.syncToken) return cleaned;
+        if (target.syncToken) return args;
 
         if (!target.timeMax) {
             const min = target.timeMin ? new Date(target.timeMin) : new Date();
@@ -861,8 +877,13 @@ function sanitizeToolArgs(toolName, args) {
         // singleEvents itself; the GWS tool passes params through untouched,
         // and the model leaves it out most of the time. Only for the GWS
         // shape, whose params are Google's own query parameters.
-        if (isGwsShape && target.singleEvents === undefined) target.singleEvents = true;
-        if (isGwsShape && isTrue(target.singleEvents) && !target.orderBy) target.orderBy = 'startTime';
+        // A later page (pageToken) gets the same defaults as the first one
+        // did, so both pages ask the same question. CALENDAR_SINGLE_EVENTS=0
+        // turns this off.
+        if (isGwsShape && process.env.CALENDAR_SINGLE_EVENTS !== '0') {
+            if (target.singleEvents === undefined) target.singleEvents = true;
+            if (isTrue(target.singleEvents) && !target.orderBy) target.orderBy = 'startTime';
+        }
     }
 
     return cleaned;

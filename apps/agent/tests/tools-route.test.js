@@ -262,6 +262,31 @@ describe('POST /tools/execute', () => {
             expect(res.body.result.output.length).toBe(50000);
         });
 
+        test('a screenshot never reaches the voice model as text, and the size cap never cuts one in half', async () => {
+            agent.toolExecutor.execute.mockResolvedValue({ output: 'Page title: Example', _images: [{ mimeType: 'image/png', data: 'A'.repeat(300000) }] });
+            const res = await request(app).post('/tools/execute').send({ name: 'getFact', args: { key: 'shot' } });
+            expect(res.body.result).toEqual({ output: 'Page title: Example', _imagesOmitted: 1 });
+        });
+
+        test('a generated picture keeps its other fields: only the base64 goes', async () => {
+            agent.toolExecutor.execute.mockResolvedValue({ success: true, prompt: 'a cat', image_base64: 'B'.repeat(200000) });
+            const res = await request(app).post('/tools/execute').send({ name: 'getFact', args: { key: 'pic' } });
+            expect(res.body.result).toEqual({ success: true, prompt: 'a cat', image_base64: '<BASE64_IMAGE_TRUNCATED>' });
+        });
+
+        test('LIVE_TOOL_CLEANING=0: the call and its result go through as they came, the calendar filter still applies', async () => {
+            process.env.LIVE_TOOL_CLEANING = '0';
+            try {
+                const args = { resource: 'events', method: 'list', params: { ...range } };
+                agent.toolExecutor.execute.mockResolvedValue({ text: 'x'.repeat(60000) });
+                const res = await request(app).post('/tools/execute').send({ name: 'work_calendar', args });
+                expect(agent.toolExecutor.execute.mock.calls[0][1]).toEqual(args);
+                expect(res.body.result.text.length).toBe(60000);
+            } finally {
+                delete process.env.LIVE_TOOL_CLEANING;
+            }
+        });
+
         test('an everyday result is passed on untouched', async () => {
             agent.toolExecutor.execute.mockResolvedValue({ success: true, value: 'espresso' });
             const res = await request(app).post('/tools/execute').send({ name: 'getFact', args: { key: 'coffee' } });

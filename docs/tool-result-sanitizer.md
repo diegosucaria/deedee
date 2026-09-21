@@ -51,7 +51,7 @@ Strips verbose Google Calendar API metadata.
 | meetingLink | Full conferenceData blob, recurringEventId |
 | status (only if not "confirmed") | Calendar-level summary (email) |
 
-The list of calendars (`calendarList.list`) is cleaned on its own: each entry keeps `id`, `summary` (the owner's own name for it when he set one), `primary`, `accessRole`, `timeZone` and a short `description`; colours, reminders and notification settings go. It used to pass through the events branch, which kept a calendar's name and dropped its `id`, so a shared calendar could not be read: its id is not its name.
+The list of calendars (`calendarList.list`) is cleaned on its own: each entry keeps `id`, `summary` (the owner's own name for it when he set one), `primary`, `accessRole`, `timeZone`, a short `description`, and `deleted` or `hidden` when set; colours, reminders and notification settings go. It used to pass through the events branch, which kept a calendar's name and dropped its `id`, so a shared calendar could not be read: its id is not its name.
 
 ### 1c. People (`isPeopleTool`)
 
@@ -108,7 +108,9 @@ The `sanitizeToolResult` function accepts an optional third parameter `maxChars`
 
 ## Before the Call: `sanitizeToolArgs()`
 
-Runs inside `_executeTool`, which chats, jobs, sub-agents and approved cards share, and in `POST /tools/execute`, which a voice call uses. It only touches a calendar `events.list` call. The voice route also runs `sanitizeToolResult()` on what comes back; until 2026-09-21 it did neither, so a voice call got Google's raw answer.
+Runs inside `_executeTool`, which chats, jobs, sub-agents and approved cards share, and in `POST /tools/execute`, which a voice call uses. It only touches a calendar `events.list` call.
+
+The voice route also runs `sanitizeToolResult()` on **every** tool's result, as a chat does; until 2026-09-21 it ran neither, so a voice call got each tool's raw answer. Pictures come out first (`_images` is dropped and counted in `_imagesOmitted`, a long `image_base64` is blanked): a voice model cannot take a picture inside a tool result, and the size cap would cut the base64 in half. `LIVE_TOOL_CLEANING=0` turns the voice route's repairs and cleaning off; the calendar filter stays.
 
 | Left out by the model | What the call gets | Why |
 |---|---|---|
@@ -117,7 +119,7 @@ Runs inside `_executeTool`, which chats, jobs, sub-agents and approved cards sha
 
 Measured on the device (2026-09-21), one work calendar, the past 7 days. Without `singleEvents`: 127 entries, 39 of them cancelled, 48 series dated before the window, 67,703 characters after cleaning, cut at 50,000. With it: 47 meetings, all inside the window, 29,399 characters. For the next 7 days the model saw 15 of the 45 real meetings. Over 30 days, 73% of list calls left `singleEvents` out.
 
-A model that sets `singleEvents: false` keeps it, and gets no order (Google refuses `startTime` there). A call with a `syncToken` is left exactly as it came: Google refuses a range or an order next to one.
+A model that sets `singleEvents: false` keeps it, and gets no order (Google refuses `startTime` there). A call with a `syncToken` is left exactly as it came: Google refuses a range or an order next to one. `params` sent as a JSON string are read first; a string that will not parse leaves the call alone. A later page (`pageToken`) gets the same defaults as the first, so both pages ask the same question. `CALENDAR_SINGLE_EVENTS=0` turns the `singleEvents` default off.
 
 ## Adding a New Sanitizer
 

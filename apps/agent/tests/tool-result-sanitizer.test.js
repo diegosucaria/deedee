@@ -1054,6 +1054,18 @@ describe('Tool Result Sanitizer', () => {
             expect(out.items[0].id).toBe('user@example.com');
         });
 
+        test('a mask that leaves only id and summary keeps both, and no name is made up', () => {
+            const out = sanitizeToolResult('work_calendar', { items: [{ id: 'abc123@group.calendar.google.com', summary: 'Team holidays' }, { id: 'def456@group.calendar.google.com' }] });
+            expect(out.items).toEqual([{ id: 'abc123@group.calendar.google.com', summary: 'Team holidays' }, { id: 'def456@group.calendar.google.com' }]);
+        });
+
+        test('a deleted or hidden calendar says so', () => {
+            const out = JSON.parse(sanitizeToolResult('work_calendar', { output: JSON.stringify(listing([{ ...shared, deleted: true }, { ...own, hidden: true }])) }).output);
+            expect(out.items[0].deleted).toBe(true);
+            expect(out.items[1].hidden).toBe(true);
+            expect(out.items[1].deleted).toBeUndefined();
+        });
+
         test('an events response is still cleaned as events: it holds accessRole at the top too', () => {
             const out = JSON.parse(sanitizeToolResult('work_calendar', { output: JSON.stringify(makeCalendarResponse([makeCalendarEvent({})])) }).output);
             expect(out.items[0].start).toBeDefined();
@@ -1114,6 +1126,39 @@ describe('Tool Result Sanitizer', () => {
             expect(sanitizeToolArgs('work_calendar', get)).toEqual(get);
             expect(sanitizeToolArgs('work_calendar', cals)).toEqual(cals);
             expect(sanitizeToolArgs('work_calendar', insert)).toEqual(insert);
+        });
+
+        test('params sent as a JSON string are read, not replaced', () => {
+            const out = sanitizeToolArgs('work_calendar', { resource: 'events', method: 'list', params: JSON.stringify(range) });
+            expect(out.params).toEqual({ ...range, singleEvents: true, orderBy: 'startTime' });
+        });
+
+        test('a sync token inside string params is seen too: the call is left exactly as it came', () => {
+            const args = { resource: 'events', method: 'list', params: JSON.stringify({ calendarId: 'primary', syncToken: 'abc' }) };
+            expect(sanitizeToolArgs('work_calendar', args)).toBe(args);
+        });
+
+        test('string params that will not parse leave the call alone', () => {
+            const args = { resource: 'events', method: 'list', params: '{calendarId: primary' };
+            expect(sanitizeToolArgs('work_calendar', args)).toBe(args);
+        });
+
+        test('a second page gets the same defaults as the first, so both ask the same question', () => {
+            const first = sanitizeToolArgs('work_calendar', list(range));
+            const second = sanitizeToolArgs('work_calendar', list({ ...range, pageToken: 'p2' }));
+            expect(second.params).toEqual({ ...first.params, pageToken: 'p2' });
+        });
+
+        test('CALENDAR_SINGLE_EVENTS=0 turns the default off and keeps the timeMax repair', () => {
+            process.env.CALENDAR_SINGLE_EVENTS = '0';
+            try {
+                const out = sanitizeToolArgs('work_calendar', list({ calendarId: 'primary', timeMin: range.timeMin }));
+                expect(out.params.singleEvents).toBeUndefined();
+                expect(out.params.orderBy).toBeUndefined();
+                expect(out.params.timeMax).toBeDefined();
+            } finally {
+                delete process.env.CALENDAR_SINGLE_EVENTS;
+            }
         });
 
         test('a flat-shape tool gains nothing it may not know', () => {
