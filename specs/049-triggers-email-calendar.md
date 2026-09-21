@@ -98,14 +98,14 @@ within a week. It can come later and use the same endpoint.
 
 ## 3. Setting up Gmail push from Settings
 
-Goal: the owner types nothing. He copies one script, runs it once, and the
-page turns green by itself.
+Goal: the owner types nothing. He copies one script, runs it once, and
+confirms with one click what arrived.
 
 ### 3.1 What Deedee already knows
 
 | Value | Where it comes from |
 |---|---|
-| The push URL | `SOCKET_URL` is the API's public address in the two-subdomain setup (README, Authentication Setup). The URL is `<SOCKET_URL>/hooks/gmail`. With one subdomain it is `WEB_ORIGIN` plus the path the reverse proxy sends to the API; the field can be edited. |
+| The push URL | `SOCKET_URL` is the API's public address in the two-subdomain setup (README, Authentication Setup). The URL is `<SOCKET_URL>/hooks/gmail`. With one subdomain it is `WEB_ORIGIN` plus the path the reverse proxy sends to the API; the field can be edited. `SOCKET_URL` is a variable of the **web** service, so the web app fills the field and sends the URL along when the owner starts the setup. The agent stores it; it is the audience every push is checked against. |
 | The Google Cloud project | A connected account's `client_id` starts with the project **number** of the OAuth client. Gmail only publishes to a topic in that same project. Accounts that share one OAuth client share one topic and one subscription. |
 | Which accounts need a watch | The ones with an active email trigger. |
 | Everything else | Fixed names: topic `deedee-gmail`, subscription `deedee-gmail-push`, service account `deedee-push`. |
@@ -120,17 +120,28 @@ Settings → Interfaces → Google Workspace gains a card, **Email triggers
 1. **The push URL**, pre-filled, with a self-test. The API asks its own public
    address for `GET /hooks/gmail/ping`, which answers a fixed body with no
    login. A redirect or a 401 there means the reverse proxy asks for a login
-   on that path, and the card says so: "Let `POST /hooks/gmail` through
-   without the proxy's own login." A failed self-test is a warning, not a
-   stop: some home networks cannot reach their own public address from
-   inside.
+   on that path, and the card says what to do:
+
+   > Let two exact paths skip the proxy's own login: `POST /hooks/gmail` and
+   > `GET /hooks/gmail/ping`. Match the whole path, not a prefix (`Path(...)`,
+   > not `PathPrefix(...)`, in Traefik; `location = ...` in nginx). Pass the
+   > `Authorization` header through untouched.
+
+   A failed self-test is a warning, not a stop: some home networks cannot
+   reach their own public address from inside. The self-test is kept on a
+   short lead, because the URL can be edited: `https://` only, the path is
+   fixed, no redirect is followed, it waits 5 seconds, and it shows only the
+   status code and whether the fixed body came back. It is a bare `fetch`
+   with none of our headers. It must not go through the API's shared `axios`,
+   which adds the internal token to any call aimed at the agent.
 2. **The script**, pre-filled (3.3), with a Copy button and an
    **Open Cloud Shell** link (`https://shell.cloud.google.com/?show=terminal`).
    Cloud Shell is signed in already and has `gcloud`. The script takes about
    20 seconds.
 3. **Waiting for the test message.** The script's last line publishes one
-   message that carries a one-time code. When it arrives, the card turns to
-   **Connected** by itself, over the socket.
+   message that carries a one-time code. When it arrives, the card shows what
+   came, over the socket: "A test push arrived from Google Cloud project
+   `<id>`. Is this yours?" One click on **Confirm** turns it to **Connected**.
 
 Connected shows: the topic, the service account, the time of the last push,
 pushes in the last 24 hours, the last error, and each account's watch with
@@ -196,19 +207,36 @@ old notices; the daily catch-up read covers the gap.
 The push for the test message reaches `POST /hooks/gmail` like any other.
 
 1. The endpoint verifies Google's signature and that the audience is its own
-   push URL (section 4). That proves the call came through a Pub/Sub push
-   subscription aimed at this URL. It does not prove whose: anyone can aim
-   their own subscription here.
-2. The one-time code proves whose. It is compared in constant time, and
-   burned on the first try that carries a valid signature, right or wrong.
-3. Deedee then **learns** the rest from that one verified call: the service
-   account's address from the token's `email` claim, the project from the
-   envelope's `subscription` field, the topic from the message. It stores
-   them and pins them. From then on a push must carry that exact service
-   account, or it is refused.
-4. It calls `users.watch` for each account that has an active email trigger.
-   A watch that succeeds proves Gmail may publish to the topic. One that
-   fails shows Google's own error on the card.
+   push URL (section 4). That proves little: only that Google signed a token
+   for this audience. Anyone can ask Google for such a token, by aiming a
+   subscription of their own at any server with our URL as the audience, and
+   then send it here as often as they like.
+2. The one-time code proves whose push it is. It is compared in constant
+   time. **Only the right code uses it up.** A wrong code is counted and
+   never burns it, or a stranger could kill every code the moment it is made.
+   The code has 128 bits, so guessing is hopeless, and the limiter in
+   section 4 caps the tries. The card shows how many wrong tries arrived.
+3. The names must agree. From that one verified call Deedee reads the
+   service account (the token's `email` claim), the subscription (the
+   envelope's `subscription` field, which Pub/Sub writes, not the sender) and
+   the topic (the message). It accepts them only as the exact set the script
+   makes, all in one project `<id>`: `deedee-push@<id>.iam.gserviceaccount.com`,
+   `projects/<id>/subscriptions/deedee-gmail-push` and
+   `projects/<id>/topics/deedee-gmail`.
+4. The owner confirms the project with one click (3.2). This is what a leaked
+   code cannot get past: a stranger who saw the code could otherwise pin a
+   project of his own, and `users.watch` would then send him the owner's
+   mailbox address and the times his mail arrives.
+5. Only then does Deedee pin the three values and call `users.watch` for each
+   account that has an active email trigger. From then on a push must carry
+   that exact service account, or it is refused. A watch that succeeds proves
+   Gmail may publish to the topic. One that fails shows Google's own error on
+   the card.
+
+**When a setup can happen.** Only while the page holds a live, unused code and
+nothing is pinned. Once values are pinned, a code proves a test push and
+changes nothing. Pinning again needs **Disconnect**, pressed by the signed-in
+owner. No push from outside clears the pin, however often one fails.
 
 No settings are typed. None of the stored values is a secret.
 
@@ -230,24 +258,37 @@ No settings are typed. None of the stored values is a secret.
 `POST /hooks/gmail` is a new public door on `apps/api`. It sits before the
 session and bearer checks because it has its own.
 
-- Body limit 16 KB, JSON only. Anything else: 400.
+- A cheap limiter runs first, before any parsing and before any signature
+  work: 600 requests a minute in all, plus a bucket per address. Over it: 429
+  with an empty body. Junk from a stranger must cost almost nothing on a
+  small device.
+- Body limit 16 KB, JSON only. Anything else: 400. The route mounts its own
+  `express.json({ limit: '16kb' })` ahead of the app's parser, which allows
+  50 MB for every other route.
 - `Authorization: Bearer <JWT>` is verified with `jose` (already a dependency)
   against Google's keys (`https://www.googleapis.com/oauth2/v3/certs`, cached):
   issuer `https://accounts.google.com` or `accounts.google.com` (Google
   documents both), audience equal to the stored push URL, `email_verified` true, `email` equal to the pinned service account,
   60 seconds of clock slack. Before enrolment there is no pinned account, and
-  the only message accepted is a valid enrolment (3.4).
-- A bad or missing token: 401, and nothing else runs. No log line carries the
-  token or the body.
+  the only message accepted is a valid enrolment (3.4). Once an account is
+  pinned, the token is decoded unverified first, and a wrong `aud` or `email`
+  is refused there, before the costly check. One shared key set is made at
+  boot (`createRemoteJWKSet`, with its refetch cooldown and a short timeout),
+  so an unknown `kid` from a stranger never forces a fetch per request.
+- A bad or missing token: 401, and nothing else runs.
+- No log line carries the token, the body, the one-time code or a mailbox
+  address (a mailbox prints as `u***@example.com`). The socket says
+  "a test push arrived" and "connected"; it never carries the code.
 - A good token: answer 204 at once. The handler only hands
   `{ emailAddress, historyId }` to the agent over the internal route, with
   the internal token. It never works inline.
 - An address that is not a connected account with an active email trigger:
   204 and dropped, so Pub/Sub does not retry.
 - Replays: the last 1,000 Pub/Sub `messageId`s are remembered, and a notice
-  whose `historyId` is not above the account's cursor is dropped.
-- A global budget of 60 accepted pushes a minute. Over it: 429, and Pub/Sub
-  backs off by itself. Gmail sends at most one notice a second per mailbox,
+  whose `historyId` is not above the account's cursor is dropped. A repeat
+  answers 204 and does not spend the budget below.
+- A global budget of 60 accepted pushes a minute. Refused pushes never touch
+  it. Over it: 429, and Pub/Sub backs off by itself. Gmail sends at most one notice a second per mailbox,
   and a notice only says "look now": the history read goes by the stored
   cursor, so a dropped notice loses nothing as long as a later one arrives.
 - `GET /hooks/gmail/ping` answers `{ "deedee": true }`. It exists for the
@@ -293,7 +334,7 @@ little as it can. Google's own numbers, read from its quota pages on
 
 | | Limit | What this design uses |
 |---|---|---|
-| Gmail | 6,000 quota units per minute per user; 80,000,000 a day per project before any charge | about 100 a day for the watch, 2 per burst, 5 per filtered trigger per burst, 20 per message read |
+| Gmail | 6,000 quota units per minute per user; 80,000,000 a day per project before any charge (read again on 2026-09-21; a project that used the API before May 2026 keeps its older, higher limits) | about 100 a day for the watch (`watch` costs 100, `stop` 50), 2 per burst, 5 per filtered trigger per burst, 20 per message read |
 | Calendar | 600 requests per minute per user | about 48 a day per account |
 | Pub/Sub | the first 10 GiB a month are free | a notice is under 1 KB |
 
@@ -357,6 +398,12 @@ the author.
   exception for that one account.
 - The script's flags were checked against Google's `gcloud` reference on
   2026-09-21. It has not been run yet.
+- Pub/Sub pushes only to `https://` with a certificate a public authority
+  signed. Confirm that it asks for no proof of domain ownership any more; if
+  it does, the script is not the whole job.
+- The envelope's `subscription` field names the subscription's project. A
+  topic can sit in another one. The script keeps both in one project, and
+  3.4 refuses anything else.
 
 ## 10. Evidence
 
