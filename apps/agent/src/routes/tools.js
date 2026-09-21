@@ -5,6 +5,25 @@ const { toolDefinitions } = require('../tools-definition');
 const { ApprovalService } = require('../services/approval-service');
 const { classifyToolResult, TurnTaint } = require('../utils/untrusted-content');
 const { filterCalendarResult } = require('../utils/calendar-filter');
+const { sanitizeToolResult, sanitizeToolArgs } = require('../utils/tool-result-sanitizer');
+const { splitImages } = require('../utils/function-response');
+
+// LIVE_TOOL_CLEANING=0: a voice call's tool calls and results go through as they came.
+const liveCleaning = () => process.env.LIVE_TOOL_CLEANING !== '0';
+
+/**
+ * A voice model cannot take a picture inside a tool result: the base64 would
+ * reach it as text, and the size cap would cut it in half. Leave the pictures
+ * out and say how many, as a chat's result leaves them out of its text.
+ */
+function withoutPictures(result) {
+    const { result: rest, images } = splitImages(result);
+    let out = images.length > 0 ? { ...rest, _imagesOmitted: images.length } : rest;
+    if (out && typeof out === 'object' && typeof out.image_base64 === 'string' && out.image_base64.length > 500) {
+        out = { ...out, image_base64: '<BASE64_IMAGE_TRUNCATED>' };
+    }
+    return out;
+}
 
 // What a live session has read. Each tool call arrives on its own request, so
 // there is no run to carry taint: this stands in for one.
@@ -155,7 +174,10 @@ function createToolRouter(agent) {
                 return res.status(503).json({ error: 'Approvals not initialized' });
             }
 
-            const raw = await agent.toolExecutor.execute(name, args, context);
+            // The gate above judged the call as the model made it. What runs
+            // gets the same repairs a chat's call gets (a calendar list with
+            // no end, or one that would return series and not meetings).
+            const raw = await agent.toolExecutor.execute(name, liveCleaning() ? sanitizeToolArgs(name, args) : args, context);
             // What this session has read now counts for the calls that follow.
             noteLiveResult(name, args, raw, agent.mcp?.toolMap?.get?.(name)?.name || null, Date.now(), sessionId);
             // A call reads the same calendars a chat does: the ones he ticked.
@@ -164,6 +186,16 @@ function createToolRouter(agent) {
                 result = filterCalendarResult(name, raw, agent.settings, agent.mcp?.toolMap, args, agent.mcp?.config);
             } catch (e) {
                 console.warn(`[Agent] Live calendar result not filtered (${name}): ${e.message}`);
+            }
+            // And every result gets the same cleaning and size cap a chat's
+            // result gets: a week of one work calendar is over 300,000
+            // characters as Google sends it. Pictures come out first.
+            if (liveCleaning()) {
+                try {
+                    result = sanitizeToolResult(name, withoutPictures(result));
+                } catch (e) {
+                    console.warn(`[Agent] Live tool result not cleaned (${name}): ${e.message}`);
+                }
             }
             res.json({ result });
         } catch (error) {

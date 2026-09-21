@@ -298,7 +298,7 @@ function isCalendarTool(toolName) {
 /**
  * Sanitize a Google Calendar tool result.
  * Strips attendee metadata, etags, iCalUIDs, htmlLinks, attachments, etc.
- * Keeps: summary, start, end, location, attendees (name+email), description (truncated), status.
+ * Keeps: summary, start, end, id, location, attendees (name+email), description (truncated), status.
  */
 function sanitizeCalendarResult(result) {
     // GWS MCP wraps results as { output: "JSON string" }
@@ -319,7 +319,56 @@ function sanitizeCalendarResult(result) {
     return result;
 }
 
+const MAX_CALENDAR_DESCRIPTION_CHARS = 200;
+
+// Every field a calendarList entry can hold. An event holds others (start,
+// end, status, attendees...), which is how a masked list is told apart.
+const CALENDAR_ENTRY_KEYS = new Set([
+    'kind', 'etag', 'id', 'summary', 'summaryOverride', 'description', 'location', 'timeZone',
+    'colorId', 'backgroundColor', 'foregroundColor', 'hidden', 'selected', 'deleted', 'primary',
+    'accessRole', 'defaultReminders', 'notificationSettings', 'conferenceProperties', 'dataOwner',
+]);
+
+/**
+ * calendarList.list: the account's calendars, not events. An events response
+ * carries accessRole at its top level too, so go by the kind. A fields mask
+ * can remove the kind: then go by the entries, which must each hold an id or
+ * an access role and nothing an event alone would hold. So a masked events
+ * list that kept `end` or `status` is still cleaned as events.
+ */
+function isCalendarListing(obj) {
+    if (!obj || !Array.isArray(obj.items)) return false;
+    if (obj.kind === 'calendar#calendarList') return true;
+    if (obj.kind) return false;
+    return obj.items.length > 0 && obj.items.every(c =>
+        c && typeof c === 'object' && !Array.isArray(c) && (c.accessRole || c.id) &&
+        Object.keys(c).every(k => CALENDAR_ENTRY_KEYS.has(k)));
+}
+
+/** The id is the point: events.list needs it, and a shared calendar's id is not its name. */
+function extractCleanCalendar(cal) {
+    if (!cal || typeof cal !== 'object') return cal;
+    const clean = { id: cal.id };
+    const name = cal.summaryOverride || cal.summary;
+    if (name) clean.summary = name;
+    if (cal.deleted) clean.deleted = true;
+    if (cal.hidden) clean.hidden = true;
+    if (cal.primary) clean.primary = true;
+    if (cal.accessRole) clean.accessRole = cal.accessRole;
+    if (cal.timeZone) clean.timeZone = cal.timeZone;
+    if (cal.description) clean.description = truncate(cal.description, MAX_CALENDAR_DESCRIPTION_CHARS);
+    return clean;
+}
+
 function sanitizeCalendarParsed(obj) {
+    // The list of calendars. It used to go through the events branch below,
+    // which kept each calendar's name and dropped its id.
+    if (isCalendarListing(obj)) {
+        const out = { items: obj.items.map(extractCleanCalendar) };
+        if (obj.nextPageToken) out.nextPageToken = obj.nextPageToken;
+        return out;
+    }
+
     // Calendar events list response { items: [...], kind: "calendar#events", ... }
     if (obj.items && Array.isArray(obj.items)) {
         return {
@@ -356,6 +405,12 @@ function extractCleanEvent(event) {
         start: flattenDateTime(event.start),
         end: flattenDateTime(event.end),
     };
+
+    // The id is what events.get, patch and delete ask for: without it a listed
+    // meeting can be read and never moved or cancelled. One instance of a
+    // series carries the series id inside its own (`<series>_<time>`), so
+    // recurringEventId stays out.
+    if (event.id) clean.id = event.id;
 
     // Only include status if it's NOT confirmed (the default)
     if (event.status && event.status !== 'confirmed') {
@@ -778,6 +833,7 @@ const DEFAULT_CALENDAR_WINDOW_DAYS = 7;
  * Currently handles:
  *  - calendar events.list called with timeMin but no timeMax → default to timeMin + 7d
  *  - calendar events.list called with neither → default to now + 7d
+ *  - calendar events.list (GWS shape) called without singleEvents → true, ordered by start time
  *
  * Returns a new args object; the input is never mutated.
  */
@@ -799,13 +855,29 @@ function sanitizeToolArgs(toolName, args) {
         );
         let target;
         if (isGwsShape) {
-            cleaned.params = cleaned.params && typeof cleaned.params === 'object'
-                ? { ...cleaned.params }
+            // The model sometimes sends params as a JSON string. Read it, or
+            // the defaults below would replace the call's own parameters.
+            let params = cleaned.params;
+            if (typeof params === 'string' && params.trim()) {
+                try {
+                    params = JSON.parse(params);
+                } catch {
+                    return args;
+                }
+                // "[]", "5", "null": not parameters. Leave the call alone too.
+                if (!params || typeof params !== 'object' || Array.isArray(params)) return args;
+            }
+            cleaned.params = params && typeof params === 'object' && !Array.isArray(params)
+                ? { ...params }
                 : {};
             target = cleaned.params;
         } else {
             target = cleaned;
         }
+
+        // A sync token asks for what changed, and Google refuses it together
+        // with a time range or an order. Leave such a call as it came.
+        if (target.syncToken) return args;
 
         if (!target.timeMax) {
             const min = target.timeMin ? new Date(target.timeMin) : new Date();
@@ -816,9 +888,27 @@ function sanitizeToolArgs(toolName, args) {
                 console.log(`[Sanitizer] events.list missing timeMax — defaulted to ${target.timeMin} → ${target.timeMax} (${DEFAULT_CALENDAR_WINDOW_DAYS}d window)`);
             }
         }
+
+        // Left to itself, Google answers with each recurring series once,
+        // dated at its first ever meeting, plus every cancelled one-off of it:
+        // not the meetings of the days asked for. The old gsuite server set
+        // singleEvents itself; the GWS tool passes params through untouched,
+        // and the model leaves it out most of the time. Only for the GWS
+        // shape, whose params are Google's own query parameters.
+        // A later page (pageToken) gets the same defaults as the first one
+        // did, so both pages ask the same question. CALENDAR_SINGLE_EVENTS=0
+        // turns this off.
+        if (isGwsShape && process.env.CALENDAR_SINGLE_EVENTS !== '0') {
+            if (target.singleEvents === undefined) target.singleEvents = true;
+            if (isTrue(target.singleEvents) && !target.orderBy) target.orderBy = 'startTime';
+        }
     }
 
     return cleaned;
+}
+
+function isTrue(value) {
+    return value === true || String(value).toLowerCase() === 'true';
 }
 
 function isCalendarEventsListCall(toolName, args) {
