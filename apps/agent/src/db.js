@@ -4,6 +4,9 @@ const fs = require('fs');
 const crypto = require('crypto');
 const messagesFts = require('./utils/messages-fts');
 
+// How often GET /health may walk the whole file (PRAGMA quick_check).
+const HEALTH_INTEGRITY_MS = Math.max(60 * 1000, Number(process.env.HEALTH_INTEGRITY_MINUTES || 30) * 60 * 1000);
+
 // Map raw tags to human-friendly service categories for cost breakdown
 // For tagged entries, use the tag directly. For NULL-tagged entries (main chat),
 // the SQL query resolves the source from chat_id patterns.
@@ -2697,7 +2700,23 @@ class AgentDB {
    * Run a health check on the database.
    * Returns { ok, details } where details has integrity and connectivity info.
    */
-  healthCheck() {
+  /**
+   * The database part of GET /health.
+   *
+   * `quick_check` walks every page of the file. It ran on every health
+   * request, and better-sqlite3 is synchronous: on the device it blocked the
+   * whole agent for about 1.2 seconds each time, several times a minute (the
+   * dashboard, the API and the supervisor all ask). Once the message search
+   * index made the file bigger, the answer also came later than the API's
+   * one-second wait, so the dashboard showed the agent as down.
+   *
+   * The scan now runs at most every HEALTH_INTEGRITY_MS, and its last result
+   * is what a health request reads. A request costs one `SELECT 1`. A corrupt
+   * file does not heal itself, so a result that says "corrupt" is kept and
+   * shown until a later scan says otherwise.
+   * @param {{ now?: number, force?: boolean }} [opts]
+   */
+  healthCheck({ now = Date.now(), force = false } = {}) {
     if (!this.db || !this.db.open) {
       return { ok: false, details: { status: 'closed' } };
     }
@@ -2715,34 +2734,51 @@ class AgentDB {
       return { ok: false, details };
     }
 
-    // 2. Quick integrity check (fast — checks page structure without scanning all data)
+    // 2. Integrity and WAL state: the slow part, from the last scan.
+    const last = this._integrity;
+    if (force || !last || now - last.at > HEALTH_INTEGRITY_MS) {
+      this._integrity = this._scanIntegrity(now);
+    }
+    const scan = this._integrity;
+    details.integrity = scan.integrity;
+    details.integrityCheckedAt = new Date(scan.at).toISOString();
+    if (scan.integrityErrors) details.integrityErrors = scan.integrityErrors;
+    if (scan.integrityError) details.integrityError = scan.integrityError;
+    if (scan.integrity === 'corrupt') details.status = 'corrupt';
+    else if (scan.integrity === 'error') details.status = 'error';
+    details.wal = scan.wal;
+
+    return { ok: details.status === 'ok', details };
+  }
+
+  /** One full scan: page structure, then the WAL's state. Slow on a large file. */
+  _scanIntegrity(now = Date.now()) {
+    const started = Date.now();
+    const scan = { at: now, integrity: 'ok', wal: null };
     try {
       const rows = this.db.pragma('quick_check');
       const isOk = rows.length === 1 && rows[0].quick_check === 'ok';
-      details.integrity = isOk ? 'ok' : 'corrupt';
       if (!isOk) {
-        details.integrityErrors = rows.slice(0, 10).map(r => r.quick_check);
-        details.status = 'corrupt';
+        scan.integrity = 'corrupt';
+        scan.integrityErrors = rows.slice(0, 10).map(r => r.quick_check);
       }
     } catch (err) {
-      details.integrity = 'error';
-      details.integrityError = err.message;
-      details.status = 'error';
+      scan.integrity = 'error';
+      scan.integrityError = err.message;
     }
-
-    // 3. WAL status
     try {
       const walInfo = this.db.pragma('wal_checkpoint');
-      details.wal = {
+      scan.wal = {
         busy: walInfo[0]?.busy ?? null,
         log: walInfo[0]?.log ?? null,
         checkpointed: walInfo[0]?.checkpointed ?? null
       };
     } catch (err) {
-      details.wal = { error: err.message };
+      scan.wal = { error: err.message };
     }
-
-    return { ok: details.status === 'ok', details };
+    const took = Date.now() - started;
+    if (took > 500) console.log(`[DB] Integrity scan took ${took} ms (${scan.integrity}). It runs at most every ${Math.round(HEALTH_INTEGRITY_MS / 60000)} min.`);
+    return scan;
   }
 
   close() {

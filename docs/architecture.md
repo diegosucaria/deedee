@@ -57,6 +57,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - **Health Monitor**:
         - **Proactive Polling**: Checks status of Agent (DB, Config), API (Reachability), and Interfaces every 30s.
         - **Aggregated Report**: Exposes `/health` endpoint with full system status for dashboards.
+        - **What the agent's `/health` costs**: one `SELECT 1` per request. The integrity scan (`PRAGMA quick_check`, which walks the whole file) runs at most every 30 minutes (`HEALTH_INTEGRITY_MINUTES`) and its last result is what a request reads. It used to run on every request and blocked the agent for over a second each time on the device.
 
 ### 3. API Gateway (`apps/api`)
 - **Type**: Express Service (Port 3001)
