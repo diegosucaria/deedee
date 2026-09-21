@@ -2777,7 +2777,9 @@ class AgentDB {
   /** Start one scan when the last is too old and none is running. Returns its promise, or null. */
   _startIntegrityScan(now = Date.now()) {
     const every = integrityScanEveryMs();
-    if (!every || this._integrityRun) return null;
+    // A worker stuck in a read cannot be stopped from outside. While one is
+    // alive, start no other: each would hang the same way and stay for good.
+    if (!every || this._integrityRun || this._integrityStuck) return null;
     const last = this._integrity;
     const retry = last && (last.integrity === 'error' || last.integrity === 'unknown');
     const wait = retry ? Math.min(every, INTEGRITY_RETRY_MS) : every;
@@ -2807,7 +2809,9 @@ class AgentDB {
         if (took > 500 || scan.integrity !== 'ok') {
           console.log(`[DB] Integrity scan: ${scan.integrity} in ${took} ms, off the main thread.${scan.integrityError ? ` ${scan.integrityError}` : ''}`);
         }
-        resolve({ at: now, ...scan });
+        // Dated when it settled, on the caller's clock. Dated at its start, a
+        // scan that timed out would already be due again the moment it ended.
+        resolve({ at: now + took, ...scan });
       };
       let worker;
       try {
@@ -2816,7 +2820,10 @@ class AgentDB {
         return done({ integrity: 'unknown', integrityError: `the scan could not start: ${err.message}` });
       }
       const timer = setTimeout(() => {
-        done({ integrity: 'unknown', integrityError: `the scan gave no answer in ${Math.round(timeoutMs / 1000)} s and was stopped` });
+        // terminate() cannot end a thread blocked inside a read, so the
+        // worker may outlive this. It is remembered until it does exit.
+        this._integrityStuck = worker;
+        done({ integrity: 'unknown', integrityError: `the scan gave no answer in ${Math.round(timeoutMs / 1000)} s; no new scan starts until it ends` });
         worker.terminate().catch(() => { });
       }, timeoutMs);
       timer.unref();
@@ -2832,7 +2839,11 @@ class AgentDB {
         done({ integrity: 'corrupt', integrityErrors: rows });
       });
       worker.once('error', (err) => { clearTimeout(timer); done({ integrity: 'unknown', integrityError: `the scan worker failed: ${err.message}` }); });
-      worker.once('exit', (code) => { clearTimeout(timer); done({ integrity: 'unknown', integrityError: `the scan worker exited with code ${code} and no result` }); });
+      worker.once('exit', (code) => {
+        clearTimeout(timer);
+        if (this._integrityStuck === worker) this._integrityStuck = null;
+        done({ integrity: 'unknown', integrityError: `the scan worker exited with code ${code} and no result` });
+      });
       // A scan in flight must not hold a shutdown open.
       worker.unref();
     });

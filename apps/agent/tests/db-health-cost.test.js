@@ -82,9 +82,36 @@ describe('AgentDB.healthCheck', () => {
 
         test('a scan that never answers is stopped, and says nothing about the file', async () => {
             const hung = workerFile('setInterval(() => {}, 1000);');
-            const scan = await db.scanIntegrity(Date.now(), { workerFile: hung, timeoutMs: 150 });
+            const t0 = Date.now();
+            const scan = await db.scanIntegrity(t0, { workerFile: hung, timeoutMs: 150 });
             expect(scan.integrity).toBe('unknown');
             expect(scan.integrityError).toMatch(/no answer/);
+            // Dated when it settled, not when it began: or it would be due again at once.
+            expect(scan.at).toBeGreaterThanOrEqual(t0 + 150);
+        });
+
+        test('while a timed-out worker is still alive, no other scan starts; once it has gone, one may', async () => {
+            // terminate() cannot end a thread blocked inside a read. On the device that
+            // would have meant one more hung thread every two minutes, for ever.
+            const stuck = { alive: true };
+            db._integrityStuck = stuck;
+            const spy = jest.spyOn(db, 'scanIntegrity');
+            expect(db._startIntegrityScan(Date.now() + 24 * 60 * MIN)).toBeNull();
+            expect(spy).not.toHaveBeenCalled();
+            expect(db.healthCheck().ok).toBe(true);
+
+            db._integrityStuck = null;
+            const run = db._startIntegrityScan(Date.now());
+            expect(run).not.toBeNull();
+            await run;
+        });
+
+        test('a worker that is stopped after its timeout is forgotten when it exits', async () => {
+            const hung = workerFile('setInterval(() => {}, 1000);');
+            await db.scanIntegrity(Date.now(), { workerFile: hung, timeoutMs: 100 });
+            // This one can be terminated (it is not inside a read), so it exits soon.
+            for (let i = 0; i < 100 && db._integrityStuck; i++) await new Promise(r => setTimeout(r, 20));
+            expect(db._integrityStuck).toBeNull();
         });
 
         test('a worker that dies with no result is "unknown" too', async () => {
