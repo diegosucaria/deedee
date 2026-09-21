@@ -1022,4 +1022,111 @@ describe('Tool Result Sanitizer', () => {
             expect(sanitizeToolArgs('work_calendar', undefined)).toBeUndefined();
         });
     });
+
+    describe('the list of calendars keeps each calendar\'s id', () => {
+        const entry = (over) => ({ kind: 'calendar#calendarListEntry', etag: '"1"', colorId: '14', backgroundColor: '#9fe1e7', foregroundColor: '#000000', selected: true, defaultReminders: [{ method: 'popup', minutes: 10 }], notificationSettings: { notifications: [] }, conferenceProperties: { allowedConferenceSolutionTypes: ['hangoutsMeet'] }, timeZone: 'America/New_York', ...over });
+        const listing = (items, extra = {}) => ({ kind: 'calendar#calendarList', etag: '"2"', nextSyncToken: 'tok', items, ...extra });
+        const own = entry({ id: 'user@example.com', summary: 'user@example.com', accessRole: 'owner', primary: true });
+        const shared = entry({ id: 'abc123@group.calendar.google.com', summary: 'Team holidays', accessRole: 'reader', description: 'd'.repeat(400) });
+
+        test('id, name, primary, access and time zone stay; colours, reminders and tokens go', () => {
+            const out = JSON.parse(sanitizeToolResult('work_calendar', { output: JSON.stringify(listing([own, shared])) }).output);
+            expect(out.items[0]).toEqual({ id: 'user@example.com', summary: 'user@example.com', primary: true, accessRole: 'owner', timeZone: 'America/New_York' });
+            expect(out.items[1].id).toBe('abc123@group.calendar.google.com');
+            expect(out.items[1].summary).toBe('Team holidays');
+            expect(out.items[1].description.length).toBeLessThan(230);
+            const text = JSON.stringify(out);
+            for (const gone of ['etag', 'colorId', 'backgroundColor', 'defaultReminders', 'notificationSettings', 'conferenceProperties', 'nextSyncToken']) expect(text).not.toContain(gone);
+        });
+
+        test('the name he gave a shared calendar wins over its own', () => {
+            const out = JSON.parse(sanitizeToolResult('work_calendar', { output: JSON.stringify(listing([{ ...shared, summaryOverride: 'Holidays' }])) }).output);
+            expect(out.items[0].summary).toBe('Holidays');
+        });
+
+        test('a further page stays reachable', () => {
+            const out = JSON.parse(sanitizeToolResult('work_calendar', { output: JSON.stringify(listing([own], { nextPageToken: 'p2' })) }).output);
+            expect(out.nextPageToken).toBe('p2');
+        });
+
+        test('a listing with its kind cut by a fields mask is still known by its entries', () => {
+            const out = sanitizeToolResult('work_calendar', { items: [{ id: 'user@example.com', summary: 'user@example.com', accessRole: 'owner' }] });
+            expect(out.items[0].id).toBe('user@example.com');
+        });
+
+        test('an events response is still cleaned as events: it holds accessRole at the top too', () => {
+            const out = JSON.parse(sanitizeToolResult('work_calendar', { output: JSON.stringify(makeCalendarResponse([makeCalendarEvent({})])) }).output);
+            expect(out.items[0].start).toBeDefined();
+            expect(out.items[0].id).toBeUndefined();
+        });
+
+        test('an empty events response is not taken for a listing', () => {
+            const out = JSON.parse(sanitizeToolResult('work_calendar', { output: JSON.stringify(makeCalendarResponse([])) }).output);
+            expect(out).toEqual({ timeZone: expect.anything(), items: [] });
+        });
+    });
+
+    describe('sanitizeToolArgs — events.list asks for the meetings of the days, not the series', () => {
+        const list = (params) => ({ resource: 'events', method: 'list', params });
+        const range = { calendarId: 'primary', timeMin: '2026-04-29T00:00:00Z', timeMax: '2026-04-30T00:00:00Z' };
+
+        test('the call the system prompt teaches gains singleEvents and an order', () => {
+            const out = sanitizeToolArgs('work_calendar', list(range));
+            expect(out.params.singleEvents).toBe(true);
+            expect(out.params.orderBy).toBe('startTime');
+            expect(out.params.timeMax).toBe(range.timeMax);
+            expect(out.params.calendarId).toBe('primary');
+        });
+
+        test('a call with no params at all gains them too', () => {
+            const out = sanitizeToolArgs('personal_calendar', { resource: 'events', method: 'list' });
+            expect(out.params.singleEvents).toBe(true);
+            expect(out.params.orderBy).toBe('startTime');
+        });
+
+        test('singleEvents: true with no order gains the order', () => {
+            const out = sanitizeToolArgs('work_calendar', list({ ...range, singleEvents: true }));
+            expect(out.params.orderBy).toBe('startTime');
+            expect(sanitizeToolArgs('work_calendar', list({ ...range, singleEvents: 'true' })).params.orderBy).toBe('startTime');
+        });
+
+        test('a model that asked for the series keeps them: startTime order is invalid there', () => {
+            const out = sanitizeToolArgs('work_calendar', list({ ...range, singleEvents: false }));
+            expect(out.params.singleEvents).toBe(false);
+            expect(out.params.orderBy).toBeUndefined();
+        });
+
+        test('an order the model chose is kept', () => {
+            const out = sanitizeToolArgs('work_calendar', list({ ...range, orderBy: 'updated' }));
+            expect(out.params.singleEvents).toBe(true);
+            expect(out.params.orderBy).toBe('updated');
+        });
+
+        test('a sync token call is left exactly as it came', () => {
+            const args = list({ calendarId: 'primary', syncToken: 'abc' });
+            expect(sanitizeToolArgs('work_calendar', args)).toEqual(args);
+        });
+
+        test('only events.list: a single event read, a calendar list and an insert are untouched', () => {
+            const get = { resource: 'events', method: 'get', params: { calendarId: 'primary', eventId: 'e1' } };
+            const cals = { resource: 'calendarList', method: 'list' };
+            const insert = { resource: 'events', method: 'insert', params: { calendarId: 'primary' }, body: { summary: 'x' } };
+            expect(sanitizeToolArgs('work_calendar', get)).toEqual(get);
+            expect(sanitizeToolArgs('work_calendar', cals)).toEqual(cals);
+            expect(sanitizeToolArgs('work_calendar', insert)).toEqual(insert);
+        });
+
+        test('a flat-shape tool gains nothing it may not know', () => {
+            const out = sanitizeToolArgs('listEvents', { timeMin: '2026-04-29T00:00:00Z' });
+            expect(out.singleEvents).toBeUndefined();
+            expect(out.orderBy).toBeUndefined();
+        });
+
+        test('the caller\'s object is never changed', () => {
+            const args = list({ ...range });
+            const before = JSON.parse(JSON.stringify(args));
+            sanitizeToolArgs('work_calendar', args);
+            expect(args).toEqual(before);
+        });
+    });
 });

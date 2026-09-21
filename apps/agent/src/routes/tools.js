@@ -5,6 +5,7 @@ const { toolDefinitions } = require('../tools-definition');
 const { ApprovalService } = require('../services/approval-service');
 const { classifyToolResult, TurnTaint } = require('../utils/untrusted-content');
 const { filterCalendarResult } = require('../utils/calendar-filter');
+const { sanitizeToolResult, sanitizeToolArgs } = require('../utils/tool-result-sanitizer');
 
 // What a live session has read. Each tool call arrives on its own request, so
 // there is no run to carry taint: this stands in for one.
@@ -155,7 +156,10 @@ function createToolRouter(agent) {
                 return res.status(503).json({ error: 'Approvals not initialized' });
             }
 
-            const raw = await agent.toolExecutor.execute(name, args, context);
+            // The gate above judged the call as the model made it. What runs
+            // gets the same repairs a chat's call gets (a calendar list with
+            // no end, or one that would return series and not meetings).
+            const raw = await agent.toolExecutor.execute(name, sanitizeToolArgs(name, args), context);
             // What this session has read now counts for the calls that follow.
             noteLiveResult(name, args, raw, agent.mcp?.toolMap?.get?.(name)?.name || null, Date.now(), sessionId);
             // A call reads the same calendars a chat does: the ones he ticked.
@@ -164,6 +168,13 @@ function createToolRouter(agent) {
                 result = filterCalendarResult(name, raw, agent.settings, agent.mcp?.toolMap, args, agent.mcp?.config);
             } catch (e) {
                 console.warn(`[Agent] Live calendar result not filtered (${name}): ${e.message}`);
+            }
+            // And it gets the same cleaning and size cap: a week of one work
+            // calendar is over 300,000 characters as Google sends it.
+            try {
+                result = sanitizeToolResult(name, result);
+            } catch (e) {
+                console.warn(`[Agent] Live tool result not cleaned (${name}): ${e.message}`);
             }
             res.json({ result });
         } catch (error) {

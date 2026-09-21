@@ -51,6 +51,8 @@ Strips verbose Google Calendar API metadata.
 | meetingLink | Full conferenceData blob, recurringEventId |
 | status (only if not "confirmed") | Calendar-level summary (email) |
 
+The list of calendars (`calendarList.list`) is cleaned on its own: each entry keeps `id`, `summary` (the owner's own name for it when he set one), `primary`, `accessRole`, `timeZone` and a short `description`; colours, reminders and notification settings go. It used to pass through the events branch, which kept a calendar's name and dropped its `id`, so a shared calendar could not be read: its id is not its name.
+
 ### 1c. People (`isPeopleTool`)
 
 Compacts contact data by removing sparse fields common in WhatsApp/Slack synced contacts.
@@ -103,6 +105,19 @@ Runs **before** the sanitizer to remove calendars the user has not configured as
 Configuration is stored per-GWS-account in `agent_settings` with key `gws_calendar_filter:{label}`. Managed via Settings > Interfaces > Google Workspace > Calendar Access.
 
 The `sanitizeToolResult` function accepts an optional third parameter `maxChars` to override the default cap, but the high-cap tool logic is now built into the sanitizer itself via `HIGH_CAP_TOOLS`.
+
+## Before the Call: `sanitizeToolArgs()`
+
+Runs inside `_executeTool`, which chats, jobs, sub-agents and approved cards share, and in `POST /tools/execute`, which a voice call uses. It only touches a calendar `events.list` call. The voice route also runs `sanitizeToolResult()` on what comes back; until 2026-09-21 it did neither, so a voice call got Google's raw answer.
+
+| Left out by the model | What the call gets | Why |
+|---|---|---|
+| `timeMax` | `timeMin` plus 7 days (`timeMin` is now when missing too) | An open range returns years of events |
+| `singleEvents` (GWS shape only) | `true`, and `orderBy: 'startTime'` when no order was given | Google's default returns each recurring series once, dated at its first ever meeting, plus every cancelled one-off of it. The cleaning step drops the recurrence rule, so the model cannot tell which day a series meets. The old gsuite server set this itself; the GWS tool passes `params` through |
+
+Measured on the device (2026-09-21), one work calendar, the past 7 days. Without `singleEvents`: 127 entries, 39 of them cancelled, 48 series dated before the window, 67,703 characters after cleaning, cut at 50,000. With it: 47 meetings, all inside the window, 29,399 characters. For the next 7 days the model saw 15 of the 45 real meetings. Over 30 days, 73% of list calls left `singleEvents` out.
+
+A model that sets `singleEvents: false` keeps it, and gets no order (Google refuses `startTime` there). A call with a `syncToken` is left exactly as it came: Google refuses a range or an order next to one.
 
 ## Adding a New Sanitizer
 

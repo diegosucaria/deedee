@@ -234,6 +234,41 @@ describe('POST /tools/execute', () => {
         });
     });
 
+    describe('a call gets the same calendar repairs and cleaning a chat gets', () => {
+        const range = { calendarId: 'primary', timeMin: '2026-04-29T00:00:00Z', timeMax: '2026-04-30T00:00:00Z' };
+        beforeEach(() => agent.mcp.toolMap.set('work_calendar', { name: 'gws_work' }));
+
+        test('a calendar list asks for the meetings of the days, and the model\'s own args are what the gate saw', async () => {
+            const review = jest.spyOn(agent.approvals, 'review');
+            const args = { resource: 'events', method: 'list', params: { ...range } };
+            await request(app).post('/tools/execute').send({ name: 'work_calendar', args });
+            const ran = agent.toolExecutor.execute.mock.calls[0][1];
+            expect(ran.params).toMatchObject({ ...range, singleEvents: true, orderBy: 'startTime' });
+            expect(review.mock.calls[0][0].args).toEqual(args);
+        });
+
+        test('an event comes back cleaned: no etag, no links, the title and times kept', async () => {
+            const event = { kind: 'calendar#event', etag: '"1"', id: 'e1', htmlLink: 'https://example.com/e1', iCalUID: 'u1', summary: 'Standup', start: { dateTime: '2026-04-29T10:00:00Z' }, end: { dateTime: '2026-04-29T10:15:00Z' }, organizer: { email: 'user@example.com', self: true } };
+            agent.toolExecutor.execute.mockResolvedValue({ output: JSON.stringify({ kind: 'calendar#events', items: [event] }) });
+            const res = await request(app).post('/tools/execute').send({ name: 'work_calendar', args: { resource: 'events', method: 'list', params: { ...range } } });
+            const items = JSON.parse(res.body.result.output).items;
+            expect(items).toEqual([{ summary: 'Standup', start: '2026-04-29T10:00:00Z', end: '2026-04-29T10:15:00Z' }]);
+        });
+
+        test('an oversized result is cut and says so', async () => {
+            agent.toolExecutor.execute.mockResolvedValue({ text: 'x'.repeat(60000) });
+            const res = await request(app).post('/tools/execute').send({ name: 'getFact', args: { key: 'big' } });
+            expect(res.body.result._sanitizer).toMatchObject({ truncated: true, maxChars: 50000 });
+            expect(res.body.result.output.length).toBe(50000);
+        });
+
+        test('an everyday result is passed on untouched', async () => {
+            agent.toolExecutor.execute.mockResolvedValue({ success: true, value: 'espresso' });
+            const res = await request(app).post('/tools/execute').send({ name: 'getFact', args: { key: 'coffee' } });
+            expect(res.body.result).toEqual({ success: true, value: 'espresso' });
+        });
+    });
+
     test('without a checked token a call is not his chat: a gated call still asks', async () => {
         // The plain app above has no token step, like a dev setup with the token unset.
         const res = await request(app).post('/tools/execute').send({ name: 'sendEmail', args: { to: 'someone@example.com' } });

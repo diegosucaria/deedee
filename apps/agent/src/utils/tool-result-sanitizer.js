@@ -319,7 +319,40 @@ function sanitizeCalendarResult(result) {
     return result;
 }
 
+const MAX_CALENDAR_DESCRIPTION_CHARS = 200;
+
+/**
+ * calendarList.list: the account's calendars, not events. An events response
+ * carries accessRole at its top level too, so go by the kind, or by entries
+ * that each hold an access role and no start.
+ */
+function isCalendarListing(obj) {
+    if (!obj || !Array.isArray(obj.items)) return false;
+    if (obj.kind === 'calendar#calendarList') return true;
+    if (obj.kind) return false;
+    return obj.items.length > 0 && obj.items.every(c => c && typeof c === 'object' && c.accessRole && !c.start);
+}
+
+/** The id is the point: events.list needs it, and a shared calendar's id is not its name. */
+function extractCleanCalendar(cal) {
+    if (!cal || typeof cal !== 'object') return cal;
+    const clean = { id: cal.id, summary: cal.summaryOverride || cal.summary || '(no name)' };
+    if (cal.primary) clean.primary = true;
+    if (cal.accessRole) clean.accessRole = cal.accessRole;
+    if (cal.timeZone) clean.timeZone = cal.timeZone;
+    if (cal.description) clean.description = truncate(cal.description, MAX_CALENDAR_DESCRIPTION_CHARS);
+    return clean;
+}
+
 function sanitizeCalendarParsed(obj) {
+    // The list of calendars. It used to go through the events branch below,
+    // which kept each calendar's name and dropped its id.
+    if (isCalendarListing(obj)) {
+        const out = { items: obj.items.map(extractCleanCalendar) };
+        if (obj.nextPageToken) out.nextPageToken = obj.nextPageToken;
+        return out;
+    }
+
     // Calendar events list response { items: [...], kind: "calendar#events", ... }
     if (obj.items && Array.isArray(obj.items)) {
         return {
@@ -778,6 +811,7 @@ const DEFAULT_CALENDAR_WINDOW_DAYS = 7;
  * Currently handles:
  *  - calendar events.list called with timeMin but no timeMax → default to timeMin + 7d
  *  - calendar events.list called with neither → default to now + 7d
+ *  - calendar events.list (GWS shape) called without singleEvents → true, ordered by start time
  *
  * Returns a new args object; the input is never mutated.
  */
@@ -807,6 +841,10 @@ function sanitizeToolArgs(toolName, args) {
             target = cleaned;
         }
 
+        // A sync token asks for what changed, and Google refuses it together
+        // with a time range or an order. Leave such a call as it came.
+        if (target.syncToken) return cleaned;
+
         if (!target.timeMax) {
             const min = target.timeMin ? new Date(target.timeMin) : new Date();
             if (!isNaN(min.getTime())) {
@@ -816,9 +854,22 @@ function sanitizeToolArgs(toolName, args) {
                 console.log(`[Sanitizer] events.list missing timeMax — defaulted to ${target.timeMin} → ${target.timeMax} (${DEFAULT_CALENDAR_WINDOW_DAYS}d window)`);
             }
         }
+
+        // Left to itself, Google answers with each recurring series once,
+        // dated at its first ever meeting, plus every cancelled one-off of it:
+        // not the meetings of the days asked for. The old gsuite server set
+        // singleEvents itself; the GWS tool passes params through untouched,
+        // and the model leaves it out most of the time. Only for the GWS
+        // shape, whose params are Google's own query parameters.
+        if (isGwsShape && target.singleEvents === undefined) target.singleEvents = true;
+        if (isGwsShape && isTrue(target.singleEvents) && !target.orderBy) target.orderBy = 'startTime';
     }
 
     return cleaned;
+}
+
+function isTrue(value) {
+    return value === true || String(value).toLowerCase() === 'true';
 }
 
 function isCalendarEventsListCall(toolName, args) {
