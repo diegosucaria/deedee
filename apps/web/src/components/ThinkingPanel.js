@@ -14,8 +14,11 @@ import clsx from 'clsx';
  *
  * `live=true` shows a spinner header and auto-expands so the user can watch progress.
  * `live=false` is the persisted-history mode — collapsed by default.
+ *
+ * `widthClass` is the panel's own width limit. A parent that already carries
+ * the limit (the assistant's message column) passes 'max-w-full'.
  */
-export default function ThinkingPanel({ entries, live = false, statusText = '' }) {
+export default function ThinkingPanel({ entries, live = false, statusText = '', widthClass = 'max-w-[90%] md:max-w-[70%]' }) {
     const [expanded, setExpanded] = useState(live);
 
     const summary = useMemo(() => {
@@ -70,7 +73,7 @@ export default function ThinkingPanel({ entries, live = false, statusText = '' }
                 live
                     ? 'border-indigo-500/40 bg-indigo-500/5'
                     : 'border-zinc-700/70 bg-zinc-800/40 hover:border-zinc-600',
-                'max-w-[90%] md:max-w-[70%]'
+                widthClass
             )}
         >
             {/* Subtle indigo shimmer sweeping across the live panel. Wrapped

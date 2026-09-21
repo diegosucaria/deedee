@@ -1338,8 +1338,12 @@ export default function ChatSessionPage({ params }) {
                             )}
                         >
                             {msg.role === 'user' ? (
-                                <div className="flex flex-col gap-1 items-end relative group">
-                                    <div className="bg-indigo-600 text-white rounded-2xl rounded-tr-none px-5 py-3 shadow-sm max-w-[85%] md:max-w-[70%] relative break-words">
+                                // The width limit sits on this wrapper, a child of the full-width
+                                // row. On the bubble it was a share of a wrapper that shrinks to the
+                                // bubble itself, so a short message got 70% of its own width: "hola"
+                                // broke in two and a long link pushed the bubble off the screen.
+                                <div className="flex flex-col gap-1 items-end relative group min-w-0 max-w-[85%] md:max-w-[70%]">
+                                    <div className="bg-indigo-600 text-white rounded-2xl rounded-tr-none px-5 py-3 shadow-sm max-w-full relative break-words">
                                         {/* Actions on Hover */}
                                         {msg.id && (
                                             <div className="absolute -top-3 left-0 opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-800 rounded-lg shadow-lg border border-zinc-700 flex items-center p-1 gap-1 z-10">
@@ -1429,11 +1433,11 @@ export default function ChatSessionPage({ params }) {
                                 </div>
                             ) : (
                                 // Assistant Message
-                                <div className="flex flex-col gap-2 items-start relative group">
+                                <div className="flex flex-col gap-2 items-start relative group min-w-0 max-w-[90%] md:max-w-[70%]">
                                     {msg.precedingTools && msg.precedingTools.length > 0 && (
-                                        <ThinkingPanel entries={msg.precedingTools} live={false} />
+                                        <ThinkingPanel entries={msg.precedingTools} live={false} widthClass="max-w-full" />
                                     )}
-                                    <div className="bg-zinc-800 text-zinc-200 rounded-2xl rounded-tl-none border border-zinc-700 px-5 py-3 shadow-sm max-w-[90%] md:max-w-[70%] relative break-words">
+                                    <div className="bg-zinc-800 text-zinc-200 rounded-2xl rounded-tl-none border border-zinc-700 px-5 py-3 shadow-sm max-w-full relative break-words">
                                         {/* Actions on Hover */}
                                         {msg.id && (
                                             <div className="absolute -top-3 right-0 opacity-0 group-hover:opacity-100 transition-opacity bg-zinc-800 rounded-lg shadow-lg border border-zinc-700 flex items-center p-1 gap-1 z-10">
