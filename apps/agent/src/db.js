@@ -2,7 +2,25 @@ const Database = require('better-sqlite3');
 const path = require('path');
 const fs = require('fs');
 const crypto = require('crypto');
+const { Worker } = require('worker_threads');
 const messagesFts = require('./utils/messages-fts');
+
+const INTEGRITY_WORKER = path.join(__dirname, 'utils', 'integrity-worker.js');
+
+// How often the whole file is walked for damage (PRAGMA quick_check), in ms.
+// Read on every call. HEALTH_INTEGRITY_MINUTES=0 turns the scan off.
+function integrityScanEveryMs() {
+  // An empty value (a device variable cleared in the dashboard) is not "0".
+  const raw = String(process.env.HEALTH_INTEGRITY_MINUTES ?? '').trim();
+  if (!raw) return 30 * 60 * 1000;
+  const minutes = Number(raw);
+  if (minutes === 0) return 0;
+  return (Number.isFinite(minutes) && minutes > 0 ? Math.max(1, minutes) : 30) * 60 * 1000;
+}
+// A scan that could not run (the worker would not start, an I/O error) is tried again soon.
+const INTEGRITY_RETRY_MS = 60 * 1000;
+// A scan that never answers (a stalled read) is stopped, or no later scan would ever start.
+const INTEGRITY_TIMEOUT_MS = 2 * 60 * 1000;
 
 // Map raw tags to human-friendly service categories for cost breakdown
 // For tagged entries, use the tag directly. For NULL-tagged entries (main chat),
@@ -2694,10 +2712,27 @@ class AgentDB {
   }
 
   /**
-   * Run a health check on the database.
-   * Returns { ok, details } where details has integrity and connectivity info.
+   * The database part of GET /health. Returns { ok, details }.
+   *
+   * `quick_check` walks every page of the file. It ran on every health
+   * request, and better-sqlite3 is synchronous: on the device it blocked the
+   * whole agent for 1.2 to 2.0 seconds each time, several times a minute (the
+   * dashboard, the API and the supervisor all ask). Once the message search
+   * index made the file bigger, the answer also came later than the API's
+   * one-second wait, so the dashboard showed a working agent as down.
+   *
+   * A request now costs one `SELECT 1` and a stat of the WAL file. The scan
+   * runs in a worker thread, at most every HEALTH_INTEGRITY_MINUTES, so it
+   * blocks neither the request nor the agent. A request reports the last scan:
+   * 'pending' until the first one lands. A damaged file does not heal itself,
+   * so "corrupt" is kept and shown until a later scan says otherwise. A scan
+   * that could not run is tried again within a minute: 'error' when SQLite
+   * could not read the file (that is a database fault), 'unknown' when the
+   * check itself failed (the worker would not start or never answered), which
+   * says nothing about the file and leaves the status alone.
+   * @param {{ now?: number }} [opts]
    */
-  healthCheck() {
+  healthCheck({ now = Date.now() } = {}) {
     if (!this.db || !this.db.open) {
       return { ok: false, details: { status: 'closed' } };
     }
@@ -2715,34 +2750,103 @@ class AgentDB {
       return { ok: false, details };
     }
 
-    // 2. Quick integrity check (fast — checks page structure without scanning all data)
-    try {
-      const rows = this.db.pragma('quick_check');
-      const isOk = rows.length === 1 && rows[0].quick_check === 'ok';
-      details.integrity = isOk ? 'ok' : 'corrupt';
-      if (!isOk) {
-        details.integrityErrors = rows.slice(0, 10).map(r => r.quick_check);
-        details.status = 'corrupt';
-      }
-    } catch (err) {
-      details.integrity = 'error';
-      details.integrityError = err.message;
-      details.status = 'error';
+    // 2. Integrity: the slow part, from the last scan.
+    this._startIntegrityScan(now);
+    const scan = this._integrity;
+    if (!scan) {
+      details.integrity = integrityScanEveryMs() ? 'pending' : 'off';
+    } else {
+      details.integrity = scan.integrity;
+      details.integrityCheckedAt = new Date(scan.at).toISOString();
+      if (scan.integrityErrors) details.integrityErrors = scan.integrityErrors;
+      if (scan.integrityError) details.integrityError = scan.integrityError;
+      if (scan.integrity === 'corrupt') details.status = 'corrupt';
+      else if (scan.integrity === 'error') details.status = 'error';
     }
 
-    // 3. WAL status
+    // 3. WAL size. SQLite checkpoints it on its own; this only reports.
     try {
-      const walInfo = this.db.pragma('wal_checkpoint');
-      details.wal = {
-        busy: walInfo[0]?.busy ?? null,
-        log: walInfo[0]?.log ?? null,
-        checkpointed: walInfo[0]?.checkpointed ?? null
-      };
-    } catch (err) {
-      details.wal = { error: err.message };
+      details.wal = { bytes: fs.statSync(`${this.dbPath}-wal`).size };
+    } catch {
+      details.wal = { bytes: 0 };
     }
 
     return { ok: details.status === 'ok', details };
+  }
+
+  /** Start one scan when the last is too old and none is running. Returns its promise, or null. */
+  _startIntegrityScan(now = Date.now()) {
+    const every = integrityScanEveryMs();
+    // A worker stuck in a read cannot be stopped from outside. While one is
+    // alive, start no other: each would hang the same way and stay for good.
+    if (!every || this._integrityRun || this._integrityStuck) return null;
+    const last = this._integrity;
+    const retry = last && (last.integrity === 'error' || last.integrity === 'unknown');
+    const wait = retry ? Math.min(every, INTEGRITY_RETRY_MS) : every;
+    if (last && now - last.at <= wait) return null;
+    this._integrityRun = this.scanIntegrity(now).then((scan) => {
+      this._integrityRun = null;
+      // A scan of a file that was closed meanwhile says nothing about the next one.
+      if (this.db && this.db.open) this._integrity = scan;
+      return scan;
+    });
+    return this._integrityRun;
+  }
+
+  /**
+   * One full scan, in a worker thread on its own read-only connection.
+   * Resolves to { at, integrity, integrityErrors?, integrityError? }; never rejects.
+   * The second argument is for tests: another worker file, a shorter timeout.
+   */
+  scanIntegrity(now = Date.now(), { workerFile = INTEGRITY_WORKER, timeoutMs = INTEGRITY_TIMEOUT_MS } = {}) {
+    const started = Date.now();
+    return new Promise((resolve) => {
+      let settled = false;
+      const done = (scan) => {
+        if (settled) return;
+        settled = true;
+        const took = Date.now() - started;
+        if (took > 500 || scan.integrity !== 'ok') {
+          console.log(`[DB] Integrity scan: ${scan.integrity} in ${took} ms, off the main thread.${scan.integrityError ? ` ${scan.integrityError}` : ''}`);
+        }
+        // Dated when it settled, on the caller's clock. Dated at its start, a
+        // scan that timed out would already be due again the moment it ended.
+        resolve({ at: now + took, ...scan });
+      };
+      let worker;
+      try {
+        worker = new Worker(workerFile, { workerData: { file: this.dbPath } });
+      } catch (err) {
+        return done({ integrity: 'unknown', integrityError: `the scan could not start: ${err.message}` });
+      }
+      const timer = setTimeout(() => {
+        // terminate() cannot end a thread blocked inside a read, so the
+        // worker may outlive this. It is remembered until it does exit.
+        this._integrityStuck = worker;
+        done({ integrity: 'unknown', integrityError: `the scan gave no answer in ${Math.round(timeoutMs / 1000)} s; no new scan starts until it ends` });
+        worker.terminate().catch(() => { });
+      }, timeoutMs);
+      timer.unref();
+      worker.once('message', (msg) => {
+        clearTimeout(timer);
+        if (msg && msg.error) {
+          // A file too damaged to walk makes quick_check throw, not return rows.
+          if (/^SQLITE_(CORRUPT|NOTADB)/.test(String(msg.code || ''))) return done({ integrity: 'corrupt', integrityErrors: [msg.error] });
+          return done({ integrity: 'error', integrityError: msg.error });
+        }
+        const rows = (msg && msg.rows) || [];
+        if (rows.length === 1 && rows[0] === 'ok') return done({ integrity: 'ok' });
+        done({ integrity: 'corrupt', integrityErrors: rows });
+      });
+      worker.once('error', (err) => { clearTimeout(timer); done({ integrity: 'unknown', integrityError: `the scan worker failed: ${err.message}` }); });
+      worker.once('exit', (code) => {
+        clearTimeout(timer);
+        if (this._integrityStuck === worker) this._integrityStuck = null;
+        done({ integrity: 'unknown', integrityError: `the scan worker exited with code ${code} and no result` });
+      });
+      // A scan in flight must not hold a shutdown open.
+      worker.unref();
+    });
   }
 
   close() {
