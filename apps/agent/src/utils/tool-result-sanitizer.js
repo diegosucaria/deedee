@@ -321,18 +321,28 @@ function sanitizeCalendarResult(result) {
 
 const MAX_CALENDAR_DESCRIPTION_CHARS = 200;
 
+// Every field a calendarList entry can hold. An event holds others (start,
+// end, status, attendees...), which is how a masked list is told apart.
+const CALENDAR_ENTRY_KEYS = new Set([
+    'kind', 'etag', 'id', 'summary', 'summaryOverride', 'description', 'location', 'timeZone',
+    'colorId', 'backgroundColor', 'foregroundColor', 'hidden', 'selected', 'deleted', 'primary',
+    'accessRole', 'defaultReminders', 'notificationSettings', 'conferenceProperties', 'dataOwner',
+]);
+
 /**
  * calendarList.list: the account's calendars, not events. An events response
- * carries accessRole at its top level too, so go by the kind, or by entries
- * that each hold an access role and no start.
+ * carries accessRole at its top level too, so go by the kind. A fields mask
+ * can remove the kind: then go by the entries, which must each hold an id or
+ * an access role and nothing an event alone would hold. So a masked events
+ * list that kept `end` or `status` is still cleaned as events.
  */
 function isCalendarListing(obj) {
     if (!obj || !Array.isArray(obj.items)) return false;
     if (obj.kind === 'calendar#calendarList') return true;
     if (obj.kind) return false;
-    // A fields mask can remove the kind, and the access role with it. What
-    // is left of an entry then is an id and no start: keep the id either way.
-    return obj.items.length > 0 && obj.items.every(c => c && typeof c === 'object' && (c.accessRole || c.id) && !c.start);
+    return obj.items.length > 0 && obj.items.every(c =>
+        c && typeof c === 'object' && !Array.isArray(c) && (c.accessRole || c.id) &&
+        Object.keys(c).every(k => CALENDAR_ENTRY_KEYS.has(k)));
 }
 
 /** The id is the point: events.list needs it, and a shared calendar's id is not its name. */
@@ -848,6 +858,8 @@ function sanitizeToolArgs(toolName, args) {
                 } catch {
                     return args;
                 }
+                // "[]", "5", "null": not parameters. Leave the call alone too.
+                if (!params || typeof params !== 'object' || Array.isArray(params)) return args;
             }
             cleaned.params = params && typeof params === 'object' && !Array.isArray(params)
                 ? { ...params }

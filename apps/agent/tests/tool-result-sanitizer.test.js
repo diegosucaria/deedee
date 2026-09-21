@@ -1059,6 +1059,15 @@ describe('Tool Result Sanitizer', () => {
             expect(out.items).toEqual([{ id: 'abc123@group.calendar.google.com', summary: 'Team holidays' }, { id: 'def456@group.calendar.google.com' }]);
         });
 
+        test('a masked EVENTS list is not taken for calendars: what the mask kept of each event stays', () => {
+            // fields=items(id,summary,end) strips the kind and the start. Taken for calendars, `end` was lost.
+            const masked = { items: [{ id: 'e1', summary: 'Standup', end: { dateTime: '2026-09-22T10:00:00Z' } }] };
+            expect(sanitizeToolResult('work_calendar', masked).items[0].end).toBe('2026-09-22T10:00:00Z');
+            // fields=items(id,status): a cancelled one-off has no start at all.
+            const cancelled = sanitizeToolResult('work_calendar', { items: [{ id: 'e2', status: 'cancelled' }] });
+            expect(cancelled.items[0].status).toBe('cancelled');
+        });
+
         test('a deleted or hidden calendar says so', () => {
             const out = JSON.parse(sanitizeToolResult('work_calendar', { output: JSON.stringify(listing([{ ...shared, deleted: true }, { ...own, hidden: true }])) }).output);
             expect(out.items[0].deleted).toBe(true);
@@ -1141,6 +1150,13 @@ describe('Tool Result Sanitizer', () => {
         test('string params that will not parse leave the call alone', () => {
             const args = { resource: 'events', method: 'list', params: '{calendarId: primary' };
             expect(sanitizeToolArgs('work_calendar', args)).toBe(args);
+        });
+
+        test('string params that parse to something other than an object leave the call alone too', () => {
+            for (const junk of ['[]', 'null', '5', '"x"']) {
+                const args = { resource: 'events', method: 'list', params: junk };
+                expect(sanitizeToolArgs('work_calendar', args)).toBe(args);
+            }
         });
 
         test('a second page gets the same defaults as the first, so both ask the same question', () => {
