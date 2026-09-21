@@ -3517,30 +3517,79 @@ class AgentDB {
    * Job executions use chat_id like 'scheduled_{name}' or 'system_{name}'.
    * We match by job_name from job_logs and correlate with token_usage timestamps.
    */
+  /** When a job log's run began and ended, in ms. The row is written when the run ends. */
+  _jobRunWindow(log) {
+    const text = String(log?.timestamp || '');
+    const end = Date.parse(/[zZ]$|[+-]\d\d:?\d\d$/.test(text) ? text : `${text.replace(' ', 'T')}Z`);
+    if (!Number.isFinite(end)) return null;
+    // CURRENT_TIMESTAMP has whole seconds, so allow for the cut-off part.
+    return { start: end - (log.duration_ms || 0) - 2000, end: end + 1000 };
+  }
+
+  /**
+   * Where a job run's messages are, for the link in Job History, or null.
+   *
+   * A run writes to its own chat, `scheduled_<name>_<ms>` or
+   * `system_<name>_<ms>`, with the ms taken as the run began. Thirteen-digit
+   * numbers sort as text the way they sort as numbers, so the range below is
+   * one seek in idx_messages_chat_time per prefix. A job that reports into a
+   * chat of its own (`targetChatId`) has no such chat: its link is that chat,
+   * from the moment the run began.
+   * @returns {{ chatId: string, since?: string } | null}
+   */
+  getJobRunHistory(log) {
+    const window = this._jobRunWindow(log);
+    if (!window || !log.job_name) return null;
+    for (const prefix of [`scheduled_${log.job_name}_`, `system_${log.job_name}_`]) {
+      const row = this.db.prepare(
+        'SELECT chat_id FROM messages WHERE chat_id >= ? AND chat_id <= ? ORDER BY chat_id DESC LIMIT 1'
+      ).get(`${prefix}${window.start}`, `${prefix}${window.end}`);
+      if (row && /^\d{13}$/.test(row.chat_id.slice(prefix.length))) return { chatId: row.chat_id };
+    }
+    try {
+      const job = this.db.prepare('SELECT payload FROM scheduled_jobs WHERE name = ?').get(log.job_name);
+      const target = job?.payload ? JSON.parse(job.payload)?.targetChatId : null;
+      if (target) {
+        const since = new Date(window.start).toISOString();
+        const until = new Date(window.end).toISOString();
+        const hit = this.db.prepare('SELECT 1 FROM messages WHERE chat_id = ? AND timestamp >= ? AND timestamp <= ? LIMIT 1').get(String(target), since, until);
+        if (hit) return { chatId: String(target), since };
+      }
+    } catch { /* a payload that does not parse has no target chat */ }
+    return null;
+  }
+
   getJobRunCost(jobLogId) {
     const log = this.db.prepare('SELECT * FROM job_logs WHERE id = ?').get(jobLogId);
     if (!log) return { totalCost: 0, totalTokens: 0, callCount: 0 };
 
-    // Match token_usage by chat_id and time window.
-    // Scheduler generates chat_ids like 'scheduled_{name}_{epoch}' or 'system_{name}_{epoch}'.
-    // We use GLOB with a digit-only suffix to prevent job 'foo' from matching 'foo_bar'.
-    const scheduledGlob = `scheduled_${log.job_name}_[0-9]*`;
-    const systemGlob = `system_${log.job_name}_[0-9]*`;
-    const durationMs = log.duration_ms || 60000; // fallback 1 min
-    const startTime = log.timestamp;
-    // End time = start + duration + small buffer
-    const endBufferSec = Math.ceil(durationMs / 1000) + 5;
-
-    const row = this.db.prepare(`
-      SELECT
-        SUM(estimated_cost) as total_cost,
-        SUM(total_tokens) as total_tokens,
-        COUNT(*) as call_count
-      FROM token_usage
-      WHERE (chat_id GLOB ? OR chat_id GLOB ?)
-        AND timestamp >= datetime(?, '-2 seconds')
-        AND timestamp <= datetime(?, '+' || ? || ' seconds')
-    `).get(scheduledGlob, systemGlob, startTime, startTime, endBufferSec);
+    // The run's own chat, plus the sub-agents it spawned: they spend under
+    // `subagent-<id>`, and for a briefing that is most of the bill.
+    const run = this.getJobRunHistory(log);
+    let row = null;
+    if (run && !run.since) {
+      row = this.db.prepare(`
+        SELECT SUM(estimated_cost) as total_cost, SUM(total_tokens) as total_tokens, COUNT(*) as call_count
+        FROM token_usage
+        WHERE chat_id = ?
+           OR chat_id IN (SELECT 'subagent-' || id FROM subagents WHERE parent_chat_id = ?)
+      `).get(run.chatId, run.chatId);
+    } else {
+      // No chat to go by (its messages were cleaned up): match by name and
+      // time. The row is written when the run ENDS. This used to count from
+      // the row's time forward, so it caught the last call of a run at most:
+      // on the device, 40 runs showed $0.15 where they had cost $1.52.
+      const window = this._jobRunWindow(log);
+      if (window) {
+        row = this.db.prepare(`
+          SELECT SUM(estimated_cost) as total_cost, SUM(total_tokens) as total_tokens, COUNT(*) as call_count
+          FROM token_usage
+          WHERE (chat_id GLOB ? OR chat_id GLOB ?)
+            AND timestamp >= datetime(?, 'unixepoch')
+            AND timestamp <= datetime(?, 'unixepoch')
+        `).get(`scheduled_${log.job_name}_[0-9]*`, `system_${log.job_name}_[0-9]*`, Math.floor(window.start / 1000), Math.ceil(window.end / 1000));
+      }
+    }
 
     return {
       totalCost: row?.total_cost || 0,

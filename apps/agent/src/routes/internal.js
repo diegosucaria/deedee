@@ -920,12 +920,14 @@ function createInternalRouter(agent) {
             const { search, status } = req.query;
             const result = agent.db.getJobLogs(limit, offset, { search, status });
 
-            // Enrich with cost data
+            // Enrich with cost data, and with where the run's messages are:
+            // { chatId, since? } or null (a job that ran no model has none).
             const costs = agent.db.getJobLogCosts(result.logs.map(l => l.id));
             result.logs = result.logs.map(l => ({
                 ...l,
                 cost: costs[l.id]?.totalCost || 0,
-                tokens: costs[l.id]?.totalTokens || 0
+                tokens: costs[l.id]?.totalTokens || 0,
+                history: agent.db.getJobRunHistory(l)
             }));
 
             res.json(result);

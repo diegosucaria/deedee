@@ -1,10 +1,12 @@
 'use client';
 
 import { useState, useEffect, useRef, useCallback } from 'react';
+import Link from 'next/link';
 import { getJobLogs, deleteJobLogs } from '@/app/actions';
-import { Clock, CheckCircle, XCircle, RefreshCw, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Clock, CheckCircle, XCircle, RefreshCw, ChevronLeft, ChevronRight, ScrollText } from 'lucide-react';
 import LogContent from './LogContent';
 import { useSocket } from '@/hooks/useSocket';
+import { jobHistoryHref } from '@/lib/job-history';
 
 
 
@@ -215,7 +217,20 @@ export default function JobLogsTable({ initialSearch = '' } = {}) {
                                         )}
                                     </td>
                                     <td className="px-6 py-4 align-top font-mono text-zinc-300 text-xs">
-                                        {log.job_name}
+                                        {/* The run's own messages: every tool call and result. A job
+                                            that ran no model (a backup, a direct reminder) has none. */}
+                                        {jobHistoryHref(log.history) ? (
+                                            <Link
+                                                href={jobHistoryHref(log.history)}
+                                                title="Open this run's messages: every tool call and result"
+                                                className="group/run inline-flex items-start gap-1.5 text-indigo-300 hover:text-indigo-200 hover:underline"
+                                            >
+                                                <span className="break-all">{log.job_name}</span>
+                                                <ScrollText className="w-3.5 h-3.5 shrink-0 mt-px opacity-60 group-hover/run:opacity-100" />
+                                            </Link>
+                                        ) : (
+                                            <span className="break-all" title="This run wrote no messages">{log.job_name}</span>
+                                        )}
                                     </td>
                                     <td className="px-6 py-4 align-top max-w-xl">
                                         <LogContent content={log.output} />
