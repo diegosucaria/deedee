@@ -3532,7 +3532,10 @@ class AgentDB {
     const end = Date.parse(/[zZ]$|[+-]\d\d:?\d\d$/.test(text) ? text : `${text.replace(' ', 'T')}Z`);
     if (!Number.isFinite(end)) return null;
     // CURRENT_TIMESTAMP has whole seconds, so allow for the cut-off part.
-    return { start: end - (log.duration_ms || 0) - 2000, end: end + 1000 };
+    // `began` is the earliest the run can have begun if the clocks agree; the
+    // two seconds under it are slack for when they do not.
+    const began = end - (log.duration_ms || 0);
+    return { start: began - 2000, began, end: end + 1000 };
   }
 
   /**
@@ -3556,7 +3559,10 @@ class AgentDB {
         'SELECT DISTINCT chat_id FROM messages WHERE chat_id >= ? AND chat_id <= ? ORDER BY chat_id ASC LIMIT 5'
       ).all(`${prefix}${window.start}`, `${prefix}${window.end}`);
       // The digits-only check keeps job "check" away from job "check_<digits>_x".
-      const own = rows.find(r => /^\d{13}$/.test(r.chat_id.slice(prefix.length)));
+      const chats = rows.filter(r => /^\d{13}$/.test(r.chat_id.slice(prefix.length)));
+      // A chat from inside the slack belongs to a run that began a moment
+      // earlier, when there is one that began at or after this run did.
+      const own = chats.find(r => Number(r.chat_id.slice(prefix.length)) >= window.began) || chats[0];
       if (own) return { chatId: own.chat_id };
     }
     try {

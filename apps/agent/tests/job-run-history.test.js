@@ -72,6 +72,22 @@ describe('a job log finds its run', () => {
             }
         });
 
+        test('two runs that began a second apart each get their own chat', () => {
+            // The two seconds of slack under a run's start would reach the earlier run's chat.
+            const a = END - 60000;
+            const b = a + 1000;
+            say(`scheduled_dup_${a + 5}`, a + 100);
+            say(`scheduled_dup_${b + 5}`, b + 100);
+            expect(db.getJobRunHistory(logRun('dup', { endMs: a + 30000, durationMs: 30000 }))).toEqual({ chatId: `scheduled_dup_${a + 5}` });
+            expect(db.getJobRunHistory(logRun('dup', { endMs: b + 30000, durationMs: 30000 }))).toEqual({ chatId: `scheduled_dup_${b + 5}` });
+        });
+
+        test('a chat stamped just under the run\'s start is still found when it is the only one (clocks that disagree)', () => {
+            const start = END - 60000;
+            say(`scheduled_skew_${start - 900}`, start);
+            expect(db.getJobRunHistory(logRun('skew'))).toEqual({ chatId: `scheduled_skew_${start - 900}` });
+        });
+
         test('a chat id that only looks like this job\'s is passed over, and the real one behind it is found', () => {
             const start = END - 60000;
             say(`scheduled_check_${start + 5}_of_another_job`, start + 100);
