@@ -45,11 +45,13 @@ Strips verbose Google Calendar API metadata.
 
 | Kept | Stripped |
 |------|---------|
-| summary, start (flattened), end (flattened) | id, etag, iCalUID, htmlLink, kind, sequence |
+| summary, start (flattened), end (flattened), id | etag, iCalUID, htmlLink, kind, sequence |
 | location, description (500 chars) | creator, organizer metadata, reminders |
 | attendees (name, email, responseStatus; max 10) | attachments, extendedProperties |
 | meetingLink | Full conferenceData blob, recurringEventId |
 | status (only if not "confirmed") | Calendar-level summary (email) |
+
+The event `id` is kept since 2026-09-21: `events.get`, `patch` and `delete` ask for it, so without it a listed meeting could be read and never moved or cancelled. It adds about 8% to a week's list. `recurringEventId` stays out: one instance of a series carries the series id inside its own (`<series>_<time>`).
 
 The list of calendars (`calendarList.list`) is cleaned on its own: each entry keeps `id`, `summary` (the owner's own name for it when he set one), `primary`, `accessRole`, `timeZone`, a short `description`, and `deleted` or `hidden` when set; colours, reminders and notification settings go. It used to pass through the events branch, which kept a calendar's name and dropped its `id`, so a shared calendar could not be read: its id is not its name.
 

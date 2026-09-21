@@ -298,7 +298,7 @@ function isCalendarTool(toolName) {
 /**
  * Sanitize a Google Calendar tool result.
  * Strips attendee metadata, etags, iCalUIDs, htmlLinks, attachments, etc.
- * Keeps: summary, start, end, location, attendees (name+email), description (truncated), status.
+ * Keeps: summary, start, end, id, location, attendees (name+email), description (truncated), status.
  */
 function sanitizeCalendarResult(result) {
     // GWS MCP wraps results as { output: "JSON string" }
@@ -405,6 +405,12 @@ function extractCleanEvent(event) {
         start: flattenDateTime(event.start),
         end: flattenDateTime(event.end),
     };
+
+    // The id is what events.get, patch and delete ask for: without it a listed
+    // meeting can be read and never moved or cancelled. One instance of a
+    // series carries the series id inside its own (`<series>_<time>`), so
+    // recurringEventId stays out.
+    if (event.id) clean.id = event.id;
 
     // Only include status if it's NOT confirmed (the default)
     if (event.status && event.status !== 'confirmed') {

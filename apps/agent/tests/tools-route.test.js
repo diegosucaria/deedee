@@ -247,12 +247,12 @@ describe('POST /tools/execute', () => {
             expect(review.mock.calls[0][0].args).toEqual(args);
         });
 
-        test('an event comes back cleaned: no etag, no links, the title and times kept', async () => {
+        test('an event comes back cleaned: no etag, no links; the title, the times and the id kept', async () => {
             const event = { kind: 'calendar#event', etag: '"1"', id: 'e1', htmlLink: 'https://example.com/e1', iCalUID: 'u1', summary: 'Standup', start: { dateTime: '2026-04-29T10:00:00Z' }, end: { dateTime: '2026-04-29T10:15:00Z' }, organizer: { email: 'user@example.com', self: true } };
             agent.toolExecutor.execute.mockResolvedValue({ output: JSON.stringify({ kind: 'calendar#events', items: [event] }) });
             const res = await request(app).post('/tools/execute').send({ name: 'work_calendar', args: { resource: 'events', method: 'list', params: { ...range } } });
             const items = JSON.parse(res.body.result.output).items;
-            expect(items).toEqual([{ summary: 'Standup', start: '2026-04-29T10:00:00Z', end: '2026-04-29T10:15:00Z' }]);
+            expect(items).toEqual([{ summary: 'Standup', start: '2026-04-29T10:00:00Z', end: '2026-04-29T10:15:00Z', id: 'e1' }]);
         });
 
         test('an oversized result is cut and says so', async () => {

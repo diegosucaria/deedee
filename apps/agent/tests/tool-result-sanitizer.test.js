@@ -355,8 +355,10 @@ describe('Tool Result Sanitizer', () => {
             expect(item.end).toBe('2026-03-11T08:00:00-03:00');
         });
 
-        it('should omit confirmed status and strip id/recurringEventId', () => {
-            const event = makeCalendarEvent();
+        it('should omit confirmed status, keep the id and strip recurringEventId', () => {
+            // Without the id a listed meeting can be read and never moved or
+            // cancelled: events.get, patch and delete all ask for it.
+            const event = { ...makeCalendarEvent(), id: 'series1_20260311T100000Z', recurringEventId: 'series1' };
             const result = { output: JSON.stringify(makeCalendarResponse([event])) };
 
             const cleaned = sanitizeToolResult('work_calendar', result);
@@ -364,7 +366,14 @@ describe('Tool Result Sanitizer', () => {
             const item = parsed.items[0];
 
             expect(item.status).toBeUndefined();
-            expect(item.id).toBeUndefined();
+            expect(item.id).toBe('series1_20260311T100000Z');
+            expect(item.recurringEventId).toBeUndefined();
+        });
+
+        it('an event with no id gains none', () => {
+            const { id, ...event } = makeCalendarEvent();
+            const parsed = JSON.parse(sanitizeToolResult('work_calendar', { output: JSON.stringify(makeCalendarResponse([event])) }).output);
+            expect('id' in parsed.items[0]).toBe(false);
         });
 
         it('should strip attachments', () => {
@@ -448,8 +457,9 @@ describe('Tool Result Sanitizer', () => {
             // Attendees capped at 10 (from 20)
             expect(parsed.items[0].attendees).toHaveLength(10);
             expect(parsed.items[0].attendeesOmitted).toBe(10);
-            // id and recurringEventId are stripped
-            expect(parsed.items[0].id).toBeUndefined();
+            // The id stays (a meeting can then be moved or cancelled); recurringEventId goes.
+            expect(parsed.items[0].id).toBeDefined();
+            expect(parsed.items[0].recurringEventId).toBeUndefined();
         });
     });
 
@@ -1078,7 +1088,7 @@ describe('Tool Result Sanitizer', () => {
         test('an events response is still cleaned as events: it holds accessRole at the top too', () => {
             const out = JSON.parse(sanitizeToolResult('work_calendar', { output: JSON.stringify(makeCalendarResponse([makeCalendarEvent({})])) }).output);
             expect(out.items[0].start).toBeDefined();
-            expect(out.items[0].id).toBeUndefined();
+            expect(out.items[0].accessRole).toBeUndefined();
         });
 
         test('an empty events response is not taken for a listing', () => {
