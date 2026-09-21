@@ -80,19 +80,21 @@ class Scheduler {
 
                 // Execute immediately
                 (async () => {
+                    // The duration is how Job History finds the run's messages and cost.
+                    const start = Date.now();
                     try {
                         console.log(`[Scheduler] Immediate execution of '${name}'...`);
                         const result = await callback();
                         // Log success
                         if (this.agent.db) {
                             let output = result ? (typeof result === 'object' ? JSON.stringify(result) : String(result)) : null;
-                            this.agent.db.logJobExecution(name, 'success', output, 0);
+                            this.agent.db.logJobExecution(name, 'success', output, Date.now() - start);
                             this.agent.interface?.broadcast('joblog:update', { jobName: name, status: 'success' });
                         }
                     } catch (err) {
                         console.error(`[Scheduler] Immediate job '${name}' failed:`, err);
                         if (this.agent.db) {
-                            this.agent.db.logJobExecution(name, 'failure', err.message, 0);
+                            this.agent.db.logJobExecution(name, 'failure', err.message, Date.now() - start);
                             this.agent.interface?.broadcast('joblog:update', { jobName: name, status: 'failure' });
                         }
                     } finally {
