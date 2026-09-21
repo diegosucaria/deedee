@@ -63,6 +63,23 @@ describe('a job log finds its run', () => {
             expect(db.getJobRunHistory(logRun('hourly', { durationMs: 21000 }))).toEqual({ chatId: `scheduled_hourly_${END - 20000}` });
         });
 
+        test('runs of one job that overlap each get their own chat: the first one in the window', () => {
+            // Every minute, three minutes each. A = 10:00 to 10:03, B = 10:01 to 10:04, C = 10:02 to 10:05.
+            const at = (min) => Date.parse(`2026-09-21T10:0${min}:00Z`);
+            for (const min of [0, 1, 2]) say(`scheduled_poll_${at(min) + 15}`, at(min) + 500);
+            for (const min of [0, 1, 2]) {
+                expect(db.getJobRunHistory(logRun('poll', { endMs: at(min + 3), durationMs: 180000 }))).toEqual({ chatId: `scheduled_poll_${at(min) + 15}` });
+            }
+        });
+
+        test('a chat id that only looks like this job\'s is passed over, and the real one behind it is found', () => {
+            const start = END - 60000;
+            say(`scheduled_check_${start + 5}_of_another_job`, start + 100);
+            expect(db.getJobRunHistory(logRun('check'))).toBeNull();
+            say(`scheduled_check_${start + 900}`, start + 1000);
+            expect(db.getJobRunHistory(logRun('check'))).toEqual({ chatId: `scheduled_check_${start + 900}` });
+        });
+
         test('a job whose name starts another job\'s name never takes its chat', () => {
             say(`scheduled_check_mail_${END - 30000}`, END - 29000);
             expect(db.getJobRunHistory(logRun('check'))).toBeNull();
@@ -84,12 +101,32 @@ describe('a job log finds its run', () => {
             const hit = db.getJobRunHistory(logRun('standup_nudge'));
             expect(hit.chatId).toBe('100000000000001@g.us');
             expect(Date.parse(hit.since)).toBe(END - 60000 - 2000);
+            // Both ends: without the second, an old run opens on today's messages.
+            expect(Date.parse(hit.until)).toBe(END + 1000);
         });
 
         test('a row with no usable time, or no name, has no history', () => {
             expect(db.getJobRunHistory({ job_name: 'x', timestamp: 'not a date', duration_ms: 10 })).toBeNull();
             expect(db.getJobRunHistory({ job_name: '', timestamp: sqlTime(END), duration_ms: 10 })).toBeNull();
             expect(db.getJobRunHistory(null)).toBeNull();
+        });
+    });
+
+    describe('the history a link opens', () => {
+        test('order=asc in lowercase, as the page sends it, reads oldest first', () => {
+            say('c-order', END - 3000, 'first');
+            say('c-order', END - 2000, 'second');
+            say('c-order', END - 1000, 'third');
+            expect(db.getHistory({ chatId: 'c-order', order: 'asc' }).map(r => r.content)).toEqual(['first', 'second', 'third']);
+            expect(db.getHistory({ chatId: 'c-order', order: 'ASC' }).map(r => r.content)).toEqual(['first', 'second', 'third']);
+            expect(db.getHistory({ chatId: 'c-order' }).map(r => r.content)).toEqual(['third', 'second', 'first']);
+        });
+
+        test('since and until fence an old run off from today\'s messages', () => {
+            say('c-busy', END - 30000, 'the run');
+            for (let i = 0; i < 5; i++) say('c-busy', END + 86400000 + i, `today ${i}`);
+            const rows = db.getHistory({ chatId: 'c-busy', since: new Date(END - 62000).toISOString(), until: new Date(END + 1000).toISOString(), order: 'asc' });
+            expect(rows.map(r => r.content)).toEqual(['the run']);
         });
     });
 
@@ -110,6 +147,41 @@ describe('a job log finds its run', () => {
             const cost = db.getJobRunCost(logRun('morning_briefing', { durationMs: 76000 }).id);
             expect(cost.totalCost).toBeCloseTo(0.20, 6);
             expect(cost.callCount).toBe(4);
+        });
+
+        test('sub-agents of sub-agents count too', () => {
+            const start = END - 60000;
+            const chat = `scheduled_research_${start + 10}`;
+            say(chat, start + 100);
+            spend(chat, 0.06, start + 1000);
+            db.createSubAgent({ id: 'top', parentChatId: chat, task: 't', model: 'FLASH' });
+            db.createSubAgent({ id: 'mid', parentChatId: 'subagent-top', task: 't', model: 'FLASH' });
+            db.createSubAgent({ id: 'leaf', parentChatId: 'subagent-mid', task: 't', model: 'FLASH' });
+            spend('subagent-top', 0.10, start + 5000);
+            spend('subagent-mid', 0.10, start + 9000);
+            spend('subagent-leaf', 0.10, start + 12000);
+            expect(db.getJobRunCost(logRun('research').id).totalCost).toBeCloseTo(0.36, 6);
+        });
+
+        test('a job that reports into one of the owner\'s chats is priced from that chat, inside the run only', () => {
+            const start = END - 60000;
+            const chat = '100000000000001@g.us';
+            db.saveScheduledJob({ name: 'standup_nudge', cronExpression: '0 9 * * 1-5', taskType: 'agent_instruction', payload: { task: 'x', targetChatId: chat } });
+            say(chat, start + 500, 'the run');
+            spend(chat, 0.30, start + 2000);
+            spend(chat, 0.12, END - 4000);
+            // The owner's own turns in that chat, before and after the run.
+            spend(chat, 0.80, start - 3600000);
+            spend(chat, 0.70, END + 3600000);
+            // A sub-agent of the run, and one from an ordinary turn an hour earlier.
+            db.createSubAgent({ id: 'mine', parentChatId: chat, task: 't', model: 'FLASH', createdAt: new Date(start + 3000).toISOString() });
+            db.createSubAgent({ id: 'earlier', parentChatId: chat, task: 't', model: 'FLASH', createdAt: new Date(start - 3600000).toISOString() });
+            spend('subagent-mine', 0.05, start + 8000);
+            spend('subagent-earlier', 0.40, start - 3500000);
+
+            const cost = db.getJobRunCost(logRun('standup_nudge').id);
+            expect(cost.totalCost).toBeCloseTo(0.47, 6);
+            expect(cost.callCount).toBe(3);
         });
 
         test('with the run\'s messages gone, the match is by name and time, counted back from the end', () => {

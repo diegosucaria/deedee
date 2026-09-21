@@ -16,6 +16,7 @@ export default async function HistoryPage({ searchParams }) {
 
     const limit = searchParams.limit || 100;
     const since = searchParams.since;
+    const until = searchParams.until;
     const order = searchParams.order || 'desc';
     const chatId = searchParams.chatId;
     const source = searchParams.source || '';
@@ -24,6 +25,7 @@ export default async function HistoryPage({ searchParams }) {
         if (view === 'messages') {
             const query = new URLSearchParams({ limit, order });
             if (since) query.append('since', since);
+            if (until) query.append('until', until);
             if (chatId) query.append('chatId', chatId);
             if (source) query.append('source', source);
 

@@ -710,6 +710,14 @@ class AgentDB {
       this.db.exec("ALTER TABLE messages ADD COLUMN parts TEXT");
     } catch (err) { }
 
+    // Job History prices each row from its run's chat and the sub-agents under
+    // it. Without these, every row scanned both tables: 729 ms for a page of
+    // 100 rows against 0.5 ms with them, measured on a copy of realistic size.
+    try {
+      this.db.exec("CREATE INDEX IF NOT EXISTS idx_token_usage_chat ON token_usage(chat_id)");
+      this.db.exec("CREATE INDEX IF NOT EXISTS idx_subagents_parent ON subagents(parent_chat_id)");
+    } catch (err) { }
+
     // Migration: Add estimated_cost to token_usage
     try {
       this.db.exec("ALTER TABLE token_usage ADD COLUMN estimated_cost REAL");
@@ -1641,7 +1649,8 @@ class AgentDB {
       query += ' WHERE ' + conditions.join(' AND ');
     }
 
-    query += ` ORDER BY m.timestamp ${order === 'ASC' ? 'ASC' : 'DESC'} LIMIT ?`;
+    // The history page sends 'asc' in lowercase; it used to be read as DESC.
+    query += ` ORDER BY m.timestamp ${String(order).toUpperCase() === 'ASC' ? 'ASC' : 'DESC'} LIMIT ?`;
     params.push(limit);
 
     const stmt = this.db.prepare(query);
@@ -3532,19 +3541,23 @@ class AgentDB {
    * A run writes to its own chat, `scheduled_<name>_<ms>` or
    * `system_<name>_<ms>`, with the ms taken as the run began. Thirteen-digit
    * numbers sort as text the way they sort as numbers, so the range below is
-   * one seek in idx_messages_chat_time per prefix. A job that reports into a
-   * chat of its own (`targetChatId`) has no such chat: its link is that chat,
-   * from the moment the run began.
-   * @returns {{ chatId: string, since?: string } | null}
+   * one seek in idx_messages_chat_time per prefix. The run's own chat is the
+   * FIRST one in its window: when runs of one job overlap, the later chats
+   * belong to the later runs. A job that reports into a chat of its own
+   * (`targetChatId`) has no such chat: its link is that chat, between the
+   * moment the run began and the moment it ended.
+   * @returns {{ chatId: string, since?: string, until?: string } | null}
    */
   getJobRunHistory(log) {
     const window = this._jobRunWindow(log);
     if (!window || !log.job_name) return null;
     for (const prefix of [`scheduled_${log.job_name}_`, `system_${log.job_name}_`]) {
-      const row = this.db.prepare(
-        'SELECT chat_id FROM messages WHERE chat_id >= ? AND chat_id <= ? ORDER BY chat_id DESC LIMIT 1'
-      ).get(`${prefix}${window.start}`, `${prefix}${window.end}`);
-      if (row && /^\d{13}$/.test(row.chat_id.slice(prefix.length))) return { chatId: row.chat_id };
+      const rows = this.db.prepare(
+        'SELECT DISTINCT chat_id FROM messages WHERE chat_id >= ? AND chat_id <= ? ORDER BY chat_id ASC LIMIT 5'
+      ).all(`${prefix}${window.start}`, `${prefix}${window.end}`);
+      // The digits-only check keeps job "check" away from job "check_<digits>_x".
+      const own = rows.find(r => /^\d{13}$/.test(r.chat_id.slice(prefix.length)));
+      if (own) return { chatId: own.chat_id };
     }
     try {
       const job = this.db.prepare('SELECT payload FROM scheduled_jobs WHERE name = ?').get(log.job_name);
@@ -3553,7 +3566,7 @@ class AgentDB {
         const since = new Date(window.start).toISOString();
         const until = new Date(window.end).toISOString();
         const hit = this.db.prepare('SELECT 1 FROM messages WHERE chat_id = ? AND timestamp >= ? AND timestamp <= ? LIMIT 1').get(String(target), since, until);
-        if (hit) return { chatId: String(target), since };
+        if (hit) return { chatId: String(target), since, until };
       }
     } catch { /* a payload that does not parse has no target chat */ }
     return null;
@@ -3561,34 +3574,55 @@ class AgentDB {
 
   getJobRunCost(jobLogId) {
     const log = this.db.prepare('SELECT * FROM job_logs WHERE id = ?').get(jobLogId);
-    if (!log) return { totalCost: 0, totalTokens: 0, callCount: 0 };
+    const none = { totalCost: 0, totalTokens: 0, callCount: 0 };
+    if (!log) return none;
+    const window = this._jobRunWindow(log);
+    if (!window) return none;
+    const from = Math.floor(window.start / 1000);
+    const to = Math.ceil(window.end / 1000);
 
-    // The run's own chat, plus the sub-agents it spawned: they spend under
-    // `subagent-<id>`, and for a briefing that is most of the bill.
+    // The run's chat, plus every sub-agent under it, however deep: they spend
+    // under `subagent-<id>`, and for a briefing that is most of the bill.
     const run = this.getJobRunHistory(log);
     let row = null;
     if (run && !run.since) {
       row = this.db.prepare(`
+        WITH RECURSIVE tree(chat) AS (
+          SELECT ?
+          UNION
+          SELECT 'subagent-' || s.id FROM subagents s JOIN tree t ON s.parent_chat_id = t.chat
+        )
+        SELECT SUM(estimated_cost) as total_cost, SUM(total_tokens) as total_tokens, COUNT(*) as call_count
+        FROM token_usage WHERE chat_id IN (SELECT chat FROM tree)
+      `).get(run.chatId);
+    } else if (run) {
+      // The run wrote into one of the owner's chats. That chat holds other
+      // turns too, so count only what it spent inside the run's window, and
+      // only the sub-agents that began inside it.
+      row = this.db.prepare(`
+        WITH RECURSIVE tree(chat) AS (
+          SELECT 'subagent-' || s.id FROM subagents s
+            WHERE s.parent_chat_id = ? AND datetime(s.created_at) >= datetime(?, 'unixepoch') AND datetime(s.created_at) <= datetime(?, 'unixepoch')
+          UNION
+          SELECT 'subagent-' || s.id FROM subagents s JOIN tree t ON s.parent_chat_id = t.chat
+        )
         SELECT SUM(estimated_cost) as total_cost, SUM(total_tokens) as total_tokens, COUNT(*) as call_count
         FROM token_usage
-        WHERE chat_id = ?
-           OR chat_id IN (SELECT 'subagent-' || id FROM subagents WHERE parent_chat_id = ?)
-      `).get(run.chatId, run.chatId);
+        WHERE (chat_id = ? AND timestamp >= datetime(?, 'unixepoch') AND timestamp <= datetime(?, 'unixepoch'))
+           OR chat_id IN (SELECT chat FROM tree)
+      `).get(run.chatId, from, to, run.chatId, from, to);
     } else {
       // No chat to go by (its messages were cleaned up): match by name and
       // time. The row is written when the run ENDS. This used to count from
       // the row's time forward, so it caught the last call of a run at most:
       // on the device, 40 runs showed $0.15 where they had cost $1.52.
-      const window = this._jobRunWindow(log);
-      if (window) {
-        row = this.db.prepare(`
-          SELECT SUM(estimated_cost) as total_cost, SUM(total_tokens) as total_tokens, COUNT(*) as call_count
-          FROM token_usage
-          WHERE (chat_id GLOB ? OR chat_id GLOB ?)
-            AND timestamp >= datetime(?, 'unixepoch')
-            AND timestamp <= datetime(?, 'unixepoch')
-        `).get(`scheduled_${log.job_name}_[0-9]*`, `system_${log.job_name}_[0-9]*`, Math.floor(window.start / 1000), Math.ceil(window.end / 1000));
-      }
+      row = this.db.prepare(`
+        SELECT SUM(estimated_cost) as total_cost, SUM(total_tokens) as total_tokens, COUNT(*) as call_count
+        FROM token_usage
+        WHERE (chat_id GLOB ? OR chat_id GLOB ?)
+          AND timestamp >= datetime(?, 'unixepoch')
+          AND timestamp <= datetime(?, 'unixepoch')
+      `).get(`scheduled_${log.job_name}_[0-9]*`, `system_${log.job_name}_[0-9]*`, from, to);
     }
 
     return {
