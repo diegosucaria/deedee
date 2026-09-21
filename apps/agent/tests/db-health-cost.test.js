@@ -1,78 +1,164 @@
 /**
  * GET /health ran PRAGMA quick_check, which walks every page of the file, on
  * every request. better-sqlite3 is synchronous, so on the device each health
- * request blocked the whole agent for about 1.2 seconds, several times a
+ * request blocked the whole agent for 1.2 to 2.0 seconds, several times a
  * minute, and once the file grew the answer came later than the API's
  * one-second wait: the dashboard showed a working agent as down.
+ *
+ * A request now never walks the file. The scan runs in a worker thread.
  */
 const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { AgentDB } = require('../src/db');
 
+const MIN = 60 * 1000;
+
 describe('AgentDB.healthCheck', () => {
     let dir, db, pragma;
 
     beforeEach(() => {
+        delete process.env.HEALTH_INTEGRITY_MINUTES;
         dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deedee-health-'));
         db = new AgentDB(dir);
         pragma = jest.spyOn(db.db, 'pragma');
         jest.spyOn(console, 'log').mockImplementation(() => { });
     });
 
-    afterEach(() => {
+    afterEach(async () => {
+        delete process.env.HEALTH_INTEGRITY_MINUTES;
+        await db._integrityRun;
         jest.restoreAllMocks();
         db.close();
         fs.rmSync(dir, { recursive: true, force: true });
     });
 
-    const scans = () => pragma.mock.calls.filter(c => c[0] === 'quick_check').length;
+    const mainThreadScans = () => pragma.mock.calls.filter(c => /quick_check|integrity_check|wal_checkpoint/.test(String(c[0]))).length;
 
-    test('the first request scans; the ones that follow read its result', () => {
-        const first = db.healthCheck();
-        expect(first).toMatchObject({ ok: true, details: { status: 'ok', connectivity: 'ok', integrity: 'ok' } });
-        expect(first.details.integrityCheckedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
-        expect(scans()).toBe(1);
+    describe('with the real worker', () => {
+        test('the first request says "pending" at once; the scan lands from the worker, never from the main thread', async () => {
+            const first = db.healthCheck();
+            expect(first).toEqual({ ok: true, details: { status: 'ok', connectivity: 'ok', integrity: 'pending', wal: { bytes: expect.any(Number) } } });
 
-        for (let i = 0; i < 20; i++) expect(db.healthCheck().ok).toBe(true);
-        expect(scans()).toBe(1);
-        // The WAL's state comes from the scan too: no checkpoint per request.
-        expect(pragma.mock.calls.filter(c => c[0] === 'wal_checkpoint')).toHaveLength(1);
+            const scan = await db._integrityRun;
+            expect(scan.integrity).toBe('ok');
+            const second = db.healthCheck();
+            expect(second).toMatchObject({ ok: true, details: { status: 'ok', integrity: 'ok' } });
+            expect(second.details.integrityCheckedAt).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+            expect(mainThreadScans()).toBe(0);
+        });
+
+        test('a damaged file is reported', async () => {
+            for (let i = 0; i < 400; i++) db.saveMessage({ role: 'user', content: `row ${i} ${'x'.repeat(400)}`, chatId: 'c1' });
+            db.db.pragma('wal_checkpoint(TRUNCATE)');
+            const pageSize = db.db.pragma('page_size', { simple: true });
+            const pages = db.db.pragma('page_count', { simple: true });
+            const fd = fs.openSync(db.dbPath, 'r+');
+            // Every page after the first few: whatever holds the rows is hit.
+            for (let page = 8; page < pages; page++) fs.writeSync(fd, Buffer.alloc(pageSize, 0xAB), 0, pageSize, page * pageSize);
+            fs.closeSync(fd);
+
+            const scan = await db.scanIntegrity();
+            expect(scan.integrity).not.toBe('ok');
+            expect(scan.integrityErrors || scan.integrityError).toBeTruthy();
+        });
+
+        test('a file that is not there is an error, not a crash', async () => {
+            const gone = Object.assign(Object.create(AgentDB.prototype), { dbPath: path.join(dir, 'missing.db') });
+            const scan = await gone.scanIntegrity();
+            expect(scan).toMatchObject({ integrity: 'error', integrityError: expect.any(String) });
+        });
     });
 
-    test('the scan runs again once its result is half an hour old, or when asked', () => {
-        const t0 = Date.now();
-        db.healthCheck({ now: t0 });
-        db.healthCheck({ now: t0 + 29 * 60 * 1000 });
-        expect(scans()).toBe(1);
-        db.healthCheck({ now: t0 + 31 * 60 * 1000 });
-        expect(scans()).toBe(2);
-        db.healthCheck({ now: t0 + 32 * 60 * 1000, force: true });
-        expect(scans()).toBe(3);
-    });
+    describe('when a scan runs', () => {
+        let results;
+        beforeEach(() => {
+            results = [];
+            jest.spyOn(db, 'scanIntegrity').mockImplementation((now) => Promise.resolve({ at: now, ...(results.shift() || { integrity: 'ok' }) }));
+        });
+        const settle = () => db._integrityRun || Promise.resolve();
+        const scans = () => db.scanIntegrity.mock.calls.length;
 
-    test('a corrupt result is kept and shown until a later scan says otherwise', () => {
-        const t0 = Date.now();
-        pragma.mockImplementationOnce(() => [{ quick_check: '*** in database main ***' }, { quick_check: 'Page 12: btreeInitPage() returns error code 11' }]);
-        const bad = db.healthCheck({ now: t0 });
-        expect(bad.ok).toBe(false);
-        expect(bad.details).toMatchObject({ status: 'corrupt', integrity: 'corrupt' });
-        expect(bad.details.integrityErrors).toHaveLength(2);
-        // Still corrupt a minute later, with no new scan.
-        expect(db.healthCheck({ now: t0 + 60 * 1000 }).details.status).toBe('corrupt');
-        expect(scans()).toBe(1);
-    });
+        test('twenty requests at once start one scan', async () => {
+            for (let i = 0; i < 20; i++) expect(db.healthCheck().ok).toBe(true);
+            expect(scans()).toBe(1);
+            await settle();
+            for (let i = 0; i < 20; i++) expect(db.healthCheck().details.integrity).toBe('ok');
+            expect(scans()).toBe(1);
+        });
 
-    test('every request still proves the database answers', () => {
-        db.healthCheck();
-        const prepare = jest.spyOn(db.db, 'prepare');
-        db.healthCheck();
-        expect(prepare).toHaveBeenCalledWith('SELECT 1');
-    });
+        test('it runs again once its result is half an hour old', async () => {
+            const t0 = Date.now();
+            db.healthCheck({ now: t0 }); await settle();
+            db.healthCheck({ now: t0 + 29 * MIN }); await settle();
+            expect(scans()).toBe(1);
+            db.healthCheck({ now: t0 + 31 * MIN }); await settle();
+            expect(scans()).toBe(2);
+        });
 
-    test('a closed database says so at once', () => {
-        const closed = new AgentDB(fs.mkdtempSync(path.join(os.tmpdir(), 'deedee-health-closed-')));
-        closed.close();
-        expect(closed.healthCheck()).toEqual({ ok: false, details: { status: 'closed' } });
+        test('a corrupt result is kept and shown until a later scan says otherwise', async () => {
+            const t0 = Date.now();
+            results.push({ integrity: 'corrupt', integrityErrors: ['*** in database main ***', 'Page 12: btreeInitPage() returns error code 11'] });
+            db.healthCheck({ now: t0 }); await settle();
+            const bad = db.healthCheck({ now: t0 + 29 * MIN });
+            expect(bad.ok).toBe(false);
+            expect(bad.details).toMatchObject({ status: 'corrupt', integrity: 'corrupt' });
+            expect(bad.details.integrityErrors).toHaveLength(2);
+            expect(scans()).toBe(1);
+            db.healthCheck({ now: t0 + 31 * MIN }); await settle();
+            expect(db.healthCheck({ now: t0 + 32 * MIN }).ok).toBe(true);
+        });
+
+        test('a scan that could not run is not held against the file for half an hour', async () => {
+            const t0 = Date.now();
+            results.push({ integrity: 'error', integrityError: 'disk I/O error' });
+            db.healthCheck({ now: t0 }); await settle();
+            expect(db.healthCheck({ now: t0 + 30 * 1000 }).details).toMatchObject({ status: 'error', integrity: 'error', integrityError: 'disk I/O error' });
+            expect(scans()).toBe(1);
+            // A minute on, the next request starts another try, and it clears.
+            db.healthCheck({ now: t0 + 61 * 1000 }); await settle();
+            expect(scans()).toBe(2);
+            expect(db.healthCheck({ now: t0 + 62 * 1000 }).ok).toBe(true);
+        });
+
+        test('HEALTH_INTEGRITY_MINUTES: read on every call, junk means the default, 0 turns the scan off', async () => {
+            const t0 = Date.now();
+            db.healthCheck({ now: t0 }); await settle();
+            process.env.HEALTH_INTEGRITY_MINUTES = '5';
+            db.healthCheck({ now: t0 + 6 * MIN }); await settle();
+            expect(scans()).toBe(2);
+
+            process.env.HEALTH_INTEGRITY_MINUTES = 'soon';
+            db.healthCheck({ now: t0 + 20 * MIN }); await settle();
+            expect(scans()).toBe(2);
+            db.healthCheck({ now: t0 + 40 * MIN }); await settle();
+            expect(scans()).toBe(3);
+
+            process.env.HEALTH_INTEGRITY_MINUTES = '0';
+            db.healthCheck({ now: t0 + 400 * MIN }); await settle();
+            expect(scans()).toBe(3);
+        });
+
+        test('with the scan off, a fresh database reports "off", not "pending"', () => {
+            process.env.HEALTH_INTEGRITY_MINUTES = '0';
+            expect(db.healthCheck().details.integrity).toBe('off');
+            expect(scans()).toBe(0);
+        });
+
+        test('a scan that lands after the database closed is dropped', async () => {
+            db.healthCheck();
+            const run = db._integrityRun;
+            db.close();
+            await run;
+            expect(db._integrity).toBeUndefined();
+            expect(db.healthCheck()).toEqual({ ok: false, details: { status: 'closed' } });
+        });
+
+        test('every request still proves the database answers, and none checkpoints the WAL', () => {
+            const prepare = jest.spyOn(db.db, 'prepare');
+            db.healthCheck();
+            expect(prepare).toHaveBeenCalledWith('SELECT 1');
+            expect(mainThreadScans()).toBe(0);
+        });
     });
 });

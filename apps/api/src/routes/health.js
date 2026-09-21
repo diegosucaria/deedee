@@ -16,9 +16,10 @@ router.get('/', async (req, res) => {
 
     // Check Agent Reachability
     try {
-        // Three seconds, as the dashboard and the supervisor allow. One second
-        // called a busy agent "unreachable" while it was answering chats.
-        await axios.get(`${agentUrl}/health`, { timeout: 3000 });
+        // Two seconds. One second called a busy agent "unreachable" while it
+        // was answering chats. It must stay under the dashboard's own three
+        // seconds for this route, or a dead agent is blamed on the API.
+        await axios.get(`${agentUrl}/health`, { timeout: 2000 });
         health.checks.agent = 'ok';
     } catch (e) {
         health.checks.agent = 'unreachable';
