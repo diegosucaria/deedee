@@ -10,6 +10,8 @@ const { looksLikeBase64, hasImageMagic, PHOTO_MAX_AGE_MS } = require('../utils/p
 const MAX_SEARCH_QUERIES = 50;
 const MAX_HITS_PER_QUERY = 10;
 const MAX_RESULT_CHARS = 40000;
+// A query is echoed in front of its hits; a very long one is cut there.
+const MAX_QUERY_ECHO = 120;
 // At most this many photos read by one add_vinyl call. Each record found
 // starts its own enrichment pipeline on the device.
 const MAX_PHOTOS_PER_CALL = 5;
@@ -126,13 +128,22 @@ class DJExecutor {
      * group's, a job's or a watcher run's would fill his crate. Returns
      * { photos, fromEarlier }.
      */
+    /**
+     * True for a chat turn the owner typed in his own chat. A job run, a
+     * watcher run, or a run resumed after an approval in his chat is not an
+     * ask in his chat: it must not pick up a photo he sent a moment before
+     * it fired (a resumed job keeps his chat and source but not its name).
+     */
+    static ownerChatTurn(context) {
+        if (!context || context.ownerTyped !== true) return false;
+        const message = context.message || {};
+        const content = String(message.content || '');
+        return !message.metadata?.jobName && !content.startsWith('SYSTEM_WATCHER_ALERT') && !content.startsWith('[SYSTEM: approval result]');
+    }
+
     _photosForAdd(context, now) {
         const none = { photos: [], fromEarlier: false };
-        if (context.ownerTyped !== true) return none;
-        // A job or a watcher run in his chat is not an ask in his chat: it
-        // must not pick up a photo he sent a moment before it fired.
-        const message = context.message || {};
-        if (message.metadata?.jobName || String(message.content || '').startsWith('SYSTEM_WATCHER_ALERT')) return none;
+        if (!DJExecutor.ownerChatTurn(context)) return none;
         const onMessage = imagePartsOf(context.message).map(p => ({ data: p.inlineData.data, mimeType: p.inlineData.mimeType }));
         if (onMessage.length > 0) return { photos: onMessage.slice(0, MAX_PHOTOS_PER_CALL), fromEarlier: false };
         const chatId = context.message?.metadata?.chatId;
@@ -155,6 +166,8 @@ class DJExecutor {
     async add_vinyl(args, context) {
         const { image_path } = args || {};
         const ctx = context || {};
+        // Both ways in, the photo and the path, are for the owner's own chat.
+        if (!DJExecutor.ownerChatTurn(ctx)) return NO_PHOTO_TEXT;
         try {
             let results;
             let fromEarlier = false;
@@ -283,23 +296,28 @@ class DJExecutor {
             const now = Date.now();
             const sections = [];
             let hits = 0;
-            let used = 0;
+            // Every search gets an even share of the reply; the header and
+            // the echoed query count against it too.
+            const share = Math.floor(MAX_RESULT_CHARS / list.length);
             for (const q of list) {
+                const echo = q.length > MAX_QUERY_ECHO ? `${q.slice(0, MAX_QUERY_ECHO - 1)}…` : q;
                 const { vinyls, near } = this._searchOne(q);
-                if (vinyls.length === 0) { sections.push(`"${q}": no match`); continue; }
+                if (vinyls.length === 0) { sections.push(`"${echo}": no match`); continue; }
                 hits += 1;
                 const count = `${vinyls.length} ${near ? 'near ' : ''}match${vinyls.length === 1 ? '' : 'es'}${near ? ' with the numbers left out; compare the titles' : ''}`;
-                // Lines until the per-search cap or the reply's budget, whichever comes first.
+                const head = `"${echo}": ${count}`;
+                let used = head.length + 60;
+                // Lines until the per-search cap or this search's share, whichever comes first.
                 const lines = [];
                 for (const v of vinyls.slice(0, MAX_HITS_PER_QUERY)) {
                     const line = this._line(v, now);
-                    if (used + line.length > MAX_RESULT_CHARS) break;
-                    used += line.length;
+                    if (lines.length > 0 && used + line.length > share) break;
+                    used += line.length + 1;
                     lines.push(line);
                 }
                 const left = vinyls.length - lines.length;
                 const more = left > 0 ? `\n  (${left} more not shown; search with more words)` : '';
-                sections.push(`"${q}": ${count}${lines.length ? '\n' + lines.join('\n') : ''}${more}`);
+                sections.push(`${head}\n${lines.join('\n')}${more}`);
             }
             const head = list.length > 1 ? `${list.length} searches, ${hits} with a match, ${list.length - hits} with none.` : null;
             const tail = wanted.length > list.length ? `${wanted.length - list.length} more queries were dropped: at most ${MAX_SEARCH_QUERIES} per call.` : null;
@@ -378,4 +396,4 @@ class DJExecutor {
     }
 }
 
-module.exports = { DJExecutor, addedLabel, imagePartsOf, imagePathInData, NO_PHOTO_TEXT, MAX_SEARCH_QUERIES, MAX_HITS_PER_QUERY, MAX_RESULT_CHARS, MAX_PHOTOS_PER_CALL };
+module.exports = { DJExecutor, addedLabel, imagePartsOf, imagePathInData, NO_PHOTO_TEXT, MAX_SEARCH_QUERIES, MAX_HITS_PER_QUERY, MAX_RESULT_CHARS, MAX_QUERY_ECHO, MAX_PHOTOS_PER_CALL };

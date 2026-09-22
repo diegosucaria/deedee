@@ -9,7 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { AgentDB } = require('../src/db');
-const { DJExecutor, addedLabel, imagePathInData, MAX_SEARCH_QUERIES, MAX_HITS_PER_QUERY, MAX_RESULT_CHARS, MAX_PHOTOS_PER_CALL } = require('../src/executors/dj');
+const { DJExecutor, addedLabel, imagePathInData, MAX_SEARCH_QUERIES, MAX_HITS_PER_QUERY, MAX_RESULT_CHARS, MAX_QUERY_ECHO, MAX_PHOTOS_PER_CALL } = require('../src/executors/dj');
 const { TIER1_LIMIT_OVERRIDES } = require('../src/utils/tool-loop-limits');
 
 // Real-looking photo bytes: a stripped row holds a short marker instead.
@@ -139,14 +139,32 @@ describe('DJ tools from chat', () => {
             expect(ingestVinyl).not.toHaveBeenCalled();
         });
 
-        test('a job or a watcher run in his chat never picks up a photo, even one he sent a moment before', async () => {
+        test('a job, a watcher run or a run resumed after an approval in his chat never picks up a photo, even one he sent a moment before', async () => {
             db.saveMessage({ role: 'user', content: '', parts: [photo('image/jpeg', CCCC)], metadata: { chatId: 'c1' }, source: 'web' });
             const job = own({ parts: [{ text: 'STEP 1 add the records' }, photo()], metadata: { chatId: 'c1', jobName: 'nightly' } });
             const watcher = own({ content: 'SYSTEM_WATCHER_ALERT: A message from a contact matched', parts: [photo()], metadata: { chatId: 'c1' } });
-            for (const context of [job, watcher]) {
+            // A resumed job keeps his chat and source but not its name; the resume text is the mark.
+            const resumed = own({ content: '[SYSTEM: approval result] The owner approved the paused call sendMessage and it ran.', metadata: { chatId: 'c1' } });
+            for (const context of [job, watcher, resumed]) {
                 expect(await exec.execute('add_vinyl', {}, context)).toMatch(/nothing was added/);
             }
             expect(ingestVinylFromBase64).not.toHaveBeenCalled();
+        });
+
+        test('image_path is for the owner\'s chat turn too: a contact, a group, a job or no context is refused', async () => {
+            fs.mkdirSync(path.join(dir, 'vinyl_covers'), { recursive: true });
+            const file = path.join(dir, 'vinyl_covers', 'cover.jpg');
+            fs.writeFileSync(file, JPEG_BYTES);
+            const contexts = [
+                { message: { parts: [] }, ownerTyped: false },
+                { message: { parts: [], metadata: { isGroup: true } } },
+                own({ parts: [], metadata: { chatId: 'c1', jobName: 'nightly' } }),
+                undefined,
+            ];
+            for (const context of contexts) {
+                expect(await exec.execute('add_vinyl', { image_path: file }, context)).toMatch(/nothing was added/);
+            }
+            expect(ingestVinyl).not.toHaveBeenCalled();
         });
 
         test('whitespace inside the photo bytes is dropped before the vision call', async () => {
@@ -276,16 +294,36 @@ describe('DJ tools from chat', () => {
             expect(out.length).toBeLessThan(50000);
             expect(out.length).toBeLessThan(MAX_RESULT_CHARS + 6000);
             expect(out).toMatch(/^50 searches, 50 with a match, 0 with none\./);
-            // Every search still says how many it found, even the ones with no room for lines.
+            // Every search says how many it found, shows at least one line, and counts the rest.
             expect(out.match(/": 12 matches/g)).toHaveLength(MAX_SEARCH_QUERIES);
-            expect(out).toContain('(12 more not shown; search with more words)');
+            expect(out.match(/more not shown; search with more words/g)).toHaveLength(MAX_SEARCH_QUERIES);
+            expect(out.match(/^- \*\*A Rather Long Artist Name Here\*\*/gm).length).toBeGreaterThanOrEqual(MAX_SEARCH_QUERIES);
         });
 
-        test('a single punctuation character is not searched as typed', async () => {
+        test('a single punctuation character, or several of them, is not searched as typed', async () => {
             db.addVinyl(record());
             expect(await exec.execute('search_vinyls', { query: '-' }, {})).toBe('"-": no match');
             expect(db.searchVinyls('-')).toEqual([]);
-            expect(db.searchVinyls('!!')).toEqual([]);
+            expect(db.searchVinyls('- -')).toEqual([]);
+            expect(db.searchVinyls('!! ??')).toEqual([]);
+            expect(db.searchVinyls('!!')).toHaveLength(0);
+        });
+
+        test('fifty very long queries, with hits or without, stay under the result cap and every search keeps a line', async () => {
+            for (let i = 0; i < 12; i++) {
+                db.addVinyl(record({ artist: 'A Rather Long Artist Name Here', title: `An Even Longer Record Title Number ${i}`, label: 'Some Long Label Name Records', catalogNumber: `CAT-${i}`, meta: { genre: 'Electronic' } }));
+            }
+            const long = `Some Long Label ${'x'.repeat(2000)}`;
+            let out = await exec.execute('search_vinyls', { queries: Array(MAX_SEARCH_QUERIES).fill(long) }, {});
+            expect(out.length).toBeLessThan(50000);
+            expect(out.match(/…": no match/g)).toHaveLength(MAX_SEARCH_QUERIES);
+            expect(out).not.toContain('x'.repeat(MAX_QUERY_ECHO));
+            // With hits: a near match on a 116-character line, fifty times, each with at least one hit line.
+            const near = `Some Long Label 12" 2021 24.99 ${'9'.repeat(85)}`;
+            out = await exec.execute('search_vinyls', { queries: Array(MAX_SEARCH_QUERIES).fill(near) }, {});
+            expect(out.length).toBeLessThan(50000);
+            expect(out.match(/": 12 near matches/g)).toHaveLength(MAX_SEARCH_QUERIES);
+            expect(out.match(/^- \*\*A Rather Long Artist Name Here\*\*/gm).length).toBeGreaterThanOrEqual(MAX_SEARCH_QUERIES);
         });
 
         test('a pasted line with punctuation still finds the record', async () => {
