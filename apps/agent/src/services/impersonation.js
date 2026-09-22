@@ -368,9 +368,14 @@ Output a concise list of rules for this specific relationship.
             const status = this.getAutopilotStatus(contactString);
             if (status === 'full') {
                 console.log(`[Impersonation] Autonomous Mode: Auto-sending reply to ${contactString}`);
+                // HttpInterface.send reports a refused send as false, not a
+                // throw. This used to mark the draft approved either way, so a
+                // reply the messaging service refused was lost: the owner saw
+                // "sent", the contact got nothing.
+                const messages = draftText.split(/\[\s*SPLIT\s*\]/i).map(m => m.trim()).filter(m => m);
+                let sentCount = 0;
+                let failure = null;
                 try {
-                    const messages = draftText.split(/\[\s*SPLIT\s*\]/i).map(m => m.trim()).filter(m => m);
-
                     for (const msgContent of messages) {
                         const payload = {
                             source: buffer.source || 'whatsapp',
@@ -378,15 +383,32 @@ Output a concise list of rules for this specific relationship.
                             metadata: { chatId, session: 'assistant' },
                             type: 'text'
                         };
-                        await this.agent.interface.send(payload);
+                        const sent = await this.agent.interface.send(payload);
+                        if (sent === false) { failure = 'the messaging service refused it'; break; }
+                        sentCount++;
                         // Small delay between messages for natural feel
                         if (messages.length > 1) await new Promise(r => setTimeout(r, 800));
                     }
+                } catch (e) {
+                    failure = (e && e.message) || (typeof e === 'string' && e) || 'the send threw';
+                    console.error('[Impersonation] Auto-send failed:', failure);
+                }
 
+                if (!failure) {
                     this.markDraftCompleted(saved.lastInsertRowid, 'approved');
                     console.log(`[Impersonation] Auto-sent ${messages.length} messages successfully.`);
-                } catch (e) {
-                    console.error('[Impersonation] Auto-send failed:', e.message);
+                } else if (sentCount === 0) {
+                    // Nothing went out: the draft stays pending in Autopilot → Drafts, and the owner hears.
+                    console.warn(`[Impersonation] Auto-send to ${contactString} did not go out (${failure}); the draft waits for the owner.`);
+                    await this._notifyOwner(`I could not send the Autopilot reply to ${contactName}: ${failure}. Nothing went out. The draft is waiting in Autopilot → Drafts.`);
+                } else {
+                    // Part of it went out. The web's approve path resumes a
+                    // 'partially_sent' draft from sent_count, so the owner can
+                    // finish it from Autopilot → Drafts.
+                    this.db.db.prepare("UPDATE autopilot_drafts SET status = 'partially_sent', sent_count = ? WHERE id = ?").run(sentCount, saved.lastInsertRowid);
+                    const missing = messages.slice(sentCount).join(' ');
+                    console.warn(`[Impersonation] Auto-send to ${contactString}: ${sentCount} of ${messages.length} parts went out (${failure}).`);
+                    await this._notifyOwner(`Only ${sentCount} of ${messages.length} parts of the Autopilot reply to ${contactName} went out: ${failure}. The rest waits in Autopilot → Drafts; approve it there to send it. The part that did not go: "${missing}"`);
                 }
             } else {
                 console.log(`[Impersonation] Draft saved for ${contactName}. Waiting for approval.`);
@@ -640,9 +662,38 @@ ${transcript}
         // into style learning as a "correction".
         return this.db.db.prepare(`
             SELECT * FROM autopilot_drafts
-            WHERE chat_id = ? AND status = 'pending' AND (source IS NULL OR source = 'autopilot')
+            WHERE chat_id = ? AND status IN ('pending', 'partially_sent') AND (source IS NULL OR source = 'autopilot')
             ORDER BY created_at DESC LIMIT 1
         `).get(chatId);
+    }
+
+    /**
+     * Tell the owner something, through the delivery ledger when there is one
+     * (it retries a refused send and falls back to his other channel), else a
+     * plain send to his chat from the assistant's number. Never throws.
+     */
+    async _notifyOwner(text) {
+        try {
+            const delivery = this.agent.delivery;
+            if (delivery && typeof delivery.resolveOwnerTarget === 'function' && typeof delivery.deliver === 'function') {
+                const owner = delivery.resolveOwnerTarget('whatsapp');
+                if (owner) {
+                    const channel = owner.channel === 'whatsapp' ? 'whatsapp:assistant' : owner.channel;
+                    const out = await delivery.deliver('job_notification', channel, owner.target, { content: text, type: 'text' }, { origin: 'autopilot', dedupe: false });
+                    // The ledger reports a note it could not take as a value, not a throw.
+                    if (out && out.delivered === false && !out.queued && !out.inFlight) console.warn(`[Impersonation] The owner's note was not delivered: ${out.error || 'unknown'}`);
+                    return;
+                }
+            }
+            let ownerPhone = process.env.MY_PHONE;
+            const setting = this.db.getAgentSetting?.('owner_phone');
+            if (setting?.value) ownerPhone = setting.value;
+            if (!ownerPhone || !this.agent.interface?.send) return;
+            const jid = String(ownerPhone).includes('@') ? ownerPhone : `${String(ownerPhone).replace(/[^0-9]/g, '')}@s.whatsapp.net`;
+            await this.agent.interface.send({ source: 'whatsapp', type: 'text', content: text, metadata: { chatId: jid, session: 'assistant' } });
+        } catch (e) {
+            console.warn('[Impersonation] Could not notify the owner:', e.message);
+        }
     }
 
     /**

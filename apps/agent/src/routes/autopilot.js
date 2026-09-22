@@ -170,6 +170,12 @@ function createAutopilotRouter(agent) {
         try {
             const { id } = req.params;
             const { content } = req.body;
+            // A partly sent draft resumes from sent_count over the same split.
+            // An edit would send the wrong parts, or none: approve it as it is.
+            const draft = agent.db.db.prepare("SELECT status FROM autopilot_drafts WHERE id = ?").get(id);
+            if (draft && draft.status === 'partially_sent') {
+                return res.status(400).json({ error: 'Part of this draft already went out. Approve it to send the rest as it is; it cannot be edited.' });
+            }
             agent.db.db.prepare("UPDATE autopilot_drafts SET content = ? WHERE id = ?").run(content, id);
             res.json({ success: true });
         } catch (e) {
