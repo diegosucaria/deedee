@@ -740,11 +740,11 @@ const toolDefinitions = [
       {
         name: "add_vinyl",
         category: "dj",
-        description: "Add vinyl records to the DJ Crate from a photo of a cover, centre label or receipt. With no image_path it reads the image(s) attached to the owner's current message. Call it only when the owner asks to add records or says the records were bought. A list the owner is thinking of buying is a search_vinyls job, not an add. A record photo with no ask: ask first.",
+        description: "Add vinyl records to the DJ Crate from a photo of a cover, centre label or receipt. With no image_path it reads the photo(s) on the owner's current message, else the latest photo the owner sent in this chat within 30 minutes; a contact's or a group's photo is never read. Call it only when the owner asks to add records or says the records were bought. A list the owner is thinking of buying is a search_vinyls job, not an add. A record photo with no ask: ask first.",
         parameters: {
           type: "OBJECT",
           properties: {
-            image_path: { type: "STRING", description: "Optional. Absolute path to a local image file. Leave it out to read the photo attached to the current message." }
+            image_path: { type: "STRING", description: "Optional. Absolute path to an image file under the data folder. Leave it out to read the photo in the chat." }
           },
           required: []
         }
@@ -777,12 +777,12 @@ const toolDefinitions = [
       {
         name: "search_vinyls",
         category: "dj",
-        description: "Search the DJ Crate for vinyl records. Matches artist, title, label, catalog number and track names; every word must match. Each hit says when it was added. For a list of records (a cart, a wish list, a receipt) pass them all in 'queries' in ONE call, one entry per record, instead of one call per record.",
+        description: "Search the DJ Crate for vinyl records. Matches artist, title, label, catalog number and track names; every word must match, so give the artist and the title and leave out the price, the format and the year. Each hit says when it was added. For a list of records (a cart, a wish list, a receipt) pass them all in 'queries' in ONE call, one entry per record, instead of one call per record.",
         parameters: {
           type: "OBJECT",
           properties: {
-            query: { type: "STRING", description: "One search: artist and title, a label, a catalog number." },
-            queries: { type: "ARRAY", items: { type: "STRING" }, description: "Several searches in one call, one entry per record. Use this for a list." }
+            query: { type: "STRING", description: "One search: artist and title, a label, or a catalog number." },
+            queries: { type: "ARRAY", items: { type: "STRING" }, description: "Several searches in one call, one entry per record (artist and title). Use this for a list." }
           },
           required: []
         }

@@ -111,8 +111,9 @@ class AnalysisService {
                     // only when the owner asks, through add_vinyl or the DJ
                     // page. No vault note either: the DJ vault feeds the
                     // recommendations, and a cart is not history.
-                    // DJ_AUTO_INGEST=1 brings the old auto-add back.
-                    if (process.env.DJ_AUTO_INGEST === '1' && this.agent.djService) {
+                    // DJ_AUTO_INGEST=1 brings the old auto-add back, for any
+                    // sender's photo, as before. Read on every call.
+                    if (['1', 'true', 'yes'].includes(String(process.env.DJ_AUTO_INGEST || '').toLowerCase()) && this.agent.djService) {
                         try {
                             console.log('[AnalysisService] DJ_AUTO_INGEST=1: routing to DJService.ingestVinyl()...');
                             const results = await this.agent.djService.ingestVinylFromBase64(data, mimeType);

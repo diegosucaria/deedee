@@ -10,7 +10,8 @@ const TIER1_LIMIT_OVERRIDES = Object.freeze({
   // A list of records checked one by one is a real pass, not a stuck loop:
   // the 6-call warning nagged a 12-item cart check and told the model to
   // stop. search_vinyls now takes a list; this is for a model that still
-  // goes one by one. Both are cheap local reads.
+  // goes one by one. Both are cheap local reads. A run also ends at its own
+  // cap, MAX_TOOL_LOOPS rounds (15 by default, 50 on the device).
   search_vinyls: 20,
   get_vinyl: 20,
 });

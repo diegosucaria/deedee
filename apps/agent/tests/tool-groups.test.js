@@ -65,6 +65,13 @@ describe('groupsNamedIn', () => {
         expect(groupsNamedIn('turn on the Home Assistant lights')).toEqual(['home']);
         expect(groupsNamedIn('open the browser and check my bill')).toEqual(['browser']);
         expect(groupsNamedIn('use playwright to log in')).toEqual(['browser']);
+        // add_vinyl reads the photo from the chat now: the words of an "add" must load the dj group.
+        for (const t of ['add this record to my collection', 'me compre estos discos', 'what vinyls do I have?', 'mis vinilos', 'DJ set tonight', 'add these to my crate']) {
+            expect(groupsNamedIn(t)).toEqual(['dj']);
+        }
+        for (const t of ['the recording failed', 'a small adjustment', 'discography of the label']) {
+            expect(groupsNamedIn(t)).toEqual([]);
+        }
         expect(mcpServerGroup('browser')).toBe('browser');
         expect(mcpServerGroup('browser-use')).toBeNull();
         expect(TOOL_GROUPS.browser).toContain('Playwright');

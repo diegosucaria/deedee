@@ -14,7 +14,7 @@ Deedee includes a specialized **DJ Module** that acts as your Crate Digger and B
     -   **Cover Art Download**: Tries multiple image URLs from Discogs, Cover Art Archive, and Gemini with redirect handling; falls back to uploaded photo.
     -   **Confidence Tracking**: Enrichment results carry a confidence score (0–1) visible in the UI.
     -   **Persistence**: Saves to `dj_vinyls` table + cover image to `data/vinyl_covers/`.
-    -   **Usage**: Send the photo in chat or WhatsApp and ask to add it, or upload it from the DJ Crate page. A photo on its own adds nothing: the crate is written only on the owner's ask, through the `add_vinyl` tool or the page. The attachment analysis used to add every record it saw in a photo, ask or no ask (a screenshot of a shop cart became eight "owned" records); `DJ_AUTO_INGEST=1` brings that back.
+    -   **Usage**: Send the photo in chat or WhatsApp and ask to add it, or upload it from the DJ Crate page. A photo on its own adds nothing: the crate is written only on the owner's ask, through the `add_vinyl` tool or the page. The tool reads the photos on the owner's message, or the latest photo he sent in the same chat within 30 minutes; only his own chat counts (`context.ownerTyped`), never a contact's, a group's or a watcher run's. The attachment analysis used to add every record it saw in a photo, ask or no ask, from any sender (a screenshot of a shop cart became eight "owned" records); `DJ_AUTO_INGEST=1` brings that back as it was. Read on every call, default off.
 
 2.  **Recommendation Engine ("Booth Buddy")**:
     -   **Context Aware**: Knows what you are playing (Key, BPM, Vibe).
@@ -60,9 +60,9 @@ Deedee includes a specialized **DJ Module** that acts as your Crate Digger and B
 
 | Tool | What it does |
 |---|---|
-| `add_vinyl` | Adds the records in the photo attached to the current message, or at `image_path`. Only on the owner's ask; a list the owner may buy is a search. Says which records were already in the crate. |
+| `add_vinyl` | Adds the records in the photos on the owner's current message (at most 5 photos per call), else the latest photo he sent in the chat within 30 minutes, or the image file at `image_path` (an image file under `/app/data` only, resolved through `fs.realpath`). Only on the owner's ask, and only from his own chat; a list he may buy is a search. Says which records were already in the crate. |
 | `list_vinyls` | The crate, newest first. Each row says when it was added. |
-| `search_vinyls` | One `query`, or a `queries` list with one entry per record, in one call. Every word must match one of artist, title, label, catalog number or track names; punctuation-only words are ignored. Each hit says when it was added. The tool-loop guard allows 20 calls of it per turn (`apps/agent/src/utils/tool-loop-limits.js`; the default is 6). |
+| `search_vinyls` | One `query`, or a `queries` list with one entry per record, in one call. Every word must match one of artist, title, label, catalog number or track names; punctuation-only words are ignored. Each hit says when it was added. The tool-loop guard's same-tool warning starts at 20 calls for it (`apps/agent/src/utils/tool-loop-limits.js`; the default is 6); a run still ends at its own cap of 15 rounds. |
 | `get_vinyl` | One record with its tracks, BPM and key. |
 | `list_crate_tracks` | Every track across the crate, with BPM, key and RPM. |
 | `recommend_vinyl`, `recommend_digital` | Track picks from the crate, or from history and general knowledge. |

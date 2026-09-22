@@ -33,11 +33,14 @@ describe('attachment analysis and the DJ crate', () => {
         expect(agent.vaults.updateVaultPage).not.toHaveBeenCalled();
     });
 
-    test('DJ_AUTO_INGEST=1 brings the old auto-add back', async () => {
-        process.env.DJ_AUTO_INGEST = '1';
-        const agent = fakeAgent({ vaultId: 'dj_history', summary: 'a record', suggestedMemories: [] });
-        await new AnalysisService(agent).analyzeAttachment('chat-1', image, 'none');
-        expect(agent.djService.ingestVinylFromBase64).toHaveBeenCalledWith('AAAA', 'image/png');
+    test('DJ_AUTO_INGEST=1 (or true) brings the old auto-add back; 0 does not', async () => {
+        for (const [value, calls] of [['1', 1], ['true', 1], ['YES', 1], ['0', 0], ['false', 0]]) {
+            process.env.DJ_AUTO_INGEST = value;
+            const agent = fakeAgent({ vaultId: 'dj_history', summary: 'a record', suggestedMemories: [] });
+            await new AnalysisService(agent).analyzeAttachment('chat-1', image, 'none');
+            expect(agent.djService.ingestVinylFromBase64).toHaveBeenCalledTimes(calls);
+            if (calls) expect(agent.djService.ingestVinylFromBase64).toHaveBeenCalledWith('AAAA', 'image/png');
+        }
     });
 
     test('a finance file still gets its vault note', async () => {

@@ -9,10 +9,15 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { AgentDB } = require('../src/db');
-const { DJExecutor, addedLabel, MAX_SEARCH_QUERIES } = require('../src/executors/dj');
+const { DJExecutor, addedLabel, imagePathInData, MAX_SEARCH_QUERIES, MAX_HITS_PER_QUERY, MAX_PHOTOS_PER_CALL } = require('../src/executors/dj');
 const { TIER1_LIMIT_OVERRIDES } = require('../src/utils/tool-loop-limits');
 
-const photo = (mimeType = 'image/png', data = 'AAAA') => ({ inlineData: { mimeType, data } });
+// Real-looking photo bytes: a stripped row holds a short marker instead.
+const AAAA = 'A'.repeat(300);
+const CCCC = 'C'.repeat(300);
+const photo = (mimeType = 'image/png', data = AAAA) => ({ inlineData: { mimeType, data } });
+// A turn in the owner's own chat.
+const own = (message) => ({ message, ownerTyped: true });
 const record = (over = {}) => ({
     artist: 'Alice', title: 'Sample Record', label: 'Sample Label', catalogNumber: 'CAT-1',
     coverImageUrl: '/vinyl_covers/default.png', bpm: 0, key: '', tracks: [], meta: {}, ...over,
@@ -20,9 +25,11 @@ const record = (over = {}) => ({
 
 describe('DJ tools from chat', () => {
     let dir, db, ingestVinyl, ingestVinylFromBase64, exec;
+    const savedDataDir = process.env.DATA_DIR;
 
     beforeEach(() => {
         dir = fs.mkdtempSync(path.join(os.tmpdir(), 'dj-exec-'));
+        process.env.DATA_DIR = dir;
         db = new AgentDB(dir);
         ingestVinyl = jest.fn().mockResolvedValue([{ id: 'v-path', artist: 'Alice', title: 'Sample Record', label: 'Sample Label' }]);
         ingestVinylFromBase64 = jest.fn().mockResolvedValue([{ id: 'v-photo', artist: 'Alice', title: 'Sample Record', label: 'Sample Label' }]);
@@ -32,25 +39,42 @@ describe('DJ tools from chat', () => {
     afterEach(() => {
         db.close();
         fs.rmSync(dir, { recursive: true, force: true });
+        if (savedDataDir === undefined) delete process.env.DATA_DIR; else process.env.DATA_DIR = savedDataDir;
     });
 
     describe('add_vinyl', () => {
-        test('with no path it reads the photo attached to the current message, and only the photo', async () => {
-            const message = { parts: [{ text: 'add these' }, photo(), photo('audio/ogg', 'BBBB')] };
-            const out = await exec.execute('add_vinyl', {}, { message });
+        test('with no path it reads the photo on the owner\'s current message, and only the photo', async () => {
+            const message = { parts: [{ text: 'add these' }, photo(), photo('audio/ogg', 'B'.repeat(300))] };
+            const out = await exec.execute('add_vinyl', {}, own(message));
             expect(ingestVinylFromBase64).toHaveBeenCalledTimes(1);
-            expect(ingestVinylFromBase64).toHaveBeenCalledWith('AAAA', 'image/png');
+            expect(ingestVinylFromBase64).toHaveBeenCalledWith(AAAA, 'image/png');
             expect(ingestVinyl).not.toHaveBeenCalled();
-            expect(out).toMatch(/^Added 1 vinyls to your crate/);
+            expect(out).toMatch(/^Added 1 vinyls to your crate \(details still loading\)/);
             expect(out).toContain('Alice');
         });
 
-        test('with no path and no photo it adds nothing and says what to attach', async () => {
-            const out = await exec.execute('add_vinyl', {}, { message: { parts: [{ text: 'add it' }] } });
+        test('a photo on a message that is not the owner\'s own chat is never read', async () => {
+            // A contact's chat on the assistant's number, a group, a watcher run: ownerTyped is false or missing.
+            for (const context of [{ message: { parts: [photo()] }, ownerTyped: false }, { message: { parts: [photo()] } }, { message: { parts: [photo()] }, ownerTyped: 'yes' }]) {
+                const out = await exec.execute('add_vinyl', {}, context);
+                expect(out).toMatch(/nothing was added/);
+            }
+            expect(ingestVinylFromBase64).not.toHaveBeenCalled();
+            expect(ingestVinyl).not.toHaveBeenCalled();
+        });
+
+        test('a stripped marker in place of the bytes is not a photo', async () => {
+            const out = await exec.execute('add_vinyl', {}, own({ parts: [photo('image/jpeg', '[MEDIA_STRIPPED_PASSIVE]')] }));
+            expect(ingestVinylFromBase64).not.toHaveBeenCalled();
+            expect(out).toMatch(/nothing was added/);
+        });
+
+        test('with no path and no photo it adds nothing and says what to send', async () => {
+            const out = await exec.execute('add_vinyl', {}, own({ parts: [{ text: 'add it' }], metadata: { chatId: 'c1' } }));
             expect(ingestVinylFromBase64).not.toHaveBeenCalled();
             expect(ingestVinyl).not.toHaveBeenCalled();
             expect(out).toMatch(/nothing was added/);
-            expect(out).toMatch(/attaches the photo/);
+            expect(out).toMatch(/sends the photo/);
         });
 
         test('with no context at all it still adds nothing', async () => {
@@ -59,27 +83,66 @@ describe('DJ tools from chat', () => {
             expect(out).toMatch(/nothing was added/);
         });
 
-        test('with image_path it still reads the file', async () => {
-            const out = await exec.execute('add_vinyl', { image_path: '/tmp/cover.jpg' }, { message: { parts: [photo()] } });
-            expect(ingestVinyl).toHaveBeenCalledWith('/tmp/cover.jpg', 'auto');
+        test('the photo the owner sent a moment earlier in the same chat is used, and the reply says so', async () => {
+            db.saveMessage({ role: 'user', content: '', parts: [photo('image/jpeg', CCCC)], metadata: { chatId: 'c1' }, source: 'web' });
+            const out = await exec.execute('add_vinyl', {}, own({ parts: [{ text: 'add it' }], metadata: { chatId: 'c1' } }));
+            expect(ingestVinylFromBase64).toHaveBeenCalledWith(CCCC, 'image/jpeg');
+            expect(out).toMatch(/^Added 1 vinyls to your crate from the photo sent earlier in this chat/);
+        });
+
+        test('a photo from another chat, from more than 30 minutes ago, or not from the owner, is not used', async () => {
+            db.saveMessage({ role: 'user', content: '', parts: [photo('image/jpeg', CCCC)], metadata: { chatId: 'c2' }, source: 'web' });
+            db.saveMessage({ role: 'model', content: '', parts: [photo('image/jpeg', CCCC)], metadata: { chatId: 'c1' }, source: 'web' });
+            db.saveMessage({ role: 'user', content: '', parts: [photo('image/jpeg', CCCC)], metadata: { chatId: 'c1' }, source: 'web' });
+            db.db.prepare("UPDATE messages SET timestamp = ? WHERE chat_id = 'c1' AND role = 'user'").run(new Date(Date.now() - 2 * 60 * 60 * 1000).toISOString());
+            let out = await exec.execute('add_vinyl', {}, own({ parts: [{ text: 'add it' }], metadata: { chatId: 'c1' } }));
+            expect(out).toMatch(/nothing was added/);
+            out = await exec.execute('add_vinyl', {}, { message: { parts: [{ text: 'add it' }], metadata: { chatId: 'c2' } }, ownerTyped: false });
+            expect(out).toMatch(/nothing was added/);
+            expect(ingestVinylFromBase64).not.toHaveBeenCalled();
+        });
+
+        test('with image_path it reads an image file under the data folder, by its real path', async () => {
+            fs.mkdirSync(path.join(dir, 'vinyl_covers'), { recursive: true });
+            const file = path.join(dir, 'vinyl_covers', 'cover.jpg');
+            fs.writeFileSync(file, 'x');
+            const out = await exec.execute('add_vinyl', { image_path: file }, own({ parts: [photo()] }));
+            expect(ingestVinyl).toHaveBeenCalledWith(fs.realpathSync(file), 'auto');
             expect(ingestVinylFromBase64).not.toHaveBeenCalled();
             expect(out).toMatch(/^Added 1 vinyls to your crate/);
         });
 
-        test('two photos on one message are both read', async () => {
-            await exec.execute('add_vinyl', {}, { message: { parts: [photo('image/jpeg', 'AAAA'), photo('image/jpeg', 'CCCC')] } });
-            expect(ingestVinylFromBase64.mock.calls.map(c => c[0])).toEqual(['AAAA', 'CCCC']);
+        test('image_path outside the data folder, not an image, or a link that leaves the folder, is refused', async () => {
+            fs.mkdirSync(path.join(dir, 'vinyl_covers'), { recursive: true });
+            fs.writeFileSync(path.join(dir, 'auth.json'), '{}');
+            fs.symlinkSync('/etc/hostname', path.join(dir, 'vinyl_covers', 'link.jpg'));
+            for (const image_path of ['/etc/hostname', path.join(dir, 'auth.json'), path.join(dir, 'vinyl_covers', 'link.jpg'), path.join(dir, 'vinyl_covers', 'missing.jpg'), 42]) {
+                const out = await exec.execute('add_vinyl', { image_path }, own({ parts: [] }));
+                expect(out).toMatch(/nothing was added/);
+            }
+            expect(ingestVinyl).not.toHaveBeenCalled();
+            expect(imagePathInData(path.join(dir, 'auth.json'), dir)).toBeNull();
+            expect(imagePathInData(path.join(dir, 'vinyl_covers', 'link.jpg'), dir)).toBeNull();
+        });
+
+        test('two photos on one message are both read, and past five the rest are left', async () => {
+            await exec.execute('add_vinyl', {}, own({ parts: [photo('image/jpeg', AAAA), photo('image/jpeg', CCCC)] }));
+            expect(ingestVinylFromBase64.mock.calls.map(c => c[0])).toEqual([AAAA, CCCC]);
+            ingestVinylFromBase64.mockClear();
+            const many = Array.from({ length: MAX_PHOTOS_PER_CALL + 2 }, (_, i) => photo('image/jpeg', String.fromCharCode(65 + i).repeat(300)));
+            await exec.execute('add_vinyl', {}, own({ parts: many }));
+            expect(ingestVinylFromBase64).toHaveBeenCalledTimes(MAX_PHOTOS_PER_CALL);
         });
 
         test('one unreadable photo does not lose the other, and alone it is reported', async () => {
             ingestVinylFromBase64
                 .mockRejectedValueOnce(new Error('Failed to parse vinyl information from image.'))
                 .mockResolvedValueOnce([{ id: 'v2', artist: 'Bob', title: 'Second Record', label: 'L' }]);
-            let out = await exec.execute('add_vinyl', {}, { message: { parts: [photo('image/jpeg', 'AAAA'), photo('image/jpeg', 'CCCC')] } });
+            let out = await exec.execute('add_vinyl', {}, own({ parts: [photo('image/jpeg', AAAA), photo('image/jpeg', CCCC)] }));
             expect(out).toMatch(/^Added 1 vinyls to your crate/);
             expect(out).toContain('Bob');
             ingestVinylFromBase64.mockRejectedValueOnce(new Error('Failed to parse vinyl information from image.'));
-            out = await exec.execute('add_vinyl', {}, { message: { parts: [photo()] } });
+            out = await exec.execute('add_vinyl', {}, own({ parts: [photo()] }));
             expect(out).toBe('Failed to ingest vinyl: Failed to parse vinyl information from image.');
         });
 
@@ -88,7 +151,7 @@ describe('DJ tools from chat', () => {
                 { id: 'old', artist: 'Alice', title: 'Sample Record', label: 'L', _preExisting: true },
                 { id: 'new', artist: 'Bob', title: 'Second Record', label: 'L' },
             ]);
-            const out = await exec.execute('add_vinyl', {}, { message: { parts: [photo('image/jpeg')] } });
+            const out = await exec.execute('add_vinyl', {}, own({ parts: [photo('image/jpeg')] }));
             expect(out).toMatch(/^Added 1 vinyls to your crate/);
             expect(out).toMatch(/Already in the crate/);
             expect(out.indexOf('Bob')).toBeLessThan(out.indexOf('Already in the crate'));
@@ -124,6 +187,50 @@ describe('DJ tools from chat', () => {
             out = await exec.execute('search_vinyls', { query: 'Alice\nNobody Nothing\n\nBob' }, {});
             expect(out).toMatch(/^3 searches, 1 with a match, 2 with none\./);
             expect(out).toContain('"Nobody Nothing": no match');
+        });
+
+        test('query and queries both count: a model that fills both used to lose the first record', async () => {
+            db.addVinyl(record());
+            db.addVinyl(record({ artist: 'Bob', title: 'Second Record', label: 'Other Label', catalogNumber: 'CAT-2' }));
+            const out = await exec.execute('search_vinyls', { query: 'Alice', queries: ['Bob', 'Nobody'] }, {});
+            expect(out).toMatch(/^3 searches, 2 with a match, 1 with none\./);
+            expect(out).toContain('"Alice": 1 match');
+            expect(out).toContain('"Bob": 1 match');
+        });
+
+        test('a list sent as a JSON array in a string, or with entries that are not text, still reads as a list', async () => {
+            db.addVinyl(record());
+            let out = await exec.execute('search_vinyls', { queries: '["Alice", "Nobody"]' }, {});
+            expect(out).toMatch(/^2 searches, 1 with a match, 1 with none\./);
+            expect(out).not.toContain('"[');
+            out = await exec.execute('search_vinyls', { queries: [{ artist: 'Alice' }, null, 'Alice', 7] }, {});
+            expect(out).not.toContain('[object Object]');
+            expect(out).toContain('"Alice": 1 match');
+            expect(out).toContain('"7": no match');
+        });
+
+        test('a cart line with a price, a size and a year still finds the record, marked as a near match', async () => {
+            db.addVinyl(record());
+            const out = await exec.execute('search_vinyls', { query: 'Alice - Sample Record (12", Sample Label, 2021) 24.99' }, {});
+            expect(out).toMatch(/: 1 near match with the numbers left out; compare the titles\n- \*\*Alice\*\*/);
+            // A line whose words are all in the crate stays an exact match.
+            expect(await exec.execute('search_vinyls', { query: 'Alice Sample Record' }, {})).toMatch(/: 1 match\n/);
+            // Words that no field holds still miss: the near match only drops numbers.
+            expect(await exec.execute('search_vinyls', { query: 'Alice Sample Record 2021 EUR' }, {})).toContain(': no match');
+        });
+
+        test('a band whose name is only punctuation is searched as typed', async () => {
+            db.addVinyl(record({ artist: '!!!', title: 'Louden Up Now', catalogNumber: 'CAT-9' }));
+            expect(await exec.execute('search_vinyls', { query: '!!!' }, {})).toMatch(/^"!!!": 1 match/);
+            expect(db.searchVinyls('!!! Louden')).toHaveLength(1);
+        });
+
+        test('past ten hits for one search the rest are counted, not listed', async () => {
+            for (let i = 0; i < MAX_HITS_PER_QUERY + 3; i++) db.addVinyl(record({ title: `Record ${i}`, catalogNumber: `CAT-${i}` }));
+            const out = await exec.execute('search_vinyls', { query: 'Sample Label' }, {});
+            expect(out).toMatch(new RegExp(`^"Sample Label": ${MAX_HITS_PER_QUERY + 3} matches\n`));
+            expect(out.match(/^- \*\*Alice\*\*/gm)).toHaveLength(MAX_HITS_PER_QUERY);
+            expect(out).toContain('(3 more not shown; search with more words)');
         });
 
         test('a pasted line with punctuation still finds the record', async () => {

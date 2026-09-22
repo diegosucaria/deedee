@@ -67,8 +67,10 @@ const GROUP_NAME_WORDS = {
     health: ['allende'],
     code: ['shell', 'git', 'repo', 'repository', 'codebase'],
     // Not an integration's name, but its read tools used to ride on every
-    // turn; now the group must load for "what is in my crate?" to work.
-    dj: ['vinyl', 'vinilo', 'crate'],
+    // turn; now the group must load for "what is in my crate?" to work, and
+    // for "add this record" or "estos discos" with a photo (add_vinyl reads
+    // the photo from the chat now).
+    dj: ['vinyl', 'vinilo', 'crate', 'record', 'disco', 'dj'],
     // The photo tools work from chat now; "add this to my wardrobe" with a
     // picture must load the group whatever the router made of the picture.
     wardrobe: ['wardrobe', 'garment', 'outfit', 'guardarropa', 'ropa'],
@@ -81,8 +83,10 @@ const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // "slackeame", "browsers".
 // 'outfit' must not fire on "Outfitters", nor 'ropa' inside another word;
 // their plurals ("outfits", "ropas", "guardarropas") still count.
-const WHOLE_WORD_GROUPS = new Set(['code', 'wardrobe']);
-const PLURAL_GROUPS = new Set(['wardrobe']);
+// 'record' must not fire on "recording", nor 'dj' inside "adjust"; "records",
+// "discos" and "vinilos" still count.
+const WHOLE_WORD_GROUPS = new Set(['code', 'wardrobe', 'dj']);
+const PLURAL_GROUPS = new Set(['wardrobe', 'dj']);
 const GROUP_NAME_PATTERNS = Object.fromEntries(
     Object.entries(GROUP_NAME_WORDS).map(([g, words]) => {
         const tail = WHOLE_WORD_GROUPS.has(g) ? `${PLURAL_GROUPS.has(g) ? 's?' : ''}\\b` : '';

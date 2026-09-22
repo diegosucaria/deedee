@@ -25,7 +25,8 @@ describe('names the prompt uses exist in the code', () => {
     test('the record-photo rule names real DJ tools; add_vinyl reads the attached photo and search_vinyls takes a list', () => {
         expect(full).toContain("'add_vinyl'");
         expect(full).toContain("'search_vinyls'");
-        expect(decl('add_vinyl').description).toMatch(/attached to the owner's current message/);
+        expect(decl('add_vinyl').description).toMatch(/photo\(s\) on the owner's current message/);
+        expect(decl('add_vinyl').description).toMatch(/a contact's or a group's photo is never read/);
         expect(decl('add_vinyl').parameters.required).toEqual([]);
         expect(Object.keys(decl('search_vinyls').parameters.properties)).toEqual(expect.arrayContaining(['query', 'queries']));
         expect(decl('search_vinyls').parameters.required).toEqual([]);
