@@ -86,8 +86,10 @@ describe('AgentDB.healthCheck', () => {
             const scan = await db.scanIntegrity(t0, { workerFile: hung, timeoutMs: 150 });
             expect(scan.integrity).toBe('unknown');
             expect(scan.integrityError).toMatch(/no answer/);
-            // Dated when it settled, not when it began: or it would be due again at once.
-            expect(scan.at).toBeGreaterThanOrEqual(t0 + 150);
+            // Dated when it settled, not when it began: or it would be due again at
+            // once. The scan measures its own time from a clock read a moment after
+            // t0, so allow a few milliseconds.
+            expect(scan.at).toBeGreaterThanOrEqual(t0 + 140);
         });
 
         test('while a timed-out worker is still alive, no other scan starts; once it has gone, one may', async () => {
