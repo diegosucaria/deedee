@@ -14,12 +14,14 @@ const { verifySession } = require('./session');
 // Guarded with optional chaining so test suites that pass a stub axios
 // (no `interceptors` property) don't crash at module load.
 if (axios?.interceptors?.request?.use) {
-    const AGENT_URL = process.env.AGENT_URL || 'http://agent:3000';
+    // With AGENT_URL unset (a dev run outside Docker) the modules default to
+    // either http://agent:3000 or http://localhost:3000; both mean the agent.
+    const AGENT_URLS = process.env.AGENT_URL ? [process.env.AGENT_URL] : ['http://agent:3000', 'http://localhost:3000'];
     axios.interceptors.request.use((config) => {
         const token = process.env.DEEDEE_INTERNAL_TOKEN;
         if (!token) return config;
         const target = config.url || '';
-        if (target.startsWith(AGENT_URL)) {
+        if (AGENT_URLS.some(base => target.startsWith(base))) {
             config.headers = config.headers || {};
             if (!config.headers.Authorization) {
                 config.headers.Authorization = `Bearer ${token}`;

@@ -161,7 +161,8 @@ class Monitor {
                 method: 'POST',
                 headers: {
                     'Content-Type': 'application/json',
-                    'Authorization': `Bearer ${process.env.DEEDEE_API_TOKEN || 'test-token'}`
+                    // Every agent route but /health wants the internal token.
+                    'Authorization': `Bearer ${process.env.DEEDEE_INTERNAL_TOKEN || process.env.DEEDEE_API_TOKEN || 'test-token'}`
                 },
                 body: JSON.stringify({
                     content: 'HEALTH_CHECK_PING_123',

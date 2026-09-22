@@ -36,6 +36,43 @@ describe('Agent Server API', () => {
   });
 });
 
+describe('every route but /health sits behind the internal token', () => {
+  const saved = process.env.DEEDEE_INTERNAL_TOKEN;
+  beforeEach(() => { process.env.DEEDEE_INTERNAL_TOKEN = 'test-internal-token'; });
+  afterEach(() => { if (saved === undefined) delete process.env.DEEDEE_INTERNAL_TOKEN; else process.env.DEEDEE_INTERNAL_TOKEN = saved; });
+  const withToken = (req) => req.set('Authorization', 'Bearer test-internal-token');
+
+  test('the routes that used to trust the Docker network now refuse a call with no token', async () => {
+    // A message posted to /chat counts as typed on the owner's side, and the
+    // agent's own shell tool runs inside that network.
+    expect((await request(app).post('/chat').send({ content: 'hi', source: 'web' })).statusCode).toBe(401);
+    expect((await request(app).post('/webhook').send({ content: 'hi', source: 'telegram' })).statusCode).toBe(401);
+    expect((await request(app).get('/status')).statusCode).toBe(401);
+    expect((await request(app).get('/live/config')).statusCode).toBe(401);
+    expect((await request(app).post('/live/token').send({})).statusCode).toBe(401);
+    expect((await request(app).get('/v1/vaults')).statusCode).toBe(401);
+    expect((await request(app).get('/internal/tools')).statusCode).toBe(401);
+  });
+
+  test('a wrong token is refused the same way', async () => {
+    const res = await request(app).post('/chat').set('Authorization', 'Bearer nope').send({ content: 'hi' });
+    expect(res.statusCode).toBe(401);
+  });
+
+  test('/health stays open: the supervisor and the gateway poll it with no token', async () => {
+    const res = await request(app).get('/health');
+    expect(res.statusCode).toBe(200);
+    expect(res.body.status).toBe('ok');
+  });
+
+  test('the right token gets past the check on the routes that were open', async () => {
+    expect((await withToken(request(app).get('/status'))).statusCode).toBe(200);
+    expect((await withToken(request(app).get('/live/config'))).statusCode).toBe(200);
+    // 200 with an agent, 503 without one in this test process: never 401.
+    expect((await withToken(request(app).post('/webhook')).send({ content: 'hi', source: 'telegram' })).statusCode).not.toBe(401);
+  });
+});
+
 describe('the voice call tool route sits behind the internal token', () => {
   const saved = process.env.DEEDEE_INTERNAL_TOKEN;
   afterEach(() => { if (saved === undefined) delete process.env.DEEDEE_INTERNAL_TOKEN; else process.env.DEEDEE_INTERNAL_TOKEN = saved; });

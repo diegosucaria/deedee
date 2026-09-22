@@ -161,7 +161,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     -   API `/v1/*`: Bearer Token (`DEEDEE_API_TOKEN`). Used by iOS Shortcuts, cron, and internal services.
     -   Browser `/socket.io`: Session JWT cookie (signed with `SESSION_SECRET`, set by the web service after password or passkey login). The API gateway verifies the cookie on each WebSocket upgrade and injects `DEEDEE_API_TOKEN` into the upstream handshake so Interfaces accepts the connection. Internal services authenticate directly with `DEEDEE_API_TOKEN` in `handshake.auth.token`.
     -   Web UI: Self-contained `/login` page (password + passkey). Next.js middleware redirects unauthenticated requests; route handlers re-check via `requireSession()` for defense-in-depth.
-    -   Agent `/internal/*`: `DEEDEE_INTERNAL_TOKEN` bearer. Defense-in-depth on top of Docker network isolation.
+    -   Agent, every route but `/health`: `DEEDEE_INTERNAL_TOKEN` bearer (one check at the top of `server.js`), on top of Docker network isolation. The gateway, the interfaces service, the web app's image proxies and the supervisor's deep check all send it.
     -   Telegram: `ALLOWED_TELEGRAM_IDS` allowlist.
 3.  **Safety Mechanisms**:
     -   **Global Stop**: `/stop` command halts all active execution loops instantly.

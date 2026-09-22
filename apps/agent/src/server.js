@@ -8,6 +8,40 @@ const port = process.env.PORT || 3000;
 const interfacesUrl = process.env.INTERFACES_URL || 'http://localhost:5000';
 const googleApiKey = process.env.GOOGLE_API_KEY;
 
+// Every route but /health needs DEEDEE_INTERNAL_TOKEN. The check sits above
+// the body parser, so a caller with no token never costs a 50 MB parse. The
+// gateway and the interfaces service send the token on every call to the
+// agent (their axios interceptors); the web app sends it on its own calls to
+// /internal/*; the supervisor sends it on its deep check.
+// /status, /webhook, /chat, /live/* and /v1/* used to rely on the Docker
+// network being closed. The agent's own shell tool and the browser it
+// drives run inside that network, and a message posted to /chat counts as
+// typed on the owner's side: slash commands run, and with source 'web' his
+// consent covers what goes out. The token never touches the browser.
+const cryptoTimingSafe = require('crypto').timingSafeEqual;
+const OPEN_PATHS = ['/health'];
+const internalTokenMiddleware = (req, res, next) => {
+  const expected = process.env.DEEDEE_INTERNAL_TOKEN;
+  if (!expected) return next(); // Token unset: dev-only escape hatch (a warning is logged at boot).
+  const header = req.headers.authorization || '';
+  const provided = header.startsWith('Bearer ') ? header.slice(7) : '';
+  const a = Buffer.from(provided);
+  const b = Buffer.from(expected);
+  if (a.length !== b.length || !cryptoTimingSafe(a, b)) {
+    return res.status(401).json({ error: 'Invalid or missing internal token' });
+  }
+  // A route may trust its caller only when a token was really checked.
+  req.internalAuth = true;
+  next();
+};
+app.use((req, res, next) => {
+  if (OPEN_PATHS.some(open => req.path === open || req.path.startsWith(`${open}/`))) return next();
+  return internalTokenMiddleware(req, res, next);
+});
+if (!process.env.DEEDEE_INTERNAL_TOKEN) {
+  console.warn('[Server] DEEDEE_INTERNAL_TOKEN is not set: every agent route is open to the Docker network. Set it outside development.');
+}
+
 // Increase body limit to support large audio/image payloads
 app.use(express.json({ limit: '50mb' }));
 
@@ -132,28 +166,6 @@ app.post('/webhook', (req, res) => {
   }
 });
 
-// /internal/* routes carry private user content (wardrobe images, vault
-// files, journal data, etc). Inside the Docker network they're already
-// unreachable from the public internet, but we add a constant-time bearer
-// check as defense-in-depth against accidental port exposure or a future
-// deploy where agent isn't network-isolated. Web injects this token
-// server-side when proxying to the agent; it never touches the browser.
-const cryptoTimingSafe = require('crypto').timingSafeEqual;
-const internalTokenMiddleware = (req, res, next) => {
-    const expected = process.env.DEEDEE_INTERNAL_TOKEN;
-    if (!expected) return next(); // Token unset: dev-only escape hatch.
-    const header = req.headers.authorization || '';
-    const provided = header.startsWith('Bearer ') ? header.slice(7) : '';
-    const a = Buffer.from(provided);
-    const b = Buffer.from(expected);
-    if (a.length !== b.length || !cryptoTimingSafe(a, b)) {
-        return res.status(401).json({ error: 'Invalid or missing internal token' });
-    }
-    // A route may trust its caller only when a token was really checked.
-    req.internalAuth = true;
-    next();
-};
-
 const { createInternalRouter } = require('./routes/internal');
 const { createLiveRouter } = require('./routes/live');
 const { createWatchersRouter } = require('./routes/watchers'); // NEW
@@ -176,15 +188,8 @@ app.use('/live', createLiveRouter(agent));
 const { createHealthRouter } = require('./routes/health');
 app.use('/health', createHealthRouter(agent));
 
-// Gate every /internal/* path with the bearer token check, regardless of
-// whether agent is initialized. Express runs middleware in registration
-// order, so this must come before any /internal route handlers.
-app.use('/internal', internalTokenMiddleware);
-// The voice call's tool route (POST /tools/execute) runs any tool by name. It
-// was open to the whole Docker network, the agent's own shell included. The
-// gateway already sends the internal token on every call to the agent, and a
-// call that passed this check is the owner's own session (routes/tools.js).
-app.use('/tools', internalTokenMiddleware);
+// The token check for /internal/*, /tools/* and every other path sits at the
+// top of this file, before any route is registered.
 
 if (agent) {
   // Mount Modular Routers

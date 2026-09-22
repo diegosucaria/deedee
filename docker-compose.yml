@@ -78,6 +78,8 @@ services:
       - GIT_USER_EMAIL=deedee@bot
       - PORT=4000
       - SUPERVISOR_STATE_DIR=/app/state
+      # DEEDEE_INTERNAL_TOKEN required at runtime — the deep check posts to
+      # the agent's /chat, which wants it like every agent route but /health.
       # SUPERVISOR_TOKEN required at runtime — the supervisor refuses every
       # request when it is unset. Inject via Balena/.env; agent and api send
       # it as X-Supervisor-Token.
