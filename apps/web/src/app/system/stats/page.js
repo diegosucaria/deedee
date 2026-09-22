@@ -3,6 +3,7 @@ import DateIntervalSelector from '@/components/DateIntervalSelector';
 import StatsClient from './StatsClient';
 import { fetchAPI } from '@/lib/api';
 import { Activity, MessageSquare, Zap, Brain, CheckCircle, BarChart3, Clock, Database } from 'lucide-react';
+import { knowledgeBaseValue, knowledgeBaseDetail } from '@/lib/rag-stats';
 
 // Re-alias CleanupButton if it was named CleanMetricsButton in usage, or import correct one.
 // Based on usage <CleanMetricsButton />, but import is CleanupButton.
@@ -68,7 +69,8 @@ export default async function StatsPage({ searchParams }) {
                 />
                 <StatCard
                     title="Knowledge Base"
-                    value={stats.rag?.totalDocuments ? `${stats.rag.totalDocuments} Docs` : '0 Docs'}
+                    value={knowledgeBaseValue(stats.rag)}
+                    subtitle={knowledgeBaseDetail(stats.rag)}
                     icon={Database}
                     color="text-pink-400"
                     bg="bg-pink-400/10 border-pink-400/20"
@@ -151,7 +153,7 @@ export default async function StatsPage({ searchParams }) {
     );
 }
 
-function StatCard({ title, value, icon: Icon, color, bg }) {
+function StatCard({ title, value, subtitle, icon: Icon, color, bg }) {
     return (
         <div className={`p-6 rounded-xl border ${bg} flex items-center gap-4`}>
             <div className={`p-3 rounded-lg bg-zinc-950 ${color}`}>
@@ -160,6 +162,7 @@ function StatCard({ title, value, icon: Icon, color, bg }) {
             <div>
                 <p className="text-sm text-zinc-400 font-medium">{title}</p>
                 <p className={`text-2xl font-bold ${color}`}>{value}</p>
+                {subtitle && <p className="text-xs text-zinc-500">{subtitle}</p>}
             </div>
         </div>
     );
