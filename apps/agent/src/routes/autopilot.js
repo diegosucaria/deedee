@@ -186,21 +186,23 @@ function createAutopilotRouter(agent) {
                     if (meta && meta.is_pinned) is_pinned = true;
                 } catch (e) { }
 
+                let ids = {};
+                try { ids = JSON.parse(p.identifiers || '{}') || {}; } catch (e) { }
+
                 // Resolve Timestamp (ms): by phone JID, or by the linked WhatsApp ID.
                 let ts = 0;
                 if (p.phone) {
                     const phone = p.phone.replace(/\D/g, '');
                     ts = recentMap[`${phone}@s.whatsapp.net`] || recentMap[`${phone}@lid`] || 0;
                 }
-                if (!ts) {
-                    let ids = {};
-                    try { ids = JSON.parse(p.identifiers || '{}') || {}; } catch (e) { }
-                    if (ids.whatsapp_lid) ts = recentMap[`${ids.whatsapp_lid}@lid`] || 0;
-                }
+                if (!ts && ids.whatsapp_lid) ts = recentMap[`${ids.whatsapp_lid}@lid`] || 0;
 
+                // Only the WhatsApp ID leaves the identifiers: the Style picker
+                // uses it to see that a WhatsApp contact is already this person.
                 const { identifiers, ...rest } = p;
                 return {
                     ...rest,
+                    whatsapp_lid: ids.whatsapp_lid ? String(ids.whatsapp_lid) : null,
                     has_style: has_style,
                     is_pinned: is_pinned, // [NEW]
                     last_message_at: ts

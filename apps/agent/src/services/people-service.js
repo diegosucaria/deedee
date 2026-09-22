@@ -105,7 +105,8 @@ class PeopleService {
      * Records each person's WhatsApp ID (identifiers.whatsapp_lid) next to their
      * phone number, from the phone → ID links in the WhatsApp contact list.
      * A person stored under a WhatsApp ID moves onto the linked phone number,
-     * unless another person already has that number. Never creates or deletes
+     * unless another person already has that number; with no known number,
+     * the ID is recorded as their WhatsApp ID. Never creates or deletes
      * people. Pass the contact list if you already have it.
      * @returns {{ linked: number, upgraded: number }}
      */
@@ -125,6 +126,7 @@ class PeopleService {
             lidByPhone.set(c.id.split('@')[0], String(c.lid).split('@')[0]);
         }
         const phoneByLid = new Map([...lidByPhone].map(([phone, lid]) => [lid, phone]));
+        const knownLids = new Set(list.filter(c => typeof c?.id === 'string' && c.id.endsWith('@lid')).map(c => c.id.split('@')[0]));
 
         const stats = { linked: 0, upgraded: 0 };
         for (const person of this.agent.db.listPeople()) {
@@ -148,6 +150,13 @@ class PeopleService {
                 identifiers.whatsapp_lid = phone;
                 this.agent.db.updatePerson(person.id, { phone: realPhone, identifiers });
                 stats.upgraded++;
+            } else if (knownLids.has(phone) && identifiers.whatsapp_lid !== phone) {
+                // Stored under a WhatsApp ID with no known phone number:
+                // record it as their WhatsApp ID, so lookups by WhatsApp ID
+                // find them and nothing takes the digits for a phone number.
+                identifiers.whatsapp_lid = phone;
+                this.agent.db.updatePerson(person.id, { identifiers });
+                stats.linked++;
             }
         }
         return stats;
@@ -184,6 +193,12 @@ class PeopleService {
 
         const stats = { added: 0, skipped: 0, total: whatsappContacts.length };
 
+        // A WhatsApp ID row whose phone row is in the list is the same
+        // contact: the phone row makes the person, the link pass adds the ID.
+        const lidsWithPhoneRow = new Set(whatsappContacts
+            .filter(c => c?.lid && typeof c.id === 'string' && c.id.endsWith('@s.whatsapp.net'))
+            .map(c => String(c.lid).split('@')[0]));
+
         for (const contact of whatsappContacts) {
             // Skip group chats (JIDs ending in @g.us)
             if (contact.id && contact.id.endsWith('@g.us')) {
@@ -201,8 +216,14 @@ class PeopleService {
                 continue;
             }
 
-            // Check duplicate (by phone, or by the WhatsApp ID linked to it)
-            const contactLid = contact.lid ? String(contact.lid).split('@')[0] : null;
+            // Check duplicate (by phone, or by the WhatsApp ID linked to it).
+            // A WhatsApp ID row's own digits are its WhatsApp ID.
+            const isLidRow = String(contact.id).endsWith('@lid');
+            if (isLidRow && lidsWithPhoneRow.has(phone)) {
+                stats.skipped++;
+                continue;
+            }
+            const contactLid = isLidRow ? phone : (contact.lid ? String(contact.lid).split('@')[0] : null);
             if (existingPhones.has(phone) || (contactLid && (existingLids.has(contactLid) || existingPhones.has(contactLid)))) {
                 stats.skipped++;
                 continue;
@@ -225,7 +246,7 @@ class PeopleService {
                 name: contact.name,
                 phone: phone,
                 source: 'whatsapp_sync',
-                identifiers: { whatsapp: phone },
+                identifiers: isLidRow ? { whatsapp_lid: phone } : { whatsapp: phone },
                 metadata: { synced_at: new Date().toISOString() }
             });
             existingPhones.add(phone);
