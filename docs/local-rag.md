@@ -5,27 +5,25 @@ Deedee uses **Retrieval-Augmented Generation (RAG)** to provide "Long-Term Memor
 ## Core Concepts
 
 ### 1. Documents & Chunks
-Large files (like PDFs or Markdown notes) are too big for a single prompt. We break them down into smaller pieces called **Chunks** (e.g., ~1000 characters).
+Large files (like PDFs or Markdown notes) are too big for a single prompt. We break them down into smaller pieces called **Chunks** of 2,000 characters, each overlapping the one before it by 400 (`rag-service.js`, `_chunkText`). Images, audio, video and PDFs are not cut up: each gets one vector of its own from the multimodal embedding call.
 
 ### 2. Embeddings (Vectors)
-We use the Google Gemini Embedding API to convert each text chunk into a **Vector** (a list of 768 numbers).
+We use the Google Gemini Embedding API to convert each text chunk into a **Vector** (a list of numbers).
 - **Semantics**: The vector represents the *meaning* of the text, not just the keywords.
-- **Model**: Default is `text-embedding-004`, but this is configurable.
+- **Model**: `gemini-embedding-2` (`config-service.js`, `EMBEDDING`).
+- **Size**: 1,536 numbers on the device (`EMBEDDING_DIMENSIONS` in `docker-compose.yml`). Without that variable the code falls back to 768 (`rag-service.js`, `EMBEDDING_DIMENSIONS`). The model also takes 3,072. Changing the number re-embeds the whole index at the next boot.
 
 ### 3. Vector Database
-We store these vectors locally in a SQLite database (`data/rag.db`) using a `BLOB` column. This keeps your data private on the device (except for the API call to generate the vector itself).
+We store these vectors locally in a SQLite database (`data/rag.db`) using a `BLOB` column, with a `chunks_vec` copy for sqlite-vec where that extension loads. This keeps your data private on the device (except for the API call to generate the vector itself).
 
 ## Configuration
 
-You can configure the embedding model via environment variables in `.env`:
+Set these in `.env` (see `.env.example`):
 
 ```bash
-# Default: text-embedding-004
-GEMINI_EMBEDDING_MODEL=text-embedding-004
+GEMINI_EMBEDDING_MODEL=gemini-embedding-2
+EMBEDDING_DIMENSIONS=1536
 ```
-
-Other supported models (check Google AI Studio for availability):
-- `gemini-embedding-001`
 
 ## Implementation Details
 
@@ -44,8 +42,9 @@ To improve accuracy, we specify the `taskType` when calling the API:
 2.  **Retrieval (Search)**:
     - User asks question.
     - `RagService` calls API with `RETRIEVAL_QUERY` -> Gets Query Vector.
-    - Calculates **Cosine Similarity** between Query Vector and all Stored Vectors.
-    - Returns top 5 most similar chunks.
+    - Where sqlite-vec loaded, `chunks_vec` answers a nearest-neighbour query for four times the number of chunks wanted. Where it did not (the device runs Alpine, and the prebuilt extension is glibc-only), every stored vector is scored by **cosine similarity** instead.
+    - Each candidate scores `vector × 0.7`. A chunk the FTS5 index also matched gains a flat `0.3`, so a keyword hit can lift a weak semantic one.
+    - Anything under `minScore` (0.3 by default) is dropped; the top 5 come back.
 
 3.  **Generation**:
     - Agent inserts top chunks into the prompt ("Context: ...").

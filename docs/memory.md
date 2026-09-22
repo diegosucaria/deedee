@@ -76,7 +76,7 @@ Naming every key costs about 17,000 characters on the device, so most of the bud
 - **Use tracking**: `getFact` and a `searchMemory` hit bump `use_count` and `last_used_at`. They are bookkeeping for the memory page and do not change the order of the block: reordering on use would throw away the cached prefix every turn.
 - **Escape hatch**: `FACTS_INDEX=0` brings the full dump back.
 - **The live voice prompt** uses the same renderer with its own smaller budget (`MAX_FACTS_CHARS`, 6,000), because the whole voice instruction has to fit in 12,000 characters. The facts take what is left after the rules, the recall line and the owner's style, so they can never push those off the end.
-- **RAG Sync**: Facts are synced to `data/MEMORY.md` and embedded into RAG (vault: `memory`)
+- **RAG Sync**: Facts are synced to `data/MEMORY.md` and embedded into RAG (vault: `memory`) by `nightly_consolidation` at 2 AM, and only when that run learned at least one fact. The 3 AM scan reads the vaults and the journal folder; it never touches `MEMORY.md`.
 - **Pruning**: Nightly job uses Gemini to cull stale/obsolete facts, backed up to `data/pruned_memories.json`. Pinned facts are excluded from the pruning prompt and have a server-side safety net.
 - **Contradiction Detection**: During consolidation, if a new fact value conflicts with an existing one, the change is logged to the journal. Pinned facts block the overwrite entirely.
 - **Data Segregation**: Internal keys (`config:*`, `job:*`, `sys_*`, `sch_*`) are filtered from user-facing API responses
@@ -146,7 +146,7 @@ The RAG service uses a dual search strategy:
 | Time | Job | Description |
 |------|-----|-------------|
 | 2:00 AM | `nightly_consolidation` | Summarize yesterday's chats → journal + facts |
-| 3:00 AM | `nightly_rag_scan` | Re-embed vaults, journals, and MEMORY.md |
+| 3:00 AM | `nightly_rag_scan` | Index changed vault files, vault pages and journal days; drop the ones deleted from disk |
 | 4:00 AM | `nightly_memory_pruning` | Delete stale temporal facts (>7 days old) |
 | 4:30 AM | `nightly_dream` | Creative synthesis from recent memories |
 
