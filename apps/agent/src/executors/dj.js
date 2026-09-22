@@ -1,4 +1,94 @@
+const fs = require('fs');
+const path = require('path');
 const { createAssistantMessage } = require('@deedee/shared/src/types');
+const { looksLikeBase64, hasImageMagic, PHOTO_MAX_AGE_MS } = require('../utils/photo-from-chat');
+
+// At most this many searches in one search_vinyls call, at most this many
+// hits shown per search, and at most this many characters of hit lines in
+// one reply: fifty searches that each hit a shared label blew past the
+// 50,000-character cap on a tool result, and the tail was lost.
+const MAX_SEARCH_QUERIES = 50;
+const MAX_HITS_PER_QUERY = 10;
+const MAX_RESULT_CHARS = 40000;
+// A query is echoed in front of its hits; a very long one is cut there.
+const MAX_QUERY_ECHO = 120;
+// At most this many photos read by one add_vinyl call. Each record found
+// starts its own enrichment pipeline on the device.
+const MAX_PHOTOS_PER_CALL = 5;
+// Rows to read when looking back in the chat for the owner's photo.
+const PHOTO_LOOKBACK_ROWS = 8;
+// image_path may only name an image file under the data folder. The file
+// tools resolve every path and stay inside the repo; this tool sent any
+// readable file's bytes to the vision model, credentials included. The name
+// and the bytes both have to be an image's: a link named x.jpg can point at
+// the credentials file.
+const IMAGE_FILE = /\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i;
+
+const NO_PHOTO_TEXT = "No photo to read: nothing was added. The owner sends the photo of the cover, label or receipt in this chat with the ask (the latest one within 30 minutes counts); or pass image_path to an image file under the data folder.";
+
+/**
+ * When a record entered the crate, as the model should read it: "just now",
+ * minutes or hours for a fresh row, the date for an old one. A record added
+ * seconds ago used to look like one the owner had kept for years.
+ */
+function addedLabel(createdAt, now = Date.now()) {
+    if (!createdAt) return '';
+    const raw = String(createdAt).trim();
+    // SQLite's CURRENT_TIMESTAMP is UTC with no zone mark; an ISO string
+    // without one is read as UTC too, never as the container's local time.
+    const iso = raw.includes('T') ? raw : raw.replace(' ', 'T');
+    const t = Date.parse(/(Z|[+-]\d\d:?\d\d)$/i.test(iso) ? iso : `${iso}Z`);
+    if (Number.isNaN(t)) return '';
+    const mins = Math.max(0, Math.round((now - t) / 60000));
+    if (mins < 1) return 'added just now';
+    if (mins < 60) return `added ${mins} min ago`;
+    if (mins < 48 * 60) return `added ${Math.round(mins / 60)} h ago`;
+    return `added ${new Date(t).toISOString().slice(0, 10)}`;
+}
+
+/** The photos on a message: image parts with real bytes, not a stripped marker. */
+function imagePartsOf(message) {
+    const parts = Array.isArray(message?.parts) ? message.parts : [];
+    return parts
+        .filter(p => p?.inlineData && String(p.inlineData.mimeType || '').toLowerCase().startsWith('image/')
+            && looksLikeBase64(p.inlineData.data))
+        .map(p => ({ inlineData: { mimeType: String(p.inlineData.mimeType).toLowerCase(), data: p.inlineData.data.replace(/\s+/g, '') } }));
+}
+
+/** True when a file's first bytes are a JPEG, PNG, GIF, WebP, BMP or HEIF signature. */
+function fileHasImageMagic(realPath) {
+    let fd;
+    try {
+        fd = fs.openSync(realPath, 'r');
+        const head = Buffer.alloc(16);
+        const n = fs.readSync(fd, head, 0, 16, 0);
+        if (n < 12) return false;
+        return hasImageMagic(head.toString('base64'));
+    } catch {
+        return false;
+    } finally {
+        if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* closed */ } }
+    }
+}
+
+/**
+ * The real path of an image file under the data folder, or null. A link
+ * that leaves the folder, a link or a file whose bytes are not an image's,
+ * a folder, or a missing file gives null.
+ */
+function imagePathInData(imagePath, dataDir = process.env.DATA_DIR || '/app/data') {
+    if (typeof imagePath !== 'string' || !IMAGE_FILE.test(imagePath)) return null;
+    let root, real;
+    try {
+        root = fs.realpathSync(dataDir);
+        real = fs.realpathSync(imagePath);
+        if (!fs.statSync(real).isFile()) return null;
+    } catch {
+        return null;
+    }
+    if (!real.startsWith(root + path.sep) || !IMAGE_FILE.test(real)) return null;
+    return fileHasImageMagic(real) ? real : null;
+}
 
 class DJExecutor {
     constructor(services) {
@@ -6,10 +96,10 @@ class DJExecutor {
         this.djService = services.dj;
     }
 
-    async execute(name, args) {
+    async execute(name, args, context) {
         switch (name) {
             case 'add_vinyl':
-                return this.add_vinyl(args);
+                return this.add_vinyl(args, context);
             case 'list_vinyls':
                 return this.list_vinyls(args);
             case 'get_vinyl':
@@ -29,19 +119,100 @@ class DJExecutor {
         }
     }
 
-    async add_vinyl({ image_path }) {
-        if (!image_path) return "Please provide an image of the vinyl or receipt.";
+    /**
+     * The photos an add_vinyl call with no image_path reads: those on the
+     * owner's current message, else the latest photo the owner sent in this
+     * chat within 30 minutes (he often sends the photo first and the ask a
+     * moment later). Only the owner's own chat counts (context.ownerTyped,
+     * from Agent._ownerTyped), and only a chat turn: a contact's photo, a
+     * group's, a job's or a watcher run's would fill his crate. Returns
+     * { photos, fromEarlier }.
+     */
+    /**
+     * True for a chat turn the owner typed in his own chat. A job run, a
+     * watcher run, or a run resumed after an approval in his chat is not an
+     * ask in his chat: it must not pick up a photo he sent a moment before
+     * it fired (a resumed job keeps his chat and source but not its name).
+     */
+    static ownerChatTurn(context) {
+        if (!context || context.ownerTyped !== true) return false;
+        const message = context.message || {};
+        const content = String(message.content || '');
+        return !message.metadata?.jobName && !content.startsWith('SYSTEM_WATCHER_ALERT') && !content.startsWith('[SYSTEM: approval result]');
+    }
 
+    _photosForAdd(context, now) {
+        const none = { photos: [], fromEarlier: false };
+        if (!DJExecutor.ownerChatTurn(context)) return none;
+        const onMessage = imagePartsOf(context.message).map(p => ({ data: p.inlineData.data, mimeType: p.inlineData.mimeType }));
+        if (onMessage.length > 0) return { photos: onMessage.slice(0, MAX_PHOTOS_PER_CALL), fromEarlier: false };
+        const chatId = context.message?.metadata?.chatId;
+        const db = this.services?.db || this.djService?.db;
+        if (!chatId || !db || typeof db.getLastUserPhoto !== 'function') return { photos: [], fromEarlier: false };
         try {
-            const results = await this.djService.ingestVinyl(image_path, 'auto');
-            if (results.length === 0) return "No vinyls detected or confidence too low.";
+            const found = db.getLastUserPhoto(chatId, { since: new Date(now - PHOTO_MAX_AGE_MS).toISOString(), rows: PHOTO_LOOKBACK_ROWS });
+            if (found) return { photos: [{ data: found.data, mimeType: found.mimeType }], fromEarlier: true };
+        } catch (e) {
+            console.warn(`[DJExecutor] Could not look for a photo in the chat: ${e.message}`);
+        }
+        return { photos: [], fromEarlier: false };
+    }
 
-            const list = results.map(v => `- **${v.artist}** - ${v.title} (${v.label})`).join('\n');
-            return `Added ${results.length} vinyls to your crate:\n${list}`;
+    /**
+     * With no image_path, the photo comes from the owner's chat (see
+     * _photosForAdd). Before, the tool could not see a chat photo at all, so
+     * a background step wrote the crate instead, ask or no ask.
+     */
+    async add_vinyl(args, context) {
+        const { image_path } = args || {};
+        const ctx = context || {};
+        // Both ways in, the photo and the path, are for the owner's own chat.
+        if (!DJExecutor.ownerChatTurn(ctx)) return NO_PHOTO_TEXT;
+        try {
+            let results;
+            let fromEarlier = false;
+            if (image_path) {
+                const real = imagePathInData(image_path);
+                if (!real) return "image_path must name an image file (.jpg, .png, .webp) under the data folder: nothing was added. Leave it out to read the photo in the chat.";
+                results = await this.djService.ingestVinyl(real, 'auto');
+            } else {
+                const chosen = this._photosForAdd(ctx, Date.now());
+                if (chosen.photos.length === 0) return NO_PHOTO_TEXT;
+                fromEarlier = chosen.fromEarlier;
+                results = [];
+                const failures = [];
+                for (const photo of chosen.photos) {
+                    try {
+                        results.push(...(await this.djService.ingestVinylFromBase64(photo.data, photo.mimeType)));
+                    } catch (e) {
+                        failures.push(e.message);
+                    }
+                }
+                if (results.length === 0 && failures.length > 0) return `Failed to ingest vinyl: ${failures.join('; ')}`;
+                if (failures.length > 0) console.warn(`[DJExecutor] add_vinyl: ${failures.length} of ${chosen.photos.length} photos could not be read: ${failures.join('; ')}`);
+            }
+            if (!results || results.length === 0) return "No vinyls detected or confidence too low.";
+
+            const line = v => `- **${v.artist}** - ${v.title} (${v.label})`;
+            const added = results.filter(v => !v._preExisting);
+            const known = results.filter(v => v._preExisting);
+            const source = fromEarlier ? ' from the photo sent earlier in this chat' : '';
+            const out = [];
+            if (added.length > 0) out.push(`Added ${added.length} vinyls to your crate${source} (details still loading):\n${added.map(line).join('\n')}`);
+            if (known.length > 0) out.push(`Already in the crate${source}, details refreshing:\n${known.map(line).join('\n')}`);
+            return out.join('\n');
         } catch (e) {
             console.error(e);
             return `Failed to ingest vinyl: ${e.message}`;
         }
+    }
+
+    /** One crate row as the model reads it, with when it was added. */
+    _line(v, now) {
+        const trackCount = Array.isArray(v.tracks) ? v.tracks.length : 0;
+        const genre = v.meta?.genre || '';
+        const added = addedLabel(v.created_at, now);
+        return `- **${v.artist}** — ${v.title} (${v.label || 'Unknown Label'}) [${trackCount} tracks${genre ? ', ' + genre : ''}] (id: ${v.id}${added ? ', ' + added : ''})`;
     }
 
     async list_vinyls({ limit, offset } = {}) {
@@ -49,11 +220,8 @@ class DJExecutor {
             const vinyls = this.djService.db.getVinyls({ limit: limit || 50, offset: offset || 0 });
             if (vinyls.length === 0) return "Your vinyl crate is empty. Use add_vinyl to scan some records.";
 
-            const list = vinyls.map(v => {
-                const trackCount = v.tracks ? v.tracks.length : 0;
-                const genre = v.meta?.genre || '';
-                return `- **${v.artist}** — ${v.title} (${v.label || 'Unknown Label'}) [${trackCount} tracks${genre ? ', ' + genre : ''}] (id: ${v.id})`;
-            }).join('\n');
+            const now = Date.now();
+            const list = vinyls.map(v => this._line(v, now)).join('\n');
             return `Found ${vinyls.length} vinyls in your crate:\n${list}`;
         } catch (e) {
             return `Error listing vinyls: ${e.message}`;
@@ -75,16 +243,85 @@ class DJExecutor {
         }
     }
 
-    async search_vinyls({ query }) {
-        try {
-            const vinyls = this.djService.db.searchVinyls(query);
-            if (vinyls.length === 0) return `No vinyls found matching "${query}".`;
+    /**
+     * The queries a search_vinyls call asks for, as a list. `queries` may be
+     * an array, one string, or a JSON array in a string; `query` may hold a
+     * record per line. `query` and `queries` both count: a model that fills
+     * both used to lose the first record of a cart check.
+     */
+    static queriesOf({ query, queries } = {}) {
+        let given = [];
+        if (Array.isArray(queries)) given = queries;
+        else if (typeof queries === 'string') {
+            const t = queries.trim();
+            let parsed = null;
+            if (t.startsWith('[')) { try { parsed = JSON.parse(t); } catch { parsed = null; } }
+            given = Array.isArray(parsed) ? parsed : [queries];
+        }
+        return [...given, query]
+            .filter(q => typeof q === 'string' || typeof q === 'number')
+            .flatMap(q => String(q).split(/\r?\n/))
+            .map(q => q.trim()).filter(Boolean);
+    }
 
-            const list = vinyls.map(v => {
-                const trackCount = v.tracks ? v.tracks.length : 0;
-                return `- **${v.artist}** — ${v.title} (${v.label || 'Unknown Label'}) [${trackCount} tracks] (id: ${v.id})`;
-            }).join('\n');
-            return `Found ${vinyls.length} vinyls matching "${query}":\n${list}`;
+    /**
+     * One search. When the words as typed match nothing, the search runs
+     * again without the words that are only numbers: a cart line carries a
+     * price, a year or a size that no field holds, and the miss then read as
+     * "not in the crate" for a record that was.
+     */
+    _searchOne(q) {
+        const db = this.djService.db;
+        const exact = db.searchVinyls(q);
+        if (exact.length > 0) return { vinyls: exact, near: false };
+        const words = q.split(/\s+/).filter(Boolean);
+        const lettered = words.filter(w => /\p{L}/u.test(w));
+        if (lettered.length > 0 && lettered.length < words.length) {
+            const near = db.searchVinyls(lettered.join(' '));
+            if (near.length > 0) return { vinyls: near, near: true };
+        }
+        return { vinyls: [], near: false };
+    }
+
+    /**
+     * One query, or a list with one entry per record, in one call. A cart of
+     * twelve records used to take twelve calls, and the tool-loop guard
+     * warned the model to stop halfway.
+     */
+    async search_vinyls(args) {
+        const wanted = DJExecutor.queriesOf(args || {});
+        if (wanted.length === 0) return "Give a query, or a list of queries with one entry per record.";
+        const list = wanted.slice(0, MAX_SEARCH_QUERIES);
+        try {
+            const now = Date.now();
+            const sections = [];
+            let hits = 0;
+            // Every search gets an even share of the reply; the header and
+            // the echoed query count against it too.
+            const share = Math.floor(MAX_RESULT_CHARS / list.length);
+            for (const q of list) {
+                const echo = q.length > MAX_QUERY_ECHO ? `${q.slice(0, MAX_QUERY_ECHO - 1)}…` : q;
+                const { vinyls, near } = this._searchOne(q);
+                if (vinyls.length === 0) { sections.push(`"${echo}": no match`); continue; }
+                hits += 1;
+                const count = `${vinyls.length} ${near ? 'near ' : ''}match${vinyls.length === 1 ? '' : 'es'}${near ? ' with the numbers left out; compare the titles' : ''}`;
+                const head = `"${echo}": ${count}`;
+                let used = head.length + 60;
+                // Lines until the per-search cap or this search's share, whichever comes first.
+                const lines = [];
+                for (const v of vinyls.slice(0, MAX_HITS_PER_QUERY)) {
+                    const line = this._line(v, now);
+                    if (lines.length > 0 && used + line.length > share) break;
+                    used += line.length + 1;
+                    lines.push(line);
+                }
+                const left = vinyls.length - lines.length;
+                const more = left > 0 ? `\n  (${left} more not shown; search with more words)` : '';
+                sections.push(`${head}\n${lines.join('\n')}${more}`);
+            }
+            const head = list.length > 1 ? `${list.length} searches, ${hits} with a match, ${list.length - hits} with none.` : null;
+            const tail = wanted.length > list.length ? `${wanted.length - list.length} more queries were dropped: at most ${MAX_SEARCH_QUERIES} per call.` : null;
+            return [head, ...sections, tail].filter(Boolean).join('\n');
         } catch (e) {
             return `Error searching vinyls: ${e.message}`;
         }
@@ -159,4 +396,4 @@ class DJExecutor {
     }
 }
 
-module.exports = { DJExecutor };
+module.exports = { DJExecutor, addedLabel, imagePartsOf, imagePathInData, NO_PHOTO_TEXT, MAX_SEARCH_QUERIES, MAX_HITS_PER_QUERY, MAX_RESULT_CHARS, MAX_QUERY_ECHO, MAX_PHOTOS_PER_CALL };

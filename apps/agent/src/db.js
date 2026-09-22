@@ -2338,7 +2338,15 @@ class AgentDB {
 
   searchVinyls(query) {
     if (!query) return [];
-    const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+    // A pasted line like "Artist — Title (Label / CAT-1)" carries words that
+    // are only punctuation, or wear it at the ends; every such search was a
+    // miss. Trim the ends of each word and drop what is left empty. A query
+    // that is one word of nothing but punctuation (the band "!!!") is
+    // searched as typed, unless it is a single character: "-" would match
+    // every catalog number.
+    const words = query.toLowerCase().split(/\s+/).filter(Boolean);
+    const trimmed = words.map(t => t.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, '')).filter(Boolean);
+    const tokens = trimmed.length > 0 ? trimmed : (words.length === 1 && words[0].length >= 2 ? words : []);
     if (tokens.length === 0) return [];
     // Build WHERE clause: every token must match at least one field
     const conditions = tokens.map(() =>

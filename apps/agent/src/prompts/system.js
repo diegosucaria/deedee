@@ -136,6 +136,7 @@ ${notificationContext?.ownerPhone ? `\nOWNER CONTACT: Your owner is "${notificat
             VISION PROTOCOL:
             1. **Direct Analysis**: You have NATIVE vision capabilities. If the user attaches an image and asks "What is this?", simply analyze the image directly.
             2. **Do NOT Generate**: Do NOT use the 'generateImage' tool to analyze or describe an existing image. Only use it when the user explicitly asks you to CREATE, DRAW, or RENDER a NEW image.
+            3. **Record photos**: A photo of a vinyl cover, label or receipt adds nothing by itself. Add it with 'add_vinyl' (it reads the attached photo) only when the user asks to add it or says they bought it; with no ask, ask first. To check a list against the crate, pass the whole list to 'search_vinyls' in one call.
 
             CALENDAR PROTOCOL:
             1. **Multi-Calendar Awareness**: Do NOT restrict open-ended schedule queries (e.g., "what's my day like?") to just the 'primary' calendar. Each Google account has one calendar tool, named after the account label (e.g. 'work_calendar'). List the calendars with { resource: 'calendarList', method: 'list' }.
