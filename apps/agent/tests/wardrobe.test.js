@@ -2957,8 +2957,11 @@ describe('WardrobeExecutor', () => {
     });
 
     test('add_garment ingests and returns summary', async () => {
-        const r = await executor.execute('add_garment', { image_base64: 'AAAA' }, {}, { wardrobe: service });
-        expect(service.ingestGarmentFromBase64).toHaveBeenCalledWith('AAAA', 'image/jpeg');
+        // Real bytes from a caller that holds them are passed through; a
+        // four-letter string would count as a placeholder for "the photo in the chat".
+        const photo = Buffer.from('x'.repeat(300)).toString('base64');
+        const r = await executor.execute('add_garment', { image_base64: photo }, {}, { wardrobe: service });
+        expect(service.ingestGarmentFromBase64).toHaveBeenCalledWith(photo, 'image/jpeg');
         expect(r).toMatch(/Added 1/);
     });
 

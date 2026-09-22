@@ -69,6 +69,9 @@ const GROUP_NAME_WORDS = {
     // Not an integration's name, but its read tools used to ride on every
     // turn; now the group must load for "what is in my crate?" to work.
     dj: ['vinyl', 'vinilo', 'crate'],
+    // The photo tools work from chat now; "add this to my wardrobe" with a
+    // picture must load the group whatever the router made of the picture.
+    wardrobe: ['wardrobe', 'garment', 'outfit', 'guardarropa', 'ropa'],
 };
 
 const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -76,10 +79,13 @@ const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // "digital", "legit" or "github". Product names match from the start of a word
 // only, so inflections and Spanglish still fire: "gmails", "google calendario",
 // "slackeame", "browsers".
-const WHOLE_WORD_GROUPS = new Set(['code']);
+// 'outfit' must not fire on "Outfitters", nor 'ropa' inside another word;
+// their plurals ("outfits", "ropas", "guardarropas") still count.
+const WHOLE_WORD_GROUPS = new Set(['code', 'wardrobe']);
+const PLURAL_GROUPS = new Set(['wardrobe']);
 const GROUP_NAME_PATTERNS = Object.fromEntries(
     Object.entries(GROUP_NAME_WORDS).map(([g, words]) => {
-        const tail = WHOLE_WORD_GROUPS.has(g) ? '\\b' : '';
+        const tail = WHOLE_WORD_GROUPS.has(g) ? `${PLURAL_GROUPS.has(g) ? 's?' : ''}\\b` : '';
         return [g, new RegExp(`\\b(?:${words.map(escapeRe).join('|')})${tail}`, 'i')];
     })
 );
