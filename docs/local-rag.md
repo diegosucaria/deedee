@@ -61,3 +61,27 @@ After three failed passes in a row (`failed_attempts` on the row) the scan stops
 
 A vault name must hold at least one letter or digit. A name of only dots or symbols used to sanitise to an empty string, and `deleteVault` on it would have removed the whole vaults folder (`vault-manager.js`, `sanitizeTopic`).
 
+## When a file is deleted
+
+The nightly scan used to only add. A file taken out of a vault kept its chunks, so search went on quoting a document that was no longer on disk.
+
+`pruneMissingDocuments` (`rag-service.js`) now runs at the end of each scan. For every indexed file that has left the disk it deletes the chunks, the matching `chunks_fts` and `chunks_vec` rows and the `documents` row, and the scan logs how many it dropped. It only looks at documents under the folder it has just scanned — `vaults/` after `scanAndIngest`, the journal folder after `scanJournals` — and the caller has already checked that folder is there. So an unmounted data volume prunes nothing.
+
+`RAG_PRUNE_MISSING=0` turns the pruning off and gives back the old behaviour. The value is read on every call.
+
+## Private vaults
+
+`searchMemory` is a core tool: it runs on any turn where the agent looks something up, and it searches every vault at once. That put the owner's medical notes in reach of a question nobody asked about them.
+
+A vault can now be marked **private** on its page in the web app (the Private switch in the header). The flag lives in `agent_settings` as `vault_private:<id>`, and every vault starts searchable.
+
+What changes:
+
+- A search with no vault named skips the private ones. That is `searchMemory` on every turn, and `searchDocuments` in a chat that has no active vault.
+- A search that names a vault still reads it. So `searchDocuments` in a chat whose active vault is the private one works as before, and so does opening that vault's chat pane in the web app.
+- Nothing else changes: the vault is still indexed, still on the page, still readable with `readVaultPage` and `readVaultFile`. Private means "stay out of the sweep", not "hidden".
+
+The route is `POST /v1/vaults/:id/private` with `{ "private": true }`, behind the internal token like every other agent route, with the gateway and the `setVaultPrivate` Server Action in front.
+
+`VAULT_PRIVACY=0` turns the whole idea off and searches every vault again. The value is read on every call.
+

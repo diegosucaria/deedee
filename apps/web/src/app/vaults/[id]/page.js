@@ -2,6 +2,7 @@ import { getVault } from '@/app/actions';
 import Link from 'next/link';
 import VaultChat from '@/components/VaultChat';
 import VaultDetailClient from '@/components/VaultDetailClient';
+import VaultPrivateToggle from '@/components/VaultPrivateToggle';
 import { notFound } from 'next/navigation';
 
 export const dynamic = 'force-dynamic';
@@ -26,7 +27,8 @@ export default async function VaultDetailPage({ params }) {
                         <span className="text-2xl">🔐</span> {vault.id}
                     </h1>
                 </div>
-                <div className="flex items-center gap-2">
+                <div className="flex items-center gap-4">
+                    <VaultPrivateToggle vaultId={vault.id} isPrivate={vault.private} />
                     <span className="text-xs text-zinc-500 uppercase tracking-wider font-semibold">Knowledge Base</span>
                 </div>
             </header>

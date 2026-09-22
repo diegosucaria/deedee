@@ -114,8 +114,10 @@ KV Facts are the ground truth — always in context. Journal and RAG content onl
 ### searchMemory Flow
 When the agent calls `searchMemory(query)`:
 1. **Chat history**: `db.searchMessages(query)` — ranked full-text search through stored messages (see below)
-2. **RAG**: `ragService.search(query)` — hybrid vector + FTS5 across all vaults (journal, memory, user vaults)
+2. **RAG**: `ragService.search(query)` — hybrid vector + FTS5 across every vault (journal, memory, user vaults) except the ones marked private
 3. Returns both as `{ chat_history, knowledge }` so the agent can reason across sources
+
+This call names no vault, and it runs on any turn where the agent looks something up. A vault marked private stays out of it; a search that names the vault still reads it. See "Private vaults" in `docs/local-rag.md`.
 
 ### Chat history search (`utils/messages-fts.js`)
 `searchMemory` and `searchHistory` both read stored messages through `db.searchMessages`. It used to be a `LIKE` scan of every row: no ranking, newest first, and a hit inside tool data came back as escaped JSON. It is now an FTS5 index.

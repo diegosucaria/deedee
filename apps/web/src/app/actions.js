@@ -1744,6 +1744,23 @@ export async function updateVaultPage(id, content, page = 'index.md') {
     }
 }
 
+// A private vault stays out of the search the agent runs on every turn. A
+// chat opened on that vault still searches it.
+export async function setVaultPrivate(id, isPrivate) {
+    await requireActionSession();
+    try {
+        await fetchAPI(`/v1/vaults/${encodeURIComponent(id)}/private`, {
+            method: 'POST',
+            body: JSON.stringify({ private: !!isPrivate })
+        });
+        revalidatePath(`/vaults/${id}`);
+        revalidatePath('/vaults');
+        return { success: true, private: !!isPrivate };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function deleteVault(id) {
     await requireActionSession();
     try {

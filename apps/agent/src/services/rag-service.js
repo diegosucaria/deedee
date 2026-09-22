@@ -937,20 +937,59 @@ class RagService {
         console.log(`[RAG] Journal scan complete. ${ingested} ingested, ${skipped} skipped (too short), ${pruned} deleted days dropped from the index.`);
     }
 
+    /**
+     * The vaults the owner marked private. A search over everything skips
+     * them; a search that names a vault does not. VAULT_PRIVACY=0 turns the
+     * whole idea off, and the value is read on every call.
+     * @returns {string[]}
+     */
+    privateVaultIds() {
+        if (String(process.env.VAULT_PRIVACY ?? '').trim() === '0') return [];
+        try {
+            const db = this.agent?.db;
+            return typeof db?.getPrivateVaultIds === 'function' ? db.getPrivateVaultIds() : [];
+        } catch (e) {
+            console.warn('[RAG] Could not read the private vault list:', e.message);
+            return [];
+        }
+    }
+
+    /**
+     * @param {string} query
+     * @param {string|null} vaultId one vault, or null for every vault
+     * @param {number} limit
+     * @param {number} minScore
+     *
+     * With no vaultId the search skips the vaults marked private: searchMemory
+     * runs on every turn, and the owner's medical notes should not answer a
+     * question nobody asked about them. Naming the vault still reaches it.
+     */
     async search(query, vaultId = null, limit = 5, minScore = 0.3) {
-        console.log(`[RAG] Hybrid Searching for: "${query}" (Vault: ${vaultId || 'Global'}, minScore: ${minScore})`);
+        const skip = vaultId ? [] : this.privateVaultIds();
+        console.log(`[RAG] Hybrid Searching for: "${query}" (Vault: ${vaultId || 'Global'}, minScore: ${minScore}${skip.length ? `, skipping ${skip.length} private` : ''})`);
         const queryEmbedding = await this._getEmbedding(query, 'RETRIEVAL_QUERY');
 
         if (this.useVec) {
-            return this._searchWithVec(queryEmbedding, query, vaultId, limit, minScore);
+            return this._searchWithVec(queryEmbedding, query, vaultId, limit, minScore, skip);
         }
-        return this._searchBruteForce(queryEmbedding, query, vaultId, limit, minScore);
+        return this._searchBruteForce(queryEmbedding, query, vaultId, limit, minScore, skip);
+    }
+
+    /**
+     * ` AND (...)` that keeps private vaults out, with its parameters. A NULL
+     * vault_id is a global document: `NULL NOT IN (...)` is NULL in SQL, so
+     * the IS NULL arm has to be there or those rows would vanish.
+     */
+    _skipClause(column, skip) {
+        if (!skip || skip.length === 0) return { sql: '', params: [] };
+        const holes = skip.map(() => '?').join(', ');
+        return { sql: ` AND (${column} IS NULL OR ${column} NOT IN (${holes}))`, params: [...skip] };
     }
 
     /**
      * Native vector search via sqlite-vec (KNN) + FTS boost.
      */
-    _searchWithVec(queryEmbedding, query, vaultId, limit, minScore) {
+    _searchWithVec(queryEmbedding, query, vaultId, limit, minScore, skip = []) {
         const queryBuffer = Buffer.from(new Float32Array(queryEmbedding).buffer);
         const candidateLimit = limit * 4;
 
@@ -968,6 +1007,10 @@ class RagService {
         if (vaultId) {
             vecSql += ' AND d.vault_id = ?';
             params.push(vaultId);
+        } else {
+            const skipClause = this._skipClause('d.vault_id', skip);
+            vecSql += skipClause.sql;
+            params.push(...skipClause.params);
         }
         vecSql += ` ORDER BY cv.distance LIMIT ?`;
         params.push(candidateLimit);
@@ -977,7 +1020,7 @@ class RagService {
             candidates = this.db.prepare(vecSql).all(...params);
         } catch (e) {
             console.warn('[RAG] vec0 search failed, falling back to brute force:', e.message);
-            return this._searchBruteForce(queryEmbedding, query, vaultId, limit, minScore);
+            return this._searchBruteForce(queryEmbedding, query, vaultId, limit, minScore, skip);
         }
 
         // Convert distance to similarity score (vec0 uses L2 distance by default)
@@ -1005,7 +1048,7 @@ class RagService {
     /**
      * Brute-force cosine similarity search (fallback when sqlite-vec unavailable).
      */
-    _searchBruteForce(queryEmbedding, query, vaultId, limit, minScore) {
+    _searchBruteForce(queryEmbedding, query, vaultId, limit, minScore, skip = []) {
         let vectorSql = 'SELECT chunks.id, chunks.content, chunks.embedding, chunk_index, document_id, chunks.content_type, documents.filename, documents.vault_id FROM chunks JOIN documents ON chunks.document_id = documents.id';
         const params = [];
         if (vaultId) {
@@ -1014,6 +1057,9 @@ class RagService {
         } else {
             // Rows without a vector (cleared by a dimension change) cannot be scored.
             vectorSql += ' WHERE chunks.embedding IS NOT NULL';
+            const skipClause = this._skipClause('documents.vault_id', skip);
+            vectorSql += skipClause.sql;
+            params.push(...skipClause.params);
         }
 
         const allChunks = this.db.prepare(vectorSql).all(...params);

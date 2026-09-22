@@ -56,6 +56,9 @@ router.get('/:id', (req, res) => proxyRequest(req, res, 'GET', `/v1/vaults/${req
 // POST /v1/vaults/:id/wiki
 router.post('/:id/wiki', (req, res) => proxyRequest(req, res, 'POST', `/v1/vaults/${req.params.id}/wiki`, req.body));
 
+// POST /v1/vaults/:id/private - mark a vault private, or take the mark off
+router.post('/:id/private', (req, res) => proxyRequest(req, res, 'POST', `/v1/vaults/${req.params.id}/private`, req.body));
+
 // POST /v1/vaults/:id/files (Upload)
 router.post('/:id/files', upload.single('file'), async (req, res) => {
     // Handling Multipart Proxying manually with axios + form-data

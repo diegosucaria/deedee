@@ -25,7 +25,11 @@ class MemoryExecutor extends BaseExecutor {
                 const chatResults = db.searchMessages(query, limit)
                     .map(m => ({ timestamp: m.timestamp, role: m.role, content: m.content }));
 
-                // 2. RAG (journal + memory vaults — semantic + keyword hybrid)
+                // 2. RAG (journal + memory vaults — semantic + keyword hybrid).
+                // No vault id, so this reads every vault at once. It runs on
+                // every turn, so the vaults the owner marked private stay out
+                // of it (rag-service.js, privateVaultIds). A chat opened on
+                // one of those vaults still searches it.
                 const { agent } = this.services;
                 let ragResults = [];
                 if (agent?.ragService) {

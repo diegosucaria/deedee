@@ -3614,6 +3614,35 @@ class AgentDB {
     stmt.run(key, valStr, category);
   }
 
+  // --- Private vaults ---
+  // A vault marked private stays out of the unscoped search searchMemory runs
+  // on every turn. A chat whose active vault is that one still searches it,
+  // and so does searchDocuments when it is given the vault by name. The flag
+  // lives in agent_settings as `vault_private:<id>`.
+
+  /** True when this vault is marked private. Default false. */
+  isVaultPrivate(vaultId) {
+    if (!vaultId) return false;
+    return this.getAgentSetting(`vault_private:${vaultId}`)?.value === true;
+  }
+
+  /** Mark a vault private, or take the mark off. */
+  setVaultPrivate(vaultId, isPrivate) {
+    this.setAgentSetting(`vault_private:${vaultId}`, !!isPrivate, 'vaults');
+  }
+
+  /** The ids of every vault marked private. */
+  getPrivateVaultIds() {
+    const rows = this.db.prepare("SELECT key, value FROM agent_settings WHERE key LIKE 'vault_private:%'").all();
+    const ids = [];
+    for (const row of rows) {
+      let value = row.value;
+      try { value = JSON.parse(row.value); } catch (e) { /* stored as text */ }
+      if (value === true || value === 'true') ids.push(row.key.slice('vault_private:'.length));
+    }
+    return ids;
+  }
+
   // Rows in the 'system' category (migration flags) are internal bookkeeping
   // and stay out of the settings the UI and the agent read.
   getAllAgentSettings() {

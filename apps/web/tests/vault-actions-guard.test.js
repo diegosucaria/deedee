@@ -12,7 +12,7 @@ const SOURCE = fs.readFileSync(path.join(__dirname, '../src/app/actions.js'), 'u
 
 const VAULT_ACTIONS = [
     'getVaults', 'createVault', 'getVault', 'getVaultPage', 'updateVaultPage',
-    'deleteVault', 'uploadVaultFile', 'deleteVaultFile',
+    'deleteVault', 'uploadVaultFile', 'deleteVaultFile', 'setVaultPrivate',
     'getVaultEmbeddings', 'deleteVaultEmbedding'
 ];
 
