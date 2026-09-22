@@ -108,12 +108,21 @@ function sessionSourceFromId(id) {
   return null;
 }
 
-// id wins when it names an owner; then the message source; then the old shape
-// rule, so a legacy row stays as visible as it was before the source column.
+// The interfaces that own their own chats. Everything else the owner drives
+// himself (the dashboard, the API gateway, a phone shortcut), and those chats
+// belong in his list, so an unknown source must not hide one.
+const OTHER_INTERFACES = new Set(['whatsapp', 'telegram', 'slack', 'scheduler', 'subagent', 'api']);
+
+// The id wins when it names an owner, then the source of the first message.
+// What is left is the owner's own chat if the id has the web shape, which is
+// the rule the list used before this column.
 function resolveSessionSource(id, messageSource) {
-  return sessionSourceFromId(id)
-    || normalizeSessionSource(messageSource)
-    || (id && id.includes('-') ? 'web' : 'unknown');
+  const fromId = sessionSourceFromId(id);
+  if (fromId) return fromId;
+  const fromSource = normalizeSessionSource(messageSource);
+  if (fromSource && OTHER_INTERFACES.has(fromSource)) return fromSource;
+  if (fromSource === 'web') return 'web';
+  return id && id.includes('-') ? 'web' : 'unknown';
 }
 
 // Tags written on the main agent chat path (see services/usage-attribution.js).
@@ -841,11 +850,11 @@ class AgentDB {
       const fixed = this.db.prepare(`
         UPDATE chat_sessions
         SET created_at = replace(created_at, ' ', 'T') || 'Z'
-        WHERE created_at LIKE '____-__-__ __:__:__'
+        WHERE created_at LIKE '____-__-__ %'
       `).run().changes + this.db.prepare(`
         UPDATE chat_sessions
         SET updated_at = replace(updated_at, ' ', 'T') || 'Z'
-        WHERE updated_at LIKE '____-__-__ __:__:__'
+        WHERE updated_at LIKE '____-__-__ %'
       `).run().changes;
       if (fixed > 0) console.log(`[DB] Normalised ${fixed} chat session dates to ISO.`);
     } catch (err) {
@@ -1506,9 +1515,13 @@ class AgentDB {
     // when the session is created. SESSION_SOURCE_FILTER=0 falls back to the
     // old rule, which read the id shape and so lost a web chat that had been
     // handed a Slack channel id.
+    const oldRule = `id LIKE '%-%' AND id NOT LIKE '%@%'`;
     const owner = process.env.SESSION_SOURCE_FILTER === '0'
-      ? `AND id LIKE '%-%' AND id NOT LIKE '%@%'`
-      : `AND source = 'web'`;
+      ? `AND ${oldRule}`
+      // A row the backfill never reached keeps its source NULL. It falls back
+      // to the old rule, so a backfill that fails leaves the old list rather
+      // than an empty one.
+      : `AND (source = 'web' OR (source IS NULL AND ${oldRule}))`;
     return this.db.prepare(`
       SELECT * FROM chat_sessions 
       WHERE is_archived = 0
@@ -1603,15 +1616,21 @@ class AgentDB {
 
     const args = [];
 
+    // created_at is ISO ('2026-09-22T17:06:14.000Z'). datetime('now') returns
+    // the space form, which SQLite compares as text and reads as smaller, so
+    // the cutoff has to be ISO too or nothing is ever cleaned up.
+    const cutoff = (seconds) => new Date(Date.now() - seconds * 1000).toISOString();
+
     if (preserveId) {
       // Aggressive Mode: Delete ANY empty session that isn't the preserved one.
       // We still give a Tiny buffer (e.g. 5 seconds) just in case of parallel requests/latency, 
       // but effectively it cleans up "yesterday's empty chat" immediately.
-      sql += ` AND cs.id != ? AND cs.created_at < datetime('now', '-5 seconds')`;
-      args.push(preserveId);
+      sql += ` AND cs.id != ? AND cs.created_at < ?`;
+      args.push(preserveId, cutoff(5));
     } else {
       // Passive Mode: Only delete very old abandoned sessions
-      sql += ` AND cs.created_at < datetime('now', '-10 minutes')`;
+      sql += ` AND cs.created_at < ?`;
+      args.push(cutoff(600));
     }
 
     sql += ` )`;

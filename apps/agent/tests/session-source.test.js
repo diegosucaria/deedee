@@ -87,6 +87,67 @@ describe('Chat session ownership', () => {
         expect(db.getSessions({ limit: 50 }).map(s => s.id)).not.toContain('100000000000001@g.us');
     });
 
+    test('a chat from a phone shortcut stays in the list', () => {
+        // Sources we do not know name the owner's own chat, not an interface
+        // with a list of its own, so they must not drop out of the sidebar.
+        db.ensureSession('4b30dea9-1b20-5bb4-9a58-000000000002', 'ios_shortcut');
+        expect(db.getSessions({ limit: 50 }).map(s => s.id))
+            .toContain('4b30dea9-1b20-5bb4-9a58-000000000002');
+    });
+
+    test('a row the backfill never reached keeps the old id rule', () => {
+        db.db.prepare(`INSERT INTO chat_sessions (id, title, source, created_at, updated_at) VALUES (?, ?, NULL, ?, ?)`)
+            .run('4b30dea9-1b20-5bb4-9a58-000000000003', 'Never Backfilled', '2026-05-01T10:00:00.000Z', '2026-05-01T10:00:00.000Z');
+        db.db.prepare(`INSERT INTO chat_sessions (id, title, source, created_at, updated_at) VALUES (?, ?, NULL, ?, ?)`)
+            .run('100000000000002@g.us', 'WhatsApp Chat', '2026-05-01T10:00:00.000Z', '2026-05-01T10:00:00.000Z');
+
+        const ids = db.getSessions({ limit: 50 }).map(s => s.id);
+        expect(ids).toContain('4b30dea9-1b20-5bb4-9a58-000000000003');
+        expect(ids).not.toContain('100000000000002@g.us');
+    });
+
+    test('an empty chat made minutes ago is cleaned up', () => {
+        // The cutoff used datetime('now'), which SQLite compares as text
+        // against an ISO created_at and always reads as smaller, so nothing
+        // made the same day was ever deleted.
+        const stay = db.createSession({ title: 'New Chat', source: 'web' });
+        const go = db.createSession({ id: 'gone-1', title: 'New Chat', source: 'web' });
+        db.db.prepare('UPDATE chat_sessions SET created_at = ? WHERE id = ?')
+            .run(new Date(Date.now() - 30 * 60000).toISOString(), 'gone-1');
+
+        db.deleteEmptySessions(stay.id);
+        expect(db.getSession('gone-1')).toBeUndefined();
+        expect(db.getSession(stay.id)).toBeTruthy();
+    });
+
+    test('an empty chat made seconds ago survives the cleanup', () => {
+        const stay = db.createSession({ title: 'New Chat', source: 'web' });
+        const fresh = db.createSession({ id: 'fresh-1', title: 'New Chat', source: 'web' });
+        db.deleteEmptySessions(stay.id);
+        expect(db.getSession(fresh.id)).toBeTruthy();
+    });
+
+    test('a chat that holds messages is never cleaned up', () => {
+        const kept = db.createSession({ id: 'kept-1', title: 'New Chat', source: 'web' });
+        saveUserMessage(kept.id, 'web');
+        db.db.prepare('UPDATE chat_sessions SET created_at = ? WHERE id = ?')
+            .run('2020-01-01T00:00:00.000Z', kept.id);
+
+        db.deleteEmptySessions('some-other-chat');
+        expect(db.getSession(kept.id)).toBeTruthy();
+    });
+
+    test('the migration rewrites stored dates in the old format', () => {
+        db.db.prepare(`INSERT INTO chat_sessions (id, title, source, created_at, updated_at) VALUES (?, ?, 'web', ?, ?)`)
+            .run('legacy-1', 'Legacy Chat', '2026-05-01 10:00:00', '2026-05-01 10:00:00.500');
+        db.close();
+
+        db = new AgentDB(tmpDir); // reopening runs the migrations
+        const row = db.getSession('legacy-1');
+        expect(row.created_at).toBe('2026-05-01T10:00:00Z');
+        expect(row.updated_at).toBe('2026-05-01T10:00:00.500Z');
+    });
+
     test('SESSION_SOURCE_FILTER=0 restores the old id-shape list', () => {
         db.ensureSession('C0EXAMPLE04', 'web'); // web-owned, no dash in the id
         process.env.SESSION_SOURCE_FILTER = '0';
