@@ -1,8 +1,9 @@
 'use client';
 
 import { useState, useEffect, useCallback } from 'react';
-import { RefreshCw, Smartphone, LogOut, Loader2, AlertCircle, ScanLine, Wrench } from 'lucide-react';
-import { getWhatsAppStatus, connectWhatsApp, disconnectWhatsApp, repairWhatsAppSession } from '../app/actions';
+import { RefreshCw, Smartphone, LogOut, Loader2, AlertCircle, ScanLine, Wrench, Stethoscope } from 'lucide-react';
+import { getWhatsAppStatus, connectWhatsApp, disconnectWhatsApp, repairWhatsAppSession, diagnoseWhatsApp } from '../app/actions';
+import { diagnosticLines } from '@/lib/whatsapp-diagnostics';
 import ContactList from './ContactList';
 
 export default function WhatsAppSettings() {
@@ -270,7 +271,64 @@ function SessionCard({ sessionKey, title, description, data, refresh, onShowCont
                     </div>
                 )}
             </div>
+
+            <Diagnostics sessionKey={sessionKey} />
         </div >
+    );
+}
+
+/**
+ * Read-only: what the interfaces service sees for this session right now.
+ * The probes run live, so the report only appears when you ask for it. The
+ * /diagnose chat command used to be the only way to read this.
+ */
+function Diagnostics({ sessionKey }) {
+    const [busy, setBusy] = useState(false);
+    const [report, setReport] = useState(null);
+    const [error, setError] = useState(null);
+
+    const run = async () => {
+        setBusy(true);
+        setError(null);
+        const res = await diagnoseWhatsApp(sessionKey);
+        if (res.success) setReport(res.report);
+        else { setReport(null); setError(res.error || 'Diagnostics failed'); }
+        setBusy(false);
+    };
+
+    const lines = diagnosticLines(report);
+
+    return (
+        <div className="px-6 pb-6 pt-4 border-t border-zinc-800 bg-zinc-900/50">
+            <button
+                onClick={run}
+                disabled={busy}
+                className="w-full py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 rounded text-xs font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                title="Ask the interfaces service how this session is doing. It sends one presence ping (the account shows as online for a moment) and reads the blocklist; it writes nothing."
+            >
+                {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Stethoscope className="w-3 h-3" />}
+                Run diagnostics
+            </button>
+
+            {error && <p className="mt-2 text-xs text-red-400">{error}</p>}
+
+            {lines.length > 0 && (
+                <div className="mt-3 text-[10px] font-mono space-y-1 bg-zinc-950/30 p-2 rounded border border-zinc-800/50">
+                    {lines.map(line => (
+                        <div key={line.label} className="flex justify-between gap-3">
+                            <span className="text-zinc-500 shrink-0">{line.label}</span>
+                            <span className={`text-right break-all ${line.ok ? 'text-zinc-400' : 'text-red-400'}`}>{line.detail}</span>
+                        </div>
+                    ))}
+                    {report?.timestamp && (
+                        <div className="flex justify-between gap-3 pt-1 border-t border-zinc-800/50">
+                            <span className="text-zinc-600">Checked</span>
+                            <span className="text-zinc-600">{new Date(report.timestamp).toLocaleTimeString()}</span>
+                        </div>
+                    )}
+                </div>
+            )}
+        </div>
     );
 }
 

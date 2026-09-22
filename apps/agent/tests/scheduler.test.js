@@ -566,9 +566,13 @@ describe('Scheduler & Smart Notifications', () => {
             expect(db.getScheduledJobs()).toEqual([]);
             expect(Object.keys(scheduler.jobs)).toEqual([]);
             expect(db.listRecentOutbox({ limit: 10 }).map(r => r.status)).toEqual(['sent', 'sent']);
-            // The late delivery is logged like a normal run.
+            // The late delivery is logged like a normal run, and the log says
+            // it was late: the "(late)" prefix only reaches the owner, so Job
+            // History has no other way to tell the two apart.
             const logs = db.db.prepare('SELECT * FROM job_logs').all();
-            expect(logs.some(r => JSON.stringify(r).includes('reminder_late'))).toBe(true);
+            const lateLog = logs.find(r => r.job_name === 'reminder_late');
+            expect(lateLog).toBeDefined();
+            expect(JSON.parse(lateLog.output).late).toBe(true);
         });
     });
 

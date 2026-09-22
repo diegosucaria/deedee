@@ -76,3 +76,12 @@ describe('API Security', () => {
         expect(res.body.agentResponse.replies[0].content).toEqual('Hello');
     });
 });
+
+describe('the routes added for the Models page, the diagnostics block and Clear Summaries', () => {
+    test('each refuses a call with no token before proxying anything', async () => {
+        const { app } = require('../src/server');
+        expect((await request(app).get('/v1/models')).statusCode).toBe(401);
+        expect((await request(app).post('/v1/whatsapp/diagnose').send({ session: 'user' })).statusCode).toBe(401);
+        expect((await request(app).post('/v1/summaries/clear').send({})).statusCode).toBe(401);
+    });
+});

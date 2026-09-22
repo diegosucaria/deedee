@@ -2,6 +2,7 @@ import { fetchAPI } from '@/lib/api';
 import HistoryList from '@/components/HistoryList';
 import SummaryList from '@/components/SummaryList';
 import SessionFilter from '@/components/SessionFilter';
+import ClearSummariesButton from '@/components/ClearSummariesButton';
 import { getSessions } from '../../actions';
 import Link from 'next/link';
 
@@ -55,8 +56,10 @@ export default async function HistoryPage({ searchParams }) {
                             {view === 'messages' ? `Raw log of database interactions (Last ${limit}).` : 'Compressed summaries of past conversations.'}
                         </p>
                     </div>
-                    {view === 'messages' && (
+                    {view === 'messages' ? (
                         <SessionFilter sessions={sessions} chatId={chatId} />
+                    ) : (
+                        <ClearSummariesButton />
                     )}
                 </div>
 

@@ -20,7 +20,13 @@
  * Exit code: 0 all ok, 1 any failure, 2 bad arguments. Needs GOOGLE_API_KEY.
  * Nothing here writes to token_usage; the cost column is an estimate from
  * ConfigService pricing. See docs/models.md.
+ *
+ * Every run also writes DATA_DIR/model-smoke.json (one row per role, with its
+ * status, time and first error). GET /internal/models reads that file, so the
+ * Models tab in the web app can show when each role last answered.
+ * MODEL_SMOKE_WRITE=0 turns the write off.
  */
+const fs = require('fs');
 const path = require('path');
 
 const AGENT_ROOT = path.join(__dirname, '..');
@@ -289,7 +295,8 @@ const RUNNERS = {
         });
         const name = token?.name || '';
         if (!name.startsWith('auth_tokens/')) throw new Error(`token name ${JSON.stringify(name)} does not start with auth_tokens/`);
-        return { note: `token ${name.slice(0, 20)}...` };
+        // The name is the key of a live session: not even a piece of it goes in the file.
+        return { note: 'token created' };
     }
 };
 
@@ -339,6 +346,70 @@ async function runSmoke(client, plan, opts = DEFAULTS, config = new ConfigServic
     const skipped = rows.filter(r => r.status === 'skip').length;
     const cost = rows.reduce((s, r) => s + (r.cost || 0), 0);
     return { rows, ok, failed, skipped, cost, exitCode: failed > 0 ? 1 : 0 };
+}
+
+/** Where the last run is kept. Same folder as agent.db on the device. */
+function resultPath(dataDir = process.env.DATA_DIR || path.join(AGENT_ROOT, 'data')) {
+    return path.join(dataDir, 'model-smoke.json');
+}
+
+/**
+ * One row per role, from the per-check rows. A role fails when any of its
+ * checks fails; it is skipped only when every check was skipped.
+ * @param {Array} rows
+ * @returns {Array<{role:string, model:string, status:string, ms:number, error:string|null, checks:Array}>}
+ */
+function summarizeByRole(rows = []) {
+    const byRole = new Map();
+    for (const row of rows) {
+        if (!byRole.has(row.role)) byRole.set(row.role, { role: row.role, model: row.model, status: 'skip', ms: 0, error: null, checks: [] });
+        const role = byRole.get(row.role);
+        role.checks.push({ check: row.check, status: row.status, ms: row.ms || 0, note: row.note || '' });
+        role.ms += row.ms || 0;
+        if (row.status === 'fail') {
+            role.status = 'fail';
+            if (!role.error) role.error = row.note || `${row.check} failed`;
+        } else if (row.status === 'ok' && role.status !== 'fail') {
+            role.status = 'ok';
+        }
+    }
+    return [...byRole.values()];
+}
+
+/**
+ * Write the last run so the web app can show it. A failed write only warns:
+ * the smoke check itself must still report its own result.
+ * @returns {string|null} the file written, or null
+ */
+/**
+ * An error text from the SDK may quote a request URL or a key. The file lands
+ * in DATA_DIR, which the backup zips, and the Models page shows the text: no
+ * key may sit in either.
+ */
+function scrubSecrets(text) {
+    return String(text)
+        .replace(/AIza[0-9A-Za-z_-]{20,}/g, '[redacted]')
+        .replace(/([?&](?:key|api_key|token)=)[^&\s"']+/gi, '$1[redacted]')
+        .replace(/(Bearer\s+)[A-Za-z0-9._-]{16,}/g, '$1[redacted]')
+        .replace(/auth_tokens\/[A-Za-z0-9._-]+/g, 'auth_tokens/[redacted]');
+}
+
+function writeResult(result, models, dataDir, out = console) {
+    if (process.env.MODEL_SMOKE_WRITE === '0') return null;
+    const file = resultPath(dataDir);
+    const payload = {
+        at: new Date().toISOString(),
+        ok: result.ok, failed: result.failed, skipped: result.skipped, cost: result.cost,
+        roles: summarizeByRole(result.rows).map(r => ({ ...r, model: models[r.role] || r.model }))
+    };
+    try {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, scrubSecrets(JSON.stringify(payload, null, 2)));
+        return file;
+    } catch (e) {
+        out.error(`model-smoke: could not write ${file}: ${e.message}`);
+        return null;
+    }
 }
 
 function formatTable(rows) {
@@ -397,6 +468,7 @@ async function main(argv = process.argv.slice(2), out = console) {
     }
 
     const result = await runSmoke(client, plan, opts, config);
+    writeResult(result, models, undefined, out);
     if (opts.json) {
         out.log(JSON.stringify({ ...result, models }, null, 2));
     } else {
@@ -409,6 +481,7 @@ async function main(argv = process.argv.slice(2), out = console) {
 
 module.exports = {
     parseArgs, buildPlan, runSmoke, formatTable, checksForRole, lowestThinkingLevel, supportsThinkingLevel, TEXT_THINKING_BUDGET,
+    summarizeByRole, writeResult, resultPath, scrubSecrets,
     ROLE_ORDER, TEXT_ROLES, CHECKS, THINKING_LEVELS, DEFAULTS, HELP, RUNNERS, main
 };
 

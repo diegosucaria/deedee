@@ -1,7 +1,7 @@
 'use client';
 
 import { usePathname, useRouter } from 'next/navigation';
-import { Activity, Bell, Clock, Terminal } from 'lucide-react';
+import { Activity, Bell, Clock, Cpu, Terminal } from 'lucide-react';
 import PageShell from '@/components/PageShell';
 import ScrollableTabs from '@/components/ScrollableTabs';
 
@@ -12,6 +12,7 @@ export default function SystemLayout({ children }) {
     const tabs = [
         { id: '/system/stats', label: 'Stats', icon: Activity },
         { id: '/system/history', label: 'History', icon: Clock },
+        { id: '/system/models', label: 'Models', icon: Cpu },
         { id: '/system/notifications', label: 'Notifications', icon: Bell },
         { id: '/system/logs', label: 'Logs', icon: Terminal },
     ];

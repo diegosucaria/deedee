@@ -23,6 +23,9 @@ const proxyRequest = async (req, res, method, path, data) => {
 router.get('/journal', (req, res) => proxyRequest(req, res, 'GET', '/internal/journal'));
 router.get('/journal/:date', (req, res) => proxyRequest(req, res, 'GET', `/internal/journal/${encodeURIComponent(req.params.date)}`));
 
+// Model roles, prices and the last smoke run. Read-only; see docs/models.md.
+router.get('/models', (req, res) => proxyRequest(req, res, 'GET', '/internal/models'));
+
 router.get('/stats', (req, res) => proxyRequest(req, res, 'GET', '/internal/stats'));
 router.get('/stats/latency', (req, res) => proxyRequest(req, res, 'GET', '/internal/stats/latency'));
 router.get('/stats/usage', (req, res) => proxyRequest(req, res, 'GET', '/internal/stats/usage'));
@@ -65,6 +68,7 @@ router.patch('/tasks/:id/scope', (req, res) => proxyRequest(req, res, 'PATCH', `
 // History
 router.get('/history', (req, res) => proxyRequest(req, res, 'GET', '/internal/history'));
 router.get('/summaries', (req, res) => proxyRequest(req, res, 'GET', '/internal/summaries'));
+router.post('/summaries/clear', (req, res) => proxyRequest(req, res, 'POST', '/internal/summaries/clear', req.body));
 router.delete('/history/:id', (req, res) => proxyRequest(req, res, 'DELETE', `/internal/history/${encodeURIComponent(req.params.id)}`));
 
 // Goals

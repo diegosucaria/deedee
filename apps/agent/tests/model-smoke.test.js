@@ -261,3 +261,85 @@ describe('model-smoke main', () => {
         }
     });
 });
+
+// The run is written to DATA_DIR/model-smoke.json so GET /internal/models can
+// show it. The faults guarded against: a role that failed one check reported
+// as ok, and an unwritable folder taking the smoke check itself down.
+const fs = require('fs');
+const os = require('os');
+const { summarizeByRole, writeResult, resultPath } = smoke;
+
+describe('model-smoke result file', () => {
+    let dir;
+
+    beforeEach(() => {
+        dir = fs.mkdtempSync(path.join(os.tmpdir(), 'deedee-smoke-write-'));
+        delete process.env.MODEL_SMOKE_WRITE;
+    });
+    afterEach(() => fs.rmSync(dir, { recursive: true, force: true }));
+
+    const rows = [
+        { role: 'LITE', model: 'a', check: 'get', status: 'ok', ms: 100, note: '' },
+        { role: 'LITE', model: 'a', check: 'text', status: 'ok', ms: 200, note: '"OK"' },
+        { role: 'PRO', model: 'b', check: 'get', status: 'ok', ms: 50, note: '' },
+        { role: 'PRO', model: 'b', check: 'text', status: 'fail', ms: 60000, note: 'timed out after 60000 ms' },
+        { role: 'IMAGE', model: 'c', check: 'image', status: 'skip', ms: 0, note: 'pass --with-image to run' }
+    ];
+
+    test('one row per role: any failed check fails the role', () => {
+        const byRole = summarizeByRole(rows);
+        expect(byRole.map(r => [r.role, r.status, r.ms])).toEqual([
+            ['LITE', 'ok', 300], ['PRO', 'fail', 60050], ['IMAGE', 'skip', 0]
+        ]);
+        expect(byRole.find(r => r.role === 'PRO').error).toBe('timed out after 60000 ms');
+        expect(byRole.find(r => r.role === 'LITE').error).toBeNull();
+        expect(byRole.find(r => r.role === 'LITE').checks).toHaveLength(2);
+    });
+
+    test('a role whose checks were all skipped is not called ok', () => {
+        expect(summarizeByRole([{ role: 'IMAGE', model: 'c', check: 'image', status: 'skip', ms: 0, note: '' }])[0].status).toBe('skip');
+    });
+
+    test('the file holds the roles, the counts and a timestamp', () => {
+        const file = writeResult({ rows, ok: 3, failed: 1, skipped: 1, cost: 0.002 }, { LITE: 'a', PRO: 'b', IMAGE: 'c' }, dir);
+        expect(file).toBe(resultPath(dir));
+        const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
+        expect(Date.parse(saved.at)).not.toBeNaN();
+        expect([saved.ok, saved.failed, saved.skipped]).toEqual([3, 1, 1]);
+        expect(saved.roles.map(r => r.role)).toEqual(['LITE', 'PRO', 'IMAGE']);
+        expect(saved.roles.find(r => r.role === 'PRO').model).toBe('b');
+    });
+
+    test('a key quoted in an error never reaches the file', () => {
+        // Built at run time so no key-shaped string sits in the source.
+        const fakeKey = 'AIza' + 'x'.repeat(30);
+        const rows = [
+            { role: 'LITE', model: 'a', check: 'text', status: 'fail', ms: 5, note: `403 https://example.invalid/v1/models?key=${fakeKey} Bearer ${'y'.repeat(24)}` },
+        ];
+        const file = writeResult({ rows, ok: 0, failed: 1, skipped: 0, cost: 0 }, { LITE: 'a' }, dir);
+        const text = fs.readFileSync(file, 'utf8');
+        expect(text).not.toContain(fakeKey);
+        expect(text).not.toContain('y'.repeat(24));
+        expect(text).toContain('[redacted]');
+        expect(smoke.scrubSecrets(`key=${fakeKey}&x=1`)).toBe('key=[redacted]&x=1');
+        expect(smoke.scrubSecrets('token auth_tokens/abcDEF-123 made')).toBe('token auth_tokens/[redacted] made');
+    });
+
+    test('MODEL_SMOKE_WRITE=0 writes nothing', () => {
+        process.env.MODEL_SMOKE_WRITE = '0';
+        try {
+            expect(writeResult({ rows, ok: 3, failed: 1, skipped: 1, cost: 0 }, {}, dir)).toBeNull();
+            expect(fs.existsSync(resultPath(dir))).toBe(false);
+        } finally {
+            delete process.env.MODEL_SMOKE_WRITE;
+        }
+    });
+
+    test('a folder that cannot be written only warns; the check still reports', () => {
+        const o = { log: jest.fn(), error: jest.fn() };
+        const blocked = path.join(dir, 'a-file');
+        fs.writeFileSync(blocked, 'not a folder');
+        expect(writeResult({ rows, ok: 0, failed: 0, skipped: 0, cost: 0 }, {}, path.join(blocked, 'nested'), o)).toBeNull();
+        expect(o.error).toHaveBeenCalled();
+    });
+});

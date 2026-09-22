@@ -145,6 +145,28 @@ one cent. The script does not write to `token_usage`.
 
 Run it before and after every id change. A retired id fails at `get` with a 404.
 
+Every run also writes `$DATA_DIR/model-smoke.json`: a timestamp, the ok/failed/
+skipped counts, and one row per role with its status, its total time and its
+first error. `MODEL_SMOKE_WRITE=0` turns the write off. The file is the only
+trace a run leaves; the Models tab reads it.
+
+## Models tab
+
+`GET /internal/models` (agent) → `GET /v1/models` (gateway) → the `getModels()`
+Server Action → **System → Models** in the web app. Read-only: no route there
+changes anything.
+
+Per role it returns the model id, the env var that would override it and
+whether it is set, the price rows in dollars per million tokens (input, cached
+input at a tenth of that, output, and the text output rate for an image model),
+whether the price is that id's own row or the name heuristic's guess, the
+thinking levels the id accepts, and the role's last smoke result.
+
+The tab shows a tilde on a guessed price and an amber or red badge on a role
+whose last smoke check skipped or failed. When `model-smoke.json` is missing or
+unreadable the tab still lists the roles and prices and says the check has not
+run.
+
 ## SDK
 
 The agent calls Gemini through `@google/genai` 2.22.0 (`apps/agent/package.json`).

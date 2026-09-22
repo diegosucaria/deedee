@@ -39,6 +39,10 @@ router.get('/resolve', (req, res) => proxyRequest(req, res, 'GET', '/whatsapp/re
 
 router.post('/repair', (req, res) => proxyRequest(req, res, 'POST', '/whatsapp/repair', req.body));
 
+// Session state, the two live probes and the store counts. The /diagnose chat
+// command was the only way to see this; now the Settings page can show it too.
+router.post('/diagnose', (req, res) => proxyRequest(req, res, 'POST', '/whatsapp/diagnose', req.body));
+
 router.get('/profile', (req, res) => proxyRequest(req, res, 'GET', '/whatsapp/profile'));
 
 module.exports = router;
