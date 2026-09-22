@@ -210,9 +210,14 @@ class VaultManager {
     }
 
     sanitizeTopic(topic) {
-        return topic.toLowerCase()
+        const safe = String(topic == null ? '' : topic).toLowerCase()
             .replace(/\s+/g, '-') // Replace spaces with dashes
             .replace(/[^a-z0-9_-]/g, ''); // Remove invalid chars
+        // A name with no letter or digit ('...', '???') came out empty, and
+        // path.join(vaultsDir, '') is the vaults folder itself: deleteVault
+        // would have removed every vault. No name, no vault.
+        if (!/[a-z0-9]/.test(safe)) throw new Error(`Vault name '${String(topic == null ? '' : topic).slice(0, 40)}' has no letters or digits.`);
+        return safe;
     }
 }
 

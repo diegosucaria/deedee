@@ -50,3 +50,10 @@ To improve accuracy, we specify the `taskType` when calling the API:
 3.  **Generation**:
     - Agent inserts top chunks into the prompt ("Context: ...").
     - LLM answers the user using that context.
+
+## When an embedding fails
+
+`ingestDocument` writes the document's row before it embeds the chunks. Until 2026-09-22 the row carried the file's hash from the start, so a file whose embedding failed (a network error, a rate limit) looked indexed to the next scan and never got a vector. A failed embedding now clears the hash (`rag-service.js`, `ingestDocument`), and the next nightly scan indexes the file again. `reindexEmbeddings` still forces a full pass.
+
+A vault name must hold at least one letter or digit. A name of only dots or symbols used to sanitise to an empty string, and `deleteVault` on it would have removed the whole vaults folder (`vault-manager.js`, `sanitizeTopic`).
+

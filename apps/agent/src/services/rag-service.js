@@ -523,7 +523,15 @@ class RagService {
             docId = info.lastInsertRowid;
         }
 
-        return this._indexContent(docId, filepath, buffer);
+        const result = await this._indexContent(docId, filepath, buffer);
+        if (result && result.failed > 0) {
+            // The row already holds the file's hash, so the next scan would take
+            // this file for indexed and skip it for good. Clear the hash: the
+            // next scan then re-indexes it.
+            this.db.prepare('UPDATE documents SET hash = NULL WHERE id = ?').run(docId);
+            console.warn(`[RAG] ${filename}: ${result.failed} embedding(s) failed; it will be indexed again on the next scan.`);
+        }
+        return result;
     }
 
     /**
