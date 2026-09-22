@@ -104,14 +104,24 @@ class AnalysisService {
             if (analysis.vaultId && analysis.vaultId !== 'null' && analysis.vaultId !== 'none') {
                 console.log(`[AnalysisService] Identified Vault: ${analysis.vaultId}`);
 
-                // Route vinyl/DJ images to the DJ Service for proper cataloguing
-                if (analysis.vaultId === 'dj_history' && this.agent.djService) {
-                    try {
-                        console.log('[AnalysisService] Routing to DJService.ingestVinyl()...');
-                        const results = await this.agent.djService.ingestVinylFromBase64(data, mimeType);
-                        console.log(`[AnalysisService] DJ ingestion complete: ${results.length} vinyls added.`);
-                    } catch (djErr) {
-                        console.error('[AnalysisService] DJ ingestion failed:', djErr.message);
+                if (analysis.vaultId === 'dj_history') {
+                    // A record photo used to land in the crate from here, with
+                    // no ask and no word to the owner: a screenshot of a shop
+                    // cart became eight "owned" records. The crate is written
+                    // only when the owner asks, through add_vinyl or the DJ
+                    // page. No vault note either: the DJ vault feeds the
+                    // recommendations, and a cart is not history.
+                    // DJ_AUTO_INGEST=1 brings the old auto-add back.
+                    if (process.env.DJ_AUTO_INGEST === '1' && this.agent.djService) {
+                        try {
+                            console.log('[AnalysisService] DJ_AUTO_INGEST=1: routing to DJService.ingestVinyl()...');
+                            const results = await this.agent.djService.ingestVinylFromBase64(data, mimeType);
+                            console.log(`[AnalysisService] DJ ingestion complete: ${results.length} vinyls added.`);
+                        } catch (djErr) {
+                            console.error('[AnalysisService] DJ ingestion failed:', djErr.message);
+                        }
+                    } else {
+                        console.log('[AnalysisService] DJ content seen; nothing added. The owner adds records with add_vinyl.');
                     }
                 } else {
                     // Store in Vault Notes for non-DJ vaults.

@@ -1,15 +1,42 @@
 const { createAssistantMessage } = require('@deedee/shared/src/types');
 
+// At most this many searches in one search_vinyls call.
+const MAX_SEARCH_QUERIES = 50;
+
+/**
+ * When a record entered the crate, as the model should read it: "just now",
+ * minutes or hours for a fresh row, the date for an old one. A record added
+ * seconds ago used to look like one the owner had kept for years.
+ */
+function addedLabel(createdAt, now = Date.now()) {
+    if (!createdAt) return '';
+    const raw = String(createdAt);
+    const t = Date.parse(raw.includes('T') ? raw : `${raw.replace(' ', 'T')}Z`);
+    if (Number.isNaN(t)) return '';
+    const mins = Math.max(0, Math.round((now - t) / 60000));
+    if (mins < 1) return 'added just now';
+    if (mins < 60) return `added ${mins} min ago`;
+    if (mins < 48 * 60) return `added ${Math.round(mins / 60)} h ago`;
+    return `added ${new Date(t).toISOString().slice(0, 10)}`;
+}
+
+/** The image attachments on the owner's current message. */
+function imagePartsOf(message) {
+    const parts = Array.isArray(message?.parts) ? message.parts : [];
+    return parts.filter(p => p?.inlineData && typeof p.inlineData.data === 'string'
+        && String(p.inlineData.mimeType || '').startsWith('image/'));
+}
+
 class DJExecutor {
     constructor(services) {
         this.services = services;
         this.djService = services.dj;
     }
 
-    async execute(name, args) {
+    async execute(name, args, context) {
         switch (name) {
             case 'add_vinyl':
-                return this.add_vinyl(args);
+                return this.add_vinyl(args, context);
             case 'list_vinyls':
                 return this.list_vinyls(args);
             case 'get_vinyl':
@@ -29,19 +56,54 @@ class DJExecutor {
         }
     }
 
-    async add_vinyl({ image_path }) {
-        if (!image_path) return "Please provide an image of the vinyl or receipt.";
-
+    /**
+     * With no image_path, the photo is the one attached to the owner's
+     * current message. Before, the tool could not see a chat photo at all,
+     * so a background step wrote the crate instead, ask or no ask.
+     */
+    async add_vinyl({ image_path } = {}, context = {}) {
         try {
-            const results = await this.djService.ingestVinyl(image_path, 'auto');
-            if (results.length === 0) return "No vinyls detected or confidence too low.";
+            let results;
+            if (image_path) {
+                results = await this.djService.ingestVinyl(image_path, 'auto');
+            } else {
+                const images = imagePartsOf(context.message);
+                if (images.length === 0) {
+                    return "No photo to read: nothing was added. The owner attaches the photo of the cover, label or receipt to the message that asks to add it, or you pass image_path.";
+                }
+                results = [];
+                const failures = [];
+                for (const part of images) {
+                    try {
+                        results.push(...(await this.djService.ingestVinylFromBase64(part.inlineData.data, part.inlineData.mimeType)));
+                    } catch (e) {
+                        failures.push(e.message);
+                    }
+                }
+                if (results.length === 0 && failures.length > 0) return `Failed to ingest vinyl: ${failures.join('; ')}`;
+                if (failures.length > 0) console.warn(`[DJExecutor] add_vinyl: ${failures.length} of ${images.length} photos could not be read: ${failures.join('; ')}`);
+            }
+            if (!results || results.length === 0) return "No vinyls detected or confidence too low.";
 
-            const list = results.map(v => `- **${v.artist}** - ${v.title} (${v.label})`).join('\n');
-            return `Added ${results.length} vinyls to your crate:\n${list}`;
+            const line = v => `- **${v.artist}** - ${v.title} (${v.label})`;
+            const added = results.filter(v => !v._preExisting);
+            const known = results.filter(v => v._preExisting);
+            const out = [];
+            if (added.length > 0) out.push(`Added ${added.length} vinyls to your crate (details still loading):\n${added.map(line).join('\n')}`);
+            if (known.length > 0) out.push(`Already in the crate, details refreshing:\n${known.map(line).join('\n')}`);
+            return out.join('\n');
         } catch (e) {
             console.error(e);
             return `Failed to ingest vinyl: ${e.message}`;
         }
+    }
+
+    /** One crate row as the model reads it, with when it was added. */
+    _line(v, now) {
+        const trackCount = Array.isArray(v.tracks) ? v.tracks.length : 0;
+        const genre = v.meta?.genre || '';
+        const added = addedLabel(v.created_at, now);
+        return `- **${v.artist}** — ${v.title} (${v.label || 'Unknown Label'}) [${trackCount} tracks${genre ? ', ' + genre : ''}] (id: ${v.id}${added ? ', ' + added : ''})`;
     }
 
     async list_vinyls({ limit, offset } = {}) {
@@ -49,11 +111,8 @@ class DJExecutor {
             const vinyls = this.djService.db.getVinyls({ limit: limit || 50, offset: offset || 0 });
             if (vinyls.length === 0) return "Your vinyl crate is empty. Use add_vinyl to scan some records.";
 
-            const list = vinyls.map(v => {
-                const trackCount = v.tracks ? v.tracks.length : 0;
-                const genre = v.meta?.genre || '';
-                return `- **${v.artist}** — ${v.title} (${v.label || 'Unknown Label'}) [${trackCount} tracks${genre ? ', ' + genre : ''}] (id: ${v.id})`;
-            }).join('\n');
+            const now = Date.now();
+            const list = vinyls.map(v => this._line(v, now)).join('\n');
             return `Found ${vinyls.length} vinyls in your crate:\n${list}`;
         } catch (e) {
             return `Error listing vinyls: ${e.message}`;
@@ -75,16 +134,33 @@ class DJExecutor {
         }
     }
 
-    async search_vinyls({ query }) {
+    /**
+     * One query, or a list with one entry per record, in one call. A cart of
+     * twelve records used to take twelve calls, and the tool-loop guard
+     * warned the model to stop halfway.
+     */
+    async search_vinyls({ query, queries } = {}) {
+        // A list may arrive as `queries`, as one string in `queries`, or as
+        // one `query` with a record per line. All read as a list.
+        const given = Array.isArray(queries) ? queries : (typeof queries === 'string' ? [queries] : []);
+        const wanted = (given.length > 0 ? given : [query])
+            .flatMap(q => String(q ?? '').split(/\r?\n/))
+            .map(q => q.trim()).filter(Boolean);
+        if (wanted.length === 0) return "Give a query, or a list of queries with one entry per record.";
+        const list = wanted.slice(0, MAX_SEARCH_QUERIES);
         try {
-            const vinyls = this.djService.db.searchVinyls(query);
-            if (vinyls.length === 0) return `No vinyls found matching "${query}".`;
-
-            const list = vinyls.map(v => {
-                const trackCount = v.tracks ? v.tracks.length : 0;
-                return `- **${v.artist}** — ${v.title} (${v.label || 'Unknown Label'}) [${trackCount} tracks] (id: ${v.id})`;
-            }).join('\n');
-            return `Found ${vinyls.length} vinyls matching "${query}":\n${list}`;
+            const now = Date.now();
+            const sections = [];
+            let hits = 0;
+            for (const q of list) {
+                const vinyls = this.djService.db.searchVinyls(q);
+                if (vinyls.length === 0) { sections.push(`"${q}": no match`); continue; }
+                hits += 1;
+                sections.push(`"${q}": ${vinyls.length} match${vinyls.length === 1 ? '' : 'es'}\n${vinyls.map(v => this._line(v, now)).join('\n')}`);
+            }
+            const head = list.length > 1 ? `${list.length} searches, ${hits} with a match, ${list.length - hits} with none.` : null;
+            const tail = wanted.length > list.length ? `${wanted.length - list.length} more queries were dropped: at most ${MAX_SEARCH_QUERIES} per call.` : null;
+            return [head, ...sections, tail].filter(Boolean).join('\n');
         } catch (e) {
             return `Error searching vinyls: ${e.message}`;
         }
@@ -159,4 +235,4 @@ class DJExecutor {
     }
 }
 
-module.exports = { DJExecutor };
+module.exports = { DJExecutor, addedLabel, imagePartsOf, MAX_SEARCH_QUERIES };

@@ -2338,7 +2338,12 @@ class AgentDB {
 
   searchVinyls(query) {
     if (!query) return [];
-    const tokens = query.toLowerCase().split(/\s+/).filter(Boolean);
+    // A pasted line like "Artist — Title (Label / CAT-1)" carries words that
+    // are only punctuation, or wear it at the ends; every such search was a
+    // miss. Trim the ends of each word and drop what is left empty.
+    const tokens = query.toLowerCase().split(/\s+/)
+      .map(t => t.replace(/^[^\p{L}\p{N}]+|[^\p{L}\p{N}]+$/gu, ''))
+      .filter(Boolean);
     if (tokens.length === 0) return [];
     // Build WHERE clause: every token must match at least one field
     const conditions = tokens.map(() =>

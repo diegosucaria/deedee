@@ -144,3 +144,4 @@
     - [x] **Multi-token Search**: Search queries split by whitespace, all tokens must match across artist/title/label/genre/style/catalog.
     - [x] **Discogs Result Scoring**: Ranked search results with format, year, and text similarity scoring.
     - [x] **Original Photo Preservation**: Keeps original uploaded photo URL in meta when enrichment replaces cover art.
+    - [x] **No silent adds (Sep 2026)**: The attachment analysis no longer writes to the crate (`DJ_AUTO_INGEST=1` restores it). `add_vinyl` reads the photo attached to the message; `search_vinyls` takes a `queries` list and its loop ceiling is 20; list and search results say when a record was added.

@@ -89,6 +89,7 @@ const { sanitizeFunctionDeclarations } = require('./utils/gemini-schema-sanitize
 const { filterCalendarResult } = require('./utils/calendar-filter');
 const { NotificationService } = require('./utils/notifications');
 const { DeliveryService } = require('./services/delivery-service');
+const { TIER1_LIMIT_OVERRIDES } = require('./utils/tool-loop-limits');
 
 
 // Compact, redacted JSON-ish preview of tool args/results for the chat UI.
@@ -2417,11 +2418,7 @@ class Agent {
       const MAX_LOOPS_BROWSER = parseInt(process.env.MAX_TOOL_LOOPS_BROWSER || '50');
       const MAX_SAME_TOOL_CALLS = 6; // Same tool name (non-browser) = likely stuck
       const MAX_IDENTICAL_CALLS = 3; // Same tool + same args = definitely stuck
-      // Per-tool Tier 1 overrides. Use for tools that legitimately fan out across
-      // many distinct arguments (but should still have a ceiling, unlike LOOP_EXEMPT_TOOLS).
-      const TIER1_LIMIT_OVERRIDES = {
-        resolveSlackUser: 12, // fans out per user in a Slack scan (6–10 normal); cheap now that the workspace roster is cached interface-side
-      };
+      // Per-tool Tier 1 ceilings live in utils/tool-loop-limits.js.
       let loopCount = 0;
       // Why the tool loop ended early, if it did. The model never saw the last
       // results then, so its silence is not a finished task.
