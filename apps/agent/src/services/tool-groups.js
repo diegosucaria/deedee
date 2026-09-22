@@ -69,6 +69,9 @@ const GROUP_NAME_WORDS = {
     // Not an integration's name, but its read tools used to ride on every
     // turn; now the group must load for "what is in my crate?" to work.
     dj: ['vinyl', 'vinilo', 'crate'],
+    // The photo tools work from chat now; "add this to my wardrobe" with a
+    // picture must load the group whatever the router made of the picture.
+    wardrobe: ['wardrobe', 'garment', 'outfit', 'guardarropa', 'prenda', 'ropa'],
 };
 
 const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');

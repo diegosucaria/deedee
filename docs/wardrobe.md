@@ -160,8 +160,10 @@ Deedee includes a personal **Wardrobe Service** that catalogs your clothes, sugg
 
 All tools are registered under category `wardrobe`.
 
+Photos reach the tools from the chat. A model cannot copy a picture's bytes into an argument, so `add_garment`, `analyze_outfit_photo`, `critique_outfit`, `set_reference_selfie` and `add_to_wardrobe_trip_capsule` take the latest photo the owner sent: the one in the message that started the turn, or his most recent one in the same chat within 30 minutes (`utils/photo-from-chat.js`, `AgentDB.getLastUserPhoto`). In a group only the turn's own message counts. An `image_base64` that holds real bytes (the web page, an API caller) is kept; a placeholder is replaced. With no photo the tool says so and asks for one. Until 2026-09-21 these tools never ran from chat.
+
 ### Garments
-- `add_garment(image_base64, mime_type?)`
+- `add_garment(image_base64?, mime_type?)` — the photo comes from the chat
 - `list_garments(limit?, offset?, type?)`
 - `get_garment(id)`
 - `search_garments(query)`
@@ -170,7 +172,7 @@ All tools are registered under category `wardrobe`.
 - `confirm_brand(garment_id, accept)`
 
 ### Outfits
-- `analyze_outfit_photo(image_base64, caption?, trip_id?, mime_type?)`
+- `analyze_outfit_photo(image_base64?, caption?, trip_id?, mime_type?)` — the photo comes from the chat
 - `recommend_outfit(garment_ids?, trip_id?, context?, count?)`
 - `visualize_outfit(garment_ids_panels, layout?, outfit_id?)` — accepts flat array (1 panel) or array-of-arrays (N panels, max 4)
 - `critique_outfit(image_base64?, garment_ids?, trip_id?, question?)`
@@ -196,7 +198,7 @@ All tools are registered under category `wardrobe`.
 ### Profile
 - `get_wardrobe_profile()`
 - `update_wardrobe_profile(patch)`
-- `set_reference_selfie(image_base64, mime_type?)`
+- `set_reference_selfie(image_base64?, mime_type?)` — the photo comes from the chat
 
 ## API Endpoints
 

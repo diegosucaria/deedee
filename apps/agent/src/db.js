@@ -2659,6 +2659,38 @@ class AgentDB {
   }
 
   /**
+   * The last photo the user sent in a chat: { data, mimeType, messageId, timestamp }
+   * or null. Read for the wardrobe's photo tools when the model calls one
+   * after the owner sent a picture (utils/photo-from-chat.js). The chat's
+   * newest rows come off idx_messages_chat_time; only rows that hold inline
+   * data are parsed, and a row stripped in passive mode (a marker in place of
+   * the bytes) does not count.
+   * @param {string} chatId
+   * @param {{ since?: string, rows?: number }} [opts] - ISO time floor; rows to read
+   */
+  getLastUserPhoto(chatId, { since = null, rows = 8 } = {}) {
+    if (!chatId) return null;
+    const limit = Math.max(1, Math.min(50, Number(rows) || 8));
+    const found = since
+      ? this.db.prepare(`
+          SELECT id, parts, timestamp FROM messages
+          WHERE chat_id = ? AND role = 'user' AND timestamp >= ? AND parts LIKE '%"inlineData"%'
+          ORDER BY timestamp DESC, rowid DESC LIMIT ?`).all(chatId, since, limit)
+      : this.db.prepare(`
+          SELECT id, parts, timestamp FROM messages
+          WHERE chat_id = ? AND role = 'user' AND parts LIKE '%"inlineData"%'
+          ORDER BY timestamp DESC, rowid DESC LIMIT ?`).all(chatId, limit);
+    const { photoInParts } = require('./utils/photo-from-chat');
+    for (const row of found) {
+      let parts;
+      try { parts = JSON.parse(row.parts); } catch { continue; }
+      const photo = photoInParts(parts);
+      if (photo) return { ...photo, messageId: row.id, timestamp: row.timestamp };
+    }
+    return null;
+  }
+
+  /**
    * Count the messages in a chat saved after the given message.
    * Returns null when the message is missing (deleted or unknown id).
    */

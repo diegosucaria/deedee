@@ -2,6 +2,7 @@ const fs = require('fs');
 const path = require('path');
 const { BaseExecutor } = require('./base');
 const { createAssistantMessage } = require('@deedee/shared/src/types');
+const { PHOTO_TOOLS, NO_PHOTO_TEXT, photoFromChat } = require('../utils/photo-from-chat');
 
 class WardrobeExecutor extends BaseExecutor {
     constructor(services) {
@@ -13,6 +14,12 @@ class WardrobeExecutor extends BaseExecutor {
         const services = this.getServices(callServices);
         const wardrobe = services.wardrobe;
         if (!wardrobe) return null;
+
+        // A model cannot pass a photo's bytes. The photo tools take the latest
+        // photo the owner sent in this chat instead.
+        if (PHOTO_TOOLS.has(name)) {
+            args = photoFromChat(name, args || {}, { message: context && context.message, db: services.db });
+        }
 
         switch (name) {
             case 'add_garment':
@@ -191,7 +198,7 @@ class WardrobeExecutor extends BaseExecutor {
 
     async critique_outfit({ image_base64, mime_type, garment_ids, trip_id, question } = {}, wardrobe) {
         if (!image_base64 && (!Array.isArray(garment_ids) || garment_ids.length === 0)) {
-            return 'Provide either image_base64 or garment_ids.';
+            return `${NO_PHOTO_TEXT} Or pass garment_ids to critique pieces from the wardrobe.`;
         }
         try {
             const result = await wardrobe.critiqueOutfit({
@@ -280,7 +287,7 @@ class WardrobeExecutor extends BaseExecutor {
     }
 
     async set_reference_selfie({ image_base64, mime_type } = {}, wardrobe) {
-        if (!image_base64) return 'Missing image_base64.';
+        if (!image_base64) return NO_PHOTO_TEXT;
         try {
             const profile = await wardrobe.setReferenceSelfie(image_base64, mime_type || 'image/jpeg');
             return `Reference selfie saved. Profile updated.`;
@@ -424,8 +431,8 @@ class WardrobeExecutor extends BaseExecutor {
         }
     }
 
-    async analyze_outfit_photo({ image_base64, caption, trip_id, mime_type }, wardrobe) {
-        if (!image_base64) return 'Missing image_base64.';
+    async analyze_outfit_photo({ image_base64, caption, trip_id, mime_type } = {}, wardrobe) {
+        if (!image_base64) return NO_PHOTO_TEXT;
         try {
             const result = await wardrobe.analyzeOutfitPhoto(image_base64, {
                 caption,
@@ -462,8 +469,8 @@ class WardrobeExecutor extends BaseExecutor {
         }
     }
 
-    async add_garment({ image_base64, mime_type }, wardrobe) {
-        if (!image_base64) return 'Please provide a base64-encoded image (image_base64).';
+    async add_garment({ image_base64, mime_type } = {}, wardrobe) {
+        if (!image_base64) return NO_PHOTO_TEXT;
         try {
             const result = await wardrobe.ingestGarmentFromBase64(image_base64, mime_type || 'image/jpeg');
             const created = Array.isArray(result?.garments) ? result.garments : [];

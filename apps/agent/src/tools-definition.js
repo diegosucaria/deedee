@@ -840,14 +840,14 @@ const toolDefinitions = [
       {
         name: "add_garment",
         category: "wardrobe",
-        description: "Add a garment to the user's wardrobe from an image. Accepts a base64-encoded image.",
+        description: "Add the clothes in a photo to the user's wardrobe. Call it when he sends a photo of clothes and asks to add them. The photo is taken from this chat: the latest one he sent, within the last 30 minutes. Leave image_base64 out.",
         parameters: {
           type: "OBJECT",
           properties: {
-            image_base64: { type: "STRING", description: "Base64-encoded image data (no data: prefix)." },
+            image_base64: { type: "STRING", description: "Leave out. Only for a caller that holds the bytes itself (base64, no data: prefix)." },
             mime_type: { type: "STRING", description: "Optional MIME type (e.g. 'image/jpeg')." }
           },
-          required: ["image_base64"]
+          required: []
         }
       },
       {
@@ -1033,7 +1033,7 @@ const toolDefinitions = [
       {
         name: "add_to_wardrobe_trip_capsule",
         category: "wardrobe",
-        description: "Append garments to a wardrobe trip's actual_capsule. Accepts either explicit garment_ids or a photo (image_base64) that will be analyzed via analyze_outfit_photo.",
+        description: "Append garments to a wardrobe trip's actual_capsule. Pass garment_ids, or leave them out to use the latest photo he sent in this chat (analyzed via analyze_outfit_photo). Leave image_base64 out.",
         parameters: {
           type: "OBJECT",
           properties: {
@@ -1061,11 +1061,11 @@ const toolDefinitions = [
       {
         name: "critique_outfit",
         category: "wardrobe",
-        description: "Evaluate an outfit, score it 0-10, list specific strengths/weaknesses, and propose a better alternative using only pieces from the wardrobe. Accepts either a photo (image_base64) or explicit garment_ids.",
+        description: "Evaluate an outfit, score it 0-10, list specific strengths/weaknesses, and propose a better alternative using only pieces from the wardrobe. Works on the latest photo he sent in this chat (leave image_base64 out), or on explicit garment_ids.",
         parameters: {
           type: "OBJECT",
           properties: {
-            image_base64: { type: "STRING", description: "Optional photo to analyze." },
+            image_base64: { type: "STRING", description: "Leave out: the latest photo in this chat is used. Only for a caller that holds the bytes itself." },
             mime_type: { type: "STRING" },
             garment_ids: {
               type: "ARRAY",
@@ -1099,14 +1099,14 @@ const toolDefinitions = [
       {
         name: "set_reference_selfie",
         category: "wardrobe",
-        description: "Save a full-body reference selfie used for virtual-mirror image generation. Call this the first time visualize_outfit asks for one.",
+        description: "Save a full-body reference selfie used for virtual-mirror image generation. Call this the first time visualize_outfit asks for one, after he sends the selfie in this chat; the latest photo he sent is used. Leave image_base64 out.",
         parameters: {
           type: "OBJECT",
           properties: {
-            image_base64: { type: "STRING" },
+            image_base64: { type: "STRING", description: "Leave out. Only for a caller that holds the bytes itself." },
             mime_type: { type: "STRING" }
           },
-          required: ["image_base64"]
+          required: []
         }
       },
       {
@@ -1178,16 +1178,16 @@ const toolDefinitions = [
       {
         name: "analyze_outfit_photo",
         category: "wardrobe",
-        description: "Hybrid primitive for 'what should I wear' style requests. Given a photo of clothes, simultaneously matches items to the existing wardrobe AND auto-adds any unmatched garments. Returns garment ids you can then pass to recommend_outfit/visualize_outfit/critique_outfit. Use whenever the user sends a photo and asks about combinations.",
+        description: "Hybrid primitive for 'what should I wear' style requests. Given a photo of clothes, simultaneously matches items to the existing wardrobe AND auto-adds any unmatched garments. Returns garment ids you can then pass to recommend_outfit/visualize_outfit/critique_outfit. Use whenever the user sends a photo and asks about combinations. The photo is taken from this chat: the latest one he sent, within the last 30 minutes. Leave image_base64 out.",
         parameters: {
           type: "OBJECT",
           properties: {
-            image_base64: { type: "STRING", description: "Base64 image (no data: prefix)." },
+            image_base64: { type: "STRING", description: "Leave out: the latest photo he sent in this chat (within 30 minutes) is used. Only for a caller that holds the bytes itself." },
             mime_type: { type: "STRING", description: "Optional MIME type." },
             caption: { type: "STRING", description: "Optional user caption / question." },
             trip_id: { type: "STRING", description: "Optional active trip id to scope matching to the trip's capsule." }
           },
-          required: ["image_base64"]
+          required: []
         }
       },
       // Slack Integration
