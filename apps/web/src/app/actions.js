@@ -1922,6 +1922,34 @@ export async function createPerson(prevState, formData) {
     }
 }
 
+// Adds a WhatsApp contact to People and returns its id. Autopilot → Style
+// needs a person record to hold a contact's style. A contact known only by
+// its WhatsApp ID gets that ID as its phone for now; the People sync moves
+// it onto the real number once WhatsApp links the two.
+export async function createPersonFromContact({ name, phone, lid } = {}) {
+    await requireActionSession();
+    try {
+        const cleanName = String(name || '').trim();
+        const digits = String(phone || '').replace(/\D/g, '');
+        const lidDigits = String(lid || '').replace(/@.*$/, '').replace(/\D/g, '');
+        if (!cleanName || (!digits && !lidDigits)) {
+            return { success: false, error: 'A name and a phone number or WhatsApp ID are needed' };
+        }
+        const identifiers = {};
+        if (digits) identifiers.whatsapp = digits;
+        if (lidDigits && lidDigits !== digits) identifiers.whatsapp_lid = lidDigits;
+        const res = await fetchAPI('/v1/people', {
+            method: 'POST',
+            body: JSON.stringify({ name: cleanName, phone: digits || lidDigits, identifiers, source: 'web' })
+        });
+        revalidatePath('/people');
+        revalidatePath('/autopilot');
+        return { success: true, id: res?.id || null };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function updatePerson(id, data) {
     await requireActionSession();
     try {

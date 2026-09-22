@@ -821,6 +821,16 @@ class AgentDB {
       this.db.exec("ALTER TABLE autopilot_drafts ADD COLUMN sent_count INTEGER DEFAULT 0");
     } catch (err) { }
 
+    // Migration: drafts that don't answer an incoming message (partner
+    // greetings in review mode) record where they came from and when they
+    // stop making sense, so a good-morning draft can't go out at night.
+    try {
+      this.db.exec("ALTER TABLE autopilot_drafts ADD COLUMN source TEXT");
+    } catch (err) { }
+    try {
+      this.db.exec("ALTER TABLE autopilot_drafts ADD COLUMN expires_at TEXT");
+    } catch (err) { }
+
     // Migration: Add relationship to people (Fix for older DBs)
     try {
       this.db.exec("ALTER TABLE people ADD COLUMN relationship TEXT");
@@ -3510,6 +3520,17 @@ class AgentDB {
     this.db.prepare('DELETE FROM usage_logs').run(); // Also usage_logs (rate limiting)
     console.log('[DB] FORCE CLEANUP: Deleted all metrics, token_usage, and usage_logs.');
   }
+  // A draft that does not come from an incoming message (partner greetings
+  // in review mode). expiresAt is an ISO time; approving after it refuses to
+  // send. Returns the new draft id.
+  createAutopilotDraft({ chatId, contactId, content, contextContent = null, options = {}, source = null, expiresAt = null }) {
+    const r = this.db.prepare(`
+      INSERT INTO autopilot_drafts (chat_id, contact_id, content, context_content, options, status, source, expires_at)
+      VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+    `).run(chatId, contactId, content, contextContent, JSON.stringify(options || {}), source, expiresAt);
+    return Number(r.lastInsertRowid);
+  }
+
   getAgentSetting(key) {
     const stmt = this.db.prepare('SELECT value FROM agent_settings WHERE key = ?');
     const row = stmt.get(key);

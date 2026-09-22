@@ -1,6 +1,20 @@
 const express = require('express');
 const axios = require('axios');
 
+/**
+ * Marks pending drafts whose expires_at has passed as 'expired'. Only
+ * greeting drafts carry an expiry today. Returns how many were retired.
+ */
+function expireDrafts(agentDb, now = Date.now()) {
+    const rows = agentDb.db.prepare(
+        "SELECT id, expires_at FROM autopilot_drafts WHERE status IN ('pending', 'partially_sent') AND expires_at IS NOT NULL"
+    ).all();
+    const stale = rows.filter(r => Date.parse(r.expires_at) <= now).map(r => r.id);
+    const mark = agentDb.db.prepare("UPDATE autopilot_drafts SET status = 'expired' WHERE id = ?");
+    for (const id of stale) mark.run(id);
+    return stale.length;
+}
+
 function createAutopilotRouter(agent) {
     const router = express.Router();
 
@@ -15,6 +29,8 @@ function createAutopilotRouter(agent) {
     // GET /drafts?status=pending
     router.get('/drafts', (req, res) => {
         try {
+            // Retire expired drafts first, so the list never offers one.
+            expireDrafts(agent.db);
             const status = req.query.status || 'pending';
             // Include 'partially_sent' drafts when querying for 'pending' so they remain actionable
             const statuses = status === 'pending' ? ['pending', 'partially_sent'] : [status];
@@ -43,6 +59,12 @@ function createAutopilotRouter(agent) {
             if (!draft) return res.status(404).json({ error: 'Draft not found' });
             if (draft.status !== 'pending' && draft.status !== 'partially_sent') {
                 return res.status(400).json({ error: 'Draft already processed' });
+            }
+            // A greeting draft stops making sense after its window: a
+            // good-morning text approved in the evening must not go out.
+            if (draft.expires_at && Date.parse(draft.expires_at) <= Date.now()) {
+                agent.db.db.prepare("UPDATE autopilot_drafts SET status = 'expired' WHERE id = ?").run(id);
+                return res.status(410).json({ error: 'This draft expired and was not sent' });
             }
 
             // Resolve Source
@@ -362,4 +384,4 @@ function createAutopilotRouter(agent) {
     return router;
 }
 
-module.exports = { createAutopilotRouter };
+module.exports = { createAutopilotRouter, expireDrafts };

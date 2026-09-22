@@ -3,11 +3,16 @@
  * owner's own WhatsApp account (session "user"), in the owner's own style.
  *
  * Who to greet comes from the `partner_greeting` agent setting, never from
- * source code:
+ * source code (edited in Autopilot → Greetings):
  *   { "contact": "<phone digits, phone JID or LID JID>", "name": "<name used in notes to the owner>",
- *     "dryRun": true|false }
- * With dryRun (or the global communication_dry_run) on, the jobs draft and
- * report to the owner but send nothing to the partner.
+ *     "mode": "send" | "review" | "dry_run", "pausedUntil": "YYYY-MM-DD" }
+ * - send: the greeting goes out, and the owner gets a WhatsApp note.
+ * - review: the draft lands in Autopilot → Drafts and the owner gets it on
+ *   WhatsApp; approving it there sends it. It expires after a few hours.
+ * - dry_run: only the WhatsApp note; nothing reaches the partner.
+ * The global communication_dry_run switch forces dry_run. The older
+ * { dryRun: true } still means dry_run. pausedUntil skips both greetings
+ * through that day (inclusive), for days the owner and partner are together.
  *
  * Code decides whether to send; the model only drafts the text (or declines).
  * The job skips a day when the owner already wrote to the partner, and the
@@ -24,15 +29,21 @@ const SETTING_KEY = 'partner_greeting';
 const DAY_START_HOUR = 4;
 const HISTORY_LIMIT = 60;
 
+const MODES = ['send', 'review', 'dry_run'];
+const DRAFT_SOURCE = 'partner_greeting';
+
 const KINDS = {
     morning: {
         label: 'good morning',
         maxDelayMin: 75,
+        // A review draft stays approvable this long.
+        reviewMinutes: 180,
         guidance: 'It is the start of the day. Open the day with the owner\'s usual good-morning greeting.'
     },
     night: {
         label: 'good night',
         maxDelayMin: 45,
+        reviewMinutes: 120,
         guidance: 'It is late evening. Close the day with the owner\'s usual good-night message.'
     }
 };
@@ -52,6 +63,12 @@ function dayStartMs(now, timeZone) {
     return Date.UTC(+parts.year, +parts.month - 1, +parts.day + dayOffset, DAY_START_HOUR) - offsetMs;
 }
 
+/** The local date (YYYY-MM-DD) a greeting at `now` belongs to; a day starts at DAY_START_HOUR. */
+function greetingDay(now, timeZone) {
+    return new Intl.DateTimeFormat('en-CA', { timeZone, year: 'numeric', month: '2-digit', day: '2-digit' })
+        .format(new Date(dayStartMs(now, timeZone)));
+}
+
 class PartnerGreetingService {
     constructor(agent) {
         this.agent = agent;
@@ -65,7 +82,9 @@ class PartnerGreetingService {
             try { value = JSON.parse(value); } catch { value = null; }
         }
         if (!value || typeof value.contact !== 'string' || !value.contact.trim()) return null;
-        return { contact: value.contact.trim(), name: (value.name || 'your partner').trim(), dryRun: value.dryRun === true };
+        const mode = MODES.includes(value.mode) ? value.mode : (value.dryRun === true ? 'dry_run' : 'send');
+        const pausedUntil = typeof value.pausedUntil === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(value.pausedUntil) ? value.pausedUntil : null;
+        return { contact: value.contact.trim(), name: (value.name || 'your partner').trim(), mode, pausedUntil };
     }
 
     _jid(contact) {
@@ -103,7 +122,21 @@ class PartnerGreetingService {
         }).join('\n');
     }
 
-    async draft(kind, history, now, timeZone) {
+    /**
+     * The owner's saved notes on how they write to this person (Autopilot →
+     * Style, stored on the person record), or '' when there are none.
+     */
+    _styleNotes(jid) {
+        const person = typeof this.agent.db.getPerson === 'function' ? this.agent.db.getPerson(jid) : null;
+        let meta = person?.metadata;
+        if (typeof meta === 'string') {
+            try { meta = JSON.parse(meta); } catch { meta = null; }
+        }
+        const notes = meta && typeof meta.style_profile === 'string' ? meta.style_profile.trim() : '';
+        return notes.slice(0, 2000);
+    }
+
+    async draft(kind, history, now, timeZone, styleNotes = '') {
         const spec = KINDS[kind];
         const localNow = new Intl.DateTimeFormat('en-GB', { timeZone, dateStyle: 'full', timeStyle: 'short' }).format(new Date(now));
         const prompt = `You write one WhatsApp message that the OWNER will send to their PARTNER from the OWNER's own phone. The partner must not be able to tell it apart from the owner's own messages.
@@ -112,7 +145,10 @@ Now: ${localNow}. ${spec.guidance}
 
 Recent chat, oldest first:
 ${this._formatHistory(history, timeZone)}
-
+${styleNotes ? `
+How the owner writes to this person, in the owner's own notes. Follow them; where they and the chat disagree, the notes win:
+${styleNotes}
+` : ''}
 Rules:
 - Match the OWNER's own lines above: language, spelling, capitalisation, pet names, emoji use and length. Reuse the owner's usual ${spec.label} wording if it appears. Never copy the PARTNER's style.
 - One or two short lines. No quotation marks, no signature.
@@ -144,12 +180,48 @@ Return JSON only: {"send": true or false, "text": "the message", "reason": "one 
     }
 
     async _notifyOwner(text) {
+        // The delivery ledger retries a refused send and falls back to the
+        // other owner channel. The note goes to the owner from Deedee's own
+        // number (the assistant session), never from the owner's account.
+        const delivery = this.agent.delivery;
+        if (delivery && typeof delivery.resolveOwnerTarget === 'function' && typeof delivery.deliver === 'function') {
+            const owner = delivery.resolveOwnerTarget('whatsapp');
+            if (owner) {
+                const channel = owner.channel === 'whatsapp' ? 'whatsapp:assistant' : owner.channel;
+                await delivery.deliver('job_notification', channel, owner.target,
+                    { content: text, type: 'text' }, { origin: DRAFT_SOURCE, dedupe: false });
+                return;
+            }
+        }
         let ownerPhone = process.env.MY_PHONE;
         const setting = this.agent.db.getAgentSetting?.('owner_phone');
         if (setting?.value) ownerPhone = setting.value;
         if (!ownerPhone) return;
         const jid = String(ownerPhone).includes('@') ? ownerPhone : `${String(ownerPhone).replace(/[^0-9]/g, '')}@s.whatsapp.net`;
         await this.agent.interface.send({ source: 'whatsapp', type: 'text', content: text, metadata: { chatId: jid, session: 'assistant' } });
+    }
+
+    /**
+     * Review mode: store the draft in Autopilot → Drafts with an expiry and
+     * refresh the Drafts tab. Returns { draftId, expiresAt }.
+     */
+    _saveReviewDraft(kind, jid, settings, text, now) {
+        const spec = KINDS[kind];
+        const expiresAt = new Date(now + spec.reviewMinutes * 60 * 1000).toISOString();
+        const person = typeof this.agent.db.getPerson === 'function' ? this.agent.db.getPerson(jid) : null;
+        const draftId = this.agent.db.createAutopilotDraft({
+            chatId: jid,
+            contactId: person?.id || jid,
+            content: text,
+            contextContent: `Daily ${spec.label} greeting`,
+            options: { kind, name: settings.name },
+            source: DRAFT_SOURCE,
+            expiresAt
+        });
+        try {
+            Promise.resolve(this.agent.interface?.broadcast?.('autopilot:update', { type: 'draft_created', chatId: jid })).catch(() => {});
+        } catch { /* the Drafts tab also refreshes on its own */ }
+        return { draftId, expiresAt };
     }
 
     /**
@@ -163,14 +235,24 @@ Return JSON only: {"send": true or false, "text": "the message", "reason": "one 
         const settings = this.getSettings();
         if (!settings) return { skipped: true, reason: `${SETTING_KEY} setting is not configured` };
 
+        const timeZone = process.env.TZ || 'America/Argentina/Buenos_Aires';
+        const clock = opts.now || Date.now;
+
+        // Days together: skip quietly, before waiting out the random delay.
+        // The pause covers both greetings through that day; the next
+        // morning's greeting runs again.
+        if (settings.pausedUntil && greetingDay(clock(), timeZone) <= settings.pausedUntil) {
+            console.log(`[PartnerGreeting] ${spec.label} skipped: paused through ${settings.pausedUntil}.`);
+            return { skipped: true, reason: `paused through ${settings.pausedUntil}` };
+        }
+
         if (opts.randomDelay) {
             const delayMin = Math.floor(Math.random() * (spec.maxDelayMin + 1));
             console.log(`[PartnerGreeting] ${spec.label}: waiting ${delayMin} min so it doesn't land at the same minute every day.`);
             await new Promise(r => setTimeout(r, delayMin * 60 * 1000));
         }
 
-        const now = (opts.now || Date.now)();
-        const timeZone = process.env.TZ || 'America/Argentina/Buenos_Aires';
+        const now = clock();
         const jid = this._jid(settings.contact);
         const history = await this.fetchHistory(jid);
 
@@ -180,17 +262,27 @@ Return JSON only: {"send": true or false, "text": "the message", "reason": "one 
             return { skipped: true, reason: skip };
         }
 
-        const draft = await this.draft(kind, history, now, timeZone);
+        const draft = await this.draft(kind, history, now, timeZone, this._styleNotes(jid));
         if (!draft.send) {
             await this._notifyOwner(`I didn't send ${spec.label} to ${settings.name} today: ${draft.reason || 'the chat did not look right for it.'}`);
             return { skipped: true, reason: draft.reason || 'model declined' };
         }
 
-        // Greeting-only dry run, or the global switch sendMessage honours:
-        // draft and report, but send nothing to the partner.
-        if (settings.dryRun || this.agent.db.getAgentSetting?.('communication_dry_run')?.value === true) {
+        // The global switch sendMessage honours overrides the greeting's own mode.
+        const globalDryRun = this.agent.db.getAgentSetting?.('communication_dry_run')?.value === true;
+        const mode = globalDryRun ? 'dry_run' : settings.mode;
+
+        if (mode === 'dry_run') {
             await this._notifyOwner(`Dry run: would have sent ${spec.label} to ${settings.name}: "${draft.text}"`);
             return { dryRun: true, kind, text: draft.text };
+        }
+
+        if (mode === 'review') {
+            const { draftId, expiresAt } = this._saveReviewDraft(kind, jid, settings, draft.text, now);
+            const until = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit' }).format(new Date(expiresAt));
+            const label = spec.label.charAt(0).toUpperCase() + spec.label.slice(1);
+            await this._notifyOwner(`${label} for ${settings.name} is ready: "${draft.text}". Approve it in Autopilot → Drafts by ${until}, or it won't be sent.`);
+            return { review: true, kind, text: draft.text, draftId, expiresAt };
         }
 
         await this.agent.interface.send({ source: 'whatsapp', type: 'text', content: draft.text, metadata: { chatId: jid, session: 'user' } });
@@ -199,4 +291,4 @@ Return JSON only: {"send": true or false, "text": "the message", "reason": "one 
     }
 }
 
-module.exports = { PartnerGreetingService, dayStartMs, SETTING_KEY };
+module.exports = { PartnerGreetingService, dayStartMs, greetingDay, SETTING_KEY, DRAFT_SOURCE };

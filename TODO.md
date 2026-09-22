@@ -100,6 +100,8 @@
 - [x] **UI Persistence**: Settings and Brain tabs now persist state in URL parameters.
 - [x] **Multi-Model Support**: Integrated xAI Grok (Beta/Vision) with Model Selector in Chat and Settings.
 - [x] **Autopilot Enhancements**:
+    - [x] **Greetings tab**: partner greetings moved to Autopilot → Greetings, with send / review / dry-run delivery, a "together until" pause, the job switches, and the contact's saved style.
+    - [x] **Style picker**: search people and WhatsApp contacts; a contact not in People is added when picked.
     - [x] **Per-Contact Styles**: Analyze and override communication style for specific contacts (Boss vs Partner).
     - [x] **Autopilot Control UI**: Web Interface to manage Drafts, Settings, and Style Profiles.
     - [x] **Audio & Context**: Fixed Voice Message transcription and Sender Name resolution.

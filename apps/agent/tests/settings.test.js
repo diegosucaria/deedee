@@ -141,14 +141,34 @@ describe('Settings API partner_greeting', () => {
         const res = await request(app).post('/internal/settings')
             .send({ key: 'partner_greeting', value: { contact: ' 100000000000001@lid ', name: ' Alex ' }, category: 'communication' });
         expect(res.statusCode).toBe(200);
-        expect(run).toHaveBeenCalledWith('partner_greeting', JSON.stringify({ contact: '100000000000001@lid', name: 'Alex', dryRun: false }), 'communication');
+        expect(run).toHaveBeenCalledWith('partner_greeting', JSON.stringify({ contact: '100000000000001@lid', name: 'Alex', mode: 'send' }), 'communication');
     });
 
-    test('keeps dryRun only when it is exactly true', async () => {
+    test('the older dryRun: true still means dry_run, anything else means send', async () => {
         await request(app).post('/internal/settings').send({ key: 'partner_greeting', value: { contact: '5490000000000', dryRun: true } });
         await request(app).post('/internal/settings').send({ key: 'partner_greeting', value: { contact: '5490000000000', dryRun: 'yes' } });
-        expect(run.mock.calls[0][1]).toBe(JSON.stringify({ contact: '5490000000000', dryRun: true }));
-        expect(run.mock.calls[1][1]).toBe(JSON.stringify({ contact: '5490000000000', dryRun: false }));
+        expect(run.mock.calls[0][1]).toBe(JSON.stringify({ contact: '5490000000000', mode: 'dry_run' }));
+        expect(run.mock.calls[1][1]).toBe(JSON.stringify({ contact: '5490000000000', mode: 'send' }));
+    });
+
+    test('accepts review mode with a pause date, and an empty pause clears it', async () => {
+        await request(app).post('/internal/settings').send({ key: 'partner_greeting', value: { contact: '5490000000000', mode: 'review', pausedUntil: '2026-09-25' } });
+        await request(app).post('/internal/settings').send({ key: 'partner_greeting', value: { contact: '5490000000000', mode: 'review', pausedUntil: '' } });
+        expect(run.mock.calls[0][1]).toBe(JSON.stringify({ contact: '5490000000000', mode: 'review', pausedUntil: '2026-09-25' }));
+        expect(run.mock.calls[1][1]).toBe(JSON.stringify({ contact: '5490000000000', mode: 'review' }));
+    });
+
+    test('rejects an unknown mode and an impossible pause date', async () => {
+        const bad = [
+            { contact: '5490000000000', mode: 'shout' },
+            { contact: '5490000000000', pausedUntil: '2026-02-30' },
+            { contact: '5490000000000', pausedUntil: 'next friday' }
+        ];
+        for (const value of bad) {
+            const res = await request(app).post('/internal/settings').send({ key: 'partner_greeting', value });
+            expect(res.statusCode).toBe(400);
+        }
+        expect(run).not.toHaveBeenCalled();
     });
 
     test('rejects a value without a usable contact', async () => {

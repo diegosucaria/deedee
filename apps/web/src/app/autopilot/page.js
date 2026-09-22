@@ -3,12 +3,23 @@
 import { useState, useEffect, Suspense } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { getAutopilotDrafts, approveDraft, rejectDraft, editDraft, getAutopilotSettings, updateAutopilotStatus, toggleAutopilotPin, getStyleProfile, saveStyleProfile, analyzeStyle, getContactStyle, saveContactStyle, analyzeContactStyle, updatePerson } from '../actions';
-import { Loader2, Check, X, Edit2, Save, User, Settings, MessageSquare, ShieldAlert, Sparkles, Brain, Search, Trash, Clock, RefreshCw, Pin } from 'lucide-react';
+import { Loader2, Check, X, Edit2, Save, User, Settings, MessageSquare, ShieldAlert, Sparkles, Brain, Search, Trash, Clock, RefreshCw, Pin, Heart } from 'lucide-react';
 import clsx from 'clsx';
 import { useChatSidebar } from '@/components/ChatSidebarProvider';
 import { useSocket } from '../../hooks/useSocket';
 import ScrollableTabs from '@/components/ScrollableTabs';
 import PageShell from '@/components/PageShell';
+import PartnerGreetings from '@/components/PartnerGreetings';
+import ContactStylePicker from '@/components/ContactStylePicker';
+
+// A draft's options JSON ({ cost } for replies, { kind, name } for greetings).
+function draftOptions(draft) {
+    try {
+        return draft?.options ? JSON.parse(draft.options) || {} : {};
+    } catch {
+        return {};
+    }
+}
 
 // Wrapper to handle Suspense boundary for useSearchParams
 export default function AutopilotPageWrapper() {
@@ -147,8 +158,7 @@ function AutopilotPage() {
         // loadData(); // Full refresh to confirm alignment
     };
 
-    const handleContactSelect = async (e) => {
-        const id = e.target.value;
+    const handleContactSelect = async (id) => {
         setSelectedContactStyleId(id);
         setLoading(true);
 
@@ -228,6 +238,7 @@ function AutopilotPage() {
                     { id: 'drafts', label: `Drafts (${drafts.length})`, icon: MessageSquare },
                     { id: 'settings', label: 'Settings', icon: Settings },
                     { id: 'style', label: 'Style', icon: Brain },
+                    { id: 'greetings', label: 'Greetings', icon: Heart },
                 ]}
                 activeTab={activeTab}
                 onChange={setActiveTab}
@@ -251,13 +262,24 @@ function AutopilotPage() {
                             <div key={draft.id} className="bg-zinc-900 border border-zinc-800 rounded-xl p-5 shadow-lg group hover:border-zinc-700 transition-colors">
                                 <div className="flex justify-between items-start mb-4">
                                     <div>
-                                        <h3 className="font-semibold text-lg text-blue-400">{draft.contact_name || draft.contact_id}</h3>
+                                        <h3 className="font-semibold text-lg text-blue-400">{draftOptions(draft).name || draft.contact_name || draft.contact_id}</h3>
                                         <p className="text-xs text-zinc-500 font-mono mt-1">Chat ID: {draft.chat_id}</p>
+                                        {draft.expires_at && (
+                                            <p className="text-xs text-amber-400/80 mt-1">
+                                                Expires {new Date(draft.expires_at).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                            </p>
+                                        )}
                                     </div>
                                     <div className="flex flex-col items-end gap-1">
-                                        <span className="text-xs bg-blue-500/10 text-blue-400 px-2 py-1 rounded-full border border-blue-500/20">
-                                            Assisted
-                                        </span>
+                                        {draft.source === 'partner_greeting' ? (
+                                            <span className="text-xs bg-pink-500/10 text-pink-400 px-2 py-1 rounded-full border border-pink-500/20">
+                                                Greeting
+                                            </span>
+                                        ) : (
+                                            <span className="text-xs bg-blue-500/10 text-blue-400 px-2 py-1 rounded-full border border-blue-500/20">
+                                                Assisted
+                                            </span>
+                                        )}
                                         {(() => {
                                             try {
                                                 const opts = draft.options ? JSON.parse(draft.options) : {};
@@ -277,7 +299,7 @@ function AutopilotPage() {
                                 {/* Context Message */}
                                 {draft.context_message && (
                                     <div className="mb-3 p-3 rounded-lg bg-zinc-800/50 border border-zinc-800/50 text-sm text-zinc-400 italic">
-                                        <span className="font-semibold text-zinc-500 not-italic text-xs block mb-1">Incoming:</span>
+                                        <span className="font-semibold text-zinc-500 not-italic text-xs block mb-1">{draft.source === 'partner_greeting' ? 'Scheduled:' : 'Incoming:'}</span>
                                         "{draft.context_message}"
                                     </div>
                                 )}
@@ -470,6 +492,8 @@ function AutopilotPage() {
                     </div>
                 )}
 
+                {activeTab === 'greetings' && <PartnerGreetings />}
+
                 {activeTab === 'style' && (
                     <div className="space-y-6">
                         <div className="bg-zinc-900 border border-zinc-800 rounded-xl p-6">
@@ -487,29 +511,12 @@ function AutopilotPage() {
                                 </div>
 
                                 <div className="flex items-center gap-3">
-                                    <select
-                                        value={selectedContactStyleId}
-                                        onChange={handleContactSelect}
-                                        className="bg-zinc-950 border border-zinc-700 text-zinc-300 text-sm rounded-lg focus:ring-purple-500 focus:border-purple-500 block p-2.5"
-                                    >
-                                        <option value="global">GLOBAL (Baseline)</option>
-                                        <optgroup label="Contacts">
-                                            {[...settings].sort((a, b) => {
-                                                // Priority: Pinned
-                                                if (a.is_pinned && !b.is_pinned) return -1;
-                                                if (!a.is_pinned && b.is_pinned) return 1;
-                                                // Priority: Has Style
-                                                if (a.has_style && !b.has_style) return -1;
-                                                if (!a.has_style && b.has_style) return 1;
-                                                // Name Sort
-                                                return (a.name || '').localeCompare(b.name || '');
-                                            }).map(p => (
-                                                <option key={p.id} value={p.id}>
-                                                    {p.is_pinned ? '📌 ' : ''}{p.has_style ? '★ ' : ''}{p.name}
-                                                </option>
-                                            ))}
-                                        </optgroup>
-                                    </select>
+                                    <ContactStylePicker
+                                        people={settings}
+                                        selectedId={selectedContactStyleId}
+                                        onSelect={handleContactSelect}
+                                        onPeopleChanged={async () => setSettings(await getAutopilotSettings())}
+                                    />
 
                                     <button
                                         onClick={handleAnalyze}

@@ -124,16 +124,30 @@ function createSettingsRouter(agent) {
                 }
                 storedValue = n;
             }
-            // Partner greeting target: { contact, name?, dryRun? }. Lives on the Pi only.
-            // dryRun limits the greeting jobs to drafting and reporting to the
-            // owner, without touching the global communication_dry_run switch.
+            // Partner greetings: { contact, name?, mode?, pausedUntil? }. Lives on the Pi only.
+            // mode: 'send' (default), 'review' (a draft in Autopilot → Drafts,
+            // approve to send) or 'dry_run' (nothing reaches the partner). Every
+            // mode tells the owner on WhatsApp. pausedUntil ('YYYY-MM-DD',
+            // inclusive) skips the greetings through that day. The older
+            // { dryRun: true } still means 'dry_run'.
             if (key === 'partner_greeting') {
                 const contact = typeof storedValue?.contact === 'string' ? storedValue.contact.trim() : '';
                 if (contact.replace(/[^0-9]/g, '').length < 5) {
-                    return res.status(400).json({ error: 'partner_greeting needs { contact: phone number or WhatsApp JID, name?: string, dryRun?: boolean }' });
+                    return res.status(400).json({ error: 'partner_greeting needs { contact: phone number or WhatsApp JID, name?: string, mode?: send|review|dry_run, pausedUntil?: YYYY-MM-DD }' });
                 }
                 const name = typeof storedValue.name === 'string' ? storedValue.name.trim() : '';
-                storedValue = { contact, ...(name ? { name } : {}), dryRun: storedValue.dryRun === true };
+                const mode = storedValue.mode === undefined ? (storedValue.dryRun === true ? 'dry_run' : 'send') : storedValue.mode;
+                if (!['send', 'review', 'dry_run'].includes(mode)) {
+                    return res.status(400).json({ error: 'partner_greeting mode must be send, review or dry_run' });
+                }
+                const pause = storedValue.pausedUntil;
+                const isDay = d => typeof d === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(d)
+                    && !isNaN(Date.parse(`${d}T00:00:00Z`))
+                    && new Date(`${d}T00:00:00Z`).toISOString().slice(0, 10) === d;
+                if (pause != null && pause !== '' && !isDay(pause)) {
+                    return res.status(400).json({ error: 'partner_greeting pausedUntil must be a date (YYYY-MM-DD) or empty' });
+                }
+                storedValue = { contact, ...(name ? { name } : {}), mode, ...(pause ? { pausedUntil: pause } : {}) };
             }
 
             // Approvals: { ttlInteractiveMin, ttlDeferredHours, deny: string[] | string }.
