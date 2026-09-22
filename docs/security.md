@@ -62,7 +62,7 @@ DeeDee operates on a **"YOLO but Safe"** model. This means we prioritize **Perso
 - **Service Mesh**:
     - **`apps/web`**: Public UI. Browser-facing auth handled by the built-in `/login` page (password + passkey, signed JWT cookie). See **User Authentication** below.
     - **`apps/api`**: Public Gateway. `/v1/*` enforces Bearer Auth (`DEEDEE_API_TOKEN`). `/socket.io` verifies the session JWT cookie issued by `apps/web` (shared `SESSION_SECRET`).
-    - **`apps/agent`**: Internal Only. Protected by Docker Network isolation **plus** `DEEDEE_INTERNAL_TOKEN` on `/internal/*` (defense-in-depth so accidental port exposure doesn't leak vault files / wardrobe images / journal data). Enforces Path Validation on Journal Ops.
+    - **`apps/agent`**: Internal Only. Protected by Docker Network isolation **plus** `DEEDEE_INTERNAL_TOKEN` on every route but `/health` (one check at the top of `server.js`). `/status`, `/webhook`, `/chat`, `/live/*` and `/v1/*` used to rely on the network alone; the agent's own shell tool and the browser it drives run inside that network, and a message posted to `/chat` counts as typed on the owner's side (slash commands run; with source `web` his consent covers what goes out). The gateway and the interfaces service send the token on every call. With the token unset (a dev setup) every route is open and a warning is logged at boot. Enforces Path Validation on Journal Ops.
     - **`apps/supervisor`**: Internal Only. Protected by `SUPERVISOR_TOKEN` to prevent SSRF->RCE lateral movement. It reads container logs through the balena supervisor API (`io.balena.features.supervisor-api`), not the engine socket: the socket was mounted only for logs, and it could start a privileged container. A read-only mount would not help, because a read-only bind mount does not stop writes to a socket. The supervisor API can restart services and read the journal, but cannot run a container of its choosing. Log requests name a service from a fixed list.
 
 ## User Authentication
@@ -331,10 +331,11 @@ asks for in a call is his approval, as in a typed chat: a covered call runs as
 safety rules and the deny-list hold, and once the session has read third-party
 text his word stops covering what goes out. Three things make that safe:
 
-- `POST /tools/execute` sits behind the internal token (`server.js`). It was
-  open to the whole Docker network, the agent's own shell included. Only the
-  gateway holds the token, and only his logged-in web session reaches the
-  gateway's live routes.
+- `POST /tools/execute` sits behind the internal token (`server.js`), as
+  every agent route but `/health` does now. It was open to the whole Docker
+  network, the agent's own shell included. Only the gateway and the
+  interfaces service hold the token, and only his logged-in web session
+  reaches the gateway's live routes.
 - The route marks a call as his only when a token was really checked
   (`req.internalAuth`). With the token unset (a dev setup) a call stays
   "unknown, which asks", as before. `ApprovalService._isOwnerChat` trusts the

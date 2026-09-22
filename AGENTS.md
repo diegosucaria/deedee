@@ -60,12 +60,13 @@ device before the owner merges.
    `scripts/check-pii.js` runs before every commit and in CI; names to block
    go in the gitignored `.pii-denylist` (see `docs/security.md`).
 2. **Every new endpoint is authenticated.** Routes in `apps/api` need the
-   bearer token; only its `/health` is public. Agent routes under `/internal`
-   and `/tools` need the internal token. The agent's other routes (`/status`,
-   `/webhook`, `/chat`, `/live/*`, `/v1/*`) have no check of their own and
-   rely on the Docker network being closed, so a new agent route must bring
-   its own check. No token ever reaches the browser: the web app fetches
-   through Server Actions.
+   bearer token; only its `/health` is public. Every agent route but
+   `/health` needs the internal token: one check at the top of
+   `apps/agent/src/server.js` covers `/internal/*`, `/tools/*`, `/status`,
+   `/webhook`, `/chat`, `/live/*` and `/v1/*`, so a new agent route is
+   covered by default. The gateway and the interfaces service send the token
+   on every call to the agent. No token ever reaches the browser: the web app
+   fetches through Server Actions.
 3. **A new tool is a security decision.** Classify it in
    `apps/agent/src/utils/untrusted-content.js` (our own text, or text a third
    party wrote). Decide whether it needs the owner's approval
