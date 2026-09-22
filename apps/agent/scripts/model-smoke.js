@@ -380,6 +380,18 @@ function summarizeByRole(rows = []) {
  * the smoke check itself must still report its own result.
  * @returns {string|null} the file written, or null
  */
+/**
+ * An error text from the SDK may quote a request URL or a key. The file lands
+ * in DATA_DIR, which the backup zips, and the Models page shows the text: no
+ * key may sit in either.
+ */
+function scrubSecrets(text) {
+    return String(text)
+        .replace(/AIza[0-9A-Za-z_-]{20,}/g, '[redacted]')
+        .replace(/([?&](?:key|api_key|token)=)[^&\s"']+/gi, '$1[redacted]')
+        .replace(/(Bearer\s+)[A-Za-z0-9._-]{16,}/g, '$1[redacted]');
+}
+
 function writeResult(result, models, dataDir, out = console) {
     if (process.env.MODEL_SMOKE_WRITE === '0') return null;
     const file = resultPath(dataDir);
@@ -390,7 +402,7 @@ function writeResult(result, models, dataDir, out = console) {
     };
     try {
         fs.mkdirSync(path.dirname(file), { recursive: true });
-        fs.writeFileSync(file, JSON.stringify(payload, null, 2));
+        fs.writeFileSync(file, scrubSecrets(JSON.stringify(payload, null, 2)));
         return file;
     } catch (e) {
         out.error(`model-smoke: could not write ${file}: ${e.message}`);
@@ -467,7 +479,7 @@ async function main(argv = process.argv.slice(2), out = console) {
 
 module.exports = {
     parseArgs, buildPlan, runSmoke, formatTable, checksForRole, lowestThinkingLevel, supportsThinkingLevel, TEXT_THINKING_BUDGET,
-    summarizeByRole, writeResult, resultPath,
+    summarizeByRole, writeResult, resultPath, scrubSecrets,
     ROLE_ORDER, TEXT_ROLES, CHECKS, THINKING_LEVELS, DEFAULTS, HELP, RUNNERS, main
 };
 

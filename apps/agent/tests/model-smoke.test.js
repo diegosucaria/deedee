@@ -310,6 +310,20 @@ describe('model-smoke result file', () => {
         expect(saved.roles.find(r => r.role === 'PRO').model).toBe('b');
     });
 
+    test('a key quoted in an error never reaches the file', () => {
+        // Built at run time so no key-shaped string sits in the source.
+        const fakeKey = 'AIza' + 'x'.repeat(30);
+        const rows = [
+            { role: 'LITE', model: 'a', check: 'text', status: 'fail', ms: 5, note: `403 https://example.invalid/v1/models?key=${fakeKey} Bearer ${'y'.repeat(24)}` },
+        ];
+        const file = writeResult({ rows, ok: 0, failed: 1, skipped: 0, cost: 0 }, { LITE: 'a' }, dir);
+        const text = fs.readFileSync(file, 'utf8');
+        expect(text).not.toContain(fakeKey);
+        expect(text).not.toContain('y'.repeat(24));
+        expect(text).toContain('[redacted]');
+        expect(smoke.scrubSecrets(`key=${fakeKey}&x=1`)).toBe('key=[redacted]&x=1');
+    });
+
     test('MODEL_SMOKE_WRITE=0 writes nothing', () => {
         process.env.MODEL_SMOKE_WRITE = '0';
         try {
