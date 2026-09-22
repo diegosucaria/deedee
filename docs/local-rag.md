@@ -66,7 +66,7 @@ The nightly scan used to only add. A file taken out of a vault kept its chunks, 
 
 `pruneMissingDocuments` (`rag-service.js`) now runs at the end of each scan. For every indexed file that has left the disk it deletes the chunks, the matching `chunks_fts` and `chunks_vec` rows and the `documents` row, and the scan logs how many it dropped. It only looks at documents under the folder it has just scanned — `vaults/` after `scanAndIngest`, the journal folder after `scanJournals` — and the caller has already checked that folder is there. So an unmounted data volume prunes nothing.
 
-`RAG_PRUNE_MISSING=0` turns the pruning off and gives back the old behaviour. The value is read on every call.
+`RAG_PRUNE_MISSING=0` turns the pruning off and gives back the old behaviour. The value is read on every call. Note the trade-off: a vault folder that vanishes while its parent is present (an unmounted or half-copied volume) loses that vault's index rows on the next scan; they come back, re-embedded, once the folder is back.
 
 ## Private vaults
 
@@ -83,4 +83,6 @@ What changes:
 The route is `POST /v1/vaults/:id/private` with `{ "private": true }`, behind the internal token like every other agent route, with the gateway and the `setVaultPrivate` Server Action in front.
 
 `VAULT_PRIVACY=0` turns the whole idea off and searches every vault again. The value is read on every call.
+
+What the flag covers, and what it does not. It keeps a private vault out of the two searches that run unasked: the RAG search over every vault, and the chat search over every message (`searchMemory` skips the vault's own chat pane, `vault-<id>`, where the owner's questions and the answers about that vault live). The nightly journal is built without those pane chats too. It does not cover a read that names the vault: `readVaultPage`, `readVaultFile`, `listVaultFiles`, a chat opened on that vault, or the file and shell tools, which reach `vaults/` as they always did.
 

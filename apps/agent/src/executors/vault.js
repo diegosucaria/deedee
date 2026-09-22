@@ -61,10 +61,12 @@ class VaultExecutor extends BaseExecutor {
         // 3. Switch Context (Magical Part)
         await this.setSessionTopic(topic, context);
 
-        // 4. Trigger RAG Ingestion (Auto-Index)
+        // 4. Trigger RAG Ingestion (Auto-Index). The vault id must be the
+        // folder's name, or 'Health' would index beside 'health' and slip
+        // past the private flag until the nightly scan repairs it.
         try {
             if (this.services.agent.ragService) {
-                await this.services.agent.ragService.ingestDocument(targetPath, topic);
+                await this.services.agent.ragService.ingestDocument(targetPath, this.services.vaults.sanitizeTopic(topic));
             }
         } catch (e) {
             console.error(`[Vault] RAG Ingestion failed: ${e.message}`);
@@ -97,7 +99,7 @@ class VaultExecutor extends BaseExecutor {
             const safeTopic = this.services.vaults.sanitizeTopic(topic);
             const safePage = path.basename(page);
             const targetPath = path.join(this.services.vaults.vaultsDir, safeTopic, safePage);
-            await this.services.agent.ragService.ingestDocument(targetPath, topic);
+            await this.services.agent.ragService.ingestDocument(targetPath, safeTopic);
         } catch (e) {
             console.error(`[Vault] RAG ingestion failed for ${page}:`, e.message);
         }

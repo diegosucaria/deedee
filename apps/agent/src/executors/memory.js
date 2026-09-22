@@ -6,6 +6,16 @@ const { FACT_TOOLS, runFactTool } = require('../utils/fact-tools');
 // A searched fact comes back shortened; getFact reads one in full.
 const FACT_VALUE_CHARS = 600;
 
+/** The chat ids of the private vaults' own chat panes, `vault-<id>` each. */
+function privateVaultChats(agent) {
+    try {
+        const ids = agent?.ragService?.privateVaultIds?.() || [];
+        return ids.map(id => `vault-${id}`);
+    } catch (e) {
+        return [];
+    }
+}
+
 class MemoryExecutor extends BaseExecutor {
     async execute(name, args, context, callServices) {
         const services = this.getServices(callServices);
@@ -21,8 +31,13 @@ class MemoryExecutor extends BaseExecutor {
                 const query = args.query;
                 const limit = args.limit || 10;
 
-                // 1. Chat history (ranked full-text search, a short excerpt per match)
-                const chatResults = db.searchMessages(query, limit)
+                // 1. Chat history (ranked full-text search, a short excerpt per match).
+                // A question asked in a private vault's own chat pane, and its
+                // answer, are chat rows too: those chats stay out of this search
+                // (the pane's chat id is `vault-<id>`, apps/web/src/lib/vault-chat.js).
+                const { agent } = this.services;
+                const privateChats = privateVaultChats(agent);
+                const chatResults = (privateChats.length ? db.searchMessages(query, limit, { notChatIds: privateChats }) : db.searchMessages(query, limit))
                     .map(m => ({ timestamp: m.timestamp, role: m.role, content: m.content }));
 
                 // 2. RAG (journal + memory vaults — semantic + keyword hybrid).
@@ -30,7 +45,6 @@ class MemoryExecutor extends BaseExecutor {
                 // every turn, so the vaults the owner marked private stay out
                 // of it (rag-service.js, privateVaultIds). A chat opened on
                 // one of those vaults still searches it.
-                const { agent } = this.services;
                 let ragResults = [];
                 if (agent?.ragService) {
                     try {
@@ -95,7 +109,11 @@ class MemoryExecutor extends BaseExecutor {
                 // agent has no access to its session volume.
                 const { fetchWhatsAppMessagesByDate } = require('../services/whatsapp-messages');
                 const whatsappMessages = await fetchWhatsAppMessagesByDate(date);
-                const messages = db.getMessagesByDate(date, whatsappMessages);
+                // The journal is indexed as a vault of its own that cannot be
+                // private, so a private vault's chat pane stays out of it.
+                const privateChats = privateVaultChats(this.services.agent);
+                const messages = (db.getMessagesByDate(date, whatsappMessages) || [])
+                    .filter(m => !(m && m.chat_id && privateChats.includes(m.chat_id)));
 
                 // Diagnostic: count messages by source
                 const sourceCounts = {};

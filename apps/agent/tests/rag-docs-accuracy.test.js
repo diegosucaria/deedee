@@ -58,8 +58,10 @@ describe('the RAG docs say what the code does', () => {
     });
 
     test('the 3 AM job does not touch MEMORY.md, and the docs no longer say it does', () => {
-        const job = SCHEDULER.slice(SCHEDULER.indexOf("sysJob.name === 'nightly_rag_scan'"));
-        const body = job.slice(0, job.indexOf('nightly_memory_pruning'));
+        // The job's branch runs to the next job's branch, whatever order the jobs sit in.
+        const job = SCHEDULER.slice(SCHEDULER.indexOf("sysJob.name === 'nightly_rag_scan'") + 1);
+        const next = job.search(/sysJob\.name === '/);
+        const body = next === -1 ? job : job.slice(0, next);
         expect(body).toContain('scanAndIngest');
         expect(body).toContain('scanJournals');
         expect(body).not.toContain('MEMORY.md');

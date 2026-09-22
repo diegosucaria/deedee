@@ -2479,10 +2479,10 @@ class AgentDB {
    * @returns {Array<{ timestamp: string, role: string, content: string, chat_id: string }>}
    */
   searchMessages(query, limit = 10, opts = {}) {
-    const { chatId, notChatId, from, to, indexOnly } = opts || {};
+    const { chatId, notChatId, notChatIds, from, to, indexOnly } = opts || {};
     if (this._messagesFtsReady) {
       try {
-        const rows = messagesFts.searchMessagesFts(this.db, query, { limit, chatId, notChatId, from, to });
+        const rows = messagesFts.searchMessagesFts(this.db, query, { limit, chatId, notChatId, notChatIds, from, to });
         if (rows.length > 0) return rows;
       } catch (err) {
         console.warn('[DB] Full-text message search failed, using the plain scan:', err.message);
@@ -2500,6 +2500,10 @@ class AgentDB {
     const params = [`%${escaped}%`, `%${escaped}%`];
     if (chatId) { where.push('chat_id = ?'); params.push(chatId); }
     if (notChatId) { where.push('(chat_id IS NULL OR chat_id != ?)'); params.push(notChatId); }
+    if (Array.isArray(notChatIds) && notChatIds.length > 0) {
+      where.push(`(chat_id IS NULL OR chat_id NOT IN (${notChatIds.map(() => '?').join(', ')}))`);
+      params.push(...notChatIds);
+    }
     if (from) { where.push("date(timestamp, 'localtime') >= ?"); params.push(from); }
     if (to) { where.push("date(timestamp, 'localtime') <= ?"); params.push(to); }
     const stmt = this.db.prepare(`

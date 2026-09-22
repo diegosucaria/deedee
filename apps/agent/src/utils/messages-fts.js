@@ -208,11 +208,11 @@ function matchLevels(query) {
  *    tool dump must not end the search.
  * @param {import('better-sqlite3').Database} db
  * @param {string} query
- * @param {{ limit?: number, chatId?: string, notChatId?: string, role?: string, from?: string, to?: string }} [opts]
+ * @param {{ limit?: number, chatId?: string, notChatId?: string, notChatIds?: string[], role?: string, from?: string, to?: string }} [opts]
  *   `from` and `to` are local days, YYYY-MM-DD, both inclusive.
  * @returns {Array<{ id: string, chat_id: string, role: string, timestamp: string, content: string }>}
  */
-function searchMessagesFts(db, query, { limit = 10, chatId, notChatId, role, from, to } = {}) {
+function searchMessagesFts(db, query, { limit = 10, chatId, notChatId, notChatIds, role, from, to } = {}) {
     const levels = matchLevels(query);
     const max = Math.max(1, Math.min(Number(limit) || 10, 50));
     if (!levels.all) return [];
@@ -221,6 +221,10 @@ function searchMessagesFts(db, query, { limit = 10, chatId, notChatId, role, fro
     const params = [];
     if (chatId) { where.push('msg.chat_id = ?'); params.push(chatId); }
     if (notChatId) { where.push('(msg.chat_id IS NULL OR msg.chat_id != ?)'); params.push(notChatId); }
+    if (Array.isArray(notChatIds) && notChatIds.length > 0) {
+        where.push(`(msg.chat_id IS NULL OR msg.chat_id NOT IN (${notChatIds.map(() => '?').join(', ')}))`);
+        params.push(...notChatIds);
+    }
     if (role) { where.push('msg.role = ?'); params.push(role); }
     if (from) { where.push("date(msg.timestamp, 'localtime') >= ?"); params.push(from); }
     if (to) { where.push("date(msg.timestamp, 'localtime') <= ?"); params.push(to); }

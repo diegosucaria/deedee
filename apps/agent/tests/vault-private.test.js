@@ -77,6 +77,26 @@ describe('a private vault stays out of the search that runs on every turn', () =
 
     const vaultsIn = (results) => results.map(r => r.vault_id);
 
+    test("a question asked in the private vault's own chat pane stays out of the chat search too", async () => {
+        db.setVaultPrivate('health', true);
+        db.saveMessage({ role: 'user', content: 'what did the scan say about my knee', chatId: 'vault-health', source: 'web' });
+        db.saveMessage({ role: 'model', content: 'the scan report says the knee is fine', chatId: 'vault-health', source: 'web' });
+        db.saveMessage({ role: 'user', content: 'the printer scan is done', chatId: 'web-1', source: 'web' });
+
+        const rows = db.searchMessages('scan', 10, { notChatIds: ['vault-health'] });
+        expect(rows.map(r => r.chat_id)).toEqual(['web-1']);
+
+        const executor = new MemoryExecutor({ db, agent });
+        const out = JSON.stringify(await executor.execute('searchMemory', { query: 'scan' }, { message: { metadata: {} } }));
+        expect(out).toContain('printer scan');
+        expect(out).not.toContain('knee');
+
+        // Not private: the pane's rows are ordinary chat rows again.
+        db.setVaultPrivate('health', false);
+        const open = JSON.stringify(await executor.execute('searchMemory', { query: 'scan' }, { message: { metadata: {} } }));
+        expect(open).toContain('knee');
+    });
+
     test('with nothing marked private the search reads every vault, as before', async () => {
         const results = await rag.search('health', null, 10, 0);
         expect(vaultsIn(results)).toEqual(expect.arrayContaining(['health', 'finance', 'journal']));

@@ -45,6 +45,13 @@ describe('a note saved to a vault can be found again', () => {
         SELECT c.content FROM chunks c JOIN documents d ON d.id = c.document_id
         WHERE d.vault_id = 'health'`).all().map(r => r.content).join('\n');
 
+    test("a note saved to 'Health' is filed under the folder's name, so the private flag still covers it", async () => {
+        await executor.execute('saveNoteToVault', { topic: 'Health', content: 'a note about the knee' }, { message: { metadata: {} } });
+        const rows = rag.db.prepare('SELECT vault_id FROM documents').all();
+        expect(rows.length).toBeGreaterThan(0);
+        expect(rows.every(r => r.vault_id === 'health')).toBe(true);
+    });
+
     test('saveNoteToVault indexes the page it wrote', async () => {
         await executor.execute('saveNoteToVault',
             { topic: 'health', content: 'The appointment is on the fourteenth.' },

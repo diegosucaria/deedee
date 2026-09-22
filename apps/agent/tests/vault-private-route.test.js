@@ -47,6 +47,15 @@ describe('POST /v1/vaults/:id/private', () => {
         expect(db.isVaultPrivate('health')).toBe(false);
     });
 
+    test('deleting a vault takes its private flag with it', async () => {
+        await vaults.createVault('notes');
+        await request(app).post('/v1/vaults/notes/private').send({ private: true });
+        expect(db.isVaultPrivate('notes')).toBe(true);
+        const res = await request(app).delete('/v1/vaults/notes');
+        expect(res.statusCode).toBe(200);
+        expect(db.isVaultPrivate('notes')).toBe(false);
+    });
+
     test('a body that is not true or false is refused', async () => {
         for (const body of [{}, { private: 'yes' }, { private: 1 }]) {
             const res = await request(app).post('/v1/vaults/health/private').send(body);

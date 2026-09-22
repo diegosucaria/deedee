@@ -88,6 +88,8 @@ module.exports = (agent) => {
         const { id } = req.params;
         try {
             await agent.vaults.deleteVault(id);
+            // A vault made again under the same name must not come back private by surprise.
+            if (typeof agent.db?.setVaultPrivate === 'function') agent.db.setVaultPrivate(agent.vaults.sanitizeTopic(id), false);
             res.json({ success: true, message: 'Vault deleted' });
         } catch (error) {
             res.status(500).json({ error: error.message });
