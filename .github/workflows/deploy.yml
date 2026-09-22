@@ -6,6 +6,15 @@ on:
       - master
   workflow_dispatch:
 
+# Three merges within a minute once built three releases at the same time,
+# and the slowest build, from the oldest commit, became the newest release:
+# the device ran a tree that lacked the two later merges. One deploy at a
+# time, in order; a waiting run is never cancelled, so every merge still
+# builds and the last release holds the last tree.
+concurrency:
+  group: deploy-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
   deploy:
     runs-on: ubuntu-latest
