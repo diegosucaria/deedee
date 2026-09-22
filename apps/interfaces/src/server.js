@@ -966,4 +966,6 @@ if (require.main === module) {
   });
 }
 
-module.exports = { app, makeInputGate, sentIds };
+// `server` and `io` are exported so a test can listen on a spare port and
+// drive the socket handlers with a real client.
+module.exports = { app, server, io, makeInputGate, sentIds };

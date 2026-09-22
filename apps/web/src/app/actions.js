@@ -1712,6 +1712,7 @@ export async function deleteSession(id) {
 }
 // --- Life Vaults ---
 export async function getVaults() {
+    await requireActionSession();
     try {
         return await fetchAPI('/v1/vaults');
     } catch (error) {
@@ -1721,6 +1722,7 @@ export async function getVaults() {
 }
 
 export async function createVault(topic) {
+    await requireActionSession();
     try {
         const res = await fetchAPI('/v1/vaults', {
             method: 'POST',
@@ -1734,6 +1736,7 @@ export async function createVault(topic) {
 }
 
 export async function getVault(id) {
+    await requireActionSession();
     try {
         return await fetchAPI(`/v1/vaults/${encodeURIComponent(id)}`);
     } catch (error) {
@@ -1743,6 +1746,7 @@ export async function getVault(id) {
 }
 
 export async function getVaultPage(id, page) {
+    await requireActionSession();
     try {
         const res = await fetchAPI(`/v1/vaults/${encodeURIComponent(id)}/pages?name=${encodeURIComponent(page)}`);
         return res.content || '';
@@ -1753,6 +1757,7 @@ export async function getVaultPage(id, page) {
 }
 
 export async function updateVaultPage(id, content, page = 'index.md') {
+    await requireActionSession();
     try {
         await fetchAPI(`/v1/vaults/${encodeURIComponent(id)}/wiki`, {
             method: 'POST',
@@ -1765,7 +1770,25 @@ export async function updateVaultPage(id, content, page = 'index.md') {
     }
 }
 
+// A private vault stays out of the search the agent runs on every turn. A
+// chat opened on that vault still searches it.
+export async function setVaultPrivate(id, isPrivate) {
+    await requireActionSession();
+    try {
+        await fetchAPI(`/v1/vaults/${encodeURIComponent(id)}/private`, {
+            method: 'POST',
+            body: JSON.stringify({ private: !!isPrivate })
+        });
+        revalidatePath(`/vaults/${id}`);
+        revalidatePath('/vaults');
+        return { success: true, private: !!isPrivate };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function deleteVault(id) {
+    await requireActionSession();
     try {
         await fetchAPI(`/v1/vaults/${encodeURIComponent(id)}`, { method: 'DELETE' });
         revalidatePath('/vaults');
@@ -1776,6 +1799,7 @@ export async function deleteVault(id) {
 }
 
 export async function uploadVaultFile(id, formData) {
+    await requireActionSession();
     // Note: formData must contain 'file'
     // fetchAPI handles JSON usually. For Multipart, we might need a separate client-side logic OR use fetch directly inside this action.
     // However, Server Actions can accept FormData. But sending it to external API requires careful handling.
@@ -1820,6 +1844,7 @@ export async function uploadVaultFile(id, formData) {
     }
 }
 export async function deleteVaultFile(id, filename) {
+    await requireActionSession();
     try {
         const { API_URL } = require('@/lib/api');
         const { DEEDEE_API_TOKEN } = process.env;
@@ -2274,6 +2299,7 @@ export async function analyzeContactStyle(contactId) {
 // --- Vault Embeddings ---
 
 export async function getVaultEmbeddings(vaultId) {
+    await requireActionSession();
     try {
         return await fetchAPI(`/v1/vaults/${encodeURIComponent(vaultId)}/embeddings`);
     } catch (error) {
@@ -2283,6 +2309,7 @@ export async function getVaultEmbeddings(vaultId) {
 }
 
 export async function deleteVaultEmbedding(vaultId, filename) {
+    await requireActionSession();
     try {
         await fetchAPI(`/v1/vaults/${encodeURIComponent(vaultId)}/embeddings/${encodeURIComponent(filename)}`, {
             method: 'DELETE'

@@ -5,6 +5,11 @@ import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { io } from 'socket.io-client';
 import { getSocketUrl } from '@/hooks/useSocket';
+import {
+    VAULT_CHAT_SEND, VAULT_CHAT_REPLY, VAULT_CHAT_THINKING,
+    VAULT_CHAT_ACK, VAULT_CHAT_ERROR,
+    vaultChatId, vaultChatPayload, isStatusMessage, replyText
+} from '@/lib/vault-chat';
 
 export default function VaultChat({ vaultId, isOpen = true, onClose }) {
     const [messages, setMessages] = useState([]);
@@ -14,10 +19,9 @@ export default function VaultChat({ vaultId, isOpen = true, onClose }) {
     const socketRef = useRef(null);
     const messagesEndRef = useRef(null);
 
-    // Unique Chat ID for this Vault Session
-    // We can persist this in localStorage if we want history to survive reload
-    // For now, let's keep it ephemeral or use a consistent ID hash
-    const chatId = `vault-${vaultId}-${typeof window !== 'undefined' ? window.localStorage.getItem('deviceId') || 'dev' : 'dev'}`;
+    // One room per vault. The server puts the socket in this room from the
+    // handshake query, so a reply sent out of band still lands here.
+    const chatId = vaultChatId(vaultId);
 
     useEffect(() => {
         if (!isOpen) return;
@@ -30,24 +34,39 @@ export default function VaultChat({ vaultId, isOpen = true, onClose }) {
         });
 
         socket.on('connect', () => {
-            console.log('VaultChat connected:', chatId);
             setIsConnected(true);
-            socket.emit('join', chatId);
         });
 
         socket.on('disconnect', () => {
             setIsConnected(false);
         });
 
-        socket.on('message', (msg) => {
-            if (msg.role === 'assistant') {
-                setIsTyping(false);
-                setMessages(prev => [...prev, msg]);
-            }
+        socket.on(VAULT_CHAT_REPLY, (data) => {
+            const content = replyText(data);
+            if (isStatusMessage(content)) return;
+            setIsTyping(false);
+            if (!content) return;
+            setMessages(prev => {
+                const last = prev[prev.length - 1];
+                // The same answer can arrive twice: once in the turn's reply
+                // list and once through the delivery route.
+                if (last && last.role === 'assistant' && last.content === content) return prev;
+                return [...prev, { role: 'assistant', content, timestamp: data.timestamp }];
+            });
         });
 
-        socket.on('agent:typing', () => {
-            setIsTyping(true);
+        socket.on(VAULT_CHAT_THINKING, () => setIsTyping(true));
+
+        // The turn is done: the server acks once the agent has answered.
+        socket.on(VAULT_CHAT_ACK, () => setIsTyping(false));
+
+        socket.on(VAULT_CHAT_ERROR, (data) => {
+            setIsTyping(false);
+            setMessages(prev => [...prev, {
+                role: 'assistant',
+                content: `Could not answer: ${data?.message || 'unknown error'}`,
+                timestamp: data?.timestamp
+            }]);
         });
 
         socketRef.current = socket;
@@ -69,15 +88,9 @@ export default function VaultChat({ vaultId, isOpen = true, onClose }) {
         setInput('');
         setIsTyping(true); // Optimistic
 
-        // Send to Agent with Vault Context
-        socketRef.current.emit('message', {
-            chatId,
-            text: input,
-            metadata: {
-                vaultId: vaultId, // Explicit context
-                context: `User is asking specifically about the context of Vault '${vaultId}'. Use RAG searchDocuments if needed.`
-            }
-        });
+        // metadata.vaultId makes the agent treat this vault as the chat's
+        // active topic, so searchDocuments looks in it.
+        socketRef.current.emit(VAULT_CHAT_SEND, vaultChatPayload({ vaultId, text: input }));
     };
 
     const handleKeyDown = (e) => {

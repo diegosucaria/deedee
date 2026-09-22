@@ -1,5 +1,4 @@
 const express = require('express');
-const router = express.Router();
 const path = require('path');
 const fs = require('fs');
 const multer = require('multer');
@@ -11,6 +10,11 @@ const upload = multer({
 });
 
 module.exports = (agent) => {
+    // One router per call, the way every other route file does it. A router
+    // built at module level kept the handlers of the first agent it was given
+    // and stacked the next lot behind them.
+    const router = express.Router();
+
     // Middleware to ensure VaultManager is ready
     const ensureVaults = (req, res, next) => {
         if (!agent.vaults) {
@@ -25,7 +29,33 @@ module.exports = (agent) => {
     router.get('/', async (req, res) => {
         try {
             const vaults = await agent.vaults.listVaults();
-            res.json(vaults);
+            const isPrivate = (id) => (agent.db?.isVaultPrivate ? agent.db.isVaultPrivate(id) : false);
+            res.json(vaults.map(v => ({ ...v, private: isPrivate(v.id) })));
+        } catch (error) {
+            res.status(500).json({ error: error.message });
+        }
+    });
+
+    // POST /v1/vaults/:id/private - Mark a vault private, or take the mark off.
+    // A private vault stays out of the search searchMemory runs on every turn.
+    router.post('/:id/private', async (req, res) => {
+        const { private: wanted } = req.body || {};
+        if (typeof wanted !== 'boolean') {
+            return res.status(400).json({ error: 'Body must be { "private": true } or { "private": false }' });
+        }
+        let id;
+        try {
+            id = agent.vaults.sanitizeTopic(req.params.id);
+        } catch (e) {
+            return res.status(400).json({ error: e.message });
+        }
+        try {
+            const vaults = await agent.vaults.listVaults();
+            if (!vaults.some(v => v.id === id)) return res.status(404).json({ error: `Vault '${id}' not found` });
+
+            agent.db.setVaultPrivate(id, wanted);
+            console.log(`[Vaults] Vault '${id}' is now ${wanted ? 'private' : 'searchable from any chat'}.`);
+            res.json({ success: true, id, private: wanted });
         } catch (error) {
             res.status(500).json({ error: error.message });
         }
@@ -58,6 +88,8 @@ module.exports = (agent) => {
         const { id } = req.params;
         try {
             await agent.vaults.deleteVault(id);
+            // A vault made again under the same name must not come back private by surprise.
+            if (typeof agent.db?.setVaultPrivate === 'function') agent.db.setVaultPrivate(agent.vaults.sanitizeTopic(id), false);
             res.json({ success: true, message: 'Vault deleted' });
         } catch (error) {
             res.status(500).json({ error: error.message });
@@ -76,7 +108,8 @@ module.exports = (agent) => {
                 id,
                 wiki: wiki || '',
                 files: files || [],
-                pages: pages || []
+                pages: pages || [],
+                private: agent.db?.isVaultPrivate ? agent.db.isVaultPrivate(id) : false
             });
         } catch (error) {
             res.status(500).json({ error: error.message });

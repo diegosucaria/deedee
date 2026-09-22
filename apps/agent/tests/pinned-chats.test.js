@@ -1,6 +1,7 @@
 const { describe, expect, test, beforeEach, afterEach } = require('@jest/globals');
 const { AgentDB } = require('../src/db.js');
 const fs = require('fs');
+const os = require('os');
 const path = require('path');
 const Database = require('better-sqlite3');
 
@@ -21,8 +22,9 @@ describe('Pinned Chats Feature', () => {
         // So we just override it after creation? No, it opens in constructor.
         // constructor(dataDir) uses dataDir/agent.db
         // Let's make a subdir for test
-        testDir = path.join(__dirname, 'test_db_dir');
-        if (fs.existsSync(testDir)) fs.rmSync(testDir, { recursive: true, force: true });
+        // A folder of its own: a fixed one inside the repo collided with another
+        // test file in the same worker and left this one a database that was not fresh.
+        testDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deedee-pinned-'));
 
         db = new AgentDB(testDir);
     });

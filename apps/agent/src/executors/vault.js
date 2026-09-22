@@ -61,10 +61,12 @@ class VaultExecutor extends BaseExecutor {
         // 3. Switch Context (Magical Part)
         await this.setSessionTopic(topic, context);
 
-        // 4. Trigger RAG Ingestion (Auto-Index)
+        // 4. Trigger RAG Ingestion (Auto-Index). The vault id must be the
+        // folder's name, or 'Health' would index beside 'health' and slip
+        // past the private flag until the nightly scan repairs it.
         try {
             if (this.services.agent.ragService) {
-                await this.services.agent.ragService.ingestDocument(targetPath, topic);
+                await this.services.agent.ragService.ingestDocument(targetPath, this.services.vaults.sanitizeTopic(topic));
             }
         } catch (e) {
             console.error(`[Vault] RAG Ingestion failed: ${e.message}`);
@@ -79,10 +81,28 @@ class VaultExecutor extends BaseExecutor {
 
         await this.services.vaults.appendVaultPage(topic, 'index.md', noteEntry);
 
+        // A note nobody can search is half a note. addToVault and
+        // writeVaultPage index their page; this one did not, so every note
+        // saved this way was invisible to searchDocuments.
+        await this.ingestPage(topic, 'index.md');
+
         // Ensure context is switched (if not already)
         await this.setSessionTopic(topic, context);
 
         return `Note saved to '${topic}' vault.`;
+    }
+
+    /** Index one vault page. A failed index never fails the write. */
+    async ingestPage(topic, page) {
+        try {
+            if (!this.services.agent.ragService) return;
+            const safeTopic = this.services.vaults.sanitizeTopic(topic);
+            const safePage = path.basename(page);
+            const targetPath = path.join(this.services.vaults.vaultsDir, safeTopic, safePage);
+            await this.services.agent.ragService.ingestDocument(targetPath, safeTopic);
+        } catch (e) {
+            console.error(`[Vault] RAG ingestion failed for ${page}:`, e.message);
+        }
     }
 
     async readVaultPage(topic, page) {
@@ -93,19 +113,7 @@ class VaultExecutor extends BaseExecutor {
 
     async updateVaultPage(topic, page, content) {
         await this.services.vaults.updateVaultPage(topic, page, content);
-
-        // Trigger RAG ingestion for the page
-        try {
-            if (this.services.agent.ragService) {
-                const safeTopic = this.services.vaults.sanitizeTopic(topic);
-                const safePage = path.basename(page);
-                const targetPath = path.join(this.services.vaults.vaultsDir, safeTopic, safePage);
-                await this.services.agent.ragService.ingestDocument(targetPath, topic);
-            }
-        } catch (e) {
-            console.error(`[Vault] RAG ingestion failed for ${page}:`, e.message);
-        }
-
+        await this.ingestPage(topic, page);
         return `Page '${page}' updated in vault '${topic}'.`;
     }
 

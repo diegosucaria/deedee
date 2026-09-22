@@ -2479,10 +2479,10 @@ class AgentDB {
    * @returns {Array<{ timestamp: string, role: string, content: string, chat_id: string }>}
    */
   searchMessages(query, limit = 10, opts = {}) {
-    const { chatId, notChatId, from, to, indexOnly } = opts || {};
+    const { chatId, notChatId, notChatIds, from, to, indexOnly } = opts || {};
     if (this._messagesFtsReady) {
       try {
-        const rows = messagesFts.searchMessagesFts(this.db, query, { limit, chatId, notChatId, from, to });
+        const rows = messagesFts.searchMessagesFts(this.db, query, { limit, chatId, notChatId, notChatIds, from, to });
         if (rows.length > 0) return rows;
       } catch (err) {
         console.warn('[DB] Full-text message search failed, using the plain scan:', err.message);
@@ -2500,6 +2500,10 @@ class AgentDB {
     const params = [`%${escaped}%`, `%${escaped}%`];
     if (chatId) { where.push('chat_id = ?'); params.push(chatId); }
     if (notChatId) { where.push('(chat_id IS NULL OR chat_id != ?)'); params.push(notChatId); }
+    if (Array.isArray(notChatIds) && notChatIds.length > 0) {
+      where.push(`(chat_id IS NULL OR chat_id NOT IN (${notChatIds.map(() => '?').join(', ')}))`);
+      params.push(...notChatIds);
+    }
     if (from) { where.push("date(timestamp, 'localtime') >= ?"); params.push(from); }
     if (to) { where.push("date(timestamp, 'localtime') <= ?"); params.push(to); }
     const stmt = this.db.prepare(`
@@ -3612,6 +3616,35 @@ class AgentDB {
       ON CONFLICT(key) DO UPDATE SET value = excluded.value, category = excluded.category, updated_at = CURRENT_TIMESTAMP
   `);
     stmt.run(key, valStr, category);
+  }
+
+  // --- Private vaults ---
+  // A vault marked private stays out of the unscoped search searchMemory runs
+  // on every turn. A chat whose active vault is that one still searches it,
+  // and so does searchDocuments when it is given the vault by name. The flag
+  // lives in agent_settings as `vault_private:<id>`.
+
+  /** True when this vault is marked private. Default false. */
+  isVaultPrivate(vaultId) {
+    if (!vaultId) return false;
+    return this.getAgentSetting(`vault_private:${vaultId}`)?.value === true;
+  }
+
+  /** Mark a vault private, or take the mark off. */
+  setVaultPrivate(vaultId, isPrivate) {
+    this.setAgentSetting(`vault_private:${vaultId}`, !!isPrivate, 'vaults');
+  }
+
+  /** The ids of every vault marked private. */
+  getPrivateVaultIds() {
+    const rows = this.db.prepare("SELECT key, value FROM agent_settings WHERE key LIKE 'vault_private:%'").all();
+    const ids = [];
+    for (const row of rows) {
+      let value = row.value;
+      try { value = JSON.parse(row.value); } catch (e) { /* stored as text */ }
+      if (value === true || value === 'true') ids.push(row.key.slice('vault_private:'.length));
+    }
+    return ids;
   }
 
   // Rows in the 'system' category (migration flags) are internal bookkeeping
