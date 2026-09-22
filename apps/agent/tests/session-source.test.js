@@ -14,6 +14,13 @@ describe('Chat session ownership', () => {
         role: 'user', content: 'hello', source, chatId
     });
 
+    // Writes a row the way a build before the source column did: straight
+    // into the table, with no session bookkeeping.
+    let seq = 0;
+    const insertMessage = (chatId, source, role = 'user') => db.db.prepare(
+        `INSERT INTO messages (id, role, content, source, chat_id, timestamp) VALUES (?, ?, 'hello', ?, ?, ?)`
+    ).run(`legacy-${++seq}`, role, source, chatId, new Date().toISOString());
+
     beforeEach(() => {
         tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'deedee-test-'));
         db = new AgentDB(tmpDir);
@@ -23,6 +30,8 @@ describe('Chat session ownership', () => {
         if (db) db.close();
         fs.rmSync(tmpDir, { recursive: true, force: true });
         delete process.env.SESSION_SOURCE_FILTER;
+        delete process.env.EMPTY_CHAT_CLEANUP;
+        delete process.env.SESSION_TOUCH;
     });
 
     test('a Slack channel Deedee only listened to is never reused as a new web chat', () => {
@@ -52,7 +61,7 @@ describe('Chat session ownership', () => {
         // messages all came from the dashboard.
         db.db.prepare(`INSERT INTO chat_sessions (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)`)
             .run('C0EXAMPLE02', 'A Chat From The Dashboard', '2026-09-22T14:01:56.000Z', '2026-09-22T14:01:56.000Z');
-        saveUserMessage('C0EXAMPLE02', 'web');
+        insertMessage('C0EXAMPLE02', 'web');
 
         expect(db.backfillSessionSources()).toBe(1);
         expect(db.getSession('C0EXAMPLE02').source).toBe('web');
@@ -67,8 +76,8 @@ describe('Chat session ownership', () => {
             .run('C0EXAMPLE05', 'A Chat From The Dashboard', '2026-09-22T14:01:56.000Z', '2026-09-22T14:01:56.000Z');
         db.db.prepare(`INSERT INTO messages (id, role, content, source, chat_id, timestamp) VALUES (?, 'user', 'hi', 'slack', ?, 1600000000000)`)
             .run('m-int-1', 'C0EXAMPLE05');
-        saveUserMessage('C0EXAMPLE05', 'web');
-        saveUserMessage('C0EXAMPLE05', 'web');
+        insertMessage('C0EXAMPLE05', 'web');
+        insertMessage('C0EXAMPLE05', 'web');
 
         db.backfillSessionSources();
         expect(db.getSession('C0EXAMPLE05').source).toBe('web');
@@ -77,7 +86,7 @@ describe('Chat session ownership', () => {
     test('an assistant reply keeping the default source does not hide a chat', () => {
         db.db.prepare(`INSERT INTO chat_sessions (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)`)
             .run('4b30dea9-1b20-5bb4-9a58-000000000005', 'Old Chat', '2026-05-01T10:00:00.000Z', '2026-05-01T10:00:00.000Z');
-        db.saveMessage({ role: 'assistant', content: 'hi', source: 'system', chatId: '4b30dea9-1b20-5bb4-9a58-000000000005' });
+        insertMessage('4b30dea9-1b20-5bb4-9a58-000000000005', 'system', 'assistant');
 
         db.backfillSessionSources();
         expect(db.getSession('4b30dea9-1b20-5bb4-9a58-000000000005').source).toBe('web');
@@ -114,7 +123,7 @@ describe('Chat session ownership', () => {
     test('a WhatsApp chat stays hidden even when its first saved message says web', () => {
         db.db.prepare(`INSERT INTO chat_sessions (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)`)
             .run('100000000000001@g.us', 'WhatsApp Chat', '2026-05-01T10:00:00.000Z', '2026-05-01T10:00:00.000Z');
-        saveUserMessage('100000000000001@g.us', 'web');
+        insertMessage('100000000000001@g.us', 'web');
 
         db.backfillSessionSources();
         expect(db.getSession('100000000000001@g.us').source).toBe('whatsapp');
@@ -193,6 +202,59 @@ describe('Chat session ownership', () => {
 
         db.deleteEmptySessions('some-other-chat');
         expect(db.getSession(pinned.id)).toBeTruthy();
+    });
+
+    test('a chat id sent as a number does not break the turn', () => {
+        expect(() => db.ensureSession(12345, 'telegram')).not.toThrow();
+        expect(db.getSession('12345').source).toBe('telegram');
+    });
+
+    test('a chat a job created is claimed back when you write in it', () => {
+        // No repair path used to exist: the source was stamped once, so a web
+        // chat whose row a job made first stayed out of the list for good.
+        db.ensureSession('4b30dea9-1b20-5bb4-9a58-000000000006', 'scheduler');
+        expect(db.getSessions({ limit: 50 }).map(s => s.id))
+            .not.toContain('4b30dea9-1b20-5bb4-9a58-000000000006');
+
+        saveUserMessage('4b30dea9-1b20-5bb4-9a58-000000000006', 'web');
+        expect(db.getSessions({ limit: 50 }).map(s => s.id))
+            .toContain('4b30dea9-1b20-5bb4-9a58-000000000006');
+    });
+
+    test('a web message never claims a Slack chat', () => {
+        db.ensureSession('C0EXAMPLE06', 'slack');
+        saveUserMessage('C0EXAMPLE06', 'web');
+        expect(db.getSession('C0EXAMPLE06').source).toBe('slack');
+        expect(db.getSessions({ limit: 50 }).map(s => s.id)).not.toContain('C0EXAMPLE06');
+    });
+
+    test('a chat from another interface is not swept up mid-turn', () => {
+        // The row exists from the start of a turn; the first message lands
+        // later. A dashboard navigation in that window must not delete it.
+        db.ensureSession('C0EXAMPLE07', 'slack');
+        db.db.prepare('UPDATE chat_sessions SET created_at = ? WHERE id = ?')
+            .run('2020-01-01T00:00:00.000Z', 'C0EXAMPLE07');
+
+        db.deleteEmptySessions('some-other-chat');
+        expect(db.getSession('C0EXAMPLE07')).toBeTruthy();
+    });
+
+    test('EMPTY_CHAT_CLEANUP=0 keeps every blank chat', () => {
+        const blank = db.createSession({ id: 'blank-1', title: 'New Chat', source: 'web' });
+        db.db.prepare('UPDATE chat_sessions SET created_at = ? WHERE id = ?')
+            .run('2020-01-01T00:00:00.000Z', blank.id);
+
+        process.env.EMPTY_CHAT_CLEANUP = '0';
+        db.deleteEmptySessions('some-other-chat');
+        expect(db.getSession(blank.id)).toBeTruthy();
+    });
+
+    test('SESSION_TOUCH=0 leaves the date alone', () => {
+        const chat = db.createSession({ title: 'A Chat', source: 'web' });
+        const before = db.getSession(chat.id).updated_at;
+        process.env.SESSION_TOUCH = '0';
+        saveUserMessage(chat.id, 'web');
+        expect(db.getSession(chat.id).updated_at).toBe(before);
     });
 
     test('the migration rewrites stored dates in the old format', () => {

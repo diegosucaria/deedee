@@ -101,8 +101,9 @@ function normalizeSessionSource(source) {
 
 // Only the id shapes that name their owner beyond doubt. A Slack channel id
 // ('C0EXAMPLE1') and a web UUID both return null: the caller asks the messages.
-function sessionSourceFromId(id) {
-  if (!id) return null;
+function sessionSourceFromId(rawId) {
+  if (!rawId) return null;
+  const id = String(rawId); // a caller can send a chat id as a number
   if (id.includes('@') || id.includes('%40')) return 'whatsapp';
   if (id.startsWith('scheduled_') || id.startsWith('system_')) return 'scheduler';
   if (id.startsWith('subagent-')) return 'subagent';
@@ -125,7 +126,7 @@ function resolveSessionSource(id, messageSource) {
   const fromSource = normalizeSessionSource(messageSource);
   if (fromSource && OTHER_INTERFACES.has(fromSource)) return fromSource;
   if (fromSource === 'web') return 'web';
-  return id && id.includes('-') ? 'web' : 'unknown';
+  return id && String(id).includes('-') ? 'web' : 'unknown';
 }
 
 // Tags written on the main agent chat path (see services/usage-attribution.js).
@@ -1465,7 +1466,7 @@ class AgentDB {
 
   createSession({ id, title, source }) {
     this.deleteEmptySessions(); // Cleanup abandoned sessions
-    const sessionId = id || crypto.randomUUID();
+    const sessionId = id ? String(id) : crypto.randomUUID();
     const now = new Date().toISOString();
     const owner = resolveSessionSource(sessionId, source || 'web');
     this.db.prepare(`
@@ -1516,7 +1517,10 @@ class AgentDB {
   }
 
   getSession(id) {
-    return this.db.prepare('SELECT * FROM chat_sessions WHERE id = ?').get(id);
+    // String(): SQLite matches a number against a stored id of text as
+    // unequal, so a caller sending a numeric chat id would miss its own row
+    // and try to insert it again.
+    return this.db.prepare('SELECT * FROM chat_sessions WHERE id = ?').get(String(id));
   }
 
   getSessions({ limit = 50, offset = 0 } = {}) {
@@ -1610,6 +1614,9 @@ class AgentDB {
   }
 
   deleteEmptySessions(preserveId = null) {
+    // EMPTY_CHAT_CLEANUP=0 leaves every blank chat in place.
+    if (process.env.EMPTY_CHAT_CLEANUP === '0') return;
+
     // Strategy:
     // 1. If preserveId is provided (user is looking at a specific chat), we can be aggressive and delete ALL other empty sessions instantly.
     // 2. If no preserveId, we fallback to the safety buffer (e.g. 10 mins or maybe 1 min?) to avoid deleting a just-created session 
@@ -1625,6 +1632,10 @@ class AgentDB {
         -- Only chats nobody named. A chat you titled, or cleared, keeps its
         -- row: losing it would drop the chat out of the list.
         AND (cs.title IS NULL OR cs.title = 'New Chat')
+        -- Only the owner's own blank chats. Another interface holds its row
+        -- from the start of a turn until the first message is saved, and a
+        -- sweep in that window would delete the chat mid-turn.
+        AND (cs.source IS NULL OR cs.source IN ('web', 'unknown'))
     `;
 
     const args = [];
@@ -1724,11 +1735,27 @@ class AgentDB {
   // under 'Older'. Never moves the date backwards, so a copied or imported
   // message cannot pull a live chat back in time.
   touchSession(chatId, timestamp) {
-    if (!chatId) return;
+    // SESSION_TOUCH=0 leaves the date to renames and pins alone.
+    if (!chatId || process.env.SESSION_TOUCH === '0') return;
     this.db.prepare(`
       UPDATE chat_sessions SET updated_at = ?
       WHERE id = ? AND (updated_at IS NULL OR updated_at < ?)
     `).run(timestamp, chatId, timestamp);
+  }
+
+  // A chat the owner writes in from the dashboard belongs in his list, even
+  // if a job or an unnamed caller created the row first. A chat that belongs
+  // to WhatsApp, Telegram, Slack or a sub-agent is never claimed, which is
+  // what keeps a Slack channel out of the sidebar.
+  claimSessionForWeb(chatId) {
+    if (!chatId) return;
+    // An id that names another owner is never claimed, whatever its row says.
+    if (sessionSourceFromId(chatId)) return;
+    const owned = [...OTHER_INTERFACES].filter(s => s !== 'scheduler');
+    this.db.prepare(`
+      UPDATE chat_sessions SET source = 'web'
+      WHERE id = ? AND (source IS NULL OR source NOT IN ('web', ${owned.map(() => '?').join(', ')}))
+    `).run(chatId, ...owned);
   }
 
   saveMessage(msg) {
@@ -1754,6 +1781,7 @@ class AgentDB {
     }
     stmt.run(id, msg.role, msg.content, partsStr, msg.source, targetChatId, msg.cost || 0, msg.tokenCount || 0, ts, metaStr);
     this.touchSession(targetChatId, ts);
+    if (normalizeSessionSource(msg.source) === 'web') this.claimSessionForWeb(targetChatId);
   }
 
   // Insert variant for the proactive-mirror wrapper. Idempotent on id so callers
