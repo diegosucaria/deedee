@@ -27,8 +27,12 @@ export function parseParts(raw) {
  * @param {*} value
  * @param {number} depth guard against a cycle or a very deep tool result
  */
+// What stands in for anything nested deeper than the walk goes.
+export const DEEP_MARKER = '[deep]';
+
 export function stripBlobs(value, depth = 0) {
-    if (depth > 12) return value;
+    // Past the guard nothing is inspected, so nothing may pass through whole.
+    if (depth > 12) return DEEP_MARKER;
     if (Array.isArray(value)) return value.map(v => stripBlobs(v, depth + 1));
     if (!value || typeof value !== 'object') return value;
     // { mimeType, data } is an inline blob whatever the key above it.
@@ -81,9 +85,13 @@ export function describeParts(raw) {
  * Cut a long body down to a first screenful.
  * @returns {{ head: string, hidden: number }} hidden is 0 when nothing was cut
  */
-export function clipBody(body, maxLines = 12) {
+export function clipBody(body, maxLines = 12, maxChars = 4000) {
     const text = typeof body === 'string' ? body : String(body ?? '');
     const lines = text.split('\n');
-    if (lines.length <= maxLines) return { head: text, hidden: 0 };
-    return { head: lines.slice(0, maxLines).join('\n'), hidden: lines.length - maxLines };
+    const byLines = lines.length > maxLines;
+    let head = byLines ? lines.slice(0, maxLines).join('\n') : text;
+    // A tool result can be one 50,000-character line; lines alone would not cut it.
+    const byChars = head.length > maxChars;
+    if (byChars) head = head.slice(0, maxChars);
+    return { head, hidden: (byLines ? lines.length - maxLines : 0) + (byChars ? 1 : 0) };
 }

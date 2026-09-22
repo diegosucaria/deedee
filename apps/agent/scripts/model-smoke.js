@@ -295,7 +295,8 @@ const RUNNERS = {
         });
         const name = token?.name || '';
         if (!name.startsWith('auth_tokens/')) throw new Error(`token name ${JSON.stringify(name)} does not start with auth_tokens/`);
-        return { note: `token ${name.slice(0, 20)}...` };
+        // The name is the key of a live session: not even a piece of it goes in the file.
+        return { note: 'token created' };
     }
 };
 
@@ -389,7 +390,8 @@ function scrubSecrets(text) {
     return String(text)
         .replace(/AIza[0-9A-Za-z_-]{20,}/g, '[redacted]')
         .replace(/([?&](?:key|api_key|token)=)[^&\s"']+/gi, '$1[redacted]')
-        .replace(/(Bearer\s+)[A-Za-z0-9._-]{16,}/g, '$1[redacted]');
+        .replace(/(Bearer\s+)[A-Za-z0-9._-]{16,}/g, '$1[redacted]')
+        .replace(/auth_tokens\/[A-Za-z0-9._-]+/g, 'auth_tokens/[redacted]');
 }
 
 function writeResult(result, models, dataDir, out = console) {

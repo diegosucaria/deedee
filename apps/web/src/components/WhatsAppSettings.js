@@ -304,7 +304,7 @@ function Diagnostics({ sessionKey }) {
                 onClick={run}
                 disabled={busy}
                 className="w-full py-1.5 bg-zinc-800 hover:bg-zinc-700 text-zinc-400 hover:text-zinc-200 rounded text-xs font-medium transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
-                title="Ask the interfaces service how this session is doing. Changes nothing."
+                title="Ask the interfaces service how this session is doing. It sends one presence ping (the account shows as online for a moment) and reads the blocklist; it writes nothing."
             >
                 {busy ? <Loader2 className="w-3 h-3 animate-spin" /> : <Stethoscope className="w-3 h-3" />}
                 Run diagnostics

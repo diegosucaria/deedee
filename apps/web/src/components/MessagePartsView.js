@@ -28,7 +28,7 @@ function PartRow({ part }) {
                 {part.name && <span className="font-mono text-zinc-300 ml-1.5">{part.name}</span>}
             </div>
             {body && (
-                <pre className="text-[11px] text-zinc-500 bg-zinc-950/60 p-2 rounded mt-1 overflow-x-auto whitespace-pre-wrap">
+                <pre className="text-[11px] text-zinc-500 bg-zinc-950/60 p-2 rounded mt-1 overflow-x-auto whitespace-pre-wrap max-h-48 overflow-y-auto">
                     {body}
                 </pre>
             )}
