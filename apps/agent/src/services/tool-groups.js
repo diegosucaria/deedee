@@ -79,11 +79,13 @@ const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // "digital", "legit" or "github". Product names match from the start of a word
 // only, so inflections and Spanglish still fire: "gmails", "google calendario",
 // "slackeame", "browsers".
-// 'outfit' must not fire on "Outfitters", nor 'ropa' inside another word.
+// 'outfit' must not fire on "Outfitters", nor 'ropa' inside another word;
+// their plurals ("outfits", "ropas", "guardarropas") still count.
 const WHOLE_WORD_GROUPS = new Set(['code', 'wardrobe']);
+const PLURAL_GROUPS = new Set(['wardrobe']);
 const GROUP_NAME_PATTERNS = Object.fromEntries(
     Object.entries(GROUP_NAME_WORDS).map(([g, words]) => {
-        const tail = WHOLE_WORD_GROUPS.has(g) ? '\\b' : '';
+        const tail = WHOLE_WORD_GROUPS.has(g) ? `${PLURAL_GROUPS.has(g) ? 's?' : ''}\\b` : '';
         return [g, new RegExp(`\\b(?:${words.map(escapeRe).join('|')})${tail}`, 'i')];
     })
 );

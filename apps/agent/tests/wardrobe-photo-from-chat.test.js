@@ -250,8 +250,12 @@ describe('the declarations and the router agree', () => {
         expect(groupsNamedIn('agregá esta prenda a mi ropa')).toEqual(['wardrobe']);
         expect(groupsNamedIn('what do you think of this outfit?')).toEqual(['wardrobe']);
         expect(groupsNamedIn('Europa trip next week')).toEqual([]);
-        // "prenda la luz" is the verb, and a shop is not an outfit.
+        // Plurals count; "prenda la luz" is the verb, and a shop is not an outfit.
+        for (const plural of ['outfits for the trip', 'my garments', 'mostrame mis ropas', 'guardá esto en mi guardarropas']) {
+            expect(groupsNamedIn(plural)).toEqual(['wardrobe']);
+        }
         expect(groupsNamedIn('prenda la luz del living')).toEqual([]);
         expect(groupsNamedIn('Urban Outfitters shipped my order')).toEqual([]);
+        expect(groupsNamedIn('hay que arroparse, hace frío')).toEqual([]);
     });
 });
