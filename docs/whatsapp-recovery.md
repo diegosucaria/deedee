@@ -13,8 +13,7 @@ Logs show: `Timeout in AwaitingInitialSync, forcing state to Online`.
 
 ## Before you reach for a level: diagnostics
 
-Each session card in Settings has a **Run diagnostics** button. It reads
-nothing else and changes nothing. The web app calls `diagnoseWhatsApp()` →
+Each session card in Settings has a **Run diagnostics** button. It sends one presence ping, which shows the account as online for a moment, reads the blocklist, and writes nothing. The web app calls `diagnoseWhatsApp()` →
 `POST /v1/whatsapp/diagnose` → `POST /whatsapp/diagnose` on the interfaces
 service → `runDiagnostics()` in `apps/interfaces/src/whatsapp.js`.
 

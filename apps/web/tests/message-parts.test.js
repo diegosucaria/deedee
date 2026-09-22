@@ -1,7 +1,23 @@
 // The parts view in Message History. The faults it guards against: a row of
 // base64 filling the screen, a JSON string that will not parse taking the page
 // down, a tool call whose name or arguments go missing.
-const { describeParts, parseParts, stripBlobs, prettyJson, clipBody, MEDIA_MARKER } = require('../src/lib/message-parts.js');
+const { describeParts, parseParts, stripBlobs, prettyJson, clipBody, MEDIA_MARKER, DEEP_MARKER } = require('../src/lib/message-parts.js');
+
+describe('the size guards', () => {
+    test('a one-line body longer than the cap is cut and marked hidden', () => {
+        const out = clipBody('x'.repeat(5000));
+        expect(out.head.length).toBe(4000);
+        expect(out.hidden).toBe(1);
+        expect(clipBody('short')).toEqual({ head: 'short', hidden: 0 });
+    });
+
+    test('nothing nested past the walk comes through whole', () => {
+        let deep = { data: 'A'.repeat(1000), mimeType: 'image/png' };
+        for (let i = 0; i < 15; i++) deep = { inner: deep };
+        expect(JSON.stringify(stripBlobs(deep))).not.toContain('AAAA');
+        expect(JSON.stringify(stripBlobs(deep))).toContain(DEEP_MARKER);
+    });
+});
 
 describe('parseParts', () => {
     test('a JSON string and an array both come back as an array', () => {

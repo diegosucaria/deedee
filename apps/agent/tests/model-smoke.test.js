@@ -322,6 +322,7 @@ describe('model-smoke result file', () => {
         expect(text).not.toContain('y'.repeat(24));
         expect(text).toContain('[redacted]');
         expect(smoke.scrubSecrets(`key=${fakeKey}&x=1`)).toBe('key=[redacted]&x=1');
+        expect(smoke.scrubSecrets('token auth_tokens/abcDEF-123 made')).toBe('token auth_tokens/[redacted] made');
     });
 
     test('MODEL_SMOKE_WRITE=0 writes nothing', () => {
