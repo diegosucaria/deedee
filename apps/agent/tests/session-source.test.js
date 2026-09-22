@@ -51,12 +51,46 @@ describe('Chat session ownership', () => {
         // What the bug left behind: a session keyed by a Slack channel id whose
         // messages all came from the dashboard.
         db.db.prepare(`INSERT INTO chat_sessions (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)`)
-            .run('C0EXAMPLE02', 'Vinyl Duplicate Check', '2026-09-22T14:01:56.000Z', '2026-09-22T14:01:56.000Z');
+            .run('C0EXAMPLE02', 'A Chat From The Dashboard', '2026-09-22T14:01:56.000Z', '2026-09-22T14:01:56.000Z');
         saveUserMessage('C0EXAMPLE02', 'web');
 
         expect(db.backfillSessionSources()).toBe(1);
         expect(db.getSession('C0EXAMPLE02').source).toBe('web');
         expect(db.getSessions({ limit: 50 }).map(s => s.id)).toContain('C0EXAMPLE02');
+    });
+
+    test('a legacy row with an integer timestamp does not mislabel a web chat', () => {
+        // messages.timestamp holds ISO text and, in old rows, integer
+        // milliseconds. SQLite sorts the two apart, so the backfill counts
+        // the sources instead of reading the first row.
+        db.db.prepare(`INSERT INTO chat_sessions (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)`)
+            .run('C0EXAMPLE05', 'A Chat From The Dashboard', '2026-09-22T14:01:56.000Z', '2026-09-22T14:01:56.000Z');
+        db.db.prepare(`INSERT INTO messages (id, role, content, source, chat_id, timestamp) VALUES (?, 'user', 'hi', 'slack', ?, 1600000000000)`)
+            .run('m-int-1', 'C0EXAMPLE05');
+        saveUserMessage('C0EXAMPLE05', 'web');
+        saveUserMessage('C0EXAMPLE05', 'web');
+
+        db.backfillSessionSources();
+        expect(db.getSession('C0EXAMPLE05').source).toBe('web');
+    });
+
+    test('an assistant reply keeping the default source does not hide a chat', () => {
+        db.db.prepare(`INSERT INTO chat_sessions (id, title, created_at, updated_at) VALUES (?, ?, ?, ?)`)
+            .run('4b30dea9-1b20-5bb4-9a58-000000000005', 'Old Chat', '2026-05-01T10:00:00.000Z', '2026-05-01T10:00:00.000Z');
+        db.saveMessage({ role: 'assistant', content: 'hi', source: 'system', chatId: '4b30dea9-1b20-5bb4-9a58-000000000005' });
+
+        db.backfillSessionSources();
+        expect(db.getSession('4b30dea9-1b20-5bb4-9a58-000000000005').source).toBe('web');
+    });
+
+    test('a chat you named keeps its row when it holds no messages', () => {
+        // /clear empties a chat. The cleanup must not take the chat with it.
+        const cleared = db.createSession({ id: 'cleared-1', title: 'Holiday Plans', source: 'web' });
+        db.db.prepare('UPDATE chat_sessions SET created_at = ? WHERE id = ?')
+            .run('2020-01-01T00:00:00.000Z', cleared.id);
+
+        db.deleteEmptySessions('some-other-chat');
+        expect(db.getSession(cleared.id)).toBeTruthy();
     });
 
     test('the backfill leaves a real Slack chat out of the web list', () => {

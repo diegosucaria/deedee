@@ -90,7 +90,10 @@ function normalizeSessionSource(source) {
   if (s.startsWith('whatsapp')) return 'whatsapp';
   if (s.startsWith('telegram')) return 'telegram';
   if (s.startsWith('slack')) return 'slack';
-  if (s === 'scheduler' || s === 'system') return 'scheduler';
+  if (s === 'scheduler') return 'scheduler';
+  // 'system' is the default source of createAssistantMessage, so it says
+  // nothing about the owner. Scheduled chats are known by their id.
+  if (s === 'system') return null;
   if (s === 'subagent') return 'subagent';
   if (s === 'web') return 'web';
   return s;
@@ -1486,12 +1489,17 @@ class AgentDB {
     return session;
   }
 
-  // Fill the source column for rows written before it existed. The first
-  // message names the owner; an empty row falls back to its id shape.
+  // Fill the source column for rows written before it existed. The messages
+  // name the owner; an empty row falls back to its id shape.
   backfillSessionSources() {
+    // The commonest source in the chat, not the first row: timestamp holds
+    // ISO text and, in old rows, integer milliseconds, and SQLite sorts the
+    // two apart, so 'the first message' is not always the earliest one.
     const rows = this.db.prepare(`
       SELECT cs.id,
-        (SELECT m.source FROM messages m WHERE m.chat_id = cs.id ORDER BY m.timestamp ASC LIMIT 1) AS first_source
+        (SELECT m.source FROM messages m
+          WHERE m.chat_id = cs.id AND m.source IS NOT NULL
+          GROUP BY m.source ORDER BY COUNT(*) DESC, m.source ASC LIMIT 1) AS main_source
       FROM chat_sessions cs
       WHERE cs.source IS NULL
     `).all();
@@ -1500,7 +1508,7 @@ class AgentDB {
     const stmt = this.db.prepare('UPDATE chat_sessions SET source = ? WHERE id = ?');
     this.db.transaction(() => {
       for (const row of rows) {
-        stmt.run(resolveSessionSource(row.id, row.first_source), row.id);
+        stmt.run(resolveSessionSource(row.id, row.main_source), row.id);
       }
     })();
     console.log(`[DB] Backfilled source for ${rows.length} chat sessions.`);
@@ -1614,6 +1622,9 @@ class AgentDB {
         LEFT JOIN messages m ON cs.id = m.chat_id
         WHERE m.id IS NULL
         AND cs.is_pinned = 0
+        -- Only chats nobody named. A chat you titled, or cleared, keeps its
+        -- row: losing it would drop the chat out of the list.
+        AND (cs.title IS NULL OR cs.title = 'New Chat')
     `;
 
     const args = [];
