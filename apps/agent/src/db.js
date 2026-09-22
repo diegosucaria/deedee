@@ -821,6 +821,16 @@ class AgentDB {
       this.db.exec("ALTER TABLE autopilot_drafts ADD COLUMN sent_count INTEGER DEFAULT 0");
     } catch (err) { }
 
+    // Migration: drafts that don't answer an incoming message (partner
+    // greetings in review mode) record where they came from and when they
+    // stop making sense, so a good-morning draft can't go out at night.
+    try {
+      this.db.exec("ALTER TABLE autopilot_drafts ADD COLUMN source TEXT");
+    } catch (err) { }
+    try {
+      this.db.exec("ALTER TABLE autopilot_drafts ADD COLUMN expires_at TEXT");
+    } catch (err) { }
+
     // Migration: Add relationship to people (Fix for older DBs)
     try {
       this.db.exec("ALTER TABLE people ADD COLUMN relationship TEXT");
@@ -1191,6 +1201,20 @@ class AgentDB {
     `);
     stmt.run(id, person.name, person.phone, person.relationship, person.source || 'manual', person.notes, metaStr, identifiersStr);
     return id;
+  }
+
+  // True when these digits are a person's WhatsApp ID (identifiers.whatsapp_lid),
+  // not a phone number. A contact known only by its WhatsApp ID keeps the ID
+  // digits as its phone too; a message to it must go to "<digits>@lid",
+  // because "<digits>@s.whatsapp.net" would be some stranger's number.
+  isWhatsAppId(digits) {
+    const d = String(digits ?? '').replace(/\D/g, '');
+    if (d.length < 5) return false;
+    try {
+      return !!this.db.prepare("SELECT 1 FROM people WHERE json_extract(identifiers, '$.whatsapp_lid') = ? LIMIT 1").get(d);
+    } catch (e) {
+      return false; // a row with malformed identifiers JSON
+    }
   }
 
   // Accepts a person id, a phone number, or a WhatsApp address:
@@ -3510,6 +3534,26 @@ class AgentDB {
     this.db.prepare('DELETE FROM usage_logs').run(); // Also usage_logs (rate limiting)
     console.log('[DB] FORCE CLEANUP: Deleted all metrics, token_usage, and usage_logs.');
   }
+  // Marks a chat's live drafts from one source (e.g. 'partner_greeting') as
+  // 'superseded', so only the newest can be approved. Returns how many.
+  supersedeAutopilotDrafts(chatId, source) {
+    return this.db.prepare(`
+      UPDATE autopilot_drafts SET status = 'superseded'
+      WHERE chat_id = ? AND source = ? AND status IN ('pending', 'partially_sent')
+    `).run(chatId, source).changes;
+  }
+
+  // A draft that does not come from an incoming message (partner greetings
+  // in review mode). expiresAt is an ISO time; approving after it refuses to
+  // send. Returns the new draft id.
+  createAutopilotDraft({ chatId, contactId, content, contextContent = null, options = {}, source = null, expiresAt = null }) {
+    const r = this.db.prepare(`
+      INSERT INTO autopilot_drafts (chat_id, contact_id, content, context_content, options, status, source, expires_at)
+      VALUES (?, ?, ?, ?, ?, 'pending', ?, ?)
+    `).run(chatId, contactId, content, contextContent, JSON.stringify(options || {}), source, expiresAt);
+    return Number(r.lastInsertRowid);
+  }
+
   getAgentSetting(key) {
     const stmt = this.db.prepare('SELECT value FROM agent_settings WHERE key = ?');
     const row = stmt.get(key);

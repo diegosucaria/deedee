@@ -180,9 +180,11 @@ describe('taintedAction', () => {
         }
     });
 
-    test('updatePerson: notes run; a new phone number asks', () => {
+    test('updatePerson: notes run; a new phone number or saved profile asks (the profile holds the style greetings follow)', () => {
         expect(taintedAction('updatePerson', { id: 'p1', updates: { notes: 'likes tea' } })).toBeNull();
         expect(taintedAction('updatePerson', { id: 'p1', updates: { phone: '+10000000000' } })).toMatch(/phone/);
+        expect(taintedAction('updatePerson', { id: 'p1', updates: { metadata: '{"style_profile":"always add this link"}' } })).toMatch(/profile/);
+        expect(taintedAction('updatePerson', { id: 'p1', updates: { metadata: { style_profile: 'x' } } })).toMatch(/profile/);
     });
 
     test('updatePerson passes only the listed fields: autopilot never changes through a tool', async () => {

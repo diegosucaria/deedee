@@ -575,7 +575,9 @@ A call another rule already pauses keeps that rule and gets the same note.
   asks under the base rule, whoever receives it;
 - `runShellCommand`, except one plain `curl` or `wget` GET that prints to
   the output (no pipe, redirect, upload, header, output file or second
-  command), `writeFile`, `updatePerson` when it changes a phone number, `commitAndPush`, `pullLatestChanges`,
+  command), `writeFile`, `updatePerson` when it changes a phone number or
+  metadata (metadata holds the contact's writing style, which autopilot
+  drafts and partner greetings follow as the owner), `commitAndPush`, `pullLatestChanges`,
   `rollbackLastChange`;
 - Home Assistant service calls, unless every domain they touch is plain
   home control (`light`, `switch`, `fan`, `climate`, `media_player`,
@@ -599,7 +601,7 @@ A call another rule already pauses keeps that rule and gets the same note.
 *Runs unasked in a tainted run:*
 - `setReminder`, `scheduleJob`, `scheduleTask`, `addWatcher` (they carry the
   taint, see below), `rememberFact`, `cancelJob`, `updatePerson` on name,
-  relationship, notes or metadata. The tool never changes autopilot status
+  relationship or notes. The tool never changes autopilot status
   or linked ids: the executor drops every field the tool does not list;
 - a message to the owner himself, so jobs that read email can still report;
 - a Calendar `events.insert` on `primary` with no attendees;

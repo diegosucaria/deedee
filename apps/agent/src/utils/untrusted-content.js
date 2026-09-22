@@ -521,9 +521,12 @@ function taintedAction(toolName, args, { serverName = null, isOwnerTarget = () =
             return isOwnerTarget(a) ? null : 'send a message';
         case 'sendSlackMessage': return 'send a Slack message';
         // A changed number redirects later messages "to" this contact.
+        // Metadata holds the contact's writing style, which autopilot drafts
+        // and partner greetings follow when they write as the owner.
         case 'updatePerson': {
             const u = asObject(a.updates) || {};
-            return u.phone !== undefined ? "change a contact's phone number" : null;
+            if (u.phone !== undefined) return "change a contact's phone number";
+            return u.metadata !== undefined ? "change a contact's saved profile" : null;
         }
         // A plain GET (curl/wget, no pipe, redirect, upload or output file)
         // only reads, and its result comes back wrapped as untrusted.

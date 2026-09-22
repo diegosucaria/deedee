@@ -634,9 +634,13 @@ ${transcript}
      * Get the latest pending draft for a chat
      */
     getPendingDraft(chatId) {
+        // Only drafts that answer an incoming message. Greeting drafts
+        // (source 'partner_greeting') are not replies: treating one as the
+        // pending draft would feed the owner's next message to that chat
+        // into style learning as a "correction".
         return this.db.db.prepare(`
-            SELECT * FROM autopilot_drafts 
-            WHERE chat_id = ? AND status = 'pending' 
+            SELECT * FROM autopilot_drafts
+            WHERE chat_id = ? AND status = 'pending' AND (source IS NULL OR source = 'autopilot')
             ORDER BY created_at DESC LIMIT 1
         `).get(chatId);
     }

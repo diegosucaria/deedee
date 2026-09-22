@@ -1922,6 +1922,69 @@ export async function createPerson(prevState, formData) {
     }
 }
 
+// Autopilot → Greetings: the partner_greeting setting, the global dry-run
+// switch and the two greeting jobs. Unlike getAgentConfig and getTasks it
+// reports a failed load, so the tab never takes an unreachable agent for
+// "nobody set" (a pick then would wipe the saved mode and pause).
+export async function getPartnerGreetingState() {
+    await requireActionSession();
+    try {
+        const [config, tasks] = await Promise.all([
+            fetchAPI('/v1/settings'),
+            fetchAPI('/v1/tasks?includeSystem=true'),
+        ]);
+        const jobs = (Array.isArray(tasks) ? tasks : tasks?.jobs || [])
+            .filter((j) => j?.name === 'partner_good_morning' || j?.name === 'partner_good_night');
+        return {
+            ok: true,
+            value: config?.partner_greeting || null,
+            globalDryRun: config?.communication_dry_run === true,
+            jobs,
+        };
+    } catch (error) {
+        return { ok: false, error: apiErrorMessage(error) };
+    }
+}
+
+// Adds a WhatsApp contact to People and returns its id. Autopilot → Style
+// needs a person record to hold a contact's style. A contact already in
+// People (by phone or WhatsApp ID) returns that person instead, so the style
+// lands on the record greetings and drafts look up. A contact known only by
+// its WhatsApp ID gets that ID as its phone and as identifiers.whatsapp_lid;
+// sends then go to "<id>@lid", and the People sync moves it onto the real
+// number once WhatsApp links the two.
+export async function createPersonFromContact({ name, phone, lid } = {}) {
+    await requireActionSession();
+    try {
+        const cleanName = String(name || '').trim();
+        const digits = String(phone || '').replace(/\D/g, '');
+        const lidDigits = String(lid || '').replace(/@.*$/, '').replace(/\D/g, '');
+        if (!cleanName || (!digits && !lidDigits)) {
+            return { success: false, error: 'A name and a phone number or WhatsApp ID are needed' };
+        }
+        for (const key of [...new Set([lidDigits, digits].filter(Boolean))]) {
+            try {
+                const existing = await fetchAPI(`/v1/people/${encodeURIComponent(key)}`);
+                if (existing?.id) return { success: true, id: existing.id, existing: true };
+            } catch {
+                // Not in People under this number.
+            }
+        }
+        const identifiers = {};
+        if (digits) identifiers.whatsapp = digits;
+        if (lidDigits && lidDigits !== digits) identifiers.whatsapp_lid = lidDigits;
+        const res = await fetchAPI('/v1/people', {
+            method: 'POST',
+            body: JSON.stringify({ name: cleanName, phone: digits || lidDigits, identifiers, source: 'web' })
+        });
+        revalidatePath('/people');
+        revalidatePath('/autopilot');
+        return { success: true, id: res?.id || null };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
 export async function updatePerson(id, data) {
     await requireActionSession();
     try {
@@ -2048,7 +2111,8 @@ export async function approveDraft(id) {
         revalidatePath('/autopilot');
         return { success: true };
     } catch (error) {
-        return { success: false, error: error.message };
+        // The agent says why ("This draft expired and was not sent").
+        return { success: false, error: apiErrorMessage(error) };
     }
 }
 

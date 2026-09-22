@@ -9,8 +9,8 @@ import EnvVariables from '@/components/EnvVariables';
 import VoiceSelector from '@/components/VoiceSelector';
 import ScrollableTabs from '@/components/ScrollableTabs';
 import PageShell from '@/components/PageShell';
+import Link from 'next/link';
 import InterfacesClient from '@/components/InterfacesClient';
-import PartnerGreetingSettings from '@/components/PartnerGreetingSettings';
 import ApprovalsSettings from '@/components/ApprovalsSettings';
 import SecurityClient from './security/SecurityClient';
 
@@ -514,10 +514,10 @@ function SettingsContent() {
                             )}
                         </div>
 
-                        <PartnerGreetingSettings
-                            value={config?.partner_greeting}
-                            onSave={(v) => handleSave('partner_greeting', v)}
-                        />
+                        <div className="bg-zinc-900/50 border border-zinc-800 rounded-xl p-6 text-sm text-zinc-400">
+                            Partner greetings moved to{' '}
+                            <Link href="/autopilot?tab=greetings" className="text-indigo-400 hover:underline">Autopilot → Greetings</Link>.
+                        </div>
 
                         {/* Voice Settings Card */}
                         <div className="bg-zinc-900 border border-zinc-800 rounded-xl overflow-hidden">
