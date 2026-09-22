@@ -1326,20 +1326,24 @@ class WhatsAppService {
                     id: contact.id,
                     name: contact.name,
                     notify: contact.notify,
-                    phone
+                    phone,
+                    lid: contact.lid || null
                 });
             }
         }
         return results;
     }
 
+    // lid: the contact's WhatsApp ID when the store knows it. The agent's
+    // People sync links phone numbers to WhatsApp IDs from this field.
     getContacts() {
         if (!this.store) return [];
         return this.store.getContacts().map(c => ({
             id: c.id,
             name: c.name,
             notify: c.notify,
-            phone: c.id.split('@')[0]
+            phone: c.id.split('@')[0],
+            lid: c.lid || null
         }));
     }
 
@@ -1351,7 +1355,8 @@ class WhatsAppService {
             id: c.id,
             name: c.name,
             notify: c.notify,
-            phone: c.id.split('@')[0]
+            phone: c.id.split('@')[0],
+            lid: c.lid || null
         };
     }
 

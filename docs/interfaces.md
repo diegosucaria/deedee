@@ -139,7 +139,7 @@ Deedee supports the **Gemini Live API** for real-time, low-latency voice interac
 The agent can now resolve contact names to phone numbers using your WhatsApp contact list.
 
 ### Usage
--   **Sync**: You can manually import contacts from the Web UI (People Page) using the "Sync WhatsApp" button. Contacts are also passively verified when they message the bot.
+-   **Sync**: The "Sync WhatsApp" button on the People page adds saved contacts to People. A contact's phone row and WhatsApp ID row make one person. The sync then records each person's WhatsApp ID (`identifiers.whatsapp_lid`) from the contact list; nightly maintenance does the same. A person stored under a WhatsApp ID moves onto the linked phone number. With no known number, those digits are recorded as the person's WhatsApp ID, so a lookup by WhatsApp ID finds them. Contacts are also passively verified when they message the bot.
 -   **Search**: You can search contacts in the Web UI settings to verify visibility.
 -   **Tool**: The agent uses the `searchContacts` tool to find numbers when you say "Send message to Alice".
 -   **Safeguard**: The agent will NOT send messages to unknown numbers by default unless explicitly instructed (or if they are in the `allowedNumbers` list).

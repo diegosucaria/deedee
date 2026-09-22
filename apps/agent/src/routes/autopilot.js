@@ -144,7 +144,7 @@ function createAutopilotRouter(agent) {
             // 1. Get People from Agent DB
             // Preserve existing filters (sys_, sch_)
             const people = agent.db.db.prepare(`
-                SELECT id, name, phone, relationship, autopilot_status, autopilot_expires_at, source, metadata 
+                SELECT id, name, phone, relationship, autopilot_status, autopilot_expires_at, source, metadata, identifiers
                 FROM people 
                 WHERE (name IS NULL OR (name NOT LIKE 'sys_%' AND name NOT LIKE 'sch_%'))
             `).all();
@@ -158,10 +158,13 @@ function createAutopilotRouter(agent) {
                 // Fetch ample history to cover most contacts
                 const recents = await axios.get(`${interfacesUrl}/whatsapp/recent?limit=200`, { headers });
 
+                // /whatsapp/recent returns { jid, lastTimestamp } with the time in
+                // milliseconds; jid is the phone JID when the contact is known,
+                // else the WhatsApp ID (@lid).
                 if (recents.data && Array.isArray(recents.data)) {
                     recents.data.forEach(chat => {
-                        if (chat.remote_jid && chat.lastTimestamp) {
-                            recentMap[chat.remote_jid] = chat.lastTimestamp;
+                        if (chat.jid && chat.lastTimestamp) {
+                            recentMap[chat.jid] = chat.lastTimestamp;
                         }
                     });
                 }
@@ -183,21 +186,26 @@ function createAutopilotRouter(agent) {
                     if (meta && meta.is_pinned) is_pinned = true;
                 } catch (e) { }
 
-                // Resolve Timestamp
+                let ids = {};
+                try { ids = JSON.parse(p.identifiers || '{}') || {}; } catch (e) { }
+
+                // Resolve Timestamp (ms): by phone JID, or by the linked WhatsApp ID.
                 let ts = 0;
                 if (p.phone) {
                     const phone = p.phone.replace(/\D/g, '');
-                    const jid = `${phone}@s.whatsapp.net`;
-                    if (recentMap[jid]) {
-                        ts = recentMap[jid];
-                    }
+                    ts = recentMap[`${phone}@s.whatsapp.net`] || recentMap[`${phone}@lid`] || 0;
                 }
+                if (!ts && ids.whatsapp_lid) ts = recentMap[`${ids.whatsapp_lid}@lid`] || 0;
 
+                // Only the WhatsApp ID leaves the identifiers: the Style picker
+                // uses it to see that a WhatsApp contact is already this person.
+                const { identifiers, ...rest } = p;
                 return {
-                    ...p,
+                    ...rest,
+                    whatsapp_lid: ids.whatsapp_lid ? String(ids.whatsapp_lid) : null,
                     has_style: has_style,
                     is_pinned: is_pinned, // [NEW]
-                    last_message_at: ts * 1000 // Convert Seconds to MS
+                    last_message_at: ts
                 };
             });
 

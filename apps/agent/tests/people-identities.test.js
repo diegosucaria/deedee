@@ -9,6 +9,7 @@ const { ImpersonationService } = require('../src/services/impersonation');
 const PHONE_A = '5490000000001', LID_A = '100000000000001';
 const PHONE_B = '5490000000002', LID_B = '100000000000002';
 const PHONE_C = '5490000000003', LID_C = '100000000000003';
+const LID_D = '100000000000004'; // a contact known only by its WhatsApp ID
 
 const contact = (phone, lid, name) => ({ id: `${phone}@s.whatsapp.net`, lid: lid ? `${lid}@lid` : undefined, name });
 
@@ -83,6 +84,37 @@ describe('People linked by phone and WhatsApp ID', () => {
         expect(stats.upgraded).toBe(1); // Cleo moved onto her phone number
         expect(db.listPeople().map(p => p.name).sort()).toEqual(['Alex', 'Cleo']);
         expect(db.getPerson(`${LID_A}@lid`).name).toBe('Alex');
+    });
+
+    test('sync makes one person, not two, from a contact whose phone row and WhatsApp ID row both carry a saved name', async () => {
+        const axios = require('axios');
+        jest.spyOn(axios, 'get').mockResolvedValue({ data: [
+            { id: `${PHONE_A}@s.whatsapp.net`, name: 'Alex', phone: PHONE_A, lid: `${LID_A}@lid` },
+            { id: `${LID_A}@lid`, name: 'Alex A.', phone: LID_A, lid: null }
+        ] });
+        const stats = await people.syncFromWhatsApp();
+        expect(stats.added).toBe(1);
+        expect(db.listPeople().map(p => p.name)).toEqual(['Alex']);
+        expect(db.getPerson(`${LID_A}@lid`).phone).toBe(PHONE_A);
+    });
+
+    test('a person stored under a WhatsApp ID with no known phone gets it recorded, so a lookup by WhatsApp ID finds them', async () => {
+        const d = db.createPerson({ name: 'Dan', phone: LID_D });
+        const list = [{ id: `${LID_D}@lid`, name: null, notify: 'Dan', lid: null }];
+        expect(await people.linkWhatsAppIdentities(list)).toEqual({ linked: 1, upgraded: 0 });
+        expect(db.getPerson(d).identifiers.whatsapp_lid).toBe(LID_D);
+        expect(db.getPerson(`${LID_D}@lid`).id).toBe(d);
+        // Running again changes nothing.
+        expect(await people.linkWhatsAppIdentities(list)).toEqual({ linked: 0, upgraded: 0 });
+    });
+
+    test('sync stores a saved contact known only by its WhatsApp ID as a WhatsApp ID', async () => {
+        const axios = require('axios');
+        jest.spyOn(axios, 'get').mockResolvedValue({ data: [{ id: `${LID_D}@lid`, name: 'Dan', phone: LID_D, lid: null }] });
+        await people.syncFromWhatsApp();
+        const dan = db.getPerson(`${LID_D}@lid`);
+        expect(dan.name).toBe('Dan');
+        expect(dan.identifiers.whatsapp_lid).toBe(LID_D);
     });
 
     test('autopilot and style lookups follow the WhatsApp ID, and never match on digit suffixes', () => {
