@@ -71,7 +71,7 @@ const GROUP_NAME_WORDS = {
     dj: ['vinyl', 'vinilo', 'crate'],
     // The photo tools work from chat now; "add this to my wardrobe" with a
     // picture must load the group whatever the router made of the picture.
-    wardrobe: ['wardrobe', 'garment', 'outfit', 'guardarropa', 'prenda', 'ropa'],
+    wardrobe: ['wardrobe', 'garment', 'outfit', 'guardarropa', 'ropa'],
 };
 
 const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -79,7 +79,8 @@ const escapeRe = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 // "digital", "legit" or "github". Product names match from the start of a word
 // only, so inflections and Spanglish still fire: "gmails", "google calendario",
 // "slackeame", "browsers".
-const WHOLE_WORD_GROUPS = new Set(['code']);
+// 'outfit' must not fire on "Outfitters", nor 'ropa' inside another word.
+const WHOLE_WORD_GROUPS = new Set(['code', 'wardrobe']);
 const GROUP_NAME_PATTERNS = Object.fromEntries(
     Object.entries(GROUP_NAME_WORDS).map(([g, words]) => {
         const tail = WHOLE_WORD_GROUPS.has(g) ? '\\b' : '';

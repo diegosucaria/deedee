@@ -3425,6 +3425,10 @@ class Agent {
         message,
         sendCallback,
         approved: options.approved === true,
+        // The owner's own chat (his login, his API token, his WhatsApp or
+        // Telegram chat), never a contact's, a group's or a sub-agent's. The
+        // wardrobe's photo tools take a photo from the chat only when this holds.
+        ownerTyped: await this._ownerTyped(message),
         // Sources of untrusted content this run has read; a spawned sub-agent inherits them.
         untrustedTaint: options.taint?.tainted ? [...options.taint.sources] : [],
         // The breaker state a spawned sub-agent shares.

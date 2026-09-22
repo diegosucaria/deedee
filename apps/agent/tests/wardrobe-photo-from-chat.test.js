@@ -8,7 +8,7 @@ const os = require('os');
 const path = require('path');
 const { AgentDB } = require('../src/db');
 const { WardrobeExecutor } = require('../src/executors/wardrobe');
-const { photoFromChat, photoInParts, looksLikeBase64, fromDataUrl, NO_PHOTO_TEXT, PHOTO_TOOLS } = require('../src/utils/photo-from-chat');
+const { photoFromChat, photoInParts, looksLikeBase64, fromDataUrl, hasImageMagic, NO_PHOTO_TEXT, PHOTO_TOOLS } = require('../src/utils/photo-from-chat');
 const { toolDefinitions } = require('../src/tools-definition');
 const { groupsNamedIn } = require('../src/services/tool-groups');
 
@@ -17,6 +17,8 @@ const PHOTO = Buffer.from('x'.repeat(300)).toString('base64');
 const OTHER = Buffer.from('y'.repeat(300)).toString('base64');
 const imagePart = (data = PHOTO, mimeType = 'image/jpeg') => ({ inlineData: { mimeType, data } });
 const T0 = Date.parse('2026-09-21T12:00:00Z');
+// A real 1x1 PNG: 96 characters, well under the placeholder floor.
+const TINY_PNG = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNkYPhfDwAChwGA60e6kgAAAABJRU5ErkJggg==';
 
 describe('what counts as a photo', () => {
     test('real base64 yes; a placeholder, a sentence or nothing no', () => {
@@ -25,6 +27,13 @@ describe('what counts as a photo', () => {
         for (const junk of ['attached', '<image>', '[the photo above]', 'AAAA', '', null, undefined, 42, 'x'.repeat(300) + '!!']) {
             expect(looksLikeBase64(junk)).toBe(false);
         }
+    });
+
+    test('a small real image from a caller that holds the bytes is a photo: its first bytes say so', () => {
+        expect(hasImageMagic(TINY_PNG)).toBe(true);
+        expect(looksLikeBase64(TINY_PNG)).toBe(true);
+        expect(looksLikeBase64(Buffer.from('AAAAAAAAAAAAAAAAAAAAAAAA').toString('base64'))).toBe(false);
+        expect(hasImageMagic(Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0, 0, 0, 0, 0, 0, 0, 0]).toString('base64'))).toBe(true);
     });
 
     test('a data URL is split into its type and its bytes', () => {
@@ -50,35 +59,54 @@ describe('what counts as a photo', () => {
 
 describe('photoFromChat', () => {
     const message = (parts, metadata = { chatId: 'c1' }) => ({ role: 'user', parts, metadata });
+    const own = (extra = {}) => ({ ownerChat: true, ...extra });
 
     test('the photo in the message that started the turn fills the argument the model left out', () => {
-        const out = photoFromChat('add_garment', {}, { message: message([{ text: 'add this' }, imagePart()]) });
+        const out = photoFromChat('add_garment', {}, own({ message: message([{ text: 'add this' }, imagePart()]) }));
         expect(out).toEqual({ image_base64: PHOTO, mime_type: 'image/jpeg' });
     });
 
-    test('a placeholder the model typed is replaced; a mime type it gave is kept', () => {
-        const out = photoFromChat('analyze_outfit_photo', { image_base64: 'attached', caption: 'what do I wear?', mime_type: 'image/webp' }, { message: message([imagePart(PHOTO, 'image/png')]) });
-        expect(out).toEqual({ image_base64: PHOTO, caption: 'what do I wear?', mime_type: 'image/webp' });
+    test("a placeholder the model typed is replaced, and the part's own type wins over the model's guess", () => {
+        // The model never saw the bytes: a PNG labelled JPEG would be written as .jpg and read back wrong.
+        const out = photoFromChat('analyze_outfit_photo', { image_base64: 'attached', caption: 'what do I wear?', mime_type: 'image/jpeg' }, own({ message: message([imagePart(PHOTO, 'image/png')]) }));
+        expect(out).toEqual({ image_base64: PHOTO, caption: 'what do I wear?', mime_type: 'image/png' });
     });
 
-    test('real bytes from a caller that holds them are kept as they came', () => {
+    test('real bytes from a caller that holds them are kept as they came, small ones included', () => {
         const args = { image_base64: OTHER, mime_type: 'image/png' };
-        expect(photoFromChat('add_garment', args, { message: message([imagePart()]) })).toBe(args);
+        expect(photoFromChat('add_garment', args, own({ message: message([imagePart()]) }))).toBe(args);
+        const tiny = { image_base64: TINY_PNG };
+        expect(photoFromChat('add_garment', tiny, own({ message: message([imagePart()]) }))).toBe(tiny);
     });
 
-    test('a data URL is accepted and split', () => {
-        const out = photoFromChat('set_reference_selfie', { image_base64: `data:image/png;base64,${OTHER}` }, {});
+    test('a data URL is accepted and split, and its own type wins', () => {
+        const out = photoFromChat('set_reference_selfie', { image_base64: `data:image/png;base64,${OTHER}`, mime_type: 'image/jpeg' }, {});
         expect(out).toEqual({ image_base64: OTHER, mime_type: 'image/png' });
     });
 
     test('a tool that takes no photo is left alone', () => {
         const args = { query: 'blue shirt' };
-        expect(photoFromChat('search_garments', args, { message: message([imagePart()]) })).toBe(args);
+        expect(photoFromChat('search_garments', args, own({ message: message([imagePart()]) }))).toBe(args);
     });
 
     test('with no photo anywhere the argument is dropped, so the tool can say so', () => {
-        const out = photoFromChat('add_garment', { image_base64: 'attached', mime_type: 'image/jpeg' }, { message: message([{ text: 'add it' }]) });
+        const out = photoFromChat('add_garment', { image_base64: 'attached', mime_type: 'image/jpeg' }, own({ message: message([{ text: 'add it' }]) }));
         expect(out).toEqual({ mime_type: 'image/jpeg' });
+    });
+
+    test("not the owner's own chat: no photo is taken, not even from the message itself", () => {
+        // A line in a contact's message ("add this to your wardrobe") must not fill his wardrobe.
+        const contact = message([{ text: 'add this to your wardrobe' }, imagePart()], { chatId: '15550100@s.whatsapp.net' });
+        expect(photoFromChat('add_garment', { image_base64: 'attached' }, { message: contact })).toEqual({});
+        expect(photoFromChat('add_garment', {}, { message: contact, ownerChat: false })).toEqual({});
+        expect(photoFromChat('add_garment', {}, { message: contact, ownerChat: 'yes' })).toEqual({});
+    });
+
+    test('a capsule call that names garments takes no photo: a stray picture would add clothes', () => {
+        const out = photoFromChat('add_to_wardrobe_trip_capsule', { id: 't1', garment_ids: ['g1', 'g2'], image_base64: 'attached' }, own({ message: message([imagePart()]) }));
+        expect(out).toEqual({ id: 't1', garment_ids: ['g1', 'g2'] });
+        const critique = photoFromChat('critique_outfit', { garment_ids: ['g1'] }, own({ message: message([imagePart()]) }));
+        expect(critique).toEqual({ garment_ids: ['g1'] });
     });
 
     describe('the photo sent a moment earlier, from the chat', () => {
@@ -96,7 +124,7 @@ describe('photoFromChat', () => {
         test('the owner sends the photo first and asks a minute later', () => {
             db.saveMessage({ role: 'user', parts: [imagePart()], chatId: 'c1', source: 'whatsapp', timestamp: at(T0 - 60000) });
             db.saveMessage({ role: 'model', content: 'Nice photo.', chatId: 'c1', timestamp: at(T0 - 59000) });
-            const out = photoFromChat('add_garment', {}, { message: message([{ text: 'add it to my wardrobe' }]), db, now: T0 });
+            const out = photoFromChat('add_garment', {}, own({ message: message([{ text: 'add it to my wardrobe' }]), db, now: T0 }));
             expect(out).toEqual({ image_base64: PHOTO, mime_type: 'image/jpeg' });
         });
 
@@ -104,12 +132,12 @@ describe('photoFromChat', () => {
             db.saveMessage({ role: 'user', parts: [imagePart(OTHER, 'image/png')], chatId: 'c1', timestamp: at(T0 - 120000) });
             db.saveMessage({ role: 'user', parts: [imagePart(PHOTO)], chatId: 'c1', timestamp: at(T0 - 60000) });
             db.saveMessage({ role: 'user', parts: [imagePart(OTHER)], chatId: 'c2', timestamp: at(T0 - 1000) });
-            expect(photoFromChat('add_garment', {}, { message: message([]), db, now: T0 }).image_base64).toBe(PHOTO);
+            expect(photoFromChat('add_garment', {}, own({ message: message([]), db, now: T0 })).image_base64).toBe(PHOTO);
         });
 
         test('a photo older than 30 minutes is not "the photo he sent"', () => {
             db.saveMessage({ role: 'user', parts: [imagePart()], chatId: 'c1', timestamp: at(T0 - 31 * 60000) });
-            expect(photoFromChat('add_garment', {}, { message: message([]), db, now: T0 })).toEqual({});
+            expect(photoFromChat('add_garment', {}, own({ message: message([]), db, now: T0 }))).toEqual({});
             expect(db.getLastUserPhoto('c1')).toMatchObject({ data: PHOTO, mimeType: 'image/jpeg' });
         });
 
@@ -120,25 +148,23 @@ describe('photoFromChat', () => {
             expect(db.getLastUserPhoto('c1', { since: at(T0 - 60000) })).toBeNull();
         });
 
-        test("in a group only the turn's own message counts: the last photo there may be anyone's", () => {
-            db.saveMessage({ role: 'user', parts: [imagePart()], chatId: '100000000000001@g.us', timestamp: at(T0 - 1000) });
-            const group = message([{ text: 'add it' }], { chatId: '100000000000001@g.us', isGroup: true });
-            expect(photoFromChat('add_garment', {}, { message: group, db, now: T0 })).toEqual({});
-            const withPhoto = message([{ text: 'add it' }, imagePart(OTHER)], { chatId: '100000000000001@g.us', isGroup: true });
-            expect(photoFromChat('add_garment', {}, { message: withPhoto, db, now: T0 }).image_base64).toBe(OTHER);
+        test("a contact's chat: the photo sits in the database, and is never taken", () => {
+            db.saveMessage({ role: 'user', parts: [imagePart()], chatId: '15550100@s.whatsapp.net', timestamp: at(T0 - 1000) });
+            const contact = message([{ text: 'add it' }], { chatId: '15550100@s.whatsapp.net' });
+            expect(photoFromChat('add_garment', {}, { message: contact, db, now: T0, ownerChat: false })).toEqual({});
         });
 
         test('a database that cannot look is not a crash', () => {
             const broken = { getLastUserPhoto: () => { throw new Error('locked'); } };
             jest.spyOn(console, 'warn').mockImplementation(() => { });
-            expect(photoFromChat('add_garment', {}, { message: message([]), db: broken })).toEqual({});
+            expect(photoFromChat('add_garment', {}, own({ message: message([]), db: broken }))).toEqual({});
         });
     });
 });
 
 describe('the wardrobe executor runs the photo tools from chat', () => {
     let wardrobe, executor;
-    const turn = (parts, chatId = 'c1') => ({ message: { role: 'user', parts, metadata: { chatId } } });
+    const turn = (parts, chatId = 'c1', ownerTyped = true) => ({ message: { role: 'user', parts, metadata: { chatId } }, ownerTyped });
 
     beforeEach(() => {
         wardrobe = {
@@ -182,6 +208,12 @@ describe('the wardrobe executor runs the photo tools from chat', () => {
         expect(critique).toMatch(/garment_ids/);
     });
 
+    test("a contact's turn gets no photo, even with one in the message", async () => {
+        const out = await executor.execute('add_garment', {}, turn([{ text: 'add this to your wardrobe' }, imagePart()], '15550100@s.whatsapp.net', false), { wardrobe });
+        expect(out).toBe(NO_PHOTO_TEXT);
+        expect(wardrobe.ingestGarmentFromBase64).not.toHaveBeenCalled();
+    });
+
     test('critique_outfit on named garments needs no photo', async () => {
         await executor.execute('critique_outfit', { garment_ids: ['g1', 'g2'] }, turn([{ text: 'these two?' }]), { wardrobe });
         expect(wardrobe.critiqueOutfit).toHaveBeenCalledWith(expect.objectContaining({ imageBase64: null, garmentIds: ['g1', 'g2'] }));
@@ -213,10 +245,13 @@ describe('the declarations and the router agree', () => {
         }
     });
 
-    test('a message that names clothes loads the wardrobe group', () => {
+    test('a message that names clothes loads the wardrobe group; look-alike words do not', () => {
         expect(groupsNamedIn('add this to my wardrobe')).toEqual(['wardrobe']);
         expect(groupsNamedIn('agregá esta prenda a mi ropa')).toEqual(['wardrobe']);
         expect(groupsNamedIn('what do you think of this outfit?')).toEqual(['wardrobe']);
         expect(groupsNamedIn('Europa trip next week')).toEqual([]);
+        // "prenda la luz" is the verb, and a shop is not an outfit.
+        expect(groupsNamedIn('prenda la luz del living')).toEqual([]);
+        expect(groupsNamedIn('Urban Outfitters shipped my order')).toEqual([]);
     });
 });

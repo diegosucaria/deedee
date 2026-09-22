@@ -16,9 +16,10 @@ class WardrobeExecutor extends BaseExecutor {
         if (!wardrobe) return null;
 
         // A model cannot pass a photo's bytes. The photo tools take the latest
-        // photo the owner sent in this chat instead.
+        // photo the owner sent in this chat instead, and only in his own chat
+        // (the agent says which turns are his: context.ownerTyped).
         if (PHOTO_TOOLS.has(name)) {
-            args = photoFromChat(name, args || {}, { message: context && context.message, db: services.db });
+            args = photoFromChat(name, args || {}, { message: context && context.message, db: services.db, ownerChat: !!(context && context.ownerTyped) });
         }
 
         switch (name) {
