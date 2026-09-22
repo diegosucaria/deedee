@@ -61,3 +61,12 @@ Endpoints are exposed via the API Gateway under `/v1/autopilot` (proxied to Agen
   - `GET /v1/autopilot/style/:id` (Contact)
   - `POST /v1/autopilot/style/:id` (Save Contact)
   - `POST /v1/autopilot/style/:id/analyze` (Analyze Contact)
+
+## When a send is refused
+
+In autonomous mode the reply goes out through the messaging service, which reports a refused send as `false` rather than throwing. Until 2026-09-22 the draft was marked approved either way: the owner saw "sent" and the contact got nothing. Now (`services/impersonation.js`, `processBufferedMessage`):
+
+- Nothing went out: the draft stays `pending` in Autopilot → Drafts, and the owner gets one note through the delivery ledger (retries and his other channel), from the assistant's number.
+- Part of a multi-part reply went out: the draft is marked approved, and the note tells the owner which part the contact did not get.
+- A send that throws counts as refused.
+
