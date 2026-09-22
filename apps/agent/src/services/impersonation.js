@@ -390,8 +390,8 @@ Output a concise list of rules for this specific relationship.
                         if (messages.length > 1) await new Promise(r => setTimeout(r, 800));
                     }
                 } catch (e) {
-                    failure = e.message;
-                    console.error('[Impersonation] Auto-send failed:', e.message);
+                    failure = (e && e.message) || 'the send threw';
+                    console.error('[Impersonation] Auto-send failed:', failure);
                 }
 
                 if (!failure) {
@@ -402,11 +402,13 @@ Output a concise list of rules for this specific relationship.
                     console.warn(`[Impersonation] Auto-send to ${contactString} did not go out (${failure}); the draft waits for the owner.`);
                     await this._notifyOwner(`I could not send the Autopilot reply to ${contactName}: ${failure}. Nothing went out. The draft is waiting in Autopilot → Drafts.`);
                 } else {
-                    // Part of it went out. The draft is done, but the owner must know what the contact did not get.
-                    this.markDraftCompleted(saved.lastInsertRowid, 'approved');
+                    // Part of it went out. The web's approve path resumes a
+                    // 'partially_sent' draft from sent_count, so the owner can
+                    // finish it from Autopilot → Drafts.
+                    this.db.db.prepare("UPDATE autopilot_drafts SET status = 'partially_sent', sent_count = ? WHERE id = ?").run(sentCount, saved.lastInsertRowid);
                     const missing = messages.slice(sentCount).join(' ');
                     console.warn(`[Impersonation] Auto-send to ${contactString}: ${sentCount} of ${messages.length} parts went out (${failure}).`);
-                    await this._notifyOwner(`Only ${sentCount} of ${messages.length} parts of the Autopilot reply to ${contactName} went out: ${failure}. The part that did not: "${missing}"`);
+                    await this._notifyOwner(`Only ${sentCount} of ${messages.length} parts of the Autopilot reply to ${contactName} went out: ${failure}. The rest waits in Autopilot → Drafts; approve it there to send it. The part that did not go: "${missing}"`);
                 }
             } else {
                 console.log(`[Impersonation] Draft saved for ${contactName}. Waiting for approval.`);
@@ -677,7 +679,9 @@ ${transcript}
                 const owner = delivery.resolveOwnerTarget('whatsapp');
                 if (owner) {
                     const channel = owner.channel === 'whatsapp' ? 'whatsapp:assistant' : owner.channel;
-                    await delivery.deliver('job_notification', channel, owner.target, { content: text, type: 'text' }, { origin: 'autopilot', dedupe: false });
+                    const out = await delivery.deliver('job_notification', channel, owner.target, { content: text, type: 'text' }, { origin: 'autopilot', dedupe: false });
+                    // The ledger reports a note it could not take as a value, not a throw.
+                    if (out && out.delivered === false && !out.queued) console.warn(`[Impersonation] The owner's note was not delivered: ${out.error || 'unknown'}`);
                     return;
                 }
             }

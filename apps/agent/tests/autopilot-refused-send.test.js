@@ -68,14 +68,36 @@ describe('autonomous Autopilot and a refused send', () => {
         expect(opts).toMatchObject({ origin: 'autopilot', dedupe: false });
     });
 
-    test('a reply that went out in part is done, and the owner hears which part the contact did not get', async () => {
+    test('a reply that went out in part waits as partially sent, so the owner can finish it from the web', async () => {
         agent.interface.send.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
         buffered();
         await service.processBufferedMessage(CHAT, CONTACT);
-        expect(draft().status).toBe('approved');
+        const row = db.db.prepare('SELECT status, sent_count FROM autopilot_drafts WHERE chat_id = ? ORDER BY id DESC LIMIT 1').get(CHAT);
+        expect(row).toEqual({ status: 'partially_sent', sent_count: 1 });
         expect(deliver).toHaveBeenCalledTimes(1);
         expect(deliver.mock.calls[0][3].content).toMatch(/Only 1 of 2 parts/);
         expect(deliver.mock.calls[0][3].content).toMatch(/Nos vemos mañana/);
+        expect(deliver.mock.calls[0][3].content).toMatch(/Autopilot → Drafts/);
+    });
+
+    test('a throw with no message, or a bare string, is still a refused send', async () => {
+        for (const thrown of [new Error(''), 'boom']) {
+            agent.interface.send.mockRejectedValue(thrown);
+            deliver.mockClear();
+            buffered();
+            await service.processBufferedMessage(CHAT, CONTACT);
+            expect(draft().status).toBe('pending');
+            expect(deliver).toHaveBeenCalledTimes(1);
+            expect(deliver.mock.calls[0][3].content).toMatch(/the send threw|boom/);
+        }
+    });
+
+    test('a note the ledger could not take is logged, not lost in silence', async () => {
+        agent.interface.send.mockResolvedValue(false);
+        deliver.mockResolvedValue({ delivered: false, error: 'bad target for whatsapp' });
+        buffered();
+        await service.processBufferedMessage(CHAT, CONTACT);
+        expect(console.warn).toHaveBeenCalledWith(expect.stringMatching(/note was not delivered: bad target/));
     });
 
     test('a send that throws is a failed send too, not a crash', async () => {
