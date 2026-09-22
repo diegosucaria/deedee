@@ -167,6 +167,23 @@ describe('Monitor', () => {
             expect(healthCall[1].signal).toBeInstanceOf(AbortSignal);
         });
 
+        test('the deep check posts to /chat with the internal token: every agent route but /health wants it', async () => {
+            const saved = { internal: process.env.DEEDEE_INTERNAL_TOKEN, api: process.env.DEEDEE_API_TOKEN };
+            process.env.DEEDEE_INTERNAL_TOKEN = 'internal-token';
+            process.env.DEEDEE_API_TOKEN = 'api-token';
+            try {
+                mockFetch.mockResolvedValue({ ok: true, status: 200, json: async () => ({ replies: [{ content: 'pong' }] }) });
+                await monitor._deepCheck();
+                const chatCall = mockFetch.mock.calls.find(([url]) => url.endsWith('/chat'));
+                expect(chatCall).toBeDefined();
+                expect(chatCall[1].headers.Authorization).toBe('Bearer internal-token');
+            } finally {
+                for (const [k, v] of [['DEEDEE_INTERNAL_TOKEN', saved.internal], ['DEEDEE_API_TOKEN', saved.api]]) {
+                    if (v === undefined) delete process.env[k]; else process.env[k] = v;
+                }
+            }
+        });
+
         test('start() never touches git beyond reading HEAD', async () => {
             mockHead('hash123', OWNER);
             jest.spyOn(monitor, 'check').mockResolvedValue();

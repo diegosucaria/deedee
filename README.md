@@ -72,7 +72,7 @@ These env vars go on the **web** service unless noted. Generate secrets with `op
 | `WEBAUTHN_ORIGIN` | for passkeys | Same as `WEB_ORIGIN`. Must be `https://` (or `localhost` for dev). |
 | `COOKIE_DOMAIN` | two-subdomain only | e.g. `.example.com` so the cookie rides to `api.example.com` for socket.io. |
 | `SOCKET_URL` | two-subdomain only | Public URL of the api gateway (e.g. `https://api.example.com`). |
-| `DEEDEE_INTERNAL_TOKEN` | yes | 32+ bytes. Set on **web**, **api**, **agent**, and **interfaces**. Defense-in-depth on agent's `/internal/*`. |
+| `DEEDEE_INTERNAL_TOKEN` | yes | 32+ bytes. Set on **web**, **api**, **agent**, **interfaces** and **supervisor** (a fleet-wide variable on Balena). Every agent route but `/health` needs it. |
 | `DEEDEE_API_TOKEN` | yes | Existing token. Bearer for `/v1/*` (iOS Shortcuts, cron, etc.). Browser never sees it. |
 
 #### Recipe A: two subdomains (web on one, api on another)

@@ -56,6 +56,13 @@ router.post('/:id/files', (req, res) => {
             host: agentUrlObj.host // Update Host header
         }
     };
+    // The caller's header holds the api token. The agent wants the internal
+    // token on every route (axios adds it elsewhere; this proxy is raw http).
+    if (process.env.DEEDEE_INTERNAL_TOKEN) {
+        options.headers.authorization = `Bearer ${process.env.DEEDEE_INTERNAL_TOKEN}`;
+    } else {
+        delete options.headers.authorization;
+    }
 
     // Remove connection headers to avoid conflicts
     delete options.headers['connection'];

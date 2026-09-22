@@ -8,10 +8,8 @@ const port = process.env.PORT || 3000;
 const interfacesUrl = process.env.INTERFACES_URL || 'http://localhost:5000';
 const googleApiKey = process.env.GOOGLE_API_KEY;
 
-// Increase body limit to support large audio/image payloads
-app.use(express.json({ limit: '50mb' }));
-
-// Every route but /health needs DEEDEE_INTERNAL_TOKEN. The gateway and the
+// Every route but /health needs DEEDEE_INTERNAL_TOKEN. The check sits above
+// the body parser, so a caller with no token never costs a 50 MB parse. The gateway and the
 // interfaces service send it on every call to the agent (their axios
 // interceptors), and the web app sends it on its own calls to /internal/*.
 // /status, /webhook, /chat, /live/* and /v1/* used to rely on the Docker
@@ -42,6 +40,9 @@ app.use((req, res, next) => {
 if (!process.env.DEEDEE_INTERNAL_TOKEN) {
   console.warn('[Server] DEEDEE_INTERNAL_TOKEN is not set: every agent route is open to the Docker network. Set it outside development.');
 }
+
+// Increase body limit to support large audio/image payloads
+app.use(express.json({ limit: '50mb' }));
 
 // Global Error Handlers
 process.on('unhandledRejection', (reason, promise) => {
