@@ -137,6 +137,30 @@ describe('Chat session ownership', () => {
         expect(db.getSession(kept.id)).toBeTruthy();
     });
 
+    test('an empty Telegram group is never handed to a new web chat', () => {
+        // A Telegram group id is negative, so the dash rule used to read it
+        // as a web chat.
+        db.ensureSession('-1001234567890', 'telegram');
+        expect(db.getLatestEmptySession()).toBeNull();
+        expect(db.getSessions({ limit: 50 }).map(s => s.id)).not.toContain('-1001234567890');
+    });
+
+    test('a chat made through the API gateway stays in the list', () => {
+        db.ensureSession('4b30dea9-1b20-5bb4-9a58-000000000004', 'api');
+        expect(db.getSessions({ limit: 50 }).map(s => s.id))
+            .toContain('4b30dea9-1b20-5bb4-9a58-000000000004');
+    });
+
+    test('a pinned empty chat survives the cleanup', () => {
+        const pinned = db.createSession({ id: 'pinned-1', title: 'New Chat', source: 'web' });
+        db.updateSession(pinned.id, { isPinned: true });
+        db.db.prepare('UPDATE chat_sessions SET created_at = ? WHERE id = ?')
+            .run('2020-01-01T00:00:00.000Z', pinned.id);
+
+        db.deleteEmptySessions('some-other-chat');
+        expect(db.getSession(pinned.id)).toBeTruthy();
+    });
+
     test('the migration rewrites stored dates in the old format', () => {
         db.db.prepare(`INSERT INTO chat_sessions (id, title, source, created_at, updated_at) VALUES (?, ?, 'web', ?, ?)`)
             .run('legacy-1', 'Legacy Chat', '2026-05-01 10:00:00', '2026-05-01 10:00:00.500');
@@ -144,7 +168,7 @@ describe('Chat session ownership', () => {
 
         db = new AgentDB(tmpDir); // reopening runs the migrations
         const row = db.getSession('legacy-1');
-        expect(row.created_at).toBe('2026-05-01T10:00:00Z');
+        expect(row.created_at).toBe('2026-05-01T10:00:00.000Z');
         expect(row.updated_at).toBe('2026-05-01T10:00:00.500Z');
     });
 

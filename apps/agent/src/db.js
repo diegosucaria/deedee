@@ -104,14 +104,14 @@ function sessionSourceFromId(id) {
   if (id.startsWith('scheduled_') || id.startsWith('system_')) return 'scheduler';
   if (id.startsWith('subagent-')) return 'subagent';
   if (id.startsWith('api_')) return 'api';
-  if (/^\d+$/.test(id)) return 'telegram';
+  if (/^-?\d+$/.test(id)) return 'telegram'; // a Telegram group id is negative
   return null;
 }
 
 // The interfaces that own their own chats. Everything else the owner drives
 // himself (the dashboard, the API gateway, a phone shortcut), and those chats
 // belong in his list, so an unknown source must not hide one.
-const OTHER_INTERFACES = new Set(['whatsapp', 'telegram', 'slack', 'scheduler', 'subagent', 'api']);
+const OTHER_INTERFACES = new Set(['whatsapp', 'telegram', 'slack', 'scheduler', 'subagent']);
 
 // The id wins when it names an owner, then the source of the first message.
 // What is left is the owner's own chat if the id has the web shape, which is
@@ -845,15 +845,16 @@ class AgentDB {
     // CURRENT_TIMESTAMP read '2026-09-22 17:06:14'; rows written in code read
     // '2026-09-22T17:06:14.000Z'. Both are UTC, but SQLite compares them as
     // text, so the two forms sorted apart on the same day and the list order
-    // was wrong. Both are UTC, so appending the T and the Z keeps the meaning.
+    // was wrong. Both are UTC, so the rewrite keeps the meaning. It writes the
+    // milliseconds too, the form the code writes, so one format is left.
     try {
       const fixed = this.db.prepare(`
         UPDATE chat_sessions
-        SET created_at = replace(created_at, ' ', 'T') || 'Z'
+        SET created_at = strftime('%Y-%m-%dT%H:%M:%fZ', created_at)
         WHERE created_at LIKE '____-__-__ %'
       `).run().changes + this.db.prepare(`
         UPDATE chat_sessions
-        SET updated_at = replace(updated_at, ' ', 'T') || 'Z'
+        SET updated_at = strftime('%Y-%m-%dT%H:%M:%fZ', updated_at)
         WHERE updated_at LIKE '____-__-__ %'
       `).run().changes;
       if (fixed > 0) console.log(`[DB] Normalised ${fixed} chat session dates to ISO.`);
@@ -1612,6 +1613,7 @@ class AgentDB {
         SELECT cs.id FROM chat_sessions cs
         LEFT JOIN messages m ON cs.id = m.chat_id
         WHERE m.id IS NULL
+        AND cs.is_pinned = 0
     `;
 
     const args = [];
