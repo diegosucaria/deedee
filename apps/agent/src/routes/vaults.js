@@ -182,7 +182,14 @@ module.exports = (agent) => {
         // We don't have a "getFilePath" method exposed in VaultExecutor/Manager specifically for this,
         // but we can construct it if we trust the inputs or duplicate the logic.
         // START SAFE PATH CONSTRUCTION
-        const safeTopic = id.toLowerCase().replace(/[^a-z0-9_-]/g, '');
+        // The one sanitiser: a name with no letter or digit is refused, not
+        // turned into the vaults folder itself.
+        let safeTopic;
+        try {
+            safeTopic = agent.vaults.sanitizeTopic(id);
+        } catch (e) {
+            return res.status(400).json({ error: e.message });
+        }
         const safeFilename = path.basename(filename);
 
         const filePath = path.join(agent.vaults.vaultsDir, safeTopic, 'files', safeFilename);

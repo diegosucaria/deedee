@@ -34,6 +34,18 @@ describe('VaultManager', () => {
         expect(typeof vaults[0].filesCount).toBe('number');
     });
 
+    test("a name with no letters or digits names no vault: '...' would have been the vaults folder itself", async () => {
+        await vaultManager.createVault('travel');
+        for (const bad of ['...', '???', '  ', '', null, undefined, '.. ..']) {
+            await expect(vaultManager.deleteVault(bad)).rejects.toThrow(/no letters or digits/);
+            await expect(vaultManager.createVault(bad)).rejects.toThrow(/no letters or digits/);
+        }
+        // Every vault is still there.
+        const ids = (await vaultManager.listVaults()).map(v => v.id);
+        expect(ids).toEqual(expect.arrayContaining(['health', 'finance', 'travel']));
+        expect(fs.existsSync(path.join(TEST_DATA_DIR, 'vaults'))).toBe(true);
+    });
+
     test('should create a new vault', async () => {
         const id = await vaultManager.createVault('travel');
         expect(id).toBe('travel');
