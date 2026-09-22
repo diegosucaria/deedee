@@ -6,7 +6,7 @@ import { getJobLogs, deleteJobLogs } from '@/app/actions';
 import { Clock, CheckCircle, XCircle, RefreshCw, ChevronLeft, ChevronRight, ScrollText } from 'lucide-react';
 import LogContent from './LogContent';
 import { useSocket } from '@/hooks/useSocket';
-import { jobHistoryHref } from '@/lib/job-history';
+import { jobHistoryHref, isLateRun } from '@/lib/job-history';
 
 
 
@@ -230,6 +230,14 @@ export default function JobLogsTable({ initialSearch = '' } = {}) {
                                             </Link>
                                         ) : (
                                             <span className="break-all" title="This run wrote no messages">{log.job_name}</span>
+                                        )}
+                                        {isLateRun(log) && (
+                                            <span
+                                                className="ml-2 inline-flex items-center px-1.5 py-0.5 rounded text-[10px] uppercase font-bold bg-amber-500/10 text-amber-400 border border-amber-500/20"
+                                                title="The agent was down when this reminder came due, so it went out afterwards with a (late) marker"
+                                            >
+                                                Late
+                                            </span>
                                         )}
                                     </td>
                                     <td className="px-6 py-4 align-top max-w-xl">

@@ -11,6 +11,18 @@ When the WhatsApp client (`Baileys`) encounters heavy session data or corruption
 **Symptom**:
 Logs show: `Timeout in AwaitingInitialSync, forcing state to Online`.
 
+## Before you reach for a level: diagnostics
+
+Each session card in Settings has a **Run diagnostics** button. It reads
+nothing else and changes nothing. The web app calls `diagnoseWhatsApp()` →
+`POST /v1/whatsapp/diagnose` → `POST /whatsapp/diagnose` on the interfaces
+service → `runDiagnostics()` in `apps/interfaces/src/whatsapp.js`.
+
+The report shows the session state, a presence probe and a blocklist probe
+with their times, and the store counts (contacts, messages, size). A probe that
+fails, or `Socket not connected`, means a socket that is open but dead: start
+at Level 1. The same report still prints in chat with `/diagnose [session]`.
+
 ## Recovery Levels
 
 ### Level 1: The Kick (Automated)

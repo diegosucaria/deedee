@@ -20,7 +20,13 @@
  * Exit code: 0 all ok, 1 any failure, 2 bad arguments. Needs GOOGLE_API_KEY.
  * Nothing here writes to token_usage; the cost column is an estimate from
  * ConfigService pricing. See docs/models.md.
+ *
+ * Every run also writes DATA_DIR/model-smoke.json (one row per role, with its
+ * status, time and first error). GET /internal/models reads that file, so the
+ * Models tab in the web app can show when each role last answered.
+ * MODEL_SMOKE_WRITE=0 turns the write off.
  */
+const fs = require('fs');
 const path = require('path');
 
 const AGENT_ROOT = path.join(__dirname, '..');
@@ -341,6 +347,57 @@ async function runSmoke(client, plan, opts = DEFAULTS, config = new ConfigServic
     return { rows, ok, failed, skipped, cost, exitCode: failed > 0 ? 1 : 0 };
 }
 
+/** Where the last run is kept. Same folder as agent.db on the device. */
+function resultPath(dataDir = process.env.DATA_DIR || path.join(AGENT_ROOT, 'data')) {
+    return path.join(dataDir, 'model-smoke.json');
+}
+
+/**
+ * One row per role, from the per-check rows. A role fails when any of its
+ * checks fails; it is skipped only when every check was skipped.
+ * @param {Array} rows
+ * @returns {Array<{role:string, model:string, status:string, ms:number, error:string|null, checks:Array}>}
+ */
+function summarizeByRole(rows = []) {
+    const byRole = new Map();
+    for (const row of rows) {
+        if (!byRole.has(row.role)) byRole.set(row.role, { role: row.role, model: row.model, status: 'skip', ms: 0, error: null, checks: [] });
+        const role = byRole.get(row.role);
+        role.checks.push({ check: row.check, status: row.status, ms: row.ms || 0, note: row.note || '' });
+        role.ms += row.ms || 0;
+        if (row.status === 'fail') {
+            role.status = 'fail';
+            if (!role.error) role.error = row.note || `${row.check} failed`;
+        } else if (row.status === 'ok' && role.status !== 'fail') {
+            role.status = 'ok';
+        }
+    }
+    return [...byRole.values()];
+}
+
+/**
+ * Write the last run so the web app can show it. A failed write only warns:
+ * the smoke check itself must still report its own result.
+ * @returns {string|null} the file written, or null
+ */
+function writeResult(result, models, dataDir, out = console) {
+    if (process.env.MODEL_SMOKE_WRITE === '0') return null;
+    const file = resultPath(dataDir);
+    const payload = {
+        at: new Date().toISOString(),
+        ok: result.ok, failed: result.failed, skipped: result.skipped, cost: result.cost,
+        roles: summarizeByRole(result.rows).map(r => ({ ...r, model: models[r.role] || r.model }))
+    };
+    try {
+        fs.mkdirSync(path.dirname(file), { recursive: true });
+        fs.writeFileSync(file, JSON.stringify(payload, null, 2));
+        return file;
+    } catch (e) {
+        out.error(`model-smoke: could not write ${file}: ${e.message}`);
+        return null;
+    }
+}
+
 function formatTable(rows) {
     const cols = [
         ['Role', r => r.role], ['Model', r => r.model], ['Check', r => r.check],
@@ -397,6 +454,7 @@ async function main(argv = process.argv.slice(2), out = console) {
     }
 
     const result = await runSmoke(client, plan, opts, config);
+    writeResult(result, models, undefined, out);
     if (opts.json) {
         out.log(JSON.stringify({ ...result, models }, null, 2));
     } else {
@@ -409,6 +467,7 @@ async function main(argv = process.argv.slice(2), out = console) {
 
 module.exports = {
     parseArgs, buildPlan, runSmoke, formatTable, checksForRole, lowestThinkingLevel, supportsThinkingLevel, TEXT_THINKING_BUDGET,
+    summarizeByRole, writeResult, resultPath,
     ROLE_ORDER, TEXT_ROLES, CHECKS, THINKING_LEVELS, DEFAULTS, HELP, RUNNERS, main
 };
 

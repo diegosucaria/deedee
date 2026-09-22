@@ -1,5 +1,5 @@
 // Job History links a run to its messages.
-const { jobHistoryHref } = require('../src/lib/job-history.js');
+const { jobHistoryHref, isLateRun } = require('../src/lib/job-history.js');
 
 describe('jobHistoryHref', () => {
     test('a run with its own chat opens that chat, oldest message first', () => {
@@ -30,5 +30,31 @@ describe('jobHistoryHref', () => {
 
     test('a since or until that is not a date is left out', () => {
         expect(jobHistoryHref({ chatId: 'c1', since: 'yesterday-ish', until: 42 })).toBe('/system/history?chatId=c1&order=asc');
+    });
+});
+
+// A reminder delivered after a restart goes out with a "(late)" prefix. That
+// prefix reaches the owner, not the database, so the row is marked by the
+// `late` key the scheduler writes into the job log output.
+describe('isLateRun', () => {
+    test('a late delivery is marked', () => {
+        expect(isLateRun({ output: '{"late":true,"delivered":true}' })).toBe(true);
+        expect(isLateRun({ output: '{"late":true,"error":"send failed"}' })).toBe(true);
+    });
+
+    test('an on-time run is not marked', () => {
+        expect(isLateRun({ output: '{"delivered":true}' })).toBe(false);
+        expect(isLateRun({ output: 'System job output executed successfully.' })).toBe(false);
+    });
+
+    test('a run whose output only mentions the word late is not marked', () => {
+        expect(isLateRun({ output: 'the train is late' })).toBe(false);
+        expect(isLateRun({ output: '{"note":"late arrival","late":false}' })).toBe(false);
+    });
+
+    test('no output, no marker, and never a throw', () => {
+        for (const none of [null, undefined, {}, { output: null }, { output: 42 }, { output: '{"late":true' }]) {
+            expect(isLateRun(none)).toBe(false);
+        }
     });
 });

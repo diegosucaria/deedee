@@ -4,6 +4,7 @@ import { useState, useEffect } from 'react';
 import { useRouter, useSearchParams, usePathname } from 'next/navigation';
 import { Trash2, User, Bot, Wrench, Terminal, ArrowUpDown, Clock, Cpu, MessageSquare } from 'lucide-react';
 import { deleteHistory } from '@/app/actions';
+import MessagePartsView from '@/components/MessagePartsView';
 import clsx from 'clsx';
 import ReactMarkdown from 'react-markdown';
 
@@ -290,6 +291,8 @@ export default function HistoryList({ history, subagent }) {
                                                     return <ReactMarkdown>{text || '*(No content)*'}</ReactMarkdown>;
                                                 })()}
                                             </div>
+
+                                            <MessagePartsView parts={msg.parts} />
                                         </div>
 
                                         {/* Actions */}

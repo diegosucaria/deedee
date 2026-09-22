@@ -770,6 +770,74 @@ function createInternalRouter(agent) {
         } catch (e) { res.status(500).json({ error: e.message }); }
     });
 
+    // --- Models (Read-Only) ---
+    // Which model id each role runs on, what it costs, and how it did in the
+    // last `node scripts/model-smoke.js`. The Models tab in the web app reads
+    // this. See docs/models.md.
+    const modelsDataDir = () => process.env.DATA_DIR || agent.dataDir
+        || (agent.db && agent.db.dbPath ? path.dirname(agent.db.dbPath) : path.join(process.cwd(), 'data'));
+
+    /** The last smoke run, or null when the script has never run here. */
+    function readSmoke() {
+        try {
+            const file = path.join(modelsDataDir(), 'model-smoke.json');
+            if (!fs.existsSync(file)) return null;
+            const parsed = JSON.parse(fs.readFileSync(file, 'utf8'));
+            return parsed && typeof parsed === 'object' ? parsed : null;
+        } catch (e) {
+            console.warn('[Internal] model-smoke.json unreadable:', e.message);
+            return null;
+        }
+    }
+
+    // Cached input is billed at 10% of the input rate (ConfigService.calculateCost).
+    const CACHED_SHARE = 0.1;
+
+    /** One price row per tier, in dollars per million tokens. */
+    function priceTiers(pricing) {
+        const tier = (t) => t ? {
+            input: t.input, output: t.output,
+            cachedInput: Math.round(t.input * CACHED_SHARE * 1e6) / 1e6,
+            outputText: t.outputText ?? null
+        } : null;
+        return { threshold: pricing.threshold || null, tier1: tier(pricing.tier1), tier2: tier(pricing.tier2) };
+    }
+
+    router.get('/models', (req, res) => {
+        try {
+            const config = agent.configService;
+            if (!config) return res.status(503).json({ error: 'Config service not ready' });
+            const ids = config.get('MODELS') || {};
+            const envVars = config.get('MODEL_ENV_VARS') || {};
+            const table = config.get('PRICING') || {};
+            const smoke = readSmoke();
+            const smokeByRole = new Map((smoke && Array.isArray(smoke.roles) ? smoke.roles : []).map(r => [r.role, r]));
+
+            const roles = Object.keys(ids).map(role => {
+                const model = ids[role];
+                const envVar = envVars[role] || null;
+                const last = smokeByRole.get(role) || null;
+                return {
+                    role,
+                    model,
+                    envVar,
+                    source: envVar && process.env[envVar] ? 'env' : 'default',
+                    // false means the price below comes from the name heuristic,
+                    // not from a row for this exact id.
+                    exactPrice: Object.prototype.hasOwnProperty.call(table, model),
+                    price: priceTiers(config.getPricing(model)),
+                    thinkingLevels: config.getModelThinkingLevels(model),
+                    smoke: last ? { status: last.status, ms: last.ms ?? null, error: last.error || null } : null
+                };
+            });
+
+            res.json({
+                roles,
+                smoke: smoke ? { at: smoke.at || null, ok: smoke.ok ?? null, failed: smoke.failed ?? null, skipped: smoke.skipped ?? null } : null
+            });
+        } catch (e) { res.status(500).json({ error: e.message }); }
+    });
+
     // --- Config / Env (Read-Only) ---
     router.get('/config/env', (req, res) => {
         // Allowlist of safe keys to display

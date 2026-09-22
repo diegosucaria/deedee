@@ -613,13 +613,16 @@ class Scheduler {
         if (!reminderPayload.reminderMessage) return;
         reminderPayload.reminderMessage = `(late) ${reminderPayload.reminderMessage}`;
         let status = 'success';
-        let output = null;
+        // `late: true` is the only trace a late delivery leaves behind: the
+        // "(late)" prefix goes to the owner, not to the database. Job History
+        // reads this key to badge the run (apps/web/src/lib/job-history.js).
+        let output = JSON.stringify({ late: true });
         try {
             const result = await this._buildDirectReminderCallback(name, reminderPayload)();
-            output = result ? JSON.stringify(result) : null;
+            output = JSON.stringify({ late: true, ...(result && typeof result === 'object' ? result : {}) });
         } catch (err) {
             status = 'failure';
-            output = err.message;
+            output = JSON.stringify({ late: true, error: err.message });
             console.error(`[Scheduler] Late reminder '${name}' failed:`, err.message);
         }
         if (typeof this.agent.db?.logJobExecution === 'function') {

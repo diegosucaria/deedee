@@ -16,3 +16,19 @@ export function jobHistoryHref(history) {
     }
     return `/system/history?${query.toString()}`;
 }
+
+/**
+ * True when the run was a reminder the scheduler delivered after a restart.
+ * The scheduler writes `{"late":true,...}` as the job log output
+ * (apps/agent/src/scheduler.js, `_deliverLateReminder`). The owner gets a
+ * "(late)" prefix in the message; this is how the same run is marked here.
+ */
+export function isLateRun(log) {
+    const output = log?.output;
+    if (typeof output !== 'string' || !output.includes('"late"')) return false;
+    try {
+        return JSON.parse(output)?.late === true;
+    } catch {
+        return false;
+    }
+}

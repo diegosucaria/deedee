@@ -519,6 +519,32 @@ export async function cleanupData() {
 
 
 
+// Drops every stored chat summary. The agent writes them again as chats grow
+// long; the messages themselves are untouched.
+export async function clearSummaries() {
+    await requireActionSession();
+    try {
+        await fetchAPI('/v1/summaries/clear', { method: 'POST' });
+        revalidatePath('/system/history');
+        return { success: true };
+    } catch (error) {
+        return { success: false, error: error.message };
+    }
+}
+
+// --- Models ---
+// Role -> model id, the price rows, and the last `scripts/model-smoke.js` run.
+// Read-only; the Models tab shows it. See docs/models.md.
+export async function getModels() {
+    await requireActionSession();
+    try {
+        return await fetchAPI('/v1/models');
+    } catch (error) {
+        console.error('getModels Error:', error);
+        return { roles: [], smoke: null, error: error.message };
+    }
+}
+
 // --- Configuration ---
 export async function getEnvConfig() {
     await requireActionSession();
@@ -2274,6 +2300,17 @@ export async function repairWhatsAppSession(session) {
         await fetchAPI('/v1/whatsapp/repair', { method: 'POST', body: JSON.stringify({ session }) });
         revalidatePath('/settings'); // Assuming this is where it's used
         return { success: true };
+    } catch (e) { return { success: false, error: e.message }; }
+}
+
+// Read-only: session state, the presence and blocklist probes, and the store
+// counts. The interfaces service runs the probes live, so this can take a
+// second. Same report the /diagnose chat command prints.
+export async function diagnoseWhatsApp(session) {
+    await requireActionSession();
+    try {
+        const report = await fetchAPI('/v1/whatsapp/diagnose', { method: 'POST', body: JSON.stringify({ session }) });
+        return { success: true, report };
     } catch (e) { return { success: false, error: e.message }; }
 }
 
