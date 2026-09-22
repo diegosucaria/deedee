@@ -160,6 +160,39 @@ describe('a failed embedding is not permanent', () => {
         }
     });
 
+    test('a process killed mid-pass leaves no row that looks indexed: the hash is written only on success', async () => {
+        const rag = open();
+        // A pass that never ends stands in for a process that died in the middle of one.
+        rag._indexContent = () => new Promise(() => { });
+        rag.ingestDocument(file, 'notes');
+        await new Promise((r) => setImmediate(r));
+        expect(docRow(rag)).toEqual({ hash: null, failed_attempts: 0 });
+    });
+
+    test('a file changed between two bad nights starts its own run of tries', async () => {
+        const rag = open();
+        await pass(rag, 'fail-all');
+        fs.writeFileSync(file, 'A new version of the document, long enough to embed in several chunks. '.repeat(160));
+        await pass(rag, 'fail-all');
+        expect(docRow(rag).failed_attempts).toBe(1);
+        fs.writeFileSync(file, 'A document about generic topics, long enough to embed in several chunks. '.repeat(160));
+    });
+
+    test('a cap reached from above the cap is announced too', async () => {
+        process.env.RAG_MAX_INDEX_ATTEMPTS = '0';
+        const rag = open();
+        try {
+            for (let i = 0; i < 5; i++) await pass(rag, 'fail-all');
+            expect(agent.notifications.create).not.toHaveBeenCalled();
+            process.env.RAG_MAX_INDEX_ATTEMPTS = '3';
+            await pass(rag, 'fail-all');
+            expect(docRow(rag)).toEqual({ hash: expect.any(String), failed_attempts: 6 });
+            expect(agent.notifications.create).toHaveBeenCalledTimes(1);
+        } finally {
+            delete process.env.RAG_MAX_INDEX_ATTEMPTS;
+        }
+    });
+
     test('a file that was indexed is still skipped on the next scan', async () => {
         const rag = open();
         await pass(rag, 'ok');

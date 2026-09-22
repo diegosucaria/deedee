@@ -153,6 +153,10 @@ class RagService {
         try {
             // Failed indexing passes in a row for this document (see ingestDocument).
             this.db.prepare('ALTER TABLE documents ADD COLUMN failed_attempts INTEGER DEFAULT 0').run();
+        } catch (e) { /* column exists */ }
+        try {
+            // The content hash of the last pass that failed, so a changed file starts its own run of tries.
+            this.db.prepare('ALTER TABLE documents ADD COLUMN tried_hash TEXT').run();
         } catch (e) { }
 
         // Migration: Add content_type to chunks for multimodal support
@@ -524,27 +528,30 @@ class RagService {
                 this.db.prepare('UPDATE documents SET vault_id = ? WHERE id = ?').run(vaultId, existing.id);
             }
             // A changed file gets its own run of tries, whatever the old one did.
-            if (existing.hash && existing.hash !== hash && existing.failed_attempts) {
+            if (existing.failed_attempts && existing.tried_hash && existing.tried_hash !== hash) {
                 this.db.prepare('UPDATE documents SET failed_attempts = 0 WHERE id = ?').run(existing.id);
             }
             return this._recordOutcome(existing.id, filename, hash, () => this._reembedDocument({ id: existing.id, filepath }));
         }
 
-        const info = this.db.prepare('INSERT INTO documents (filepath, filename, hash, vault_id, indexed_at) VALUES (?, ?, ?, ?, ?)')
-            .run(filepath, filename, hash, vaultId, new Date().toISOString());
+        // No hash until the pass succeeds: a process killed mid-pass (a
+        // redeploy, an out-of-memory) must not leave a row that looks indexed.
+        const info = this.db.prepare('INSERT INTO documents (filepath, filename, hash, vault_id, indexed_at) VALUES (?, ?, NULL, ?, ?)')
+            .run(filepath, filename, vaultId, new Date().toISOString());
         const docId = info.lastInsertRowid;
         return this._recordOutcome(docId, filename, hash, () => this._indexContent(docId, filepath, buffer));
     }
 
     /**
-     * Run one indexing pass and record how it went. The row is written with
-     * the file's hash before any embedding, so a failed pass used to count as
-     * done: the next scan skipped the file for good, with no vector. A failed
-     * pass (a throw, or chunks that still failed after their retries) now
-     * clears the hash, and the next scan indexes the file again. After
-     * maxIndexAttempts() failed passes in a row the hash is kept, so the scan
-     * stops trying, and the owner hears once; reindexEmbeddings still forces
-     * a full pass, and a changed file starts its own run of tries.
+     * Run one indexing pass and record how it went. The row used to be written
+     * with the file's hash before any embedding, so a failed pass counted as
+     * done: the next scan skipped the file for good, with no vector. The hash
+     * is now written only when a pass succeeds; a failed pass (a throw, or
+     * chunks that still failed after their retries) leaves it empty, and the
+     * next scan indexes the file again. After maxIndexAttempts() failed passes
+     * in a row the hash is written anyway, so the scan stops trying, and the
+     * owner hears each time that happens; reindexEmbeddings still forces a
+     * full pass, and a changed file starts its own run of tries.
      * @returns {Promise<{failed:number}>}
      */
     async _recordOutcome(docId, filename, hash, run) {
@@ -558,7 +565,7 @@ class RagService {
         if (result && result.failed > 0) {
             this._noteFailedPass(docId, filename, hash, `${result.failed} embedding(s) failed after their retries`);
         } else {
-            this.db.prepare('UPDATE documents SET failed_attempts = 0 WHERE id = ?').run(docId);
+            this.db.prepare('UPDATE documents SET hash = ?, failed_attempts = 0, tried_hash = NULL WHERE id = ?').run(hash, docId);
         }
         return result;
     }
@@ -568,20 +575,20 @@ class RagService {
         const attempts = (row?.failed_attempts || 0) + 1;
         const cap = maxIndexAttempts();
         if (cap > 0 && attempts >= cap) {
-            // Give up: keep the file's hash, so the nightly scan skips it, and
-            // say so. The chunks it has, if any, are from the last good pass.
-            this.db.prepare('UPDATE documents SET hash = ?, failed_attempts = ? WHERE id = ?').run(hash, attempts, docId);
+            // Give up: write the file's hash, so the nightly scan skips it, and
+            // say so. Search keeps whatever chunks the row already has, if any.
+            this.db.prepare('UPDATE documents SET hash = ?, failed_attempts = ?, tried_hash = ? WHERE id = ?').run(hash, attempts, hash, docId);
             console.error(`[RAG] ${filename}: indexing failed ${attempts} times in a row (${why}). Giving up until reindexEmbeddings runs or the file changes.`);
             this._notify({
                 type: 'rag_ingest_failed',
                 severity: 'warning',
                 title: `A document could not be indexed: ${filename}`,
-                message: `Indexing failed ${attempts} times in a row (${why}). The nightly scan will not try again until the file changes; run reindexEmbeddings once the cause is fixed. Search keeps whatever this file had from its last good pass.`,
+                message: `Indexing failed ${attempts} times in a row (${why}). The nightly scan will not try again until the file changes; run reindexEmbeddings once the cause is fixed. Search keeps whatever chunks this file already had, if any.`,
                 metadata: { filename, attempts, link: '/system' }
             });
             return;
         }
-        this.db.prepare('UPDATE documents SET hash = NULL, failed_attempts = ? WHERE id = ?').run(attempts, docId);
+        this.db.prepare('UPDATE documents SET hash = NULL, failed_attempts = ?, tried_hash = ? WHERE id = ?').run(attempts, hash, docId);
         console.warn(`[RAG] ${filename}: ${why}; it will be indexed again on the next scan (attempt ${attempts}${cap > 0 ? ` of ${cap}` : ''}).`);
     }
 

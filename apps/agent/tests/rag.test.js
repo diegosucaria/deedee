@@ -92,8 +92,11 @@ describe('RagService', () => {
             config: expect.objectContaining({ taskType: 'RETRIEVAL_DOCUMENT' })
         }));
         expect(mockPrepare).toHaveBeenCalledWith(expect.stringContaining('INSERT INTO documents'));
-        // Verify vault_id is passed
-        expect(mockRun).toHaveBeenCalledWith(filePath, 'test.txt', expect.any(String), vaultId, expect.any(String));
+        // Verify vault_id is passed. The row is inserted with no hash; the hash
+        // is written once the pass succeeds, so a crash mid-pass leaves nothing
+        // that looks indexed.
+        expect(mockRun).toHaveBeenCalledWith(filePath, 'test.txt', vaultId, expect.any(String));
+        expect(mockPrepare).toHaveBeenCalledWith(expect.stringContaining('UPDATE documents SET hash = ?, failed_attempts = 0'));
     });
 
     test('should search documents with vault scope', async () => {
