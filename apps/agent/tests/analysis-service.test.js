@@ -34,7 +34,7 @@ describe('attachment analysis and the DJ crate', () => {
     });
 
     test('DJ_AUTO_INGEST=1 (or true) brings the old auto-add back; 0 does not', async () => {
-        for (const [value, calls] of [['1', 1], ['true', 1], ['YES', 1], ['0', 0], ['false', 0]]) {
+        for (const [value, calls] of [['1', 1], ['true', 1], ['YES', 1], [' true ', 1], ['0', 0], ['false', 0]]) {
             process.env.DJ_AUTO_INGEST = value;
             const agent = fakeAgent({ vaultId: 'dj_history', summary: 'a record', suggestedMemories: [] });
             await new AnalysisService(agent).analyzeAttachment('chat-1', image, 'none');

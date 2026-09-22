@@ -9,7 +9,7 @@ const fs = require('fs');
 const os = require('os');
 const path = require('path');
 const { AgentDB } = require('../src/db');
-const { DJExecutor, addedLabel, imagePathInData, MAX_SEARCH_QUERIES, MAX_HITS_PER_QUERY, MAX_PHOTOS_PER_CALL } = require('../src/executors/dj');
+const { DJExecutor, addedLabel, imagePathInData, MAX_SEARCH_QUERIES, MAX_HITS_PER_QUERY, MAX_RESULT_CHARS, MAX_PHOTOS_PER_CALL } = require('../src/executors/dj');
 const { TIER1_LIMIT_OVERRIDES } = require('../src/utils/tool-loop-limits');
 
 // Real-looking photo bytes: a stripped row holds a short marker instead.
@@ -18,6 +18,9 @@ const CCCC = 'C'.repeat(300);
 const photo = (mimeType = 'image/png', data = AAAA) => ({ inlineData: { mimeType, data } });
 // A turn in the owner's own chat.
 const own = (message) => ({ message, ownerTyped: true });
+// The first bytes of a PNG and of a JPEG file, then padding.
+const PNG_BYTES = Buffer.concat([Buffer.from('89504e470d0a1a0a0000000d49484452', 'hex'), Buffer.alloc(32)]);
+const JPEG_BYTES = Buffer.concat([Buffer.from('ffd8ffe000104a46494600', 'hex'), Buffer.alloc(32)]);
 const record = (over = {}) => ({
     artist: 'Alice', title: 'Sample Record', label: 'Sample Label', catalogNumber: 'CAT-1',
     coverImageUrl: '/vinyl_covers/default.png', bpm: 0, key: '', tracks: [], meta: {}, ...over,
@@ -105,24 +108,56 @@ describe('DJ tools from chat', () => {
         test('with image_path it reads an image file under the data folder, by its real path', async () => {
             fs.mkdirSync(path.join(dir, 'vinyl_covers'), { recursive: true });
             const file = path.join(dir, 'vinyl_covers', 'cover.jpg');
-            fs.writeFileSync(file, 'x');
+            fs.writeFileSync(file, JPEG_BYTES);
+            fs.writeFileSync(path.join(dir, 'vinyl_covers', 'cover.png'), PNG_BYTES);
             const out = await exec.execute('add_vinyl', { image_path: file }, own({ parts: [photo()] }));
             expect(ingestVinyl).toHaveBeenCalledWith(fs.realpathSync(file), 'auto');
             expect(ingestVinylFromBase64).not.toHaveBeenCalled();
             expect(out).toMatch(/^Added 1 vinyls to your crate/);
+            expect(imagePathInData(path.join(dir, 'vinyl_covers', 'cover.png'), dir)).toBe(fs.realpathSync(path.join(dir, 'vinyl_covers', 'cover.png')));
+            // A link inside the folder to an image inside the folder is fine.
+            fs.symlinkSync(file, path.join(dir, 'vinyl_covers', 'same.jpg'));
+            expect(imagePathInData(path.join(dir, 'vinyl_covers', 'same.jpg'), dir)).toBe(fs.realpathSync(file));
         });
 
-        test('image_path outside the data folder, not an image, or a link that leaves the folder, is refused', async () => {
-            fs.mkdirSync(path.join(dir, 'vinyl_covers'), { recursive: true });
-            fs.writeFileSync(path.join(dir, 'auth.json'), '{}');
+        test('image_path outside the data folder, not an image by name or by bytes, a folder, or a link that leaves the folder, is refused', async () => {
+            fs.mkdirSync(path.join(dir, 'vinyl_covers', 'folder.jpg'), { recursive: true });
+            fs.writeFileSync(path.join(dir, 'auth.json'), '{"token":"x"}');
+            fs.writeFileSync(path.join(dir, 'vinyl_covers', 'fake.jpg'), '{"token":"x"}');
             fs.symlinkSync('/etc/hostname', path.join(dir, 'vinyl_covers', 'link.jpg'));
-            for (const image_path of ['/etc/hostname', path.join(dir, 'auth.json'), path.join(dir, 'vinyl_covers', 'link.jpg'), path.join(dir, 'vinyl_covers', 'missing.jpg'), 42]) {
+            // A link named x.jpg to the credentials file, inside the folder: the bytes give it away.
+            fs.symlinkSync(path.join(dir, 'auth.json'), path.join(dir, 'vinyl_covers', 'creds.jpg'));
+            fs.linkSync(path.join(dir, 'auth.json'), path.join(dir, 'vinyl_covers', 'hard.jpg'));
+            const refused = ['/etc/hostname', path.join(dir, 'auth.json'), path.join(dir, 'vinyl_covers', 'fake.jpg'), path.join(dir, 'vinyl_covers', 'link.jpg'),
+                path.join(dir, 'vinyl_covers', 'creds.jpg'), path.join(dir, 'vinyl_covers', 'hard.jpg'), path.join(dir, 'vinyl_covers', 'folder.jpg'),
+                path.join(dir, 'vinyl_covers', 'missing.jpg'), path.join(dir, '..', path.basename(dir), 'auth.json'), 42];
+            for (const image_path of refused) {
                 const out = await exec.execute('add_vinyl', { image_path }, own({ parts: [] }));
                 expect(out).toMatch(/nothing was added/);
+                if (typeof image_path === 'string') expect(imagePathInData(image_path, dir)).toBeNull();
             }
             expect(ingestVinyl).not.toHaveBeenCalled();
-            expect(imagePathInData(path.join(dir, 'auth.json'), dir)).toBeNull();
-            expect(imagePathInData(path.join(dir, 'vinyl_covers', 'link.jpg'), dir)).toBeNull();
+        });
+
+        test('a job or a watcher run in his chat never picks up a photo, even one he sent a moment before', async () => {
+            db.saveMessage({ role: 'user', content: '', parts: [photo('image/jpeg', CCCC)], metadata: { chatId: 'c1' }, source: 'web' });
+            const job = own({ parts: [{ text: 'STEP 1 add the records' }, photo()], metadata: { chatId: 'c1', jobName: 'nightly' } });
+            const watcher = own({ content: 'SYSTEM_WATCHER_ALERT: A message from a contact matched', parts: [photo()], metadata: { chatId: 'c1' } });
+            for (const context of [job, watcher]) {
+                expect(await exec.execute('add_vinyl', {}, context)).toMatch(/nothing was added/);
+            }
+            expect(ingestVinylFromBase64).not.toHaveBeenCalled();
+        });
+
+        test('whitespace inside the photo bytes is dropped before the vision call', async () => {
+            const spaced = `${AAAA.slice(0, 100)}\n${AAAA.slice(100)}`;
+            await exec.execute('add_vinyl', {}, own({ parts: [photo('image/JPEG', spaced)] }));
+            expect(ingestVinylFromBase64).toHaveBeenCalledWith(AAAA, 'image/jpeg');
+        });
+
+        test('null arguments add nothing and search nothing, without throwing', async () => {
+            expect(await exec.execute('add_vinyl', null, null)).toMatch(/nothing was added/);
+            expect(await exec.execute('search_vinyls', null, null)).toMatch(/^Give a query/);
         });
 
         test('two photos on one message are both read, and past five the rest are left', async () => {
@@ -233,6 +268,26 @@ describe('DJ tools from chat', () => {
             expect(out).toContain('(3 more not shown; search with more words)');
         });
 
+        test('fifty searches with many long hits each stay under the result cap', async () => {
+            for (let i = 0; i < 12; i++) {
+                db.addVinyl(record({ artist: 'A Rather Long Artist Name Here', title: `An Even Longer Record Title Number ${i}`, label: 'Some Long Label Name Records', catalogNumber: `CAT-${i}`, meta: { genre: 'Electronic' } }));
+            }
+            const out = await exec.execute('search_vinyls', { queries: Array(MAX_SEARCH_QUERIES).fill('Some Long Label') }, {});
+            expect(out.length).toBeLessThan(50000);
+            expect(out.length).toBeLessThan(MAX_RESULT_CHARS + 6000);
+            expect(out).toMatch(/^50 searches, 50 with a match, 0 with none\./);
+            // Every search still says how many it found, even the ones with no room for lines.
+            expect(out.match(/": 12 matches/g)).toHaveLength(MAX_SEARCH_QUERIES);
+            expect(out).toContain('(12 more not shown; search with more words)');
+        });
+
+        test('a single punctuation character is not searched as typed', async () => {
+            db.addVinyl(record());
+            expect(await exec.execute('search_vinyls', { query: '-' }, {})).toBe('"-": no match');
+            expect(db.searchVinyls('-')).toEqual([]);
+            expect(db.searchVinyls('!!')).toEqual([]);
+        });
+
         test('a pasted line with punctuation still finds the record', async () => {
             db.addVinyl(record());
             const out = await exec.execute('search_vinyls', { query: 'Alice — Sample Record (Sample Label / CAT-1)' }, {});
@@ -270,6 +325,9 @@ describe('DJ tools from chat', () => {
         expect(addedLabel('2026-09-22 02:05:08', now)).toBe('added 5 min ago');
         expect(addedLabel('2026-09-21 20:10:00', now)).toBe('added 6 h ago');
         expect(addedLabel('2026-06-26T21:41:05.000Z', now)).toBe('added 2026-06-26');
+        // An ISO string with no zone mark is UTC, whatever the container's clock says.
+        expect(addedLabel('2026-09-22T02:05:08', now)).toBe('added 5 min ago');
+        expect(addedLabel('2026-09-22T02:05:08+00:00', now)).toBe('added 5 min ago');
         expect(addedLabel(null, now)).toBe('');
         expect(addedLabel('garbage', now)).toBe('');
     });

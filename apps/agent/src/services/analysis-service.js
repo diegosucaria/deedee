@@ -113,7 +113,7 @@ class AnalysisService {
                     // recommendations, and a cart is not history.
                     // DJ_AUTO_INGEST=1 brings the old auto-add back, for any
                     // sender's photo, as before. Read on every call.
-                    if (['1', 'true', 'yes'].includes(String(process.env.DJ_AUTO_INGEST || '').toLowerCase()) && this.agent.djService) {
+                    if (['1', 'true', 'yes'].includes(String(process.env.DJ_AUTO_INGEST || '').trim().toLowerCase()) && this.agent.djService) {
                         try {
                             console.log('[AnalysisService] DJ_AUTO_INGEST=1: routing to DJService.ingestVinyl()...');
                             const results = await this.agent.djService.ingestVinylFromBase64(data, mimeType);

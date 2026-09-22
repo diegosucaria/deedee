@@ -1,13 +1,15 @@
 const fs = require('fs');
 const path = require('path');
 const { createAssistantMessage } = require('@deedee/shared/src/types');
-const { looksLikeBase64, PHOTO_MAX_AGE_MS } = require('../utils/photo-from-chat');
+const { looksLikeBase64, hasImageMagic, PHOTO_MAX_AGE_MS } = require('../utils/photo-from-chat');
 
-// At most this many searches in one search_vinyls call, and at most this
-// many hits shown per search: fifty searches that each hit a shared label
-// blew past the 50,000-character result cap.
+// At most this many searches in one search_vinyls call, at most this many
+// hits shown per search, and at most this many characters of hit lines in
+// one reply: fifty searches that each hit a shared label blew past the
+// 50,000-character cap on a tool result, and the tail was lost.
 const MAX_SEARCH_QUERIES = 50;
 const MAX_HITS_PER_QUERY = 10;
+const MAX_RESULT_CHARS = 40000;
 // At most this many photos read by one add_vinyl call. Each record found
 // starts its own enrichment pipeline on the device.
 const MAX_PHOTOS_PER_CALL = 5;
@@ -15,7 +17,9 @@ const MAX_PHOTOS_PER_CALL = 5;
 const PHOTO_LOOKBACK_ROWS = 8;
 // image_path may only name an image file under the data folder. The file
 // tools resolve every path and stay inside the repo; this tool sent any
-// readable file's bytes to the vision model, credentials included.
+// readable file's bytes to the vision model, credentials included. The name
+// and the bytes both have to be an image's: a link named x.jpg can point at
+// the credentials file.
 const IMAGE_FILE = /\.(jpe?g|png|webp|gif|bmp|heic|heif)$/i;
 
 const NO_PHOTO_TEXT = "No photo to read: nothing was added. The owner sends the photo of the cover, label or receipt in this chat with the ask (the latest one within 30 minutes counts); or pass image_path to an image file under the data folder.";
@@ -27,8 +31,11 @@ const NO_PHOTO_TEXT = "No photo to read: nothing was added. The owner sends the 
  */
 function addedLabel(createdAt, now = Date.now()) {
     if (!createdAt) return '';
-    const raw = String(createdAt);
-    const t = Date.parse(raw.includes('T') ? raw : `${raw.replace(' ', 'T')}Z`);
+    const raw = String(createdAt).trim();
+    // SQLite's CURRENT_TIMESTAMP is UTC with no zone mark; an ISO string
+    // without one is read as UTC too, never as the container's local time.
+    const iso = raw.includes('T') ? raw : raw.replace(' ', 'T');
+    const t = Date.parse(/(Z|[+-]\d\d:?\d\d)$/i.test(iso) ? iso : `${iso}Z`);
     if (Number.isNaN(t)) return '';
     const mins = Math.max(0, Math.round((now - t) / 60000));
     if (mins < 1) return 'added just now';
@@ -40,14 +47,32 @@ function addedLabel(createdAt, now = Date.now()) {
 /** The photos on a message: image parts with real bytes, not a stripped marker. */
 function imagePartsOf(message) {
     const parts = Array.isArray(message?.parts) ? message.parts : [];
-    return parts.filter(p => p?.inlineData && String(p.inlineData.mimeType || '').toLowerCase().startsWith('image/')
-        && looksLikeBase64(p.inlineData.data));
+    return parts
+        .filter(p => p?.inlineData && String(p.inlineData.mimeType || '').toLowerCase().startsWith('image/')
+            && looksLikeBase64(p.inlineData.data))
+        .map(p => ({ inlineData: { mimeType: String(p.inlineData.mimeType).toLowerCase(), data: p.inlineData.data.replace(/\s+/g, '') } }));
+}
+
+/** True when a file's first bytes are a JPEG, PNG, GIF, WebP, BMP or HEIF signature. */
+function fileHasImageMagic(realPath) {
+    let fd;
+    try {
+        fd = fs.openSync(realPath, 'r');
+        const head = Buffer.alloc(16);
+        const n = fs.readSync(fd, head, 0, 16, 0);
+        if (n < 12) return false;
+        return hasImageMagic(head.toString('base64'));
+    } catch {
+        return false;
+    } finally {
+        if (fd !== undefined) { try { fs.closeSync(fd); } catch { /* closed */ } }
+    }
 }
 
 /**
- * The real path of an image file under the data folder, or null. A symlink
- * that leaves the folder, a file that is not an image, or a missing file
- * gives null.
+ * The real path of an image file under the data folder, or null. A link
+ * that leaves the folder, a link or a file whose bytes are not an image's,
+ * a folder, or a missing file gives null.
  */
 function imagePathInData(imagePath, dataDir = process.env.DATA_DIR || '/app/data') {
     if (typeof imagePath !== 'string' || !IMAGE_FILE.test(imagePath)) return null;
@@ -55,10 +80,12 @@ function imagePathInData(imagePath, dataDir = process.env.DATA_DIR || '/app/data
     try {
         root = fs.realpathSync(dataDir);
         real = fs.realpathSync(imagePath);
+        if (!fs.statSync(real).isFile()) return null;
     } catch {
         return null;
     }
-    return real.startsWith(root + path.sep) ? real : null;
+    if (!real.startsWith(root + path.sep) || !IMAGE_FILE.test(real)) return null;
+    return fileHasImageMagic(real) ? real : null;
 }
 
 class DJExecutor {
@@ -95,11 +122,17 @@ class DJExecutor {
      * owner's current message, else the latest photo the owner sent in this
      * chat within 30 minutes (he often sends the photo first and the ask a
      * moment later). Only the owner's own chat counts (context.ownerTyped,
-     * from Agent._ownerTyped): a contact's photo, a group's or a watcher's
-     * would fill his crate. Returns { photos, fromEarlier }.
+     * from Agent._ownerTyped), and only a chat turn: a contact's photo, a
+     * group's, a job's or a watcher run's would fill his crate. Returns
+     * { photos, fromEarlier }.
      */
     _photosForAdd(context, now) {
-        if (context.ownerTyped !== true) return { photos: [], fromEarlier: false };
+        const none = { photos: [], fromEarlier: false };
+        if (context.ownerTyped !== true) return none;
+        // A job or a watcher run in his chat is not an ask in his chat: it
+        // must not pick up a photo he sent a moment before it fired.
+        const message = context.message || {};
+        if (message.metadata?.jobName || String(message.content || '').startsWith('SYSTEM_WATCHER_ALERT')) return none;
         const onMessage = imagePartsOf(context.message).map(p => ({ data: p.inlineData.data, mimeType: p.inlineData.mimeType }));
         if (onMessage.length > 0) return { photos: onMessage.slice(0, MAX_PHOTOS_PER_CALL), fromEarlier: false };
         const chatId = context.message?.metadata?.chatId;
@@ -119,7 +152,9 @@ class DJExecutor {
      * _photosForAdd). Before, the tool could not see a chat photo at all, so
      * a background step wrote the crate instead, ask or no ask.
      */
-    async add_vinyl({ image_path } = {}, context = {}) {
+    async add_vinyl(args, context) {
+        const { image_path } = args || {};
+        const ctx = context || {};
         try {
             let results;
             let fromEarlier = false;
@@ -128,7 +163,7 @@ class DJExecutor {
                 if (!real) return "image_path must name an image file (.jpg, .png, .webp) under the data folder: nothing was added. Leave it out to read the photo in the chat.";
                 results = await this.djService.ingestVinyl(real, 'auto');
             } else {
-                const chosen = this._photosForAdd(context, Date.now());
+                const chosen = this._photosForAdd(ctx, Date.now());
                 if (chosen.photos.length === 0) return NO_PHOTO_TEXT;
                 fromEarlier = chosen.fromEarlier;
                 results = [];
@@ -240,22 +275,31 @@ class DJExecutor {
      * twelve records used to take twelve calls, and the tool-loop guard
      * warned the model to stop halfway.
      */
-    async search_vinyls(args = {}) {
-        const wanted = DJExecutor.queriesOf(args);
+    async search_vinyls(args) {
+        const wanted = DJExecutor.queriesOf(args || {});
         if (wanted.length === 0) return "Give a query, or a list of queries with one entry per record.";
         const list = wanted.slice(0, MAX_SEARCH_QUERIES);
         try {
             const now = Date.now();
             const sections = [];
             let hits = 0;
+            let used = 0;
             for (const q of list) {
                 const { vinyls, near } = this._searchOne(q);
                 if (vinyls.length === 0) { sections.push(`"${q}": no match`); continue; }
                 hits += 1;
-                const shown = vinyls.slice(0, MAX_HITS_PER_QUERY);
                 const count = `${vinyls.length} ${near ? 'near ' : ''}match${vinyls.length === 1 ? '' : 'es'}${near ? ' with the numbers left out; compare the titles' : ''}`;
-                const more = vinyls.length > shown.length ? `\n  (${vinyls.length - shown.length} more not shown; search with more words)` : '';
-                sections.push(`"${q}": ${count}\n${shown.map(v => this._line(v, now)).join('\n')}${more}`);
+                // Lines until the per-search cap or the reply's budget, whichever comes first.
+                const lines = [];
+                for (const v of vinyls.slice(0, MAX_HITS_PER_QUERY)) {
+                    const line = this._line(v, now);
+                    if (used + line.length > MAX_RESULT_CHARS) break;
+                    used += line.length;
+                    lines.push(line);
+                }
+                const left = vinyls.length - lines.length;
+                const more = left > 0 ? `\n  (${left} more not shown; search with more words)` : '';
+                sections.push(`"${q}": ${count}${lines.length ? '\n' + lines.join('\n') : ''}${more}`);
             }
             const head = list.length > 1 ? `${list.length} searches, ${hits} with a match, ${list.length - hits} with none.` : null;
             const tail = wanted.length > list.length ? `${wanted.length - list.length} more queries were dropped: at most ${MAX_SEARCH_QUERIES} per call.` : null;
@@ -334,4 +378,4 @@ class DJExecutor {
     }
 }
 
-module.exports = { DJExecutor, addedLabel, imagePartsOf, imagePathInData, NO_PHOTO_TEXT, MAX_SEARCH_QUERIES, MAX_HITS_PER_QUERY, MAX_PHOTOS_PER_CALL };
+module.exports = { DJExecutor, addedLabel, imagePartsOf, imagePathInData, NO_PHOTO_TEXT, MAX_SEARCH_QUERIES, MAX_HITS_PER_QUERY, MAX_RESULT_CHARS, MAX_PHOTOS_PER_CALL };
