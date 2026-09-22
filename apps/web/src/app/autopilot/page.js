@@ -49,6 +49,7 @@ function AutopilotPage() {
     const [editContent, setEditContent] = useState('');
     const [searchQuery, setSearchQuery] = useState('');
     const [selectedDuration, setSelectedDuration] = useState(0); // 0 = Forever, 15, 60, 180
+    const [greetingsKey, setGreetingsKey] = useState(0); // bumping it reloads the Greetings tab
 
     // Style State
     const [styleProfile, setStyleProfile] = useState('');
@@ -224,7 +225,7 @@ function AutopilotPage() {
                 </div>
 
                 <button
-                    onClick={() => loadData(false)}
+                    onClick={() => (activeTab === 'greetings' ? setGreetingsKey((k) => k + 1) : loadData(false))}
                     disabled={loading}
                     className="p-1 text-zinc-500 hover:text-white hover:bg-zinc-800 rounded transition-colors disabled:opacity-50"
                     title="Refresh Data"
@@ -492,7 +493,7 @@ function AutopilotPage() {
                     </div>
                 )}
 
-                {activeTab === 'greetings' && <PartnerGreetings />}
+                {activeTab === 'greetings' && <PartnerGreetings key={greetingsKey} />}
 
                 {activeTab === 'style' && (
                     <div className="space-y-6">

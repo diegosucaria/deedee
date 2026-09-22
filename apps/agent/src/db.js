@@ -1203,6 +1203,20 @@ class AgentDB {
     return id;
   }
 
+  // True when these digits are a person's WhatsApp ID (identifiers.whatsapp_lid),
+  // not a phone number. A contact known only by its WhatsApp ID keeps the ID
+  // digits as its phone too; a message to it must go to "<digits>@lid",
+  // because "<digits>@s.whatsapp.net" would be some stranger's number.
+  isWhatsAppId(digits) {
+    const d = String(digits ?? '').replace(/\D/g, '');
+    if (d.length < 5) return false;
+    try {
+      return !!this.db.prepare("SELECT 1 FROM people WHERE json_extract(identifiers, '$.whatsapp_lid') = ? LIMIT 1").get(d);
+    } catch (e) {
+      return false; // a row with malformed identifiers JSON
+    }
+  }
+
   // Accepts a person id, a phone number, or a WhatsApp address:
   // "<phone>@s.whatsapp.net" or a WhatsApp ID ("<lid>@lid"). Phones match the
   // phone column or identifiers.whatsapp; WhatsApp IDs match
@@ -3520,6 +3534,15 @@ class AgentDB {
     this.db.prepare('DELETE FROM usage_logs').run(); // Also usage_logs (rate limiting)
     console.log('[DB] FORCE CLEANUP: Deleted all metrics, token_usage, and usage_logs.');
   }
+  // Marks a chat's live drafts from one source (e.g. 'partner_greeting') as
+  // 'superseded', so only the newest can be approved. Returns how many.
+  supersedeAutopilotDrafts(chatId, source) {
+    return this.db.prepare(`
+      UPDATE autopilot_drafts SET status = 'superseded'
+      WHERE chat_id = ? AND source = ? AND status IN ('pending', 'partially_sent')
+    `).run(chatId, source).changes;
+  }
+
   // A draft that does not come from an incoming message (partner greetings
   // in review mode). expiresAt is an ISO time; approving after it refuses to
   // send. Returns the new draft id.

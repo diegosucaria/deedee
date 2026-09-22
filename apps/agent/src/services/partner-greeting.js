@@ -8,17 +8,21 @@
  *     "mode": "send" | "review" | "dry_run", "pausedUntil": "YYYY-MM-DD" }
  * - send: the greeting goes out, and the owner gets a WhatsApp note.
  * - review: the draft lands in Autopilot → Drafts and the owner gets it on
- *   WhatsApp; approving it there sends it. It expires after a few hours.
+ *   WhatsApp; approving it there sends it. It expires after a few hours, and
+ *   a newer greeting draft for the same chat replaces it.
  * - dry_run: only the WhatsApp note; nothing reaches the partner.
  * The global communication_dry_run switch forces dry_run. The older
  * { dryRun: true } still means dry_run. pausedUntil skips both greetings
  * through that day (inclusive), for days the owner and partner are together.
+ * A scheduled run waits a random few minutes, then reads the setting again,
+ * so a pause or mode saved during the wait applies to that run.
  *
  * Code decides whether to send; the model only drafts the text (or declines).
  * The job skips a day when the owner already wrote to the partner, and the
  * model declines when the recent chat shows something a routine greeting
- * would ignore (an argument, bad news). Every send and every decline is
- * reported to the owner.
+ * would ignore (an argument, bad news). Code also holds back a draft with a
+ * link, a phone number or more than a few short lines. Every send, decline
+ * and failure is reported to the owner.
  */
 const axios = require('axios');
 const { ConfigService } = require('./config-service');
@@ -31,6 +35,24 @@ const HISTORY_LIMIT = 60;
 
 const MODES = ['send', 'review', 'dry_run'];
 const DRAFT_SOURCE = 'partner_greeting';
+const MAX_GREETING_CHARS = 280;
+const MAX_GREETING_LINES = 3;
+
+/**
+ * Why a drafted greeting must not go out, or null. A greeting is one or two
+ * short lines. A link, a phone number or a long text means the chat or the
+ * saved notes steered the model, and the text would go out as the owner.
+ */
+function unsafeGreeting(text) {
+    const t = String(text || '');
+    if (t.length > MAX_GREETING_CHARS) return 'it was too long for a greeting';
+    if (t.split('\n').filter(line => line.trim()).length > MAX_GREETING_LINES) return 'it had too many lines for a greeting';
+    // Bare domains only for endings no word shares: texting often skips the
+    // space after a period ("amor.Me voy"), which must not read as a link.
+    if (/https?:\/\/|www\.|\b[a-z0-9-]+\.[a-z]{2,}\/|\b[a-z0-9-]+\.(com|net|org|info|xyz|link|app)\b/i.test(t)) return 'it had a link';
+    if (/(?:\+?\d[ -]?){7,}/.test(t)) return 'it had a phone number';
+    return null;
+}
 
 const KINDS = {
     morning: {
@@ -88,7 +110,32 @@ class PartnerGreetingService {
     }
 
     _jid(contact) {
-        return contact.includes('@') ? contact : `${contact.replace(/[^0-9]/g, '')}@s.whatsapp.net`;
+        if (contact.includes('@')) return contact;
+        const digits = contact.replace(/[^0-9]/g, '');
+        // Bare digits may be a WhatsApp ID stored as a phone number.
+        const isLid = typeof this.agent.db.isWhatsAppId === 'function' && this.agent.db.isWhatsAppId(digits);
+        return `${digits}@${isLid ? 'lid' : 's.whatsapp.net'}`;
+    }
+
+    /** The person record for this address, or null. A damaged row never stops the run. */
+    _person(jid) {
+        if (typeof this.agent.db.getPerson !== 'function') return null;
+        try {
+            return this.agent.db.getPerson(jid) || null;
+        } catch (err) {
+            console.warn(`[PartnerGreeting] Could not read the person record: ${err.message}`);
+            return null;
+        }
+    }
+
+    /**
+     * True when the owner wrote to this chat after `sinceMs`. Approving a
+     * greeting draft checks it, so a greeting he already sent by hand does
+     * not go out twice.
+     */
+    async ownerWroteSince(jid, sinceMs) {
+        const history = await this.fetchHistory(jid);
+        return history.some(m => m.role === 'assistant' && m.timestamp > sinceMs);
     }
 
     async fetchHistory(jid) {
@@ -127,8 +174,7 @@ class PartnerGreetingService {
      * Style, stored on the person record), or '' when there are none.
      */
     _styleNotes(jid) {
-        const person = typeof this.agent.db.getPerson === 'function' ? this.agent.db.getPerson(jid) : null;
-        let meta = person?.metadata;
+        let meta = this._person(jid)?.metadata;
         if (typeof meta === 'string') {
             try { meta = JSON.parse(meta); } catch { meta = null; }
         }
@@ -179,7 +225,12 @@ Return JSON only: {"send": true or false, "text": "the message", "reason": "one 
         };
     }
 
-    async _notifyOwner(text) {
+    /**
+     * @param {string} text
+     * @param {{ expiresAt?: string }} [opts] expiresAt: the ledger drops a
+     *   note it could not deliver by then (a review note after its draft expired).
+     */
+    async _notifyOwner(text, { expiresAt } = {}) {
         // The delivery ledger retries a refused send and falls back to the
         // other owner channel. The note goes to the owner from Deedee's own
         // number (the assistant session), never from the owner's account.
@@ -189,7 +240,7 @@ Return JSON only: {"send": true or false, "text": "the message", "reason": "one 
             if (owner) {
                 const channel = owner.channel === 'whatsapp' ? 'whatsapp:assistant' : owner.channel;
                 await delivery.deliver('job_notification', channel, owner.target,
-                    { content: text, type: 'text' }, { origin: DRAFT_SOURCE, dedupe: false });
+                    { content: text, type: 'text' }, { origin: DRAFT_SOURCE, dedupe: false, ...(expiresAt ? { expiresAt } : {}) });
                 return;
             }
         }
@@ -208,7 +259,12 @@ Return JSON only: {"send": true or false, "text": "the message", "reason": "one 
     _saveReviewDraft(kind, jid, settings, text, now) {
         const spec = KINDS[kind];
         const expiresAt = new Date(now + spec.reviewMinutes * 60 * 1000).toISOString();
-        const person = typeof this.agent.db.getPerson === 'function' ? this.agent.db.getPerson(jid) : null;
+        const person = this._person(jid);
+        // A newer greeting replaces one still waiting (a manual run, a double
+        // fire), so approving both can't send two.
+        if (typeof this.agent.db.supersedeAutopilotDrafts === 'function') {
+            this.agent.db.supersedeAutopilotDrafts(jid, DRAFT_SOURCE);
+        }
         const draftId = this.agent.db.createAutopilotDraft({
             chatId: jid,
             contactId: person?.id || jid,
@@ -226,30 +282,47 @@ Return JSON only: {"send": true or false, "text": "the message", "reason": "one 
 
     /**
      * @param {'morning'|'night'} kind
-     * @param {{ randomDelay?: boolean, now?: () => number }} [opts]
+     * @param {{ randomDelay?: boolean, now?: () => number, isEnabled?: () => boolean }} [opts]
+     *   isEnabled: whether the job is still switched on. A run whose job is
+     *   switched off during the random wait stops there.
      */
     async run(kind, opts = {}) {
         const spec = KINDS[kind];
         if (!spec) throw new Error(`Unknown greeting kind: ${kind}`);
 
-        const settings = this.getSettings();
+        let settings = this.getSettings();
         if (!settings) return { skipped: true, reason: `${SETTING_KEY} setting is not configured` };
 
         const timeZone = process.env.TZ || 'America/Argentina/Buenos_Aires';
         const clock = opts.now || Date.now;
 
-        // Days together: skip quietly, before waiting out the random delay.
-        // The pause covers both greetings through that day; the next
-        // morning's greeting runs again.
-        if (settings.pausedUntil && greetingDay(clock(), timeZone) <= settings.pausedUntil) {
+        // Days together: skip quietly. The pause covers both greetings
+        // through that day; the next morning's greeting runs again.
+        const pausedSkip = () => {
+            if (!settings.pausedUntil || greetingDay(clock(), timeZone) > settings.pausedUntil) return null;
             console.log(`[PartnerGreeting] ${spec.label} skipped: paused through ${settings.pausedUntil}.`);
             return { skipped: true, reason: `paused through ${settings.pausedUntil}` };
-        }
+        };
+        const early = pausedSkip();
+        if (early) return early;
 
         if (opts.randomDelay) {
+            const enabledAtStart = typeof opts.isEnabled === 'function' ? opts.isEnabled() : true;
             const delayMin = Math.floor(Math.random() * (spec.maxDelayMin + 1));
             console.log(`[PartnerGreeting] ${spec.label}: waiting ${delayMin} min so it doesn't land at the same minute every day.`);
             await new Promise(r => setTimeout(r, delayMin * 60 * 1000));
+
+            // The owner may have changed the Greetings tab during the wait:
+            // switched the job off, set a pause, or picked another mode or
+            // person. This run follows the tab as it is now.
+            if (enabledAtStart && typeof opts.isEnabled === 'function' && !opts.isEnabled()) {
+                console.log(`[PartnerGreeting] ${spec.label} skipped: the job was switched off while it waited.`);
+                return { skipped: true, reason: 'the job was switched off while it waited' };
+            }
+            settings = this.getSettings();
+            if (!settings) return { skipped: true, reason: `${SETTING_KEY} setting is not configured` };
+            const late = pausedSkip();
+            if (late) return late;
         }
 
         const now = clock();
@@ -268,6 +341,13 @@ Return JSON only: {"send": true or false, "text": "the message", "reason": "one 
             return { skipped: true, reason: draft.reason || 'model declined' };
         }
 
+        // Code, not the model, has the last word on what goes out as the owner.
+        const unsafe = unsafeGreeting(draft.text);
+        if (unsafe) {
+            await this._notifyOwner(`I held back ${spec.label} for ${settings.name}: ${unsafe}, which a greeting never needs. The draft: "${draft.text.slice(0, MAX_GREETING_CHARS)}"`);
+            return { skipped: true, reason: `held back: ${unsafe}` };
+        }
+
         // The global switch sendMessage honours overrides the greeting's own mode.
         const globalDryRun = this.agent.db.getAgentSetting?.('communication_dry_run')?.value === true;
         const mode = globalDryRun ? 'dry_run' : settings.mode;
@@ -279,16 +359,23 @@ Return JSON only: {"send": true or false, "text": "the message", "reason": "one 
 
         if (mode === 'review') {
             const { draftId, expiresAt } = this._saveReviewDraft(kind, jid, settings, draft.text, now);
-            const until = new Intl.DateTimeFormat('en-GB', { timeZone, hour: '2-digit', minute: '2-digit' }).format(new Date(expiresAt));
             const label = spec.label.charAt(0).toUpperCase() + spec.label.slice(1);
-            await this._notifyOwner(`${label} for ${settings.name} is ready: "${draft.text}". Approve it in Autopilot → Drafts by ${until}, or it won't be sent.`);
+            // A span, not a clock time: the device and the owner's phone can
+            // sit in different time zones.
+            const hours = spec.reviewMinutes / 60;
+            await this._notifyOwner(`${label} for ${settings.name} is ready: "${draft.text}". Approve it in Autopilot → Drafts within ${hours} hours, or it won't be sent.`, { expiresAt });
             return { review: true, kind, text: draft.text, draftId, expiresAt };
         }
 
-        await this.agent.interface.send({ source: 'whatsapp', type: 'text', content: draft.text, metadata: { chatId: jid, session: 'user' } });
+        // HttpInterface.send reports a refused send as false, not a throw.
+        const sent = await this.agent.interface.send({ source: 'whatsapp', type: 'text', content: draft.text, metadata: { chatId: jid, session: 'user' } });
+        if (sent === false) {
+            await this._notifyOwner(`I couldn't send ${spec.label} to ${settings.name}: WhatsApp refused it, so nothing went out. The draft: "${draft.text}"`);
+            return { failed: true, kind, text: draft.text };
+        }
         await this._notifyOwner(`Sent ${spec.label} to ${settings.name}: "${draft.text}"`);
         return { sent: true, kind, text: draft.text };
     }
 }
 
-module.exports = { PartnerGreetingService, dayStartMs, greetingDay, SETTING_KEY, DRAFT_SOURCE };
+module.exports = { PartnerGreetingService, dayStartMs, greetingDay, unsafeGreeting, SETTING_KEY, DRAFT_SOURCE };

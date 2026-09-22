@@ -3,10 +3,9 @@
 import { useState, useEffect } from 'react';
 import { Search, Loader2, UserPlus, Globe } from 'lucide-react';
 import { getWhatsAppContacts, createPersonFromContact } from '../app/actions';
+import { digitsOf, newContactsFor, peopleBehindContacts } from '../lib/greetings';
 
 const MIN_QUERY = 2;
-
-const digitsOf = (value = '') => String(value).replace(/@.*$/, '').replace(/\D/g, '');
 
 const rank = (a, b) =>
     (Number(!!b.is_pinned) - Number(!!a.is_pinned))
@@ -43,21 +42,18 @@ export default function ContactStylePicker({ people = [], selectedId, onSelect, 
         };
     }, [trimmed]);
 
-    const matchedPeople = (trimmed
+    // By name or number, plus the people behind matching contacts (a search
+    // for someone's push name finds the person saved under another name).
+    const byName = trimmed
         ? people.filter((p) => (p.name || '').toLowerCase().includes(trimmed) || (digits.length >= 3 && digitsOf(p.phone).includes(digits)))
-        : people
-    ).slice().sort(rank).slice(0, trimmed ? 8 : 6);
+        : people;
+    const viaContacts = trimmed.length >= MIN_QUERY ? peopleBehindContacts(people, contacts) : [];
+    const matchedPeople = [...new Map([...byName, ...viaContacts].map((p) => [p.id, p])).values()]
+        .sort(rank).slice(0, trimmed ? 8 : 6);
 
-    // WhatsApp contacts no person covers; a phone contact and its WhatsApp
-    // ID collapse into one entry.
-    const covered = new Set(people.map((p) => digitsOf(p.phone)).filter(Boolean));
-    const linkedLids = new Set(contacts.map((c) => c?.lid).filter(Boolean));
-    const newContacts = trimmed.length >= MIN_QUERY
-        ? contacts
-            .filter((c) => c?.id && !covered.has(digitsOf(c.id)) && !(c.lid && covered.has(digitsOf(c.lid))))
-            .filter((c) => !(String(c.id).endsWith('@lid') && linkedLids.has(c.id)))
-            .slice(0, 6)
-        : [];
+    // WhatsApp contacts no person covers, by phone number or WhatsApp ID; a
+    // phone contact and its WhatsApp ID collapse into one entry.
+    const newContacts = trimmed.length >= MIN_QUERY ? newContactsFor(people, contacts) : [];
 
     const onQueryChange = (e) => {
         setQuery(e.target.value);

@@ -135,7 +135,11 @@ class CommunicationExecutor extends BaseExecutor {
                 // WhatsApp JID format: [digits]@s.whatsapp.net. Keep an explicit
                 // "@lid" suffix: LID-only contacts have no phone JID, so
                 // rebuilding "@s.whatsapp.net" from their digits targets nobody.
-                const jidDomain = svc === 'whatsapp' && /@lid$/i.test(target) ? 'lid' : 's.whatsapp.net';
+                // The same goes for a person stored under a WhatsApp ID: its
+                // "phone" is those digits, so it resolves here without the suffix.
+                const isLid = /@lid$/i.test(target)
+                    || (typeof services.db?.isWhatsAppId === 'function' && services.db.isWhatsAppId(cleanTo));
+                const jidDomain = svc === 'whatsapp' && isLid ? 'lid' : 's.whatsapp.net';
                 const metadata = {
                     chatId: `${cleanTo}@${jidDomain}`,
                     session: session || 'assistant'

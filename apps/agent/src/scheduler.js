@@ -957,7 +957,11 @@ NEVER contact anyone other than the owner.`,
             // drafts the text; the service decides whether to send.
             if (sysJob.name === 'partner_good_morning' || sysJob.name === 'partner_good_night') {
                 const kind = sysJob.name === 'partner_good_morning' ? 'morning' : 'night';
-                return await this.agent.partnerGreetingService.run(kind, { randomDelay: true });
+                return await this.agent.partnerGreetingService.run(kind, {
+                    randomDelay: true,
+                    // Switching the job off during the random wait stops this run too.
+                    isEnabled: () => this.jobs[sysJob.name]?.metadata?.enabled !== false
+                });
             }
 
             // Nightly RAG Scan

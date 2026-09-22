@@ -57,6 +57,9 @@ function createAutopilotRouter(agent) {
             const draft = agent.db.db.prepare('SELECT * FROM autopilot_drafts WHERE id = ?').get(id);
 
             if (!draft) return res.status(404).json({ error: 'Draft not found' });
+            if (draft.status === 'expired') {
+                return res.status(410).json({ error: 'This draft expired and was not sent' });
+            }
             if (draft.status !== 'pending' && draft.status !== 'partially_sent') {
                 return res.status(400).json({ error: 'Draft already processed' });
             }
@@ -65,6 +68,22 @@ function createAutopilotRouter(agent) {
             if (draft.expires_at && Date.parse(draft.expires_at) <= Date.now()) {
                 agent.db.db.prepare("UPDATE autopilot_drafts SET status = 'expired' WHERE id = ?").run(id);
                 return res.status(410).json({ error: 'This draft expired and was not sent' });
+            }
+            // A greeting the owner already sent by hand must not go out twice.
+            // If the chat can't be read, his approval stands.
+            const greetings = agent.partnerGreetingService;
+            if (draft.source === 'partner_greeting' && typeof greetings?.ownerWroteSince === 'function') {
+                const madeAt = Date.parse(`${String(draft.created_at).replace(' ', 'T')}Z`);
+                let wrote = false;
+                try {
+                    wrote = Number.isFinite(madeAt) && await greetings.ownerWroteSince(draft.chat_id, madeAt);
+                } catch (err) {
+                    console.warn(`[Autopilot] Could not read the chat before approving draft ${id}: ${err.message}`);
+                }
+                if (wrote) {
+                    agent.db.db.prepare("UPDATE autopilot_drafts SET status = 'superseded' WHERE id = ?").run(id);
+                    return res.status(409).json({ error: 'You wrote to them after this draft was made, so it was not sent' });
+                }
             }
 
             // Resolve Source
@@ -98,7 +117,8 @@ function createAutopilotRouter(agent) {
                 };
 
                 try {
-                    await agent.interface.send(reply);
+                    // HttpInterface.send reports a refused send as false, not a throw.
+                    if (await agent.interface.send(reply) === false) throw new Error('the WhatsApp send was refused');
                     sentCount++;
 
                     // Persist progress after each successful send so we never re-send on retry

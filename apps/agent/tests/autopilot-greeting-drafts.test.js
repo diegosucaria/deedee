@@ -73,6 +73,63 @@ describe('Greeting drafts in Autopilot', () => {
         expect(send).toHaveBeenCalledWith(expect.objectContaining({ content: 'Good morning love', metadata: { chatId: CHAT, session: 'user' } }));
     });
 
+    const status = id => db.db.prepare('SELECT status FROM autopilot_drafts WHERE id = ?').get(id).status;
+    const appWith = (services) => {
+        const a = express();
+        a.use(express.json());
+        a.use('/', createAutopilotRouter({ db, interface: { send }, ...services }));
+        return a;
+    };
+
+    test('approving a greeting after the owner wrote to that chat by hand sends nothing', async () => {
+        const id = draft(new Date(Date.now() + 3_600_000).toISOString());
+        const ownerWroteSince = jest.fn(async () => true);
+        const res = await request(appWith({ partnerGreetingService: { ownerWroteSince } })).post(`/drafts/${id}/approve`);
+        expect(res.status).toBe(409);
+        expect(send).not.toHaveBeenCalled();
+        expect(status(id)).toBe('superseded');
+        expect(ownerWroteSince).toHaveBeenCalledWith(CHAT, expect.any(Number));
+    });
+
+    test('when the chat cannot be read, the owner\'s approval stands', async () => {
+        const id = draft(new Date(Date.now() + 3_600_000).toISOString());
+        const ownerWroteSince = jest.fn(async () => { throw new Error('interfaces down'); });
+        jest.spyOn(console, 'warn').mockImplementation(() => {});
+        const res = await request(appWith({ partnerGreetingService: { ownerWroteSince } })).post(`/drafts/${id}/approve`);
+        expect(res.status).toBe(200);
+        expect(send).toHaveBeenCalledTimes(1);
+    });
+
+    test('a refused send leaves the draft approvable instead of marking it sent', async () => {
+        const id = draft(new Date(Date.now() + 3_600_000).toISOString());
+        send.mockResolvedValueOnce(false);
+        jest.spyOn(console, 'error').mockImplementation(() => {});
+        const failed = await request(app).post(`/drafts/${id}/approve`);
+        expect(failed.status).toBe(500);
+        expect(status(id)).toBe('pending');
+
+        const retried = await request(app).post(`/drafts/${id}/approve`);
+        expect(retried.status).toBe(200);
+        expect(status(id)).toBe('approved');
+    });
+
+    test('a draft the list already marked expired answers 410, not "already processed"', async () => {
+        const id = draft(new Date(Date.now() - 60_000).toISOString());
+        await request(app).get('/drafts');
+        const res = await request(app).post(`/drafts/${id}/approve`);
+        expect(res.status).toBe(410);
+    });
+
+    test('a newer greeting draft retires the older one still waiting, and nothing else', () => {
+        const older = draft(new Date(Date.now() + 3_600_000).toISOString(), 'older');
+        const other = db.createAutopilotDraft({ chatId: '100000000000002@lid', contactId: 'x', content: 'other chat', source: 'partner_greeting' });
+        new ImpersonationService({ db }).saveDraft(CHAT, CHAT, 'a real reply draft');
+        expect(db.supersedeAutopilotDrafts(CHAT, 'partner_greeting')).toBe(1);
+        expect(status(older)).toBe('superseded');
+        expect(status(other)).toBe('pending');
+        expect(db.db.prepare("SELECT COUNT(*) n FROM autopilot_drafts WHERE chat_id = ? AND source IS NULL AND status = 'pending'").get(CHAT).n).toBe(1);
+    });
+
     test('a greeting draft is never the chat\'s pending autopilot draft', () => {
         draft(new Date(Date.now() + 3_600_000).toISOString());
         const impersonation = new ImpersonationService({ db });

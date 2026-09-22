@@ -2,8 +2,9 @@
 
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
-import { Heart, Search, Loader2, AlertTriangle } from 'lucide-react';
-import { getAgentConfig, updateAgentConfig, getPeople, getWhatsAppContacts, getTasks, toggleTask } from '../app/actions';
+import { Heart, Search, Loader2, AlertTriangle, RefreshCw } from 'lucide-react';
+import { getPartnerGreetingState, updateAgentConfig, getPeople, getWhatsAppContacts, toggleTask } from '../app/actions';
+import { modeOf, describeContact, greetingTargets, pickTarget, pauseValue } from '../lib/greetings';
 
 const MIN_QUERY = 2;
 
@@ -18,49 +19,17 @@ const MODES = [
     { id: 'dry_run', label: 'Dry run', help: 'Deedee sends you the draft on WhatsApp. Nothing reaches your partner.' },
 ];
 
-const digitsOf = (value = '') => String(value).replace(/@.*$/, '').replace(/\D/g, '');
-
-const describe = (id = '') => (id.endsWith('@lid') ? 'WhatsApp ID (no phone number shared)' : id.split('@')[0]);
-
 const todayLocal = () => new Date().toLocaleDateString('en-CA');
 
-const modeOf = (value) => (value?.mode ? value.mode : (value?.dryRun ? 'dry_run' : 'send'));
-
-// The address to greet a person on: their WhatsApp ID when linked (the chat
-// history is filed under it), otherwise their phone number.
-const personAddress = (p) => (p.identifiers?.whatsapp_lid ? `${p.identifiers.whatsapp_lid}@lid` : digitsOf(p.phone));
-
-// People first (one entry per person), then WhatsApp contacts no person
-// covers. A phone contact and its WhatsApp ID collapse into one entry.
 async function searchTargets(query) {
     const [peopleRes, contacts] = await Promise.all([
         getPeople({ search: query, limit: 8 }),
         getWhatsAppContacts('user', query),
     ]);
-    const people = (Array.isArray(peopleRes) ? peopleRes : peopleRes?.people || []).filter((p) => personAddress(p));
-    const covered = new Set();
-    for (const p of people) {
-        [p.phone, p.identifiers?.whatsapp, p.identifiers?.whatsapp_lid].forEach((v) => v && covered.add(digitsOf(v)));
-    }
-    const list = Array.isArray(contacts) ? contacts : [];
-    const linkedLids = new Set(list.map((c) => c?.lid).filter(Boolean));
-    const fromPeople = people.map((p) => ({
-        key: `person:${p.id}`,
-        contact: personAddress(p),
-        label: p.name,
-        detail: [p.phone ? digitsOf(p.phone) : null, p.identifiers?.whatsapp_lid ? 'WhatsApp ID linked' : null].filter(Boolean).join(' · '),
-    }));
-    const fromContacts = list
-        .filter((c) => c?.id && !covered.has(digitsOf(c.id)) && !(c.lid && covered.has(digitsOf(c.lid))))
-        .filter((c) => !(String(c.id).endsWith('@lid') && linkedLids.has(c.id)))
-        .map((c) => ({
-            key: `contact:${c.id}`,
-            contact: c.lid || c.id,
-            label: c.name || c.notify || c.phone || c.id,
-            detail: `${c.lid ? `${digitsOf(c.id)} · WhatsApp ID linked` : describe(c.id)} · not in People`,
-        }));
-    return [...fromPeople, ...fromContacts].slice(0, 8);
+    return greetingTargets(Array.isArray(peopleRes) ? peopleRes : peopleRes?.people || [], contacts);
 }
+
+const loadState = () => getPartnerGreetingState().catch((e) => ({ ok: false, error: e?.message || 'Could not load.' }));
 
 // Autopilot → Greetings: who the partner_good_morning / partner_good_night
 // jobs write to (as the owner), how the greeting is delivered, a pause for
@@ -69,11 +38,15 @@ async function searchTargets(query) {
 export default function PartnerGreetings() {
     const [value, setValue] = useState(null);
     const [jobs, setJobs] = useState([]);
+    const [globalDryRun, setGlobalDryRun] = useState(false);
+    const [loadError, setLoadError] = useState(null);
     const [loaded, setLoaded] = useState(false);
     const [error, setError] = useState(null);
+    const [notice, setNotice] = useState(null);
     const [query, setQuery] = useState('');
     const [results, setResults] = useState([]);
     const [searching, setSearching] = useState(false);
+    const [pauseDraft, setPauseDraft] = useState(null);
 
     const saved = value && typeof value === 'object' && value.contact ? value : null;
     const mode = modeOf(saved);
@@ -81,15 +54,23 @@ export default function PartnerGreetings() {
     const showResults = trimmed.length >= MIN_QUERY;
     const pauseActive = !!saved?.pausedUntil && saved.pausedUntil >= todayLocal();
 
+    const apply = (state) => {
+        if (!state?.ok) {
+            setLoadError(state?.error || 'Could not load.');
+        } else {
+            setLoadError(null);
+            setValue(state.value);
+            setJobs(state.jobs);
+            setGlobalDryRun(state.globalDryRun);
+        }
+        setLoaded(true);
+    };
+
     useEffect(() => {
         let active = true;
         (async () => {
-            const [config, tasks] = await Promise.all([getAgentConfig(), getTasks(true)]);
-            if (!active) return;
-            setValue(config?.partner_greeting || null);
-            const list = Array.isArray(tasks) ? tasks : tasks?.jobs || [];
-            setJobs(list.filter((j) => JOBS.some((k) => k.name === j.name)));
-            setLoaded(true);
+            const state = await loadState();
+            if (active) apply(state);
         })();
         return () => {
             active = false;
@@ -112,14 +93,18 @@ export default function PartnerGreetings() {
         };
     }, [trimmed]);
 
+    const retry = async () => {
+        setLoaded(false);
+        apply(await loadState());
+    };
+
     const save = async (next) => {
         setValue(next);
         setError(null);
         const res = await updateAgentConfig('partner_greeting', next);
         if (!res?.success) {
             setError(res?.error || 'Could not save.');
-            const config = await getAgentConfig();
-            setValue(config?.partner_greeting || null);
+            apply(await loadState());
         }
     };
 
@@ -129,10 +114,9 @@ export default function PartnerGreetings() {
     };
 
     const pick = (target) => {
-        // A new target starts in dry run, so the first drafts only reach the owner.
-        const base = saved ? { ...saved } : { mode: 'dry_run' };
-        delete base.dryRun;
-        save({ ...base, contact: target.contact, name: target.label, mode: saved ? mode : 'dry_run' });
+        const next = pickTarget(saved, target);
+        setNotice(saved && next.mode !== mode ? `Delivery is set to Dry run for ${next.name}. Choose Send or Review first below when you're ready.` : null);
+        save(next);
         setQuery('');
         setResults([]);
         setSearching(false);
@@ -142,6 +126,7 @@ export default function PartnerGreetings() {
         if (!saved) return;
         const next = { ...saved, mode, ...patch };
         delete next.dryRun;
+        setNotice(null);
         save(next);
     };
 
@@ -149,6 +134,12 @@ export default function PartnerGreetings() {
         const clean = next.trim();
         if (!saved || clean === (saved.name || '')) return;
         update({ name: clean });
+    };
+
+    const onPauseChange = (input) => {
+        setPauseDraft(input);
+        const next = pauseValue(input, todayLocal());
+        if (next !== undefined) update({ pausedUntil: next });
     };
 
     const flipJob = async (job) => {
@@ -159,10 +150,28 @@ export default function PartnerGreetings() {
             return;
         }
         setJobs((prev) => prev.map((j) => (j.name === job.name ? { ...j, enabled: !job.enabled } : j)));
+        // Reload for the next run time the agent just worked out.
+        const state = await loadState();
+        if (state.ok) setJobs(state.jobs);
     };
 
     if (!loaded) {
         return <div className="text-center text-zinc-500 mt-10"><Loader2 className="w-8 h-8 animate-spin mx-auto mb-2" />Loading...</div>;
+    }
+
+    if (loadError) {
+        return (
+            <div className="max-w-3xl bg-zinc-900/50 border border-zinc-800 rounded-xl p-6">
+                <div className="flex items-center gap-2 text-red-400 text-sm">
+                    <AlertTriangle className="w-4 h-4" />
+                    <span>Couldn&apos;t load the greeting settings: {loadError}</span>
+                </div>
+                <p className="text-xs text-zinc-500 mt-2">Nothing was changed. The agent may be restarting after a deploy.</p>
+                <button type="button" onClick={retry} className="mt-4 inline-flex items-center gap-2 text-sm text-indigo-400 hover:text-indigo-300">
+                    <RefreshCw className="w-4 h-4" /> Try again
+                </button>
+            </div>
+        );
     }
 
     return (
@@ -173,9 +182,19 @@ export default function PartnerGreetings() {
                     Partner Greetings
                 </h2>
                 <p className="text-sm text-zinc-400">
-                    Good-morning and good-night messages from your own WhatsApp, in your style. Every greeting,
-                    sent or not, also reaches you on WhatsApp. If this person has a saved style in the Style tab, the greetings follow it.
+                    Good-morning and good-night messages from your own WhatsApp, in your style. Deedee tells you on WhatsApp
+                    about every greeting it writes or holds back. Days together, and days you already wrote, pass without a note.
+                    If this person has a saved style in the Style tab, the greetings follow it.
                 </p>
+                {globalDryRun && (
+                    <div className="mt-4 flex items-center gap-2 text-amber-300 text-sm bg-amber-500/10 p-3 rounded-lg border border-amber-500/20">
+                        <AlertTriangle className="w-4 h-4" />
+                        <span>
+                            Dry run is on for all messages (<Link href="/settings?tab=communication" className="underline">Settings → Communication</Link>),
+                            so greetings only reach you, whatever you pick here.
+                        </span>
+                    </div>
+                )}
                 {error && (
                     <div className="mt-4 flex items-center gap-2 text-red-400 text-sm bg-red-500/10 p-3 rounded-lg border border-red-500/20">
                         <AlertTriangle className="w-4 h-4" />
@@ -191,11 +210,12 @@ export default function PartnerGreetings() {
                     {saved ? (
                         <div className="bg-zinc-950 border border-zinc-800 rounded-lg px-4 py-2">
                             <div className="text-white">{saved.name || 'Unnamed contact'}</div>
-                            <div className="text-xs text-zinc-500">{describe(saved.contact)}</div>
+                            <div className="text-xs text-zinc-500">{describeContact(saved.contact)}</div>
                         </div>
                     ) : (
                         <p className="text-sm text-zinc-500">Nobody yet. Search your people and contacts below.</p>
                     )}
+                    {notice && <p className="text-xs text-amber-400/90 mt-2">{notice}</p>}
                 </div>
 
                 <div>
@@ -282,13 +302,14 @@ export default function PartnerGreetings() {
                         <div className="flex items-center gap-3">
                             <input
                                 type="date"
-                                value={saved.pausedUntil || ''}
+                                value={pauseDraft ?? saved.pausedUntil ?? ''}
                                 min={todayLocal()}
-                                onChange={(e) => update({ pausedUntil: e.target.value || null })}
+                                onChange={(e) => onPauseChange(e.target.value)}
+                                onBlur={() => setPauseDraft(null)}
                                 className="bg-zinc-950 border border-zinc-800 rounded-lg px-3 py-2 text-white focus:ring-2 focus:ring-indigo-500/50 outline-none"
                             />
                             {saved.pausedUntil && (
-                                <button type="button" onClick={() => update({ pausedUntil: null })} className="text-sm text-zinc-400 hover:text-white">
+                                <button type="button" onClick={() => { setPauseDraft(null); update({ pausedUntil: null }); }} className="text-sm text-zinc-400 hover:text-white">
                                     Clear
                                 </button>
                             )}
