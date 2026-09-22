@@ -257,6 +257,26 @@ describe('Chat session ownership', () => {
         expect(db.getSession(chat.id).updated_at).toBe(before);
     });
 
+    test('a rename to a WhatsApp id moves the chat to WhatsApp', () => {
+        db.createSession({ id: '4b30dea9-1b20-5bb4-9a58-000000000007', title: 'Encoded Chat', source: 'web' });
+        saveUserMessage('4b30dea9-1b20-5bb4-9a58-000000000007', 'web');
+
+        db.migrateSessionId('4b30dea9-1b20-5bb4-9a58-000000000007', '100000000000003@g.us');
+        expect(db.getSession('100000000000003@g.us').source).toBe('whatsapp');
+        expect(db.getSessions({ limit: 50 }).map(s => s.id)).not.toContain('100000000000003@g.us');
+    });
+
+    test('a numeric chat id still moves its chat up the list', () => {
+        db.createSession({ id: 12345, title: 'New Chat', source: 'telegram' });
+        // Set the date back: a create and a message can land in the same
+        // millisecond, and the touch only ever moves a date forward.
+        db.db.prepare('UPDATE chat_sessions SET updated_at = ? WHERE id = ?')
+            .run('2020-01-01T00:00:00.000Z', '12345');
+
+        db.saveMessage({ role: 'user', content: 'hello', source: 'telegram', chatId: 12345 });
+        expect(db.getSession('12345').updated_at).not.toBe('2020-01-01T00:00:00.000Z');
+    });
+
     test('the migration rewrites stored dates in the old format', () => {
         db.db.prepare(`INSERT INTO chat_sessions (id, title, source, created_at, updated_at) VALUES (?, ?, 'web', ?, ?)`)
             .run('legacy-1', 'Legacy Chat', '2026-05-01 10:00:00', '2026-05-01 10:00:00.500');

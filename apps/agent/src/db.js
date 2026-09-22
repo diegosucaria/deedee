@@ -1473,7 +1473,7 @@ class AgentDB {
       INSERT INTO chat_sessions (id, title, source, created_at, updated_at)
       VALUES (?, ?, ?, ?, ?)
     `).run(sessionId, title || 'New Chat', owner, now, now);
-    return { id: sessionId, title, source: owner, createdAt: now };
+    return { id: sessionId, title: title || 'New Chat', source: owner, createdAt: now };
   }
 
   ensureSession(chatId, source = 'web') {
@@ -1740,7 +1740,7 @@ class AgentDB {
     this.db.prepare(`
       UPDATE chat_sessions SET updated_at = ?
       WHERE id = ? AND (updated_at IS NULL OR updated_at < ?)
-    `).run(timestamp, chatId, timestamp);
+    `).run(timestamp, String(chatId), timestamp);
   }
 
   // A chat the owner writes in from the dashboard belongs in his list, even
@@ -1755,7 +1755,7 @@ class AgentDB {
     this.db.prepare(`
       UPDATE chat_sessions SET source = 'web'
       WHERE id = ? AND (source IS NULL OR source NOT IN ('web', ${owned.map(() => '?').join(', ')}))
-    `).run(chatId, ...owned);
+    `).run(String(chatId), ...owned);
   }
 
   saveMessage(msg) {
@@ -3881,6 +3881,14 @@ class AgentDB {
       // 4. Token Usage
       const tokRes = this.db.prepare('UPDATE token_usage SET chat_id = ? WHERE chat_id = ?').run(newId, oldId);
       stats.token_usage = tokRes.changes;
+
+      // 5. Owner: a new id that names its own interface wins, which is the
+      // point of this call for an encoded WhatsApp id. Any other id keeps
+      // the owner the session already had.
+      const fromNewId = sessionSourceFromId(newId);
+      if (fromNewId) {
+        this.db.prepare('UPDATE chat_sessions SET source = ? WHERE id = ?').run(fromNewId, newId);
+      }
     });
 
     transaction();
