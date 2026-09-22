@@ -765,19 +765,62 @@ class RagService {
         const doc = this.db.prepare('SELECT id FROM documents WHERE filename = ? AND vault_id = ?').get(filename, vaultId);
         if (doc) {
             console.log(`[RAG] Deleting document ${filename} (Vault: ${vaultId})`);
-            // Delete from vec0 first (needs chunk IDs)
-            if (this.useVec) {
-                const chunkIds = this.db.prepare('SELECT id FROM chunks WHERE document_id = ?').all(doc.id);
-                for (const c of chunkIds) {
-                    try { this.db.prepare('DELETE FROM chunks_vec WHERE chunk_id = ?').run(c.id); } catch (e) { }
-                }
-            }
-            this.db.prepare('DELETE FROM chunks_fts WHERE document_id = ?').run(doc.id);
-            this.db.prepare('DELETE FROM chunks WHERE document_id = ?').run(doc.id);
-            this.db.prepare('DELETE FROM documents WHERE id = ?').run(doc.id);
+            this._deleteDocumentById(doc.id);
             return true;
         }
         return false;
+    }
+
+    /** Remove one document and everything that points at it. */
+    _deleteDocumentById(docId) {
+        // Delete from vec0 first (needs chunk IDs)
+        if (this.useVec) {
+            const chunkIds = this.db.prepare('SELECT id FROM chunks WHERE document_id = ?').all(docId);
+            for (const c of chunkIds) {
+                try { this.db.prepare('DELETE FROM chunks_vec WHERE chunk_id = ?').run(c.id); } catch (e) { }
+            }
+        }
+        this.db.prepare('DELETE FROM chunks_fts WHERE document_id = ?').run(docId);
+        this.db.prepare('DELETE FROM chunks WHERE document_id = ?').run(docId);
+        this.db.prepare('DELETE FROM documents WHERE id = ?').run(docId);
+    }
+
+    /**
+     * Drop the index rows of files that are no longer on disk: the chunks,
+     * their chunks_fts and chunks_vec rows, and the documents row. The scan
+     * only ever added, so a deleted file stayed searchable for good
+     * (specs/032, line 37).
+     *
+     * Only documents under `roots` are looked at, and the caller has already
+     * checked each root is there. So an unmounted data volume prunes nothing.
+     * RAG_PRUNE_MISSING=0 turns the pruning off; the value is read per call.
+     *
+     * @param {string[]} roots directories that exist right now
+     * @returns {number} documents removed
+     */
+    pruneMissingDocuments(roots) {
+        if (String(process.env.RAG_PRUNE_MISSING ?? '').trim() === '0') return 0;
+
+        const dirs = (Array.isArray(roots) ? roots : [roots])
+            .filter(Boolean)
+            .map(dir => path.resolve(dir))
+            .filter(dir => fs.existsSync(dir));
+        if (dirs.length === 0) return 0;
+
+        const under = (file) => dirs.some(dir => file === dir || file.startsWith(dir + path.sep));
+        const rows = this.db.prepare('SELECT id, filepath, filename FROM documents').all();
+
+        let removed = 0;
+        for (const row of rows) {
+            if (!row.filepath) continue;
+            const file = path.resolve(row.filepath);
+            if (!under(file)) continue;
+            if (fs.existsSync(file)) continue;
+            console.log(`[RAG] Pruning ${row.filename}: the file is gone.`);
+            this._deleteDocumentById(row.id);
+            removed++;
+        }
+        return removed;
     }
 
     listDocuments(vaultId) {
@@ -842,7 +885,8 @@ class RagService {
                     }
                 }
             }
-            console.log(`[RAG] Scan complete. ${processed} files checked.`);
+            const pruned = this.pruneMissingDocuments([vaultsDir]);
+            console.log(`[RAG] Scan complete. ${processed} files checked, ${pruned} deleted files dropped from the index.`);
 
             if (this.agent && this.agent.interface && this.agent.interface.broadcast) {
                 const stats = this.getStats();
@@ -889,7 +933,8 @@ class RagService {
             }
         }
 
-        console.log(`[RAG] Journal scan complete. ${ingested} ingested, ${skipped} skipped (too short).`);
+        const pruned = this.pruneMissingDocuments([journalDir]);
+        console.log(`[RAG] Journal scan complete. ${ingested} ingested, ${skipped} skipped (too short), ${pruned} deleted days dropped from the index.`);
     }
 
     async search(query, vaultId = null, limit = 5, minScore = 0.3) {
