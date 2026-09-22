@@ -565,15 +565,16 @@ function createInternalRouter(agent) {
         try {
             const { id, title, reuseEmpty } = req.body;
             if (reuseEmpty) {
+                // getLatestEmptySession already limits this to web sessions.
+                // The id check stays as a second gate: a chat from another
+                // interface must never be handed to the web.
                 const existing = agent.db.getLatestEmptySession();
-                // Only reuse if it's NOT a WhatsApp session (no @ symbol or encoded %40)
-                // This ensures we get a clean UUID session for the web
                 if (existing && !existing.id.includes('@') && !existing.id.includes('%40')) {
                     console.log(`[Agent] Reusing empty session ${existing.id}`);
                     return res.json(existing);
                 }
             }
-            const session = agent.db.createSession({ id, title });
+            const session = agent.db.createSession({ id, title, source: 'web' });
             res.json(session);
         } catch (e) { res.status(500).json({ error: e.message }); }
     });

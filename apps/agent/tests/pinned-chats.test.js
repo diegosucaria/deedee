@@ -1,13 +1,12 @@
 const { describe, expect, test, beforeEach, afterEach } = require('@jest/globals');
 const { AgentDB } = require('../src/db.js');
 const fs = require('fs');
-const os = require('os');
 const path = require('path');
-const Database = require('better-sqlite3');
-
+const os = require('os');
 
 describe('Pinned Chats Feature', () => {
     let db;
+    let testDir;
 
     beforeEach(() => {
         // Mock DATA_DIR
@@ -30,31 +29,9 @@ describe('Pinned Chats Feature', () => {
     });
 
     afterEach(() => {
-        // Close the database connection after each test
-        if (db) {
-            db.close();
-        }
-        // Remove the test directory after each test
-        if (fs.existsSync(testDir)) {
-            fs.rmSync(testDir, { recursive: true, force: true });
-        }
+        if (db) db.close();
+        fs.rmSync(testDir, { recursive: true, force: true });
     });
-
-    // afterAll is not strictly needed if afterEach cleans up,
-    // but it's good practice for final cleanup or if afterEach fails.
-    // However, since db is re-instantiated in beforeEach and closed in afterEach,
-    // an afterAll for db.close() is redundant here.
-    // The original instruction implied adding an afterAll to close db,
-    // but given the beforeEach/afterEach structure, closing in afterEach is more appropriate.
-    // If we were to add an afterAll, it would look like this:
-    /*
-    afterAll(() => {
-        // Ensure any lingering DB connections are closed, though afterEach should handle it.
-        // And ensure the directory is removed one last time.
-        if (db) db.close(); // This 'db' might be the last one from the last test.
-        if (fs.existsSync(testDir)) fs.rmSync(testDir, { recursive: true, force: true });
-    });
-    */
 
     test('should assist updateSession with isPinned', () => {
         const id = 'chat-1';
@@ -84,10 +61,14 @@ describe('Pinned Chats Feature', () => {
         db.createSession({ id: id2, title: 'Pinned 1' });
         db.createSession({ id: id3, title: 'Normal 2' });
 
-        // Manually space out updated_at to ensure deterministic sort if seconds are same
-        db.db.prepare("UPDATE chat_sessions SET updated_at = datetime('now', '-10 minutes') WHERE id = ?").run(id1);
-        db.db.prepare("UPDATE chat_sessions SET updated_at = datetime('now', '-5 minutes') WHERE id = ?").run(id2);
-        db.db.prepare("UPDATE chat_sessions SET updated_at = datetime('now') WHERE id = ?").run(id3);
+        // Space out updated_at so the sort is deterministic. ISO, the format
+        // the code writes: SQLite compares these as text, and 'now' in the
+        // other format sorts apart from an ISO date of the same second.
+        const minutesAgo = (m) => new Date(Date.now() - m * 60000).toISOString();
+        const setDate = db.db.prepare('UPDATE chat_sessions SET updated_at = ? WHERE id = ?');
+        setDate.run(minutesAgo(10), id1);
+        setDate.run(minutesAgo(5), id2);
+        setDate.run(minutesAgo(1), id3);
 
         // Now Pin id2. This also updates its updated_at to NOW in the code usually.
         // updateSession sets updated_at = CURRENT_TIMESTAMP.
