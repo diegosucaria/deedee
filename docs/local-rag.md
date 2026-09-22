@@ -53,7 +53,11 @@ To improve accuracy, we specify the `taskType` when calling the API:
 
 ## When an embedding fails
 
-`ingestDocument` writes the document's row before it embeds the chunks. Until 2026-09-22 the row carried the file's hash from the start, so a file whose embedding failed (a network error, a rate limit, a PDF that would not parse) looked indexed to the next scan and never got a vector. A failed pass now clears the hash (`rag-service.js`, `_recordOutcome`), and the next nightly scan indexes the file again. On a retry the old chunks stay until every new one has embedded, the way a model change re-embeds (`_reembedDocument`), so a bad night never empties a document that was searchable the night before. After three failed passes in a row (`failed_attempts` on the row) the scan stops trying and the owner gets one notification (`rag_ingest_failed`); `reindexEmbeddings` still forces a full pass.
+`ingestDocument` writes the document's row before it embeds the chunks. Until 2026-09-22 the row carried the file's hash from the start. So a file whose embedding failed (a network error, a rate limit, a PDF that would not parse) looked indexed to the next scan, and it never got a vector.
+
+A failed pass now clears the hash (`rag-service.js`, `_recordOutcome`), and the next nightly scan indexes the file again. On a retry the old chunks stay until every new one has embedded, the way a model change re-embeds (`_reembedDocument`). A bad night never empties a document that was searchable the night before.
+
+After three failed passes in a row (`failed_attempts` on the row) the scan stops trying and the owner gets a notification (`rag_ingest_failed`). The row keeps the file's hash, and search keeps whatever the file had from its last good pass. The counter goes back to zero on a complete pass, including one from `reindexEmbeddings`, and a changed file starts its own run of tries. `RAG_MAX_INDEX_ATTEMPTS` sets the number; `0` means never stop trying.
 
 A vault name must hold at least one letter or digit. A name of only dots or symbols used to sanitise to an empty string, and `deleteVault` on it would have removed the whole vaults folder (`vault-manager.js`, `sanitizeTopic`).
 

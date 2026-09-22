@@ -118,6 +118,48 @@ describe('a failed embedding is not permanent', () => {
         expect(agent.notifications.create).toHaveBeenCalledTimes(1);
     });
 
+    test('a full pass from reindexEmbeddings ends the run of failed nights: the counter goes back to zero', async () => {
+        const rag = open();
+        for (let i = 0; i < 3; i++) await pass(rag, 'fail-all');
+        expect(docRow(rag).failed_attempts).toBe(3);
+        // reindexEmbeddings re-embeds each document straight through _reembedDocument.
+        mode = 'ok'; calls = 0;
+        const { id } = rag.db.prepare('SELECT id FROM documents WHERE filepath = ?').get(file);
+        await rag._reembedDocument({ id, filepath: file });
+        expect(docRow(rag)).toEqual({ hash: expect.any(String), failed_attempts: 0 });
+        expect(chunksOf(rag)).toBeGreaterThan(1);
+    });
+
+    test('a changed file starts its own run of tries, and a second cap is not silent', async () => {
+        const rag = open();
+        for (let i = 0; i < 3; i++) await pass(rag, 'fail-all');
+        expect(agent.notifications.create).toHaveBeenCalledTimes(1);
+        // The owner replaces the file. One bad night must not cap it again in silence.
+        fs.writeFileSync(file, 'A new version of the document, long enough to embed in several chunks. '.repeat(160));
+        await pass(rag, 'fail-all');
+        expect(docRow(rag)).toEqual({ hash: null, failed_attempts: 1 });
+        expect(agent.notifications.create).toHaveBeenCalledTimes(1);
+        await pass(rag, 'fail-all');
+        await pass(rag, 'fail-all');
+        expect(docRow(rag).failed_attempts).toBe(3);
+        expect(agent.notifications.create).toHaveBeenCalledTimes(2);
+        fs.writeFileSync(file, 'A document about generic topics, long enough to embed in several chunks. '.repeat(160));
+    });
+
+    test('RAG_MAX_INDEX_ATTEMPTS=0 never stops trying', async () => {
+        process.env.RAG_MAX_INDEX_ATTEMPTS = '0';
+        try {
+            const rag = open();
+            for (let i = 0; i < 5; i++) await pass(rag, 'fail-all');
+            expect(docRow(rag)).toEqual({ hash: null, failed_attempts: 5 });
+            expect(agent.notifications.create).not.toHaveBeenCalled();
+            await pass(rag, 'ok');
+            expect(docRow(rag).failed_attempts).toBe(0);
+        } finally {
+            delete process.env.RAG_MAX_INDEX_ATTEMPTS;
+        }
+    });
+
     test('a file that was indexed is still skipped on the next scan', async () => {
         const rag = open();
         await pass(rag, 'ok');

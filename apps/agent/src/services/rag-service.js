@@ -38,8 +38,14 @@ function resolveDataDir() {
     return path.join(process.cwd(), 'data');
 }
 
-// Failed indexing passes in a row before the nightly scan stops retrying a document.
-const MAX_INDEX_ATTEMPTS = 3;
+// Failed indexing passes in a row before the nightly scan stops retrying a
+// document. Read on every call; RAG_MAX_INDEX_ATTEMPTS=0 means never stop.
+function maxIndexAttempts() {
+    const raw = String(process.env.RAG_MAX_INDEX_ATTEMPTS ?? '').trim();
+    if (!raw) return 3;
+    const n = Number(raw);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 3;
+}
 
 class RagService {
     constructor(agent) {
@@ -402,7 +408,8 @@ class RagService {
         const keepNew = result.failed === 0;
         this._swapChunks(doc.id, oldChunkIds, oldFtsRowids, keepNew);
         if (keepNew) {
-            this.db.prepare('UPDATE documents SET hash = ?, indexed_at = ? WHERE id = ?').run(hash, new Date().toISOString(), doc.id);
+            // A complete set of new chunks ends any run of failed nights.
+            this.db.prepare('UPDATE documents SET hash = ?, indexed_at = ?, failed_attempts = 0 WHERE id = ?').run(hash, new Date().toISOString(), doc.id);
         }
         return { failed: result.failed };
     }
@@ -516,6 +523,10 @@ class RagService {
             if (existing.vault_id !== vaultId) {
                 this.db.prepare('UPDATE documents SET vault_id = ? WHERE id = ?').run(vaultId, existing.id);
             }
+            // A changed file gets its own run of tries, whatever the old one did.
+            if (existing.hash && existing.hash !== hash && existing.failed_attempts) {
+                this.db.prepare('UPDATE documents SET failed_attempts = 0 WHERE id = ?').run(existing.id);
+            }
             return this._recordOutcome(existing.id, filename, hash, () => this._reembedDocument({ id: existing.id, filepath }));
         }
 
@@ -531,9 +542,9 @@ class RagService {
      * done: the next scan skipped the file for good, with no vector. A failed
      * pass (a throw, or chunks that still failed after their retries) now
      * clears the hash, and the next scan indexes the file again. After
-     * MAX_INDEX_ATTEMPTS failed passes in a row the hash is kept, so the scan
+     * maxIndexAttempts() failed passes in a row the hash is kept, so the scan
      * stops trying, and the owner hears once; reindexEmbeddings still forces
-     * a full pass.
+     * a full pass, and a changed file starts its own run of tries.
      * @returns {Promise<{failed:number}>}
      */
     async _recordOutcome(docId, filename, hash, run) {
@@ -555,23 +566,23 @@ class RagService {
     _noteFailedPass(docId, filename, hash, why) {
         const row = this.db.prepare('SELECT failed_attempts FROM documents WHERE id = ?').get(docId);
         const attempts = (row?.failed_attempts || 0) + 1;
-        if (attempts >= MAX_INDEX_ATTEMPTS) {
-            // Give up: keep the file's hash, so the nightly scan skips it, and say so once.
+        const cap = maxIndexAttempts();
+        if (cap > 0 && attempts >= cap) {
+            // Give up: keep the file's hash, so the nightly scan skips it, and
+            // say so. The chunks it has, if any, are from the last good pass.
             this.db.prepare('UPDATE documents SET hash = ?, failed_attempts = ? WHERE id = ?').run(hash, attempts, docId);
-            console.error(`[RAG] ${filename}: indexing failed ${attempts} times in a row (${why}). Giving up until reindexEmbeddings runs.`);
-            if (attempts === MAX_INDEX_ATTEMPTS) {
-                this._notify({
-                    type: 'rag_ingest_failed',
-                    severity: 'warning',
-                    title: `A document could not be indexed: ${filename}`,
-                    message: `Indexing failed ${attempts} times in a row (${why}). The nightly scan will not try again; run reindexEmbeddings once the cause is fixed.`,
-                    metadata: { filename, attempts, link: '/system' }
-                });
-            }
+            console.error(`[RAG] ${filename}: indexing failed ${attempts} times in a row (${why}). Giving up until reindexEmbeddings runs or the file changes.`);
+            this._notify({
+                type: 'rag_ingest_failed',
+                severity: 'warning',
+                title: `A document could not be indexed: ${filename}`,
+                message: `Indexing failed ${attempts} times in a row (${why}). The nightly scan will not try again until the file changes; run reindexEmbeddings once the cause is fixed. Search keeps whatever this file had from its last good pass.`,
+                metadata: { filename, attempts, link: '/system' }
+            });
             return;
         }
         this.db.prepare('UPDATE documents SET hash = NULL, failed_attempts = ? WHERE id = ?').run(attempts, docId);
-        console.warn(`[RAG] ${filename}: ${why}; it will be indexed again on the next scan (attempt ${attempts} of ${MAX_INDEX_ATTEMPTS}).`);
+        console.warn(`[RAG] ${filename}: ${why}; it will be indexed again on the next scan (attempt ${attempts}${cap > 0 ? ` of ${cap}` : ''}).`);
     }
 
     /**
