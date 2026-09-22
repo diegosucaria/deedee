@@ -31,6 +31,7 @@ Deedee is a personal AI agent designed to run on a Raspberry Pi. It uses a micro
     - **Session Management**:
         - **Persistent Threads**: Manages multiple `chat_sessions` with auto-titling.
         - **Referential Integrity**: Ensures every message belongs to a valid session (`ensureSession`).
+        - **Ownership**: `chat_sessions.source` names the interface a chat belongs to; the dashboard lists web chats only (see [memory.md](memory.md)).
     - **Safety Guard**: Verifies sensitive tool usage (e.g., shell commands) and blocks ambiguous dictation commands (`iphone` source).
     - **Hybrid Search Strategy**:
         - **Native Grounding**: Uses Gemini's built-in Google Search grounding for text-only queries (Speed/Accuracy).

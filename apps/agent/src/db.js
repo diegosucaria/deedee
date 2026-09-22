@@ -80,6 +80,42 @@ const SERVICE_CATEGORIES = {
   guardian_dry_run: 'Guardian',
 };
 
+// Which interface owns a chat session. The web sidebar lists web chats only,
+// so a wrong answer here either hides a real chat or shows a chat from
+// WhatsApp, Telegram or Slack. Ids are not enough: a Slack channel id and a
+// web session id can both be plain text, so we read the first message too.
+function normalizeSessionSource(source) {
+  if (!source) return null;
+  const s = String(source).toLowerCase();
+  if (s.startsWith('whatsapp')) return 'whatsapp';
+  if (s.startsWith('telegram')) return 'telegram';
+  if (s.startsWith('slack')) return 'slack';
+  if (s === 'scheduler' || s === 'system') return 'scheduler';
+  if (s === 'subagent') return 'subagent';
+  if (s === 'web') return 'web';
+  return s;
+}
+
+// Only the id shapes that name their owner beyond doubt. A Slack channel id
+// ('C0EXAMPLE1') and a web UUID both return null: the caller asks the messages.
+function sessionSourceFromId(id) {
+  if (!id) return null;
+  if (id.includes('@') || id.includes('%40')) return 'whatsapp';
+  if (id.startsWith('scheduled_') || id.startsWith('system_')) return 'scheduler';
+  if (id.startsWith('subagent-')) return 'subagent';
+  if (id.startsWith('api_')) return 'api';
+  if (/^\d+$/.test(id)) return 'telegram';
+  return null;
+}
+
+// id wins when it names an owner; then the message source; then the old shape
+// rule, so a legacy row stays as visible as it was before the source column.
+function resolveSessionSource(id, messageSource) {
+  return sessionSourceFromId(id)
+    || normalizeSessionSource(messageSource)
+    || (id && id.includes('-') ? 'web' : 'unknown');
+}
+
 // Tags written on the main agent chat path (see services/usage-attribution.js).
 // They say which class of turn a call belongs to, not which product surface it
 // came from, so the cost breakdown classifies them by chat_id like untagged rows.
@@ -363,6 +399,7 @@ class AgentDB {
         title TEXT,
         is_archived INTEGER DEFAULT 0,
         is_pinned INTEGER DEFAULT 0,
+        source TEXT,
         created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
         updated_at DATETIME DEFAULT CURRENT_TIMESTAMP
       );
@@ -782,6 +819,38 @@ class AgentDB {
     try {
       this.db.exec("ALTER TABLE chat_sessions ADD COLUMN is_pinned INTEGER DEFAULT 0");
     } catch (err) { }
+
+    // Migration: Add source to chat_sessions. The web list used to guess the
+    // owner from the id shape, which hid web chats that had been handed a
+    // Slack channel id.
+    try {
+      this.db.exec("ALTER TABLE chat_sessions ADD COLUMN source TEXT");
+    } catch (err) { }
+    try {
+      this.backfillSessionSources();
+    } catch (err) {
+      console.warn('[DB] Session source backfill failed (non-fatal):', err.message);
+    }
+
+    // Migration: one date format for chat_sessions. Rows written by
+    // CURRENT_TIMESTAMP read '2026-09-22 17:06:14'; rows written in code read
+    // '2026-09-22T17:06:14.000Z'. Both are UTC, but SQLite compares them as
+    // text, so the two forms sorted apart on the same day and the list order
+    // was wrong. Both are UTC, so appending the T and the Z keeps the meaning.
+    try {
+      const fixed = this.db.prepare(`
+        UPDATE chat_sessions
+        SET created_at = replace(created_at, ' ', 'T') || 'Z'
+        WHERE created_at LIKE '____-__-__ __:__:__'
+      `).run().changes + this.db.prepare(`
+        UPDATE chat_sessions
+        SET updated_at = replace(updated_at, ' ', 'T') || 'Z'
+        WHERE updated_at LIKE '____-__-__ __:__:__'
+      `).run().changes;
+      if (fixed > 0) console.log(`[DB] Normalised ${fixed} chat session dates to ISO.`);
+    } catch (err) {
+      console.warn('[DB] Session date normalisation failed (non-fatal):', err.message);
+    }
 
     // Migration: Add identifiers to people
     try {
@@ -1381,15 +1450,16 @@ class AgentDB {
     }
   }
 
-  createSession({ id, title }) {
+  createSession({ id, title, source }) {
     this.deleteEmptySessions(); // Cleanup abandoned sessions
     const sessionId = id || crypto.randomUUID();
     const now = new Date().toISOString();
+    const owner = resolveSessionSource(sessionId, source || 'web');
     this.db.prepare(`
-      INSERT INTO chat_sessions (id, title, created_at, updated_at)
-      VALUES (?, ?, ?, ?)
-    `).run(sessionId, title || 'New Chat', now, now);
-    return { id: sessionId, title, createdAt: now };
+      INSERT INTO chat_sessions (id, title, source, created_at, updated_at)
+      VALUES (?, ?, ?, ?, ?)
+    `).run(sessionId, title || 'New Chat', owner, now, now);
+    return { id: sessionId, title, source: owner, createdAt: now };
   }
 
   ensureSession(chatId, source = 'web') {
@@ -1400,10 +1470,31 @@ class AgentDB {
       if (source === 'telegram' || source === 'whatsapp') {
         title = `${source.charAt(0).toUpperCase() + source.slice(1)} Chat`;
       }
-      session = this.createSession({ id: chatId, title });
+      session = this.createSession({ id: chatId, title, source });
       // console.log(`[DB] Auto-created session ${chatId} (${title})`);
     }
     return session;
+  }
+
+  // Fill the source column for rows written before it existed. The first
+  // message names the owner; an empty row falls back to its id shape.
+  backfillSessionSources() {
+    const rows = this.db.prepare(`
+      SELECT cs.id,
+        (SELECT m.source FROM messages m WHERE m.chat_id = cs.id ORDER BY m.timestamp ASC LIMIT 1) AS first_source
+      FROM chat_sessions cs
+      WHERE cs.source IS NULL
+    `).all();
+    if (rows.length === 0) return 0;
+
+    const stmt = this.db.prepare('UPDATE chat_sessions SET source = ? WHERE id = ?');
+    this.db.transaction(() => {
+      for (const row of rows) {
+        stmt.run(resolveSessionSource(row.id, row.first_source), row.id);
+      }
+    })();
+    console.log(`[DB] Backfilled source for ${rows.length} chat sessions.`);
+    return rows.length;
   }
 
   getSession(id) {
@@ -1411,6 +1502,13 @@ class AgentDB {
   }
 
   getSessions({ limit = 50, offset = 0 } = {}) {
+    // The sidebar lists web chats. We read the source column, which is set
+    // when the session is created. SESSION_SOURCE_FILTER=0 falls back to the
+    // old rule, which read the id shape and so lost a web chat that had been
+    // handed a Slack channel id.
+    const owner = process.env.SESSION_SOURCE_FILTER === '0'
+      ? `AND id LIKE '%-%' AND id NOT LIKE '%@%'`
+      : `AND source = 'web'`;
     return this.db.prepare(`
       SELECT * FROM chat_sessions 
       WHERE is_archived = 0
@@ -1418,19 +1516,22 @@ class AgentDB {
       AND id NOT LIKE 'api_city_image_%'
       AND id NOT LIKE 'sys_%' -- Exclude system internal sessions
       AND id NOT LIKE 'subagent-%' -- Exclude sub-agent sessions
-      AND id LIKE '%-%' -- Keep only UUIDs (Web sessions), filters out numeric Telegram IDs
-      AND id NOT LIKE '%@%' -- Filter out WhatsApp IDs
+      ${owner}
       ORDER BY is_pinned DESC, updated_at DESC 
       LIMIT ? OFFSET ?
     `).all(limit, offset);
   }
 
   getLatestEmptySession() {
-    // Find latest session with title 'New Chat'
+    // Find latest empty web session with title 'New Chat'. Without the source
+    // check, a Slack channel that Deedee had only listened to counted as free,
+    // so a new web chat was written into that channel's history and then
+    // dropped out of the sidebar.
     const stmt = this.db.prepare(`
        SELECT * FROM chat_sessions 
        WHERE title = 'New Chat' 
        AND is_archived = 0
+       AND source = 'web'
        ORDER BY created_at DESC 
        LIMIT 1
     `);
@@ -1447,8 +1548,11 @@ class AgentDB {
   }
 
   updateSession(id, { title, isArchived, isPinned }) {
-    const updates = ['updated_at = CURRENT_TIMESTAMP'];
-    const args = [];
+    // ISO, like created_at and like the touch below. CURRENT_TIMESTAMP writes
+    // '2026-09-22 17:06:14', which sorts below the ISO form of the same second,
+    // so a renamed chat used to fall behind untouched ones.
+    const updates = ['updated_at = ?'];
+    const args = [new Date().toISOString()];
 
     if (title !== undefined) {
       updates.push('title = ?');
@@ -1552,7 +1656,7 @@ class AgentDB {
     // 1. Create New Session
     const newSessionId = crypto.randomUUID();
     const newTitle = `${sourceSession.title} (Fork)`;
-    this.createSession({ id: newSessionId, title: newTitle });
+    this.createSession({ id: newSessionId, title: newTitle, source: 'web' }); // a fork is opened from the dashboard
 
     // 2. Copy Messages (Role: User/Assistant/System) up to targetMsg
     // Sort ASC to insertion order
@@ -1583,6 +1687,18 @@ class AgentDB {
     return newSessionId;
   }
 
+  // A new message makes the chat recent. Without this the sidebar sorted and
+  // grouped by the session row alone, so a chat you had just written in stayed
+  // under 'Older'. Never moves the date backwards, so a copied or imported
+  // message cannot pull a live chat back in time.
+  touchSession(chatId, timestamp) {
+    if (!chatId) return;
+    this.db.prepare(`
+      UPDATE chat_sessions SET updated_at = ?
+      WHERE id = ? AND (updated_at IS NULL OR updated_at < ?)
+    `).run(timestamp, chatId, timestamp);
+  }
+
   saveMessage(msg) {
     const stmt = this.db.prepare(`
       INSERT INTO messages (id, role, content, parts, source, chat_id, cost, token_count, timestamp, metadata)
@@ -1605,6 +1721,7 @@ class AgentDB {
       ts = msg.timestamp;
     }
     stmt.run(id, msg.role, msg.content, partsStr, msg.source, targetChatId, msg.cost || 0, msg.tokenCount || 0, ts, metaStr);
+    this.touchSession(targetChatId, ts);
   }
 
   // Insert variant for the proactive-mirror wrapper. Idempotent on id so callers
@@ -1628,6 +1745,7 @@ class AgentDB {
       ts = msg.timestamp;
     }
     const result = stmt.run(id, msg.role, msg.content, partsStr, msg.source, targetChatId, msg.cost || 0, msg.tokenCount || 0, ts, metaStr);
+    if (result.changes > 0) this.touchSession(targetChatId, ts);
     return { inserted: result.changes > 0, id };
   }
 
