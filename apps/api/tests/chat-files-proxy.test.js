@@ -14,10 +14,10 @@ describe('the chat file upload proxy carries the internal token', () => {
     beforeAll(async () => {
         seen = [];
         agentStub = http.createServer((req, res) => {
-            let bytes = 0;
-            req.on('data', (d) => { bytes += d.length; });
+            const chunks = [];
+            req.on('data', (d) => chunks.push(d));
             req.on('end', () => {
-                seen.push({ url: req.url, authorization: req.headers.authorization, contentType: req.headers['content-type'], bytes });
+                seen.push({ url: req.url, authorization: req.headers.authorization, contentType: req.headers['content-type'], body: Buffer.concat(chunks).toString('utf8') });
                 res.writeHead(200, { 'Content-Type': 'application/json' });
                 res.end(JSON.stringify({ ok: true }));
             });
@@ -47,6 +47,8 @@ describe('the chat file upload proxy carries the internal token', () => {
         expect(seen[0].url).toBe('/v1/chat/chat-1/files');
         expect(seen[0].authorization).toBe('Bearer internal-token-for-the-agent');
         expect(seen[0].contentType).toMatch(/^multipart\/form-data; boundary=/);
-        expect(seen[0].bytes).toBeGreaterThan(5);
+        // The body reached the agent whole: the file's name and its bytes.
+        expect(seen[0].body).toContain('filename="note.txt"');
+        expect(seen[0].body).toContain('hello');
     });
 });

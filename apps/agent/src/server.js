@@ -9,9 +9,10 @@ const interfacesUrl = process.env.INTERFACES_URL || 'http://localhost:5000';
 const googleApiKey = process.env.GOOGLE_API_KEY;
 
 // Every route but /health needs DEEDEE_INTERNAL_TOKEN. The check sits above
-// the body parser, so a caller with no token never costs a 50 MB parse. The gateway and the
-// interfaces service send it on every call to the agent (their axios
-// interceptors), and the web app sends it on its own calls to /internal/*.
+// the body parser, so a caller with no token never costs a 50 MB parse. The
+// gateway and the interfaces service send the token on every call to the
+// agent (their axios interceptors); the web app sends it on its own calls to
+// /internal/*; the supervisor sends it on its deep check.
 // /status, /webhook, /chat, /live/* and /v1/* used to rely on the Docker
 // network being closed. The agent's own shell tool and the browser it
 // drives run inside that network, and a message posted to /chat counts as

@@ -334,8 +334,8 @@ text his word stops covering what goes out. Three things make that safe:
 - `POST /tools/execute` sits behind the internal token (`server.js`), as
   every agent route but `/health` does now. It was open to the whole Docker
   network, the agent's own shell included. The token lives in the gateway,
-  the interfaces service, the web app and the supervisor, never in the
-  browser or in a shell command's environment, and only his logged-in web
+  the interfaces service, the web app and the supervisor. It never reaches
+  the browser or a shell command's environment. Only his logged-in web
   session reaches the gateway's live routes.
 - The route marks a call as his only when a token was really checked
   (`req.internalAuth`). With the token unset (a dev setup) a call stays
