@@ -390,7 +390,7 @@ Output a concise list of rules for this specific relationship.
                         if (messages.length > 1) await new Promise(r => setTimeout(r, 800));
                     }
                 } catch (e) {
-                    failure = (e && e.message) || 'the send threw';
+                    failure = (e && e.message) || (typeof e === 'string' && e) || 'the send threw';
                     console.error('[Impersonation] Auto-send failed:', failure);
                 }
 
@@ -662,7 +662,7 @@ ${transcript}
         // into style learning as a "correction".
         return this.db.db.prepare(`
             SELECT * FROM autopilot_drafts
-            WHERE chat_id = ? AND status = 'pending' AND (source IS NULL OR source = 'autopilot')
+            WHERE chat_id = ? AND status IN ('pending', 'partially_sent') AND (source IS NULL OR source = 'autopilot')
             ORDER BY created_at DESC LIMIT 1
         `).get(chatId);
     }
@@ -681,7 +681,7 @@ ${transcript}
                     const channel = owner.channel === 'whatsapp' ? 'whatsapp:assistant' : owner.channel;
                     const out = await delivery.deliver('job_notification', channel, owner.target, { content: text, type: 'text' }, { origin: 'autopilot', dedupe: false });
                     // The ledger reports a note it could not take as a value, not a throw.
-                    if (out && out.delivered === false && !out.queued) console.warn(`[Impersonation] The owner's note was not delivered: ${out.error || 'unknown'}`);
+                    if (out && out.delivered === false && !out.queued && !out.inFlight) console.warn(`[Impersonation] The owner's note was not delivered: ${out.error || 'unknown'}`);
                     return;
                 }
             }

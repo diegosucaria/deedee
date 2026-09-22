@@ -81,15 +81,30 @@ describe('autonomous Autopilot and a refused send', () => {
     });
 
     test('a throw with no message, or a bare string, is still a refused send', async () => {
-        for (const thrown of [new Error(''), 'boom']) {
+        for (const [thrown, said] of [[new Error(''), /the send threw/], ['boom', /boom/]]) {
             agent.interface.send.mockRejectedValue(thrown);
             deliver.mockClear();
             buffered();
             await service.processBufferedMessage(CHAT, CONTACT);
             expect(draft().status).toBe('pending');
             expect(deliver).toHaveBeenCalledTimes(1);
-            expect(deliver.mock.calls[0][3].content).toMatch(/the send threw|boom/);
+            expect(deliver.mock.calls[0][3].content).toMatch(said);
         }
+    });
+
+    test('a partly sent draft is still the pending draft of that chat, so a reply typed by hand retires it', async () => {
+        agent.interface.send.mockResolvedValueOnce(true).mockResolvedValueOnce(false);
+        buffered();
+        await service.processBufferedMessage(CHAT, CONTACT);
+        expect(service.getPendingDraft(CHAT)).toMatchObject({ status: 'partially_sent', sent_count: 1 });
+    });
+
+    test('a note the ledger already holds in flight is not a warning', async () => {
+        agent.interface.send.mockResolvedValue(false);
+        deliver.mockResolvedValue({ delivered: false, inFlight: true });
+        buffered();
+        await service.processBufferedMessage(CHAT, CONTACT);
+        expect(console.warn).not.toHaveBeenCalledWith(expect.stringMatching(/note was not delivered/));
     });
 
     test('a note the ledger could not take is logged, not lost in silence', async () => {
