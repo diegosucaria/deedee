@@ -345,6 +345,12 @@ describe('Message Watchers & Passive Mode', () => {
         await agent.processMessage(message, jest.fn());
         expect(spy).toHaveBeenLastCalledWith('100000000000002@lid', expect.anything(), '100000000000002');
 
+        // A group, or a chat shown by number, keeps the number.
+        await agent.processMessage({ ...message, id: 'msg_lid_6', metadata: { ...message.metadata, chatId: '120000000000000002@g.us', isGroup: true, groupName: 'Unknown Group' } }, jest.fn());
+        expect(spy).toHaveBeenLastCalledWith('120000000000000002@g.us', expect.anything(), '5490000000001');
+        await agent.processMessage({ ...message, id: 'msg_lid_7', metadata: { ...message.metadata, chatId: '5490000000001@s.whatsapp.net' } }, jest.fn());
+        expect(spy).toHaveBeenLastCalledWith('5490000000001@s.whatsapp.net', expect.anything(), '5490000000001');
+
         // Someone saved under the number wins.
         db.createPerson({ name: 'Bob', phone: '5490000000001', source: 'test' });
         await agent.processMessage({ ...message, id: 'msg_lid_5' }, jest.fn());

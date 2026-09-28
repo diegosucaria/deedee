@@ -1655,10 +1655,12 @@ class Agent {
 
           // --- AUTOPILOT LOGIC (skip for fromMe — we don't want to draft replies to ourselves) ---
           if (!isFromMe) {
-            // A person saved under the WhatsApp ID alone is still found by its
-            // digits, as before the interfaces knew the number.
-            const lidDigits = String(message.metadata?.lid || '').split('@')[0];
-            const autopilotId = lidDigits && !this.db.getPerson(contactString) && this.db.getPerson(lidDigits)
+            // In a one-to-one chat shown by a WhatsApp ID, a person saved under that
+            // ID alone is still found by its digits, as before the interfaces knew
+            // the number. Groups and chats shown by number keep the number.
+            const lid = message.metadata?.lid;
+            const lidDigits = lid && !groupName && message.metadata?.chatId === lid ? lid.split('@')[0] : null;
+            const autopilotId = lidDigits && lidDigits !== contactString && !this.db.getPerson(contactString) && this.db.getPerson(lidDigits)
               ? lidDigits : contactString;
             // handleMessage is async and not awaited: catch its rejection on the
             // promise. A try/catch here only sees synchronous throws, so a

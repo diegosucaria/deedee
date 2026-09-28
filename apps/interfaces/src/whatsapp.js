@@ -215,6 +215,13 @@ class SQLiteStore {
             );
             CREATE INDEX IF NOT EXISTS idx_messages_jid_ts ON messages(remote_jid, timestamp DESC);
             CREATE INDEX IF NOT EXISTS idx_contacts_lid ON contacts(lid);
+            -- WhatsApp ID -> phone links read from message keys (see linkLid).
+            -- Kept apart from contacts, so a contact sync never mixes with them.
+            CREATE TABLE IF NOT EXISTS lid_links (
+                lid TEXT PRIMARY KEY,
+                phone_jid TEXT NOT NULL UNIQUE,
+                created_at INTEGER
+            );
         `);
     }
 
@@ -378,33 +385,68 @@ class SQLiteStore {
         const digits = identifier.replace(/[^0-9]/g, '');
         const isLid = identifier.includes('@lid');
         const isPhoneJid = identifier.includes('@s.whatsapp.net');
+        // Typed digits and phone JIDs may be a phone number; group ids and the like never are.
+        const maybePhone = isPhoneJid || !identifier.includes('@');
+        const byId = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE id = ?');
+        const byLid = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE lid = ?');
 
         try {
             let contact = null;
+            let knownLid = null;
 
             // Strategy 1: Direct lookup by phone JID
             if (isPhoneJid) {
-                contact = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE id = ?').get(identifier);
+                contact = byId.get(identifier);
             }
 
             // Strategy 2: Direct lookup by LID
             if (!contact && (isLid || digits.length > 14)) {
                 const lid = isLid ? identifier : `${digits}@lid`;
-                contact = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE lid = ?').get(lid);
+                contact = byLid.get(lid);
             }
 
             // Strategy 3: Raw digits — try as phone JID
             if (!contact && !isLid && !isPhoneJid && digits.length >= 7) {
                 const phoneJid = `${digits}@s.whatsapp.net`;
-                contact = this.db.prepare('SELECT id, name, notify, lid FROM contacts WHERE id = ?').get(phoneJid);
+                contact = byId.get(phoneJid);
+            }
+
+            // Strategy 3b: the digits of a WhatsApp ID we have seen, typed or turned
+            // into "<digits>@s.whatsapp.net", are that ID and never a phone number.
+            if (!contact && maybePhone && digits.length >= 7) {
+                const asLid = `${digits}@lid`;
+                contact = byLid.get(asLid);
+                if (!contact && (byId.get(asLid) || this._keyLink('lid', asLid)
+                    || this.db.prepare('SELECT 1 FROM messages WHERE remote_jid = ? LIMIT 1').get(asLid))) {
+                    knownLid = asLid;
+                }
+            }
+
+            // Links read from message keys (see linkLid).
+            if (contact && !contact.lid) {
+                const link = this._keyLink('phone', contact.id);
+                if (link) contact = { ...contact, lid: link.lid };
+            }
+            if (!contact && (isLid || maybePhone)) {
+                const lidJid = isLid ? identifier : (knownLid || (digits.length > 14 ? `${digits}@lid` : null));
+                const phoneJid = !isLid && !knownLid && digits.length >= 7 ? (isPhoneJid ? identifier : `${digits}@s.whatsapp.net`) : null;
+                const link = (lidJid && this._keyLink('lid', lidJid)) || (phoneJid && this._keyLink('phone', phoneJid));
+                if (link) {
+                    const row = byId.get(link.phone_jid);
+                    contact = row ? { ...row, lid: row.lid || link.lid } : { id: link.phone_jid, name: null, notify: null, lid: link.lid };
+                }
             }
 
             // Strategy 4: Fuzzy suffix match (handles country code variations like 549 vs 54).
             // Typed numbers and phone JIDs only: the digits of a WhatsApp ID (LID) or a
             // group id have nothing to do with a phone number, so a match there finds a stranger.
-            if (!contact && guess && (isPhoneJid || !identifier.includes('@')) && digits.length >= 7) {
+            if (!contact && !knownLid && guess && maybePhone && digits.length >= 7) {
                 const suffix = digits.slice(-7);
                 contact = this.db.prepare("SELECT id, name, notify, lid FROM contacts WHERE id LIKE ?").get(`%${suffix}@s.whatsapp.net`);
+            }
+
+            if (!contact && knownLid) {
+                return { phoneJid: null, lid: knownLid, name: null, allJids: [knownLid] };
             }
 
             if (!contact) {
@@ -429,24 +471,29 @@ class SQLiteStore {
         }
     }
 
+    /** A link read from a message key, or null. WHATSAPP_LID_ALT=0 ignores them all. */
+    _keyLink(column, value) {
+        if (process.env.WHATSAPP_LID_ALT === '0') return null;
+        const sql = column === 'lid' ? 'SELECT lid, phone_jid FROM lid_links WHERE lid = ?' : 'SELECT lid, phone_jid FROM lid_links WHERE phone_jid = ?';
+        return this.db.prepare(sql).get(value) || null;
+    }
+
     /**
      * Records that a WhatsApp ID (LID) belongs to a phone number, so the
-     * resolver finds the contact by either one. A new row gets no name: chat
-     * lists show a named chat by name alone, and the model cannot read a chat
-     * by name. `lidFrom` in `data` marks the link, so it can be found and
-     * removed. A number that holds another WhatsApp ID keeps it.
+     * resolver finds the chat by either one. The link goes in lid_links, not
+     * in contacts: a contact sync never overwrites it, and the chat gets no
+     * name (chat lists show a named chat by name alone, and the model cannot
+     * read a chat by name). A number that already holds another WhatsApp ID,
+     * in contacts or in lid_links, keeps it.
      * @returns {boolean} true when the store links the two
      */
     linkLid(phoneJid, lid) {
         const row = this.db.prepare('SELECT lid FROM contacts WHERE id = ?').get(phoneJid);
         if (row && row.lid) return row.lid === lid;
-        if (row) {
-            this.db.prepare("UPDATE contacts SET lid = ?, data = json_set(COALESCE(data, '{}'), '$.lidFrom', 'message-key') WHERE id = ?")
-                .run(lid, phoneJid);
-            return true;
-        }
-        this.db.prepare('INSERT INTO contacts (id, lid, data) VALUES (?, ?, ?)')
-            .run(phoneJid, lid, JSON.stringify({ id: phoneJid, lid, lidFrom: 'message-key' }));
+        const link = this.db.prepare('SELECT lid FROM lid_links WHERE phone_jid = ?').get(phoneJid);
+        if (link) return link.lid === lid;
+        this.db.prepare('INSERT OR REPLACE INTO lid_links (lid, phone_jid, created_at) VALUES (?, ?, ?)')
+            .run(lid, phoneJid, Math.floor(Date.now() / 1000));
         return true;
     }
 
@@ -499,7 +546,8 @@ class SQLiteStore {
         const results = [];
 
         for (const r of rows) {
-            const identity = this.resolveIdentity(r.remote_jid);
+            // A chat's own address is exact: no suffix guess.
+            const identity = this.resolveIdentity(r.remote_jid, { guess: false });
             const canonicalJid = identity.phoneJid || r.remote_jid;
 
             if (seen.has(canonicalJid)) {
@@ -1157,7 +1205,8 @@ class WhatsAppService {
             };
             // The sender's WhatsApp ID too, so a watcher saved with it still fires.
             // Personal session only: the assistant session stays as it was.
-            const lid = this.sessionId === 'user' && !msg.key.fromMe ? senderLid(msg.key, isGroup) : null;
+            const lid = this.sessionId === 'user' && !msg.key.fromMe && process.env.WHATSAPP_LID_ALT !== '0'
+                ? senderLid(msg.key, isGroup) : null;
             if (lid) userMessage.metadata.lid = lid;
             if (forwarded) userMessage.metadata.untrustedTaint = ['a forwarded message (whatsapp)'];
 
@@ -1425,7 +1474,8 @@ class WhatsAppService {
      * on the owner's own message the key can describe him instead. When the
      * number already holds another WhatsApp ID, or the link cannot be saved,
      * the message keeps its ID digits, so the store and the agent agree.
-     * WHATSAPP_LID_ALT=0 turns this off; links saved before stay.
+     * WHATSAPP_LID_ALT=0 turns this off, and the resolver then ignores the
+     * links saved before.
      */
     _phoneFromKey(key) {
         if (this.sessionId !== 'user' || process.env.WHATSAPP_LID_ALT === '0' || key.fromMe) return null;

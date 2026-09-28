@@ -43,6 +43,24 @@ describe('Impersonation Service Unit', () => {
         expect(text).toBe('Tra nscript');
     });
 
+    // The status is looked up by the contact handleMessage got, which can be a
+    // WhatsApp ID's digits. A typing signal used to swap in the number.
+    test('a typing signal keeps the contact the autopilot status was looked up by', async () => {
+        jest.useFakeTimers();
+        try {
+            mockDb.getPerson.mockReturnValue({ id: 'p1', autopilot_status: 'draft' });
+            const spy = jest.spyOn(service, 'processBufferedMessage').mockResolvedValue();
+
+            await service.handleMessage('100000000000002@lid', { content: 'Hi', metadata: { phoneNumber: '5490000000001' } }, '100000000000002');
+            service.handlePresenceUpdate('100000000000002@lid', 'composing');
+            await jest.advanceTimersByTimeAsync(10000);
+
+            expect(spy).toHaveBeenCalledWith('100000000000002@lid', '100000000000002');
+        } finally {
+            jest.useRealTimers();
+        }
+    });
+
     test('should resolve sender name from DB', async () => {
         const phone = '1234567890';
         mockDb.getPerson.mockReturnValue({ name: 'Papi', id: 'uuid' });

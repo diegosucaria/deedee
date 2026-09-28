@@ -729,7 +729,25 @@ describe('a chat shown by WhatsApp ID (LID)', () => {
         await service('user').handleMessage(reminder({ remoteJid: LID, remoteJidAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid' }));
 
         expect(sent().metadata.phoneNumber).toBe('100000000000002');
+        expect(sent().metadata.lid).toBeUndefined();
         expect(store.resolveIdentity(LID).phoneJid).toBeNull();
+    });
+
+    test('WHATSAPP_LID_ALT=0 also ignores a link saved before', async () => {
+        await service('user').handleMessage(reminder({ remoteJid: LID, remoteJidAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid' }));
+        process.env.WHATSAPP_LID_ALT = '0';
+
+        await service('user').handleMessage(reminder({ remoteJid: LID, remoteJidAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid' }));
+
+        expect(sent().metadata.phoneNumber).toBe('100000000000002');
+    });
+
+    test('a link that cannot be saved leaves the message under its ID digits', async () => {
+        jest.spyOn(store, 'linkLid').mockImplementation(() => { throw new Error('disk I/O error'); });
+
+        await service('user').handleMessage(reminder({ remoteJid: LID, remoteJidAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid' }));
+
+        expect(sent().metadata.phoneNumber).toBe('100000000000002');
     });
 
     test("the owner's own message never saves a link: its key can describe him instead", async () => {
