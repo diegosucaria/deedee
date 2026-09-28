@@ -100,21 +100,38 @@ function fieldCount(field, lo, hi) {
     return Math.min(Math.max(count, 1), hi - lo + 1);
 }
 
-/** About how many times a week a schedule runs (Infinity when it cannot tell). */
-function runsPerWeek(cron) {
+// node-schedule's aliases, as cron-parser reads them.
+const ALIAS_FIELDS = { '@yearly': '0 0 1 1 *', '@monthly': '0 0 1 * *', '@weekly': '0 0 * * 0', '@daily': '0 0 * * *', '@hourly': '0 * * * *' };
+const CRON_NAMES = { sun: '0', mon: '1', tue: '2', wed: '3', thu: '4', fri: '5', sat: '6', jan: '1', feb: '2', mar: '3', apr: '4', may: '5', jun: '6', jul: '7', aug: '8', sep: '9', oct: '10', nov: '11', dec: '12' };
+
+/** The five fields of a schedule, day and month names as numbers, or null. */
+function cronFields(cron) {
     const spec = String(cron || '').trim();
-    const aliases = { '@hourly': 168, '@daily': 7, '@weekly': 1, '@monthly': 12 / 52, '@yearly': 1 / 52 };
-    if (aliases[spec] !== undefined) return aliases[spec];
-    let f = spec.split(/\s+/);
-    if (f.length === 6) f = f.slice(1);
-    if (f.length !== 5) return Infinity;
-    const perDay = fieldCount(f[0], 0, 59) * fieldCount(f[1], 0, 23);
-    const everyDom = f[2] === '*' || f[2] === '?';
-    const everyDow = f[4] === '*' || f[4] === '?';
-    const dom = fieldCount(f[2], 1, 31) * 7 / 30.44;
-    const dow = fieldCount(f[4], 0, 6);
-    const daysPerWeek = everyDom && everyDow ? 7 : everyDom ? dow : everyDow ? dom : Math.min(7, dow + dom);
-    return perDay * daysPerWeek * fieldCount(f[3], 1, 12) / 12;
+    let fields = (ALIAS_FIELDS[spec] || spec).split(/\s+/);
+    if (fields.length === 6) fields = fields.slice(1);
+    if (fields.length !== 5) return null;
+    return fields.map(f => f.toLowerCase().replace(/[a-z]{3}/g, name => CRON_NAMES[name] ?? name));
+}
+
+/**
+ * New times that run no more often than the old ones: the same days of the
+ * month and months, weekdays no more of them (a field with anything but
+ * digits, "*", ",", "-" and "/" stays as it was), and no more minutes times
+ * hours a day. Averages over a week or a year would let a schedule held to
+ * a few days look rare.
+ */
+function noMoreOften(oldCron, newCron) {
+    const a = cronFields(oldCron);
+    const b = cronFields(newCron);
+    if (!a || !b) return false;
+    if (a[2] !== b[2] || a[3] !== b[3]) return false;
+    const plain = (f) => /^[\d*,/-]+$/.test(f);
+    if (a[4] !== b[4]) {
+        if (!plain(a[4]) || !plain(b[4])) return false;
+        if (fieldCount(b[4], 0, 6) > fieldCount(a[4], 0, 6)) return false;
+    }
+    if (!plain(a[0]) || !plain(a[1]) || !plain(b[0]) || !plain(b[1])) return a[0] === b[0] && a[1] === b[1];
+    return fieldCount(b[0], 0, 59) * fieldCount(b[1], 0, 23) <= fieldCount(a[0], 0, 59) * fieldCount(a[1], 0, 23);
 }
 
 /**
@@ -126,8 +143,13 @@ async function ownChatRun(context, scheduler) {
     const message = context?.message || {};
     const meta = message.metadata || {};
     if (meta.jobRun || meta.isSubAgent || String(message.content || '').startsWith('SYSTEM_WATCHER_ALERT')) return false;
+    // A message that carries someone else's words (a forwarded one) is not his
+    // word, as for the owner's-consent rule (ApprovalService._ownerConsent).
+    if (Array.isArray(meta.untrustedTaint) && meta.untrustedTaint.length > 0) return false;
     const channel = String(message.source || '').split(':')[0];
     if (!['web', 'whatsapp', 'telegram'].includes(channel) || !meta.chatId) return false;
+    // A WhatsApp or Slack chat opened on the web holds a contact's words.
+    if (channel === 'web' && /@|%40/.test(String(meta.chatId))) return false;
     if (typeof scheduler?.agent?._getOwnerWaIds === 'function') {
         try { await scheduler.agent._getOwnerWaIds(); } catch { /* the phone JID still counts */ }
     }
@@ -162,9 +184,10 @@ class SchedulerExecutor extends BaseExecutor {
     }
 
     /**
-     * A job run that makes a one-time task takes a slot first, before
-     * anything awaits, so calls made side by side in one turn cannot all
-     * pass. Returns { error } or { release }: release it when no task was saved.
+     * A job run that makes a one-time task takes a slot first. The count is
+     * checked and taken with no await in between, so calls made side by side
+     * in one turn cannot all pass. Returns { error } or { release }: release
+     * it when no task was saved.
      */
     _takeTaskSlot(jobRun) {
         if (!jobRun) return { release() { } };
@@ -259,7 +282,7 @@ class SchedulerExecutor extends BaseExecutor {
                 const oldEnd = existing?.metadata?.expiresAt ? Date.parse(existing.metadata.expiresAt) : Infinity;
                 const newEnd = until ? Date.parse(until) : Infinity;
                 const spared = sameTask && taint.tainted
-                    && runsPerWeek(cron) <= runsPerWeek(existing.metadata?.cronExpression) + 1e-9
+                    && noMoreOften(existing.metadata?.cronExpression, cron)
                     && newEnd <= oldEnd
                     && await ownChatRun(context, scheduler);
                 let carried = spared ? {} : taint;
@@ -450,4 +473,4 @@ class SchedulerExecutor extends BaseExecutor {
     }
 }
 
-module.exports = { SchedulerExecutor, originFor, tooOften, runsPerWeek };
+module.exports = { SchedulerExecutor, originFor, tooOften, noMoreOften };

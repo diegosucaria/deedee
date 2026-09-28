@@ -1001,6 +1001,50 @@ describe('a job made in a chat', () => {
         });
     });
 
+    describe('review round eight', () => {
+        test('a schedule dressed up with day or month names, or held to one month, cannot pass as no more often', async () => {
+            await executor.execute('scheduleJob', { name: 'weekly_hello', cron: '0 9 * * 1', task: 'Send Alice a short hello' }, inChat('whatsapp:assistant', OWNER_LID));
+            await executor.execute('scheduleJob', { name: 'daily_note', cron: '0 9 * * *', task: 'A note' }, inChat('whatsapp:assistant', OWNER_LID));
+            const mine = inChat('whatsapp:assistant', OWNER_LID, MAIL);
+
+            await executor.execute('scheduleJob', { name: 'weekly_hello', cron: '*/15 0-2 * JAN-DEC SUN-SAT' }, mine);
+            await executor.execute('scheduleJob', { name: 'daily_note', cron: '*/15 0-2 * 11 *' }, mine);
+
+            expect(savedRow(db, 'weekly_hello').payload.tainted).toBe(true);
+            expect(savedRow(db, 'daily_note').payload.tainted).toBe(true);
+        });
+
+        test('his form job on MON-FRI moved to 1-5 at a new time stays clean', async () => {
+            db.saveScheduledJob({ name: 'standup_note', cronExpression: '0 8 * * MON-FRI', taskType: 'agent_instruction', payload: { task: 'Standup note' }, enabled: true });
+            await scheduler.loadJobs();
+
+            await executor.execute('scheduleJob', { name: 'standup_note', cron: '30 7 * * 1-5' }, inChat('whatsapp:assistant', OWNER_LID, ['calendar (personal_calendar)']));
+
+            expect(savedRow(db, 'standup_note')).toMatchObject({ cronExpression: '30 7 * * 1-5' });
+            expect(savedRow(db, 'standup_note').payload.tainted).toBeUndefined();
+        });
+
+        test("a forwarded message, or a contact's chat opened on the web, is not his own chat", async () => {
+            await executor.execute('scheduleJob', { name: 'text_alice', cron: '0 8 * * *', task: 'Text Alice good morning' }, inChat('whatsapp:assistant', OWNER_LID));
+            const forwarded = { message: { source: 'whatsapp:assistant', metadata: { chatId: OWNER_LID, untrustedTaint: ['a forwarded message (whatsapp)'] } }, untrustedTaint: ['a forwarded message (whatsapp)'] };
+            await executor.execute('scheduleJob', { name: 'text_alice', cron: '0 3 * * *' }, forwarded);
+            expect(savedRow(db, 'text_alice').payload.tainted).toBe(true);
+
+            await executor.execute('scheduleJob', { name: 'text_bob', cron: '0 8 * * *', task: 'Text Bob good morning' }, inChat('web', 'web-chat-1'));
+            await executor.execute('scheduleJob', { name: 'text_bob', cron: '0 3 * * *' }, inChat('web', CONTACT_JID, MAIL));
+            expect(savedRow(db, 'text_bob').payload.tainted).toBe(true);
+        });
+
+        test('an answer to him that was queued still counts as his answer', async () => {
+            const comms = new CommunicationExecutor({ db, agent: { ...agent, delivery: scheduler._delivery() }, interface: agent.interface });
+            jest.spyOn(db, 'isVerifiedContact').mockReturnValue(true);
+            agent.interface.send.mockResolvedValue(false);
+            const run = { message: { source: 'scheduler', metadata: { chatId: 'scheduled_x_1', jobName: 'x' } }, untrustedTaint: [] };
+
+            expect(await comms.execute('sendMessage', { to: 'me', content: 'On time.' }, run)).toMatchObject({ success: true, queued: true, toOwner: true });
+        });
+    });
+
     describe('saved from the Tasks form', () => {
         const app = () => {
             const a = express();

@@ -702,8 +702,10 @@ task is the owner's own instruction and clears it. A change through
 the model writes that task and may copy what was planted. A tainted run's
 change stores its taint too, as a new job does: that is why scheduleJob runs
 unasked there. One change is spared: new times or a new end date typed in one
-of his own chats, running no more often and ending no later ("move my
-briefing before my first meeting" reads his calendar). A contact's message, a
+of his own chats (not a forwarded message, not a contact's chat opened on the
+web), with the same days of the month and months, no more weekdays, no more
+minutes times hours a day, and no later end ("move my briefing before my
+first meeting" reads his calendar). A contact's message, a
 sub-agent or a job run that moves a job taints it. A job or reminder
 that a tainted run creates from a contact's chat reports to the owner
 channel, never to that chat. A job's result only ever goes to the owner:
@@ -715,8 +717,9 @@ five cron fields (six with a fixed seconds value, or an alias such as
 `@daily`) whose minutes, hours and days are numbers, running at most every
 15 minutes unless the job keeps its times and its task. A job's run and its
 sub-agents (they carry its record, `metadata.jobRun`) make and change no
-repeating jobs, make at most two one-time tasks (the slot is taken before
-anything awaits, so calls side by side count), and cancel only their own job
+repeating jobs, make at most two one-time tasks (the count is checked and
+taken with no await in between, so calls side by side count), and cancel
+only their own job
 or a task a job made. A task a job run made (`madeByJob`, kept by a Tasks
 form re-save of the same text) makes none. A one-time task that ends with
 no answer is not run again (a thrown error is retried up to three times,

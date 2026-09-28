@@ -238,7 +238,7 @@ class CommunicationExecutor extends BaseExecutor {
                         const outcome = await delivery.deliver(kind, svc, metadata.chatId,
                             { content: resolvedContent, type: 'text', metadata: ownerMeta }, ledgerOpts);
                         if (!outcome.delivered && outcome.queued) {
-                            return { success: true, status: 'queued', queued: true, info: `Not delivered to ${cleanTo} yet: the messaging service did not take it. ${queuedText('It')}` };
+                            return { success: true, status: 'queued', queued: true, toOwner: true, info: `Not delivered to ${cleanTo} yet: the messaging service did not take it. ${queuedText('It')}` };
                         }
                         if (!outcome.delivered) {
                             return { success: false, error: `Not delivered to ${cleanTo} (${outcome.error || outcome.status || 'unknown reason'}), and nothing is queued.` };
@@ -256,10 +256,10 @@ class CommunicationExecutor extends BaseExecutor {
                             const outcome = await delivery.deliver(kind, svc, metadata.chatId,
                                 { content: caption, type: 'text', metadata: ownerMeta }, ledgerOpts);
                             if (outcome.delivered) {
-                                return { success: true, status: 'partial', info: `The picture to ${cleanTo} was not delivered. Its text went out without the picture, so it should not be sent again.` };
+                                return { success: true, status: 'partial', toOwner: true, info: `The picture to ${cleanTo} was not delivered. Its text went out without the picture, so it should not be sent again.` };
                             }
                             if (outcome.queued) {
-                                return { success: true, status: 'queued', queued: true, info: `The picture to ${cleanTo} was not delivered. ${queuedText('Its text')}` };
+                                return { success: true, status: 'queued', queued: true, toOwner: true, info: `The picture to ${cleanTo} was not delivered. ${queuedText('Its text')}` };
                             }
                             return { success: false, error: `Neither the picture nor its text reached ${cleanTo} (${outcome.error || outcome.status || 'unknown reason'}), and nothing is queued.` };
                         }
