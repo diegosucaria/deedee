@@ -161,7 +161,11 @@ class SchedulerExecutor extends BaseExecutor {
                 if (expiresAt && (!END_DATE_RE.test(String(expiresAt)) || Number.isNaN(Date.parse(expiresAt)))) {
                     return { error: `The end date must be an ISO 8601 date, such as 2026-10-01T23:59:00. '${expiresAt}' is not.` };
                 }
-                const task = args.task;
+                // Left out, an existing job keeps its task: listJobs does not
+                // show the task of a job a tainted run made (taskHidden).
+                const given = typeof args.task === 'string' && args.task.trim() ? args.task : null;
+                if (!given && !prev) return { error: 'A new job needs a task.' };
+                const task = given ?? prev.task;
                 const sameTask = !!prev && sameText(prev.task, task);
                 const sameCron = !!prev && String(existing.metadata?.cronExpression) === String(cron);
                 // The times and task a job already has pass: the floor is for
@@ -172,7 +176,7 @@ class SchedulerExecutor extends BaseExecutor {
                 }
                 // Left out, the end date stays as it was.
                 const until = expiresAt || existing?.metadata?.expiresAt || undefined;
-                if (prev && sameTask && sameCron && until === existing.metadata?.expiresAt) {
+                if (prev && sameTask && sameCron && (until ?? null) === (existing.metadata?.expiresAt ?? null)) {
                     return { success: true, info: `Job '${jobName}' already runs at '${cron}' with that task; nothing changed.` };
                 }
                 // A job keeps the taint it was made with, whatever the change:
@@ -248,9 +252,11 @@ class SchedulerExecutor extends BaseExecutor {
                     targetChatId,
                     targetSource,
                     retryCount: 0,
-                    // A job run that read untrusted content: the text it sends
-                    // later carries the mark. One set in his own chat does not.
-                    ...(jobRun && taint.tainted ? { markOnDelivery: true } : {}),
+                    // A marked job run (see Scheduler, markOwner) that read
+                    // untrusted content: the text it sends later carries the
+                    // mark, as its sendMessage does. A reminder set in his own
+                    // chat, or by a built-in or form job, does not.
+                    ...(jobRun?.markOwner === true && taint.tainted ? { markOnDelivery: true } : {}),
                     ...taint
                 };
 
@@ -311,23 +317,29 @@ class SchedulerExecutor extends BaseExecutor {
 
             case 'listJobs': {
                 const jobList = [];
+                let hidden = false;
                 for (const [name, job] of Object.entries(scheduler.jobs)) {
                     // Extract metadata from job object or DB payload if available
                     const meta = job.metadata || {};
                     const payload = meta.payload || {};
+                    // A task a run wrote after reading untrusted content may hold a
+                    // third party's words: this list is trusted, so it leaves them out.
+                    const taskHidden = payload.tainted === true;
+                    if (taskHidden) hidden = true;
 
                     jobList.push({
                         name: name,
                         cron: meta.cronExpression, // Original rule
-                        task: payload.task || 'No description',
+                        task: taskHidden ? null : (payload.task || 'No description'),
+                        ...(taskHidden ? { taskHidden: true } : {}),
                         nextInvocation: job.nextInvocation() ? job.nextInvocation().toISOString() : null,
-                        expiresAt: meta.expiresAt,
-                        // Made by a run that read untrusted content: change it in
-                        // place (the taint stays), never copy its task.
-                        ...(payload.tainted === true ? { tainted: true } : {})
+                        expiresAt: meta.expiresAt
                     });
                 }
-                return { jobs: jobList };
+                return {
+                    jobs: jobList,
+                    ...(hidden ? { note: 'A job with taskHidden was made by a run that read content a third party wrote; its task is on the Tasks page. To change its times or end date, call scheduleJob with its name and no task.' } : {})
+                };
             }
 
             case 'cancelJob': {

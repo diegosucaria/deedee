@@ -186,9 +186,9 @@ his approval. It counts when all of these hold:
   untrusted content: its result, a `sendMessage` to him or an `askUser`
   question. A run is marked (`jobRun.markOwner`) when its job answers in his
   own chat (before 2026-09-28 such a job ran inside that chat and left its
-  tool results there) or when a tainted run made the job. A reminder a job
-  run set after reading untrusted content is marked too; one he set in his
-  own chat is not. The thread mirror stores the mark on the row
+  tool results there) or when a tainted run made the job. A reminder a
+  marked job run set after reading untrusted content is marked too; one he
+  set in his own chat, or one a built-in or form job set, is not. The thread mirror stores the mark on the row
   (`metadata.jobTaint`). A job made in the web chat or the Tasks form, and a
   built-in job, carries no mark (see Known gaps).
 
@@ -713,12 +713,15 @@ sub-agents (they carry its record, `metadata.jobRun`) make and change no
 repeating jobs, make at most two one-time tasks (the slot is taken before
 anything awaits, so calls side by side count), and cancel only their own job
 or a task a job made. A task a job run made (`madeByJob`, kept by a Tasks
-form re-save of the same text) makes none. A one-time task that did not
-finish is not run again. No user job starts while its last run is still
-going. `cancelJob` refuses a built-in job, as the Tasks page does. A new
-job's name from a run that read untrusted content is a short slug, and an
-end date is an ISO date, so neither can carry a sentence back to a clean run
-through `listJobs`. The dashboard compares task texts without their line
+form re-save of the same text) makes none. A one-time task that ends with
+no answer is not run again (a thrown error is retried up to three times,
+unless the task was deleted, changed or paused meanwhile). No user job
+starts while its last run is still going. `cancelJob` refuses a built-in job, as the Tasks page does.
+`listJobs` leaves out the task of a job a tainted run made (`taskHidden`); a
+change without a task keeps it, and keeps its taint. A new job's name from a
+run that read untrusted content is a short slug, and an end date is an ISO
+date, so neither can carry a sentence back to a clean run through
+`listJobs`. The dashboard compares task texts without their line
 ends, since the form sends CRLF. A call the owner approves runs with the
 taint of the run that asked.
 
@@ -758,11 +761,11 @@ The result of a job made in the Tasks form or the web chat, or of a built-in
 job such as `proactive_thought`, and its `sendMessage` to him, reach his chat
 with no mark even when the run read email, unless a tainted run made the job.
 A mark there would make his next email or message request ask for a card
-after every morning briefing. `listJobs` shows a tainted job's task as it is,
-flagged `tainted`: a clean run that copies it into a new job makes a clean
-job, while a change in place keeps the taint. A watcher run has no job
-record, so the limits on making tasks do not hold there, and any run may
-add watchers; a contact's messages can make tasks at the pace they arrive.
+after every morning briefing. A watcher run has no job record, so the
+limits on making jobs and tasks do not hold there, and any run may add
+watchers, a job's run too: a job can reach a repeating job that way, once
+the watched contact writes. A contact's messages can make tasks at the pace
+they arrive.
 A reminder is not counted either: it runs no model, and only repeats a
 text.
 

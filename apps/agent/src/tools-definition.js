@@ -283,10 +283,10 @@ const toolDefinitions = [
           properties: {
             name: { type: "STRING", description: "Unique name for the job" },
             cron: { type: "STRING", description: "Cron expression (e.g. '0 9 * * *' for daily at 9am)" },
-            task: { type: "STRING", description: "Description of the task to perform (e.g. 'Check weather and send report')" },
+            task: { type: "STRING", description: "Description of the task to perform (e.g. 'Check weather and send report'). Needed for a new job; leave it out to keep an existing job's task." },
             expiresAt: { type: "STRING", description: "Optional. ISO 8601 Date String (e.g. '2025-12-31T23:59:00') when this job should stop running and be deleted." }
           },
-          required: ["name", "cron", "task"]
+          required: ["name", "cron"]
         }
       },
       {

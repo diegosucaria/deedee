@@ -56,7 +56,7 @@ const INTERNAL_TRUSTED = Object.freeze(new Set([
     'rememberFact', 'updateFact', 'forgetFact', 'saveJobState', 'getJobState', 'getFact',
     'addGoal', 'updateGoalProgress', 'completeGoal',
     'readFile', 'writeFile', 'listDirectory', 'rollbackLastChange', 'pullLatestChanges', 'commitAndPush',
-    // listJobs hides the task of a job a tainted run made (executors/scheduler.js).
+    // listJobs leaves out the task of a job a tainted run made (executors/scheduler.js).
     'logJournal', 'scheduleJob', 'listJobs', 'cancelJob', 'setReminder', 'scheduleTask',
     'generateImage', 'cityWeatherImage', 'lookupDevice', 'learnDevice', 'listDeviceAliases', 'deleteDeviceAlias',
     'sendMessage', 'searchContacts', 'listPeople', 'getPerson', 'searchPeople', 'updatePerson', 'deletePerson',

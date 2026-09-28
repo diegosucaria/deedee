@@ -188,6 +188,8 @@ class Scheduler {
             // this name has replaced this job; it stays.
             if (options.oneOff && this.jobs[name] === job) {
                 console.log(`[Scheduler] One-off job '${name}' completed. Cleaning up...`);
+                // Run now fires it early; its set time must not fire it again.
+                job.cancel();
                 delete this.jobs[name];
                 this.agent.db.deleteScheduledJob(name);
                 this.agent.db.deleteJobState(name);
@@ -479,7 +481,8 @@ class Scheduler {
             const taint = taintFromPayload(payload, `job "${name}"`);
             const reason = why === 'stopped' ? 'It was stopped.'
                 : why === 'refused' ? 'Some of its actions were refused.'
-                    : 'It ended with an error.';
+                    : why === 'silent' ? 'It gave no answer.'
+                        : 'It ended with an error.';
             const text = `The task "${short}" did not finish. ${reason} It may have done part of its work.`;
             await this._delivery().deliver('job_notification', target.channel, target.target,
                 { content: text, type: 'text', ...(taint.length > 0 ? { metadata: { jobTaint: taint } } : {}) },
@@ -723,9 +726,10 @@ class Scheduler {
             // The run's answer: its last reply that is not a progress line
             // ("Thinking...") or a line about the run ("Stopped: ...").
             let final = null;
-            // The kind of the last line about the run ('stopped' or 'failed'),
-            // when no answer came after it.
+            // The kind of the last line about the run ('stopped', 'refused' or 'failed').
             let stoppedWith = null;
+            // A picture or voice note went out: that was the answer.
+            let mediaSent = false;
             try {
                 const summary = await this.agent.processMessage({
                     role: 'user',
@@ -743,7 +747,10 @@ class Scheduler {
                     }
                     // A picture or a voice note is part of the answer: it goes
                     // where the result goes, now, since a result is text only.
-                    if (media) await this._deliverJobMedia(name, reply, media, currentPayload);
+                    if (media) {
+                        await this._deliverJobMedia(name, reply, media, currentPayload);
+                        mediaSent = true;
+                    }
                     // createAssistantMessage uses 'content', not 'text'.
                     const replyText = reply.content || reply.text;
                     // A line about the run wins over anything after it: once the
@@ -765,10 +772,15 @@ class Scheduler {
                 // for another chat, the breaker) is not run again: it may have
                 // done part of its work. The owner hears once, where its result
                 // would have gone; the breaker's own note goes only to the bell.
-                if (isOneOff && (final?.isError || stoppedWith)) {
-                    await this._tellTaskFailed(name, currentPayload, { why: final?.isError ? 'error' : stoppedWith });
+                // A run that paused on an approval card ends with no text: the
+                // card asks him. A run that just gave no answer tells him.
+                const paused = Array.isArray(summary?.toolOutputs)
+                    && summary.toolOutputs.some(o => /^Action PAUSED/.test(String(o?.result?.info || '')));
+                const why = final?.isError ? 'error' : stoppedWith || (!final && !mediaSent && !paused ? 'silent' : null);
+                if (isOneOff && why) {
+                    await this._tellTaskFailed(name, currentPayload, { why });
                     // Logged as a failure; the catch below neither retries it nor tells him again.
-                    throw Object.assign(new Error(`The task did not finish (${final?.isError ? 'error' : stoppedWith}); the owner was told.`), { told: true });
+                    throw Object.assign(new Error(`The task did not finish (${why}); the owner was told.`), { told: true });
                 }
 
                 const executionResult = {

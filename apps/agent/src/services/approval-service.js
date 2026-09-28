@@ -1220,7 +1220,7 @@ class ApprovalService {
         const ttlMs = route.mode === 'interactive' ? settings.ttlInteractiveMin * 60e3 : settings.ttlDeferredHours * 3600e3;
         const meta = message?.metadata || {};
         const originMeta = {};
-        for (const key of ['jobName', 'jobOrigin', 'allowedTools', 'forceModel', 'session', 'phoneNumber', 'isGroup', 'groupName']) {
+        for (const key of ['jobName', 'jobOrigin', 'jobRun', 'allowedTools', 'forceModel', 'session', 'phoneNumber', 'isGroup', 'groupName']) {
             if (meta[key] !== undefined) originMeta[key] = meta[key];
         }
         // What tainted the run: shown on the card, and kept so an approved
