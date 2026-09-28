@@ -279,6 +279,23 @@ describe('WhatsApp SQLiteStore', () => {
             expect(history.map(m => m.message.conversation)).toEqual(['From the ID chat']);
         });
 
+        // listConversations lists a chat by its own address; reading that
+        // address must give that chat, not a contact whose number ends the same.
+        test('a chat\'s own address reads that chat, never a guessed contact', async () => {
+            ev.emit('contacts.upsert', [{ id: '1110000000002@s.whatsapp.net', name: 'Alice' }]);
+            ev.emit('messages.upsert', {
+                messages: [
+                    { key: { remoteJid: '5490000000002@s.whatsapp.net', id: 'm1', fromMe: false }, messageTimestamp: 1000, message: { conversation: 'from the chat' } },
+                    { key: { remoteJid: '1110000000002@s.whatsapp.net', id: 'm2', fromMe: false }, messageTimestamp: 2000, message: { conversation: 'from Alice' } }
+                ],
+                type: 'notify'
+            });
+            await new Promise(r => setTimeout(r, 600));
+
+            expect(store.getChatHistory('5490000000002@s.whatsapp.net').map(m => m.message.conversation)).toEqual(['from the chat']);
+            expect(store.resolveIdentity('5490000000002').phoneJid).toBe('5490000000002@s.whatsapp.net');
+        });
+
         test('recent chats never guess from a chat\'s own address', async () => {
             ev.emit('contacts.upsert', [{ id: '1110000000002@s.whatsapp.net', name: 'Alice' }]);
             ev.emit('messages.upsert', {
@@ -342,13 +359,43 @@ describe('WhatsApp SQLiteStore', () => {
             expect(store.resolveIdentity(PHONE_JID).allJids).toEqual([PHONE_JID, LID]);
         });
 
-        test('a number that already holds another WhatsApp ID keeps it', () => {
+        test('a number that already holds another WhatsApp ID keeps it, and so does an ID', () => {
             ev.emit('contacts.upsert', [{ id: PHONE_JID, name: 'Alice', lid: '100000000000001@lid' }]);
-            expect(store.linkLid(PHONE_JID, LID)).toBe(false);
+            const OTHER = '5490000000003@s.whatsapp.net';
 
-            expect(store.linkLid('5490000000003@s.whatsapp.net', '100000000000001@lid')).toBe(true);
-            expect(store.linkLid('5490000000003@s.whatsapp.net', LID)).toBe(false);
+            expect(store.linkLid(PHONE_JID, LID)).toBe(false);
+            expect(store.linkLid(OTHER, '100000000000001@lid')).toBe(false);
+            expect(store.linkLid(OTHER, '100000000000003@lid')).toBe(true);
+            expect(store.linkLid(OTHER, LID)).toBe(false);
+            expect(store.linkLid('5490000000004@s.whatsapp.net', '100000000000003@lid')).toBe(false);
+            expect(store.resolveIdentity('100000000000003@lid').phoneJid).toBe(OTHER);
             expect(store.resolveIdentity(LID).phoneJid).toBeNull();
+        });
+
+        // A link saved while the number had no WhatsApp ID in contacts. When a
+        // contact sync gives the number another ID, the old ID's chat must stay
+        // its own, not show the number's current chat.
+        test('a link goes stale once contacts give its number another WhatsApp ID', async () => {
+            const OLD = '100000000000003@lid';
+            const NOW = '100000000000001@lid';
+            ev.emit('messages.upsert', {
+                messages: [
+                    { key: { remoteJid: OLD, id: 'm1', fromMe: false }, messageTimestamp: 1000, message: { conversation: 'from the old ID' } },
+                    { key: { remoteJid: NOW, id: 'm2', fromMe: false }, messageTimestamp: 2000, message: { conversation: 'from the number now' } }
+                ],
+                type: 'notify'
+            });
+            await new Promise(r => setTimeout(r, 600));
+
+            expect(store.linkLid(PHONE_JID, OLD)).toBe(true);
+            ev.emit('contacts.upsert', [{ id: PHONE_JID, name: 'Alice', lid: NOW }]);
+
+            expect(store.resolveIdentity(OLD).phoneJid).toBeNull();
+            expect(store.getChatHistory(OLD).map(m => m.message.conversation)).toEqual(['from the old ID']);
+            expect(store.resolveIdentity(PHONE_JID).allJids).toEqual([PHONE_JID, NOW]);
+            // The stale link gives way to a new one.
+            expect(store.linkLid('5490000000004@s.whatsapp.net', OLD)).toBe(true);
+            expect(store.resolveIdentity(OLD).phoneJid).toBe('5490000000004@s.whatsapp.net');
         });
 
         test('WHATSAPP_LID_ALT=0 makes the resolver ignore saved links', () => {

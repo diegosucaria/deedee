@@ -763,11 +763,15 @@ describe('a chat shown by WhatsApp ID (LID)', () => {
 
     test('a number already linked to another WhatsApp ID: the message keeps its ID digits, as the store does', async () => {
         await store.upsertContacts([{ id: `${PHONE}@s.whatsapp.net`, name: 'Alice', lid: '100000000000001@lid' }]);
+        const user = service('user');
 
-        await service('user').handleMessage(reminder({ remoteJid: LID, remoteJidAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid' }));
+        await user.handleMessage(reminder({ remoteJid: LID, remoteJidAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid' }));
+        await user.handleMessage(reminder({ id: 'm2', remoteJid: LID, remoteJidAlt: `${PHONE}@s.whatsapp.net`, addressingMode: 'lid' }));
 
         expect(sent().metadata.phoneNumber).toBe('100000000000002');
         expect(store.resolveIdentity(LID).phoneJid).toBeNull();
+        // The refusal is logged once, not on every message.
+        expect(console.warn.mock.calls.filter(c => String(c[0]).includes('keeps its digits'))).toHaveLength(1);
     });
 
     test('the assistant session sends no WhatsApp ID, so its watchers see only the number', async () => {

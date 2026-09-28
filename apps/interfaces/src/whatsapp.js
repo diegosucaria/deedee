@@ -422,25 +422,37 @@ class SQLiteStore {
                 }
             }
 
-            // Links read from message keys (see linkLid).
+            // Links read from message keys (see linkLid). Contacts win: a link is
+            // stale once contacts give its number another WhatsApp ID, or its ID
+            // another number.
+            const fresh = (link) => {
+                if (!link) return null;
+                const phoneRow = byId.get(link.phone_jid);
+                const lidRow = byLid.get(link.lid);
+                if ((phoneRow && phoneRow.lid && phoneRow.lid !== link.lid) || (lidRow && lidRow.id !== link.phone_jid)) return null;
+                return link;
+            };
             if (contact && !contact.lid) {
-                const link = this._keyLink('phone', contact.id);
+                const link = fresh(this._keyLink('phone', contact.id));
                 if (link) contact = { ...contact, lid: link.lid };
             }
             if (!contact && (isLid || maybePhone)) {
                 const lidJid = isLid ? identifier : (knownLid || (digits.length > 14 ? `${digits}@lid` : null));
                 const phoneJid = !isLid && !knownLid && digits.length >= 7 ? (isPhoneJid ? identifier : `${digits}@s.whatsapp.net`) : null;
-                const link = (lidJid && this._keyLink('lid', lidJid)) || (phoneJid && this._keyLink('phone', phoneJid));
+                const link = fresh(lidJid && this._keyLink('lid', lidJid)) || fresh(phoneJid && this._keyLink('phone', phoneJid));
                 if (link) {
-                    const row = byId.get(link.phone_jid);
-                    contact = row ? { ...row, lid: row.lid || link.lid } : { id: link.phone_jid, name: null, notify: null, lid: link.lid };
+                    contact = { ...(byId.get(link.phone_jid) || { id: link.phone_jid, name: null, notify: null }), lid: link.lid };
                 }
             }
+
+            // An address with a chat of its own is that address: no guess.
+            const ownChat = !contact && !knownLid && maybePhone && digits.length >= 7
+                && this.db.prepare('SELECT 1 FROM messages WHERE remote_jid = ? LIMIT 1').get(isPhoneJid ? identifier : `${digits}@s.whatsapp.net`);
 
             // Strategy 4: Fuzzy suffix match (handles country code variations like 549 vs 54).
             // Typed numbers and phone JIDs only: the digits of a WhatsApp ID (LID) or a
             // group id have nothing to do with a phone number, so a match there finds a stranger.
-            if (!contact && !knownLid && guess && maybePhone && digits.length >= 7) {
+            if (!contact && !knownLid && !ownChat && guess && maybePhone && digits.length >= 7) {
                 const suffix = digits.slice(-7);
                 contact = this.db.prepare("SELECT id, name, notify, lid FROM contacts WHERE id LIKE ?").get(`%${suffix}@s.whatsapp.net`);
             }
@@ -484,15 +496,31 @@ class SQLiteStore {
      * in contacts: a contact sync never overwrites it, and the chat gets no
      * name (chat lists show a named chat by name alone, and the model cannot
      * read a chat by name). A number that already holds another WhatsApp ID,
-     * in contacts or in lid_links, keeps it.
+     * in contacts or in a link, keeps it; so does a WhatsApp ID that contacts
+     * or a link give to another number. A link that contacts contradict is
+     * stale and gives way.
      * @returns {boolean} true when the store links the two
      */
     linkLid(phoneJid, lid) {
-        const row = this.db.prepare('SELECT lid FROM contacts WHERE id = ?').get(phoneJid);
-        if (row && row.lid) return row.lid === lid;
-        const link = this.db.prepare('SELECT lid FROM lid_links WHERE phone_jid = ?').get(phoneJid);
-        if (link) return link.lid === lid;
-        this.db.prepare('INSERT OR REPLACE INTO lid_links (lid, phone_jid, created_at) VALUES (?, ?, ?)')
+        const contactLid = (jid) => this.db.prepare('SELECT lid FROM contacts WHERE id = ?').get(jid)?.lid || null;
+        const lidOwner = (id) => this.db.prepare('SELECT id FROM contacts WHERE lid = ?').get(id)?.id || null;
+        // The same rule as the resolver: contacts win over a saved link.
+        const stale = (link) => {
+            const a = contactLid(link.phone_jid);
+            const b = lidOwner(link.lid);
+            return !!((a && a !== link.lid) || (b && b !== link.phone_jid));
+        };
+
+        const own = contactLid(phoneJid);
+        if (own) return own === lid;
+        const owner = lidOwner(lid);
+        if (owner) return owner === phoneJid;
+        const byPhone = this.db.prepare('SELECT lid, phone_jid FROM lid_links WHERE phone_jid = ?').get(phoneJid);
+        if (byPhone && !stale(byPhone)) return byPhone.lid === lid;
+        const byLid = this.db.prepare('SELECT lid, phone_jid FROM lid_links WHERE lid = ?').get(lid);
+        if (byLid && !stale(byLid)) return byLid.phone_jid === phoneJid;
+        this.db.prepare('DELETE FROM lid_links WHERE lid = ? OR phone_jid = ?').run(lid, phoneJid);
+        this.db.prepare('INSERT INTO lid_links (lid, phone_jid, created_at) VALUES (?, ?, ?)')
             .run(lid, phoneJid, Math.floor(Date.now() / 1000));
         return true;
     }
@@ -629,6 +657,8 @@ class WhatsAppService {
         this.sock = null;
         // Message ids sent in the last 24 h; a retry with the same id is skipped.
         this.sentIds = new SentIds();
+        // WhatsApp IDs whose link was refused; the warning is logged once.
+        this.refusedLids = new Set();
         this.qr = null;
         this.status = 'disconnected';
         this.reconnectAttempts = 0;
@@ -1486,7 +1516,10 @@ class WhatsAppService {
         if (!/^\d{6,15}$/.test(phone)) return null;
         try {
             if (!this.store.linkLid(`${phone}@s.whatsapp.net`, lid)) {
-                console.warn(`${this.logPrefix} ${phone} is linked to another WhatsApp ID; ${lid} keeps its digits.`);
+                if (!this.refusedLids.has(lid)) {
+                    this.refusedLids.add(lid);
+                    console.warn(`${this.logPrefix} ${phone} or ${lid} is linked elsewhere; ${lid} keeps its digits.`);
+                }
                 return null;
             }
         } catch (e) {
