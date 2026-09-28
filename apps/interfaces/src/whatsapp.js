@@ -445,9 +445,10 @@ class SQLiteStore {
                 }
             }
 
-            // An address with a chat of its own is that address: no guess.
-            const ownChat = !contact && !knownLid && maybePhone && digits.length >= 7
-                && this.db.prepare('SELECT 1 FROM messages WHERE remote_jid = ? LIMIT 1').get(isPhoneJid ? identifier : `${digits}@s.whatsapp.net`);
+            // An address that has written to the owner is that address: no guess.
+            // Only incoming messages count: a send to a mistyped number is not a chat.
+            const ownChat = !contact && !knownLid && guess && maybePhone && digits.length >= 7
+                && this.db.prepare('SELECT 1 FROM messages WHERE remote_jid = ? AND from_me = 0 LIMIT 1').get(isPhoneJid ? identifier : `${digits}@s.whatsapp.net`);
 
             // Strategy 4: Fuzzy suffix match (handles country code variations like 549 vs 54).
             // Typed numbers and phone JIDs only: the digits of a WhatsApp ID (LID) or a

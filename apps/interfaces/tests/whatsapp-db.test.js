@@ -279,6 +279,17 @@ describe('WhatsApp SQLiteStore', () => {
             expect(history.map(m => m.message.conversation)).toEqual(['From the ID chat']);
         });
 
+        test('a send to a mistyped number does not hide the saved contact', async () => {
+            ev.emit('contacts.upsert', [{ id: '1110000000001@s.whatsapp.net', name: 'Alice' }]);
+            ev.emit('messages.upsert', {
+                messages: [{ key: { remoteJid: '110000000001@s.whatsapp.net', id: 'm1', fromMe: true }, messageTimestamp: 1000, message: { conversation: 'sent to the wrong form' } }],
+                type: 'notify'
+            });
+            await new Promise(r => setTimeout(r, 600));
+
+            expect(store.resolveIdentity('110000000001').phoneJid).toBe('1110000000001@s.whatsapp.net');
+        });
+
         // listConversations lists a chat by its own address; reading that
         // address must give that chat, not a contact whose number ends the same.
         test('a chat\'s own address reads that chat, never a guessed contact', async () => {
@@ -396,6 +407,23 @@ describe('WhatsApp SQLiteStore', () => {
             // The stale link gives way to a new one.
             expect(store.linkLid('5490000000004@s.whatsapp.net', OLD)).toBe(true);
             expect(store.resolveIdentity(OLD).phoneJid).toBe('5490000000004@s.whatsapp.net');
+        });
+
+        test('a link goes stale once contacts give its WhatsApp ID another number', async () => {
+            ev.emit('messages.upsert', {
+                messages: [{ key: { remoteJid: LID, id: 'm1', fromMe: false }, messageTimestamp: 1000, message: { conversation: 'from the ID' } }],
+                type: 'notify'
+            });
+            await new Promise(r => setTimeout(r, 600));
+
+            expect(store.linkLid(PHONE_JID, LID)).toBe(true);
+            ev.emit('contacts.upsert', [{ id: '5490000000004@s.whatsapp.net', name: 'Bob', lid: LID }]);
+
+            expect(store.resolveIdentity(LID).phoneJid).toBe('5490000000004@s.whatsapp.net');
+            expect(store.getChatHistory(PHONE_JID)).toEqual([]);
+            // The number is free again for a new link.
+            expect(store.linkLid(PHONE_JID, '100000000000003@lid')).toBe(true);
+            expect(store.resolveIdentity(PHONE_JID).allJids).toEqual([PHONE_JID, '100000000000003@lid']);
         });
 
         test('WHATSAPP_LID_ALT=0 makes the resolver ignore saved links', () => {
