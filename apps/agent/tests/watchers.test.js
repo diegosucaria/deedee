@@ -317,6 +317,43 @@ describe('Message Watchers & Passive Mode', () => {
         expect(db.getAllWatchers()[0].last_triggered_at).toBeNull();
     });
 
+    it('a watcher on the last 8 digits of a number never matches the end of a WhatsApp ID', async () => {
+        db.createWatcher({ name: 'Short Watcher', contactString: '00000002', condition: '*', instruction: 'Say done', status: 'active' });
+
+        await agent.processMessage({
+            id: 'msg_lid_3',
+            role: 'user',
+            content: 'Hello',
+            source: 'whatsapp:user',
+            metadata: { phoneNumber: '5490000000001', lid: '100000000000002@lid', chatId: '100000000000002@lid' }
+        }, jest.fn());
+
+        expect(db.getAllWatchers()[0].last_triggered_at).toBeNull();
+    });
+
+    it('autopilot still finds a person saved under the WhatsApp ID once messages arrive under the number', async () => {
+        db.createPerson({ name: 'Alice', phone: '100000000000002', source: 'test', identifiers: { whatsapp_lid: '100000000000002' } });
+        const spy = jest.spyOn(agent.impersonationService, 'handleMessage').mockResolvedValue();
+        const message = {
+            id: 'msg_lid_4',
+            role: 'user',
+            content: 'Hello',
+            source: 'whatsapp:user',
+            metadata: { phoneNumber: '5490000000001', lid: '100000000000002@lid', chatId: '100000000000002@lid' }
+        };
+
+        await agent.processMessage(message, jest.fn());
+        expect(spy).toHaveBeenLastCalledWith('100000000000002@lid', expect.anything(), '100000000000002');
+
+        // Someone saved under the number wins.
+        db.createPerson({ name: 'Bob', phone: '5490000000001', source: 'test' });
+        await agent.processMessage({ ...message, id: 'msg_lid_5' }, jest.fn());
+        expect(spy).toHaveBeenLastCalledWith('100000000000002@lid', expect.anything(), '5490000000001');
+
+        spy.mockRestore();
+        db.db.exec("DELETE FROM people WHERE phone IN ('100000000000002', '5490000000001')");
+    });
+
     // Validating specific regex logic from agent.js
     it('should match conditions correctly', () => {
         const check = (condition, content) => {

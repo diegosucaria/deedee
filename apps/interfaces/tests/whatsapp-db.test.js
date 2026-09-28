@@ -246,21 +246,53 @@ describe('WhatsApp SQLiteStore', () => {
 
             expect(store.resolveIdentity('120000000000000002@g.us').phoneJid).toBeNull();
         });
+
+        test('a number typed with a 00 prefix still finds the contact', () => {
+            ev.emit('contacts.upsert', [{ id: '1110000000001@s.whatsapp.net', name: 'Alice' }]);
+
+            expect(store.resolveIdentity('001110000000001').phoneJid).toBe('1110000000001@s.whatsapp.net');
+        });
+
+        test('guess: false never matches by the last digits (an address WhatsApp gave is exact)', () => {
+            ev.emit('contacts.upsert', [{ id: '5490000000002@s.whatsapp.net', name: 'Stranger' }]);
+
+            expect(store.resolveIdentity('100000000000002@s.whatsapp.net', { guess: false }).phoneJid).toBe('100000000000002@s.whatsapp.net');
+            expect(store.resolveIdentity('100000000000002@s.whatsapp.net').phoneJid).toBe('5490000000002@s.whatsapp.net');
+        });
     });
 
     describe('linkLid', () => {
         const LID = '100000000000002@lid';
         const PHONE_JID = '5490000000001@s.whatsapp.net';
 
-        test('a linked WhatsApp ID resolves both ways and keeps the name it had', () => {
+        test('a linked WhatsApp ID resolves both ways, and the new row is marked and has no name', () => {
             ev.emit('contacts.upsert', [{ id: LID, notify: 'Clinic' }]);
 
             expect(store.linkLid(PHONE_JID, LID)).toBe(true);
 
-            const byLid = store.resolveIdentity(LID);
-            expect(byLid.phoneJid).toBe(PHONE_JID);
-            expect(byLid.name).toBe('Clinic');
+            expect(store.resolveIdentity(LID).phoneJid).toBe(PHONE_JID);
             expect(store.resolveIdentity('5490000000001').allJids).toEqual([PHONE_JID, LID]);
+            const row = store.getContact(PHONE_JID);
+            expect([row.name, row.notify]).toEqual([null, null]);
+            expect(row.lidFrom).toBe('message-key');
+            expect(store.linkLid(PHONE_JID, LID)).toBe(true);
+        });
+
+        // A named row made listConversations show the chat by name alone, and
+        // readChatHistory cannot find a chat by name.
+        test('recent chats list a linked chat under its number', async () => {
+            ev.emit('contacts.upsert', [{ id: LID, notify: 'Clinic' }]);
+            ev.emit('messages.upsert', {
+                messages: [{ key: { remoteJid: LID, id: 'msg1', fromMe: false }, messageTimestamp: 1000, message: { conversation: 'Reminder' } }],
+                type: 'notify'
+            });
+            await new Promise(r => setTimeout(r, 600));
+
+            store.linkLid(PHONE_JID, LID);
+
+            const [chat] = store.getRecentChats(5);
+            expect(chat.jid).toBe(PHONE_JID);
+            expect(chat.name).toBeUndefined();
         });
 
         test('a saved contact gets the link and keeps its own name', () => {
@@ -271,6 +303,7 @@ describe('WhatsApp SQLiteStore', () => {
             const saved = store.getContact(PHONE_JID);
             expect(saved.name).toBe('Alice');
             expect(saved.lid).toBe(LID);
+            expect(saved.lidFrom).toBe('message-key');
         });
 
         test('a number that already holds another WhatsApp ID keeps it', () => {

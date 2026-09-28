@@ -368,9 +368,11 @@ class SQLiteStore {
      * All other code should use this instead of ad-hoc resolution.
      *
      * @param {string} identifier - Phone JID, LID, or raw digits
+     * @param {{ guess?: boolean }} [opts] - guess: false skips the suffix match.
+     *   Pass it for an address WhatsApp gave: that address is exact.
      * @returns {{ phoneJid: string|null, lid: string|null, name: string|null, allJids: string[] }}
      */
-    resolveIdentity(identifier) {
+    resolveIdentity(identifier, { guess = true } = {}) {
         if (!identifier) return { phoneJid: null, lid: null, name: null, allJids: [] };
 
         const digits = identifier.replace(/[^0-9]/g, '');
@@ -398,9 +400,9 @@ class SQLiteStore {
             }
 
             // Strategy 4: Fuzzy suffix match (handles country code variations like 549 vs 54).
-            // Phone numbers only: the digits of a WhatsApp ID (LID) or a group id have
-            // nothing to do with a phone number, so a suffix match there finds a stranger.
-            if (!contact && !isLid && digits.length >= 7 && digits.length <= 14) {
+            // Typed numbers and phone JIDs only: the digits of a WhatsApp ID (LID) or a
+            // group id have nothing to do with a phone number, so a match there finds a stranger.
+            if (!contact && guess && (isPhoneJid || !identifier.includes('@')) && digits.length >= 7) {
                 const suffix = digits.slice(-7);
                 contact = this.db.prepare("SELECT id, name, notify, lid FROM contacts WHERE id LIKE ?").get(`%${suffix}@s.whatsapp.net`);
             }
@@ -429,23 +431,22 @@ class SQLiteStore {
 
     /**
      * Records that a WhatsApp ID (LID) belongs to a phone number, so the
-     * resolver finds the contact by either one. A new phone row takes the
-     * names the WhatsApp ID row already has. A phone row that holds another
-     * WhatsApp ID keeps it.
-     * @returns {boolean} true when it saved a link
+     * resolver finds the contact by either one. A new row gets no name: chat
+     * lists show a named chat by name alone, and the model cannot read a chat
+     * by name. `lidFrom` in `data` marks the link, so it can be found and
+     * removed. A number that holds another WhatsApp ID keeps it.
+     * @returns {boolean} true when the store links the two
      */
     linkLid(phoneJid, lid) {
         const row = this.db.prepare('SELECT lid FROM contacts WHERE id = ?').get(phoneJid);
-        if (row && row.lid) return false;
+        if (row && row.lid) return row.lid === lid;
         if (row) {
-            this.db.prepare('UPDATE contacts SET lid = ? WHERE id = ?').run(lid, phoneJid);
+            this.db.prepare("UPDATE contacts SET lid = ?, data = json_set(COALESCE(data, '{}'), '$.lidFrom', 'message-key') WHERE id = ?")
+                .run(lid, phoneJid);
             return true;
         }
-        const lidRow = this.db.prepare('SELECT name, notify FROM contacts WHERE id = ?').get(lid);
-        const name = lidRow?.name || null;
-        const notify = lidRow?.notify || null;
-        this.db.prepare('INSERT INTO contacts (id, name, notify, lid, data) VALUES (?, ?, ?, ?, ?)')
-            .run(phoneJid, name, notify, lid, JSON.stringify({ id: phoneJid, name, notify, lid }));
+        this.db.prepare('INSERT INTO contacts (id, lid, data) VALUES (?, ?, ?)')
+            .run(phoneJid, lid, JSON.stringify({ id: phoneJid, lid, lidFrom: 'message-key' }));
         return true;
     }
 
@@ -1030,7 +1031,7 @@ class WhatsAppService {
 
             // Handle LID: Use centralized resolver for consistent identity resolution
             if (this.store && (remoteJid.includes('@lid') || phoneNumber.length > 14)) {
-                const identity = this.store.resolveIdentity(remoteJid);
+                const identity = this.store.resolveIdentity(remoteJid, { guess: false });
                 const keyPhone = (identity.phoneJid || isGroup) ? null : this._phoneFromKey(msg.key);
                 if (identity.phoneJid) {
                     const resolvedPhone = identity.phoneJid.split('@')[0];
@@ -1155,7 +1156,8 @@ class WhatsAppService {
                 groupName: isGroup ? 'Unknown Group' : undefined // We could fetch subject if needed
             };
             // The sender's WhatsApp ID too, so a watcher saved with it still fires.
-            const lid = msg.key.fromMe ? null : senderLid(msg.key, isGroup);
+            // Personal session only: the assistant session stays as it was.
+            const lid = this.sessionId === 'user' && !msg.key.fromMe ? senderLid(msg.key, isGroup) : null;
             if (lid) userMessage.metadata.lid = lid;
             if (forwarded) userMessage.metadata.untrustedTaint = ['a forwarded message (whatsapp)'];
 
@@ -1420,8 +1422,10 @@ class WhatsAppService {
      * lookup by number finds the chat. The assistant session never does:
      * its allowlist decides who may command the agent, and it trusts only
      * links the store already holds. Only a message the contact sent counts:
-     * on the owner's own message the key can describe him instead.
-     * WHATSAPP_LID_ALT=0 turns this off.
+     * on the owner's own message the key can describe him instead. When the
+     * number already holds another WhatsApp ID, or the link cannot be saved,
+     * the message keeps its ID digits, so the store and the agent agree.
+     * WHATSAPP_LID_ALT=0 turns this off; links saved before stay.
      */
     _phoneFromKey(key) {
         if (this.sessionId !== 'user' || process.env.WHATSAPP_LID_ALT === '0' || key.fromMe) return null;
@@ -1431,12 +1435,15 @@ class WhatsAppService {
         const phone = altJid.split('@')[0].split(':')[0];
         if (!/^\d{6,15}$/.test(phone)) return null;
         try {
-            if (this.store.linkLid(`${phone}@s.whatsapp.net`, lid)) {
-                console.log(`${this.logPrefix} Linked ${lid} to ${phone} (number in the message key).`);
+            if (!this.store.linkLid(`${phone}@s.whatsapp.net`, lid)) {
+                console.warn(`${this.logPrefix} ${phone} is linked to another WhatsApp ID; ${lid} keeps its digits.`);
+                return null;
             }
         } catch (e) {
             console.warn(`${this.logPrefix} Could not save the link for ${lid}:`, e.message);
+            return null;
         }
+        console.log(`${this.logPrefix} Linked ${lid} to ${phone} (number in the message key).`);
         return phone;
     }
 

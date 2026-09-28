@@ -1517,9 +1517,10 @@ class Agent {
         const isUserSession = message.source === 'whatsapp:user' || message.source === 'slack';
         const isFromMe = !!message.metadata?.fromMe;
         const contactString = message.metadata?.phoneNumber || message.metadata?.slackUserName || message.metadata?.chatId;
-        // A WhatsApp sender can also show a WhatsApp ID (LID) next to the phone
-        // number: a watcher saved with either one matches.
-        const senderIds = [contactString, message.metadata?.lid].filter(Boolean);
+        // The sender's WhatsApp ID (LID), when the interfaces know it. A watcher
+        // saved with it matches exactly: the suffix rules below are for phone
+        // number variants (549 vs 54), and an ID has none.
+        const senderLid = String(message.metadata?.lid || '').replace(/\D/g, '');
         const groupName = message.metadata?.groupName;
         const msgContent = message.content?.toLowerCase() || '';
 
@@ -1532,10 +1533,10 @@ class Agent {
           // Improved Logic: Handle fuzzy number matching (e.g. 549 vs 54) and cleanup
           let isContactMatch = false;
 
-          for (const senderId of senderIds) { // Message has a phone/sender ID
+          if (contactString) { // Message has a phone/sender ID
             // 1. Try Numeric Suffix Match
             const wClean = w.contact_string.replace(/[^0-9]/g, '');
-            const msgClean = senderId.replace(/[^0-9]/g, '');
+            const msgClean = contactString.replace(/[^0-9]/g, '');
 
             if (wClean.length >= 8 && msgClean.length >= 8) {
               // Match last 8 digits (reduced from 9 to be safer for varying area codes)
@@ -1554,9 +1555,12 @@ class Agent {
 
             // 2. Fallback to direct string inclusion (handles names or shorter numbers)
             if (!isContactMatch) {
-              isContactMatch = w.contact_string.includes(senderId);
+              isContactMatch = w.contact_string.includes(contactString);
             }
-            if (isContactMatch) break;
+          }
+
+          if (!isContactMatch && senderLid) {
+            isContactMatch = w.contact_string.replace(/\D/g, '') === senderLid;
           }
 
           if (!isContactMatch && groupName) {
@@ -1651,10 +1655,15 @@ class Agent {
 
           // --- AUTOPILOT LOGIC (skip for fromMe — we don't want to draft replies to ourselves) ---
           if (!isFromMe) {
+            // A person saved under the WhatsApp ID alone is still found by its
+            // digits, as before the interfaces knew the number.
+            const lidDigits = String(message.metadata?.lid || '').split('@')[0];
+            const autopilotId = lidDigits && !this.db.getPerson(contactString) && this.db.getPerson(lidDigits)
+              ? lidDigits : contactString;
             // handleMessage is async and not awaited: catch its rejection on the
             // promise. A try/catch here only sees synchronous throws, so a
             // failure became an unhandled rejection.
-            this.impersonationService.handleMessage(chatId, message, contactString)
+            this.impersonationService.handleMessage(chatId, message, autopilotId)
               .catch(e => console.error('[Agent] Autopilot failed:', e.message));
           }
 
