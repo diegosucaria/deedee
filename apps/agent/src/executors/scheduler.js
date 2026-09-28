@@ -54,8 +54,10 @@ function tooOften(cron) {
     if (typeof cron !== 'string') return 'is not text';
     const f = cronFields(cron);
     if (!f) return 'is not a cron schedule';
-    if (f.second.length > 1) return 'repeats within a minute';
-    if (f.minute.length > 60 / MIN_JOB_MINUTES) return `runs ${f.minute.length} times an hour`;
+    // Seconds, minutes and hours match by value: count each value once.
+    const minutes = new Set(f.minute).size;
+    if (new Set(f.second).size > 1) return 'repeats within a minute';
+    if (minutes > 60 / MIN_JOB_MINUTES) return `runs ${minutes} times an hour`;
     return null;
 }
 
@@ -74,15 +76,20 @@ function noMoreOften(oldCron, newCron) {
     if (/#/.test(String(oldCron)) || /#/.test(String(newCron))) return String(oldCron).trim() === String(newCron).trim();
     const same = (x, y) => x.length === y.length && x.every((v, i) => v === y[i]);
     if (!same(a.month, b.month) || !same(a.dayOfMonth, b.dayOfMonth)) return false;
-    const days = (list) => new Set(list.map(v => v % 7)).size;
+    // The parser counts entries, repeats too: a weekday list of exactly 8
+    // entries is "every day" ("1,1,1,1,1,1,1,1" runs daily), and a day-of-
+    // month list as long as the month is "every day of the month".
+    const days = (list) => (list.length === 8 ? 7 : new Set(list.map(v => v % 7)).size);
     const numeric = (list) => list.every(v => typeof v === 'number');
-    if (a.dayOfMonth.length === 31 && numeric(a.dayOfWeek) && numeric(b.dayOfWeek)) {
+    const everyDayOfMonth = a.dayOfMonth.length === 31 && new Set(a.dayOfMonth).size === 31;
+    if (everyDayOfMonth && numeric(a.dayOfWeek) && numeric(b.dayOfWeek)) {
         if (days(b.dayOfWeek) > days(a.dayOfWeek)) return false;
     } else if (!same(a.dayOfWeek, b.dayOfWeek)) {
         return false;
     }
-    if (b.second.length > a.second.length) return false;
-    return b.minute.length * b.hour.length <= a.minute.length * a.hour.length;
+    const n = (list) => new Set(list).size;
+    if (n(b.second) > n(a.second)) return false;
+    return n(b.minute) * n(b.hour) <= n(a.minute) * n(a.hour);
 }
 
 /**

@@ -1060,10 +1060,10 @@ describe('a job made in a chat', () => {
             await executor.execute('scheduleJob', { name: 'wed_note', cron: '0 9 * * 3', task: 'A note' }, inChat('whatsapp:assistant', OWNER_LID));
             const mine = inChat('whatsapp:assistant', OWNER_LID, MAIL);
 
-            await executor.execute('scheduleJob', { name: 'daily_note', cron: '0 9,17 1* * * *' }, mine);
+            await executor.execute('scheduleJob', { name: 'daily_note', cron: '0 9 1* * * *' }, mine);
             await executor.execute('scheduleJob', { name: 'wed_note', cron: '0 9 * * 3/7' }, mine);
 
-            // "1*" is hours 10 to 23: 28 runs a day where there was one.
+            // "1*" is hours 10 to 23: 14 runs a day where there was one.
             expect(savedRow(db, 'daily_note').payload.tainted).toBe(true);
             expect(savedRow(db, 'wed_note').payload.tainted).toBe(true);
         });
@@ -1074,6 +1074,18 @@ describe('a job made in a chat', () => {
             await executor.execute('scheduleJob', { name: 'monthly_note', cron: '0 9 1 * 0-6' }, inChat('whatsapp:assistant', OWNER_LID, MAIL));
 
             expect(savedRow(db, 'monthly_note').payload.tainted).toBe(true);
+        });
+
+        test('a weekday list of eight entries runs every day, repeats or not, and cannot pass as no more often', async () => {
+            const { noMoreOften } = require('../src/executors/scheduler');
+            await executor.execute('scheduleJob', { name: 'weekly_hello', cron: '0 9 * * 1', task: 'Send Alice a short hello' }, inChat('whatsapp:assistant', OWNER_LID));
+
+            await executor.execute('scheduleJob', { name: 'weekly_hello', cron: '0 9 * * 1,1,1,1,1,1,1,1' }, inChat('whatsapp:assistant', OWNER_LID, MAIL));
+
+            expect(savedRow(db, 'weekly_hello').payload.tainted).toBe(true);
+            expect(noMoreOften('0 9 * * 1-5', '0 9 * * 1-5,1,2,3')).toBe(false);
+            // A day-of-month list padded to 31 entries is not every day of the month.
+            expect(noMoreOften(`0 9 ${Array(31).fill(1).join(',')} * *`, `0 9 ${Array(31).fill(1).join(',')} * 1`)).toBe(false);
         });
 
         test('a Slack channel or a Telegram group opened on the web is not his own chat', async () => {
