@@ -302,7 +302,7 @@ const toolDefinitions = [
       {
         name: "cancelJob",
         category: "scheduler",
-        description: "Delete a scheduled job by name, with its saved state. To change a job instead, call scheduleJob with the same name.",
+        description: "Delete a scheduled job by name, with its saved state. Built-in jobs cannot be deleted. To change a job instead, call scheduleJob with the same name.",
         parameters: {
           type: "OBJECT",
           properties: { name: { type: "STRING" } },

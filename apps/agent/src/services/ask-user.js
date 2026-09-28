@@ -126,7 +126,7 @@ class AskUserService {
      * Tool entry point. Resolves to { answer }, { cancelled: true },
      * { timeout: true } or { error }.
      */
-    async ask(message, args = {}) {
+    async ask(message, args = {}, { untrustedTaint = [] } = {}) {
         const question = String(args.question || '').trim();
         if (!question) return { error: 'askUser needs a question' };
         const options = normalizeOptions(args.options);
@@ -150,6 +150,10 @@ class AskUserService {
         const outgoing = createAssistantMessage(questionText(question, options));
         outgoing.source = replySource;
         outgoing.metadata = { chatId: replyChatId, question: { id, options } };
+        // A job run the scheduler marks, that has read third-party content:
+        // the question keeps that mark in his chat (see Scheduler, markOwner).
+        const taint = Array.isArray(untrustedTaint) ? untrustedTaint.filter(Boolean).map(String).slice(0, 20) : [];
+        if (message?.metadata?.markOwnerMessages === true && taint.length > 0) outgoing.metadata.jobTaint = taint;
         if (route.ownerChannel) {
             outgoing.metadata.session = 'assistant';
             outgoing.isNotification = true;

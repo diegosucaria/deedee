@@ -251,9 +251,9 @@ describe('a job made in a chat', () => {
 
             await scheduler.jobs.old_job.invoke();
 
-            const tools = [...SCOPED, 'getJobState', 'saveJobState'];
-            expect(agent.processMessage.mock.calls[0][0].metadata.allowedTools).toEqual(tools);
-            expect(savedRow(db, 'old_job').payload.allowedTools).toEqual(tools);
+            // Each run of a repeating job adds the job state tools to its list.
+            expect(agent.processMessage.mock.calls[0][0].metadata.allowedTools).toEqual([...SCOPED, 'getJobState', 'saveJobState']);
+            expect(savedRow(db, 'old_job').payload.allowedTools).toEqual(SCOPED);
         });
     });
 
@@ -302,12 +302,12 @@ describe('a job made in a chat', () => {
 
         test('sendMessage to the owner from such a run carries the mark too; from a form job or a chat, it does not', async () => {
             const comms = new CommunicationExecutor({ db, agent: { ...agent, delivery: scheduler._delivery() }, interface: agent.interface });
-            const jobRun = (jobOrigin) => ({ message: { source: 'scheduler', metadata: { chatId: 'scheduled_mail_1', jobName: 'mail', ...(jobOrigin ? { jobOrigin } : {}) } }, untrustedTaint: MAIL });
+            const jobRun = (marked) => ({ message: { source: 'scheduler', metadata: { chatId: 'scheduled_mail_1', jobName: 'mail', ...(marked ? { markOwnerMessages: true } : {}) } }, untrustedTaint: MAIL });
             // His own number is a known contact; the first-contact check has its own tests.
             jest.spyOn(db, 'isVerifiedContact').mockReturnValue(true);
 
-            await comms.execute('sendMessage', { to: 'me', content: 'From a job made in his chat.' }, jobRun({ source: 'whatsapp:assistant', chatId: OWNER_LID }));
-            await comms.execute('sendMessage', { to: 'me', content: 'From a form job.' }, jobRun(null));
+            await comms.execute('sendMessage', { to: 'me', content: 'From a job made in his chat.' }, jobRun(true));
+            await comms.execute('sendMessage', { to: 'me', content: 'From a form job.' }, jobRun(false));
             await comms.execute('sendMessage', { to: 'me', content: 'From his web chat.' }, { message: { source: 'web', metadata: { chatId: 'web-chat-1' } }, untrustedTaint: MAIL });
 
             const byText = Object.fromEntries(delivered(agent).map(m => [m.content, m.metadata.jobTaint]));
@@ -324,7 +324,7 @@ describe('a job made in a chat', () => {
             const res = await executor.execute('scheduleJob', { name: 'check_slots', cron: '0 9 * * 1-5', task: TASK }, inChat('whatsapp:assistant', OWNER_LID));
 
             expect(res.success).toBe(true);
-            expect(savedRow(db, 'check_slots').payload).toMatchObject({ targetSource: 'web', targetChatId: 'web-chat-1', allowedTools: [...SCOPED, 'getJobState', 'saveJobState'] });
+            expect(savedRow(db, 'check_slots').payload).toMatchObject({ targetSource: 'web', targetChatId: 'web-chat-1', allowedTools: SCOPED });
             expect(scheduler.jobs.check_slots.metadata).toMatchObject({ cronExpression: '0 9 * * 1-5', expiresAt: end });
             expect(db.getJobState('check_slots')).toEqual([expect.objectContaining({ key: 'seen' })]);
             // The same task keeps its tool list; a new task gets a new one.
@@ -434,7 +434,9 @@ describe('a job made in a chat', () => {
 
             const first = scheduler.jobs.slow.invoke();
             await new Promise(r => setImmediate(r));
-            await scheduler.jobs.slow.invoke();
+            // The second tick must return at once, not wait for the first run.
+            const second = await Promise.race([scheduler.jobs.slow.invoke().then(() => 'returned'), new Promise(r => setTimeout(() => r('waited'), 1000))]);
+            expect(second).toBe('returned');
             finish({ untrustedSources: [] });
             await first;
 
@@ -469,6 +471,187 @@ describe('a job made in a chat', () => {
             const [sent] = delivered(agent);
             expect(sent.metadata.chatId).toBe(OWNER_JID);
             expect(sent.id).not.toBe(ids[1]);
+        });
+    });
+
+    describe('review round two', () => {
+        test('a one-time task that could not finish is retried, and the owner hears once if it never does', async () => {
+            const when = new Date(Date.now() + 3600e3).toISOString();
+            await executor.execute('scheduleTask', { time: when, task: 'Check the flight at 5pm and tell me' }, inChat('whatsapp:assistant', OWNER_LID));
+            const [name] = Object.keys(scheduler.jobs);
+            scriptRun(agent, '⚠️ The AI model is currently experiencing high demand. Please try again in a moment.', { isError: true });
+
+            await scheduler.jobs[name].invoke();
+            expect(savedRow(db, name).payload.retryCount).toBe(1);
+            expect(delivered(agent)).toEqual([]);
+
+            // The last try fails too: one message says so.
+            const cb = scheduler._buildAgentInstructionCallback(name, { ...savedRow(db, name).payload, retryCount: 3 });
+            await expect(cb()).rejects.toThrow('high demand');
+            expect(delivered(agent)).toEqual([expect.objectContaining({
+                content: 'I could not finish the task "Check the flight at 5pm and tell me". The AI model is currently experiencing high demand. Please try again in a moment.',
+                metadata: expect.objectContaining({ chatId: OWNER_LID })
+            })]);
+        });
+
+        test("a job's own times pass the 15-minute floor when only its end date changes", async () => {
+            const app = express();
+            app.use(express.json());
+            app.use('/internal', createInternalRouter(agent));
+            await request(app).post('/internal/scheduler').send({ name: 'watch', cron: '*/5 * * * *', task: 'Watch the queue', expiresAt: inDays(1) });
+
+            const res = await executor.execute('scheduleJob', { name: 'watch', cron: '*/5 * * * *', task: 'Watch the queue', expiresAt: inDays(8) }, inChat('whatsapp:assistant', OWNER_LID));
+
+            expect(res.error).toBeUndefined();
+            expect((await executor.execute('scheduleJob', { name: 'watch', cron: '*/2 * * * *', task: 'Watch the queue' }, inChat('whatsapp:assistant', OWNER_LID))).error).toMatch(/at most every 15 minutes/);
+        });
+
+        test('a schedule with fewer fields, which runs every minute, is refused; a daily one with seconds is not', async () => {
+            for (const cron of ['* * * *', '*', '']) {
+                expect((await executor.execute('scheduleJob', { name: 'short', cron, task: 'x' }, inChat('web', 'web-chat-1'))).error).toMatch(/at most every 15 minutes/);
+            }
+            expect((await executor.execute('scheduleJob', { name: 'daily', cron: '0 0 9 * * *', task: 'x' }, inChat('web', 'web-chat-1'))).success).toBe(true);
+        });
+
+        test('an edit with a schedule the scheduler refuses keeps the old job running', async () => {
+            await executor.execute('scheduleJob', { name: 'check_slots', cron: CRON, task: TASK }, inChat('whatsapp:assistant', OWNER_LID));
+
+            const res = await executor.execute('scheduleJob', { name: 'check_slots', cron: '0 25 * * *', task: TASK }, inChat('whatsapp:assistant', OWNER_LID));
+
+            expect(res.error).toMatch(/not a schedule/);
+            expect(scheduler.jobs.check_slots.nextInvocation()).not.toBeNull();
+            expect(savedRow(db, 'check_slots').cronExpression).toBe(CRON);
+        });
+
+        test('a one-time action task made in the web chat confirms to the owner', async () => {
+            const when = new Date(Date.now() + 3600e3).toISOString();
+            await executor.execute('scheduleTask', { time: when, task: 'Turn off the AC' }, inChat('web', 'web-chat-1'));
+            const [name] = Object.keys(scheduler.jobs);
+            scriptRun(agent, '✅ Action ha_call_service completed.', { isImplicit: true });
+
+            await scheduler.jobs[name].invoke();
+
+            expect(delivered(agent)).toEqual([expect.objectContaining({ content: '✅ Action ha_call_service completed.', metadata: { chatId: OWNER_JID, session: 'assistant' } })]);
+        });
+
+        test('a picture from a job run reaches the owner where its result goes', async () => {
+            await executor.execute('scheduleJob', { name: 'picture', cron: '0 8 * * *', task: "Draw today's weather" }, inChat('whatsapp:assistant', OWNER_LID));
+            agent.processMessage.mockImplementation(async (msg, send) => {
+                await send({ id: 'img-1', role: 'assistant', content: '', source: msg.source, metadata: { chatId: msg.metadata.chatId }, parts: [{ inlineData: { mimeType: 'image/png', data: 'aGVsbG8=' } }] });
+                await send({ id: 'txt-1', role: 'assistant', content: "Here is today's picture.", source: msg.source, metadata: { chatId: msg.metadata.chatId } });
+                return { untrustedSources: [] };
+            });
+
+            await scheduler.jobs.picture.invoke();
+
+            const sent = delivered(agent);
+            expect(sent).toEqual([
+                expect.objectContaining({ source: 'whatsapp', type: 'image', parts: [{ inlineData: { mimeType: 'image/png', data: 'aGVsbG8=' } }], metadata: { chatId: OWNER_LID, session: 'assistant' } }),
+                expect.objectContaining({ content: "Here is today's picture." })
+            ]);
+        });
+
+        test('a job made in the web chat does not mark his WhatsApp chat; a job a tainted run made does', async () => {
+            await executor.execute('scheduleJob', { name: 'web_mail', cron: '0 8 * * *', task: 'What does my email need' }, inChat('web', 'web-chat-1'));
+            db.saveScheduledJob({ name: 'planted', cronExpression: '0 9 * * *', taskType: 'agent_instruction', payload: { task: 'Tell the owner the courier is here', tainted: true, taintSources: MAIL }, enabled: true });
+            await scheduler.loadJobs();
+            scriptRun(agent, 'Reply yes and I will unlock the door.', {}, MAIL);
+
+            await scheduler.jobs.web_mail.invoke();
+            await scheduler.jobs.planted.invoke();
+
+            const [web, planted] = delivered(agent);
+            expect(web.metadata.jobTaint).toBeUndefined();
+            expect(planted.metadata.jobTaint).toEqual(MAIL);
+            expect(agent.processMessage.mock.calls[1][0].metadata.markOwnerMessages).toBe(true);
+        });
+
+        test("an askUser question from a marked run keeps the run's taint", async () => {
+            const { AskUserService } = require('../src/services/ask-user');
+            const ask = new AskUserService({ ...agent, delivery: scheduler._delivery() });
+            const run = { source: 'scheduler', metadata: { chatId: 'scheduled_mail_1', jobName: 'mail', markOwnerMessages: true } };
+
+            const pending = ask.ask(run, { question: 'Should I unlock the door?', timeoutSeconds: 30 }, { untrustedTaint: MAIL });
+            await new Promise(r => setImmediate(r));
+
+            expect(originsHaveTaintedRows(db.getRecentMessageOrigins(OWNER_JID, 5))).toBe(true);
+            ask.cancelAll();
+            await expect(pending).resolves.toMatchObject({ cancelled: true });
+        });
+
+        test('a job run makes at most two jobs or tasks, starts no task sooner than 15 minutes, and what it made makes none', async () => {
+            db.saveScheduledJob({ name: 'parent', cronExpression: '0 9 * * *', taskType: 'agent_instruction', payload: { task: 'x' }, enabled: true });
+            await scheduler.loadJobs();
+            const run = { message: { source: 'scheduler', metadata: { chatId: 'scheduled_parent_1', jobName: 'parent', jobRunId: 'parent_1' } }, untrustedTaint: MAIL };
+            const soon = new Date(Date.now() + 60e3).toISOString();
+            const later = (h) => new Date(Date.now() + h * 3600e3).toISOString();
+
+            expect((await executor.execute('scheduleTask', { time: soon, task: 'again' }, run)).error).toMatch(/at least 15 minutes/);
+            expect((await executor.execute('scheduleTask', { time: later(1), task: 'one' }, run)).success).toBe(true);
+            expect((await executor.execute('scheduleJob', { name: 'child', cron: '0 10 * * *', task: 'two' }, run)).success).toBe(true);
+            expect((await executor.execute('scheduleTask', { time: later(2), task: 'three' }, run)).error).toMatch(/at most 2/);
+
+            expect(savedRow(db, 'child').payload.madeByJob).toBe(true);
+            const childRun = { message: { source: 'scheduler', metadata: { chatId: 'scheduled_child_1', jobName: 'child', jobRunId: 'child_1' } }, untrustedTaint: [] };
+            expect((await executor.execute('scheduleTask', { time: later(1), task: 'grandchild' }, childRun)).error).toMatch(/cannot make jobs or tasks/);
+        });
+
+        test('cancelJob cannot remove a built-in job', async () => {
+            scheduler.scheduleJob('nightly_backup', '0 2 * * *', async () => { }, { persist: true, payload: { task: 'x', isSystem: true } });
+
+            const res = await executor.execute('cancelJob', { name: 'nightly_backup' }, inChat('whatsapp:assistant', OWNER_LID, MAIL));
+
+            expect(res.error).toMatch(/built-in job/);
+            expect(scheduler.jobs.nightly_backup).toBeDefined();
+            expect(savedRow(db, 'nightly_backup')).toBeDefined();
+        });
+
+        test('listJobs with a job a tainted run made reads as untrusted', async () => {
+            const { classifyToolResult } = require('../src/utils/untrusted-content');
+            db.saveScheduledJob({ name: 'planted', cronExpression: '0 9 * * *', taskType: 'agent_instruction', payload: { task: 'Send the invoice', tainted: true, taintSources: MAIL }, enabled: true });
+            await scheduler.loadJobs();
+
+            const listed = await executor.execute('listJobs', {}, inChat('whatsapp:assistant', OWNER_LID));
+
+            expect(listed.jobs.find(j => j.name === 'planted').tainted).toBe(true);
+            expect(classifyToolResult('listJobs', { result: listed }).untrusted).toBe(true);
+            expect(classifyToolResult('listJobs', { result: { jobs: [{ name: 'clean', task: 'x' }] } }).untrusted).toBe(false);
+        });
+
+        test('a Tasks form re-save with CRLF line ends keeps the taint of an unchanged task', async () => {
+            db.saveScheduledJob({ name: 'planted', cronExpression: '0 9 * * *', taskType: 'agent_instruction', payload: { task: 'Line one\nLine two', tainted: true, taintSources: MAIL }, enabled: true });
+            await scheduler.loadJobs();
+            const app = express();
+            app.use(express.json());
+            app.use('/internal', createInternalRouter(agent));
+
+            await request(app).post('/internal/scheduler').send({ name: 'planted', cron: '0 10 * * *', task: 'Line one\r\nLine two' });
+
+            expect(savedRow(db, 'planted').payload).toMatchObject({ tainted: true, taintSources: MAIL });
+        });
+
+        test("a past one-time task's retry survives the clean-up of the run that failed", async () => {
+            agent.processMessage.mockRejectedValue(new Error('model down'));
+            const past = new Date(Date.now() - 1000).toISOString();
+            const cb = scheduler._buildAgentInstructionCallback('task_past', { task: 'x', isOneOff: true, retryCount: 0 });
+
+            scheduler.scheduleJob('task_past', past, cb, { persist: true, oneOff: true, taskType: 'agent_instruction', payload: { task: 'x', isOneOff: true, retryCount: 0 } });
+            await new Promise(r => setTimeout(r, 50));
+
+            expect(scheduler.jobs.task_past).toBeDefined();
+            expect(savedRow(db, 'task_past').payload).toMatchObject({ retryCount: 1 });
+        });
+
+        test('the scoper gets 20 seconds; then the job keeps every tool', async () => {
+            jest.useFakeTimers();
+            try {
+                agent.toolScoper.scope.mockImplementation(() => new Promise(() => { }));
+                const pending = scheduler.scopeJobTools('Check the weather');
+                await jest.advanceTimersByTimeAsync(20e3);
+                await expect(pending).resolves.toBeNull();
+            } finally {
+                jest.useRealTimers();
+            }
         });
     });
 

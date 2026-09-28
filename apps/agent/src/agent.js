@@ -3250,7 +3250,7 @@ class Agent {
 
     // --- ASK THE USER (blocks until the reply, a timeout or a stop) ---
     if (executionName === 'askUser') {
-      return this.askUser.ask(message, args);
+      return this.askUser.ask(message, args, { untrustedTaint: options.taint?.tainted ? [...options.taint.sources] : [] });
     }
 
     // --- INTERNAL DB TOOLS ---

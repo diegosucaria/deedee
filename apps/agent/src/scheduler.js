@@ -25,6 +25,14 @@ const JOB_STATE_TOOLS = ['getJobState', 'saveJobState'];
 // A tool call waits this long for the scoper before the job keeps every tool.
 const SCOPE_TIMEOUT_MS = 20e3;
 
+/** 'image' or 'audio' for a reply that carries a picture or a voice note, else null. */
+function mediaType(reply) {
+    const part = Array.isArray(reply?.parts)
+        ? reply.parts.find(p => /^(?:image|audio)\//.test(String(p?.inlineData?.mimeType || '')))
+        : null;
+    return part ? part.inlineData.mimeType.split('/')[0] : null;
+}
+
 class Scheduler {
     constructor(agent) {
         this.agent = agent;
@@ -89,9 +97,10 @@ class Scheduler {
      * @param {object} options - { persist: boolean, taskType: string, payload: object }
      */
     scheduleJob(name, cronExpression, callback, options = {}) {
-        if (this.jobs[name]) {
-            this.jobs[name].cancel();
-        }
+        // The job this one replaces. It is stopped once the new rule is in
+        // place: a rule node-schedule refuses used to stop the old job and
+        // leave nothing.
+        const previous = this.jobs[name];
 
         // Handle Date object or ISO string for one-off jobs
         let rule = cronExpression;
@@ -99,6 +108,7 @@ class Scheduler {
             rule = new Date(cronExpression);
             if (rule.getTime() <= Date.now()) {
                 console.warn(`[Scheduler] One-off job '${name}' is scheduled in the PAST (${rule.toISOString()}). Running IMMEDIATELY.`);
+                if (previous) previous.cancel();
 
                 // Execute immediately
                 // A failed run may register its retry under this name; that
@@ -134,7 +144,7 @@ class Scheduler {
                         }
                     }
                 })();
-                return; // SKIP normal scheduling
+                return true; // SKIP normal scheduling
             }
         }
 
@@ -185,8 +195,9 @@ class Scheduler {
 
         if (!job) {
             console.error(`[Scheduler] Failed to schedule job '${name}'. Rule: ${rule}`);
-            return;
+            return false;
         }
+        if (previous && previous !== job) previous.cancel();
 
         this.jobs[name] = job;
         this.jobs[name].metadata = {
@@ -217,6 +228,7 @@ class Scheduler {
             });
         }
         console.log(`[Scheduler] Job '${name}' scheduled. OneOff: ${!!options.oneOff}`);
+        return true;
     }
 
     cancelJob(name) {
@@ -370,11 +382,10 @@ class Scheduler {
 
     /**
      * The tools a job's task needs, picked once when the job is saved
-     * (ToolScoper). A repeating job always keeps getJobState and
-     * saveJobState. Null when there is no scoper, it failed or it took too
+     * (ToolScoper). Null when there is no scoper, it failed or it took too
      * long: the job then has every tool.
      */
-    async scopeJobTools(task, { recurring = true } = {}) {
+    async scopeJobTools(task) {
         const scoper = this.agent.toolScoper;
         if (!scoper || typeof scoper.scope !== 'function') return null;
         let timer;
@@ -384,8 +395,7 @@ class Scheduler {
                 scoper.scope(String(task || ''), mcpTools),
                 new Promise(resolve => { timer = setTimeout(() => resolve(null), SCOPE_TIMEOUT_MS); })
             ]);
-            if (!Array.isArray(tools) || tools.length === 0) return null;
-            return recurring ? [...new Set([...tools, ...JOB_STATE_TOOLS])] : tools;
+            return Array.isArray(tools) && tools.length > 0 ? tools : null;
         } catch (e) {
             console.warn(`[Scheduler] Tool scoping failed, the job keeps every tool: ${e.message}`);
             return null;
@@ -400,7 +410,7 @@ class Scheduler {
      * every tool, so it gets a list on its first run and keeps it.
      */
     async _giveToolList(name, payload) {
-        const tools = await this.scopeJobTools(payload.task, { recurring: !payload.isOneOff });
+        const tools = await this.scopeJobTools(payload.task);
         if (!tools) return;
         payload.allowedTools = tools;
         const job = this.jobs[name];
@@ -418,6 +428,60 @@ class Scheduler {
             console.log(`[Scheduler] Job '${name}' got a tool list of ${tools.length} tools.`);
         } catch (e) {
             console.warn(`[Scheduler] Could not save the tool list of '${name}': ${e.message}`);
+        }
+    }
+
+    /** Where a job run's own messages go: the job's chat (see _jobChatTarget) or the owner channel. */
+    async _jobReplyTarget(payload) {
+        return (await this._jobChatTarget(payload)) || this._delivery().resolveOwnerTarget();
+    }
+
+    /**
+     * A picture or a voice note from a job run (generateImage,
+     * replyWithAudio). It goes where the result goes, now: a scheduler reply
+     * only reaches the log, and a result is text only. One direct try, as
+     * for any picture: a ledger row would hold megabytes.
+     */
+    async _deliverJobMedia(name, reply, type, payload) {
+        try {
+            const target = await this._jobReplyTarget(payload);
+            if (!target || !this.agent.interface) return;
+            const [channel, session] = String(target.channel).split(':');
+            await this.agent.interface.send({
+                id: require('crypto').randomUUID(),
+                role: 'assistant',
+                source: channel,
+                content: '',
+                type,
+                parts: reply.parts,
+                ...(reply.caption ? { caption: reply.caption } : {}),
+                metadata: { chatId: target.target, ...(channel === 'whatsapp' ? { session: session || 'assistant' } : {}) },
+                isNotification: true
+            });
+        } catch (e) {
+            console.warn(`[Scheduler] Job '${name}': a picture or voice note was not sent: ${e.message}`);
+        }
+    }
+
+    /**
+     * A one-time task that never finished, after its retries: the owner
+     * hears it once, where its result would have gone. The task text may
+     * come from a run that read untrusted content; the message then
+     * carries that mark.
+     */
+    async _tellTaskFailed(name, payload, error) {
+        try {
+            const target = await this._jobReplyTarget(payload);
+            if (!target) return;
+            const task = String(payload?.task || '').replace(/\s+/g, ' ').trim();
+            const short = task.length > 80 ? `${task.slice(0, 77)}...` : task;
+            const reason = error?.forOwner ? String(error.message || '').replace(/^⚠️\s*/, '').trim() : 'Something went wrong on my side.';
+            const taint = taintFromPayload(payload, `job "${name}"`);
+            await this._delivery().deliver('job_notification', target.channel, target.target,
+                { content: `I could not finish the task "${short}". ${reason}`, type: 'text', ...(taint.length > 0 ? { metadata: { jobTaint: taint } } : {}) },
+                { origin: name, dedupe: false });
+        } catch (e) {
+            console.warn(`[Scheduler] Could not tell the owner that '${name}' failed: ${e.message}`);
         }
     }
 
@@ -493,8 +557,10 @@ class Scheduler {
 
                         // If it's NOT an action and we haven't decided it's NOT worthy yet, we notify by default.
                         // Actions are quiet by default unless explicitly asked to alert.
-                        // A job made in a chat always answered there, actions too.
-                        if (!shouldNotify && (!isAction || chat)) {
+                        // A job made in a chat always answered there, actions too,
+                        // and a one-time task made in any chat confirms that it ran.
+                        const madeInChat = !!chat || (payload?.isOneOff === true && !!this._jobOrigin(payload));
+                        if (!shouldNotify && (!isAction || madeInChat)) {
                             shouldNotify = true;
                         }
 
@@ -515,7 +581,9 @@ class Scheduler {
                             // already saved its reply there: the same id keeps the thread
                             // mirror from storing a second copy.
                             const sameChat = !!(chat && result?.savedReplyId && result.savedReplyChat === chat.target);
-                            const taint = Array.isArray(result?.jobTaint) ? result.jobTaint : [];
+                            // The run's taint mark: see markOwner in _buildAgentInstructionCallback.
+                            const marked = !!chat || payload?.tainted === true;
+                            const taint = marked && Array.isArray(result?.jobTaint) ? result.jobTaint : [];
                             const outcome = await delivery.deliver('job_notification', owner.channel, owner.target,
                                 { content: notificationText, type: 'text', ...(taint.length > 0 ? { metadata: { jobTaint: taint } } : {}) },
                                 { origin, dedupe: false, ...(sameChat ? { id: result.savedReplyId } : {}) });
@@ -615,16 +683,30 @@ class Scheduler {
             }
             const inChat = !!origin && process.env.JOB_OWN_CHAT === '0';
             const isOneOff = currentPayload.isOneOff === true;
+            // What this run sends the owner carries its taint mark when the
+            // job answers in his own chat (its run used to live there) or the
+            // job itself was made by a run that read untrusted content. The
+            // mark holds back his next word for messages, email and the house.
+            const markOwner = !!(await this._jobChatTarget(currentPayload)) || currentPayload.tainted === true;
             if (origin && !inChat && !Array.isArray(currentPayload.allowedTools)) {
                 await this._giveToolList(name, currentPayload);
             }
+            const runStart = Date.now();
             const msgMeta = {
-                chatId: inChat ? origin.chatId : `scheduled_${name}_${Date.now()}`,
+                chatId: inChat ? origin.chatId : `scheduled_${name}_${runStart}`,
                 jobName: name,
+                // One id per run, in either mode: what a run may make is counted by it.
+                jobRunId: `${name}_${runStart}`,
                 // The chat the job came from: approvals show their card there too.
                 ...(origin && !inChat ? { jobOrigin: origin } : {}),
+                // Read by sendMessage and askUser (see markOwner above).
+                ...(markOwner ? { markOwnerMessages: true } : {}),
                 ...(currentPayload.model ? { forceModel: currentPayload.model } : {}),
-                ...(currentPayload.allowedTools ? { allowedTools: currentPayload.allowedTools } : {})
+                // The note tells every run of a repeating job to use the job
+                // state tools, so its list always has them.
+                ...(Array.isArray(currentPayload.allowedTools)
+                    ? { allowedTools: isOneOff ? currentPayload.allowedTools : [...new Set([...currentPayload.allowedTools, ...JOB_STATE_TOOLS])] }
+                    : {})
             };
             // Created by a run that read untrusted content: start tainted.
             const inherited = taintFromPayload(currentPayload, `job "${name}"`);
@@ -633,6 +715,8 @@ class Scheduler {
             // The run's answer: its last reply that is not a progress line
             // ("Thinking...") or a line about the run ("Stopped: ...").
             let final = null;
+            // The last line about the run, when nothing came after it.
+            let stoppedWith = null;
             try {
                 const summary = await this.agent.processMessage({
                     role: 'user',
@@ -644,17 +728,31 @@ class Scheduler {
                     // inside a chat sends nothing here: only its final reply may
                     // go out, after the run, and not when it is [SILENT].
                     let sent = true;
-                    if (!inChat && this.agent.interface) {
+                    const media = mediaType(reply);
+                    if (!inChat && !media && this.agent.interface) {
                         sent = await this.agent.interface.send(reply);
                     }
+                    // A picture or a voice note is part of the answer: it goes
+                    // where the result goes, now, since a result is text only.
+                    if (media) await this._deliverJobMedia(name, reply, media, currentPayload);
                     // createAssistantMessage uses 'content', not 'text'.
                     const replyText = reply.content || reply.text;
+                    if (replyText && reply.isStatus) stoppedWith = replyText;
                     if (replyText && !reply.isProgress && !reply.isStatus) {
                         final = { text: replyText, id: reply.id || null, isError: reply.isError === true, isImplicit: reply.isImplicit === true };
+                        stoppedWith = null;
                     }
                     // A false from the interface lets _deliverReply record the failure.
                     return sent;
                 });
+
+                // A one-time task the run could not finish (the agent's own
+                // error reply, or a line such as "I am stuck in a loop") is
+                // retried like a thrown error; the agent catches its model
+                // errors itself, so they never reached the retry.
+                if (isOneOff && (final?.isError || (!final && stoppedWith))) {
+                    throw Object.assign(new Error(final?.isError ? final.text : stoppedWith), { forOwner: true });
+                }
 
                 const executionResult = {
                     // "✅ Action X completed." is said for a model that gave no
@@ -664,11 +762,11 @@ class Scheduler {
                     // A real result may start with ⚠️; only the agent's own error reply is held back.
                     isError: !!final?.isError,
                     // What the run read that a third party wrote. A job made in
-                    // a chat used to run inside it, and its tool results there
+                    // his chat used to run inside it, and its tool results there
                     // held back his next word for messages, email and the house.
-                    // Its result carries the mark instead. A job made in the
-                    // Tasks form never ran in his chat and carries none.
-                    jobTaint: origin && Array.isArray(summary?.untrustedSources) ? summary.untrustedSources.slice(0, 20).map(String) : [],
+                    // A result that goes back to that chat carries the mark
+                    // instead (_processSmartNotification).
+                    jobTaint: Array.isArray(summary?.untrustedSources) ? summary.untrustedSources.slice(0, 20).map(String) : [],
                     ...(inChat && final?.id ? { savedReplyId: final.id, savedReplyChat: origin.chatId } : {})
                 };
 
@@ -699,6 +797,7 @@ class Scheduler {
                     });
                 } else {
                     console.error(`[Scheduler] Task '${name}' failed permanently after ${MAX_RETRIES} retries.`);
+                    await this._tellTaskFailed(name, currentPayload, error);
                     if (process.env.SLACK_WEBHOOK_URL) {
                         try {
                             await fetch(process.env.SLACK_WEBHOOK_URL, {

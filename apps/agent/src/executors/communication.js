@@ -222,13 +222,13 @@ class CommunicationExecutor extends BaseExecutor {
                     const ledgerOpts = { origin: message?.metadata?.jobName ? `job:${message.metadata.jobName}` : 'sendMessage', dedupe: 'pending' };
                     const queuedText = (what) => `${what} is queued and will be retried, so it should not be sent again.`;
                     const isMedia = payload.type === 'image' || payload.type === 'audio';
-                    // A run of a job made in one of his chats, which read
-                    // third-party content, marks what it sends him. It used to
-                    // run inside that chat, where its tool results held back his
-                    // next word for messages, email and the house; the thread
-                    // mirror keeps the mark instead (Scheduler, jobOrigin).
-                    const fromChatJob = !!message?.metadata?.jobOrigin;
-                    const ownerTaint = toOwner && fromChatJob ? (taintPayloadFields(context?.untrustedTaint).taintSources || []) : [];
+                    // A job run the scheduler marks (a job that answers in his
+                    // own chat, or one a tainted run made) marks what it sends
+                    // him when it has read third-party content. The thread
+                    // mirror keeps the mark; it holds back his next word for
+                    // messages, email and the house (Scheduler, markOwner).
+                    const marked = message?.metadata?.markOwnerMessages === true;
+                    const ownerTaint = toOwner && marked ? (taintPayloadFields(context?.untrustedTaint).taintSources || []) : [];
                     const ownerMeta = { session: metadata.session, ...(ownerTaint.length > 0 ? { jobTaint: ownerTaint } : {}) };
                     if (ownerTaint.length > 0) payload.metadata = { ...payload.metadata, jobTaint: ownerTaint };
 

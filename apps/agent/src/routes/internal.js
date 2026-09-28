@@ -299,13 +299,16 @@ function createInternalRouter(agent) {
             }
 
             // Auto-scope tools for this job prompt; null leaves every tool.
-            const allowedTools = await agent.scheduler.scopeJobTools(task, { recurring: !isOneOff });
+            const allowedTools = await agent.scheduler.scopeJobTools(task);
             console.log(`[Scheduler] Auto-scoped ${allowedTools?.length || 0} tools for job '${name}'`);
 
             // A job a tainted run created stays tainted while its task text is
             // unchanged. Rewriting the task is the owner's own instruction.
             const prev = existingJob?.metadata?.payload;
-            const keepTaint = prev && prev.tainted === true && prev.task === task
+            // The form sends its text area with CRLF line ends: compare the text,
+            // not the line ends, or a change of time alone would clear the taint.
+            const sameText = (a, b) => String(a ?? '').replace(/\r\n?/g, '\n').trim() === String(b ?? '').replace(/\r\n?/g, '\n').trim();
+            const keepTaint = prev && prev.tainted === true && sameText(prev.task, task)
                 ? { tainted: true, ...(Array.isArray(prev.taintSources) ? { taintSources: prev.taintSources } : {}) }
                 : {};
             // A job made in a chat keeps reporting there after an edit here.
@@ -325,7 +328,7 @@ function createInternalRouter(agent) {
             // restart, and it sent the run no [SILENT] note.
             const callback = agent.scheduler._buildAgentInstructionCallback(name, payload);
 
-            agent.scheduler.scheduleJob(name, cron, callback, {
+            const scheduled = agent.scheduler.scheduleJob(name, cron, callback, {
                 persist: true,
                 taskType: 'agent_instruction',
                 payload,
@@ -334,6 +337,9 @@ function createInternalRouter(agent) {
                 // An edit leaves a paused job paused; the toggle turns it on.
                 enabled: existingJob ? existingJob.metadata?.enabled !== false : true
             });
+            if (scheduled === false) {
+                return res.status(400).json({ error: `'${cron}' is not a schedule the scheduler understands${existingJob ? '; the job was not changed' : ''}.` });
+            }
 
             if (agent.interface) {
                 agent.interface.broadcast('jobs:update', { action: 'create', name });

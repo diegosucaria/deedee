@@ -182,12 +182,12 @@ his approval. It counts when all of these hold:
   chat whose id holds `@` never counts either. A message he forwarded is
   still his own message: it reads like a tool result a third party wrote
   (`originsHaveTaintedRows`), so it holds back only the rules below. So does
-  a message from a job made in one of his chats whose run read untrusted
-  content: its result, or a `sendMessage` to him. Before 2026-09-28 such a job
-  ran inside his chat and left its tool results there. Now it runs in a chat
-  of its own, and the thread mirror stores the run's taint on the row instead
-  (`metadata.jobTaint`). A job made in the Tasks form never ran in his chat
-  and carries no mark (see Known gaps).
+  a message from a marked job run that read untrusted content: its result, a
+  `sendMessage` to him or an `askUser` question. A run is marked when its job
+  answers in his own chat (before 2026-09-28 such a job ran inside that chat
+  and left its tool results there) or when a tainted run made the job. The
+  thread mirror stores the mark on the row (`metadata.jobTaint`). A job made
+  in the web chat or the Tasks form carries no mark (see Known gaps).
 
 Then a call the rules above pause runs with no card and no guardian call,
 and the history stores `owner_instructed`. Three limits stay:
@@ -701,10 +701,17 @@ that a tainted run creates from a contact's chat reports to the owner
 channel, never to that chat. A job's result only ever goes to the owner:
 his own WhatsApp or Telegram chat where he made it, or else the owner
 channel. A job saved long ago with a contact's chat of his own account or a
-Slack channel still does nothing, as those chats are passive. A job the
-model makes runs at most every 15 minutes (a job run skips the chat rate
-limit), and no job starts while its last run is still going. A call the
-owner approves runs with the taint of the run that asked.
+Slack channel still does nothing, as those chats are passive. A job run
+skips the chat rate limit, so what the model makes is held: a schedule of
+five fields (six with a fixed seconds value) that runs at most every 15
+minutes, unless it keeps the times the job has; at most two jobs or tasks
+per job run, tasks at least 15 minutes out, and none at all from a job or
+task a job run made. No user job starts while its last run is still going.
+`cancelJob` refuses a built-in job, as the Tasks page does. `listJobs` reads
+as untrusted when a listed job was made by a tainted run, so a copy of its
+task stays tainted. The dashboard compares task texts without their line
+ends, since the form sends CRLF. A call the owner approves runs with the
+taint of the run that asked.
 
 **Goals carry taint too**: `addGoal` and `updateGoalProgress` run unasked,
 but in a tainted run they store `tainted` and `taintSources` in the goal's
@@ -738,10 +745,10 @@ state can carry text into later prompts and tool results that count as
 trusted. `learnDevice` aliases do the same for device
 names; misuse stays within home control, which runs unasked anyway. A reminder's text can quote untrusted text
 back to the owner. The autopilot reply service does not use this tool loop.
-The result of a job made in the Tasks form, and its `sendMessage` to him,
-reach his chat with no mark even when the run read email. A mark there would
-make his next email or message request ask for a card after every morning
-briefing.
+The result of a job made in the Tasks form or the web chat, and its
+`sendMessage` to him, reach his chat with no mark even when the run read
+email, unless a tainted run made the job. A mark there would make his next
+email or message request ask for a card after every morning briefing.
 
 ## Personal data guard
 
