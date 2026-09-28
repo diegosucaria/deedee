@@ -37,7 +37,7 @@ list:
 
 | job | model | tools |
 |---|---|---|
-| `proactive_thought` | PRO | `spawnAgent`, `getAgentResult`, `scheduleJob`, `setReminder`, `sendMessage`, `searchMemory`, `getFact`, `saveJobState`, `getJobState`, `askUser` |
+| `proactive_thought` | PRO | `spawnAgent`, `getAgentResult`, `setReminder`, `sendMessage`, `searchMemory`, `getFact`, `saveJobState`, `getJobState`, `askUser` |
 | `wardrobe_pretrip_check` | FLASH | `list_wardrobe_trips`, `start_wardrobe_trip`, `wardrobe_pack_for_trip`, `spawnAgent`, `getAgentResult`, `sendMessage`, `askUser` |
 | `wardrobe_morning_outfit` | FLASH | `spawnAgent`, `getAgentResult`, `recommend_outfit`, `sendMessage`, `getFact`, `searchMemory`, `askUser` |
 

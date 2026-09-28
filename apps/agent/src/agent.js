@@ -92,8 +92,9 @@ const { DeliveryService } = require('./services/delivery-service');
 const { TIER1_LIMIT_OVERRIDES } = require('./utils/tool-loop-limits');
 
 // A line about the run itself, not an answer. A scheduled job never sends one
-// as its result. 'stopped': the owner, a cancel or the breaker ended the run.
-// 'failed': it could not finish (the loop limit, repeated calls, no answer).
+// as its result. 'stopped': the owner or a cancel ended the run. 'refused':
+// the breaker did. 'failed': it could not finish (the loop limit, repeated
+// calls, no answer).
 const statusReply = (text, kind) => Object.assign(createAssistantMessage(text), { isStatus: kind });
 
 // Compact, redacted JSON-ish preview of tool args/results for the chat UI.
@@ -2454,7 +2455,7 @@ class Agent {
         // CHECK GUARDIAN BREAKER: too many refused actions mean the run is being steered.
         if (approvalRun.stopped) {
           console.warn(`${logPrefix} Approval guardian breaker tripped. Breaking loop.`);
-          await activeSendCallback(statusReply('Stopped: several actions were refused in this run. The owner was notified.', 'stopped'));
+          await activeSendCallback(statusReply('Stopped: several actions were refused in this run. The owner was notified.', 'refused'));
           stoppedEarly = 'the approval guardian breaker';
           break;
         }

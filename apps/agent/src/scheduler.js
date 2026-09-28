@@ -470,14 +470,17 @@ class Scheduler {
      * text may come from a run that read untrusted content; the message then
      * carries that mark.
      */
-    async _tellTaskFailed(name, payload, { ranSome = false } = {}) {
+    async _tellTaskFailed(name, payload, { why = 'error' } = {}) {
         try {
             const target = await this._jobReplyTarget(payload);
             if (!target) return;
             const task = String(payload?.task || '').replace(/\s+/g, ' ').trim();
             const short = task.length > 80 ? `${task.slice(0, 77)}...` : task;
             const taint = taintFromPayload(payload, `job "${name}"`);
-            const text = `The task "${short}" did not finish.${ranSome ? ' Some of its steps ran before it stopped.' : ''}`;
+            const reason = why === 'stopped' ? 'It was stopped.'
+                : why === 'refused' ? 'Some of its actions were refused.'
+                    : 'It ended with an error.';
+            const text = `The task "${short}" did not finish. ${reason} It may have done part of its work.`;
             await this._delivery().deliver('job_notification', target.channel, target.target,
                 { content: text, type: 'text', ...(taint.length > 0 ? { metadata: { jobTaint: taint } } : {}) },
                 { origin: name, dedupe: false });
@@ -743,24 +746,29 @@ class Scheduler {
                     if (media) await this._deliverJobMedia(name, reply, media, currentPayload);
                     // createAssistantMessage uses 'content', not 'text'.
                     const replyText = reply.content || reply.text;
+                    // A line about the run wins over anything after it: once the
+                    // loop stops, the model's last words (written beside its
+                    // tool calls) still go out as a reply, and are not an answer.
                     if (replyText && reply.isStatus) stoppedWith = reply.isStatus;
                     if (replyText && !reply.isProgress && !reply.isStatus) {
                         final = { text: replyText, id: reply.id || null, isError: reply.isError === true, isImplicit: reply.isImplicit === true };
-                        stoppedWith = null;
                     }
                     // A false from the interface lets _deliverReply record the failure.
                     return sent;
                 });
 
-                // A one-time task the run could not finish (the agent's own
-                // error reply, or a run that failed: the loop limit, repeated
-                // calls, no answer) is not run again: it may have done part of
-                // its work. The owner hears once. A run he or the breaker
-                // stopped ends quietly: he knows, or was told.
-                if (isOneOff && (final?.isError || (!final && stoppedWith === 'failed'))) {
-                    const ranSome = Array.isArray(summary?.toolOutputs) && summary.toolOutputs.length > 0;
-                    await this._tellTaskFailed(name, currentPayload, { ranSome });
-                    return { text: '', decision: 'silent', decisionReason: 'The task did not finish; the owner was told' };
+                // A run that stopped or failed has no answer: a repeating job
+                // says nothing and runs again at its next time.
+                if (stoppedWith) final = null;
+                // A one-time task that ended with no answer (the agent's own
+                // error reply, a failed run, a /stop that may have been meant
+                // for another chat, the breaker) is not run again: it may have
+                // done part of its work. The owner hears once, where its result
+                // would have gone; the breaker's own note goes only to the bell.
+                if (isOneOff && (final?.isError || stoppedWith)) {
+                    await this._tellTaskFailed(name, currentPayload, { why: final?.isError ? 'error' : stoppedWith });
+                    // Logged as a failure; the catch below neither retries it nor tells him again.
+                    throw Object.assign(new Error(`The task did not finish (${final?.isError ? 'error' : stoppedWith}); the owner was told.`), { told: true });
                 }
 
                 const executionResult = {
@@ -790,7 +798,9 @@ class Scheduler {
                 // A repeating job runs again at its next time. A retry would
                 // take its name as a one-off, and a one-off is deleted once it
                 // has run, so one failed run used to end the job for good.
-                if (!currentPayload.isOneOff) {
+                if (error?.told) {
+                    // The run ended with no answer and the owner heard it: no retry.
+                } else if (!currentPayload.isOneOff) {
                     console.warn(`[Scheduler] Job '${name}' failed; it runs again at its next scheduled time.`);
                 } else if (registered && (this.jobs[name] !== registered || registered.metadata?.enabled === false)) {
                     // Deleted, changed or paused while it ran: no retry brings it back.
@@ -809,7 +819,7 @@ class Scheduler {
                     });
                 } else {
                     console.error(`[Scheduler] Task '${name}' failed permanently after ${MAX_RETRIES} retries.`);
-                    await this._tellTaskFailed(name, currentPayload, {});
+                    await this._tellTaskFailed(name, currentPayload, { why: 'error' });
                     if (process.env.SLACK_WEBHOOK_URL) {
                         try {
                             await fetch(process.env.SLACK_WEBHOOK_URL, {
@@ -864,9 +874,10 @@ class Scheduler {
             // Two reminders with the same text minutes apart are two reminders,
             // so the ledger's content dedupe stays off here.
             const opts = { origin: name, dedupe: false };
-            // A reminder a run set after reading untrusted content may quote it:
-            // it carries the mark, like a job's result (originsHaveTaintedRows).
-            const taint = taintFromPayload(payload, `reminder "${name}"`);
+            // A reminder a job run set after reading untrusted content may quote
+            // it: it carries the mark, like a job's result (originsHaveTaintedRows).
+            // One he set in his own chat does not; he saw what it came from.
+            const taint = payload.markOnDelivery === true ? taintFromPayload(payload, `reminder "${name}"`) : [];
             const text = { content: reminderMessage, ...(taint.length > 0 ? { metadata: { jobTaint: taint } } : {}) };
             const outcomes = [];
             if (isUserOrigin) {
@@ -1063,7 +1074,7 @@ You are not a notification relay. You are an intelligent assistant. After filter
 DO NOT:
 - Set reminders for promotional emails or marketing deadlines
 - Set reminders for routine/recurring meetings
-- Set a reminder (scheduleJob) unless you've checked (via searchMemory) that the owner hasn't already handled it
+- Set a reminder (setReminder) unless you've checked (via searchMemory) that the owner hasn't already handled it
 - Call addGoal. Goals are for YOUR own multi-session resumable work, NOT for items you discover during scanning. If something needs the owner's attention, surface it in the summary or set a reminder — do not log it as your goal.
 - NEVER contact anyone on the owner's behalf — do NOT send messages, emails, or replies to any person. You may only message the OWNER.
 
@@ -1085,7 +1096,7 @@ FORMAT (when you do notify):
                 // ARE this turn. The scan sub-agents below still run on FLASH,
                 // and the job fires under once a day (p=0.05 over 16 slots).
                 model: 'PRO',
-                allowedTools: ['spawnAgent', 'getAgentResult', 'scheduleJob', 'setReminder', 'sendMessage', 'searchMemory', 'getFact', 'saveJobState', 'getJobState', 'askUser']
+                allowedTools: ['spawnAgent', 'getAgentResult', 'setReminder', 'sendMessage', 'searchMemory', 'getFact', 'saveJobState', 'getJobState', 'askUser']
             },
             {
                 name: 'wardrobe_pretrip_check',

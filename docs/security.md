@@ -186,10 +186,11 @@ his approval. It counts when all of these hold:
   untrusted content: its result, a `sendMessage` to him or an `askUser`
   question. A run is marked (`jobRun.markOwner`) when its job answers in his
   own chat (before 2026-09-28 such a job ran inside that chat and left its
-  tool results there) or when a tainted run made the job. A reminder a
-  tainted run set is marked too. The thread mirror stores the mark on the row
-  (`metadata.jobTaint`). A job made in the web chat or the Tasks form carries
-  no mark (see Known gaps).
+  tool results there) or when a tainted run made the job. A reminder a job
+  run set after reading untrusted content is marked too; one he set in his
+  own chat is not. The thread mirror stores the mark on the row
+  (`metadata.jobTaint`). A job made in the web chat or the Tasks form, and a
+  built-in job, carries no mark (see Known gaps).
 
 Then a call the rules above pause runs with no card and no guardian call,
 and the history stores `owner_instructed`. Three limits stay:
@@ -704,20 +705,22 @@ channel, never to that chat. A job's result only ever goes to the owner:
 his own WhatsApp or Telegram chat where he made it, or else the owner
 channel. A job saved long ago with a contact's chat of his own account or a
 Slack channel still does nothing, as those chats are passive. A job run
-skips the chat rate limit, so what the model makes is held: a schedule of
+skips the chat rate limit, so what the model makes is held. A schedule is
 five cron fields (six with a fixed seconds value, or an alias such as
-`@daily`) whose minutes, hours and days are numbers and that runs at most
-every 15 minutes, unless the job keeps its times and its task. A job run
-and its sub-agents (they carry its record, `metadata.jobRun`) make or change
-at most two jobs or tasks. A job or task a job run made or changed
-(`madeByJob`, kept by a Tasks form re-save of the same text) makes and
-changes none, and at most five of them wait at once. A one-time task that
-did not finish is not run again. No user job starts while its last run is
-still going. `cancelJob` refuses a built-in job, as the Tasks page does.
-`listJobs` hides the task of a job a tainted run made, so its words cannot
-come back to a clean run as trusted text. The dashboard compares task texts
-without their line ends, since the form sends CRLF. A call the owner
-approves runs with the taint of the run that asked.
+`@daily`) whose minutes, hours and days are numbers, running at most every
+15 minutes unless the job keeps its times and its task. A job's run and its
+sub-agents (they carry its record, `metadata.jobRun`) make and change no
+repeating jobs, make at most two one-time tasks (the slot is taken before
+anything awaits, so calls side by side count), and cancel only their own job
+or a task a job made. A task a job run made (`madeByJob`, kept by a Tasks
+form re-save of the same text) makes none. A one-time task that did not
+finish is not run again. No user job starts while its last run is still
+going. `cancelJob` refuses a built-in job, as the Tasks page does. A new
+job's name from a run that read untrusted content is a short slug, and an
+end date is an ISO date, so neither can carry a sentence back to a clean run
+through `listJobs`. The dashboard compares task texts without their line
+ends, since the form sends CRLF. A call the owner approves runs with the
+taint of the run that asked.
 
 **Goals carry taint too**: `addGoal` and `updateGoalProgress` run unasked,
 but in a tainted run they store `tainted` and `taintSources` in the goal's
@@ -751,13 +754,17 @@ state can carry text into later prompts and tool results that count as
 trusted. `learnDevice` aliases do the same for device
 names; misuse stays within home control, which runs unasked anyway. A reminder's text can quote untrusted text
 back to the owner. The autopilot reply service does not use this tool loop.
-The result of a job made in the Tasks form or the web chat, and its
-`sendMessage` to him, reach his chat with no mark even when the run read
-email, unless a tainted run made the job. A mark there would make his next
-email or message request ask for a card after every morning briefing. A
-watcher run has no job record, so the limits on making jobs and tasks do not
-hold there; a contact's messages can make tasks at the pace they arrive. A
-reminder is not counted either: it runs no model, and only repeats a text.
+The result of a job made in the Tasks form or the web chat, or of a built-in
+job such as `proactive_thought`, and its `sendMessage` to him, reach his chat
+with no mark even when the run read email, unless a tainted run made the job.
+A mark there would make his next email or message request ask for a card
+after every morning briefing. `listJobs` shows a tainted job's task as it is,
+flagged `tainted`: a clean run that copies it into a new job makes a clean
+job, while a change in place keeps the taint. A watcher run has no job
+record, so the limits on making tasks do not hold there, and any run may
+add watchers; a contact's messages can make tasks at the pace they arrive.
+A reminder is not counted either: it runs no model, and only repeats a
+text.
 
 ## Personal data guard
 
