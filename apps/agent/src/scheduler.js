@@ -773,11 +773,12 @@ class Scheduler {
                 // done part of its work. The owner hears once, where its result
                 // would have gone; the breaker's own note goes only to the bell.
                 // A run that paused on an approval card ends with no text: the
-                // card asks him. A run that sent its answer with sendMessage has
-                // answered. A run that just gave no answer tells him.
+                // card asks him. A run that sent him its answer with sendMessage
+                // has answered; a message to someone else is not his answer. A
+                // run that just gave no answer tells him.
                 const outputs = Array.isArray(summary?.toolOutputs) ? summary.toolOutputs : [];
                 const paused = outputs.some(o => /^Action PAUSED/.test(String(o?.result?.info || '')));
-                const sent = outputs.some(o => o?.name === 'sendMessage' && o?.result?.success === true);
+                const sent = outputs.some(o => o?.name === 'sendMessage' && o?.result?.success === true && o?.result?.toOwner === true);
                 const why = final?.isError ? 'error' : stoppedWith || (!final && !mediaSent && !paused && !sent ? 'silent' : null);
                 if (isOneOff && why) {
                     await this._tellTaskFailed(name, currentPayload, { why });

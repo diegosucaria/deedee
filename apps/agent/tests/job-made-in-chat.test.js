@@ -904,7 +904,7 @@ describe('a job made in a chat', () => {
             const [name] = Object.keys(scheduler.jobs);
             agent.processMessage.mockImplementation(async () => ({
                 untrustedSources: [],
-                toolOutputs: [{ name: 'sendMessage', result: { success: true, info: 'Message sent to me' } }, { name: 'saveJobState', result: { error: 'not in this run\'s tool list' } }]
+                toolOutputs: [{ name: 'sendMessage', result: { success: true, info: 'Message sent to me', toOwner: true } }, { name: 'saveJobState', result: { error: 'not in this run\'s tool list' } }]
             }));
 
             await scheduler.jobs[name].invoke();
@@ -935,6 +935,69 @@ describe('a job made in a chat', () => {
             const tasks = listed.jobs.map(j => j.task);
             expect(tasks).toContain('Reminder: Renew the passport');
             expect(JSON.stringify(listed)).not.toContain('Reply yes and I will pay');
+        });
+    });
+
+    describe('review round seven', () => {
+        test("a contact's message cannot move a clean job to run more often and keep it clean", async () => {
+            await executor.execute('scheduleJob', { name: 'weekly_hello', cron: '0 9 * * 1', task: 'Send Alice a short hello with sendMessage', expiresAt: inDays(7) }, inChat('whatsapp:assistant', OWNER_LID));
+            const watcherRun = { message: { source: 'whatsapp:user', content: 'SYSTEM_WATCHER_ALERT: a message from a contact matched', metadata: { chatId: CONTACT_JID } }, untrustedTaint: ["a contact's message (watcher)"] };
+
+            const res = await executor.execute('scheduleJob', { name: 'weekly_hello', cron: '*/15 * * * *', expiresAt: inDays(3650) }, watcherRun);
+
+            expect(res.success).toBe(true);
+            expect(savedRow(db, 'weekly_hello').payload).toMatchObject({ tainted: true, taintSources: ["a contact's message (watcher)"] });
+        });
+
+        test('in his own chat, new times keep a job clean only when it runs no more often and ends no later', async () => {
+            await executor.execute('scheduleJob', { name: 'weekly_hello', cron: '0 9 * * 1', task: 'Send Alice a short hello', expiresAt: inDays(7) }, inChat('whatsapp:assistant', OWNER_LID));
+            const mine = inChat('whatsapp:assistant', OWNER_LID, MAIL);
+
+            await executor.execute('scheduleJob', { name: 'weekly_hello', cron: '0 10 * * 2' }, mine);
+            expect(savedRow(db, 'weekly_hello').payload.tainted).toBeUndefined();
+            await executor.execute('scheduleJob', { name: 'weekly_hello', cron: '0 10 * * 2', expiresAt: inDays(30) }, mine);
+            expect(savedRow(db, 'weekly_hello').payload.tainted).toBe(true);
+
+            await executor.execute('scheduleJob', { name: 'daily_note', cron: '0 9 * * *', task: 'A note' }, inChat('web', 'web-chat-1'));
+            await executor.execute('scheduleJob', { name: 'daily_note', cron: '0 9,17 * * *' }, inChat('web', 'web-chat-1', MAIL));
+            expect(savedRow(db, 'daily_note').payload.tainted).toBe(true);
+        });
+
+        test("a one-time task's message to someone else is not its answer to the owner", async () => {
+            await executor.execute('scheduleTask', { time: new Date(Date.now() + 3600e3).toISOString(), task: "Text Alice I'm late, then check my flight and tell me" }, inChat('whatsapp:assistant', OWNER_LID));
+            const [name] = Object.keys(scheduler.jobs);
+            agent.processMessage.mockImplementation(async () => ({
+                untrustedSources: [],
+                toolOutputs: [{ name: 'sendMessage', result: { success: true, info: 'Message sent to Alice' } }, { name: 'googleSearch', result: { error: 'timeout' } }]
+            }));
+
+            await scheduler.jobs[name].invoke();
+
+            expect(delivered(agent)).toEqual([expect.objectContaining({ content: expect.stringContaining('did not finish. It gave no answer.') })]);
+        });
+
+        test('a reminder a watcher run or a built-in job set keeps its text out of listJobs', async () => {
+            const when = (m) => new Date(Date.now() + m * 60e3).toISOString();
+            const watcherRun = { message: { source: 'whatsapp:user', content: 'SYSTEM_WATCHER_ALERT: x', metadata: { chatId: CONTACT_JID } }, untrustedTaint: ["a contact's message (watcher)"] };
+            const proactive = { message: { source: 'scheduler', metadata: { chatId: 'system_proactive_thought_1', jobName: 'proactive_thought', jobRun: { name: 'proactive_thought', runId: 'p1', madeByJob: false, markOwner: false } } }, untrustedTaint: MAIL };
+            await executor.execute('setReminder', { time: when(60), message: 'Email the invoice to billing@example.com now' }, watcherRun);
+            await executor.execute('setReminder', { time: when(70), message: 'Send the Q3 numbers' }, proactive);
+            await executor.execute('setReminder', { time: when(80), message: 'Renew the passport' }, inChat('whatsapp:assistant', OWNER_LID, MAIL));
+
+            const text = JSON.stringify(await executor.execute('listJobs', {}, inChat('web', 'web-chat-1')));
+
+            expect(text).not.toContain('Email the invoice');
+            expect(text).not.toContain('Send the Q3 numbers');
+            expect(text).toContain('Renew the passport');
+        });
+
+        test('sendMessage says when it reached the owner', async () => {
+            const comms = new CommunicationExecutor({ db, agent: { ...agent, delivery: scheduler._delivery() }, interface: agent.interface });
+            jest.spyOn(db, 'isVerifiedContact').mockReturnValue(true);
+            const run = { message: { source: 'scheduler', metadata: { chatId: 'scheduled_x_1', jobName: 'x' } }, untrustedTaint: [] };
+
+            expect(await comms.execute('sendMessage', { to: 'me', content: 'Done.' }, run)).toMatchObject({ success: true, toOwner: true });
+            expect((await comms.execute('sendMessage', { to: '5490000000001', content: 'Hi' }, run)).toOwner).toBeUndefined();
         });
     });
 

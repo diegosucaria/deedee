@@ -14,6 +14,7 @@ class CommunicationExecutor extends BaseExecutor {
                 const { to, content, session, service, type, imagePath } = args;
                 // An owner-approved call (see services/approval-service.js) may open a first contact.
                 const approved = context?.approved === true;
+                let sentToOwner = false;
                 console.log(`[CommunicationExecutor] Sending ${type || 'text'} to ${to} via ${service || 'whatsapp'} (Session: ${session || 'default'})${imagePath ? ` [imagePath=${imagePath}]` : ''}`);
 
                 const svc = service || 'whatsapp';
@@ -216,6 +217,7 @@ class CommunicationExecutor extends BaseExecutor {
                     const delivery = services.agent?.delivery;
                     const toOwner = !!(delivery && typeof delivery.deliver === 'function'
                         && typeof delivery.isOwnerTarget === 'function' && delivery.isOwnerTarget(svc, metadata.chatId));
+                    sentToOwner = toOwner;
                     const kind = message?.source === 'scheduler' ? 'job_notification' : 'reply';
                     // Every send the model asks for goes out, even an equal text.
                     // Only a copy still waiting in the queue is not queued twice.
@@ -300,7 +302,8 @@ class CommunicationExecutor extends BaseExecutor {
                     console.warn('[Communication] Active Learning Hook Failed:', learningErr.message);
                 }
 
-                return { success: true, info: `Message sent to ${cleanTo}` };
+                // A scheduled task that sent this to the owner has answered (Scheduler).
+                return { success: true, info: `Message sent to ${cleanTo}`, ...(sentToOwner ? { toOwner: true } : {}) };
             }
 
             case 'addWatcher': {

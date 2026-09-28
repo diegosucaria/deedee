@@ -75,6 +75,65 @@ function tooOften(cron) {
     return perHour > 60 / MIN_JOB_MINUTES ? `runs ${perHour} times an hour` : null;
 }
 
+/** How many values a cron field takes in [lo, hi]; a name (MON, JAN) counts once. */
+function fieldCount(field, lo, hi) {
+    const text = String(field);
+    if (text === '*' || text === '?') return hi - lo + 1;
+    let count = 0;
+    for (const part of text.split(',')) {
+        const [range, stepText] = part.split('/');
+        const step = stepText ? Math.max(1, parseInt(stepText, 10) || 1) : 1;
+        let from = lo;
+        let to = hi;
+        if (range.includes('-')) {
+            const [a, b] = range.split('-').map(Number);
+            if (!(Number.isFinite(a) && Number.isFinite(b) && b >= a)) { count += 1; continue; }
+            from = a;
+            to = b;
+        } else if (range !== '*') {
+            const n = Number(range);
+            if (!Number.isFinite(n) || !stepText) { count += 1; continue; }
+            from = n;
+        }
+        count += Math.floor((to - from) / step) + 1;
+    }
+    return Math.min(Math.max(count, 1), hi - lo + 1);
+}
+
+/** About how many times a week a schedule runs (Infinity when it cannot tell). */
+function runsPerWeek(cron) {
+    const spec = String(cron || '').trim();
+    const aliases = { '@hourly': 168, '@daily': 7, '@weekly': 1, '@monthly': 12 / 52, '@yearly': 1 / 52 };
+    if (aliases[spec] !== undefined) return aliases[spec];
+    let f = spec.split(/\s+/);
+    if (f.length === 6) f = f.slice(1);
+    if (f.length !== 5) return Infinity;
+    const perDay = fieldCount(f[0], 0, 59) * fieldCount(f[1], 0, 23);
+    const everyDom = f[2] === '*' || f[2] === '?';
+    const everyDow = f[4] === '*' || f[4] === '?';
+    const dom = fieldCount(f[2], 1, 31) * 7 / 30.44;
+    const dow = fieldCount(f[4], 0, 6);
+    const daysPerWeek = everyDom && everyDow ? 7 : everyDom ? dow : everyDow ? dom : Math.min(7, dow + dom);
+    return perDay * daysPerWeek * fieldCount(f[3], 1, 12) / 12;
+}
+
+/**
+ * A run typed in one of the owner's own chats (web, his WhatsApp or
+ * Telegram chat with the assistant): not a job run, a sub-agent or a
+ * watcher run on a contact's message.
+ */
+async function ownChatRun(context, scheduler) {
+    const message = context?.message || {};
+    const meta = message.metadata || {};
+    if (meta.jobRun || meta.isSubAgent || String(message.content || '').startsWith('SYSTEM_WATCHER_ALERT')) return false;
+    const channel = String(message.source || '').split(':')[0];
+    if (!['web', 'whatsapp', 'telegram'].includes(channel) || !meta.chatId) return false;
+    if (typeof scheduler?.agent?._getOwnerWaIds === 'function') {
+        try { await scheduler.agent._getOwnerWaIds(); } catch { /* the phone JID still counts */ }
+    }
+    return typeof scheduler?._isOwnerOrigin === 'function' && scheduler._isOwnerOrigin(message.source, meta.chatId);
+}
+
 // The name of a new job: something the Tasks page, the logs and the
 // database can show. A run that read untrusted content gets a plain slug, so
 // a name cannot carry a sentence back to a clean run through listJobs.
@@ -130,6 +189,12 @@ class SchedulerExecutor extends BaseExecutor {
         const services = this.getServices(callServices);
         const { scheduler } = services;
         const jobRun = this._jobRun(context);
+        // His WhatsApp chat carries his @lid id, which only the owner id lookup
+        // knows (cached after the first call): which chat is his decides where a
+        // job reports and what listJobs shows. Before any slot is taken.
+        if (['scheduleJob', 'scheduleTask', 'setReminder', 'listJobs'].includes(name) && typeof scheduler?.agent?._getOwnerWaIds === 'function') {
+            try { await scheduler.agent._getOwnerWaIds(); } catch { /* the phone JID still counts */ }
+        }
 
         switch (name) {
             case 'scheduleJob': {
@@ -184,12 +249,20 @@ class SchedulerExecutor extends BaseExecutor {
                 // A job keeps the taint it was made with, whatever the change:
                 // the model writes the new task, and may copy what a third
                 // party planted. Only the owner's own re-save in the Tasks form
-                // clears it. A row can be tainted with no sources named. A run
-                // that read untrusted content taints the job only when it
-                // writes new task text: new times and an ISO end date carry no
-                // third party's words, and "move my briefing before my first
-                // meeting" reads his calendar.
-                let carried = sameTask ? {} : taint;
+                // clears it. A row can be tainted with no sources named.
+                // scheduleJob runs unasked in a tainted run because the job
+                // stores the run's taint. One change is spared: new times or a
+                // new end date typed in one of his own chats, running no more
+                // often and ending no later ("move my briefing before my first
+                // meeting" reads his calendar). A contact's message, a sub-agent
+                // or a job run that moves a job taints it.
+                const oldEnd = existing?.metadata?.expiresAt ? Date.parse(existing.metadata.expiresAt) : Infinity;
+                const newEnd = until ? Date.parse(until) : Infinity;
+                const spared = sameTask && taint.tainted
+                    && runsPerWeek(cron) <= runsPerWeek(existing.metadata?.cronExpression) + 1e-9
+                    && newEnd <= oldEnd
+                    && await ownChatRun(context, scheduler);
+                let carried = spared ? {} : taint;
                 if (prev?.tainted === true) {
                     const merged = taintPayloadFields([...(prev.taintSources || []), ...(carried.taintSources || [])]);
                     carried = { tainted: true, ...(merged.taintSources ? { taintSources: merged.taintSources } : {}) };
@@ -332,7 +405,11 @@ class SchedulerExecutor extends BaseExecutor {
                     // third party's words: this list is trusted, so it leaves them
                     // out. A reminder he set in his own chat stays: it only repeats
                     // a text he will read anyway, and he must be able to find it.
-                    const ownReminder = payload.isReminder === true && payload.markOnDelivery !== true;
+                    // One a watcher run, a sub-agent or a job set is hidden.
+                    const origin = scheduler._jobOrigin?.(payload);
+                    const ownReminder = payload.isReminder === true && payload.markOnDelivery !== true && !!origin
+                        && ['web', 'whatsapp', 'telegram'].includes(origin.source.split(':')[0])
+                        && scheduler._isOwnerOrigin(origin.source, origin.chatId);
                     const taskHidden = payload.tainted === true && !ownReminder;
                     if (taskHidden) hidden = true;
 
@@ -373,4 +450,4 @@ class SchedulerExecutor extends BaseExecutor {
     }
 }
 
-module.exports = { SchedulerExecutor, originFor, tooOften };
+module.exports = { SchedulerExecutor, originFor, tooOften, runsPerWeek };

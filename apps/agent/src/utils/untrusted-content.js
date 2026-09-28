@@ -538,7 +538,9 @@ function taintedAction(toolName, args, { serverName = null, isOwnerTarget = () =
         case 'rollbackLastChange': return 'change the code';
         // Scheduling lands on the owner: the job or watcher stores this run's
         // taint (taintPayloadFields), so its later runs start tainted and
-        // their outward actions ask then.
+        // their outward actions ask then. The one change that stores none is
+        // new times or end date typed in his own chat, no more often and no
+        // later (executors/scheduler.js).
         default: break;
     }
     if (INTERNAL_TRUSTED.has(name) || Object.prototype.hasOwnProperty.call(INTERNAL_UNTRUSTED, name)) return null;
