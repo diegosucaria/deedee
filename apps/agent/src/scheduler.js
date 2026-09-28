@@ -36,7 +36,8 @@ function mediaType(reply) {
 class Scheduler {
     constructor(agent) {
         this.agent = agent;
-        this.jobs = {}; // Store job references
+        // Job references. No prototype: a job named "constructor" is a job.
+        this.jobs = Object.create(null);
         // Jobs with a run in progress: the next tick waits for the next time.
         this._runningJobs = new Set();
         console.log('[Scheduler] Initialized.');
@@ -108,7 +109,7 @@ class Scheduler {
             rule = new Date(cronExpression);
             if (rule.getTime() <= Date.now()) {
                 console.warn(`[Scheduler] One-off job '${name}' is scheduled in the PAST (${rule.toISOString()}). Running IMMEDIATELY.`);
-                if (previous) previous.cancel();
+                if (typeof previous?.cancel === 'function') previous.cancel();
 
                 // Execute immediately
                 // A failed run may register its retry under this name; that
@@ -197,7 +198,7 @@ class Scheduler {
             console.error(`[Scheduler] Failed to schedule job '${name}'. Rule: ${rule}`);
             return false;
         }
-        if (previous && previous !== job) previous.cancel();
+        if (previous && previous !== job && typeof previous.cancel === 'function') previous.cancel();
 
         this.jobs[name] = job;
         this.jobs[name].metadata = {
@@ -464,21 +465,21 @@ class Scheduler {
     }
 
     /**
-     * A one-time task that never finished, after its retries: the owner
-     * hears it once, where its result would have gone. The task text may
-     * come from a run that read untrusted content; the message then
+     * A one-time task that did not finish: the owner hears it once, where its
+     * result would have gone. Fixed words, never the error text. The task
+     * text may come from a run that read untrusted content; the message then
      * carries that mark.
      */
-    async _tellTaskFailed(name, payload, error) {
+    async _tellTaskFailed(name, payload, { ranSome = false } = {}) {
         try {
             const target = await this._jobReplyTarget(payload);
             if (!target) return;
             const task = String(payload?.task || '').replace(/\s+/g, ' ').trim();
             const short = task.length > 80 ? `${task.slice(0, 77)}...` : task;
-            const reason = error?.forOwner ? String(error.message || '').replace(/^⚠️\s*/, '').trim() : 'Something went wrong on my side.';
             const taint = taintFromPayload(payload, `job "${name}"`);
+            const text = `The task "${short}" did not finish.${ranSome ? ' Some of its steps ran before it stopped.' : ''}`;
             await this._delivery().deliver('job_notification', target.channel, target.target,
-                { content: `I could not finish the task "${short}". ${reason}`, type: 'text', ...(taint.length > 0 ? { metadata: { jobTaint: taint } } : {}) },
+                { content: text, type: 'text', ...(taint.length > 0 ? { metadata: { jobTaint: taint } } : {}) },
                 { origin: name, dedupe: false });
         } catch (e) {
             console.warn(`[Scheduler] Could not tell the owner that '${name}' failed: ${e.message}`);
@@ -692,15 +693,19 @@ class Scheduler {
                 await this._giveToolList(name, currentPayload);
             }
             const runStart = Date.now();
+            // The job this run belongs to, as registered when it began: a retry
+            // must not bring back a job that was deleted, changed or paused.
+            const registered = this.jobs[name];
             const msgMeta = {
                 chatId: inChat ? origin.chatId : `scheduled_${name}_${runStart}`,
                 jobName: name,
-                // One id per run, in either mode: what a run may make is counted by it.
-                jobRunId: `${name}_${runStart}`,
+                // The run record. Sub-agents of this run carry it too. What the
+                // run may make is counted by its id; a job another job made
+                // (madeByJob) may make none; markOwner is read by sendMessage
+                // and askUser (see above).
+                jobRun: { name, runId: `${name}_${runStart}`, madeByJob: currentPayload.madeByJob === true, markOwner },
                 // The chat the job came from: approvals show their card there too.
                 ...(origin && !inChat ? { jobOrigin: origin } : {}),
-                // Read by sendMessage and askUser (see markOwner above).
-                ...(markOwner ? { markOwnerMessages: true } : {}),
                 ...(currentPayload.model ? { forceModel: currentPayload.model } : {}),
                 // The note tells every run of a repeating job to use the job
                 // state tools, so its list always has them.
@@ -715,7 +720,8 @@ class Scheduler {
             // The run's answer: its last reply that is not a progress line
             // ("Thinking...") or a line about the run ("Stopped: ...").
             let final = null;
-            // The last line about the run, when nothing came after it.
+            // The kind of the last line about the run ('stopped' or 'failed'),
+            // when no answer came after it.
             let stoppedWith = null;
             try {
                 const summary = await this.agent.processMessage({
@@ -737,7 +743,7 @@ class Scheduler {
                     if (media) await this._deliverJobMedia(name, reply, media, currentPayload);
                     // createAssistantMessage uses 'content', not 'text'.
                     const replyText = reply.content || reply.text;
-                    if (replyText && reply.isStatus) stoppedWith = replyText;
+                    if (replyText && reply.isStatus) stoppedWith = reply.isStatus;
                     if (replyText && !reply.isProgress && !reply.isStatus) {
                         final = { text: replyText, id: reply.id || null, isError: reply.isError === true, isImplicit: reply.isImplicit === true };
                         stoppedWith = null;
@@ -747,11 +753,14 @@ class Scheduler {
                 });
 
                 // A one-time task the run could not finish (the agent's own
-                // error reply, or a line such as "I am stuck in a loop") is
-                // retried like a thrown error; the agent catches its model
-                // errors itself, so they never reached the retry.
-                if (isOneOff && (final?.isError || (!final && stoppedWith))) {
-                    throw Object.assign(new Error(final?.isError ? final.text : stoppedWith), { forOwner: true });
+                // error reply, or a run that failed: the loop limit, repeated
+                // calls, no answer) is not run again: it may have done part of
+                // its work. The owner hears once. A run he or the breaker
+                // stopped ends quietly: he knows, or was told.
+                if (isOneOff && (final?.isError || (!final && stoppedWith === 'failed'))) {
+                    const ranSome = Array.isArray(summary?.toolOutputs) && summary.toolOutputs.length > 0;
+                    await this._tellTaskFailed(name, currentPayload, { ranSome });
+                    return { text: '', decision: 'silent', decisionReason: 'The task did not finish; the owner was told' };
                 }
 
                 const executionResult = {
@@ -783,6 +792,9 @@ class Scheduler {
                 // has run, so one failed run used to end the job for good.
                 if (!currentPayload.isOneOff) {
                     console.warn(`[Scheduler] Job '${name}' failed; it runs again at its next scheduled time.`);
+                } else if (registered && (this.jobs[name] !== registered || registered.metadata?.enabled === false)) {
+                    // Deleted, changed or paused while it ran: no retry brings it back.
+                    console.warn(`[Scheduler] Task '${name}' was deleted, changed or paused while it ran; no retry.`);
                 } else if (currentRetry < MAX_RETRIES) {
                     console.log(`[Scheduler] Rescheduling '${name}' for retry ${currentRetry + 1}/${MAX_RETRIES} in 60s.`);
                     const nextPayload = { ...currentPayload, retryCount: currentRetry + 1 };
@@ -797,7 +809,7 @@ class Scheduler {
                     });
                 } else {
                     console.error(`[Scheduler] Task '${name}' failed permanently after ${MAX_RETRIES} retries.`);
-                    await this._tellTaskFailed(name, currentPayload, error);
+                    await this._tellTaskFailed(name, currentPayload, {});
                     if (process.env.SLACK_WEBHOOK_URL) {
                         try {
                             await fetch(process.env.SLACK_WEBHOOK_URL, {
@@ -852,17 +864,21 @@ class Scheduler {
             // Two reminders with the same text minutes apart are two reminders,
             // so the ledger's content dedupe stays off here.
             const opts = { origin: name, dedupe: false };
+            // A reminder a run set after reading untrusted content may quote it:
+            // it carries the mark, like a job's result (originsHaveTaintedRows).
+            const taint = taintFromPayload(payload, `reminder "${name}"`);
+            const text = { content: reminderMessage, ...(taint.length > 0 ? { metadata: { jobTaint: taint } } : {}) };
             const outcomes = [];
             if (isUserOrigin) {
                 // User set the reminder from a chat interface — reply to that chat
-                outcomes.push(await delivery.deliver('reminder', originSource, originChatId, { content: reminderMessage }, opts));
+                outcomes.push(await delivery.deliver('reminder', originSource, originChatId, text, opts));
                 // Also push to the owner unless that chat already is the owner's
                 if (owner && !delivery.isOwnerTarget(originChannel, originChatId)) {
-                    outcomes.push(await delivery.deliver('reminder', owner.channel, owner.target, { content: reminderMessage }, opts));
+                    outcomes.push(await delivery.deliver('reminder', owner.channel, owner.target, text, opts));
                 }
             } else if (owner) {
                 // System-origin (e.g. proactive_thought) — deliver to the owner's channel
-                outcomes.push(await delivery.deliver('reminder', owner.channel, owner.target, { content: reminderMessage }, opts));
+                outcomes.push(await delivery.deliver('reminder', owner.channel, owner.target, text, opts));
             } else {
                 outcomes.push({ delivered: false, error: 'No owner channel configured for reminder delivery' });
             }
@@ -1371,14 +1387,18 @@ NEVER contact anyone other than the owner.`,
             }
 
             let executionResult = null;
+            const systemChatId = `system_${sysJob.name}_${Date.now()}`;
             await this.agent.processMessage({
                 role: 'user',
                 content: `System Maintenance: ${sysJob.task} `,
                 source: 'scheduler',
                 metadata: {
-                    chatId: `system_${sysJob.name}_${Date.now()}`,
+                    chatId: systemChatId,
                     // saveJobState/getJobState refuse to run without it.
                     jobName: sysJob.name,
+                    // The run record: what this run makes is counted and marked
+                    // as made by a job (executors/scheduler.js).
+                    jobRun: { name: sysJob.name, runId: systemChatId, madeByJob: false, markOwner: false },
                     ...(scope.model ? { forceModel: scope.model } : {}),
                     ...(scope.allowedTools ? { allowedTools: scope.allowedTools } : {})
                 }
@@ -1468,7 +1488,7 @@ NEVER contact anyone other than the owner.`,
      * Schedule a one-off reminder.
      */
     scheduleOneOff(name, date, callback, options = {}) {
-        this.scheduleJob(name, date, callback, { ...options, oneOff: true });
+        return this.scheduleJob(name, date, callback, { ...options, oneOff: true });
     }
 
     /**
@@ -1497,7 +1517,7 @@ NEVER contact anyone other than the owner.`,
         for (const name in this.jobs) {
             this.jobs[name].cancel(); // Cancel in memory only, preserve in DB
         }
-        this.jobs = {};
+        this.jobs = Object.create(null);
         // node-schedule graceful shutdown
         await schedule.gracefulShutdown();
     }

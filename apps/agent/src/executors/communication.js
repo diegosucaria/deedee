@@ -223,11 +223,11 @@ class CommunicationExecutor extends BaseExecutor {
                     const queuedText = (what) => `${what} is queued and will be retried, so it should not be sent again.`;
                     const isMedia = payload.type === 'image' || payload.type === 'audio';
                     // A job run the scheduler marks (a job that answers in his
-                    // own chat, or one a tainted run made) marks what it sends
-                    // him when it has read third-party content. The thread
-                    // mirror keeps the mark; it holds back his next word for
-                    // messages, email and the house (Scheduler, markOwner).
-                    const marked = message?.metadata?.markOwnerMessages === true;
+                    // own chat, or one a tainted run made), or a sub-agent of
+                    // one, marks what it sends him when it has read third-party
+                    // content. The thread mirror keeps the mark; it holds back
+                    // his next word for messages, email and the house.
+                    const marked = message?.metadata?.jobRun?.markOwner === true;
                     const ownerTaint = toOwner && marked ? (taintPayloadFields(context?.untrustedTaint).taintSources || []) : [];
                     const ownerMeta = { session: metadata.session, ...(ownerTaint.length > 0 ? { jobTaint: ownerTaint } : {}) };
                     if (ownerTaint.length > 0) payload.metadata = { ...payload.metadata, jobTaint: ownerTaint };

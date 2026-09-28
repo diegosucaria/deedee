@@ -77,6 +77,8 @@ class SubAgentExecutor extends BaseExecutor {
                         lightweight,
                         untrustedTaint: Array.isArray(context?.untrustedTaint) ? context.untrustedTaint : [],
                         approvalRunId: context?.approvalRunId || null,
+                        // A job run's limits and mark hold for its sub-agents too.
+                        jobRun: context?.message?.metadata?.jobRun || null,
                     });
                     return { success: true, ...result, ...(ignoredTools && ignoredTools.length ? { ignoredTools, note: `These listed tools do not exist and were left out: ${ignoredTools.join(', ')}.` } : {}) };
                 } catch (err) {

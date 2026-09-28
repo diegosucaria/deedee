@@ -801,7 +801,10 @@ describe('Scheduler & Smart Notifications', () => {
             scheduler.ensureSystemJobs();
             await runSystemJob('wardrobe_morning_outfit');
             const meta = passedMetadata();
-            expect(Object.keys(meta)).toEqual(['chatId', 'jobName']);
+            // No model and no tool list; the run record (jobRun) is not scoping.
+            expect(meta).toMatchObject({ chatId: expect.stringMatching(/^system_wardrobe_morning_outfit_/), jobName: 'wardrobe_morning_outfit' });
+            expect(meta).not.toHaveProperty('forceModel');
+            expect(meta).not.toHaveProperty('allowedTools');
         });
 
         it('nightly_consolidation calls consolidateMemory directly, no agent turn', async () => {

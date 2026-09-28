@@ -308,6 +308,8 @@ function createInternalRouter(agent) {
             // The form sends its text area with CRLF line ends: compare the text,
             // not the line ends, or a change of time alone would clear the taint.
             const sameText = (a, b) => String(a ?? '').replace(/\r\n?/g, '\n').trim() === String(b ?? '').replace(/\r\n?/g, '\n').trim();
+            // A job a job made keeps that mark the same way: it may not make jobs.
+            const keepMadeByJob = prev?.madeByJob === true && sameText(prev.task, task);
             const keepTaint = prev && prev.tainted === true && sameText(prev.task, task)
                 ? { tainted: true, ...(Array.isArray(prev.taintSources) ? { taintSources: prev.taintSources } : {}) }
                 : {};
@@ -316,6 +318,7 @@ function createInternalRouter(agent) {
                 task,
                 ...(prev?.targetChatId ? { targetChatId: prev.targetChatId, targetSource: prev.targetSource } : {}),
                 ...keepTaint,
+                ...(keepMadeByJob ? { madeByJob: true } : {}),
                 ...(model && model !== 'auto' ? { model: model.toUpperCase() } : {}),
                 ...(allowedTools ? { allowedTools } : {}),
                 ...(weekdaysOnly ? { weekdaysOnly: true } : {}),

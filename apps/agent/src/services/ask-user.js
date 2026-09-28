@@ -153,7 +153,7 @@ class AskUserService {
         // A job run the scheduler marks, that has read third-party content:
         // the question keeps that mark in his chat (see Scheduler, markOwner).
         const taint = Array.isArray(untrustedTaint) ? untrustedTaint.filter(Boolean).map(String).slice(0, 20) : [];
-        if (message?.metadata?.markOwnerMessages === true && taint.length > 0) outgoing.metadata.jobTaint = taint;
+        if (message?.metadata?.jobRun?.markOwner === true && taint.length > 0) outgoing.metadata.jobTaint = taint;
         if (route.ownerChannel) {
             outgoing.metadata.session = 'assistant';
             outgoing.isNotification = true;

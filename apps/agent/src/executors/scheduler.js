@@ -29,6 +29,9 @@ function originFor(context, scheduler, keep = null) {
 // form is the owner's own and has no such floor.
 const MIN_JOB_MINUTES = 15;
 
+// The aliases node-schedule reads (cron-parser's predefined set, exact case).
+const CRON_ALIASES = new Set(['@yearly', '@monthly', '@weekly', '@daily', '@hourly']);
+
 /** How many minutes of each hour a cron minute field fires on (1 to 60). */
 function minutesPerHour(field) {
     let count = 0;
@@ -49,60 +52,93 @@ function minutesPerHour(field) {
 }
 
 /**
- * Why a cron the model gave runs too often, or null. It must be a string of
- * five fields, or six whose seconds field is one number: node-schedule fills
- * the fields left out, so "* * * *" runs every minute.
+ * What is wrong with a schedule the model gave, or null. It must be one of
+ * node-schedule's aliases, or five cron fields (six when the seconds field
+ * is one number) whose minutes, hours and days are numbers, running at most
+ * every 15 minutes. node-schedule fills fields left out ("* * * *" runs
+ * every minute) and reads anything it cannot parse as a date.
  */
 function tooOften(cron) {
-    if (typeof cron !== 'string') return 'it is not a cron string';
-    let fields = cron.trim().split(/\s+/);
+    if (typeof cron !== 'string') return 'is not text';
+    const spec = cron.trim();
+    if (CRON_ALIASES.has(spec)) return null;
+    let fields = spec.split(/\s+/);
     if (fields.length === 6) {
-        if (!/^\d{1,2}$/.test(fields[0])) return 'it runs more than once a minute';
+        if (!/^\d{1,2}$/.test(fields[0])) return 'repeats within a minute';
         fields = fields.slice(1);
     }
-    if (fields.length !== 5) return 'it does not have five fields';
+    if (fields.length !== 5) return 'does not have five fields';
+    if (!/^[\d*,/-]+$/.test(fields[0]) || !/^[\d*,/-]+$/.test(fields[1]) || !/^[\d*,/?LW-]+$/.test(fields[2])) {
+        return 'is not a cron schedule';
+    }
     const perHour = minutesPerHour(fields[0]);
-    return perHour > 60 / MIN_JOB_MINUTES ? `it runs ${perHour} times an hour` : null;
+    return perHour > 60 / MIN_JOB_MINUTES ? `runs ${perHour} times an hour` : null;
 }
 
-// A job run may make this many jobs and tasks. What it makes cannot make
-// more: a task that makes a task a minute on would run on its own for ever,
-// and a run that makes several would double them each time.
+// A name the Tasks page, the logs and the database can show.
+const JOB_NAME_RE = /^[\p{L}\p{N} _.:-]{1,80}$/u;
+
+// listJobs shows this in place of the task of a job that a run made after
+// reading untrusted content, so the text cannot be copied into a clean job.
+// Passed back to scheduleJob, it keeps that job's task as it is.
+const HIDDEN_TASK = '[hidden: made by a run that read untrusted content; pass this text unchanged to keep the task]';
+
+// A job run (or a sub-agent of one) may make or change this many jobs and
+// tasks. What a job run made may make none: a task that makes a task a
+// minute on would run on its own for ever. And no more than this many jobs
+// and tasks that jobs made may wait at once.
 const MAX_MADE_PER_RUN = 2;
+const MAX_MADE_BY_JOBS = 5;
 
 class SchedulerExecutor extends BaseExecutor {
-    /**
-     * A job run (it carries metadata.jobName) that makes a job or a task:
-     * why it may not, or null. Counts per run, in its own chat id.
-     */
-    _refuseFromJobRun(context, scheduler) {
-        const meta = context?.message?.metadata || {};
-        if (!meta.jobName) return null;
-        const parent = scheduler.jobs?.[meta.jobName]?.metadata?.payload;
-        if (parent?.madeByJob === true) {
-            return `This run belongs to '${meta.jobName}', which another job made; it cannot make jobs or tasks.`;
+    /** The run record of a job run or of its sub-agents (set by the Scheduler), or null. */
+    _jobRun(context) {
+        const run = context?.message?.metadata?.jobRun;
+        return run && typeof run === 'object' && run.runId ? run : null;
+    }
+
+    /** Why this job run may not make or change a job or task, or null. Counts nothing. */
+    _refuseFromJobRun(jobRun, scheduler, { creating }) {
+        if (!jobRun) return null;
+        if (jobRun.madeByJob === true) {
+            return `This run belongs to '${jobRun.name}', which another job made; it cannot make or change jobs or tasks.`;
         }
+        const entry = this._madeByRun?.get(String(jobRun.runId));
+        if (entry && entry.count >= MAX_MADE_PER_RUN) {
+            return `One job run may make or change at most ${MAX_MADE_PER_RUN} jobs or tasks.`;
+        }
+        if (creating) {
+            const waiting = Object.values(scheduler.jobs || {}).filter(j => j?.metadata?.payload?.madeByJob === true).length;
+            if (waiting >= MAX_MADE_BY_JOBS) {
+                return `${waiting} jobs or tasks that jobs made are waiting already; no more can be made until they finish or the owner removes them.`;
+            }
+        }
+        return null;
+    }
+
+    /** A job run made or changed a job or task. */
+    _countMade(jobRun) {
+        if (!jobRun) return;
         this._madeByRun = this._madeByRun || new Map();
         const now = Date.now();
         for (const [key, entry] of this._madeByRun) if (now - entry.at > 6 * 3600e3) this._madeByRun.delete(key);
-        const key = String(meta.jobRunId || meta.chatId || meta.jobName);
+        const key = String(jobRun.runId);
         const entry = this._madeByRun.get(key) || { count: 0, at: now };
-        if (entry.count >= MAX_MADE_PER_RUN) {
-            return `One job run may make at most ${MAX_MADE_PER_RUN} jobs or tasks.`;
-        }
         entry.count += 1;
         this._madeByRun.set(key, entry);
-        return null;
     }
 
     async execute(name, args, context, callServices) {
         const services = this.getServices(callServices);
         const { scheduler } = services;
-        const fromJobRun = !!context?.message?.metadata?.jobName;
+        const jobRun = this._jobRun(context);
 
         switch (name) {
             case 'scheduleJob': {
-                const { name: jobName, cron, task, expiresAt } = args;
+                const { name: jobName, cron, expiresAt } = args;
+                if (!JOB_NAME_RE.test(String(jobName ?? ''))) {
+                    return { error: 'A job name is 1 to 80 letters, digits, spaces and the signs _ . : -' };
+                }
                 // The same name changes that job in place. Before, the model
                 // cancelled a job and made it again to change its end date; the
                 // new job reported to the chat the change came from, and the
@@ -112,28 +148,33 @@ class SchedulerExecutor extends BaseExecutor {
                 if (prev?.isSystem) {
                     return { error: `'${jobName}' is a built-in job. Its schedule and task cannot be changed here; the owner can change its model and tools on the Tasks page.` };
                 }
-                // Times the job already has pass: the floor is for new ones.
+                if (args.task === HIDDEN_TASK && !prev) {
+                    return { error: 'That text stands for a hidden task. Give the task itself.' };
+                }
+                const task = args.task === HIDDEN_TASK ? prev.task : args.task;
+                const sameTask = !!prev && prev.task === task;
                 const sameCron = !!prev && String(existing.metadata?.cronExpression) === String(cron);
-                const often = sameCron ? null : tooOften(cron);
-                if (often) {
-                    return { error: `A job made here runs at most every ${MIN_JOB_MINUTES} minutes, and '${cron}' does not: ${often}. Pick a slower schedule; the owner can make a faster job on the Tasks page.` };
+                // The times and task a job already has pass: the floor is for
+                // new ones (extending a job that runs every 5 minutes works).
+                const problem = sameCron && sameTask ? null : tooOften(cron);
+                if (problem) {
+                    return { error: `'${cron}' cannot be used: it ${problem}. A job made here needs five cron fields and runs at most every ${MIN_JOB_MINUTES} minutes; the owner can make a faster job on the Tasks page.` };
                 }
-                if (!prev) {
-                    const refused = this._refuseFromJobRun(context, scheduler);
-                    if (refused) return { error: refused };
-                }
+                const refused = this._refuseFromJobRun(jobRun, scheduler, { creating: !prev });
+                if (refused) return { error: refused };
+
                 const keep = prev ? { targetChatId: prev.targetChatId, targetSource: prev.targetSource } : null;
                 const { targetChatId, targetSource, taint } = originFor(context, scheduler, keep);
                 // A job keeps the taint it was made with, whatever the change:
                 // the model writes the new task, and may copy what a third
                 // party planted. Only the owner's own re-save in the Tasks form
                 // clears it. A row can be tainted with no sources named.
-                const sameTask = !!prev && prev.task === task;
                 let carried = taint;
                 if (prev?.tainted === true) {
                     const merged = taintPayloadFields([...(prev.taintSources || []), ...(taint.taintSources || [])]);
                     carried = { tainted: true, ...(merged.taintSources ? { taintSources: merged.taintSources } : {}) };
                 }
+                // An unchanged task keeps its tool list.
                 const allowedTools = sameTask && Array.isArray(prev.allowedTools)
                     ? prev.allowedTools
                     : await scheduler.scopeJobTools(task);
@@ -151,8 +192,8 @@ class SchedulerExecutor extends BaseExecutor {
                     // The form's Weekdays and Daytime marks describe its times.
                     ...(sameCron && prev.weekdaysOnly ? { weekdaysOnly: true } : {}),
                     ...(sameCron && prev.daytimeOnly ? { daytimeOnly: true } : {}),
-                    // Made by a job run: it may not make jobs of its own.
-                    ...(prev?.madeByJob === true || (!prev && fromJobRun) ? { madeByJob: true } : {}),
+                    // Made or changed by a job run: it may not make jobs of its own.
+                    ...(prev?.madeByJob === true || jobRun ? { madeByJob: true } : {}),
                     ...carried
                 };
                 // The same callback as after a restart: the run gets the
@@ -169,6 +210,7 @@ class SchedulerExecutor extends BaseExecutor {
                 if (scheduled === false) {
                     return { error: `'${cron}' is not a schedule the scheduler understands.${prev ? ' The job was not changed.' : ''}` };
                 }
+                this._countMade(jobRun);
                 return {
                     success: true,
                     info: `Job '${jobName}' ${prev ? 'changed' : 'scheduled'}: '${cron}'` + (until ? ` until ${until}` : '')
@@ -218,12 +260,7 @@ class SchedulerExecutor extends BaseExecutor {
                 const date = new Date(time);
                 if (isNaN(date.getTime())) return { error: "Invalid date format." };
                 if (date < new Date()) return { error: "Time must be in the future." };
-
-                // A job run's task starts at least as far out as the job floor.
-                if (fromJobRun && date.getTime() - Date.now() < MIN_JOB_MINUTES * 60e3) {
-                    return { error: `A task made by a job starts at least ${MIN_JOB_MINUTES} minutes from now.` };
-                }
-                const refused = this._refuseFromJobRun(context, scheduler);
+                const refused = this._refuseFromJobRun(jobRun, scheduler, { creating: true });
                 if (refused) return { error: refused };
 
                 const parsedName = `task_${date.getTime()}_${Math.floor(Math.random() * 1000)}`;
@@ -242,17 +279,19 @@ class SchedulerExecutor extends BaseExecutor {
                     targetSource,
                     retryCount: 0,
                     ...(allowedTools ? { allowedTools } : {}),
-                    ...(fromJobRun ? { madeByJob: true } : {}),
+                    ...(jobRun ? { madeByJob: true } : {}),
                     ...taint
                 };
 
                 const callback = scheduler._buildAgentInstructionCallback(parsedName, initialPayload);
 
-                scheduler.scheduleOneOff(parsedName, date, callback, {
+                const scheduled = scheduler.scheduleOneOff(parsedName, date, callback, {
                     persist: true,
                     taskType: 'agent_instruction',
                     payload: initialPayload
                 });
+                if (scheduled === false) return { error: 'The task could not be scheduled.' };
+                this._countMade(jobRun);
                 return { success: true, info: `Task '${task}' scheduled for ${date.toLocaleString()}` };
             }
 
@@ -262,16 +301,17 @@ class SchedulerExecutor extends BaseExecutor {
                     // Extract metadata from job object or DB payload if available
                     const meta = job.metadata || {};
                     const payload = meta.payload || {};
+                    const tainted = payload.tainted === true;
 
                     jobList.push({
                         name: name,
                         cron: meta.cronExpression, // Original rule
-                        task: payload.task || 'No description',
+                        // A task a third party may have written is not shown: its
+                        // words would come back to a clean run as trusted text.
+                        task: tainted ? HIDDEN_TASK : (payload.task || 'No description'),
                         nextInvocation: job.nextInvocation() ? job.nextInvocation().toISOString() : null,
                         expiresAt: meta.expiresAt,
-                        // Its task came from a run that read untrusted content:
-                        // the whole list then reads as such (untrusted-content.js).
-                        ...(payload.tainted === true ? { tainted: true } : {})
+                        ...(tainted ? { tainted: true } : {})
                     });
                 }
                 return { jobs: jobList };
@@ -292,4 +332,4 @@ class SchedulerExecutor extends BaseExecutor {
     }
 }
 
-module.exports = { SchedulerExecutor, originFor, tooOften };
+module.exports = { SchedulerExecutor, originFor, tooOften, HIDDEN_TASK };

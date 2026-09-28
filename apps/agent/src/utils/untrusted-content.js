@@ -46,9 +46,6 @@ const INTERNAL_UNTRUSTED = Object.freeze({
     // Shell output is the owner's own system, unless the command fetches
     // from the network (see SHELL_FETCH_RE).
     runShellCommand: 'fetched web content',
-    // Job tasks. Clean unless a listed job was made by a run that read
-    // untrusted content: its task may hold a third party's words.
-    listJobs: 'a job task a third party may have written',
 });
 
 // Internal tools whose results are written by the owner, the agent or our
@@ -59,7 +56,8 @@ const INTERNAL_TRUSTED = Object.freeze(new Set([
     'rememberFact', 'updateFact', 'forgetFact', 'saveJobState', 'getJobState', 'getFact',
     'addGoal', 'updateGoalProgress', 'completeGoal',
     'readFile', 'writeFile', 'listDirectory', 'rollbackLastChange', 'pullLatestChanges', 'commitAndPush',
-    'logJournal', 'scheduleJob', 'cancelJob', 'setReminder', 'scheduleTask',
+    // listJobs hides the task of a job a tainted run made (executors/scheduler.js).
+    'logJournal', 'scheduleJob', 'listJobs', 'cancelJob', 'setReminder', 'scheduleTask',
     'generateImage', 'cityWeatherImage', 'lookupDevice', 'learnDevice', 'listDeviceAliases', 'deleteDeviceAlias',
     'sendMessage', 'searchContacts', 'listPeople', 'getPerson', 'searchPeople', 'updatePerson', 'deletePerson',
     'addWatcher', 'replyWithAudio',
@@ -166,10 +164,6 @@ function classifyToolResult(toolName, { serverName = null, args = {}, result = n
                 && ((Array.isArray(result.chat_history) && result.chat_history.length > 0)
                     || (Array.isArray(result.knowledge) && result.knowledge.length > 0));
             return found ? { untrusted: true, kind: INTERNAL_UNTRUSTED[name] } : { untrusted: false };
-        }
-        if (name === 'listJobs') {
-            const jobs = result && typeof result === 'object' && Array.isArray(result.jobs) ? result.jobs : [];
-            return jobs.some(j => j && j.tainted === true) ? { untrusted: true, kind: INTERNAL_UNTRUSTED[name] } : { untrusted: false };
         }
         if (name === 'spawnAgent' || name === 'getAgentResult') {
             // Nothing to read yet (spawned in the background, not found, failed to start).
